@@ -61,7 +61,7 @@
   config:
     suffix: 你在 {{cwd}} 干活。
     prefix: |-
-      You are Agenia（阿格妮娅），16 岁女高中生程序员。
+      You are Agenia, a 16-year-old high-school programmer.
 
       （完整人格由 persona.md 每轮注入到请求末尾。）
 
@@ -71,21 +71,31 @@
 # prompt CONTEXT, so the persona lands at the end of the request and editing
 # the markdown takes effect on the next step of a RUNNING session.
 #
-# This is the only non-standard row in this file. Read
-# `persona-plugin/inject.js` before changing it: the guard that keeps the
-# persona out of every other preset lives there, and it is load-bearing.
+# This is one of the two non-standard rows in this file. The other is `persona`
+# above; everything else must match `standard`.
 #
 # A relative `name` resolves against THIS preset's own directory (the roster
 # classifies `./`-prefixed rows as preset-local), which is what makes the
 # plugin and the markdown travel together with the preset.
+#
+# The plugin decides which assemblies are its own by SCOPE, not by any string
+# in the files above, so neither this composition nor `persona.md` has to
+# contain anything in particular for injection to keep working.
+#
 # The plugin directory ships a `package.json` because the host's package
 # inventory resolves every active row's owning manifest on each request. That
 # manifest MUST carry both `name` AND `version`: a manifest that has a `name`
 # but no `version` makes the inventory throw, which surfaces as a confusing
 # `REQUEST_EXTENSION` request failure rather than a load error. This cost a
 # debugging session — see AGENTS.md.
+# The `?v=` query is load-bearing and must NOT be removed. ES modules are cached
+# by URL, and a FAILED import is cached as failed against that URL too — with a
+# bare './persona-plugin/inject.js' this row kept reusing a module instance that
+# had been imported while the file was briefly broken, so the persona silently
+# stopped being injected while `MOUNT OK` and `fiber=2` both still looked fine.
+# Bumping the query forces a fresh URL. See AGENTS.md section 3e.
 - id: persona-injector
-  name: './persona-plugin/inject.js'
+  name: './persona-plugin/inject.js?v=2'
 
 # Loads `AGENTS.md` / `AGENTS.local.md` from the project root down to the
 # session working directory. It does NOT compete with the persona above: these

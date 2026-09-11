@@ -46,6 +46,17 @@
  * Never throw into assembly: a bad persona file must not break the agent. A
  * missing or unreadable `persona.md` injects nothing and logs once per distinct
  * problem.
+ *
+ * EDITING THIS FILE REQUIRES A HARNESS RESTART
+ * ES modules are cached by URL, and this one is imported by a file URL that
+ * never changes, so a running harness keeps executing the instance it first
+ * loaded. Remounting the preset does NOT re-import it. Worse, a module whose
+ * import FAILED is cached as failed too: while this file was briefly
+ * syntactically broken, the failure was recorded against that URL, and every
+ * later remount silently reused the broken instance — `MOUNT OK`, the row
+ * reported `fiber=2`, and the persona simply stopped being injected with no
+ * error anywhere. `persona.md` is exempt (it is read from disk every turn), so
+ * only changes to THIS file need the restart.
  */
 
 import { appendFile, readFile, stat } from 'node:fs/promises'
@@ -63,11 +74,14 @@ const CONTEXT_NAME = 'agenia:persona'
 
 /**
  * Self-check switch. When `PERSONA_SELF_CHECK` is set in the environment, the
- * plugin records what it was handed, so the scope-filtering claim above can be
+ * plugin records what it was handed, so the scope-filtering claim below can be
  * re-measured instead of believed. Bounded, append-only, and off by default.
+ *
+ * Setting this needs a process restart to take effect: ES modules are cached by
+ * URL, so editing this file does NOT change the code a running harness uses.
+ * See AGENTS.md section 3e.
  */
 const SELF_CHECK = typeof process !== 'undefined' && Boolean(process.env && process.env.PERSONA_SELF_CHECK)
-
 /** Entries written while {@link SELF_CHECK} is on, capped so it cannot grow. */
 let selfCheckWrites = 0
 
@@ -131,9 +145,11 @@ async function readPersona() {
 /** Record one handled assembly when the self-check is on. */
 async function noteSelfCheck(assembly, context) {
   if (!SELF_CHECK || selfCheckWrites >= 50) return
+  const scope = context === null || context === undefined ? undefined : context.scope
   const line = `${JSON.stringify({
-    hasScope: context !== null && context !== undefined && context.scope !== undefined,
+    hasScope: scope !== undefined,
     sections: Array.isArray(assembly.sections) ? assembly.sections.length : -1,
+    contextNames: (Array.isArray(assembly.contexts) ? assembly.contexts : []).map((c) => String(c.name)),
   })}\n`
   try {
     await appendFile(join(tmpdir(), 'agenia-selfcheck.log'), line, 'utf8')
