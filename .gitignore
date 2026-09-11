@@ -1,0 +1,51 @@
+# ── Secrets ────────────────────────────────────────────────────────────────
+# Never commit credentials. api.txt holds a live API key and must stay local.
+api.txt
+*.api.txt
+*api*.txt
+
+.env
+.env.*
+!.env.example
+
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.*
+credentials.yaml
+.credentials.yaml
+secrets.*
+secrets/
+token.json
+
+# ── DSH runtime / local state ──────────────────────────────────────────────
+.dsh/
+sessions/
+storages/
+profiles/
+settings.yaml
+*.local.yml
+*.local.yaml
+
+# ── Node ───────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ── Build output ───────────────────────────────────────────────────────────
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# ── Editors / OS ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+Desktop.ini
+.DS_Store
