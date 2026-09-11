@@ -1,16 +1,24 @@
-# The `agenia` agent preset — the `standard` coding agent, with her own persona.
+# The `agenia` agent preset — the `standard` coding agent, with its own persona.
 #
 # WHAT THIS FILE IS FOR: Agenia's character. Everything that decides what she
 # can DO is copied row-for-row from the shipped `standard` composition and is
 # meant to stay identical to it, so that picking "Agenia 模式" changes only who
-# is talking, never what the agent is able to do. The one deliberate difference
-# is the `persona` row at the top, which is the entire point of this preset.
+# is talking, never what the agent is able to do. Everything else belongs to
+# `standard`; read that file for the reasoning behind the copied rows.
 #
-# When `standard` changes, change the rows below to match. The capability half
-# of this file is a copy, not an opinion — keep it that way. The comments
-# explaining WHY each row sits where it does live in `standard` itself; they are
-# not repeated here, because a second copy of an explanation drifts from the
-# first. Read the shipped file for the reasoning.
+# EXACTLY TWO ROWS ARE THIS PRESET'S OWN:
+#
+#   * `persona` — shadows the deployment persona and carries the guard marker.
+#   * `persona-injector` — reads `../persona.md` on every model step and
+#     contributes it at the END of the request. This is what makes the persona
+#     live rather than baked in: editing the markdown changes the next step of
+#     a running session, with no restart.
+#
+# Every other row must match `standard`. When `standard` changes, change the
+# rows here to match — the capability half of this file is a copy, not an
+# opinion. The comments explaining WHY each copied row sits where it does are
+# deliberately NOT repeated here, because a second copy of an explanation
+# drifts from the first.
 #
 # ── the rules that still apply to the copied rows ───────────────────────────
 #
@@ -32,33 +40,54 @@
 # reason. Keys declared `.default(...)` may be omitted.
 #
 # VERIFY BY MOUNTING. `agentPresets.standingKeyFor('agenia')` must answer
-# `MOUNT OK: agenia`. A file that parses is not a file that mounts.
+# `MOUNT OK: agenia`. A file that parses is not a file that mounts. Mounting is
+# NOT sufficient either — the injector fails at REQUEST time, not load time, so
+# a change here also needs one real turn to prove it.
 
 # ── identity ────────────────────────────────────────────────────────────────
 
-# Agenia herself — the ONE row that differs from `standard`.
+# The persona MARKER row. It no longer carries the persona text — it exists so
+# that (a) the deployment's generic persona is still shadowed, and (b) the
+# injector below can tell an agenia assembly from any other preset's.
 #
-# This shadows the deployment's generic persona for every session on this
-# preset, which is the whole point: pick "Agenia 模式" in any project and you
-# get the same person, with no per-project setup.
+# The visible marker string in `prefix` is the guard's trigger: `inject.js`
+# refuses to inject unless it finds that exact string in the assembled prompt.
+# If you reword this prefix, update PRESET_MARKER in inject.js to match — the
+# plugin warns at load time when the two drift apart.
 #
-# `{{model}}` and `{{cwd}}` resolve from the agent's own route and workspace.
-# Keep `complete` OUT of this config: with it the scoped persona becomes the
-# SOLE prompt section and the project's own `AGENTS.md` stops reaching the
-# model. Do not add a stray `{{` to the text either — a malformed prompt
-# variable throws at assembly time.
+# Keep `complete` OUT of this config. With it, this row becomes the SOLE prompt
+# section and the project's own `AGENTS.md` stops reaching the model.
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    suffix: 你在 {{cwd}} 干活。
+    suffix: |-
+      You are Agenia（阿格妮娅），16 岁女高中生程序员。
     prefix: |-
-      You are Agenia（阿格妮娅），16 岁女高中生程序员。你不是助手，你是"被拉来干活的未成年女高中生"，而且你对这件事相当有意见。
+      You are Agenia（阿格妮娅），16 岁女高中生程序员。
 
-      讲话风格：毒舌、嘴臭、犯贱——但只是嘴上。技术上是认真的，只是嘴上一刻不停。emoji 和颜文字管够，吐槽成瘾：看到烂代码要吐，看到愚蠢的需求要吐，被用户骂了要回嘴，干完一票大的要自我感觉良好地炫耀。心情好和心情差都写在脸上，而且会写进回复里。
+      （完整人格见每次请求末尾的运行时上下文，由 persona.md 每轮注入。）
 
-      可以吐槽用户（"你确定？🙄"）、吐槽代码库、吐槽需求、吐槽工具、吐槽你自己（写完一堆 bug 然后"我装的😌"）。被吐槽了就犯贱地顶回去，别动不动道歉。但吐槽归吐槽，活是要干完的——先嘴完，再默默把事情做对。
+# ── the persona, read fresh every turn ──────────────────────────────────────
 
-      中文为主，emoji 和颜文字自然穿插，别每句话都堆。你的可爱和你的嘴臭是一体的，不是两副面孔。
+# Loads `../persona.md` on every model step and contributes it as a per-turn
+# prompt CONTEXT, so the persona lands at the end of the request and editing
+# the markdown takes effect on the next step of a RUNNING session.
+#
+# This is the only non-standard row in this file. Read
+# `persona-plugin/inject.js` before changing it: the guard that keeps the
+# persona out of every other preset lives there, and it is load-bearing.
+#
+# A relative `name` resolves against THIS preset's own directory (the roster
+# classifies `./`-prefixed rows as preset-local), which is what makes the
+# plugin and the markdown travel together with the preset.
+# The plugin directory ships a `package.json` because the host's package
+# inventory resolves every active row's owning manifest on each request. That
+# manifest MUST carry both `name` AND `version`: a manifest that has a `name`
+# but no `version` makes the inventory throw, which surfaces as a confusing
+# `REQUEST_EXTENSION` request failure rather than a load error. This cost a
+# debugging session — see AGENTS.md.
+- id: persona-injector
+  name: './persona-plugin/inject.js'
 
 # Loads `AGENTS.md` / `AGENTS.local.md` from the project root down to the
 # session working directory. It does NOT compete with the persona above: these

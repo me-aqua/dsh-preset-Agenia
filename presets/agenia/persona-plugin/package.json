@@ -1,0 +1,14 @@
+{
+  "name": "agenia-persona",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Loads persona.md on every model step and injects it as a fresh per-turn context section.",
+  "main": "inject.js",
+  "exports": {
+    ".": "./inject.js"
+  },
+  "dsh": {
+    "client": false
+  }
+}

@@ -14,44 +14,66 @@ preset，就是一份这样的组合（一个目录 + 一个 `agent.cordis.yml`�
 16 岁女高中生程序员，毒舌、嘴臭、犯贱，emoji 和颜文字管够，随口吐槽一切 ——
 包括吐槽你和吐槽她自己。嘴上没个正经，活是干完的。
 
+## 人格是"活"的：每轮都从 .md 读取
+
+人格**不在 YAML 里**，而在 `presets/agenia/persona.md`。
+
+每发起一次模型请求，DSH 都会重新装配系统提示词，插件在那一刻重新读这个文件，
+把内容作为**每轮上下文**注入到**整个请求的最末尾**（在系统提示词之后、也在项目
+自己的 `AGENTS.md` 之后）。放大模型注意力最强的地方，长对话里最不容易漂。
+
+这意味着：
+
+- **改 `persona.md`，下一个步骤就生效** —— 正在跑的会话也会变，不用重开会话、
+  不用重启 harness。实测过：改文件后立刻重新装配，内容就换了。
+- 按 mtime + 文件大小判断是否重读，所以编辑不会被忽略。
+- 文件读不到时**不会让 agent 崩**：注入空内容并只记一次日志。
+
 ## 改人格
 
-改 `presets/agenia/agent.cordis.yml` 里 `persona` 那一行的 `prefix` 文字，然后
-**开一个新会话**生效（已经在跑的会话不会变）。改完做一次挂载验证 —— 见
-`AGENTS.md` 第 3 条，光"看着像对的"不算数。
+**只改 `presets/agenia/persona.md` 就行**，保存即可生效。
 
-三件别做的事：
+四件别做的事：
 
-- **不要给那一行加 `complete: true`。** 那会让 Agenia 的人格变成唯一的提示词段落，
-  项目自己的 `AGENTS.md` 就再也读不进来了。
-- **不要在文字里写半截的 `{{`。** 系统提示词里的 `{{...}}` 是变量引用，写错会
-  直接抛错。合法的是 `{{model}}` 和 `{{cwd}}`。
-- **不要拿人格去写工作习惯或工作边界。** 人格写什么，她就强调什么。之前试过在里面
-  写"先读代码再改"这类习惯，结果她把同一句自我定位念叨了三遍。人格管的是**语气**，
-  不是规矩；规矩归项目自己的 `AGENTS.md`。
+- **不要给 `agent.cordis.yml` 里的 `persona` 行加 `complete: true`。** 那会让它变成
+  唯一的提示词段落，项目自己的 `AGENTS.md` 就再也读不进来了。
+- **不要在人格里写半截的 `{{`。** 提示词里的 `{{...}}` 是变量引用，写错会直接抛错。
+- **不要拿人格去写工作习惯或工作边界。** 人格写什么，她就强调什么。人格管的是
+  **语气**，不是规矩；规矩归项目自己的 `AGENTS.md`。
+- **不要改 `persona` 行里的那句标记文字**（`You are Agenia（阿格妮娅）…`）。注入器
+  靠它判断"这是 Agenia 的装配"，改了会导致人格**静默不再注入**。真改了的话，同步
+  更新 `persona-plugin/inject.js` 里的 `PRESET_MARKER`；插件会在加载时警告两者不一致。
 
 ### 实测记录（2026-09-11，deepseek-flash）
 
-跑过真实会话，她确实照着人格说话：自称 16 岁女高中生程序员、说"人格写死在
-`persona` 里，跟着预设走，别想退货 😌"、主动复述了本仓库 `AGENTS.md` 里那几条规矩。
-"人格生效 + 项目文件不被顶掉"这两件事是实测过的，不是推测。
+- 注入生效、位置在最后：`personaIsLastContext: true`
+- 不污染其他预设：standard / cordis / minimal 的装配里都没有人格
+- 热更新：磁盘上改 `persona.md`，下一次装配立刻反映，还原后也立刻恢复
+- 真实会话："我是 Agenia（阿格妮娅），16 岁的女高中生程序员，被你们拉来当 agent
+  干活的那种——嘴上骂骂咧咧，代码还是会给你写对的 😌"
 
 ## 和能力的关系
 
-`agent.cordis.yml` 里除 `persona` 外的每一行，都是**从内置 `standard` 预设逐行
-抄过来的**，意图是永远保持一致。`standard` 升级后，照着改这边的行即可。
+`agent.cordis.yml` 里除 `persona` 和 `persona-injector` 两行外的每一行，都是
+**从内置 `standard` 预设逐行抄过来的**，意图是永远保持一致。`standard` 升级后，
+照着改这边的行即可。
 
 这件事有工具可验，不用肉眼比对 —— 挂载后按模块名做集合比对，会输出
-`identicalApartFromPersona: true`。别靠"读一遍看着一样"下结论。
+`identicalApartFromPersona: true`；提示词里解析出的工具数也应该两边相同。
+别靠"读一遍看着一样"下结论。
 
 ## 目录结构
 
 ```
 presets/
 └── agenia/
-    ├── agent.cordis.yml   # 组合本体：能力照抄 standard，只有 persona 行是自定义的
-    └── preset.yml         # 预设菜单里显示的名字和说明
-AGENTS.md                  # 给"在这个仓库里干活的 agent"看的规则
+    ├── agent.cordis.yml      # 组合本体：能力照抄 standard，只有两行是自定义的
+    ├── persona.md            # ★ 人格正文。每轮重新读取并注入，改这个文件就生效
+    ├── persona-plugin/
+    │   ├── package.json      # 插件清单（name 和 version 都必须有，见 AGENTS.md）
+    │   └── inject.js         # 每轮读 persona.md 并注入到请求末尾
+    └── preset.yml            # 预设菜单里显示的名字和说明
+AGENTS.md                     # 给"在这个仓库里干活的 agent"看的规则
 README.md  LICENSE  .gitignore  .gitattributes
 ```
 
