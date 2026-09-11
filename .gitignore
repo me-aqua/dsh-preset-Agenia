@@ -28,6 +28,15 @@ settings.yaml
 *.local.yml
 *.local.yaml
 
+# ── Agent preset 根 ─────────────────────────────────────────────────────────
+# presets/ 是本仓库真正交付的东西：DSH 从这里的每个子目录读一份 preset，
+# 目录名就是 preset id（presets/agenia/ → id "agenia"）。它登记在
+# ~/.dsh/profiles/web/cordis.patch.yml 的 roots 里，**必须**进版本库。
+# 注意：改那份 patch 文件会让当前所有会话当场失去工具集（见 AGENTS.md）。
+# .agent-presets/ 是 DSH 默认的用户 preset 根（~/.dsh/.agent-presets），
+# 属于机器本地状态，不进版本库。
+.agent-presets/
+
 # ── Node ───────────────────────────────────────────────────────────────────
 node_modules/
 npm-debug.log*

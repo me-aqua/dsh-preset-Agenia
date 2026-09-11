@@ -1,0 +1,150 @@
+# The `agenia` agent preset — a general-purpose engineering assistant.
+#
+# Agenia is a PORTABLE WORK ASSISTANT, not a project-specific agent. This
+# composition decides only what she can DO. Who she IS comes from elsewhere:
+# `dsh-agent-instructions` loads `AGENTS.md` / `AGENTS.local.md` from the
+# project root down to the session working directory, so every project keeps
+# its own voice and its own house rules on its own filesystem. Do not copy a
+# persona in here — a preset is global, a project is not, and two sources for
+# one persona drift apart.
+#
+# This is an AGENT-PLANE composition: mounted once per process under a standing
+# scope, and each session naming it joins by scope parentage. The host
+# composition (`base.cordis.yml` + `web.cordis.yml`) keeps everything a preset
+# must not own: the registries themselves, the sandbox and approval stack,
+# persistence, and the model route.
+#
+# A service row here MUST sit inside a group carrying an `isolate` realm, or it
+# publishes into the process-global root realm and the mount rejects it. This
+# preset deliberately contains NO service provider at all, so it needs no realm
+# and cannot collide with another preset. Every row below only CONSUMES a host
+# capability and registers a tool into this preset's scoped layer.
+#
+# Derived from the shipped `standard` composition, then trimmed by intent.
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# No `persona` row on purpose. A global persona prefix would compete with the
+# project's own `AGENTS.md` / `AGENTS.local.md`, and the project's file is the
+# one that should win: it travels with the repository, it is editable without
+# touching a shared install, and it is the only place a project can state its
+# own conventions. Agenia's character lives there.
+#
+# This row is what actually loads those files — without it, no project context
+# reaches the model and Agenia becomes a generic assistant with no memory of
+# where she is.
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+# Both shell tools consume the host registry; their executors
+# (`bash-sandbox` / `pwsh-sandbox`) are host-plane. Exactly one mounts per
+# platform, mirroring the shipped presets: `tool-bash` gates off win32 and its
+# pwsh twin gates off POSIX. `shell-env` stays in the HOST composition because
+# `apps/cli/src/web.ts` injects it to publish `DSH_WEB_URL` / `DSH_WEB_MODE`.
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+# Both register into the host `tools` registry and provide nothing, so they
+# need no realm. The `fs` service and its policy stay in the host. `tool-fs`
+# carries read/write/edit; `tool-fs-search` carries glob and grep.
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── background jobs ────────────────────────────────────────────────────────
+
+# Only the model-facing controls. The task REGISTRY stays on the host plane:
+# its producers sit outside any realm this file could put it in — `tool-bash`
+# above resolves it with `ctx.get`, and an entry-local realm here would be
+# invisible to every sibling row, so `run_in_background` would answer
+# "background jobs unavailable" while these controls sat in the catalog. The
+# registry is keyed by owning agent anyway, so one host instance serves every
+# session. What this preset chooses is whether Agenia can collect and stop
+# background work at all — she can, because a dev server or a long build is
+# ordinary work.
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+# The skill REGISTRY lives in the host composition and is layered per scope:
+# these rows register into THIS preset's layer, so they need no realm.
+# `skill-filesystem` discovers skills from the working directory, and
+# `tool-skill` gives Agenia the catalog and the loader. The merged catalog also
+# carries whatever the deployment registered globally.
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── web ─────────────────────────────────────────────────────────────────────
+
+# The `web` service and its search provider stay in the host composition; only
+# the model-facing tool is per-session. `fetch: true` adds page retrieval
+# beside search, which is what makes "read the official docs" possible instead
+# of guessing from memory.
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: true
+    searchTimeoutMs: 60000
+
+# ── conversation ────────────────────────────────────────────────────────────
+
+# The question tool: for user-owned choices and material ambiguity that
+# inspection cannot resolve.
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+# Multi-step work tracker. `allowParallelInProgress` is REQUIRED with no
+# default: a composition that omits it fails at load. `true` lets several
+# in-progress items coexist, which is what Agenia's background jobs need.
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+# Publishes a settled file as a deliverable the user can open. Cheap, and it is
+# the difference between telling someone a path and handing them the file.
+- id: present
+  name: '@deepseek-ai/dsh-tool-present'
+
+# ── deliberately absent ─────────────────────────────────────────────────────
+#
+# Each of these is a real capability that can be added later by uncommenting a
+# row copied from the shipped `standard` preset. They are left out so Agenia
+# starts as a focused engineering assistant rather than a control panel, and
+# because a general assistant working in an arbitrary project is exactly where
+# unrequested autonomy is least welcome.
+#
+#   * `tool-subagent*`, `tool-workflow`, `tool-ralph` — delegation and fan-out.
+#     Heavy: a two-line request can become dozens of child agents. Add when a
+#     concrete task needs breadth, not pre-emptively.
+#   * `tool-goal` + `command-goal` — persisted autonomous continuation rounds.
+#     This is what makes an agent keep working after you stop watching, which is
+#     a policy decision about a person's machine and API budget, not a
+#     convenience. Opt in per task.
+#   * `plan-mode` (+ its `isolate: { planMode: true }` group) — useful for
+#     large refactors, noise for small edits.
+#   * `compaction-basic` + `command-compact` + `tool-result-pruner` — context
+#     compaction, wrapping `compaction` and `toolResultPruner` in one realm.
+#     Long sessions would eventually hit the model's context ceiling without
+#     it; short and medium sessions never notice.
+#   * `tool-cordis` — runtime self-inspection, for authoring presets. That work
+#     belongs to the `cordis` preset, which is built for it.
