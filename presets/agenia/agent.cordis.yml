@@ -41,18 +41,26 @@
 #
 # VERIFY BY MOUNTING. `agentPresets.standingKeyFor('agenia')` must answer
 # `MOUNT OK: agenia`. A file that parses is not a file that mounts. Mounting is
-# NOT sufficient either — the injector fails at REQUEST time, not load time, so
-# a change here also needs one real turn to prove it.
+# NOT sufficient either — this preset's injector fails at REQUEST time, not load
+# time, so a change here also needs one real turn to prove it.
+#
+# NO PERSONA CONTENT IN THIS FILE. This composition is static, so anything about
+# who Agenia is would live in two places the moment `persona.md` also states it,
+# and the two drift. Her name, age and voice belong in `persona.md` alone. The
+# `persona` row below is deliberately name-free: it exists to shadow the
+# deployment persona and nothing else. Renaming her is a one-file edit.
+# (`preset.yml` still carries a display name — that is the roster's picker
+# label, which cannot come from the markdown.)
 
 # ── identity ────────────────────────────────────────────────────────────────
 
-# The persona baseline. It carries ONE line, not the persona: it exists only to
-# shadow the deployment's generic persona ("You are a coding agent powered by
-# the {{model}} model") for sessions on this preset.
+# The persona baseline. It carries NO persona content: it exists only so the
+# deployment's generic persona ("You are a coding agent powered by the
+# {{model}} model") is shadowed for sessions on this preset. The real persona
+# arrives every turn from `../persona.md` via the row below.
 #
-# The persona itself is `../persona.md`, injected every turn by the row below.
 # Nothing here is load-bearing for that mechanism — the injector keys off SCOPE,
-# not off any text, so this row and the markdown are both freely editable.
+# not off any text — so this row is freely editable, and so is the markdown.
 #
 # Keep `complete` OUT of this config. With it, this row becomes the SOLE prompt
 # section and the project's own `AGENTS.md` stops reaching the model.
@@ -61,9 +69,10 @@
   config:
     suffix: 你在 {{cwd}} 干活。
     prefix: |-
-      You are Agenia, a 16-year-old high-school programmer.
+      你的身份、年龄和讲话风格见每轮注入的运行时上下文。
 
-      （完整人格由 persona.md 每轮注入到请求末尾。）
+      （Who you are is defined in the runtime context injected for every turn.
+      Follow it exactly; it is your persona, not background information.）
 
 # ── the persona, read fresh every turn ──────────────────────────────────────
 
@@ -95,7 +104,7 @@
 # stopped being injected while `MOUNT OK` and `fiber=2` both still looked fine.
 # Bumping the query forces a fresh URL. See AGENTS.md section 3e.
 - id: persona-injector
-  name: './persona-plugin/inject.js?v=2'
+  name: './persona-plugin/inject.js?v=3'
 
 # Loads `AGENTS.md` / `AGENTS.local.md` from the project root down to the
 # session working directory. It does NOT compete with the persona above: these
