@@ -75,7 +75,15 @@ const PERSONA_URL = new URL('../persona.md', import.meta.url)
 
 /** Last text read from disk, reused when a re-read fails. */
 let cachedText = null
-/** `mtimeMs:size` of the cached text, so an unchanged file skips the read. */
+/**
+ * `mtimeMs:size` of the file as it was BEFORE the last successful read.
+ *
+ * Stamping before the read rather than after is deliberate: if the file is
+ * rewritten while the read is in flight, the stamp no longer describes the text
+ * that landed in `cachedText`, so the next assembly re-reads instead of serving
+ * content that was already stale. Stamping after would let an equal-sized
+ * rewrite be mistaken for a cache hit.
+ */
 let cachedStamp = null
 /** Problems already logged, so a broken file does not spam every step. */
 const loggedProblems = new Set()
@@ -88,6 +96,11 @@ function logOnce(key, message) {
 
 /**
  * Read `persona.md`, reusing the cached text while its stamp is unchanged.
+ *
+ * Worst case on a same-millisecond, same-length edit is that one assembly
+ * serves the previous text; the change lands on the following one. Rewriting
+ * cannot be missed indefinitely, which is what matters for live editing.
+ *
  * @returns the persona text, or undefined when it cannot be read.
  */
 async function readPersona() {
@@ -102,10 +115,11 @@ async function readPersona() {
   const stamp = `${info.mtimeMs}:${info.size}`
   if (stamp === cachedStamp && cachedText !== null) return cachedText
 
+  const beforeRead = stamp
   try {
     const text = await readFile(PERSONA_URL, 'utf8')
     cachedText = text
-    cachedStamp = stamp
+    cachedStamp = beforeRead
     loggedProblems.delete('read')
     return text
   } catch (error) {
@@ -117,13 +131,15 @@ async function readPersona() {
 /** Record one handled assembly when the self-check is on. */
 async function noteSelfCheck(assembly, context) {
   if (!SELF_CHECK || selfCheckWrites >= 50) return
-  selfCheckWrites += 1
   const line = `${JSON.stringify({
     hasScope: context !== null && context !== undefined && context.scope !== undefined,
     sections: Array.isArray(assembly.sections) ? assembly.sections.length : -1,
   })}\n`
   try {
     await appendFile(join(tmpdir(), 'agenia-selfcheck.log'), line, 'utf8')
+    // Counted only after a successful write, so a failing write cannot burn
+    // the budget and silently stop the record.
+    selfCheckWrites += 1
   } catch (error) {
     logOnce('selfcheck', `self-check write failed: ${String(error && error.message)}`)
   }
