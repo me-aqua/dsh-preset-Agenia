@@ -1,0 +1,8 @@
+# Normalize to LF in the repository; this project is YAML + markdown and its
+# files are read by a runtime on both Windows and POSIX.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF if any are ever added.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
