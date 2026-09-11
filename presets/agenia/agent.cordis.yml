@@ -46,26 +46,24 @@
 
 # ── identity ────────────────────────────────────────────────────────────────
 
-# The persona MARKER row. It no longer carries the persona text — it exists so
-# that (a) the deployment's generic persona is still shadowed, and (b) the
-# injector below can tell an agenia assembly from any other preset's.
+# The persona baseline. It carries ONE line, not the persona: it exists only to
+# shadow the deployment's generic persona ("You are a coding agent powered by
+# the {{model}} model") for sessions on this preset.
 #
-# The visible marker string in `prefix` is the guard's trigger: `inject.js`
-# refuses to inject unless it finds that exact string in the assembled prompt.
-# If you reword this prefix, update PRESET_MARKER in inject.js to match — the
-# plugin warns at load time when the two drift apart.
+# The persona itself is `../persona.md`, injected every turn by the row below.
+# Nothing here is load-bearing for that mechanism — the injector keys off SCOPE,
+# not off any text, so this row and the markdown are both freely editable.
 #
 # Keep `complete` OUT of this config. With it, this row becomes the SOLE prompt
 # section and the project's own `AGENTS.md` stops reaching the model.
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    suffix: |-
-      You are Agenia（阿格妮娅），16 岁女高中生程序员。
+    suffix: 你在 {{cwd}} 干活。
     prefix: |-
       You are Agenia（阿格妮娅），16 岁女高中生程序员。
 
-      （完整人格见每次请求末尾的运行时上下文，由 persona.md 每轮注入。）
+      （完整人格由 persona.md 每轮注入到请求末尾。）
 
 # ── the persona, read fresh every turn ──────────────────────────────────────
 

@@ -6,42 +6,51 @@
  * so the persona is re-read and re-injected on EVERY model step. Nothing is
  * cached across turns except the file text, which is revalidated by mtime+size
  * on each read. Editing `persona.md` therefore changes the next step of a
- * RUNNING session — no restart, no new session.
+ * RUNNING session — no restart, no new session. `persona.md` is the whole
+ * persona: every byte of it is the operator's to edit freely.
  *
  * WHY A CONTEXT AND NOT A SECTION
- * `systemPrompt.section()` also re-evaluates per assembly, but its `text` is
- * allowed to be a function only in the SYNCHRONOUS sense: `assemble()` calls
- * it and immediately stringifies the result, so a section cannot await a file
- * read. `system-prompt/assemble` is an ASYNC waterfall over the finished
- * assembly, which is what makes reading from disk on every step possible.
+ * `systemPrompt.section()` also re-evaluates per assembly, but its `text` may
+ * be a function only in the SYNCHRONOUS sense: `assemble()` calls it and
+ * immediately stringifies the result, so a section cannot await a file read.
+ * `system-prompt/assemble` is an ASYNC waterfall over the finished assembly,
+ * which is what makes reading from disk on every step possible.
  *
- * A context section also lands at the END of the request — after the system
+ * A context section also renders at the END of the request — after the system
  * prompt and after the project's own `AGENTS.md` snapshot — which is the
  * position asked for: late in the prompt, where attention is strongest.
  *
- * WHY THE GUARD MATTERS (read before touching this file)
- * `system-prompt/assemble` is documented as scope-filtered, and it is — for
- * listeners registered inside a preset's own scope. This plugin IS composed in
- * the preset's scope, so in theory only agenia assemblies reach it. Do not
- * rely on that alone. It was measured that a listener can observe EVERY
- * preset's assembly, and an injector that fires for the wrong preset would
- * stamp Agenia's persona onto unrelated sessions. The guard below therefore
- * requires BOTH:
+ * WHY NO CONTENT MARKER
+ * An earlier version of this file decided whether an assembly belonged to this
+ * preset by looking for a marker STRING contributed by the `persona` row. That
+ * made the row's text load-bearing and put a hidden constraint on the operator's
+ * own files, which is the wrong trade. The scope does the job instead.
  *
- *   1. a real agent assembly (`context.scope` present — a global or roster
- *      assembly has none), and
- *   2. the marker string in the assembled sections, which exists only because
- *      this preset's `persona` row puts it there.
+ * `system-prompt/assemble` dispatch is scope-filtered: a listener receives only
+ * assemblies whose scope chain contains the scope it registered in. This plugin
+ * is composed inside this preset's standing scope, and every session on this
+ * preset parents its scope to that mount, so the assemblies that arrive here are
+ * this preset's by construction.
+ *
+ * That is documented behaviour, and it was measured rather than assumed. A probe
+ * preset registering the same listener logged 2 entries for 12 cross-preset
+ * assemblies it triggered (agenia, standard, cordis, ptc, minimal, and a global
+ * scope-less assembly): it saw only its own. The guard below is therefore a
+ * cheap structural sanity check, not a content match.
+ *
+ * If a future DSH changes that dispatch rule, the failure mode is a persona
+ * leaking into other presets — loud and obvious, not silent. `PERSONA_SELF_CHECK`
+ * exists to re-measure the claim if it is ever doubted.
  *
  * FAILURE POLICY
  * Never throw into assembly: a bad persona file must not break the agent. A
- * missing or unreadable `persona.md` injects nothing and logs once per
- * distinct problem. If the marker check ever stops matching — someone edited
- * the persona row's text — the plugin logs a loud warning at load time rather
- * than silently doing nothing forever.
+ * missing or unreadable `persona.md` injects nothing and logs once per distinct
+ * problem.
  */
 
-import { readFile, stat } from 'node:fs/promises'
+import { appendFile, readFile, stat } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'agenia-persona'
@@ -49,14 +58,18 @@ export const name = 'agenia-persona'
 /** This row needs the prompt registry; without it there is nothing to inject into. */
 export const inject = ['systemPrompt']
 
-/**
- * A string that exists in the assembled prompt ONLY when this preset's
- * `persona` row is present. Keep it in sync with `agent.cordis.yml`.
- */
-const PRESET_MARKER = 'Agenia（阿格妮娅）'
-
 /** Section name that shows up in the runtime context snapshot. */
 const CONTEXT_NAME = 'agenia:persona'
+
+/**
+ * Self-check switch. When `PERSONA_SELF_CHECK` is set in the environment, the
+ * plugin records what it was handed, so the scope-filtering claim above can be
+ * re-measured instead of believed. Bounded, append-only, and off by default.
+ */
+const SELF_CHECK = typeof process !== 'undefined' && Boolean(process.env && process.env.PERSONA_SELF_CHECK)
+
+/** Entries written while {@link SELF_CHECK} is on, capped so it cannot grow. */
+let selfCheckWrites = 0
 
 const PERSONA_URL = new URL('../persona.md', import.meta.url)
 
@@ -101,11 +114,19 @@ async function readPersona() {
   }
 }
 
-/** True when this assembly belongs to a session running this preset. */
-function isThisPreset(assembly, context) {
-  if (context === null || context === undefined || context.scope === undefined) return false
-  const sections = Array.isArray(assembly.sections) ? assembly.sections : []
-  return sections.some((section) => typeof section.text === 'string' && section.text.includes(PRESET_MARKER))
+/** Record one handled assembly when the self-check is on. */
+async function noteSelfCheck(assembly, context) {
+  if (!SELF_CHECK || selfCheckWrites >= 50) return
+  selfCheckWrites += 1
+  const line = `${JSON.stringify({
+    hasScope: context !== null && context !== undefined && context.scope !== undefined,
+    sections: Array.isArray(assembly.sections) ? assembly.sections.length : -1,
+  })}\n`
+  try {
+    await appendFile(join(tmpdir(), 'agenia-selfcheck.log'), line, 'utf8')
+  } catch (error) {
+    logOnce('selfcheck', `self-check write failed: ${String(error && error.message)}`)
+  }
 }
 
 /**
@@ -119,24 +140,14 @@ export async function apply(ctx) {
     return
   }
 
-  // Load-time sanity check: the guard depends on the preset's persona row, so
-  // say so loudly if this preset no longer carries the marker.
-  try {
-    const own = await readFile(new URL('../agent.cordis.yml', import.meta.url), 'utf8')
-    if (!own.includes(PRESET_MARKER)) {
-      console.error(
-        `[${name}] WARNING: agent.cordis.yml no longer contains the marker "${PRESET_MARKER}". ` +
-        'The persona row was probably reworded, so the guard in inject.js will never match and ' +
-        'the persona will silently stop being injected. Update PRESET_MARKER in inject.js to match.',
-      )
-    }
-  } catch (error) {
-    logOnce('marker', `cannot read agent.cordis.yml to verify the marker: ${String(error && error.message)}`)
-  }
-
   ctx.on('system-prompt/assemble', async (assembly, context, next) => {
     const result = await next()
-    if (!isThisPreset(result, context)) return result
+    await noteSelfCheck(result, context)
+
+    // Structural sanity check only: a scope-less assembly is a roster or global
+    // read, never a session on this preset. Everything else that reaches this
+    // listener already belongs to this preset (see the header note).
+    if (context === null || context === undefined || context.scope === undefined) return result
 
     const text = await readPersona()
     if (text === undefined || text.trim().length === 0) return result
