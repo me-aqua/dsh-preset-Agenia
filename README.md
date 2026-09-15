@@ -120,6 +120,10 @@ README.md  LICENSE  .gitignore  .gitattributes
 
 ## 安装
 
+> **这个仓库是私有的。** 换一台机器 `git clone` 需要带上认证（`gh auth login`，
+> 或者用 SSH remote）。它不再能被匿名 clone —— 这是刻意的：预设里带着完整的人格
+> 和工程守则，不适合公开。
+
 DSH 只从三个地方找预设：`dsh-agent-presets` 包里自带的（只读）、部署配置里写的
 `roots`、以及 `~/.dsh/.agent-presets`。它**不会**去扫工作目录，所以本仓库必须
 在 profile 的补丁文件里被"报备"一次：
