@@ -2,12 +2,13 @@
  * Persona injector for the `agenia` agent preset.
  *
  * WHAT IT DOES
- * Reads `../persona.md` and contributes its text as a prompt CONTEXT section,
- * so the persona is re-read and re-injected on EVERY model step. Nothing is
- * cached across turns except the file text, which is revalidated by mtime+size
- * on each read. Editing `persona.md` therefore changes the next step of a
- * RUNNING session — no restart, no new session. `persona.md` is the whole
- * persona: every byte of it is the operator's to edit freely.
+ * Reads every file in {@link SOURCES} — currently `../persona.md` (who the
+ * agent is) and `../work-guidelines.md` (how it works) — and contributes each
+ * as a prompt CONTEXT section, so both are re-read and re-injected on EVERY
+ * model step. Nothing is cached across turns except the file text, which is
+ * revalidated per file by mtime+size on each read. Editing either markdown
+ * therefore changes the next step of a RUNNING session — no restart, no new
+ * session. Those files are wholly the operator's to edit freely.
  *
  * WHY A CONTEXT AND NOT A SECTION
  * `systemPrompt.section()` also re-evaluates per assembly, but its `text` may
@@ -16,7 +17,7 @@
  * `system-prompt/assemble` is an ASYNC waterfall over the finished assembly,
  * which is what makes reading from disk on every step possible.
  *
- * A context section also renders at the END of the request — after the system
+ * Context sections also render at the END of the request — after the system
  * prompt and after the project's own `AGENTS.md` snapshot — which is the
  * position asked for: late in the prompt, where attention is strongest.
  *
@@ -38,14 +39,14 @@
  * scope-less assembly): it saw only its own. The guard below is therefore a
  * cheap structural sanity check, not a content match.
  *
- * If a future DSH changes that dispatch rule, the failure mode is a persona
+ * If a future DSH changes that dispatch rule, the failure mode is content
  * leaking into other presets — loud and obvious, not silent. `PERSONA_SELF_CHECK`
  * exists to re-measure the claim if it is ever doubted.
  *
  * FAILURE POLICY
- * Never throw into assembly: a bad persona file must not break the agent. A
- * missing or unreadable `persona.md` injects nothing and logs once per distinct
- * problem.
+ * Never throw into assembly: a bad or missing markdown file must not break the
+ * agent. A source that cannot be read injects nothing and logs once per distinct
+ * problem; the other sources are unaffected.
  *
  * EDITING THIS FILE REQUIRES A HARNESS RESTART
  * ES modules are cached by URL, and this one is imported by a file URL that
@@ -55,8 +56,9 @@
  * syntactically broken, the failure was recorded against that URL, and every
  * later remount silently reused the broken instance — `MOUNT OK`, the row
  * reported `fiber=2`, and the persona simply stopped being injected with no
- * error anywhere. `persona.md` is exempt (it is read from disk every turn), so
- * only changes to THIS file need the restart.
+ * error anywhere. The markdown files are exempt (they are read from disk every
+ * turn), so only changes to THIS file need the restart — or a bump of the `?v=`
+ * query on this row, which is the cheaper of the two. See AGENTS.md section 3e.
  */
 
 import { appendFile, readFile, stat } from 'node:fs/promises'
@@ -68,9 +70,6 @@ export const name = 'agenia-persona'
 
 /** This row needs the prompt registry; without it there is nothing to inject into. */
 export const inject = ['systemPrompt']
-
-/** Section name that shows up in the runtime context snapshot. */
-const CONTEXT_NAME = 'agenia:persona'
 
 /**
  * Self-check switch. When `PERSONA_SELF_CHECK` is set in the environment, the
@@ -85,20 +84,38 @@ const SELF_CHECK = typeof process !== 'undefined' && Boolean(process.env && proc
 /** Entries written while {@link SELF_CHECK} is on, capped so it cannot grow. */
 let selfCheckWrites = 0
 
-const PERSONA_URL = new URL('../persona.md', import.meta.url)
-
-/** Last text read from disk, reused when a re-read fails. */
-let cachedText = null
 /**
- * `mtimeMs:size` of the file as it was BEFORE the last successful read.
+ * Every file this plugin injects, in the order they appear in the prompt.
  *
- * Stamping before the read rather than after is deliberate: if the file is
- * rewritten while the read is in flight, the stamp no longer describes the text
- * that landed in `cachedText`, so the next assembly re-reads instead of serving
- * content that was already stale. Stamping after would let an equal-sized
- * rewrite be mistaken for a cache hit.
+ * A list rather than hardcoded paths, because the preset separates WHO the agent
+ * is (`persona.md`), HOW it works (`work-guidelines.md`), and the CONCRETE
+ * practices it should copy (`codebase-practices.md`). Those files stay
+ * independently editable, and adding another source is a one-line change here.
  */
-let cachedStamp = null
+const SOURCES = [
+  {
+    name: 'persona.md',
+    url: new URL('../persona.md', import.meta.url),
+    contextName: 'agenia:persona',
+  },
+  {
+    name: 'work-guidelines.md',
+    url: new URL('../work-guidelines.md', import.meta.url),
+    contextName: 'agenia:work',
+  },
+  {
+    name: 'codebase-practices.md',
+    url: new URL('../codebase-practices.md', import.meta.url),
+    contextName: 'agenia:practices',
+  },
+]
+
+/** Per-source cache: last good text, the stamp it was read at, and a log key. */
+const cache = new Map()
+for (const source of SOURCES) {
+  cache.set(source.contextName, { text: null, stamp: null })
+}
+
 /** Problems already logged, so a broken file does not spam every step. */
 const loggedProblems = new Set()
 
@@ -109,36 +126,40 @@ function logOnce(key, message) {
 }
 
 /**
- * Read `persona.md`, reusing the cached text while its stamp is unchanged.
+ * Read one injected file, reusing its cached text while its stamp is unchanged.
  *
  * Worst case on a same-millisecond, same-length edit is that one assembly
  * serves the previous text; the change lands on the following one. Rewriting
  * cannot be missed indefinitely, which is what matters for live editing.
  *
- * @returns the persona text, or undefined when it cannot be read.
+ * @returns the file text, or undefined when it cannot be read.
  */
-async function readPersona() {
+async function readSource(source) {
+  const entry = cache.get(source.contextName)
   let info
   try {
-    info = await stat(PERSONA_URL)
+    info = await stat(source.url)
   } catch (error) {
-    logOnce('stat', `cannot stat ${PERSONA_URL.pathname}: ${String(error && error.message)}`)
-    return cachedText ?? undefined
+    logOnce(`stat:${source.name}`, `cannot stat ${source.url.pathname}: ${String(error && error.message)}`)
+    return entry.text ?? undefined
   }
 
   const stamp = `${info.mtimeMs}:${info.size}`
-  if (stamp === cachedStamp && cachedText !== null) return cachedText
+  if (stamp === entry.stamp && entry.text !== null) return entry.text
 
+  // Stamped before the read, not after: a file rewritten mid-read must not be
+  // recorded as matching the text that landed, or an equal-length rewrite would
+  // look like a cache hit and keep serving stale content.
   const beforeRead = stamp
   try {
-    const text = await readFile(PERSONA_URL, 'utf8')
-    cachedText = text
-    cachedStamp = beforeRead
-    loggedProblems.delete('read')
+    const text = await readFile(source.url, 'utf8')
+    entry.text = text
+    entry.stamp = beforeRead
+    loggedProblems.delete(`read:${source.name}`)
     return text
   } catch (error) {
-    logOnce('read', `cannot read ${PERSONA_URL.pathname}: ${String(error && error.message)}`)
-    return cachedText ?? undefined
+    logOnce(`read:${source.name}`, `cannot read ${source.url.pathname}: ${String(error && error.message)}`)
+    return entry.text ?? undefined
   }
 }
 
@@ -162,13 +183,13 @@ async function noteSelfCheck(assembly, context) {
 }
 
 /**
- * Register the per-assembly persona contribution.
+ * Register the per-assembly contribution from every configured source.
  * @param ctx - the preset scope context this row is composed into.
  */
 export async function apply(ctx) {
   const systemPrompt = ctx.get('systemPrompt')
   if (systemPrompt === undefined) {
-    logOnce('service', 'systemPrompt is unavailable; persona will not be injected')
+    logOnce('service', 'systemPrompt is unavailable; nothing will be injected')
     return
   }
 
@@ -181,16 +202,20 @@ export async function apply(ctx) {
     // listener already belongs to this preset (see the header note).
     if (context === null || context === undefined || context.scope === undefined) return result
 
-    const text = await readPersona()
-    if (text === undefined || text.trim().length === 0) return result
+    const texts = []
+    for (const source of SOURCES) {
+      const text = await readSource(source)
+      if (text !== undefined && text.trim().length > 0) texts.push({ source, text })
+    }
+    if (texts.length === 0) return result
 
-    const contexts = Array.isArray(result.contexts) ? result.contexts : []
-    // Drop any previous entry with this name so a re-entrant or transformed
-    // assembly cannot accumulate duplicates.
-    const kept = contexts.filter((entry) => entry.name !== CONTEXT_NAME)
+    // Drop any previous entries with these names so a re-entrant or transformed
+    // assembly cannot accumulate duplicates, then append in SOURCES order.
+    const names = new Set(SOURCES.map((s) => s.contextName))
+    const kept = (Array.isArray(result.contexts) ? result.contexts : []).filter((entry) => !names.has(entry.name))
     return {
       ...result,
-      contexts: [...kept, { name: CONTEXT_NAME, text }],
+      contexts: [...kept, ...texts.map(({ source, text }) => ({ name: source.contextName, text }))],
     }
   })
 }
