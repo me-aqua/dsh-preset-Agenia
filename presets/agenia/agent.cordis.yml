@@ -6,19 +6,34 @@
 # is talking, never what the agent is able to do. Everything else belongs to
 # `standard`; read that file for the reasoning behind the copied rows.
 #
-# EXACTLY TWO ROWS ARE THIS PRESET'S OWN:
+# EIGHT ROWS (AND ONE KEY) ARE THIS PRESET'S OWN:
 #
-#   * `persona` — shadows the deployment persona and carries the guard marker.
-#   * `persona-injector` — reads `../persona.md` on every model step and
-#     contributes it at the END of the request. This is what makes the persona
-#     live rather than baked in: editing the markdown changes the next step of
-#     a running session, with no restart.
+#   * `persona` — shadows the deployment persona. Carries NO persona content.
+#   * `persona-injector` — reads the preset's markdown on every model step and
+#     contributes it at the END of the request, so editing a file changes the
+#     next step of a RUNNING session. It serves TWO audiences — the group leader
+#     and every team member — and tells them apart by a role marker; read that
+#     file before changing it.
+#   * `team-product` / `team-dev` / `team-test` / `team-review` / `team-retro` —
+#     the five permanent roles. Each starts a fresh child that receives its own
+#     charter and a structural tool boundary.
+#   * the `persona` key on the `subagent` row — marks every spawn child as a
+#     TEMP HIRE instead of as the leader.
 #
-# Every other row must match `standard`. When `standard` changes, change the
-# rows here to match — the capability half of this file is a copy, not an
+# Every other row must match `standard`; when `standard` changes, change the
+# rows here to match. The capability half of this file is a copy, not an
 # opinion. The comments explaining WHY each copied row sits where it does are
 # deliberately NOT repeated here, because a second copy of an explanation
 # drifts from the first.
+#
+# THE PARITY RULE, AMENDED. This file used to promise that the capability half
+# was IDENTICAL to `standard`. It is not, deliberately: the team rows are an
+# addition. Verify the relation as a SET difference rather than by eye —
+# mount-validate with `standingKeyFor('agenia')`, then compare
+# `compositionInventory()` buckets by `moduleName + enabled + condition`:
+# `onlyInStandard` must be empty, and `onlyInAgenia` must contain exactly the
+# rows listed above (the injector row, plus five MORE instances of
+# `@deepseek-ai/dsh-tool-subagent`). See AGENTS.md section 3c.
 #
 # ── the rules that still apply to the copied rows ───────────────────────────
 #
@@ -104,7 +119,7 @@
 # stopped being injected while `MOUNT OK` and `fiber=2` both still looked fine.
 # Bumping the query forces a fresh URL. See AGENTS.md section 3e.
 - id: persona-injector
-  name: './persona-plugin/inject.js?v=5'
+  name: './persona-plugin/inject.js?v=10'
 
 # Loads `AGENTS.md` / `AGENTS.local.md` from the project root down to the
 # session working directory. It does NOT compete with the persona above: these
@@ -215,6 +230,15 @@
     - id: tool-subagent-list-agents
       name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
 
+    # The `subagent` tool is this group's TEMP-HIRE channel: the leader writes a
+    # job description and starts a one-off specialist. The `persona` below is
+    # load-bearing — it carries the role marker the injector keys off
+    # (`persona-plugin/inject.js`), and WITHOUT it a spawned child is handed the
+    # leader's own persona and believes it is her. The hire's full charter is
+    # injected from `team/hire.md` on every request.
+    #
+    # `subagent_fork` below is deliberately NOT marked: a fork continues this
+    # agent's own conversation prefix, so it should keep this agent's identity.
     - id: tool-subagent
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -222,6 +246,9 @@
         toolName: subagent
         modelSelectionSettings: true
         backgroundMode: continuable
+        persona: |-
+          【组员:hire】你是这个组临时外聘的专家，干完就走。
+          这个组的来龙去脉、工序、以及你的岗位说明书会随请求自动注入 —— 开工前先读它们。
 
     - id: tool-subagent-fork
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -249,6 +276,108 @@
         toolName: subagent_claude_code
         backgroundMode: one-shot
         maxDepth: provider-managed
+
+    # ── 固定组员 ─────────────────────────────────────────────────────────────
+    #
+    # One row per permanent role. The leader calls these by name; each starts a
+    # fresh child that shares no context with her, which is exactly what the
+    # process needs at the independent stages (a reviewer who never saw the
+    # implementation cannot rubber-stamp it).
+    #
+    # `persona` carries the role marker the injector keys off — see
+    # `persona-plugin/inject.js`. It is what makes a child receive ITS OWN
+    # charter instead of the leader's persona. The marker is a machine token in
+    # OUR composition, never in the operator's markdown, so editing a charter
+    # stays a plain file edit.
+    #
+    # The charter itself is NOT copied here: the injector reads `team/<role>.md`
+    # fresh on every request, so editing one takes effect on the next step of a
+    # running session.
+    #
+    # `maxDepth: 1` is the structural cap that stops a member from hiring
+    # anybody: a member sits at depth 1, so its own child would be depth 2 and
+    # is rejected at start. It is the load-bearing guard, and it cannot fail on
+    # a name.
+    #
+    # `toolFilter` additionally takes the delegation tools out of its prompt, so
+    # they cannot even be attempted. It is prompt hygiene on top of that guard —
+    # and it is the part that can fail LOUDLY at child start.
+    #
+    # ⚠️ ONLY NAMES THE CHILD *INHERITS* MAY APPEAR IN A DENY LIST.
+    # `restrict()` rejects a "scope-local" name, i.e. one registered in the
+    # child's OWN layer, and the failure aborts the whole child start:
+    #
+    #     tools.restrict() names unknown global tool "subagent"
+    #
+    # That is exactly what happened here: the `subagent` row above sets
+    # `modelSelectionSettings`, so that instance installs its tool per-Agent
+    # through each Session's own Context rather than into the standing layer —
+    # the sibling `subagent_fork` row, which omits model selection, stays
+    # inherited and IS restrictable. This cost one full verification run; the
+    # error message helpfully prints the complete restrictable universe, so read
+    # it rather than guessing a name.
+    #
+    # `modelSelectionSettings` is deliberately ABSENT from every row below: at
+    # most one instance per tool scope may own model selection
+    # (`list_subagent_models` is a global name), and the `subagent` row owns it.
+
+    - id: team-product
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: team_product
+        backgroundMode: one-shot
+        maxDepth: 1
+        persona: '【组员:product】你是这个项目的产品和体验负责人。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
+        toolFilter:
+          deny: [subagent_fork, workflow, ralph]
+
+    - id: team-dev
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: team_dev
+        backgroundMode: one-shot
+        maxDepth: 1
+        persona: '【组员:dev】你是这个项目的实现者。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
+        toolFilter:
+          deny: [subagent_fork, workflow, ralph]
+
+    - id: team-test
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: team_test
+        backgroundMode: one-shot
+        maxDepth: 1
+        persona: '【组员:test】你是这个项目的测试与流水线负责人。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
+        toolFilter:
+          deny: [subagent_fork, workflow, ralph]
+
+    - id: team-review
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: team_review
+        backgroundMode: one-shot
+        maxDepth: 1
+        persona: '【组员:review】你是这个项目的独立评审。你只审不改。岗位说明书会随请求自动注入 —— 开工前先读它。'
+        # 写权限边界**不在这里** —— 它由 `persona-plugin/inject.js` 的角色门禁统一执行：
+        # 产品 / 审核 / 流程三个角色同一套规则（只能写 `.team/` 下、且没有 shell）。
+        # **一行一条规则，规则只有一个家。** 这里的 deny 只管"不许再招人"。
+        toolFilter:
+          deny: [subagent_fork, workflow, ralph]
+
+    - id: team-retro
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: team_retro
+        backgroundMode: one-shot
+        maxDepth: 1
+        persona: '【组员:retro】你是这个组的流程与复盘。你只提案，不落笔。岗位说明书会随请求自动注入 —— 开工前先读它。'
+        toolFilter:
+          deny: [subagent_fork, workflow, ralph]
 
     - id: workflow-worker-thread
       name: '@deepseek-ai/dsh-workflow-worker-thread'
