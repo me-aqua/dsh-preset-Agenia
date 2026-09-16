@@ -138,7 +138,6 @@ presets/
    │  ├─ package.json         #   name 和 version 都必须有
    │  └─ inject.js            #   分源器 + 写权限门禁 + 流程账本
    └─ preset.yml              #   预设菜单里的名字和说明
-AGENTS.md                     # 给"在这个仓库里干活的 agent"看的规则
 README.md  LICENSE  .gitignore  .gitattributes
 ```
 
@@ -149,8 +148,8 @@ README.md  LICENSE  .gitignore  .gitattributes
 
 ## 安装
 
-> **这个仓库是私有的。** 换一台机器 `git clone` 需要带上认证（`gh auth login`，
-> 或者用 SSH remote）。
+> 公开仓库：`git clone https://github.com/me-aqua/dsh-preset-Agenia.git`，
+> 然后把它指给 DSH 就行。
 
 DSH 只从三个地方找预设：`dsh-agent-presets` 包里自带的（只读）、部署配置里写的
 `roots`、以及 `~/.dsh/.agent-presets`。它**不会**去扫工作目录，所以本仓库必须

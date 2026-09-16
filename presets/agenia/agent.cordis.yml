@@ -33,7 +33,8 @@
 # `compositionInventory()` buckets by `moduleName + enabled + condition`:
 # `onlyInStandard` must be empty, and `onlyInAgenia` must contain exactly the
 # rows listed above (the injector row, plus five MORE instances of
-# `@deepseek-ai/dsh-tool-subagent`). See AGENTS.md section 3c.
+# `@deepseek-ai/dsh-tool-subagent`). Compare it as a MULTISET: the five team
+# rows share one module name, so a set comparison silently misses them.
 #
 # ── the rules that still apply to the copied rows ───────────────────────────
 #
@@ -110,14 +111,14 @@
 # inventory resolves every active row's owning manifest on each request. That
 # manifest MUST carry both `name` AND `version`: a manifest that has a `name`
 # but no `version` makes the inventory throw, which surfaces as a confusing
-# `REQUEST_EXTENSION` request failure rather than a load error. This cost a
-# debugging session — see AGENTS.md.
+# `REQUEST_EXTENSION` request failure rather than a load error.
 # The `?v=` query is load-bearing and must NOT be removed. ES modules are cached
 # by URL, and a FAILED import is cached as failed against that URL too — with a
 # bare './persona-plugin/inject.js' this row kept reusing a module instance that
 # had been imported while the file was briefly broken, so the persona silently
 # stopped being injected while `MOUNT OK` and `fiber=2` both still looked fine.
-# Bumping the query forces a fresh URL. See AGENTS.md section 3e.
+# Bumping the query forces a fresh URL, so any edit to that file needs a bump
+# (or a harness restart).
 - id: persona-injector
   name: './persona-plugin/inject.js?v=10'
 

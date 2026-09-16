@@ -43,7 +43,7 @@
  * ES modules are cached by URL, and a FAILED import is cached as failed against
  * that URL too — that once left the persona silently un-injected while
  * `MOUNT OK` and `fiber=2` both still looked fine. The row's `?v=` query is
- * load-bearing; see AGENTS.md section 3e.
+ * load-bearing: any edit to this file needs a bump or a harness restart.
  */
 
 import { appendFile, readdir, readFile, stat } from 'node:fs/promises'
