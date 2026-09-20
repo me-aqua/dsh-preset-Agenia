@@ -65,9 +65,14 @@ Done in ... using pnpm v...        ← 退出码 0
 （耗时和 pnpm 版本号每次都不同，**别逐字比**。）它会把这个包写进
 `~/.dsh/profiles/web/package.json` 的 `dependencies`。
 
-⚠️ **别用 `npm install --no-save` 代替它。** `--no-save` 就是"别登记"，
-而 pnpm 认的是那张登记表 —— 下次谁跑一次 `pnpm install`，没登记的会被当多余的东西清掉，
-然后 Agenia 会**响亮地**报 `Cannot find package`（不是静默，但人格会消失）。
+⚠️ **别用 `npm install --no-save` 代替它。** `--no-save` 的字面意思就是"别登记"，
+而这个 profile 认的是那张登记表（`package.json` 的 `dependencies`）——
+**没登记的东西，pnpm 对不上账**。
+
+（⚠️ 这里原先写的是"下次谁跑一次 `pnpm install`，没登记的会被当多余的东西清掉"。
+**那句话没测过，2026-09-20 实测是假的**：在同一台机器上复现"手工放、不登记"的状态，
+`pnpm install --force` 和 `pnpm prune` 都报 `Already up to date`，**都没删它**。
+所以别把"没登记"当成一颗定时炸弹 —— 它只是**歪的**，不是**会炸的**。）
 
 ⚠️ **你会看到一句警告，那是预期的，不是错误**：
 

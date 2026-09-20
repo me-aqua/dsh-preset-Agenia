@@ -186,8 +186,9 @@ dsh plugin --profile web add <上面那个 .tgz 的路径>
 
 - ⚠️ 会看到一句 `declares no dsh.bundle` 的**警告 —— 那是预期的，不是错误**：这个包是给预设里
   某一行当普通依赖用的，本来就不该是 profile 层。
-- ⚠️ **别用 `npm install --no-save` 代替** —— 没登记进 `dependencies` 的包，
-  下次谁跑一次 `pnpm install` 就会被当多余的东西清掉。
+- ⚠️ **用这一条，别用 `npm install --no-save`。** 差别是**登记**：官方命令会把包写进
+  `~/.dsh/profiles/web/package.json` 的 `dependencies`，而 `--no-save` 的字面意思就是"别登记"。
+  **这个 profile 认的是那张清单** —— 没登记的东西，pnpm 对不上账。
 
 **3. ⚠️ 先把这个 harness 关掉，再改补丁文件**
 
