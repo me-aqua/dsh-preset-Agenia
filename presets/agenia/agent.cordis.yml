@@ -1,148 +1,94 @@
-# The `agenia` agent preset — the `standard` coding agent, with its own persona.
+# Agenia 的能力清单。
 #
-# WHAT THIS FILE IS FOR: Agenia's character. Everything that decides what she
-# can DO is copied row-for-row from the shipped `standard` composition and is
-# meant to stay identical to it, so that picking "Agenia 模式" changes only who
-# is talking, never what the agent is able to do. Everything else belongs to
-# `standard`; read that file for the reasoning behind the copied rows.
+# 这个文件决定"她能做什么"，以及"每轮注入什么、按什么顺序"。
+# 它**不写任何人格内容** —— 她叫什么、什么脾气、怎么说话，全在 persona.md 里。
+# 名字只住一个地方，改名字只改那一份。
 #
-# EIGHT ROWS (AND ONE KEY) ARE THIS PRESET'S OWN:
+# ── 你要改的只有两处 ────────────────────────────────────────────────────
 #
-#   * `persona` — shadows the deployment persona. Carries NO persona content.
-#   * `persona-injector` — reads the preset's markdown on every model step and
-#     contributes it at the END of the request, so editing a file changes the
-#     next step of a RUNNING session. It serves TWO audiences — the group leader
-#     and every team member — and tells them apart by a role marker; read that
-#     file before changing it.
-#   * `team-product` / `team-dev` / `team-test` / `team-review` / `team-retro` —
-#     the five permanent roles. Each starts a fresh child that receives its own
-#     charter and a structural tool boundary.
-#   * the `persona` key on the `subagent` row — marks every spawn child as a
-#     TEMP HIRE instead of as the leader.
+#   1. 下面 persona-injector 那一行的 config 段：
+#        leaderOrder  —— 组长收到的内容，按这个顺序拼
+#        memberOrder  —— 组员收到的内容，按这个顺序拼
+#        officeBound  —— 哪几个岗位只能写 .team/、而且没有命令行
+#      改顺序、加减岗位、放开/收紧限制，都是改这三行。不用碰代码。
 #
-# Every other row must match `standard`; when `standard` changes, change the
-# rows here to match. The capability half of this file is a copy, not an
-# opinion. The comments explaining WHY each copied row sits where it does are
-# deliberately NOT repeated here, because a second copy of an explanation
-# drifts from the first.
+#   2. 队伍那一块（搜「队伍」）—— 每个岗位一行。加一个岗位 = 加一行 + 在 team/ 里加一个 .md。
 #
-# THE PARITY RULE, AMENDED. This file used to promise that the capability half
-# was IDENTICAL to `standard`. It is not, deliberately: the team rows are an
-# addition. Verify the relation as a SET difference rather than by eye —
-# mount-validate with `standingKeyFor('agenia')`, then compare
-# `compositionInventory()` buckets by `moduleName + enabled + condition`:
-# `onlyInStandard` must be empty, and `onlyInAgenia` must contain exactly the
-# rows listed above (the injector row, plus five MORE instances of
-# `@deepseek-ai/dsh-tool-subagent`). Compare it as a MULTISET: the five team
-# rows share one module name, so a set comparison silently misses them.
+# ── 另外三条是框架的硬要求，别改 ────────────────────────────────────────
 #
-# ── the rules that still apply to the copied rows ───────────────────────────
+#   * 凡是"提供服务"的行，必须放在带 isolate 的分组里（下面三个 group）。
+#   * 这几个键是必填的，漏掉整个配置就挂载不上：
+#     tool-todo.allowParallelInProgress · tool-fs-search.sampleOverCapGlobResults · plan-mode.section
+#   * 这个文件夹里的 package.json 必须同时有 name 和 version，否则每次请求都会失败。
 #
-# AGENT PLANE. The roster mounts this once per process under a standing scope;
-# each session naming it joins by scope parentage. The host composition
-# (`base.cordis.yml` + `web.cordis.yml`) keeps everything a preset must not own:
-# the registries, the sandbox and approval stack, persistence, the model route.
-#
-# REALMS. A row that PUBLISHES a service must sit inside a group carrying an
-# `isolate` realm, or it lands in the process-global root realm and the mount is
-# rejected. `true` means an entry-local realm — this mount's own private
-# instance. A shared label does NOT pool instances. The three groups below
-# (`planning`, `compaction`, `delegation`) are exactly `standard`'s, and every
-# consumer that reaches a service they publish must live inside them.
-#
-# REQUIRED CONFIG. A key declared `z.boolean().required()` has no default and
-# sinks the WHOLE mount when omitted: `tool-todo.allowParallelInProgress` and
-# `tool-fs-search.sampleOverCapGlobResults` are both spelled out below for that
-# reason. Keys declared `.default(...)` may be omitted.
-#
-# VERIFY BY MOUNTING. `agentPresets.standingKeyFor('agenia')` must answer
-# `MOUNT OK: agenia`. A file that parses is not a file that mounts. Mounting is
-# NOT sufficient either — this preset's injector fails at REQUEST time, not load
-# time, so a change here also needs one real turn to prove it.
-#
-# NO PERSONA CONTENT IN THIS FILE. This composition is static, so anything about
-# who Agenia is would live in two places the moment `persona.md` also states it,
-# and the two drift. Her name, age and voice belong in `persona.md` alone. The
-# `persona` row below is deliberately name-free: it exists to shadow the
-# deployment persona and nothing else. Renaming her is a one-file edit.
-# (`preset.yml` still carries a display name — that is the roster's picker
-# label, which cannot come from the markdown.)
+# 其余每一行都是照抄框架自带的「标准模式」，不要凭印象改 —— 照抄才对得上。
 
-# ── identity ────────────────────────────────────────────────────────────────
+# ── 人格 ────────────────────────────────────────────────────────────────────
 
-# The persona baseline. It carries NO persona content: it exists only so the
-# deployment's generic persona ("You are a coding agent powered by the
-# {{model}} model") is shadowed for sessions on this preset. The real persona
-# arrives every turn from `../persona.md` via the row below.
+# 这一行本身不含人格，它只是把出厂的那句通用人格"盖掉"，
+# 好让真正的人格由下面那一行每轮注入进来。
 #
-# Nothing here is load-bearing for that mechanism — the injector keys off SCOPE,
-# not off any text — so this row is freely editable, and so is the markdown.
-#
-# Keep `complete` OUT of this config. With it, this row becomes the SOLE prompt
-# section and the project's own `AGENTS.md` stops reaching the model.
+# ⚠️ 不要给它加 complete: true —— 加了之后这是唯一的提示词段落，
+#    项目自己的 AGENTS.md 就再也读不进来了。
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    suffix: 你在 {{cwd}} 干活。
     prefix: |-
-      你的身份、年龄和讲话风格见每轮注入的运行时上下文。
+      你的身份、年龄和说话风格见每轮注入的内容。
 
-      （Who you are is defined in the runtime context injected for every turn.
+      （Who you are is defined in the content injected for every turn.
       Follow it exactly; it is your persona, not background information.）
+    suffix: 你在 {{cwd}} 干活。
 
-# ── the persona, read fresh every turn ──────────────────────────────────────
+# ── 每轮注入 ────────────────────────────────────────────────────────────────
 
-# Loads `../persona.md` on every model step and contributes it as a per-turn
-# prompt CONTEXT, so the persona lands at the end of the request and editing
-# the markdown takes effect on the next step of a RUNNING session.
-#
-# This is one of the two non-standard rows in this file. The other is `persona`
-# above; everything else must match `standard`.
-#
-# THE CODE TRAVELS WITH THIS DIRECTORY. The `name` below is a relative path,
-# and a relative row specifier is resolved against the directory of the
-# composition that declares the row — this preset's own directory, wherever
-# that directory has been copied to. So the plugin file needs nothing installed
-# anywhere, and the markdown stays next to it: `contentDir: '.'` resolves
-# against the same base, which is what keeps `persona.md` and `leader.md`
-# editable on disk. A BARE package name would be resolved from the harness's
-# own base instead — the profile directory — so it would depend on whatever is
-# installed there. Neither form is resolved against the process working
-# directory.
-#
-# The plugin decides which assemblies are its own by SCOPE, not by any string
-# in the files above, so neither this composition nor `persona.md` has to
-# contain anything in particular for injection to keep working.
-#
-# The plugin directory's `package.json` MUST carry both `name` AND `version`
-# because the host's package inventory resolves every active row's owning
-# manifest on each request. A manifest that has a `name` but no `version` makes
-# the inventory throw, which surfaces as a confusing `REQUEST_EXTENSION`
-# request failure rather than a load error.
-#
-# ES modules are cached by URL, and a FAILED import is cached as failed against
-# that URL too, so this row can keep reusing a module instance that was imported
-# while the plugin file was broken — the persona then stops being injected while
-# `MOUNT OK` and `fiber=2` both still look fine. Editing the plugin therefore
-# needs a harness RESTART, and a restart is the only thing that works: the
-# `name` below is a file path, with no version and no query string in it, so
-# nothing written into `package.json` changes the URL the module was cached
-# under and the cached instance is reused. The markdown stays live either way:
-# it is read from disk on every step.
+# 真正的入口。它每一轮读一遍前面那些 .md，按下面写的顺序拼好，贴到请求的最末尾。
+# 这就是"防止遗忘"的全部做法。
 - id: persona-injector
-  name: './persona-plugin/inject.js'
+  name: './inject.js'
   config:
-    contentDir: '.'
+    # 组长收到的，按这个顺序拼。名字就是根目录下那些 .md 的文件名。
+    # persona 放在最后 —— 越靠后离请求末尾越近，权重越高。她是组长这件事，
+    # 比其他任何一条都更需要"刚刚读过"。
+    leaderOrder:
+      - leader
+      - work-guidelines
+      - roster        # 算出来的：队伍一览
+      - board         # 算出来的：这一票干到哪了
+      - persona
 
-# Loads `AGENTS.md` / `AGENTS.local.md` from the project root down to the
-# session working directory. It does NOT compete with the persona above: these
-# arrive as a `user/message`, not as a prompt section.
+    # 组员收到的，按这个顺序拼。
+    # 组员不读 leader —— 那里面是队伍设定和她怎么带队，跟他们没关系。
+    # 组员也不读 persona —— 那是组长的身份，不是他们的。
+    # charter 是"他自己那份岗位说明书"。
+    memberOrder:
+      - work-guidelines
+      - charter
+
+    # 这几个岗位：写文件只能落在项目的 .team/ 里，而且没有命令行。
+    # 让某个岗位不再受限制 = 把它的名字从这一行删掉。
+    #
+    # 只留"做判断"的岗位。评审和复盘的产出必须是意见、不能是改动，
+    # 否则独立性就没了 —— 限制和他们的工作正好对得上。
+    #
+    # 复盘每天要缩别人的 memory.md，看着像越权 —— 它没越。别人的 memory.md
+    # 也在 .team/ 里面，这条边界本来就是"只能写 .team/"，正好够它用。
+    # 不需要为它开任何后门。
+    #
+    # 设计和美工不在名单里：她的产出本来就是文件（设计稿、HTML、渲染 PDF），
+    # 这些活都要跑命令行，而命令行是一条通用写入通道 ——
+    # 给她命令行的同时留着这道写边界，边界就是纸的。两样不能兼得，所以放开。
+    officeBound:
+      - review
+      - retro
+
+# 项目自己的 AGENTS.md / AGENTS.local.md 照常加载，和人格不冲突。
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
     maxBytes: 65536
 
-# ── shell ───────────────────────────────────────────────────────────────────
+# ── 命令行 ──────────────────────────────────────────────────────────────────
 
 - id: tool-bash
   name: '@deepseek-ai/dsh-tool-bash'
@@ -152,7 +98,7 @@
   name: '@deepseek-ai/dsh-tool-pwsh'
   disabled: !!js process.platform !== 'win32'
 
-# ── filesystem ──────────────────────────────────────────────────────────────
+# ── 文件 ────────────────────────────────────────────────────────────────────
 
 - id: tool-fs
   name: '@deepseek-ai/dsh-tool-fs'
@@ -162,12 +108,12 @@
   config:
     sampleOverCapGlobResults: false
 
-# ── background jobs ────────────────────────────────────────────────────────
+# ── 后台任务 ────────────────────────────────────────────────────────────────
 
 - id: tool-jobs
   name: '@deepseek-ai/dsh-tool-jobs'
 
-# ── skills ──────────────────────────────────────────────────────────────────
+# ── 技能 ────────────────────────────────────────────────────────────────────
 
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
@@ -175,7 +121,7 @@
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
 
-# ── goals ───────────────────────────────────────────────────────────────────
+# ── 目标 ────────────────────────────────────────────────────────────────────
 
 - id: command-goal
   name: '@deepseek-ai/dsh-command-goal'
@@ -183,7 +129,7 @@
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
 
-# ── plan mode ───────────────────────────────────────────────────────────────
+# ── 计划模式 ────────────────────────────────────────────────────────────────
 
 - id: planning
   name: cordis:group
@@ -193,6 +139,7 @@
   config:
     - id: plan-mode
       name: '@deepseek-ai/dsh-plan-mode'
+      # section 是必填的。下面是框架的原文，照抄的，别改。
       config:
         section: |
               You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
@@ -207,7 +154,7 @@
 
               When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
 
-# ── compaction ──────────────────────────────────────────────────────────────
+# ── 上下文压缩 ──────────────────────────────────────────────────────────────
 
 - id: compaction
   name: cordis:group
@@ -229,7 +176,7 @@
         headChars: 4096
         tailChars: 1024
 
-# ── delegation and workflows ────────────────────────────────────────────────
+# ── 派活与队伍 ──────────────────────────────────────────────────────────────
 
 - id: delegation
   name: cordis:group
@@ -243,15 +190,8 @@
     - id: tool-subagent-list-agents
       name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
 
-    # The `subagent` tool is this group's TEMP-HIRE channel: the leader writes a
-    # job description and starts a one-off specialist. The `persona` below is
-    # load-bearing — it carries the role marker the injector keys off
-    # (`persona-plugin/inject.js`), and WITHOUT it a spawned child is handed the
-    # leader's own persona and believes it is her. The hire's full charter is
-    # injected from `team/hire.md` on every request.
-    #
-    # `subagent_fork` below is deliberately NOT marked: a fork continues this
-    # agent's own conversation prefix, so it should keep this agent's identity.
+    # 临时外聘的通道：组长写一份招聘要求，起一个用一次就散的人。
+    # 下面那段 persona 是必需的那枚标记 —— 少了它，外聘的人会以为自己是组长。
     - id: tool-subagent
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -261,8 +201,9 @@
         backgroundMode: continuable
         persona: |-
           【组员:hire】你是这个组临时外聘的专家，干完就走。
-          这个组的来龙去脉、工序、以及你的岗位说明书会随请求自动注入 —— 开工前先读它们。
+          队伍的来龙去脉、干活的次序、以及你自己的岗位说明书会随请求自动注入 —— 开工前先读它们。
 
+    # 这一行故意不带标记：分身延续的是当前这段对话，它就该保持当前这个身份。
     - id: tool-subagent-fork
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -270,8 +211,7 @@
         toolName: subagent_fork
         backgroundMode: continuable
 
-    # Not installed in production dsh: enable only after adding the matching
-    # Bundle to the Profile and restarting the Host.
+    # 这两个要装了对应的包才能开，先关着。
     - id: tool-subagent-codex
       name: '@deepseek-ai/dsh-tool-subagent'
       disabled: true
@@ -290,58 +230,31 @@
         backgroundMode: one-shot
         maxDepth: provider-managed
 
-    # ── 固定组员 ─────────────────────────────────────────────────────────────
+    # ── 队伍 ────────────────────────────────────────────────────────────────
     #
-    # One row per permanent role. The leader calls these by name; each starts a
-    # fresh child that shares no context with her, which is exactly what the
-    # process needs at the independent stages (a reviewer who never saw the
-    # implementation cannot rubber-stamp it).
+    # 每个岗位一行。组长按名字叫他们，每个人都有自己那一份说明书。
     #
-    # `persona` carries the role marker the injector keys off — see
-    # `persona-plugin/inject.js`. It is what makes a child receive ITS OWN
-    # charter instead of the leader's persona. The marker is a machine token in
-    # OUR composition, never in the operator's markdown, so editing a charter
-    # stays a plain file edit.
+    # 加一个岗位，两步：
+    #   1. 在 team/ 里放一个 .md（第一行当岗位名字，正文就是说明书）
+    #   2. 在这里复制一行，改三处：id、toolName、persona 里的标记
+    #   3. 如果这个岗位要受限，把它加进上面 officeBound
     #
-    # The charter itself is NOT copied here: the injector reads `team/<role>.md`
-    # fresh on every request, so editing one takes effect on the next step of a
-    # running session.
-    #
-    # `maxDepth: 1` is the structural cap that stops a member from hiring
-    # anybody: a member sits at depth 1, so its own child would be depth 2 and
-    # is rejected at start. It is the load-bearing guard, and it cannot fail on
-    # a name.
-    #
-    # `toolFilter` additionally takes the delegation tools out of its prompt, so
-    # they cannot even be attempted. It is prompt hygiene on top of that guard —
-    # and it is the part that can fail LOUDLY at child start.
-    #
-    # ⚠️ ONLY NAMES THE CHILD *INHERITS* MAY APPEAR IN A DENY LIST.
-    # `restrict()` rejects a "scope-local" name, i.e. one registered in the
-    # child's OWN layer, and the failure aborts the whole child start:
-    #
-    #     tools.restrict() names unknown global tool "subagent"
-    #
-    # That is exactly what happened here: the `subagent` row above sets
-    # `modelSelectionSettings`, so that instance installs its tool per-Agent
-    # through each Session's own Context rather than into the standing layer —
-    # the sibling `subagent_fork` row, which omits model selection, stays
-    # inherited and IS restrictable. This cost one full verification run; the
-    # error message helpfully prints the complete restrictable universe, so read
-    # it rather than guessing a name.
-    #
-    # `modelSelectionSettings` is deliberately ABSENT from every row below: at
-    # most one instance per tool scope may own model selection
-    # (`list_subagent_models` is a global name), and the `subagent` row owns it.
+    # 下面几处是踩过坑的，别顺手改：
+    #   * persona 里那枚【组员:xxx】标记是必需的 —— 少了它，组员会以为自己是组长。
+    #   * maxDepth: 1 —— 组员自己不能再招人，这是结构上的硬拦。
+    #   * toolFilter 里只能写"组员继承得到的"工具名。写一个只属于他自己那一层的名字，
+    #     会让整个岗位启动失败（五个人一起挂）。错了会打印可用的完整名单，照着读。
+    #   * 不要在 toolFilter 里写 pwsh/bash —— 两个平台只注册其中一个，写错那个同样会挂。
+    #     平台差异交给底层处理，别在这里表达。
 
-    - id: team-product
+    - id: team-design
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
-        toolName: team_product
+        toolName: team_design
         backgroundMode: one-shot
         maxDepth: 1
-        persona: '【组员:product】你是这个项目的产品和体验负责人。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
+        persona: '【组员:design】你是这个项目的设计和美工。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
         toolFilter:
           deny: [subagent_fork, workflow, ralph]
 
@@ -375,9 +288,6 @@
         backgroundMode: one-shot
         maxDepth: 1
         persona: '【组员:review】你是这个项目的独立评审。你只审不改。岗位说明书会随请求自动注入 —— 开工前先读它。'
-        # 写权限边界**不在这里** —— 它由 `persona-plugin/inject.js` 的角色门禁统一执行：
-        # 产品 / 审核 / 流程三个角色同一套规则（只能写 `.team/` 下、且没有 shell）。
-        # **一行一条规则，规则只有一个家。** 这里的 deny 只管"不许再招人"。
         toolFilter:
           deny: [subagent_fork, workflow, ralph]
 
@@ -406,7 +316,7 @@
         subagentProvider: spawn
         maxRounds: 64
 
-# ── remaining model-facing rows ─────────────────────────────────────────────
+# ── 其余面向模型的工具 ──────────────────────────────────────────────────────
 
 - id: tool-ask-user
   name: '@deepseek-ai/dsh-tool-ask-user'
