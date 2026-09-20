@@ -1,16 +1,12 @@
 {
   "name": "@agenia/persona-plugin",
   "version": "1.0.0",
+  "private": true,
   "description": "Per-turn persona and team injector for the `agenia` agent preset: reads the preset's markdown on every model step and contributes it to the request as prompt contexts.",
   "license": "MIT",
   "type": "module",
   "main": "./inject.js",
   "exports": {
     ".": "./inject.js"
-  },
-  "files": [
-    "inject.js",
-    "content",
-    "README.md"
-  ]
+  }
 }
