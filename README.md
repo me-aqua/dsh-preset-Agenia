@@ -160,49 +160,89 @@ README.md  INSTALL.md  LICENSE  .gitignore  .gitattributes
 `api.txt` 和这些文件放在一起，但**永远不会进版本库** —— `.gitignore` 挡着它。
 （维护者本机才有这个文件；**运行 Agenia 不需要它**。）
 
-## 安装
+## 安装（第一次装，看这一节就够）
 
-> ⚠️ **一步一步的完整安装说明在 [`INSTALL.md`](INSTALL.md)** —— 下面这一段只讲"为什么"，
-> 不讲"怎么走"。真要装，照着那份走。
+> 完整版、以及"卡住了怎么办"，在 [`INSTALL.md`](INSTALL.md)。**但下面五步就是全部。**
 
-> 公开仓库：`git clone https://github.com/me-aqua/dsh-preset-Agenia.git`，
-> 然后把它指给 DSH 就行。
+**0. 前提**：Node ≥ 22.13，以及 pnpm（没有就 `npm i -g pnpm`），以及一个能跑的 DSH
+（`npx @deepseek-ai/dsh web`）。下面凡写 `dsh` 的地方，**没有全局 `dsh` 就写 `npx @deepseek-ai/dsh`**。
 
-DSH 只从三个地方找预设：`dsh-agent-presets` 包里自带的（只读）、部署配置里写的
-`roots`、以及 `~/.dsh/.agent-presets`。它**不会**去扫工作目录，所以本仓库必须
-在 profile 的补丁文件里被"报备"一次：
+**1. 打包**
 
-`~/.dsh/profiles/web/cordis.patch.yml`
+```sh
+cd <仓库>/packages/persona-plugin
+npm pack
+```
+
+→ 得到一个 `agenia-persona-plugin-<版本>.tgz`（15 个文件）。
+
+**2. 装进 profile**
+
+```sh
+dsh plugin --profile web add <上面那个 .tgz 的路径>
+```
+
+→ 末行打印 `Done in …`、退出码 0。
+
+- ⚠️ 会看到一句 `declares no dsh.bundle` 的**警告 —— 那是预期的，不是错误**：这个包是给预设里
+  某一行当普通依赖用的，本来就不该是 profile 层。
+- ⚠️ **别用 `npm install --no-save` 代替** —— 没登记进 `dependencies` 的包，
+  下次谁跑一次 `pnpm install` 就会被当多余的东西清掉。
+
+**3. ⚠️ 先把这个 harness 关掉，再改补丁文件**
+
+> **为什么得关**：`~/.dsh/profiles/web/cordis.patch.yml` 是**热加载**的（这个 profile 设了
+> `patchReload: live`）。**你一存盘，DSH 会当场重放整套补丁** —— 而**所有正在跑的会话**，
+> 它们的预设层都挂在 `agent-presets` 那一行底下，会跟着一起被拆掉：工具一个个消失
+> （`cordis_*` → `pwsh`/`read`/`write`），而且**不可恢复**。
+> 本仓库的历史上已经这么丢过两次会话。**万一你已经这么干了**：关掉重来就行，配置本身没写坏。
+
+在 `~/.dsh/profiles/web/cordis.patch.yml` 里加上这一段
+（**已经有 `- id: agent-presets` 了，就只加 `roots` 那一项，别抄两遍** —— 同一个 id 出现两次会让
+harness 报 `duplicate loader entry id` 起不来）：
 
 ```yaml
 - id: agent-presets
   config:
-    default: standard          # 必填 —— 见下面的警告
+    default: standard          # 必填，别删 —— config 是整体替换（见下）
     roots:
-      - path: /path/to/presets     # 装着 agenia/ 的那个目录
+      - path: <仓库>/presets   # 装着 agenia/ 的**那个目录本身**，不是它的上一层
         trust: user
 ```
 
-这段配置有两点不直观：
+**4. 重启 harness** —— **重启 = 先停掉现在这个（在终端里 Ctrl-C），确认退了，再重新起。**
 
-- **`config:` 是整体替换，不是合并。** `agent-presets` 这一行是 `dsh-web-app`
-  声明的，它带着 `default: standard`，而 `default` 是必填项、没有默认值。
+⚠️ **别直接再开一个**：两个实例会抢 `~/.dsh/.credentials.yaml` 的写锁，第二个会报
+`atomic-write: timed out waiting for the writer lock`。
+
+**5. 怎么知道成了**：新开一个会话 → 把预设那一格从「标准模式」切成「**Agenia 模式**」→ 问它
+「你是谁？你收到的上下文里的"内容目录"是什么？」
+
+- ✅ **成了**：它自称 16 岁的组长，并报出 `内容目录：<仓库>\presets\agenia`
+- ❌ **那一格里根本没有「Agenia 模式」**：预设**没被发现** → 回第 3 步查
+  （路径填成上一层了？补丁和 `dsh-web-app` 自带那行撞 id 了？）**和第 4 步**（真重启了吗）
+- ❌ **能切到 Agenia，但它说自己是"编码 agent"**：**注入没生效** → 回第 2 步
+
+### 为什么这么写（两点不直观，踩过）
+
+- **补丁里的 `config:` 是整体替换，不是合并。** `agent-presets` 这一行是 `dsh-web-app`
+  声明的，带着 `default: standard`，而 `default` 是必填项、没有默认值 ——
   只写 `roots` 的补丁会把 `default` 顶掉，**harness 就起不来了**。
-- **`roots` 里写的是"装着预设的目录"**，不是"目录的父目录"。
-
-> ### ⚠ 不要在 harness 开着的时候改那个补丁文件
->
-> web 这个 profile 设了 `patchReload: live`，所以那个文件一被写，DSH 会**当场**
-> 重新应用整套补丁。补丁指向的是 `agent-presets` 这一行，而**所有正在进行的会话，
-> 它们的预设层（工具**和**提示词段落）都挂在这一行底下**，会跟着一起被拆掉。
->
-> 这件事在本仓库的历史上已经发生过两次。要改那个文件，请在 harness **关着**的时候改。
+- **DSH 只从三个地方找预设**：`dsh-agent-presets` 包里自带的（只读）、配置里写的 `roots`、
+  以及 `~/.dsh/.agent-presets`。它**不会**去扫工作目录。
+  **没有任何机制能让一个 npm 包装上就变成一份预设** —— 所以第 3 步是你的活。
 
 ### 卸载
 
-**完整卸载见 [`INSTALL.md`](INSTALL.md) 第 7 步** —— 那时候**还得把装进去的那个包卸掉**
-（`dsh plugin --profile web remove @agenia/persona-plugin`），
-光把补丁文件恢复原样、删掉本仓库是不够的：包还留在 profile 里。
+```sh
+dsh plugin --profile web remove @agenia/persona-plugin
+```
+
+然后**关掉 harness**（同第 3 步的理由），把补丁文件里那一行恢复成装之前的样子，再重启。
+
+⚠️ `remove` 只清清单、**不清 `node_modules/@agenia/` 那个目录** —— 想彻底干净就手动删掉它。
+
+（完整版含七行"踩过的坑"，见 [`INSTALL.md`](INSTALL.md) 第 8 步。）
 
 ## 一个值得记下来的 Windows 坑
 
