@@ -99,28 +99,39 @@
 # This is one of the two non-standard rows in this file. The other is `persona`
 # above; everything else must match `standard`.
 #
-# A relative `name` resolves against THIS preset's own directory (the roster
-# classifies `./`-prefixed rows as preset-local), which is what makes the
-# plugin and the markdown travel together with the preset.
+# THE CODE IS A PACKAGE, THE CONTENT IS THIS DIRECTORY. A bare `name` resolves
+# from the harness's own base, NOT from this preset, so the plugin is installed
+# (see `packages/persona-plugin` in the repository) while the markdown stays
+# here: `contentDir: '.'` means "this preset's own directory", which is what
+# keeps `persona.md` and `leader.md` editable on disk. The copy inside the
+# package is only the default for a mount that names no directory. A relative
+# value is resolved against the directory of the composition that declares the
+# row — never against the process working directory.
 #
 # The plugin decides which assemblies are its own by SCOPE, not by any string
 # in the files above, so neither this composition nor `persona.md` has to
 # contain anything in particular for injection to keep working.
 #
-# The plugin directory ships a `package.json` because the host's package
-# inventory resolves every active row's owning manifest on each request. That
-# manifest MUST carry both `name` AND `version`: a manifest that has a `name`
-# but no `version` makes the inventory throw, which surfaces as a confusing
-# `REQUEST_EXTENSION` request failure rather than a load error.
-# The `?v=` query is load-bearing and must NOT be removed. ES modules are cached
-# by URL, and a FAILED import is cached as failed against that URL too — with a
-# bare './persona-plugin/inject.js' this row kept reusing a module instance that
-# had been imported while the file was briefly broken, so the persona silently
-# stopped being injected while `MOUNT OK` and `fiber=2` both still looked fine.
-# Bumping the query forces a fresh URL, so any edit to that file needs a bump
-# (or a harness restart).
+# The installed package's `package.json` MUST carry both `name` AND `version`
+# because the host's package inventory resolves every active row's owning
+# manifest on each request. A manifest that has a `name` but no `version` makes
+# the inventory throw, which surfaces as a confusing `REQUEST_EXTENSION`
+# request failure rather than a load error.
+#
+# ES modules are cached by URL, and a FAILED import is cached as failed against
+# that URL too, so this row can keep reusing a module instance that was imported
+# while the plugin file was broken — the persona then stops being injected while
+# `MOUNT OK` and `fiber=2` both still look fine. Editing the plugin therefore
+# needs a harness RESTART, and a restart is the only thing that works: measured
+# 2026-09-20, the bare name above resolves to
+# `…/profiles/web/node_modules/@agenia/persona-plugin/inject.js` — no version and
+# no query string in it — so bumping the package's `version` and reinstalling
+# yields the SAME URL, and the cached instance is reused. The markdown stays live
+# either way: it is read from disk on every step.
 - id: persona-injector
-  name: './persona-plugin/inject.js?v=10'
+  name: '@agenia/persona-plugin'
+  config:
+    contentDir: '.'
 
 # Loads `AGENTS.md` / `AGENTS.local.md` from the project root down to the
 # session working directory. It does NOT compete with the persona above: these
@@ -234,7 +245,7 @@
     # The `subagent` tool is this group's TEMP-HIRE channel: the leader writes a
     # job description and starts a one-off specialist. The `persona` below is
     # load-bearing — it carries the role marker the injector keys off
-    # (`persona-plugin/inject.js`), and WITHOUT it a spawned child is handed the
+    # (`packages/persona-plugin/inject.js`), and WITHOUT it a spawned child is handed the
     # leader's own persona and believes it is her. The hire's full charter is
     # injected from `team/hire.md` on every request.
     #
@@ -286,7 +297,7 @@
     # implementation cannot rubber-stamp it).
     #
     # `persona` carries the role marker the injector keys off — see
-    # `persona-plugin/inject.js`. It is what makes a child receive ITS OWN
+    # `packages/persona-plugin/inject.js`. It is what makes a child receive ITS OWN
     # charter instead of the leader's persona. The marker is a machine token in
     # OUR composition, never in the operator's markdown, so editing a charter
     # stays a plain file edit.
@@ -363,7 +374,7 @@
         backgroundMode: one-shot
         maxDepth: 1
         persona: '【组员:review】你是这个项目的独立评审。你只审不改。岗位说明书会随请求自动注入 —— 开工前先读它。'
-        # 写权限边界**不在这里** —— 它由 `persona-plugin/inject.js` 的角色门禁统一执行：
+        # 写权限边界**不在这里** —— 它由 `packages/persona-plugin/inject.js` 的角色门禁统一执行：
         # 产品 / 审核 / 流程三个角色同一套规则（只能写 `.team/` 下、且没有 shell）。
         # **一行一条规则，规则只有一个家。** 这里的 deny 只管"不许再招人"。
         toolFilter:

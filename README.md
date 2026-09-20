@@ -5,6 +5,9 @@
 选「Agenia 模式」和选「标准模式」，她能*做*的事**只会多不会少** —— 标准模式有的工具她
 一样不少，另外多出一支固定编制的队伍和一道写权限边界。多出来的部分在下面全部列清了。
 
+> **想把它装起来用？** 看 [`INSTALL.md`](INSTALL.md) —— 一步一步，每步都写了"怎么知道这步成了"。
+> ⚠️ 那里面第一句就是：**没有"一条命令装上"这回事**，有一段配置必须手写（原因写在那里）。
+
 ## 她是谁
 
 16 岁女高中生，现在是**这个组的组长**。干练、直接、有锋利感，emoji 和颜文字照用。
@@ -62,7 +65,7 @@
 
 ## 文件
 
-被注入提示词的有十份，按受众分两套（组长 / 组员）：
+被注入提示词的有**十二份**，按受众分两套（组长 / 组员）：
 
 | 文件 | 管什么 | 组长 | 组员 |
 | --- | --- | --- | --- |
@@ -77,14 +80,19 @@
 **每一份都是 markdown，存盘即生效** —— 正在跑的会话下一个步骤就变。
 另外 `DESIGN.md` **不进提示词**，它是给维护的人看的设计记录。
 
-> ### ⚠ 改了 `persona-plugin/inject.js` 要重启 harness
+> ### ⚠ 改了注入器的代码（`packages/persona-plugin/inject.js`）必须重启 harness
 >
 > 那个文件是**代码**，ESM 按 URL 缓存，改它不会自动重新加载。而且**"导入失败"也会
 > 被缓存**——它曾一度处于语法错误状态，导致之后无论怎么修都一直复用坏掉的实例，
-> 注入**静默消失**（挂载、行状态全都正常）。所以那个行的名字里带着 `?v=`
-> （**现在是 `?v=10`**），**改完要么重启 harness，要么把数字加一**。
+> 注入**静默消失**（挂载、行状态全都正常）。
 >
-> **那十份 .md 都不受影响**——它们每轮从磁盘读，改完存盘照旧即时生效。
+> **唯一管用的办法是重启 harness。** ~~行名里带 `?v=`，改完把数字加一~~
+> ⚠️ **已失效 2026-09-20**：行名现在写的是裸包名 `@agenia/persona-plugin`。
+> 实测（2026-09-20）装出来的落点是
+> `…/profiles/web/node_modules/@agenia/persona-plugin/inject.js` ——
+> **路径里既没有版本号、也没有查询串**，所以"升版本号 + 重装"同样换不出新 URL。
+>
+> **那十二份 .md 都不受影响**——它们每轮从磁盘读，改完存盘照旧即时生效。
 
 ## 改人格 / 改守则 / 改流程
 
@@ -137,19 +145,25 @@ presets/
    │  ├─ world.md             #   队伍设定
    │  ├─ product.md  dev.md  test.md  review.md  retro.md   # ★ 五本岗位说明书
    │  └─ hire.md              #   临时外聘
-   ├─ persona-plugin/
-   │  ├─ package.json         #   name 和 version 都必须有
-   │  └─ inject.js            #   分源器 + 写权限门禁 + 流程账本
    └─ preset.yml              #   预设菜单里的名字和说明
-README.md  LICENSE  .gitignore  .gitattributes
+packages/
+└─ persona-plugin/           # 注入器的**正式家**（不在 presets/ 里）
+   ├─ package.json           #   name 和 version 都必须有
+   ├─ inject.js              #   分源器 + 写权限门禁 + 流程账本
+   └─ content/               #   十二份 markdown 的副本（没人指定内容根时的默认值）
+README.md  INSTALL.md  LICENSE  .gitignore  .gitattributes
 ```
 
 `presets/` 就是 DSH 被指过去的那个目录，**每个子目录的名字就是 preset id**：
 `presets/agenia/` → id 是 `agenia`。id 必须匹配 `[a-z0-9][a-z0-9-]*`。
 
 `api.txt` 和这些文件放在一起，但**永远不会进版本库** —— `.gitignore` 挡着它。
+（维护者本机才有这个文件；**运行 Agenia 不需要它**。）
 
 ## 安装
+
+> ⚠️ **一步一步的完整安装说明在 [`INSTALL.md`](INSTALL.md)** —— 下面这一段只讲"为什么"，
+> 不讲"怎么走"。真要装，照着那份走。
 
 > 公开仓库：`git clone https://github.com/me-aqua/dsh-preset-Agenia.git`，
 > 然后把它指给 DSH 就行。
@@ -186,7 +200,9 @@ DSH 只从三个地方找预设：`dsh-agent-presets` 包里自带的（只读�
 
 ### 卸载
 
-把补丁文件恢复成原来的样子（或干脆清空成 `[]`），然后删掉本仓库。
+**完整卸载见 [`INSTALL.md`](INSTALL.md) 第 7 步** —— 那时候**还得把装进去的那个包卸掉**
+（`dsh plugin --profile web remove @agenia/persona-plugin`），
+光把补丁文件恢复原样、删掉本仓库是不够的：包还留在 profile 里。
 
 ## 一个值得记下来的 Windows 坑
 
