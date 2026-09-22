@@ -74,11 +74,13 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const shipped = shippedPresets()
 
   // 换到新预设后这几个数没变过（2026-09-20 实测）—— 换的是谁在建队，不是队伍大小。
+  // ⚠️ 2026-09-22 破例一次：`tool-subagent-fork` 那一行**被关掉**（老板拍板，来历见 yml 里那段注释）
+  //    ⇒ `disabled` 的行数 4 → 5。**上面三个数（37 / 5 / 1）一个没动** —— 关掉不等于删掉。
   eq('composition', 'agenia 能力行总数', agenia.length, 37)
   eq('composition', 'team-* 子行数', agenia.filter((r) => r.startsWith('team-')).length, 5)
   eq('composition', 'persona-injector 行数', agenia.filter((r) => r === 'persona-injector').length, 1)
   eq('composition', 'agent.cordis.yml 里 disabled 的行数',
-    (read(ageniaFile).match(/disabled:/g) ?? []).length, 4)
+    (read(ageniaFile).match(/disabled:/g) ?? []).length, 5)
 
   if (shipped === undefined) {
     add('composition', '找得到出厂预设目录', false, 'npm-cache/_npx/*/node_modules/@deepseek-ai/dsh-agent-presets/presets 里没找到')

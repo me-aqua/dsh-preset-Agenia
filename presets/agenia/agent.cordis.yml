@@ -203,9 +203,23 @@
           【组员:hire】你是这个组临时外聘的专家，干完就走。
           队伍的来龙去脉、干活的次序、以及你自己的岗位说明书会随请求自动注入 —— 开工前先读它们。
 
-    # 这一行故意不带标记：分身延续的是当前这段对话，它就该保持当前这个身份。
+    # ⚠️ 2026-09-22 老板拍板：**这一行关掉**（出厂 standard 里它是开的）。
+    #
+    # 关的理由：它继承的不是摘要，是**整段会话记录的副本**（分身会话的记录里，连父会话的
+    # seq 与时间戳都逐字相同）；而这一行**不带任何组员标记** —— 注入器的分流是
+    # "扫不到标记就当组长"，于是每个分身都拿到**组长的全套注入**
+    # （leader.md / 名册 / 进度板 / persona）**和组长的写权限**，还能再招人（这行没有 maxDepth）。
+    # 真回合取证（TavernGame，2026-09-22）：5 次分身长出 **19 个会话**，分身以为自己是组长、
+    # 往组长账本里写，并把**并行的兄弟**当成了"另一个会话"，组长信了。
+    #
+    # 为什么是关掉而不是加限制：这支队伍的延续方式是**写本子**（now / memory / log），
+    # 不是继承上下文 —— 要人手就派组员（team_*）或外聘（subagent，带 hire 那枚标记）。
+    #
+    # ⚠️ 再打开它之前先读 AGENTS.md 3e：五条 team-* 的 deny 里**不能再写 subagent_fork**
+    # （关掉的行不再注册工具名，写一个不存在的名字会让五个岗位一起启动失败）。
     - id: tool-subagent-fork
       name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
       config:
         provider: fork
         toolName: subagent_fork
@@ -252,6 +266,9 @@
     #        改这个键之前先读那一节：关卡次序不再由"等结果"强制，评审期间也不再物理锁住组长。
     #   * toolFilter 里只能写"组员继承得到的"工具名。写一个只属于他自己那一层的名字，
     #     会让整个岗位启动失败（五个人一起挂）。错了会打印可用的完整名单，照着读。
+    #   * ⚠️ 2026-09-22 起 **deny 里不许再写 subagent_fork** —— 上面那一行已经关了，
+    #     它的工具名不再注册，写一个不存在的名字同样会让五个岗位一起挂。
+    #     （这条是推论、没实测；真要再打开那一行，先跑一次挂载测试。）
     #   * 不要在 toolFilter 里写 pwsh/bash —— 两个平台只注册其中一个，写错那个同样会挂。
     #     平台差异交给底层处理，别在这里表达。
 
@@ -264,7 +281,7 @@
         maxDepth: 1
         persona: '【组员:design】你是这个项目的设计和美工。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
         toolFilter:
-          deny: [subagent_fork, workflow, ralph]
+          deny: [workflow, ralph]
 
     - id: team-dev
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -275,7 +292,7 @@
         maxDepth: 1
         persona: '【组员:dev】你是这个项目的实现者。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
         toolFilter:
-          deny: [subagent_fork, workflow, ralph]
+          deny: [workflow, ralph]
 
     - id: team-test
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -286,7 +303,7 @@
         maxDepth: 1
         persona: '【组员:test】你是这个项目的测试与流水线负责人。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
         toolFilter:
-          deny: [subagent_fork, workflow, ralph]
+          deny: [workflow, ralph]
 
     - id: team-review
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -297,7 +314,7 @@
         maxDepth: 1
         persona: '【组员:review】你是这个项目的独立评审。你只审不改。岗位说明书会随请求自动注入 —— 开工前先读它。'
         toolFilter:
-          deny: [subagent_fork, workflow, ralph]
+          deny: [workflow, ralph]
 
     - id: team-retro
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -308,7 +325,7 @@
         maxDepth: 1
         persona: '【组员:retro】你是这个组的流程与复盘。你只提案，不落笔。岗位说明书会随请求自动注入 —— 开工前先读它。'
         toolFilter:
-          deny: [subagent_fork, workflow, ralph]
+          deny: [workflow, ralph]
 
     - id: workflow-worker-thread
       name: '@deepseek-ai/dsh-workflow-worker-thread'
