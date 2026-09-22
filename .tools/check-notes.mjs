@@ -341,8 +341,17 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   // 口径落在**第一行**：`# now（YYYY-MM-DD · 一句话）`。不写日期 = 没人知道这一页是哪天的。
   // ⚠️ 为什么先只报不红：约定刚立，历史那几页的第一行格式对不上（有的写名字、有的写别的话），
   //    现在判红等于把"格式迁移"伪装成"违纪"，红一片之后这张表就没人看了。
-  //    翻面条件：**连续两个工作日、五个岗位的第一行都带着当天的日期**，再把 add 换成 yes。
+  //    翻面条件：**连续两个工作日、五个固定岗位的第一行都带着当天的日期**，再把下面每行换成 yes。
   //    （和下面「今天的复盘在」同款：先钉事实，够稳了再钉纪律。）
+  //
+  // 翻面不能靠谁记得查 —— 所以先给一行**计数**，它自己会说"还有多远"。
+  // 分母是"五个固定岗位里已经有 now.md 的那几份"：抽屉是懒建的，没上过岗的岗位没有这一页，
+  // 拿它当分母，会让这条永远到不了满分（而分不动的量尺等于没有量尺）。
+  const fixedRoles = presetRoles.filter((r) => r !== 'hire')
+  const dated = fixedRoles.filter((r) => existsSync(join(teamRoot, r, 'now.md')))
+  const fresh = dated.filter((r) => ageDays(firstLineDate(read(join(teamRoot, r, 'now.md')))) === 0)
+  add('office', 'now.md 第一行是今天日期的岗位数（翻面信号，只报不红）', true,
+    `${fresh.length}/${dated.length} —— 五个固定岗位里已经有 now.md 的那几份`)
   for (const r of [...presetRoles, 'leader']) {
     const p = join(teamRoot, r, 'now.md')
     if (!existsSync(p)) continue
