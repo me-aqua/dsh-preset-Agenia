@@ -52,6 +52,19 @@ const SHELL = ['bash', 'pwsh']
 /** 团队的办公桌：项目里的 .team/ 目录。受限岗位只能写这里。 */
 const OFFICE = /(^|[\\/])\.team([\\/]|$)/
 
+/**
+ * 队伍的工具名 → 岗位名。约定：`team_<岗位名>`，而岗位名就是 `team/<岗位名>.md`
+ * 的文件名。**加岗位时 toolName 必须照这个写** —— 进度板按这个约定认人，
+ * 写成别的形状，那一列不会出现在板子上（不报错，只是没有）。
+ */
+const TEAM_TOOL = /^team[_-]([a-z0-9][a-z0-9-]*)$/
+
+/** 进度板上显示的名字。没登记过的岗位原样显示岗位名 —— 看得见就不算静默。 */
+const BOARD_LABELS = { design: '设计', dev: '开发', test: '测试', review: '评审', retro: '复盘' }
+
+/** 板子上固定岗位的排列次序（设计 → 实现 → 测试 → 评审 → 复盘）；名单外的岗位排在后面，按名字排。 */
+const BOARD_ORDER = ['design', 'dev', 'test', 'review', 'retro']
+
 /** 这个 preset 自己的文件夹 —— 也就是 .md 默认存放的地方。 */
 function presetDir(ctx) {
   const base = ctx === null || ctx === undefined ? undefined : ctx.baseUrl
@@ -187,6 +200,71 @@ export async function apply(ctx, config = {}) {
   )
 
   // ─────────────────────────────────────────────────────────────
+  // 配置自检。
+  // 这一份文件是在**用户的机器上**跑的，那边没有体检脚本 —— 配置拼错的时候，
+  // 唯一能出声的就是这里。查到的都只 console.error，**绝不抛错**：
+  // 一个拼错的键不该让整支队伍挂载不上（"读不到就什么都不注入、不进装配"
+  // 是这份文件一贯的失败策略），但也**不许悄悄放过**。
+  //
+  // 为什么不 export Config 交给框架校验：那要 import 一个 schema 库，而这份预设的
+  // 装法是"拷一个文件夹"，用户机器上没有 node_modules —— 为了查错把安装搞坏不值。
+  // ─────────────────────────────────────────────────────────────
+  const KNOWN_CONFIG = ['leaderOrder', 'memberOrder', 'officeBound', 'contentDir']
+  /** 这三个 key 是算出来的，不是文件。 */
+  const COMPUTED_KEYS = ['roster', 'board', 'charter']
+
+  async function selfCheck() {
+    const problems = []
+
+    for (const key of Object.keys(config)) {
+      if (!KNOWN_CONFIG.includes(key)) {
+        problems.push(`不认识的配置键「${key}」—— 是不是拼错了？这一项不会生效。`)
+      }
+    }
+
+    const roles = await roleNames(contentDir)
+    for (const [key, order] of [['leaderOrder', leaderOrder], ['memberOrder', memberOrder]]) {
+      for (const entry of order) {
+        if (COMPUTED_KEYS.includes(entry)) {
+          if (entry === 'charter' && key === 'leaderOrder') {
+            problems.push('leaderOrder 里的「charter」不生效 —— charter 是组员自己那份说明书，组长没有。')
+          } else if (key === 'memberOrder' && (entry === 'roster' || entry === 'board')) {
+            problems.push(`memberOrder 里的「${entry}」不生效 —— 名册和进度板只给组长。`)
+          }
+          continue
+        }
+        const text = typeof entry === 'string'
+          ? await readText(join(contentDir, `${entry}.md`))
+          : undefined
+        if (text === undefined) {
+          problems.push(
+            `${key} 里的「${String(entry)}」找不到对应文件（${String(entry)}.md 不存在或者是空的）—— 这一份不会被注入。`,
+          )
+        }
+      }
+    }
+
+    for (const role of officeBound) {
+      if (!roles.includes(role)) {
+        problems.push(
+          `officeBound 里的「${role}」不是队伍里的岗位（team/ 下没有 ${role}.md）—— 这条限制永远不会生效。`,
+        )
+      }
+    }
+
+    if (problems.length > 0) {
+      console.error(
+        `[agenia] 配置里有 ${problems.length} 处问题，下面这些项不会按你想的那样生效：\n`
+          + problems.map((line) => `  - ${line}`).join('\n'),
+      )
+    }
+  }
+
+  selfCheck().catch((error) => {
+    console.error(`[agenia] 配置自检自己出错了（不影响使用）：${String(error)}`)
+  })
+
+  // ─────────────────────────────────────────────────────────────
   // ③ 和 ④ 都要知道"这个 agent 是哪个岗位"，这张表就是它们之间的桥。
   // 表在装配时登记（那里才知道角色），门禁和台账按编号来查。
   // ─────────────────────────────────────────────────────────────
@@ -196,6 +274,14 @@ export async function apply(ctx, config = {}) {
   // ④ 进度提醒。
   // 一本账，按"一票活"记：组长开口算新的一票，账清零。
   // 只记"叫过没有"，不判断"干得够不够" —— 它是提醒，不是门禁。
+  //
+  // 两条判据是有来历的，别顺手改回去（2026-09-20 修）：
+  //   * **只有成功的调用才算数。** `tools/result` 对每一个"执行过"的调用都发，
+  //     包括被门禁拒绝的和自己报错的（拒绝也会被物化成一条 isError 的结果）。
+  //     不滤掉的话：被挡下的那次写入照样算"文件动过"，一次报错的测试照样
+  //     把"还没叫过测试"的警告擦掉。
+  //   * **写 .team/ 不算项目文件动了。** 队里的本子（日志、任务卡、报告）每轮都在写，
+  //     拿它当"代码动过"，板子就天天喊狼来了。
   // ─────────────────────────────────────────────────────────────
   const ledgers = new Map()
 
@@ -211,50 +297,69 @@ export async function apply(ctx, config = {}) {
     if (typeof key !== 'string') return undefined
     let entry = ledgers.get(key)
     if (entry === undefined) {
-      entry = { design: 0, dev: 0, test: 0, review: 0, retro: 0, afterTest: 0, afterReview: 0 }
+      entry = { counts: new Map(), afterTest: 0, afterReview: 0 }
       ledgers.set(key, entry)
     }
     return entry
   }
 
+  /** 这个工具名是队伍里哪个岗位？不是队伍的工具就返回 undefined。 */
+  function teamRoleOf(toolName) {
+    if (typeof toolName !== 'string') return undefined
+    const hit = TEAM_TOOL.exec(toolName)
+    return hit === null ? undefined : hit[1]
+  }
+
   function boardOf(key) {
     const ledger = typeof key === 'string' ? ledgers.get(key) : undefined
-    if (ledger === undefined) return undefined
-    const total = ledger.design + ledger.dev + ledger.test + ledger.review + ledger.retro
-    if (total === 0) return undefined
+    if (ledger === undefined || ledger.counts.size === 0) return undefined
+    const called = (role) => (ledger.counts.get(role) ?? 0) > 0
 
-    const lines = [
-      `【这一票的进度】设计 ${ledger.design} · 开发 ${ledger.dev} · 测试 ${ledger.test}`
-        + ` · 评审 ${ledger.review} · 复盘 ${ledger.retro}`,
-    ]
-    if (ledger.test === 0 && ledger.dev > 0) {
+    // 固定岗位按次序全列出来（哪怕这一次是 0）；名单外的岗位只列有人叫过的，排在后面。
+    // 加岗位时**不用动这里** —— 新岗位只要工具名照约定写，就自动出现在板子上。
+    const extra = [...ledger.counts.keys()].filter((role) => !BOARD_ORDER.includes(role)).sort()
+    const head = [...BOARD_ORDER, ...extra]
+      .filter((role) => BOARD_ORDER.includes(role) || called(role))
+      .map((role) => `${BOARD_LABELS[role] ?? role} ${ledger.counts.get(role) ?? 0}`)
+      .join(' · ')
+
+    const lines = [`【这一票的进度】${head}`]
+    if (!called('test') && called('dev')) {
       lines.push('⚠️ 叫过开发，还没叫过测试 —— 没人验过的改动不算完成。')
     } else if (ledger.afterTest > 0) {
-      lines.push(`⚠️ 最后一次测试之后代码又动过 ${ledger.afterTest} 次 —— 那次测试作废，要重测。`)
+      lines.push(`⚠️ 最后一次测试之后，项目文件又动过 ${ledger.afterTest} 次 —— 那次测试作废，要重测。`)
     }
-    if (ledger.review > 0 && ledger.afterReview > 0) {
-      lines.push(`⚠️ 最后一次评审之后代码又动过 ${ledger.afterReview} 次 —— 那次评审作废，要重审。`)
+    if (called('review') && ledger.afterReview > 0) {
+      lines.push(`⚠️ 最后一次评审之后，项目文件又动过 ${ledger.afterReview} 次 —— 那次评审作废，要重审。`)
     }
     return lines.join('\n')
   }
 
-  ctx.on('tools/result', (call) => {
+  ctx.on('tools/result', (call, result) => {
     if (call === null || call === undefined) return
+    // 没成功的不算 —— 拒绝和报错都会走到这儿，它们不该在账本上留下痕迹。
+    if (result !== null && result !== undefined && result.isError === true) return
     const ledger = ledgerFor(taskKey(call.agent))
     if (ledger === undefined) return
-    if (call.name === 'team_design') ledger.design += 1
-    else if (call.name === 'team_dev') ledger.dev += 1
-    else if (call.name === 'team_retro') ledger.retro += 1
-    else if (call.name === 'team_test') {
-      ledger.test += 1
-      ledger.afterTest = 0
-    } else if (call.name === 'team_review') {
-      ledger.review += 1
-      ledger.afterReview = 0
-    } else if (call.name === 'write' || call.name === 'edit') {
-      ledger.afterTest += 1
-      ledger.afterReview += 1
+
+    const role = teamRoleOf(call.name)
+    if (role !== undefined) {
+      ledger.counts.set(role, (ledger.counts.get(role) ?? 0) + 1)
+      // 验收那两关是闸门：它们一过，之前动过的项目文件就不作数了。
+      if (role === 'test') ledger.afterTest = 0
+      if (role === 'review') ledger.afterReview = 0
+      return
     }
+
+    const where = WRITE_TARGET[call.name]
+    if (where === undefined) return
+    const target = call.arguments === null || typeof call.arguments !== 'object'
+      ? undefined
+      : call.arguments[where]
+    // 落在 .team/ 里的写入是队里的本子，不是项目文件动了。
+    if (landsInOffice(target, call.agent)) return
+    ledger.afterTest += 1
+    ledger.afterReview += 1
   })
 
   // 老板一开口，就是新的一票，账清零。

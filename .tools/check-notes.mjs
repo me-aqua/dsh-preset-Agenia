@@ -126,7 +126,24 @@ const today = stamp(new Date())
   yes('preset', 'team/ 的文件与 yml 里的 team-* 行一一对应（外聘除外）',
     ymlRoles.length === fixed.length && ymlRoles.every((r, i) => r === fixed[i]),
     fixed.join(', ') + '  ↔  ' + ymlRoles.join(', '))
+  // 进度板按**工具名**认人（inject.js 的 TEAM_TOOL）：形状不对，那一列就静默不出现。
+  // 2026-09-20 加 —— 以前账本里写死五个工具名，加岗位的人怎么改都记不到账。
+  const teamTools = [...effective.matchAll(/toolName:\s*(team[_-][a-z0-9-]+)/g)].map((m) => m[1]).sort()
+  const wantTools = fixed.map((r) => `team_${r}`).sort()
+  yes('preset', '每条 team-* 行的 toolName 都是 team_<岗位名>（进度板按它认人）',
+    teamTools.length === wantTools.length && teamTools.every((t, i) => t === wantTools[i]),
+    teamTools.join(', ') + '  ↔  ' + wantTools.join(', '))
   yes('preset', '外聘挂在 tool-subagent 那一行的 persona 标记上', /【组员:hire】/.test(yml))
+  // 五条固定岗位行的两个键是**刻意不是默认值**的（老板 2026-09-20 拍板）：后台跑、不许再招人。
+  // 为什么值得钉：改成 `backgroundMode: one-shot` 会静默地把"组员后台跑"变回"组长被卡住"，
+  // 而改 `maxDepth` 会让"组员不许再招人"这条硬边界消失 —— 两者都不报错。
+  const teamRows = effective.split(/- id: team-/).slice(1)
+  const bgContinuable = teamRows.filter((r) => /backgroundMode:\s*continuable/.test(r)).length
+  const depthOne = teamRows.filter((r) => /maxDepth:\s*1(\s|$)/m.test(r)).length
+  yes('preset', '五条 team-* 行都是 backgroundMode: continuable（组员默认后台跑）',
+    teamRows.length === 5 && bgContinuable === 5, `${bgContinuable}/${teamRows.length} 行`)
+  yes('preset', '五条 team-* 行都是 maxDepth: 1（组员不许再招人）',
+    teamRows.length === 5 && depthOne === 5, `${depthOne}/${teamRows.length} 行`)
   // 每个固定岗位的能力行都要带自己的标记 —— 少了它，那个人会以为自己是组长。
   const marks = (effective.match(/【组员:[a-z0-9-]+】/g) ?? []).map((m) => m.slice(4, -1)).sort()
   const wantMarks = [...roles].sort()
@@ -190,6 +207,48 @@ const today = stamp(new Date())
   // 受限岗位名单和队伍名单要能对上 —— 写个不存在的岗位名，那条限制永远不生效、也不报错。
   const orphan = office.filter((o) => !roles.includes(o))
   yes('preset', 'officeBound 里的岗位都真实存在', orphan.length === 0, orphan.join(', ') || '干净')
+
+  // ── 文书与配置对账（2026-09-22 加）──────────────────────────────────────
+  // 上面那些断言盯的是"文件形状"，盯不到"某份文档里的说法和配置对不上"。
+  // 通读一遍时抓到两处，都是**看起来像依据的假话** —— agent 会拿它去推理，比写错事实更毒：
+  //   ① `leader.md` 写着「只有你有命令行，队员都没有」，而 officeBound 只有 review + retro：
+  //      design / dev / test 三个岗位既有写权限也有命令行。那句话还是"体检脚本只能你干"的论据。
+  //   ② `work-guidelines.md` 与 `说明.md` 的 `.team/` 目录树漏了 `design/` —— 而 `leader.md`
+  //      说的是"六个岗位的文件夹"，照那棵树建抽屉就会少建一个。
+  // 两条都钉**事实**：谁不受限、树里有没有这个人。
+  const docs = [
+    ['leader.md', join(PRESET, 'leader.md')],
+    ['work-guidelines.md', join(PRESET, 'work-guidelines.md')],
+    ['persona.md', join(PRESET, 'persona.md')],
+    ['说明.md', join(PRESET, '说明.md')],
+    ['README.md', join(REPO, 'README.md')],
+  ].filter(([, p]) => existsSync(p)).map(([label, p]) => [label, read(p)])
+
+  // ① 「只有组长有命令行」这种说法 —— officeBound 没收走的岗位本来就都有命令行。
+  //    officeBound 真把五个岗位全收走的那天，这句话就成立了，所以那时本条自动放行。
+  const freeShell = fixed.filter((r) => !office.includes(r))
+  const exclusive = docs
+    .filter(([, t]) => /只有(你|他|她|组长)有(命令行|shell)|(队员|组员)(都)?没有(命令行|shell)/.test(t))
+    .map(([f]) => f)
+  yes('preset', '没有哪份文档把命令行说成组长独有（办公桌边界只收走两个岗位的 shell）',
+    freeShell.length === 0 || exclusive.length === 0,
+    exclusive.length > 0 && freeShell.length > 0
+      ? `${exclusive.join('、')} 里仍写着"只有组长有命令行" —— 事实是 ${freeShell.join('、')} 也有`
+      : `${office.join('、')} 才没有；${freeShell.join('、') || '（全部岗位）'} 本来就有`)
+
+  // ② `.team/` 目录树：编制里的岗位一个都不许漏。漏掉的抽屉不会有人建 —— 组长是照这棵树建的。
+  const trees = docs.filter(([, t]) => (t.match(/```[\s\S]*?```/g) ?? []).some((b) => b.includes('.team/')))
+  const treeMiss = []
+  for (const [f, t] of trees) {
+    const blocks = (t.match(/```[\s\S]*?```/g) ?? []).filter((b) => b.includes('.team/'))
+    const miss = fixed.filter((r) => !blocks.some((b) => b.includes(`${r}/`)))
+    if (miss.length > 0) treeMiss.push(`${f} 缺 ${miss.join('、')}`)
+  }
+  yes('preset', '`.team/` 目录树把编制里的岗位都列了出来（漏一个就少建一个抽屉）',
+    trees.length > 0 && treeMiss.length === 0,
+    treeMiss.length > 0 ? treeMiss.join('；')
+      : trees.length === 0 ? '一份目录树都没了 —— 组长没有可照抄的结构'
+        : `${trees.map(([f]) => f).join('、')}（${fixed.join('、')} 全在）`)
 }
 
 // ── 3 · 注入器：交付出去的那份还敢改吗 ─────────────────────────────────────
@@ -202,9 +261,13 @@ const today = stamp(new Date())
   // 语法错误会被 ESM 按 URL 缓存住，之后怎么修都不生效 —— 写完必须先过这一关。
   let syntax = 'ok'
   try {
-    execFileSync(process.execPath, ['--check', injector], { stdio: 'pipe' })
+    // ⚠️ 不要用 stdio: 'pipe' —— 受限沙箱里子进程开不了管道，会报
+    // `spawnSync … EPERM`，于是这条断言变成**永远红**（2026-09-20 实测：本机如此，
+    // 而它红的不是代码，是环境）。stderr 用 inherit：真出语法错时原文照打，
+    // 我们这边还能拿到退出码。判据：pipe 失败 / ignore 或 inherit 通过。
+    execFileSync(process.execPath, ['--check', injector], { stdio: ['ignore', 'ignore', 'inherit'] })
   } catch (err) {
-    syntax = String(err.stderr ?? err).split('\n').slice(0, 3).join(' ')
+    syntax = `退出码 ${String(err.status ?? '?')}（语法错原文见上面 stderr）`
   }
   yes('injector', 'node --check 通过（语法错会被 ESM 缓存住）', syntax === 'ok', syntax)
 
@@ -237,14 +300,19 @@ const today = stamp(new Date())
   // 抽屉是**懒建**的：那个岗位上过岗才有。所以缺了不红，只报 ——
   // 硬要它一开工就六个齐，等于把"以后加岗位"这件事变成八处要一起改。
   const missing = presetRoles.filter((r) => !roleDirs.includes(r))
-  add('office', '六个岗位 + 外聘的抽屉（缺的 = 那个岗位还没上过岗，不算红）',
+  add('office', '五个固定岗位 + 外聘的抽屉（缺的 = 那个岗位还没上过岗，不算红）',
     true, missing.length === 0 ? '全在' : `还没有：${missing.join(', ')}`)
 
   // 反过来才要命：抽屉在、预设里没有这个人 —— 读 .team/ 的人会以为组里还有他。
   // 换预设时最容易留下这种半截（旧版的 product 岗就是这么留下来的）。
   // leader 不在 team/ 里（他那一份是根目录的 leader.md），但队里当然有他。
   const known = [...presetRoles, 'leader']
-  const housework = ['deliverables', 'tmp', 'tmp-kit']
+  // `_archive/` 是归档旧岗位的地方（2026-09-20：`product/` → `_archive/product/`）。
+  // **归档不是幽灵** —— 幽灵指的是"读 .team/ 的人会以为组里还有他"；归档明说了它不在编制里。
+  // ⚠️ 2026-09-20 收窄：`deliverables` / `tmp` / `tmp-kit` 都从白名单里去掉了 ——
+  //    那是上一代的结构（老板拍板"每人一个日期抽屉就够了"，`deliverables/` 已归档）。
+  //    现在除归档外，`.team/` 下**只许**出现编制里的岗位。
+  const housework = ['_archive']
   const ghosts = roleDirs.filter((r) => !known.includes(r) && !housework.includes(r))
   add('office', '.team/ 下有没有预设之外的岗位目录（旧岗位留下的）',
     ghosts.length === 0, ghosts.length === 0 ? '干净' : `${ghosts.join(', ')} —— 改名成现在的岗位，或者归档掉`)
@@ -275,6 +343,24 @@ const today = stamp(new Date())
       .filter((e) => e.isDirectory()).map((e) => e.name).sort()
     : []
   add('office', '已归档的复盘日期（只报不红）', true, days.join(', ') || '（无）')
+}
+
+// ── 4b · 仓库根：不是草稿纸（2026-09-20 加）────────────────────────────────
+// 来历：一次真回合把 `probe-note.txt` 留在了项目根，`git status` 里是 `??`，
+// 而当时脚本一个字都没说。组长的原话：「这就是"文件在"和"文件被管着"的差别。」
+// 判据是**白名单**：加一个新文件就把它加进这张表 —— 这一步本身就是提醒。
+{
+  const allowed = new Set([
+    '.git', '.gitattributes', '.gitignore',
+    '.team', '.tools', '.workbuddy',
+    'AGENTS.md', 'AGENTS.local.md',
+    'INSTALL.md', 'LICENSE', 'README.md',
+    'api.txt',
+    'presets',
+  ])
+  const stray = readdirSync(REPO).filter((n) => !allowed.has(n))
+  yes('repo', '仓库根只许出现白名单里的条目（临时文件当场红）', stray.length === 0,
+    stray.length === 0 ? `白名单 ${allowed.size} 项，干净` : `多出来：${stray.join(', ')} —— 删掉，或者加进 check-notes.mjs 的白名单`)
 }
 
 // ── 5 · 这台机器的既成事实 ─────────────────────────────────────────────────

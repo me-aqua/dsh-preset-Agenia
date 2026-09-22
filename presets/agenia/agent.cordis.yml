@@ -234,14 +234,22 @@
     #
     # 每个岗位一行。组长按名字叫他们，每个人都有自己那一份说明书。
     #
-    # 加一个岗位，两步：
+    # 加一个岗位，三步：
     #   1. 在 team/ 里放一个 .md（第一行当岗位名字，正文就是说明书）
     #   2. 在这里复制一行，改三处：id、toolName、persona 里的标记
     #   3. 如果这个岗位要受限，把它加进上面 officeBound
     #
+    #   ⚠️ toolName 必须写成 team_<岗位名>（岗位名 = 你刚放进去那个 .md 的文件名）。
+    #      进度板按这个约定认人（inject.js 里的 TEAM_TOOL）：写成别的形状**不会报错**，
+    #      只是那个人永远不出现在板子上。体检脚本有一条断言盯着这个形状。
+    #
     # 下面几处是踩过坑的，别顺手改：
     #   * persona 里那枚【组员:xxx】标记是必需的 —— 少了它，组员会以为自己是组长。
     #   * maxDepth: 1 —— 组员自己不能再招人，这是结构上的硬拦。
+    #   * backgroundMode: continuable —— **组员默认后台跑**（老板 2026-09-20 拍板）。
+    #     意义是：组员干活的时候，组长还能跟老板说话、还能接着派下一件。
+    #     ⚠️ 它同时削掉了两条结构性保护，替代措施写在 `leader.md`「派工」那一节，
+    #        改这个键之前先读那一节：关卡次序不再由"等结果"强制，评审期间也不再物理锁住组长。
     #   * toolFilter 里只能写"组员继承得到的"工具名。写一个只属于他自己那一层的名字，
     #     会让整个岗位启动失败（五个人一起挂）。错了会打印可用的完整名单，照着读。
     #   * 不要在 toolFilter 里写 pwsh/bash —— 两个平台只注册其中一个，写错那个同样会挂。
@@ -252,7 +260,7 @@
       config:
         provider: spawn
         toolName: team_design
-        backgroundMode: one-shot
+        backgroundMode: continuable
         maxDepth: 1
         persona: '【组员:design】你是这个项目的设计和美工。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
         toolFilter:
@@ -263,7 +271,7 @@
       config:
         provider: spawn
         toolName: team_dev
-        backgroundMode: one-shot
+        backgroundMode: continuable
         maxDepth: 1
         persona: '【组员:dev】你是这个项目的实现者。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
         toolFilter:
@@ -274,7 +282,7 @@
       config:
         provider: spawn
         toolName: team_test
-        backgroundMode: one-shot
+        backgroundMode: continuable
         maxDepth: 1
         persona: '【组员:test】你是这个项目的测试与流水线负责人。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
         toolFilter:
@@ -285,7 +293,7 @@
       config:
         provider: spawn
         toolName: team_review
-        backgroundMode: one-shot
+        backgroundMode: continuable
         maxDepth: 1
         persona: '【组员:review】你是这个项目的独立评审。你只审不改。岗位说明书会随请求自动注入 —— 开工前先读它。'
         toolFilter:
@@ -296,7 +304,7 @@
       config:
         provider: spawn
         toolName: team_retro
-        backgroundMode: one-shot
+        backgroundMode: continuable
         maxDepth: 1
         persona: '【组员:retro】你是这个组的流程与复盘。你只提案，不落笔。岗位说明书会随请求自动注入 —— 开工前先读它。'
         toolFilter:

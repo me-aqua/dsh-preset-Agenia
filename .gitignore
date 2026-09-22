@@ -30,9 +30,12 @@ settings.yaml
 
 # ── Agent preset 根 ─────────────────────────────────────────────────────────
 # presets/ 是本仓库真正交付的东西：DSH 从这里的每个子目录读一份 preset，
-# 目录名就是 preset id（presets/agenia/ → id "agenia"）。它登记在
-# ~/.dsh/profiles/web/cordis.patch.yml 的 roots 里，**必须**进版本库。
-# 注意：改那份 patch 文件会让当前所有会话当场失去工具集（见 AGENTS.md）。
+# 目录名就是 preset id（presets/agenia/ → id "agenia"），所以它**必须**进版本库。
+# ⚠️ 装法**不是**登记一个根：把 presets/agenia 整个拷进 ~/.dsh/.agent-presets/ 就完事
+# （见 README「安装」）。本机把 presets/ 登记在 ~/.dsh/profiles/web/cordis.patch.yml
+# 的 roots 里，那只是维护者本地的方便 —— 代价是它**排在用户根前面**：名册按 id 去重、
+# 前面的根赢，所以拷进用户根的那份在这台机器上不会生效（见 INSTALL.md 第 8 节）。
+# 注意：改那份 patch 文件会让当前所有会话当场失去工具集（见 AGENTS.md 第 1 条）。
 # .agent-presets/ 是 DSH 默认的用户 preset 根（~/.dsh/.agent-presets），
 # 属于机器本地状态，不进版本库。
 .agent-presets/
@@ -43,12 +46,14 @@ settings.yaml
 AGENTS.md
 # AGENTS.local.md 是**这台机器**的既成事实（哪些命令在这台机器上跑不动），
 # 换一台机器就不成立。同一个理由：留在磁盘上，不进版本库。
-# 规矩见 AGENTS.md 与 process.md「学到的东西往哪写」。
+# 规矩见 AGENTS.md；"学到的东西写进哪份文件"现在归预设的
+# presets/agenia/work-guidelines.md（工序已从 process.md 并进那里）。
 AGENTS.local.md
 
 # ── 队伍的地方 ───────────────────────────────────────────────────────────────
-# .team/ 是这支队伍的工作区（日志 / must-know / 报告 / 交付记录），
-# **不属于项目代码，不进版本库**。规矩见 process.md「队伍的地方」。
+# .team/ 是这支队伍的工作区：<岗位>/{now.md, memory.md, <日期>/log.md}，外加归档。
+# **不属于项目代码，不进版本库**。规矩见 presets/agenia/work-guidelines.md「工作位置」
+# 与 .team/README.md（结构图 + 迁移记录）。
 # 交付前用 `git status --short` 确认它没被 git 看见。
 .team/
 
@@ -63,6 +68,9 @@ AGENTS.local.md
 # ── 本机的工作区记忆 ─────────────────────────────────────────────────────────
 # agent 在这个仓库里干活时留下的本地笔记与工作日志。**不是交付物** ——
 # 里面全是"我们当时怎么想的"，换个人/换台机器就没有意义。
+# ⚠️ 它原来住在 presets/.workbuddy/ —— 2026-09-20 挪到这里：presets/ 是预设根，
+# 目录名合法的子目录会变成未来会话可挂载的预设，那个目录里不该放实验品与备份
+# （AGENTS.md 第 4 条）。以点开头的名字不会变成 preset，但位置本身就不对。
 .workbuddy/
 
 # ── Node ───────────────────────────────────────────────────────────────────
