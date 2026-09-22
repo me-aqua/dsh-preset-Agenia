@@ -51,6 +51,13 @@ const idLines = (text) => (text.match(/^\s*- id: .+$/gm) ?? []).map((l) => l.tri
 const pad = (n) => String(n).padStart(2, '0')
 const stamp = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 const today = stamp(new Date())
+/** `YYYY-MM-DD` 到今天差几天。算不出来返回 undefined。 */
+const ageDays = (ymd) => {
+  const d = Date.parse(`${ymd}T00:00:00`)
+  return Number.isNaN(d) ? undefined : Math.round((Date.parse(`${today}T00:00:00`) - d) / 86400000)
+}
+/** 取**第一行**里的 `YYYY-MM-DD` —— `now.md` 的时效口径就写在这一行上。 */
+const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] ?? '') ?? [])[1]
 
 // ── 1 · 能力行：集合比对，不是肉眼比对 ──────────────────────────────────────
 // 规矩见 README「和能力的关系」：**standard 有的必须有、多出来的每一项都要写下来**。
@@ -326,12 +333,35 @@ const today = stamp(new Date())
     yes('office', `${d} 的长期记忆在上限内`, n <= 2000, `${n} 字（上限 2000）`)
   }
 
+  // ★ now.md 的时效（2026-09-22 加，**只报不红**）。
+  // 来历：`now.md` 的规矩是"每天开工整个重写"，但**没有任何东西量过它到底多久没动**——
+  // 于是 2026-09-21 全天零活动（`git log` 没有那天的提交、`~/.dsh/sessions` 里没有那天的目录）
+  // 这件事，脚本一个字都没说。量尺缺了，纪律就只剩"我记得"。
+  //
+  // 口径落在**第一行**：`# now（YYYY-MM-DD · 一句话）`。不写日期 = 没人知道这一页是哪天的。
+  // ⚠️ 为什么先只报不红：约定刚立，历史那几页的第一行格式对不上（有的写名字、有的写别的话），
+  //    现在判红等于把"格式迁移"伪装成"违纪"，红一片之后这张表就没人看了。
+  //    翻面条件：**连续两个工作日、五个岗位的第一行都带着当天的日期**，再把 add 换成 yes。
+  //    （和下面「今天的复盘在」同款：先钉事实，够稳了再钉纪律。）
+  for (const r of [...presetRoles, 'leader']) {
+    const p = join(teamRoot, r, 'now.md')
+    if (!existsSync(p)) continue
+    const ymd = firstLineDate(read(p))
+    const age = ymd === undefined ? undefined : ageDays(ymd)
+    const detail = ymd === undefined
+      ? '第一行没写日期 —— 约定是 `# now（YYYY-MM-DD · 一句话）`'
+      : age < 0 ? `写的是 ${ymd}（将来）`
+        : age === 0 ? `今天（${ymd}）` : `${age} 天前（${ymd}）`
+    add('office', `${r} 的 now.md 有多旧（只报不红）`, true, detail)
+  }
+
   // ★ 承重的一条：今天的复盘在不在。
   // 这一条是"半硬方案"里唯一能**在没人记得的时候自己响**的形态 ——
   // 所以它必须留在这儿，而且必须为绿。红了不要删它，去叫流程位补。
   const review = join(teamRoot, 'retro', today, '每日复盘.md')
   yes('office', `今天的复盘在（.team/retro/${today}/每日复盘.md）`, existsSync(review),
-    '开工第一步该由流程位做一份覆盖昨天的复盘；不在 ⇒ 叫流程位（一次覆盖两天，别按票叫）')
+    '开工第一步该由流程位做一份覆盖「上次复盘到现在」的复盘；不在 ⇒ 叫流程位补，'
+    + '一次覆盖整段（别按天补、别按票叫）')
   if (existsSync(review)) {
     const body = read(review)
     yes('office', '复盘里有「我的把握有多大」那一行', /我的把握有多大/.test(body))
@@ -376,8 +406,11 @@ const today = stamp(new Date())
   const userRoot = join(HOME, '.dsh', '.agent-presets')
   add('host', '用户根 ~/.dsh/.agent-presets/ 的条目数',
     true, existsSync(userRoot) ? `${readdirSync(userRoot).length} 条` : '目录不存在')
-  // 交付路径不许依赖它：拷文件夹才是装法。
-  yes('host', '预设不靠 roots 登记', !existsSync(join(PRESET, 'cordis.patch.yml')))
+  // 交付路径不许依赖 roots 登记：拷文件夹才是装法。
+  // 名字原来写的是「预设不靠 roots 登记」—— 那是**结论**，量到的其实是"目录里没有那个补丁文件"。
+  // 判据和名字对不上的断言，红的时候会把人引去查 roots。
+  yes('host', '预设目录里没有 cordis.patch.yml（拷文件夹就能装）',
+    !existsSync(join(PRESET, 'cordis.patch.yml')))
   // 用测试架子跑过之后要还原，忘了就是个坑（见 .tools/mount-test/README.md）。
   const probe = join(HOME, '.dsh', 'profiles', 'headless', 'cordis.patch.yml')
   const probeOn = existsSync(probe) && !/^\[\]\s*$/.test(read(probe))
