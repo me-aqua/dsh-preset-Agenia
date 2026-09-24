@@ -204,10 +204,12 @@ presets/
 └─ agenia/                     ← 装的时候拷的就是这一层
    ├─ agent.cordis.yml        # 组合本体：能力照抄 standard，另加 6 项
    ├─ package.json            # name 和 version 都必须有
-   ├─ inject.js               # ★ 唯一的代码：注入（快照 + 每步尾巴提醒）+ 写权限边界
+   ├─ inject.js               # ★ 唯一的代码：注入（快照 + 尾巴提醒）+ 写权限边界
    ├─ 说明.md                 #   给维护的人看的（不进提示词）
    │
-   ├─ persona.md              # ★ 她是谁 / 怎么说话        （只有组长读）
+   ├─ persona.md              # ★ 她是谁（身份 + 基本说明）   （只有组长读）
+   ├─ style.md                # ★ 她怎么说话（回怼 / emoji / 颜文字 / 口癖 / 标点）
+   │                          #   同一份走两条路：会话开头 + 每 N 步贴到最末尾
    ├─ leader.md               # ★ 这支队伍 + 她怎么带队     （只有组长读）
    ├─ work-guidelines.md      # ★ 工作位置 + 次序 + 原则    （全组都读）
    │

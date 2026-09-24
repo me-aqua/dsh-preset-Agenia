@@ -220,10 +220,14 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const member = orderOf('memberOrder')
   const office = orderOf('officeBound')
 
-  yes('preset', 'leaderOrder 是 leader → work-guidelines → roster → board → persona',
-    leader.join(',') === 'leader,work-guidelines,roster,board,persona', leader.join(' → '))
-  // persona 排最后是有意的：越靠后离请求末尾越近，权重越高。
-  yes('preset', 'leaderOrder 里 persona 排最后', leader[leader.length - 1] === 'persona')
+  yes('preset', 'leaderOrder 是 leader → work-guidelines → roster → board → persona → style',
+    leader.join(',') === 'leader,work-guidelines,roster,board,persona,style', leader.join(' → '))
+  // persona（她是谁）与 style（她怎么说话）排最后：越靠后离请求末尾越近，权重越高。
+  // ⚠️ style **同时**是 inject.js 第 ⑤ 件事读的那个文件 —— 快照这条路和尾巴那条路读同一个文件，
+  //    所以永远不会分叉（2026-09-24 老板定：不再分"开头注入的"和"每 n 步注入的"两份）。
+  yes('preset', 'leaderOrder 里 style 排最后、persona 紧随其后',
+    leader[leader.length - 1] === 'style' && leader[leader.length - 2] === 'persona',
+    leader.slice(-2).join(' → '))
   yes('preset', 'memberOrder 是 work-guidelines → charter（组员不读 leader / persona）',
     member.join(',') === 'work-guidelines,charter', member.join(' → '))
   yes('preset', 'officeBound 正好是 review + retro（只留做判断的岗位）',
@@ -328,15 +332,32 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   // ── 2026-09-24 加的两条：提醒得自报家门，正文得在磁盘上 ──────────────────
   // ① 提醒是作为一条 **user 消息**进请求的。不带"不是老板的消息"这半句，
   //    模型会把它当成"老板开口了"，一本正经回它一段 —— 当天实测：一个回合里回了两条。
-  // ② 正文放在 reminder.md 里：ESM 缓存只锁代码，不锁 .md，所以**改这句不用重启 harness**。
-  const reminderPath = join(PRESET, 'reminder.md')
-  const reminderText = existsSync(reminderPath) ? read(reminderPath) : ''
-  yes('injector', '尾巴提醒自报"不是老板的消息"（否则会被当成新指令去回）',
-    /不是老板的消息/.test(reminderText) || /不是老板的消息/.test(src),
-    '缺了它，模型会回这条自动提醒 —— 2026-09-24 真发生过（一个回合白烧两步）')
-  yes('injector', '尾巴提醒的正文住在 reminder.md（改它不用重启 harness）',
-    /REMINDER_FILE/.test(src) && /reminder\.md/.test(src) && reminderText.trim().length > 0,
+  // ② 正文放在 style.md 里：ESM 缓存只锁代码，不锁 .md，所以**改这句不用重启 harness**。
+  //    外框（"不是老板的消息" + "不是任务"）留在代码里：那是护栏，不该由内容文件承担。
+  const stylePath = join(PRESET, 'style.md')
+  const styleText = existsSync(stylePath) ? read(stylePath) : ''
+  // ① 改成"直接贴正文、不加外框"（2026-09-24 老板：「记得把那个【自动提醒】也删了，没用」）。
+  //    那层护栏当年是为"提醒被当成老板开口、模型回了它两条"加的；删掉是老板拍的 ——
+  //    真再出现被回的情况，把外框加回来并改这一条，**别争论，也别把断言删了当没看见**。
+  yes('injector', '尾巴提醒直接贴 style.md 正文（不再加"自动提醒"外框）',
+    /STYLE_FILE/.test(src) && !/REMINDER_HEAD|REMINDER_TAIL/.test(src),
+    '外框是 2026-09-24 老板拍板删掉的；要加回来先改这一条')
+  yes('injector', '尾巴提醒读的是 style.md（改它不用重启 harness）',
+    /STYLE_FILE/.test(src) && /style\.md/.test(src) && styleText.trim().length > 0,
     '锁在代码里的话，每调一句都要重启一次 harness')
+
+  // ③ **表达方式只有一份来源**（2026-09-24 老板定：开头注入的和每 n 步注入的是同一份）。
+  //    这一条盯的是"别再分叉"：四张表住在 style.md；persona.md 只留身份与基本说明。
+  //    以前两张表在 persona.md 和 reminder.md 各存一份 —— 那是迟早对不上的隐患。
+  const personaText = read(join(PRESET, 'persona.md'))
+  const styleHeadings = ['## emoji', '## 颜文字', '## 口癖', '## 标点连用']
+  const inStyle = styleHeadings.filter((h) => styleText.includes(h)).length
+  const leakedToPersona = styleHeadings.filter((h) => personaText.includes(h))
+  yes('injector', '表达表只有一份来源：四张表在 style.md、persona.md 只留身份',
+    inStyle === 4 && leakedToPersona.length === 0,
+    leakedToPersona.length > 0
+      ? `persona.md 里还留着：${leakedToPersona.join('、')}（两张表各存一份，迟早分叉）`
+      : `style.md ${inStyle}/4 张表`)
 }
 
 // ── 4 · 队伍的地方（.team/）────────────────────────────────────────────────

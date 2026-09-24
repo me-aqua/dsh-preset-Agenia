@@ -45,11 +45,16 @@ const DEFAULT_MEMBER_ORDER = ['work-guidelines', 'charter']
 const DEFAULT_OFFICE_BOUND = ['review', 'retro']
 
 /**
- * 尾巴提醒（⑤）的正文文件 —— **组长那一份从这里读**。
- * 它不进快照，只被 ⑤ 用，所以**改它不用重启 harness**（存盘即生效）。
- * 这一句是要反复调的，别锁进代码里；读不到才用下面那句兜底。
+ * 「语言风格」那一份 —— ⑤ 尾巴提醒读它。
+ * ⚠️ ① 的快照那一层由 `agent.cordis.yml` 的 `leaderOrder` 里那个 `style` 行送 ——
+ * **两条路读的是同一个文件**，所以永远不会分叉（2026-09-24 老板定：不再分两份）。
+ * 它不进快照机制 ⇒ 改它**不用重启 harness**（存盘即生效）；频率也写在它第一行的注释里。
+ *
+ * ⚠️ **贴出去的就是文件正文，不加任何外框**（2026-09-24 老板：「记得把那个【自动提醒】也删了，没用」）。
+ * 曾经加过一层「不是老板的消息，别回它」的护栏 —— 起因是提醒被当成老板开口、模型回了它两条；
+ * 但正文现在是一整份语言风格表，不像指令，护栏就成了噪声。**真再出现被回的情况，加回来。**
  */
-const REMINDER_FILE = 'reminder.md'
+const STYLE_FILE = 'style.md'
 
 /**
  * 尾巴提醒的默认频率：**至少隔这么多步**才补一句（文件里可以用 `<!-- every: N -->` 覆盖）。
@@ -483,37 +488,34 @@ export async function apply(ctx, config = {}) {
   })
 
   /**
-   * 组长那一句的**兜底**版本。正常正文在 `reminder.md` 里（改它不用重启）。
-   * ⚠️ 开头那句「不是老板的消息」是**必需**的 —— 少了她会把这条自动提醒当成老板开口，
-   * 一本正经地回它一段（2026-09-24 实测：一个回合里回了两条，白烧两步）。
+   * 组长那一份的**兜底**版本（`style.md` 读不到时才用）。
+   * 贴出去的是文件正文本身，不加外框 —— 见 `STYLE_FILE` 那段注释。
    */
   const DEFAULT_LEADER_REMINDER =
-    '【自动提醒 · 不是老板的消息，别回它、别当成任务】Agenia 上场：第一句不是「好的」「收到」——'
-    + '**先回怼**（该贫就贫、该卖萌就卖萌），② 再去查证据（不猜、不编），③ 最后总要认账'
-    + '（可以嘴硬，不许赖账）。说话**要吵**：emoji / 颜文字 / 连用标点（？？？！！！！。。。。。）'
-    + '随便堆，别写成客服话术。损事不损人 —— 对老板除外，他好这口。'
+    'Agenia 的语言风格：**第一句不是「好的」「收到」—— 先回怼**（该贫就贫、该卖萌就卖萌）；'
+    + '**要吵**，emoji / 颜文字 / 口癖 / 连用标点随便堆，别写成客服话术。'
 
-  /** 组员那一句：他自己说明书的第一行 + 两句全组通用的话。开头同样得自报"不是任务"。 */
+  /** 组员那一句：他自己说明书的第一行 + 两句全组通用的话。 */
   function memberReminder(charter) {
     const first = (charter ?? '').split('\n').find((line) => line.trim().length > 0) ?? ''
     const who = first.replace(/^#+\s*/, '').trim()
-    return `【自动提醒 · 不是任务，别回它】${who.length > 0 ? `${who}：` : ''}`
+    return `${who.length > 0 ? `${who}：` : ''}`
       + '交东西要带证据（跑了什么、结果是什么），说话别写成客服话术；有疑问当场问，别猜。'
   }
 
   /**
-   * 这一句的正文 + 频率：组长那份从磁盘读（**改正文和频率都不用重启 harness**）。
-   * 频率写在同一个文件的注释里：`<!-- every: 8 -->` = 至少隔 8 步才补一句；
+   * 这一句的正文 + 频率：组长那份从 `style.md` 读（**改正文和频率都不用重启 harness**）。
+   * 频率写在同一个文件第一行的注释里：`<!-- every: 8 -->` = 至少隔 8 步才补一句；
    * 写 0 = 只在每个回合开头贴一句。注释会被剥掉，不进提示词。
    */
   async function tailText(role, charter) {
     if (role !== undefined) return { text: memberReminder(charter), every: REMINDER_EVERY_DEFAULT }
-    const raw = await readText(join(contentDir, REMINDER_FILE))
+    const raw = await readText(join(contentDir, STYLE_FILE))
     if (raw === undefined) return { text: DEFAULT_LEADER_REMINDER, every: REMINDER_EVERY_DEFAULT }
     const hit = /<!--\s*every:\s*(\d+)\s*-->/.exec(raw)
-    const text = raw.replace(/<!--[\s\S]*?-->/g, '').trim()
+    const body = raw.replace(/<!--[\s\S]*?-->/g, '').trim()
     return {
-      text: text.length > 0 ? text : DEFAULT_LEADER_REMINDER,
+      text: body.length > 0 ? body : DEFAULT_LEADER_REMINDER,
       every: hit === null ? REMINDER_EVERY_DEFAULT : Number(hit[1]),
     }
   }
@@ -578,7 +580,7 @@ export async function apply(ctx, config = {}) {
       board: role === undefined ? boardOf(agentId) : undefined,
     })
 
-    // ⑤ 尾巴提醒。内容这里已经有了，不多读一次盘（组长那句正文另外从 reminder.md 读）。
+    // ⑤ 尾巴提醒。内容这里已经有了，不多读一次盘（组长那份正文另外从 style.md 读）。
     if (typeof agentId === 'string') {
       const charter = entries.find((entry) => entry.name.startsWith('agenia:charter:'))?.text
       await remind(agentId, role, charter)
