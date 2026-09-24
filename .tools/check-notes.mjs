@@ -143,6 +143,22 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     teamTools.length === wantTools.length && teamTools.every((t, i) => t === wantTools[i]),
     teamTools.join(', ') + '  ↔  ' + wantTools.join(', '))
   yes('preset', '外聘挂在 tool-subagent 那一行的 persona 标记上', /【组员:hire】/.test(yml))
+  // ── 2026-09-24 加：两条路的分工，以及裸 subagent 那个洞 ──────────────────
+  // 来历：老板问"team_* 还有必要吗"。查下来——五条行都开着、工具单里也都在，
+  // 但 2026-09-24 那天组长 **42 次起人全走裸 subagent**（9/23 用 team_* 的 8 个子会话
+  // 拿到的才是 `charter:test/dev/design/review/retro`；走裸 subagent 的一律 `charter:hire`）。
+  // 根因不是她懒：**六个工具的说明文字是模块生成的、逐字一样**，预设里也没一处教她走哪条。
+  // 所以分工写进了 `leader.md`「叫谁走哪条路」——那一条得钉住，它掉了就没人教。
+  const leaderDoc = read(join(PRESET, 'leader.md'))
+  yes('preset', 'leader.md 写着"固定岗位走 team_* / 外聘走裸 subagent"这条分工',
+    /team_design/.test(leaderDoc) && /team_review/.test(leaderDoc) && /外聘/.test(leaderDoc) && /`subagent`/.test(leaderDoc),
+    '没写的话，六个一模一样的工具描述教不会她走哪条路（2026-09-24 实测就是这么漂的）')
+  // 裸 subagent 那一行原来**没写 maxDepth** ⇒ 默认 3 ⇒ 外聘还能自己再招人
+  // （跟被关掉的 subagent_fork 同一类风险）。2026-09-24 补成 1。
+  const hireRow = effective.split(/- id: tool-subagent\n/)[1]?.split(/- id: /)[0] ?? ''
+  yes('preset', '裸 subagent（外聘通道）那一行有 maxDepth: 1',
+    /maxDepth:\s*1(\s|$)/m.test(hireRow),
+    '不写就是默认 3 —— 用完就散的人还能再招人')
   // 五条固定岗位行的两个键是**刻意不是默认值**的（老板 2026-09-20 拍板）：后台跑、不许再招人。
   // 为什么值得钉：改成 `backgroundMode: one-shot` 会静默地把"组员后台跑"变回"组长被卡住"，
   // 而改 `maxDepth` 会让"组员不许再招人"这条硬边界消失 —— 两者都不报错。
@@ -293,6 +309,21 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     /SHELL\s*=\s*\[[^\]]*'bash'[^\]]*'pwsh'/.test(src))
   yes('injector', '认不出岗位的 agent 一律放行（别把组长自己挡住）',
     /role === undefined \|\| !officeBound\.has\(role\)\) return undefined/.test(src))
+
+  // ── 2026-09-24 加的两条：为什么"每轮注入"这句话当年是假的 ────────────────
+  // ① 那一套是**快照**，DSH 只在文本变了才重发一条（dsh-agent-loop 的
+  //    RuntimeContextProjection.project()）。实测钉过 4 小时 15 分 / 45 万 token。
+  //    所以"真的每轮"靠的是尾巴那一句 —— 它走 agent.inject()，拿不到就必须出声。
+  yes('injector', '尾巴提醒走 agent.inject，拿不到时会报错（不静默失效）',
+    /agent\.inject\(/.test(src) && /拿不到 agent\.inject/.test(src),
+    '缺了这条，人格又只剩"变了才发"的快照那一条路')
+
+  // ② 快照里唯一会变的是 agenia:board，而板子按 team_<岗位> 认人。
+  //    2026-09-24 那天组长 42 次起人全走裸 subagent ⇒ 板子恒空 ⇒ 快照一整天没变。
+  //    所以起人也算"叫了人"（算外聘）—— 认的是"起过人"，不是"用哪个工具名起的"。
+  yes('injector', '起人的工具（subagent）也算进板子，算外聘',
+    /HIRE_TOOL = 'subagent'/.test(src) && /call\.name === HIRE_TOOL/.test(src) && /hire: '外聘'/.test(src),
+    '板子只认 team_* 的话，用 subagent 起人的那些回合里快照一动不动')
 }
 
 // ── 4 · 队伍的地方（.team/）────────────────────────────────────────────────

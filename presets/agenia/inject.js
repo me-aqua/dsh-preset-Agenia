@@ -4,12 +4,18 @@
  * 为什么需要它：模型不会真的"记住"人格。对话一长，最前面那段就被淹掉了。
  * 所以办法不是让它记住，而是每次重新告诉它一遍。
  *
- * 它做四件事，一件一段，互相独立。哪一段不想要，整段删掉就行。
+ * 它做五件事，一件一段，互相独立。哪一段不想要，整段删掉就行。
  *
- *   ① 每轮注入 —— 读 .md，按 agent.cordis.yml 里写的顺序拼好，贴到请求最末尾
+ *   ① 注入正文 —— 读 .md，按 agent.cordis.yml 里写的顺序拼好，交给提示词服务
  *   ② 分清对象 —— 组长和组员收到的内容不一样，不能混
  *   ③ 岗位边界 —— "只审不改"的岗位，在系统层面就写不了源码
  *   ④ 进度提醒 —— 叫过开发却没叫测试，下一轮提醒组长一句
+ *   ⑤ 尾巴提醒 —— 每次组装都往**请求最末尾**再塞一句短的
+ *
+ * ⚠️ ① 是**快照**，不是"每轮重发"（2026-09-24 实测）：DSH 只在快照文本变了才发新的一条
+ * （`dsh-agent-loop` 的 `RuntimeContextProjection.project()`：`retained.text === snapshot` 就 return）。
+ * 文本没变的那几个小时里，人格就钉在上一次变化的位置上 —— 实测有过 **4 小时 15 分没刷新、
+ * 离请求末尾 45 万 token** 的一次。所以要真的"每轮"，靠的是 ⑤，不是 ①。
  *
  * 顺序、谁受限、内容放在哪 —— 全部写在 agent.cordis.yml 里，不在这个文件里。
  * 想改顺序、加岗位、去掉限制，都去改那个文件，不用碰这里。
@@ -18,6 +24,7 @@
  * （.md 不用重启，存盘就生效。）
  */
 
+import { randomUUID } from 'node:crypto'
 import { readdir, readFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -59,8 +66,20 @@ const OFFICE = /(^|[\\/])\.team([\\/]|$)/
  */
 const TEAM_TOOL = /^team[_-]([a-z0-9][a-z0-9-]*)$/
 
+/**
+ * 起人的工具。**进度板把它算成"外聘上岗"** —— 外聘本来就是挂在 `tool-subagent`
+ * 那一行的 `persona` 标记上的（见 agent.cordis.yml）。
+ * 为什么要算：2026-09-24 那一天，组长 42 次起人**全走裸 `subagent`**、一次 `team_*` 都没叫，
+ * 于是板子恒空 ⇒ 快照文本一动不动 ⇒ 人格 4 小时 15 分没刷新（当天真发生过）。
+ * 认人认的是"起过人"，不是"用哪个工具名起的人"。
+ */
+const HIRE_TOOL = 'subagent'
+
+/** 起人算出来的那个岗位名。 */
+const HIRE_ROLE = 'hire'
+
 /** 进度板上显示的名字。没登记过的岗位原样显示岗位名 —— 看得见就不算静默。 */
-const BOARD_LABELS = { design: '设计', dev: '开发', test: '测试', review: '评审', retro: '复盘' }
+const BOARD_LABELS = { design: '设计', dev: '开发', test: '测试', review: '评审', retro: '复盘', hire: '外聘' }
 
 /** 板子上固定岗位的排列次序（设计 → 实现 → 测试 → 评审 → 复盘）；名单外的岗位排在后面，按名字排。 */
 const BOARD_ORDER = ['design', 'dev', 'test', 'review', 'retro']
@@ -342,7 +361,8 @@ export async function apply(ctx, config = {}) {
     const ledger = ledgerFor(taskKey(call.agent))
     if (ledger === undefined) return
 
-    const role = teamRoleOf(call.name)
+    // 起人也算"叫了人"：`team_*` 按工具名认，裸 `subagent` 算外聘（见 HIRE_TOOL 那段说明）。
+    const role = teamRoleOf(call.name) ?? (call.name === HIRE_TOOL ? HIRE_ROLE : undefined)
     if (role !== undefined) {
       ledger.counts.set(role, (ledger.counts.get(role) ?? 0) + 1)
       // 验收那两关是闸门：它们一过，之前动过的项目文件就不作数了。
@@ -413,7 +433,79 @@ export async function apply(ctx, config = {}) {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // ① + ② 每轮注入，并按标记分辨这次该给哪一拨人。
+  // ⑤ 尾巴提醒。
+  //
+  // ① 那一套是**快照**：DSH 只在快照文本变了才重发一条，文本不变时人格就钉在
+  // 上一次变化的位置上。2026-09-24 实测钉了 **4 小时 15 分 / 45 万 token** ——
+  // 那一次老板质问她，她没还嘴也没带表情；查下来人格根本没丢，是**离得太远、太旧**。
+  //
+  // 这一条补上"真的每轮"：每次组装都往**请求最末尾**塞一句短的。
+  // 走 `agent.inject()`（落点是下一个步边界），所以：
+  //   * 不动快照 —— 快照一变，从它那个位置往后的缓存全废，那是钱；
+  //   * 也不压上下文 —— 一句一百来字，贴在末尾。
+  // 刻度用"这个会话最近一条事件的 seq"：同一个刻度只贴一次，一次组装最多一句。
+  // ─────────────────────────────────────────────────────────────
+  const latestSeq = new Map()
+  const remindedAt = new Map()
+
+  ctx.on('session/event', (session, event) => {
+    const id = session === null || session === undefined ? undefined : session.id
+    const seq = event === null || event === undefined ? undefined : event.seq
+    if (typeof id === 'string' && typeof seq === 'number') latestSeq.set(id, seq)
+  })
+
+  /** 组长那一句。短、带表情，把三步的顺序再说一遍。 */
+  const LEADER_REMINDER =
+    '【提醒 · Agenia 上场】第一句不是「好的」「收到」—— **先回怼**（该贫就贫、该卖萌就卖萌），'
+    + '② 再去查证据（不猜、不编），③ 最后总要认账（可以嘴硬，不许赖账）。'
+    + '说话**要吵**：emoji / 颜文字 / 连用标点（？？？！！！！。。。。。）随便堆，别写成客服话术。'
+    + '损事不损人 —— 对老板除外，他好这口。'
+
+  /** 组员那一句：他自己说明书的第一行 + 两句全组通用的话。 */
+  function memberReminder(charter) {
+    const first = (charter ?? '').split('\n').find((line) => line.trim().length > 0) ?? ''
+    const who = first.replace(/^#+\s*/, '').trim()
+    return `【提醒${who.length > 0 ? ` · ${who}` : ''}】交东西要带证据（跑了什么、结果是什么），`
+      + '说话别写成客服话术；有疑问当场问，别猜。'
+  }
+
+  let reminderWarned = false
+
+  /** 往这个 agent 的请求末尾贴一句提醒。贴不上去就出声，不静默。 */
+  function remind(agentId, role, charter) {
+    const seq = latestSeq.get(agentId)
+    if (typeof seq !== 'number' || remindedAt.get(agentId) === seq) return
+    const agents = ctx.get('agents')
+    const agent = typeof agents?.get === 'function' ? agents.get(agentId) : undefined
+    if (agent === undefined) return
+    if (typeof agent.inject !== 'function') {
+      if (!reminderWarned) {
+        reminderWarned = true
+        console.error(
+          '[agenia] 这个框架版本拿不到 agent.inject —— 尾巴提醒没有生效，'
+            + '人格只剩快照那一条路（快照只在文本变了才重发，长回合里会越漂越远）。',
+        )
+      }
+      return
+    }
+    try {
+      agent.inject({
+        id: randomUUID(),
+        role: 'user',
+        content: [{ type: 'text', text: role === undefined ? LEADER_REMINDER : memberReminder(charter) }],
+        source: { kind: 'plugin', plugin: 'agenia' },
+      })
+      remindedAt.set(agentId, seq)
+    } catch (error) {
+      if (!reminderWarned) {
+        reminderWarned = true
+        console.error(`[agenia] 尾巴提醒贴不上去（不影响别的功能）：${String(error)}`)
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // ① + ② 注入正文，并按标记分辨这次该给哪一拨人。
   // ─────────────────────────────────────────────────────────────
   ctx.on('system-prompt/assemble', async (assembly, context, next) => {
     const result = await next()
@@ -430,6 +522,13 @@ export async function apply(ctx, config = {}) {
       role,
       board: role === undefined ? boardOf(agentId) : undefined,
     })
+
+    // ⑤ 尾巴提醒。内容这里已经有了，不多读一次盘。
+    if (typeof agentId === 'string') {
+      const charter = entries.find((entry) => entry.name.startsWith('agenia:charter:'))?.text
+      remind(agentId, role, charter)
+    }
+
     if (entries.length === 0) return result
 
     // 自己上一轮留下的先清掉，免得叠起来。

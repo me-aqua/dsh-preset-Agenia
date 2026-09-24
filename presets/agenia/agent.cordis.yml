@@ -192,6 +192,15 @@
 
     # 临时外聘的通道：组长写一份招聘要求，起一个用一次就散的人。
     # 下面那段 persona 是必需的那枚标记 —— 少了它，外聘的人会以为自己是组长。
+    #
+    # ⚠️ 2026-09-24：**这一行只给临时外聘用。** 五个固定岗位走下面的 team_* ——
+    #    只有走那条路，组员才拿得到自己那份说明书、才受 officeBound 约束。
+    #    实测（TavernGame 2026-09-24）：42 次用这一行起固定岗位，子会话的装配段全是
+    #    `agenia:charter:hire`（外聘那张纸），评审/复盘的写权限边界整条没生效。
+    #    分工教在 `leader.md`「叫谁走哪条路」那一节里 —— 六个工具的说明文字是模块生成的、
+    #    逐字一样，光靠描述教不会她，只能写进提示词。
+    # ⚠️ maxDepth: 1 是 2026-09-24 补的：这一行原来没写 ⇒ 默认 3 ⇒ **外聘还能自己再招人**
+    #    （跟被关掉的 subagent_fork 同一类风险）。补上之后，外聘也招不动人了。
     - id: tool-subagent
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
@@ -199,6 +208,7 @@
         toolName: subagent
         modelSelectionSettings: true
         backgroundMode: continuable
+        maxDepth: 1
         persona: |-
           【组员:hire】你是这个组临时外聘的专家，干完就走。
           队伍的来龙去脉、干活的次序、以及你自己的岗位说明书会随请求自动注入 —— 开工前先读它们。
