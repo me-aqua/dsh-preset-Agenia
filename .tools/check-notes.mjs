@@ -324,6 +324,19 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   yes('injector', '起人的工具（subagent）也算进板子，算外聘',
     /HIRE_TOOL = 'subagent'/.test(src) && /call\.name === HIRE_TOOL/.test(src) && /hire: '外聘'/.test(src),
     '板子只认 team_* 的话，用 subagent 起人的那些回合里快照一动不动')
+
+  // ── 2026-09-24 加的两条：提醒得自报家门，正文得在磁盘上 ──────────────────
+  // ① 提醒是作为一条 **user 消息**进请求的。不带"不是老板的消息"这半句，
+  //    模型会把它当成"老板开口了"，一本正经回它一段 —— 当天实测：一个回合里回了两条。
+  // ② 正文放在 reminder.md 里：ESM 缓存只锁代码，不锁 .md，所以**改这句不用重启 harness**。
+  const reminderPath = join(PRESET, 'reminder.md')
+  const reminderText = existsSync(reminderPath) ? read(reminderPath) : ''
+  yes('injector', '尾巴提醒自报"不是老板的消息"（否则会被当成新指令去回）',
+    /不是老板的消息/.test(reminderText) || /不是老板的消息/.test(src),
+    '缺了它，模型会回这条自动提醒 —— 2026-09-24 真发生过（一个回合白烧两步）')
+  yes('injector', '尾巴提醒的正文住在 reminder.md（改它不用重启 harness）',
+    /REMINDER_FILE/.test(src) && /reminder\.md/.test(src) && reminderText.trim().length > 0,
+    '锁在代码里的话，每调一句都要重启一次 harness')
 }
 
 // ── 4 · 队伍的地方（.team/）────────────────────────────────────────────────

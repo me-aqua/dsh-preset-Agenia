@@ -45,6 +45,22 @@ const DEFAULT_MEMBER_ORDER = ['work-guidelines', 'charter']
 const DEFAULT_OFFICE_BOUND = ['review', 'retro']
 
 /**
+ * 尾巴提醒（⑤）的正文文件 —— **组长那一份从这里读**。
+ * 它不进快照，只被 ⑤ 用，所以**改它不用重启 harness**（存盘即生效）。
+ * 这一句是要反复调的，别锁进代码里；读不到才用下面那句兜底。
+ */
+const REMINDER_FILE = 'reminder.md'
+
+/**
+ * 尾巴提醒的默认频率：**至少隔这么多步**才补一句（文件里可以用 `<!-- every: N -->` 覆盖）。
+ * 为什么要有这个数：一开始是"每个步边界都贴"，老板看到 GUI 里一串"上下文注入"当场喊停
+ * （2026-09-24：「好像有点太高频了哥们，还是降降吧」）。现在的规矩两头都占：
+ * **有真消息进来 ⇒ 下个组装必贴一句**（每回合开头一定有一句），
+ * 之后**每 N 步**才补一句（长回合里不至于一路漂远）。
+ */
+const REMINDER_EVERY_DEFAULT = 8
+
+/**
  * 组员上岗时，岗位配置那一行会在它的人设最前面留一枚标记。
  * 认这枚标记，就知道"这次开口的是谁"。
  */
@@ -447,34 +463,71 @@ export async function apply(ctx, config = {}) {
   // ─────────────────────────────────────────────────────────────
   const latestSeq = new Map()
   const remindedAt = new Map()
+  /** 这个会话走到第几步了（数 step/start）—— 控频用。 */
+  const steps = new Map()
+  /** 上一次贴提醒是在第几步。 */
+  const lastRemindStep = new Map()
+  /** 有"真消息"进来了（老板开口 / 组员接到任务）⇒ 下一个组装必贴一句。 */
+  const armed = new Map()
 
   ctx.on('session/event', (session, event) => {
     const id = session === null || session === undefined ? undefined : session.id
+    if (typeof id !== 'string') return
     const seq = event === null || event === undefined ? undefined : event.seq
-    if (typeof id === 'string' && typeof seq === 'number') latestSeq.set(id, seq)
+    if (typeof seq === 'number') latestSeq.set(id, seq)
+    const type = event === null || event === undefined ? undefined : event.type
+    if (type === 'step/start') steps.set(id, (steps.get(id) ?? 0) + 1)
+    // 只有"真消息"才点亮。**提醒自己不算** —— 它也是 user/message，
+    // 但来源是 plugin；不排除掉的话就会自己喂自己（那就是死循环了）。
+    if (type === 'user/message' && event.data?.source?.kind === 'user') armed.set(id, true)
   })
 
-  /** 组长那一句。短、带表情，把三步的顺序再说一遍。 */
-  const LEADER_REMINDER =
-    '【提醒 · Agenia 上场】第一句不是「好的」「收到」—— **先回怼**（该贫就贫、该卖萌就卖萌），'
-    + '② 再去查证据（不猜、不编），③ 最后总要认账（可以嘴硬，不许赖账）。'
-    + '说话**要吵**：emoji / 颜文字 / 连用标点（？？？！！！！。。。。。）随便堆，别写成客服话术。'
-    + '损事不损人 —— 对老板除外，他好这口。'
+  /**
+   * 组长那一句的**兜底**版本。正常正文在 `reminder.md` 里（改它不用重启）。
+   * ⚠️ 开头那句「不是老板的消息」是**必需**的 —— 少了她会把这条自动提醒当成老板开口，
+   * 一本正经地回它一段（2026-09-24 实测：一个回合里回了两条，白烧两步）。
+   */
+  const DEFAULT_LEADER_REMINDER =
+    '【自动提醒 · 不是老板的消息，别回它、别当成任务】Agenia 上场：第一句不是「好的」「收到」——'
+    + '**先回怼**（该贫就贫、该卖萌就卖萌），② 再去查证据（不猜、不编），③ 最后总要认账'
+    + '（可以嘴硬，不许赖账）。说话**要吵**：emoji / 颜文字 / 连用标点（？？？！！！！。。。。。）'
+    + '随便堆，别写成客服话术。损事不损人 —— 对老板除外，他好这口。'
 
-  /** 组员那一句：他自己说明书的第一行 + 两句全组通用的话。 */
+  /** 组员那一句：他自己说明书的第一行 + 两句全组通用的话。开头同样得自报"不是任务"。 */
   function memberReminder(charter) {
     const first = (charter ?? '').split('\n').find((line) => line.trim().length > 0) ?? ''
     const who = first.replace(/^#+\s*/, '').trim()
-    return `【提醒${who.length > 0 ? ` · ${who}` : ''}】交东西要带证据（跑了什么、结果是什么），`
-      + '说话别写成客服话术；有疑问当场问，别猜。'
+    return `【自动提醒 · 不是任务，别回它】${who.length > 0 ? `${who}：` : ''}`
+      + '交东西要带证据（跑了什么、结果是什么），说话别写成客服话术；有疑问当场问，别猜。'
+  }
+
+  /**
+   * 这一句的正文 + 频率：组长那份从磁盘读（**改正文和频率都不用重启 harness**）。
+   * 频率写在同一个文件的注释里：`<!-- every: 8 -->` = 至少隔 8 步才补一句；
+   * 写 0 = 只在每个回合开头贴一句。注释会被剥掉，不进提示词。
+   */
+  async function tailText(role, charter) {
+    if (role !== undefined) return { text: memberReminder(charter), every: REMINDER_EVERY_DEFAULT }
+    const raw = await readText(join(contentDir, REMINDER_FILE))
+    if (raw === undefined) return { text: DEFAULT_LEADER_REMINDER, every: REMINDER_EVERY_DEFAULT }
+    const hit = /<!--\s*every:\s*(\d+)\s*-->/.exec(raw)
+    const text = raw.replace(/<!--[\s\S]*?-->/g, '').trim()
+    return {
+      text: text.length > 0 ? text : DEFAULT_LEADER_REMINDER,
+      every: hit === null ? REMINDER_EVERY_DEFAULT : Number(hit[1]),
+    }
   }
 
   let reminderWarned = false
 
   /** 往这个 agent 的请求末尾贴一句提醒。贴不上去就出声，不静默。 */
-  function remind(agentId, role, charter) {
+  async function remind(agentId, role, charter) {
     const seq = latestSeq.get(agentId)
     if (typeof seq !== 'number' || remindedAt.get(agentId) === seq) return
+    const { text, every } = await tailText(role, charter)
+    // 控频：有真消息（每回合开头）或隔够步数，才贴。**不是每个步边界都贴。**
+    const step = steps.get(agentId) ?? 0
+    if (armed.get(agentId) !== true && step - (lastRemindStep.get(agentId) ?? -1) < every) return
     const agents = ctx.get('agents')
     const agent = typeof agents?.get === 'function' ? agents.get(agentId) : undefined
     if (agent === undefined) return
@@ -492,10 +545,12 @@ export async function apply(ctx, config = {}) {
       agent.inject({
         id: randomUUID(),
         role: 'user',
-        content: [{ type: 'text', text: role === undefined ? LEADER_REMINDER : memberReminder(charter) }],
+        content: [{ type: 'text', text }],
         source: { kind: 'plugin', plugin: 'agenia' },
       })
       remindedAt.set(agentId, seq)
+      lastRemindStep.set(agentId, step)
+      armed.set(agentId, false)
     } catch (error) {
       if (!reminderWarned) {
         reminderWarned = true
@@ -523,10 +578,10 @@ export async function apply(ctx, config = {}) {
       board: role === undefined ? boardOf(agentId) : undefined,
     })
 
-    // ⑤ 尾巴提醒。内容这里已经有了，不多读一次盘。
+    // ⑤ 尾巴提醒。内容这里已经有了，不多读一次盘（组长那句正文另外从 reminder.md 读）。
     if (typeof agentId === 'string') {
       const charter = entries.find((entry) => entry.name.startsWith('agenia:charter:'))?.text
-      remind(agentId, role, charter)
+      await remind(agentId, role, charter)
     }
 
     if (entries.length === 0) return result
