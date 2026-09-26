@@ -280,18 +280,34 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     moodJson === undefined
       ? '没有这个块 / JSON 不合法'
       : `scenes = ${Array.isArray(moodJson.scenes) ? moodJson.scenes.length : '（不是数组）'}`)
-  // 六维**次序也钉住**：分词比对防漂（口径 9 的原话是"分词比对，防漂"）。
+  // 六维**次序也钉住**（口径 9）。
+  // ⚠️ **2026-09-26 换测法**：原来是"六个名字要在**同一行**里按序出现"（正则分词比对）。
+  //    老板当天精简 `mood.md`、删掉了那句一行式的声明 —— 而**事实（表格里的六维次序）还在**，
+  //    红的是**文案**。⇒ 改成钉「**六个名字首次出现的先后次序**」：
+  //    表格拆成几行、句子怎么措辞都不影响；**换序 / 少一维照样红**。
+  //    🔴 **判据要跟着事实走，不跟着文案走。**（改前先问：我钉的是那件事，还是那句话？）
   const dimNames = ['愉悦', '唤起', '掌控', '疲劳', '新异', '亲近']
-  const ordered = new RegExp(dimNames.join('[^\\n]{0,40}'))
+  const firstAt = dimNames.map((d) => (moodText ?? '').indexOf(d))
+  const missing = dimNames.filter((_, i) => firstAt[i] < 0)
+  const outOfOrder = missing.length === 0 && !firstAt.every((v, i) => i === 0 || v > firstAt[i - 1])
   yes('preset', '六维 = 愉悦 · 唤起 · 掌控 · 疲劳 · 新异 · 亲近，而且次序没漂（口径 9）',
-    ordered.test(moodText ?? '') && dimNames.every((d) => (moodText ?? '').includes(d)),
-    dimNames.filter((d) => !(moodText ?? '').includes(d)).join('、') || '六个都在')
+    missing.length === 0 && !outOfOrder,
+    missing.length > 0
+      ? `少了：${missing.join('、')}`
+      : outOfOrder
+        ? `六个都在，但**次序漂了**（首次出现的位置 ${firstAt.join(' / ')}）`
+        : `六个都在，首次出现的次序对（位置 ${firstAt.join(' / ')}）`)
   const dingLines = (moodText ?? '').split('\n').filter((l) => l.includes('确定'))
   yes('preset', '「确定」没有作为第七维回来（口径 9）',
     dingLines.every((l) => /不|没有|别/.test(l)),
     dingLines.length === 0 ? '一次都没出现' : `出现了，且不像在否定：${dingLines[0].trim().slice(0, 60)}`)
-  yes('preset', '`mood.md` 里写死了「分数是调语气用的，不是绩效报表」（口径 8）',
-    /不是绩效报表/.test(moodText ?? ''))
+  // ⚠️ **2026-09-26 在这里删掉一条断言** —— 原来钉的是
+  //    「`mood.md` 里写死了「分数是调语气用的，不是绩效报表」（口径 8）」。
+  //    老板当天精简 `mood.md`、把整个 §五「边界」删了（含这一句），并**明确拍板「删的都是我想删的」**
+  //    ⇒ 这条口径**他不留了** ⇒ 断言的存在前提没了。
+  //    🔴 **这是"事实变了"、不是"判据自己烂掉"** —— 删它不算橡皮筋，但**出处必须留在这行里**：
+  //    否则下一个读代码的人会以为这里的断言可以随便删。
+  //    （同批一起不要的还有 §五 另外两条：「系统故障不算情绪」「分数不改判断」。）
 
   const mePath = join(PRESET, 'me-aqua.md')
   const meText = existsSync(mePath) ? read(mePath) : undefined
