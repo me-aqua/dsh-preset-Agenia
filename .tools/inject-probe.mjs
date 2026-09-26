@@ -16,9 +16,18 @@
  *          **插进本步的 messages**，紧跟在他那句话后面（它是好的，这一批不许退化）。
  *   尾巴限长：`tailText()` 按 `style.md` 里的 `<!-- 尾巴到此为止 -->` 切；**标记缺失
  *          或切出来是空 ⇒ 退回全文**（口径 7）。P 族。
- *   情绪模块：`moodOf(signals, constants)` 六维打分 + 场景命中；分数行 + 例子拼在尾巴
- *          那条 style 后面；常数住在 `mood.md` 的 ```mood 块里（改它不用重启）。
- *          N / O / Q 族。
+ *   情绪模块：`moodOf(signals, constants)` **三维**打分（掌控 · 疲劳 · 亲近）+ 场景命中；
+ *          分数行 + 例子拼在尾巴那条 style 后面；常数住在 `mood.md` 的 ```mood 块里
+ *          （改它不用重启）。N / O / Q 族。
+ *   🔴 **2026-09-26 第二批「情绪模块改三维」**：六维砍到三维（愉悦 / 唤起 / 新异 全删）、
+ *      场景库 6 条砍到 3 条（他久别归来 · 一路绿到底 · 刚炸过）、掌控改吃**滑动窗口 + 错误指纹**、
+ *      亲近改吃**重逢项 + 夸奖/骂**、疲劳改吃**当日 log 首条 → 净工作时长**。
+ *      口径整表换成 `.team/leader/2026-09-26/方案-情绪模块改三维.md` 第五节那 18 条，
+ *      契约 = `.team/test/2026-09-26/技术契约-情绪模块改三维.md`。
+ *      ⚠️ **老那 149 条里被"事实变了"推翻的几条是改写、不是删**（见契约第八节那张表）：
+ *      六维 → 三维、6 条场景 → 3 条，都是**事实动了**，不是判据松了。
+ *      新族：`B` 掌控 · `C` 亲近 · `W` 关键词 · `K` 疲劳 · `U` 尾巴全长 · `F` 接线 ·
+ *      `Y` 静默失效 · `X` 收官形状 · `S`（本批新增的 `S1`–`S14` 那一段）场景库与条数同步。
  *
  * 两条守门（位置问题，不是省钱问题）：
  *   守门 A：机制① 在"他刚说完、我还没开口"时不许触发。
@@ -82,28 +91,32 @@ const loadEntry = async () => (ENTRY_MODULE ??= await import(pathToFileURL(PRESE
 
 /**
  * 口径编号 → 一句话（红的时候直接印出来，省得来回翻方案）。
- * ⚠️ **编号 = `.team/leader/2026-09-26/方案-尾巴返修与情绪模块.md` 第四节那张表**（1–18）。
- *    老探针那套编号（1–8、8b）属于上一票的方案 —— 这一批整表换了，所以这里也整表换。
+ * ⚠️ **编号 = `.team/leader/2026-09-26/方案-情绪模块改三维.md` 第五节那张表**（1–18）。
+ *    上一批那套编号（机制①/②、限长、六维情绪）属于上一票的方案 —— 这一批整表又换了。
  *    字符串键（`§…`）是契约内部项（方案里没编号），印出来时不带"口径"两个字。
  */
 const CRITERION = {
-  1: '机制① 每 n 个工具结果贴一次；而且"记账在 session/event、贴在 pre-step"（不再走 agent.inject()）',
-  2: '机制① 的落点 = 「工具结果 → 我下一次开口」之间（本步的 messages，不许推迟一格）',
-  3: '机制② 不许退化：老板开口 ⇒ 这一步的 messages 里插一条 style（在他那句话之后、我开口之前）',
-  4: '守门 A / 守门 B 语义不变（老口径 #4 / #5）',
-  5: '组员一条都不贴（老口径 8b，不变）',
-  6: '尾巴正文 ≤ 400 字符（现在 3325）',
-  7: '`<!-- 尾巴到此为止 -->` 缺失时退回全文，不许静默变空',
-  8: 'mood.md 在、而且六个场景例库真的能被读出来（口径 8 的机器那半边）',
-  9: '六维 = 愉悦 · 唤起 · 掌控 · 疲劳 · 新异 · 亲近（没有"确定"）',
-  10: 'moodOf() 是导出的纯函数，时间（now）全从参数进',
-  11: '六维单调性：每维的信号加大 ⇒ 分数单调（不降/不升，且整段有真变化）',
-  12: '场景例库真的会被命中（分数落进区间 ⇒ 那几句被递出来；落不进去 ⇒ 不递）',
-  13: 'me-aqua.md 的作息三行真的被读（算"距下班"）',
-  14: '衰减常数写在 mood.md 里，改它不用重启',
-  15: '假 ctx 补上 appending 守卫（模拟 dsh-session L1181）',
-  '§形状': '注入消息的形状（契约 3.4 / 老口径 7 的形状那半边）',
-  '§产物': '真 presets/agenia/ 的内容文件（口径 6/8 的产物那半边）',
+  1: '维度 = 三个（掌控 · 疲劳 · 亲近）；愉悦/唤起/新异不再出现',
+  2: '场景库条数与 `moodConstants` 的校验**同步**（改一边没改另一边 ⇒ 整块不认）',
+  3: '掌控：成功率是**滑动窗口**（最近 20 次结果，跨回合不清零）',
+  4: '掌控：**上一回合的错，下一回合仍有影响**（治 P3）',
+  5: '掌控：两个**不同的错**不算"同一个坑"（治 P4）',
+  6: '亲近：**重逢项在他开口那一刻不归零**（治 P5）',
+  7: '亲近：夸涨 / 骂跌 / 双命中骂赢 / 一句最多一档',
+  8: '关键词 `der` **整词匹配**：`under`/`order`/`header` 不许命中',
+  9: '关键词表住 `mood.md`；改词不用重启',
+  10: '疲劳：开工时刻从**当日 log 首条**读得到',
+  11: '疲劳：今天没 log ⇒ **降级到会话首帧**，不静默失效',
+  12: '疲劳：在场累加 / 离开 ≥15 分钟按半衰 60 回退（时间从参数进）',
+  13: '三个新常数住在 `mood.md`，`.js` 里一个都没有',
+  14: '`mood.md` 的「分数是调语气用的，不是绩效报表」还在',
+  15: '尾巴全长（style 段 + 情绪段）有人守（收悬项 ⑧）',
+  16: '组员**一条都不贴**（口径 8b 回归）',
+  17: '`node --check` = 0 · 探针全绿 · 体检全绿',
+  18: '改 `inject.js` 后必须重启才生效（真回合，归组长）',
+  '§形状': '注入消息的形状与拼接线（契约 3.4 / 老口径 7 的形状那半边）',
+  '§产物': '真 presets/agenia/ 的内容文件（口径 1/2/6/14 的产物那半边）',
+  '§夹具': '夹具内容根自己的形状（改夹具 = 换量程，要交代）',
 }
 
 /** `[A1 · 口径1]` / `[J6 · §形状]` */
@@ -115,6 +128,12 @@ const tag = (id, criterion) =>
 let passed = 0
 const reds = []
 const skips = []
+/**
+ * 这次真的判过（或挂起过）的**编号**，按出现次序记下来。
+ * 收尾拿它查重号 —— 契约 §6.1：一个编号两个意思 ⇒ 读的人没法引
+ * （2026-09-26 那一批就是 `M2` ×2、`M4` ×2，评审照着契约表引编号会引错）。
+ */
+const usedIds = []
 /**
  * 读数怎么印。
  * ⚠️ 长的字符串不许原样打 —— style.md 正文 3000+ 字符，印出来日志就没法看了，
@@ -137,6 +156,7 @@ function describe(got, want) {
   return `实测 ${brief(got)} / 期望 ${brief(want)}`
 }
 const check = (id, criterion, label, got, want) => {
+  usedIds.push(id)
   const ok = JSON.stringify(got) === JSON.stringify(want)
   if (ok) passed++
   else reds.push({ id, criterion, label, got, want })
@@ -154,11 +174,23 @@ const checkTrue = (id, criterion, label, cond, detail = '') =>
  */
 const checkIf = (premise, id, criterion, label, got, want) => {
   if (!premise) {
-    skips.push({ id, criterion, label })
-    console.log(`SKIP ${tag(id, criterion)} ${label}\n      前提不成立 ⇒ **未验**（不算通过，也不算红）`)
+    skip(id, criterion, label)
     return
   }
   check(id, criterion, label, got, want)
+}
+
+/**
+ * 挂起的**裸**入口：只记账、不判真假（`checkIf` 前提不成立时走的就是它）。
+ * 它存在的理由是**分母**：一条断言的前提不成立时，以前那种写法是
+ * `if (前提) { ...check... }` —— 那 9 条**既不红、也不挂起、也不进分母，直接从输出里消失**，
+ * 而"跑了 168 条全绿"读起来像全绿（2026-09-26 评审点名的那一条）。
+ * ⇒ **判据不许因为被测对象长什么样就自己消失**：前提不成立 ⇒ 记 SKIP、退出码 2、进分母。
+ */
+const skip = (id, criterion, label) => {
+  usedIds.push(id)
+  skips.push({ id, criterion, label })
+  console.log(`SKIP ${tag(id, criterion)} ${label}\n      前提不成立 ⇒ **未验**（不算通过，也不算红）`)
 }
 
 /**
@@ -229,7 +261,14 @@ async function harness(contentDir, { member } = {}) {
    * 2026-09-26 之前这里是个纯数组 ⇒ `inject()` 直接 push ⇒ **永远不重入失败** ⇒
    * 机制① 死了一整天，探针/重放/体检三套全绿。这个字段就是那次的补丁。
    */
-  const session = { id: AGENT_ID, header: { cwd: REPO }, appending: false }
+  /**
+   * 🔴 **`cwd` 指向夹具目录本身**（2026-09-26 第二批改）——
+   * 口径 10/11 要求疲劳的"开工时刻"从 `${cwd}/.team/leader/<今天>/log.md` 的首条记录读。
+   * 夹具的 `cwd` 不指自己，那一读就会落到**真仓库**的 `.team/leader/**` 上：
+   * 读数跟着「今天组长写没写日志」漂 ⇒ 又是一个"会在半夜自己变红"的量具。
+   * ⇒ 每个夹具现在自带一份 `.team/leader/<日期>/log.md`（`leaderLog` 参数可覆盖）。
+   */
+  const session = { id: AGENT_ID, header: { cwd: contentDir }, appending: false }
   const agent = {
     id: AGENT_ID,
     session,
@@ -371,13 +410,21 @@ async function harness(contentDir, { member } = {}) {
     return entry
   }
 
-  const queue = (source, text) => {
+  /**
+   * 下一条**排队**的消息带什么 `time`。
+   * 🔴 真日志里消息是带时间的（口径 6 的重逢项要读它）——探针里由用例在 `bossText` 的第二参
+   *    明确给出；不给就是"本步的时刻"（那是另一个、更粗的近似）。
+   */
+  let lastQueuedAt
+  const queue = (source, text, at) => {
     queued += 1
+    lastQueuedAt = at
     inbox.push({
       id: `probe-${queued}`,
       role: 'user',
       content: [{ type: 'text', text }],
       source,
+      time: lastQueuedAt,
     })
   }
 
@@ -386,6 +433,16 @@ async function harness(contentDir, { member } = {}) {
     ctx,
     /** 累计贴了几条（机制①② 都算）—— 次数口径，和落点无关。 */
     count: () => injected.length,
+    /**
+     * 尾巴的读数：**条数 + 全部条目的字符数**。
+     * 口径 15（尾巴全长）要的是"真发出去那一条有多长"，所以按**每一条**算，
+     * 不是把几条加起来（两条尾巴之间的关系不是"叠加"）。
+     */
+    stat: () => ({
+      条数: injected.length,
+      字符数: injected.map((x) => (typeof x.message?.content?.[0]?.text === 'string'
+        ? x.message.content[0].text.length : 0)),
+    }),
     last: () => injected[injected.length - 1]?.message,
     /** 最近一条注入的正文（== `last()` 的正文）—— N/O/P/Q 族都读它。 */
     lastText: () => injected[injected.length - 1]?.message?.content?.[0]?.text,
@@ -402,7 +459,10 @@ async function harness(contentDir, { member } = {}) {
     //    断言 A6 钉着"实现不看 isError"。
     toolResult: (data, time) => fire('tool/result', data, time),
     // 老板那句话**只进收件箱**：它变成 `user/message` 是后面 `stepBegin()` 里落笔那一下的事。
-    boss: () => queue({ kind: 'user' }, '老板的话'),
+    boss: (t) => queue({ kind: 'user' }, '老板的话', t),
+    /** 带正文的老板消息（口径 7/8 要按**句子里的词**判夸还是骂）。
+     *  @param t 这句话的**时刻**（口径 6 的重逢项读它；不给就用本步的时刻）。 */
+    bossText: (text, t) => queue({ kind: 'user' }, text, t),
     plugin: () => queue({ kind: 'plugin', plugin: 'agenia' }, '系统自己发的消息'),
     // S 族（守卫自检）要用的三样：会话本身、agent、还有自己挂监听的口子。
     session,
@@ -483,10 +543,11 @@ const FIXTURE_STYLE_EMPTY_CUT = (every) =>
   + '切口之前一个字都没有 ⇒ 退回全文。\n'
 
 /**
- * 夹具的 `mood.md` —— 形状是契约 3.1 钉的那个 ```mood JSON 块。
- * 六个场景覆盖六维（每维至少被一条场景吃住），句子写得短、好逐字比。
+ * **老那套六场景库（上一批的夹具）** —— 只留给 `S1` 那一条用：它量的是
+ * "旧形状（六维 / 六条）在**当前产物**上是绿的" ⇒ 红基线里"新形状那几条红"才有对照。
+ * 🔴 **不许拿它当新契约的夹具**：那是"事实变了"以前的世界。
  */
-const FIXTURE_SCENES = [
+const FIXTURE_SCENES6 = [
   { id: '他久别归来', when: { closeness: [0.7, 1] },
     lines: ['你终于回来啦！！', '欸——你可算回来了，我这儿刚把 v6 跑完。'] },
   { id: '刚炸过', when: { control: [0, 0.35], arousal: [0.6, 1] },
@@ -501,13 +562,69 @@ const FIXTURE_SCENES = [
     lines: ['欸，这个我没见过。', '有点意思，我去翻翻。'] },
 ]
 
-const FIXTURE_MOOD = (halfLifeMinutes = 20, roundDecay = 0.6) =>
+/**
+ * **这一批的夹具场景库：恰好 3 条**（口径 1/2，老板 2026-09-26 拍的）。
+ * 条件只用三维键（`control` / `fatigue` / `closeness`）—— 写一个别的键，整条区间永远对不上。
+ * ⚠️ 句子写得短、好逐字比；`刚炸过` 那两句里留着「第三次」＝ 老板说的"味道留住"。
+ */
+const FIXTURE_SCENES = [
+  { id: '他久别归来', when: { closeness: [0.65, 1] },
+    lines: ['你终于回来啦！！', '欸——你可算回来了，我这儿刚把 v6 跑完。'] },
+  { id: '一路绿到底', when: { control: [0.65, 1] },
+    lines: ['全绿了！！！！', '嘿嘿，一次过。'] },
+  { id: '刚炸过', when: { control: [0, 0.35] },
+    lines: ['淦，又是它。', '第三次了哥们，这次我把它钉死。'] },
+]
+
+/** 三个维度的键（次序就是贴出去那一行的次序，契约 3.4 钉死）。 */
+const DIM_KEYS_3 = ['control', 'fatigue', 'closeness']
+/** 中文名（按同一个次序）。 */
+const DIM_LABELS_3 = ['掌控', '疲劳', '亲近']
+/** 被砍掉的三个维度（口径 1：**不再出现**）。 */
+const DIM_KEYS_GONE = ['pleasure', 'arousal', 'novelty']
+const DIM_LABELS_GONE = ['愉悦', '唤起', '新异']
+
+/**
+ * 夹具的 `mood.md` —— 契约 3.1 钉的那个 ```mood JSON 块。
+ * 🔴 **三个新常数住在这儿**（口径 13）：`presenceMinutes` 15 · `absenceHalfLifeMinutes` 60 ·
+ *    `fullScaleMinutes` 360。`pitStep` 是"同一个坑每多一次扣多少"（口径 5 的判据要用到它）。
+ * 关键词表也住这儿（口径 9）—— 改词不用重启。
+ */
+const FIXTURE_MOOD = (over = {}) =>
   '# 情绪板（探针夹具）\n'
   + '\n'
   + '分数是调语气用的，不是绩效报表。\n'
   + '\n'
   + '```mood\n'
-  + JSON.stringify({ halfLifeMinutes, roundDecay, scenes: FIXTURE_SCENES }, null, 2)
+  + JSON.stringify({
+    halfLifeMinutes: 20,
+    roundDecay: 0.6,
+    presenceMinutes: 15,
+    absenceHalfLifeMinutes: 60,
+    fullScaleMinutes: 360,
+    pitStep: 0.08,
+    // 🔴 **那四档刻度**（2026-09-26 返修 · 评审条件 ③(a)）：键名是机器与文件之间的接口
+    //    （`I12` 钉真产物那一份、`Q11`–`Q15` 钉"真的从文件读"）。值就是契约的默认值 ——
+    //    夹具带上它们，`moodConstants()` 就算把它们变成"必填"也不会让夹具整块失效。
+    reunionScaleMinutes: 240,
+    reunionBase: 0.9,
+    praiseStep: 0.06,
+    blameStep: -0.08,
+    keywordPraise: ['棒', '厉害', 'der'],
+    keywordBlame: ['笨', '又错了', '不是这么写的'],
+    ...over,
+    scenes: over.scenes ?? FIXTURE_SCENES,
+  }, null, 2)
+  + '\n```\n'
+
+/** 老形状那一份（六维 / 六条）—— 只给 `S1` 用。 */
+const FIXTURE_MOOD6 = (halfLifeMinutes = 20, roundDecay = 0.6) =>
+  '# 情绪板（探针夹具 · 老形状六条）\n'
+  + '\n'
+  + '分数是调语气用的，不是绩效报表。\n'
+  + '\n'
+  + '```mood\n'
+  + JSON.stringify({ halfLifeMinutes, roundDecay, scenes: FIXTURE_SCENES6 }, null, 2)
   + '\n```\n'
 
 /** 夹具的 `me-aqua.md` —— 作息三行，格式照契约（`下班：HH:MM`）。 */
@@ -521,20 +638,59 @@ const FIXTURE_ME_AQUA = (offWork = '18:00') =>
   + `- 下班：${offWork}\n`
 
 /**
- * 造一份内容根。
- * @param style   `style.md` 的正文（默认带切口标记那一份）
- * @param mood    `mood.md` 的正文；传 **`null`** = 不放这份文件（Q7 用）
- *                ⚠️ 传 `undefined` 会**触发默认值**（JS 解构的规矩），那是另一个意思。
- * @param meAqua  `me-aqua.md` 的正文（默认 18:00 下班）
+ * 🔴 **探针的固定那一天** —— 口径 10 的"今天"就是它。
+ * 形状照真文件（`.team/leader/2026-09-26/log.md`）：标题行、说明行、`---`、然后 `## HH:MM · …`。
+ * ⚠️ **日期必须从事件时间推、不许调 `Date.now()`**（口径 10 + 老口径 10）：
+ *    拿真实时钟去凑抽屉名 ⇒ 探针跑在哪天就找哪天的抽屉 ⇒ **半夜自己变红**。
  */
-function buildFixture({ style = FIXTURE_STYLE(3), mood = FIXTURE_MOOD(), meAqua = FIXTURE_ME_AQUA() } = {}) {
+const FIXTURE_DATE = '2026-09-26'
+const FIXTURE_LEADER_LOG = (first = '09:00') =>
+  `# log · ${FIXTURE_DATE}（星期二）\n`
+  + '\n'
+  + '> 抽屉日期 = 写它的那天。\n'
+  + '\n'
+  + '---\n'
+  + '\n'
+  + `## ${first} · 开工第一步\n`
+  + '\n'
+  + '| # | 那件事 | 读数 |\n'
+  + '| --- | --- | --- |\n'
+  + '| ① | 读 now.md | ✅ |\n'
+
+/**
+ * 造一份内容根。
+ * @param style     `style.md` 的正文（默认带切口标记那一份）
+ * @param mood      `mood.md` 的正文；传 **`null`** = 不放这份文件（Q7 用）
+ *                  ⚠️ 传 `undefined` 会**触发默认值**（JS 解构的规矩），那是另一个意思。
+ * @param meAqua    `me-aqua.md` 的正文（默认 18:00 下班）
+ * @param leaderLog `.team/leader/<日期>/log.md` 的正文；传 **`null`** = 不放这份文件（口径 11 的降级现场）。
+ *                  ⚠️ 形状照真文件（`.team/leader/2026-09-26/log.md` 实测）：标题行在前，
+ *                  首条记录是 `## HH:MM · …`。**这条形状是接口**（口径 10），改了读不出来。
+ * @param date      哪个抽屉（默认 = 探针固定那天 `2026-09-26`）
+ */
+function buildFixture({
+  style = FIXTURE_STYLE(3),
+  mood = FIXTURE_MOOD(),
+  meAqua = FIXTURE_ME_AQUA(),
+  leaderLog = FIXTURE_LEADER_LOG(),
+  date = FIXTURE_DATE,
+} = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'agenia-probe-'))
   mkdirSync(join(dir, 'team'), { recursive: true })
   writeFileSync(join(dir, 'style.md'), style, 'utf8')
   if (mood !== null) writeFileSync(join(dir, 'mood.md'), mood, 'utf8')
   if (meAqua !== null) writeFileSync(join(dir, 'me-aqua.md'), meAqua, 'utf8')
+  // 🔴 口径 10/11：开工时刻 = 这个抽屉的**首条记录时间**（`## HH:MM`）。
+  //    文件就叫 **`log.md`** —— 真目录里那个累计日志是 `.team/leader/log.md`（没有日期那层），
+  //    两者同名不同路径，所以这里不需要别的名字。
+  if (leaderLog !== null) {
+    mkdirSync(join(dir, '.team', 'leader', date), { recursive: true })
+    writeFileSync(join(dir, '.team', 'leader', date, 'log.md'), leaderLog, 'utf8')
+  }
   // 这几份只是为了别让 inject.js 的配置自检往 stderr 喊"找不到文件" —— 那是噪声。
-  for (const f of ['leader.md', 'work-guidelines.md', 'persona.md']) {
+  // ⚠️ **`leader.md` 不要**：夹具里 `.team/leader/` 是个**目录**，根上再放一个同名文件，
+  //    "内容根 + 相对名"那种解析会撞上它（`readFileSync` 直接 EISDIR/ENOENT 抛出来）。
+  for (const f of ['work-guidelines.md', 'persona.md']) {
     writeFileSync(join(dir, f), `# ${f}（探针夹具）\n`, 'utf8')
   }
   for (const role of ['design', 'dev', 'test', 'review', 'retro', 'hire']) {
@@ -598,15 +754,19 @@ function scoreFromToken(token) {
   return Number(hit[1].startsWith('.') ? `0${hit[1]}` : hit[1])
 }
 
-/** 从一条注入正文里读六维分数（读不到 ⇒ undefined）。 */
+/**
+ * 从一条注入正文里读**三维**分数（读不到 ⇒ undefined）。
+ * 行形状（契约 3.4 钉死）：`【情绪板】掌控 .62 · 疲劳 .30 · 亲近 .90`
+ * ⚠️ 六维那一版是上一批的事实；这一批是三维（口径 1）。
+ */
 function scoresFromText(text) {
   const line = (moodPartOf(text) ?? '').split('\n')[0] ?? ''
-  const hit = /^【情绪板】愉悦 (\S+) · 唤起 (\S+) · 掌控 (\S+) · 疲劳 (\S+) · 新异 (\S+) · 亲近 (\S+)$/.exec(line)
+  const hit = /^【情绪板】掌控 (\S+) · 疲劳 (\S+) · 亲近 (\S+)$/.exec(line)
   if (hit === null) return undefined
   const values = hit.slice(1).map(scoreFromToken)
   if (values.some((v) => v === undefined)) return undefined
-  const [pleasure, arousal, control, fatigue, novelty, closeness] = values
-  return { pleasure, arousal, control, fatigue, novelty, closeness }
+  const [control, fatigue, closeness] = values
+  return { control, fatigue, closeness }
 }
 
 const fixture = buildFixture()
@@ -865,14 +1025,32 @@ try {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  console.log('\n═══ I · 产物本身：真 `presets/agenia/` 那两份内容文件（口径 1、6、8）═══')
+  console.log('\n═══ I · 产物本身：真 `presets/agenia/` 那两份内容文件（口径 1、2、10、15）═══')
   // ═══════════════════════════════════════════════════════════════════════════
   // ⚠️ 这一族量的是**产物内容**（真 style.md 有多长、真 mood.md 在不在），不是逻辑 ——
   //    所以拿夹具当被测对象时（`AGENIA_PROBE_ENTRY` 指到别处，而且没给 `AGENIA_PROBE_PRODUCT_DIR`）
-  //    **整族不跑**：那时它量的是"另一个东西的内容"，跑了只会把阳性对照染红
-  //    （09-25 那次 `I1` 就是这么红的）。口径 6 / 8 的**产物那半边**由红基线 + `check-notes` 承担。
+  //    **这一族不判**：那时它量的是"另一个东西的内容"，判了只会把阳性对照染红
+  //    （09-25 那次 `I1` 就是这么红的）。
+  // 🔴 **但"不判"不等于"消失"**（2026-09-26 返修）：夹具模式下这 12 条**逐条记挂起、照样进分母** ——
+  //    这条清单必须和下面真正判的那 12 个编号一一对应（`Z9` 与"三种跑法分母对照"是它的守卫）。
   if (!TESTING_PRODUCT) {
-    console.log('（跳过：这次测的是夹具，不是产物 —— 口径 6/8 的产物那半边归红基线 + check-notes）')
+    console.log('（I 族：这次测的是夹具，不是产物 —— 12 条记挂起，分母不缩）')
+    // ⚠️ `O7`（"产物那个块解析得出 3 条场景"）也只在产物模式下判 —— 它同样必须进分母。
+    skip('O7', 2, '产物的 `mood.md` 解析得出恰好 3 条场景：这次测的是夹具，不是产物 ⇒ **未验**')
+    for (const [id, criterion, what] of [
+      ['I1', 1, '`style.md` 第一行是 `<!-- every: 3 -->`'],
+      ['I2', 1, '`every` 那枚注释在第一行'],
+      ['I6', 6, '真 `style.md` 里有切口标记'],
+      ['I7', 6, '真尾巴那一段 ≤ 400 字符'],
+      ['I3', '§产物', '真产物贴出来的尾巴段 === 真 `style.md` 切完那一段'],
+      ['I4', '§产物', '真产物尾巴段里不含 `<!--`'],
+      ['I5', '§产物', '真产物尾巴段不是兜底那两句'],
+      ['I10', 15, '真产物全长 = style 段 + 2 + 情绪段'],
+      ['I11', 15, '真产物全长 ≤ 1000 字符'],
+      ['I8', 2, '真 `mood.md` 解析得出恰好 3 条场景'],
+      ['I9', 2, '`inject.js` 里"场景数必须正好 N"那个 N = 3'],
+      ['I12', 13, '真 `mood.md` 的块里有那四档刻度、键名与值对'],
+    ]) skip(id, criterion, `${what}：这次测的是夹具，不是产物 ⇒ **未验**`)
   } else {
     const raw = readFileSync(STYLE_FILE, 'utf8')
     const head = raw.split('\n')[0] ?? ''
@@ -898,12 +1076,46 @@ try {
     checkTrue('I5', '§产物', '真产物贴出来的尾巴段不是兜底那两句（读到了文件，不是回退默认值）',
       typeof text === 'string' && text.includes('# 语言风格'))
 
-    // 口径 8 的**机器那半边**：真 mood.md 在不在、六条场景读不读得出来（人读那半边归组长）。
+    // 🔴 **口径 15 的产物那半边**（2026-09-26 返修 · 评审条件 ①(a)）：`Y1`–`Y3` 量的是**夹具**，
+    //    真产物那条尾巴以前**没有任何会自己再跑的判据** —— 它是实现岗一次性脚本的读数
+    //    （`.team/leader/now.md` 的悬项 ⑧："没有任何断言守着"）。形状与 `Y2`/`Y3` 同源，
+    //    只是把被测对象换成**真 `style.md` + 真 `mood.md`**。
+    const tailStyle = typeof text === 'string' ? stylePartOf(text).length : 0
+    const tailMood = typeof text === 'string' ? (moodPartOf(text) ?? '').length : 0
+    checkTrue('I10', 15, `【口径 15·真产物全长】真发出去那一条 = style 段 + 一个空行 + 情绪段（style ${tailStyle} + 2 + 情绪 ${tailMood}）`,
+      typeof text === 'string' && tailMood > 0 && text.length === tailStyle + tailMood + 2,
+      `实测全长 ${typeof text === 'string' ? text.length : '拿不到'}（style ${tailStyle} + 2 + 情绪 ${tailMood}）`)
+    checkTrue('I11', 15, '【口径 15·真产物上限】真产物那条尾巴 ≤ 1000 字符（同 `Y3` 代拍的那个数）',
+      typeof text === 'string' && text.length <= 1000, `实测 ${typeof text === 'string' ? text.length : '拿不到'} 字符`)
+
+    // 口径 1/2 的**机器那半边**：真 mood.md 在不在、**三条**场景读不读得出来（人读那半边归组长）。
     const moodFile = join(PRODUCT_DIR, 'mood.md')
     const moodRaw = existsSync(moodFile) ? readFileSync(moodFile, 'utf8') : undefined
     const parsed = parseMoodBlock(moodRaw)
-    check('I8', 8, '真 `presets/agenia/mood.md` 在，而且能解析出恰好 6 条场景',
-      parsed === undefined ? '读不到 / 没有 ```mood 块 / JSON 不合法' : parsed.scenes?.length, 6)
+    check('I8', 2, '真 `presets/agenia/mood.md` 在，而且能解析出**恰好 3 条**场景（口径 2 的第一半）',
+      parsed === undefined ? '读不到 / 没有 ```mood 块 / JSON 不合法' : parsed.scenes?.length, 3)
+
+    // 🔴 **口径 2 的第二半（本批最贵的一条）**：`moodConstants()` 里那个写死的条数校验
+    //    必须跟着从 6 改成 3。**改一边没改另一边** ⇒ 整块不认 ⇒ 情绪段整个不贴、
+    //    而且只 `warnOnce` 一次然后永久闭嘴（方案第四节点名的那颗雷）。
+    //    这里量**产物自己的源码**：把 `scenes.length !== N` 那个 N 抠出来。
+    const productSrc = readFileSync(PRESET_ENTRY, 'utf8')
+    const wantHits = [...productSrc.matchAll(/scenes\.length\s*!==\s*(\d+)/g)].map((m) => Number(m[1]))
+    check('I9', 2, '`inject.js` 里"场景数必须正好 N"那个 N = **3**（和 mood.md 同步）',
+      wantHits.length === 0 ? '（源码里找不到 `scenes.length !== N` 这个校验）' : wantHits, [3])
+
+    // 🔴 **那四档刻度也得住在这个块里**（2026-09-26 返修 · 评审条件 ③(a)）。
+    //    以前 `moodConstants()` 是**白名单**：`reunionScaleMinutes` / `reunionBase` /
+    //    `praiseStep` / `blameStep` 传不进去 ⇒ 往块里写什么都没人读，
+    //    而 `inject.js` 的注释还写着"以文件里的为准"（那句话当时是假的）。
+    //    这条只钉**名字与值**（键名是机器与文件之间的接口，改名 = 换接口）；
+    //    "真的从文件读"由 `Q11`–`Q15` 那五条行为判据证。
+    const fourKeys = [
+      ['reunionScaleMinutes', 240], ['reunionBase', 0.90], ['praiseStep', 0.06], ['blameStep', -0.08],
+    ]
+    check('I12', 13, '真 `mood.md` 的 ```mood 块里有那四档刻度，键名与值 = `reunionScaleMinutes` 240 · `reunionBase` .90 · `praiseStep` .06 · `blameStep` −.08',
+      fourKeys.map(([key]) => `${key}=${parsed?.[key] ?? '（没有）'}`),
+      fourKeys.map(([key, value]) => `${key}=${value}`))
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1025,6 +1237,18 @@ try {
     checkTrue('J8', 1, '`agent/pre-step` 那一段里能看见"这一步要不要贴尾巴"的判定（口径 2 的落点）',
       preStepSeg !== undefined && /(pendingTail|\w*[Tt]ail|styleOf)/.test(preStepSeg),
       preStepSeg === undefined ? '找不到 `ctx.on(\'agent/pre-step\'` 这一段' : '那一段里看不见尾巴判定')
+
+    // 🔴 **2026-09-26 返修 · 装饰换成判据**（评审条件 ⑤）。
+    //    唤起被砍 ⇒「距下班」那条信号整个删掉，`me-aqua.md` 的作息三行**没有任何机器读**。
+    //    以前 `check-notes` 里那条断言测的是"那三行的格式还对不对" —— 它测的东西**死了**，
+    //    前提没了、正则照样命中 ⇒ **永远绿**（不能翻面的判据 = 装饰）。
+    //    ⇒ 换成"读它的代码一个都不许回来"。这条与 `check-notes` 里那条同源，**两处都要有**：
+    //      `check-notes` 钉的是**产物那条固定路径**（它没法指向别处 ⇒ 翻面只能靠人看）；
+    //      这一条钉的是**这次跑的那个入口** —— 拿一份真读过 `me-aqua.md` 的旧实现当入口
+    //      （`AGENIA_PROBE_ENTRY=…`），它**当场红**，那才叫证据。
+    checkTrue('J9', '§形状', '`inject.js` 里没有读 `me-aqua.md` 的代码（`ME_FILE` / `minutesToOffWork` / 距下班 零命中）',
+      !/ME_FILE|minutesToOffWork|距下班/.test(src),
+      ['ME_FILE', 'minutesToOffWork', '距下班'].filter((w) => src.includes(w)).join('、') || '（干净：一个都没有）')
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -1038,13 +1262,17 @@ try {
   const HOUR = 60 * MIN
   const T0 = Date.parse('2026-09-26T09:00:00+08:00')
 
-  /** 一条**报错的** tool/result —— 真形状（`data.message.content[0].isError`）。A6 与 Q4 共用。 */
+  /** 一条**报错的** tool/result —— 真形状（`data.message.content[0].isError`）。A6 与 Q4 共用。
+   *  @param line 错误报文里那行"关键话"（口径 5 的**错误指纹**认它；默认那一份 = A6/Q4 用的）。
+   *  @param tool 工具名（指纹的另一半）。真日志里 `tool/result` 与 `tool/call` 是两条事件、
+   *              这里省掉 `tool/call` 直接把它挂在 `data.tool` 上 —— 采集端两种读法都该认。 */
   let errorSeq = 0
-  const errorResultEvent = () => {
+  const errorResultEvent = (line = 'Error: 探针造的报错结果', tool = 'pwsh') => {
     errorSeq += 1
     return {
       turn: 1,
       step: 1,
+      data: { tool, line },
       message: {
         id: `probe-error-${errorSeq}`,
         role: 'user',
@@ -1052,7 +1280,7 @@ try {
         content: [{
           type: 'tool-result',
           toolCallId: `probe-call-${errorSeq}`,
-          content: [{ type: 'text', text: 'Error: 探针造的报错结果' }],
+          content: [{ type: 'text', text: line }],
           isError: true,
         }],
       },
@@ -1060,33 +1288,51 @@ try {
     }
   }
 
-  /** 契约 3.2 那张"中性基线"表，逐字照抄。 */
+  /**
+   * 契约 3.2 那张"中性基线"表，逐字照抄。
+   * 🔴 **三维版**：`errors` / `oks` / `steps` / `continuousMinutes` / `newThings` / `sameErrorCount`
+   *    这些**老字段留着**（它们仍然是真信号的一部分：`recentResults` 数"最近 20 次"、
+   *    `lastErrorAt` 给衰减钟用），新增的是 `pitCounts` / `netWorkMinutes` / `keywordPraise` /
+   *    `keywordBlame` / `presentMinutes` / `absenceMinutes` 这几根**这一批真正吃**的旋钮。
+   */
   const NEUTRAL_SIGNALS = {
     now: T0,
+    recentResults: ['ok', 'ok', 'ok'],
+    pitCounts: {},
+    lastErrorAt: undefined,
+    roundsSinceError: 0,
     errors: 0,
     oks: 3,
-    sameErrorCount: 1,
     steps: 3,
-    continuousMinutes: 30,
     sinceBossMinutes: 5,
-    newThings: 0,
-    minutesToOffWork: 120,
-    lastErrorAt: T0,
-    roundsSinceError: 0,
+    sincePreviousBossMinutes: 5,
+    netWorkMinutes: 30,
+    keywordPraise: 0,
+    keywordBlame: 0,
   }
 
   /**
    * 每维的"强 / 弱"两个极端剖面（契约 3.2 那张控制字段表）。
    * ⚠️ 探针要验"信号加大 ⇒ 分数单调"，就必须知道**哪根旋钮拧哪一维** —— 这是契约钉死的，
    *    不是我猜的。场景命中（O 族）也用它造"落进区间"和"落不进区间"的两组信号。
+   * 🔴 亲近的旋钮**两根一起拧**（`sinceBossMinutes` 与 `sincePreviousBossMinutes`）：
+   *    契约里两个数只有一个进打分（重逢项优先取"他上一次开口之前离了多久"），
+   *    但探针**不知道实现取的是哪一根** —— 只拧一根的话，另一边（中性 5 分钟）
+   *    会把分钉死在 .01875，单调性就变成了假红。
    */
   const EXTREME = {
-    pleasure: { strong: { errors: 0, oks: 6 }, weak: { errors: 3, oks: 3 } },
-    arousal: { strong: { steps: 40 }, weak: { steps: 0 } },
-    control: { strong: { errors: 0, oks: 6, sameErrorCount: 1 }, weak: { errors: 3, oks: 3, sameErrorCount: 8 } },
-    fatigue: { strong: { continuousMinutes: 300 }, weak: { continuousMinutes: 0 } },
-    novelty: { strong: { newThings: 6 }, weak: { newThings: 0 } },
-    closeness: { strong: { sinceBossMinutes: 720 }, weak: { sinceBossMinutes: 0 } },
+    // 掌控：连着翻车（窗口里全是错、同一个坑第 5 次）→ 一直顺（窗口全绿、没有坑）
+    control: {
+      strong: { recentResults: Array(20).fill('ok'), pitCounts: {} },
+      weak: { recentResults: Array(20).fill('fail'), pitCounts: { 'pwsh|拒绝访问': 5 } },
+    },
+    // 疲劳：刚开工（净干 0）→ 净干满量程（360 分钟）
+    fatigue: { strong: { netWorkMinutes: 360 }, weak: { netWorkMinutes: 0 } },
+    // 亲近：就在手边 → 想他了（量程 240 分钟）
+    closeness: {
+      strong: { sinceBossMinutes: 240, sincePreviousBossMinutes: 240 },
+      weak: { sinceBossMinutes: 0, sincePreviousBossMinutes: 0 },
+    },
   }
 
   /** 按 `when` 里每一维的区间，造一组"落进去"（hit）或"落不进去"（miss）的信号。 */
@@ -1098,7 +1344,9 @@ try {
       const [lo, hi] = band
       const wantHigh = (lo + hi) / 2 >= 0.5
       const high = want === 'hit' ? wantHigh : !wantHigh
-      Object.assign(signals, high ? extreme.strong : extreme.weak)
+      // ⚠️ 深拷一层：这一批的旋钮里出现了**数组 / 对象**（`recentResults` / `pitCounts`），
+      //    浅拷会让两组信号共用一个引用 ⇒ 后面改了它，前面那组跟着变（假绿的高发区）。
+      Object.assign(signals, JSON.parse(JSON.stringify(high ? extreme.strong : extreme.weak)))
     }
     return signals
   }
@@ -1287,7 +1535,7 @@ try {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  console.log('\n═══ N · moodOf：导出的纯函数 + 六维（口径 10、9）+ 单调性（口径 11）═══')
+  console.log('\n═══ N · moodOf：导出的纯函数 + 三维（口径 10、9）+ 单调性（口径 11）═══')
   // ═══════════════════════════════════════════════════════════════════════════
   {
     checkTrue('N0', 10, '`inject.js` 导出了 `moodOf`（口径 10 要的那个导出）',
@@ -1327,23 +1575,36 @@ try {
     check('N1b', 10, '【纯函数】调用窗口里 `Date.now()`／`new Date()` 被换成抛错的桩 ⇒ 结果**一模一样**',
       JSON.stringify(poisoned?.值 ?? poisoned?.为什么), JSON.stringify(first?.值 ?? '拿不到'))
 
-    // ③ 出参形状：就是那六维，没有第七维、没有"确定"。
+    // ③ 出参形状：**就那三维**；被砍掉的三维一个都不许出现（口径 1）。
     const shape = scoresOf(first)
-    const keys = shape === undefined ? '（拿不到 scores）' : Object.keys(shape).sort().join(',')
+    const keys = shape === undefined ? ['（拿不到 scores）'] : Object.keys(shape)
     const inRange = shape !== undefined
       && Object.values(shape).every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1)
-    check('N2', 9, '`scores` 就六个键（没有第七维、没有"确定"），每个都是 [0,1] 的数',
-      { 键: keys, 全在区间内: inRange ? '是' : '否' },
-      { 键: 'arousal,closeness,control,fatigue,novelty,pleasure', 全在区间内: '是' })
+    check('N2', 1, '`scores` 就**三个**键，而且次序 = `control, fatigue, closeness`，每个都是 [0,1] 的数',
+      { 键: keys.join(','), 全在区间内: inRange ? '是' : '否' },
+      { 键: DIM_KEYS_3.join(','), 全在区间内: '是' })
 
     /**
      * 单调性：拧**一根**旋钮（契约 3.2 那张表），看那一维。
      * ⚠️ 判据是两条一起 —— ①逐点不升/不降；②**首尾真的不同**。
      *    只有①的话，"这一维是个常数"也会全绿（那就是假绿）。
+     * 🔴 这一批有三根旋钮的值**不是标量**（`recentResults` 是数组、`pitCounts` 是映射），
+     *    所以 `field` 也认三个【测试位代拍】的合成名：
+     *      `pitRepeat` = 窗口全绿、同一个坑重复 k 次
+     *      `windowFailures` = 窗口 20 个里 k 个失败（其余绿）
+     *      `windowOks` = 窗口 20 个里 k 个绿（其余失败）
+     *    —— 把"数组怎么造"写在一个地方，免得每条断言各写一遍、各错一遍。
      */
+    const PIT_A = 'pwsh|拒绝访问'
+    const signalForField = (field, v) => {
+      if (field === 'pitRepeat') return { recentResults: Array(20).fill('ok'), pitCounts: v <= 1 ? {} : { [PIT_A]: v } }
+      if (field === 'windowFailures') return { recentResults: [...Array(20 - v).fill('ok'), ...Array(v).fill('fail')] }
+      if (field === 'windowOks') return { recentResults: [...Array(v).fill('ok'), ...Array(20 - v).fill('fail')] }
+      return { [field]: v }
+    }
     const sweep = (key, field, values, dir, extra = {}) => {
       const curve = values.map((v) => {
-        const scores = scoresOf(callMood({ ...NEUTRAL_SIGNALS, ...extra, [field]: v }))
+        const scores = scoresOf(callMood({ ...NEUTRAL_SIGNALS, ...extra, ...signalForField(field, v) }))
         return scores === undefined ? '拿不到' : scores[key]
       })
       const nums = curve.filter((x) => typeof x === 'number')
@@ -1355,27 +1616,46 @@ try {
     }
     const ok = { 单调: '是', 首尾有真变化: '是' }
 
-    check('N3', 11, '【单调性·愉悦】errors 0→1→2→3（oks 固定 3）⇒ 愉悦**不升**',
-      sweep('pleasure', 'errors', [0, 1, 2, 3], 'down'), ok)
-    check('N4', 11, '【单调性·唤起】steps 0→5→20→40（其余中性）⇒ 唤起**不降**',
-      sweep('arousal', 'steps', [0, 5, 20, 40], 'up'), ok)
-    check('N5', 11, '【单调性·掌控】sameErrorCount 1→3→5→8（基线带一次失败）⇒ 掌控**不升**',
-      sweep('control', 'sameErrorCount', [1, 3, 5, 8], 'down', { errors: 1 }), ok)
-    check('N6', 11, '【单调性·疲劳】continuousMinutes 0→60→180→300 ⇒ 疲劳**不降**',
-      sweep('fatigue', 'continuousMinutes', [0, 60, 180, 300], 'up'), ok)
-    check('N7', 11, '【单调性·新异】newThings 0→1→3→6 ⇒ 新异**不降**',
-      sweep('novelty', 'newThings', [0, 1, 3, 6], 'up'), ok)
-    check('N8', 11, '【单调性·亲近】sinceBossMinutes 0→30→120→720 ⇒ 亲近**不降**',
-      sweep('closeness', 'sinceBossMinutes', [0, 30, 120, 720], 'up'), ok)
+    /**
+     * 🔴 **口径 1 的另一半：被砍掉的三个维度不许回来。**
+     * 喂一组"老维度拉满"的信号（老实现会靠它算出愉悦 1.00 / 唤起 .90 / 新异 1.00），
+     * 三维实现里这三样**根本不在出参里**。
+     * ⚠️ 这条与 `N2` 是同源的（都看 `scores` 的键）；留两条是因为它们红的原因不同：
+     *    `N2` 红 = 出参里多了三个键；`N3` 红 = 出参里那三个键**还被喂着老信号**。
+     */
+    const legacyFed = scoresOf(callMood({
+      ...NEUTRAL_SIGNALS,
+      errors: 0, oks: 6, steps: 40, continuousMinutes: 300, newThings: 6, minutesToOffWork: 0,
+    }))
+    const backAgain = DIM_KEYS_GONE.filter((k) => legacyFed !== undefined && k in legacyFed)
+    check('N3', 1, '【砍掉的三个维度】喂满"愉悦/唤起/新异"的老信号（oks 6 · steps 40 · newThings 6）⇒ 那三个键**不许出现**',
+      backAgain.length === 0 ? '（一个都没回来）' : `回来了：${backAgain.join('、')}`, '（一个都没回来）')
+    check('N4', 12, '【单调性·疲劳】净工作时长 0→60→180→360 ⇒ 疲劳**不降**',
+      sweep('fatigue', 'netWorkMinutes', [0, 60, 180, 360], 'up'), ok)
+    check('N5', 5, '【单调性·掌控·同一个坑】同一个坑 1→3→5 次（窗口全绿）⇒ 掌控**不升**',
+      sweep('control', 'pitRepeat', [1, 3, 5], 'down'), ok)
+    check('N6', 3, '【单调性·掌控·滑动窗口】窗口里失败数 0→5→10→20（总 20 次）⇒ 掌控**不降/不升**（成功率↓ ⇒ 分数↓）',
+      sweep('control', 'windowFailures', [0, 5, 10, 20], 'down'), ok)
+    check('N7', 3, '【单调性·掌控】窗口里的绿 0→20 次（全绿）⇒ 掌控不降（老 N7 的位置换了维度，见契约第八节）',
+      sweep('control', 'windowOks', [0, 5, 10, 20], 'up'), ok)
+    check('N8', 6, '【单调性·亲近】他"这一次开口之前"离了 0→30→120→240 分钟 ⇒ 亲近**不降**',
+      sweep('closeness', 'sincePreviousBossMinutes', [0, 30, 120, 240], 'up', { sinceBossMinutes: 240 }), ok)
 
-    // ④ 疲劳与唤起**必须分开**（老板 09-26 拍的：高唤起+低疲劳=来劲；都高=烦躁）。
-    //    最少要能造出"唤起明显高于疲劳"的那一格，否则两者就是一维。
-    const fresh = scoresOf(callMood(profileFor({ arousal: [0.6, 1] }, 'hit', T0)))
-    checkTrue('N9', 9, '【分开验】高步数 + 刚开工 ⇒ 唤起 > 疲劳（"来劲"那一格造得出来）',
-      typeof fresh?.arousal === 'number' && typeof fresh?.fatigue === 'number' && fresh.arousal > fresh.fatigue,
-      `唤起 ${fresh?.arousal} / 疲劳 ${fresh?.fatigue}`)
+    /**
+     * ④ **疲劳与掌控是两个独立的数**（老版那条"唤起 ≠ 疲劳"的对应条）：
+     *    连着翻车但是刚开工 ⇒ 掌控低、疲劳低；一路顺但干了一整天 ⇒ 掌控高、疲劳高。
+     *    合成一维的话这四格就分不开了。
+     */
+    const tiredBad = scoresOf(callMood({ ...NEUTRAL_SIGNALS, ...EXTREME.fatigue.weak, ...EXTREME.control.weak }))
+    const freshGood = scoresOf(callMood({ ...NEUTRAL_SIGNALS, ...EXTREME.fatigue.strong, ...EXTREME.control.strong }))
+    checkTrue('N9', 1, '【分开验】掌控与疲劳是两根独立的数：连着翻车+刚开工 ⇒ 掌控低而疲劳低；一路顺+干满 ⇒ 掌控高而疲劳高',
+      typeof tiredBad?.control === 'number' && typeof tiredBad?.fatigue === 'number'
+      && typeof freshGood?.control === 'number' && typeof freshGood?.fatigue === 'number'
+      && tiredBad.control < 0.35 && tiredBad.fatigue < 0.35
+      && freshGood.control > 0.65 && freshGood.fatigue > 0.65,
+      `翻车+刚开工：掌控 ${tiredBad?.control} 疲劳 ${tiredBad?.fatigue} · 顺+干满：掌控 ${freshGood?.control} 疲劳 ${freshGood?.fatigue}`)
 
-    // ⑤ 六个"强"剖面真的进得了高区间、"弱"剖面进得了低区间 ——
+    // ⑤ 三个"强"剖面真的进得了高区间、"弱"剖面进得了低区间 ——
     //    否则场景区间没得写（分数全挤在 0.4~0.6 就是装饰）。
     const spanOk = Object.entries(EXTREME).every(([dim, ex]) => {
       const strong = scoresOf(callMood({ ...NEUTRAL_SIGNALS, ...ex.strong }))?.[dim]
@@ -1387,26 +1667,26 @@ try {
       const weak = scoresOf(callMood({ ...NEUTRAL_SIGNALS, ...ex.weak }))?.[dim]
       return `${dim} ${weak}→${strong}`
     }).join(' · ')
-    checkTrue('N10', 11, '每一维的"强"剖面 ≥ 0.65、"弱"剖面 ≤ 0.35（分数真的拉得开）',
+    checkTrue('N10', 3, '每一维的"强"剖面 ≥ 0.65、"弱"剖面 ≤ 0.35（分数真的拉得开）',
       spanOk, spanDetail)
 
     // ⑥ 缺信号不许炸：只给 `now`。
     const bare = scoresOf(callMood({ now: T0 }))
-    checkTrue('N11', 10, '只给 `now`、别的信号全缺 ⇒ 照样出一组六维分数（不许抛、不许 NaN）',
-      bare !== undefined && Object.keys(bare).length === 6
+    checkTrue('N11', 10, '只给 `now`、别的信号全缺 ⇒ 照样出一组**三维**分数（不许抛、不许 NaN）',
+      bare !== undefined && Object.keys(bare).length === 3 && Object.keys(bare).join(',') === DIM_KEYS_3.join(',')
         && Object.values(bare).every((v) => typeof v === 'number' && Number.isFinite(v)),
       `拿到的是 ${brief(bare)}`)
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  console.log('\n═══ O · 场景例库真的会被命中（口径 8、12）═══')
+  console.log('\n═══ O · 场景例库真的会被命中（口径 2、12）═══')
   // ═══════════════════════════════════════════════════════════════════════════
   {
     const scenes = CONSTANTS?.scenes ?? []
-    check('O0', 8, '夹具的 ```mood 块里解析出**恰好 6 条**场景（口径 8 的机器那半边）', scenes.length, 6)
+    check('O0', 2, '夹具的 ```mood 块里解析出**恰好 3 条**场景（口径 2 的机器那半边）', scenes.length, 3)
     const keys = new Set(Object.keys(EXTREME))
     const badKey = scenes.flatMap((s) => Object.keys(s.when ?? {})).filter((k) => !keys.has(k))
-    check('O0b', 9, '每条场景的 `when` 只用那六个维度键（写错一个 ⇒ 那条区间永远对不上）',
+    check('O0b', 1, '每条场景的 `when` 只用那**三个**维度键（写错一个 ⇒ 那条区间永远对不上）',
       badKey.length === 0 ? '（干净）' : `多出来：${[...new Set(badKey)].join('、')}`, '（干净）')
 
     /**
@@ -1454,28 +1734,52 @@ try {
           { 至少一维真的出了区间: '是', 递出来的场景里有它: '没有' })
       }
     }
-
     checkSceneLibrary('O', scenes, '夹具', CONSTANTS)
 
-    // 🔴 口径 12 说的是**产物**那六条场景。夹具那一套只证明"机制通不通"——
+    /**
+     * 🔴 **这一族的前提不成立时，9 条编号也要进分母**（2026-09-26 返修）。
+     * 以前写的是 `if (productLibrary?.scenes?.length === 3) { checkSceneLibrary('O8', …) }`：
+     * 产物还是 6 条场景那阵子，这个分支**不进** ⇒ `O81a`–`O83c` 那 9 条
+     * **既不红、也不挂起、也不进分母，直接从输出里消失**（评审 grep "跳过"：零命中）。
+     * 后果是"58 红 → 0 红"这句话被污染：那 9 条**没有"改前"读数**。
+     * ⇒ 现在的规矩：**判据不许因为被测对象长什么样就自己消失**。
+     *    前提不成立 ⇒ 逐条记 SKIP（退出码 2），分母恒定。
+     * ⚠️ 这份编号清单必须和 `checkSceneLibrary` 里那三个 `${prefix}${at}a/b/c` 一一对应
+     *    —— 收尾的 `Z9`（编号唯一）与"三种跑法分母对照"是它的守卫。
+     */
+    const skipSceneLibrary = (prefix, label, why) => {
+      for (let i = 1; i <= 3; i++) {
+        skip(`${prefix}${i}a`, 12, `【命中·${label}】第 ${i} 条场景：${why} ⇒ **未验**`)
+        skip(`${prefix}${i}b`, 12, `【命中·逐字·${label}】第 ${i} 条场景：${why} ⇒ **未验**`)
+        skip(`${prefix}${i}c`, 12, `【不命中·${label}】第 ${i} 条场景：${why} ⇒ **未验**`)
+      }
+    }
+
+    // 🔴 口径 2 说的是**产物**那三条场景。夹具那一套只证明"机制通不通"——
     //    产物自己的区间与打分对不对得上，必须拿**产物自己的** mood.md 跑，
     //    而且**常数也得用产物那一份**（`moodOf` 是按传进去的例库判命中的）。
-    //    ⚠️ 只在"对产物跑"时才跑（夹具模式下它的被测对象不是产物，跑了只会染红对照，同 `I` 族）。
+    //    ⚠️ 夹具模式下这 9 条**记挂起、不跑**（那时它量的是"另一个东西的内容"，
+    //       跑了只会染红对照，同 `I` 族）—— 但**照样进分母**。
     if (!TESTING_PRODUCT) {
-      console.log('（产物那六条场景：跳过 —— 这次测的是夹具，见契约 5.2）')
+      console.log('（产物那三条场景：这次测的是夹具 —— 9 条记挂起，分母不缩，见契约 5.2）')
+      skipSceneLibrary('O8', '产物', '这次测的是夹具，不是产物')
     } else {
       const productMoodPath = join(PRODUCT_DIR, 'mood.md')
       const productLibrary = parseMoodBlock(existsSync(productMoodPath) ? readFileSync(productMoodPath, 'utf8') : undefined)
-      check('O7', 8, `\`${PRODUCT_DIR}\` 下的 mood.md 解析得出恰好 6 条场景（口径 12 的前提）`,
-        productLibrary?.scenes?.length ?? '读不出来 / 不是 6 条', 6)
-      if (productLibrary?.scenes?.length === 6) {
+      check('O7', 2, `\`${PRODUCT_DIR}\` 下的 mood.md 解析得出恰好 3 条场景（口径 2 的前提）`,
+        productLibrary?.scenes?.length ?? '读不出来 / 不是 3 条', 3)
+      if (productLibrary?.scenes?.length === 3) {
         checkSceneLibrary('O8', productLibrary.scenes, '产物', productLibrary)
+      } else {
+        // 🔴 原来这里什么都没有 —— 9 条就这么没了。现在它们进分母、退出码按 2 算。
+        console.log('（产物的场景不是 3 条 ⇒ 下面 9 条记挂起，**不许**读成通过）')
+        skipSceneLibrary('O8', '产物', '产物的 ```mood 块里不是 3 条场景（见上一条 `O7`）')
       }
     }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  console.log('\n═══ Q · 接线：分数行 + 例子拼在尾巴后面；常数在文件里；作息三行真的被读（口径 9、12、13、14）═══')
+  console.log('\n═══ Q · 接线：分数行 + 例子拼在尾巴后面（口径 1、7、12）═══')
   // ═══════════════════════════════════════════════════════════════════════════
   /** 情绪段到底能不能贴出来 —— Q7 的阳性对照（它不成立时"没有情绪段"是空跑成绿的）。 */
   let moodSectionWorks = false
@@ -1486,9 +1790,9 @@ try {
     const text = h.lastText()
     const mood = moodPartOf(text)
     const lines = (mood ?? '').split('\n')
-    const scoreLine = /^【情绪板】愉悦 (?:1\.00|\.[0-9]{2}) · 唤起 (?:1\.00|\.[0-9]{2}) · 掌控 (?:1\.00|\.[0-9]{2}) · 疲劳 (?:1\.00|\.[0-9]{2}) · 新异 (?:1\.00|\.[0-9]{2}) · 亲近 (?:1\.00|\.[0-9]{2})$/
+    const scoreLine = /^【情绪板】掌控 (?:1\.00|\.[0-9]{2}) · 疲劳 (?:1\.00|\.[0-9]{2}) · 亲近 (?:1\.00|\.[0-9]{2})$/
     moodSectionWorks = scoreLine.test(lines[0] ?? '')
-    checkTrue('Q1', 9, '尾巴那条消息里有【情绪板】分数行：六维齐全、次序照契约、分数写成 `.NN`',
+    checkTrue('Q1', 1, '尾巴那条消息里有【情绪板】分数行：**三维齐全**、次序照契约、分数写成 `.NN`',
       moodSectionWorks, `第 1 行实测 ${JSON.stringify(lines[0] ?? '（没有情绪段）')}`)
     check('Q2', '§形状', '情绪段第 2 行恒为 `【这种状态，人一般这么说话】`',
       lines[1], '【这种状态，人一般这么说话】')
@@ -1499,52 +1803,152 @@ try {
   }
   {
     // 例子行：造一个**确定命中**的场景（他久别归来 = 亲近高）—— 老板 12 小时前开的口。
+    // ⚠️ 那一批工具结果里**混两个报错的**：这样掌控落在中段（不命中"一路绿到底"），
+    //    这一条才量得到"命中场景那一行的**形状**"，不会被别的场景行搅进来。
     const scene = FIXTURE_SCENES.find((s) => s.id === '他久别归来')
-    const h = await harness(fixture)
-    await h.turnStart(T0)
-    await h.boss()
-    await h.stepBegin(T0)                 // 机制② 贴 1 条（老板那句话被领走 ⇒ 守门 B 挂上）
-    await h.iSpeak(T0)
-    // ⚠️ **4 个**结果：第 1 个被守门 B 吃掉，后 3 个才凑满 n=3。
-    for (let k = 0; k < 4; k++) await h.toolResult(undefined, T0 + 12 * HOUR)
-    await h.stepBegin(T0 + 12 * HOUR + MIN)
-    const text = h.lastText()
-    const scores = scoresFromText(text)
-    const example = (moodPartOf(text) ?? '').split('\n').find((l) => l.includes(scene.lines[0]))
-    check('Q4', 12, '【例子行】命中场景的那一行**逐字**长这样：`  ·（亲近 .NN）「句」「句」`',
-      example, `  ·（亲近 ${scores === undefined ? '??' : fmtScore(scores.closeness)}）「${scene.lines[0]}」「${scene.lines[1]}」`)
-    // ⚠️ 挂阳性对照：连"命中的那一行"都没递出来时，"别的场景不在"是**空跑成绿**的。
-    checkIf(typeof example === 'string', 'Q5', 12,
-      '没命中的场景**不许**出现在情绪段里（赶下班那一组信号不在这条路上）',
-      typeof text === 'string' && text.includes('再改我就住这儿了。') ? '混进来了' : '没有', '没有')
+    // ⚠️ 这一块**自带一份夹具**（不共用那个模块级的 `fixture`）：别的族会往它上面写东西
+    //    （H 族改 `style.md`），共用的话读数会被别人拨动 —— 本票实测踩过。
+    const q4dir = buildFixture()
+    try {
+      const h = await harness(q4dir)
+      // 形状同 V 族：**先让他 4 小时前说过一句**，现在这一句 ⇒ 重逢项到顶（.90）。
+      // 🔴 每句话的**时刻**都要显式给（`bossText` 的第二参）—— 口径 6 的重逢项读的是它。
+      await h.turnStart(T0 - 4 * HOUR)
+      await h.bossText('（上一句话）', T0 - 4 * HOUR)
+      await h.stepBegin(T0 - 4 * HOUR + 5 * MIN)
+      await h.bossText('老板的话', T0)
+      await h.iSpeak(T0 + MIN)                                   // 一条成功结果 ⇒ 掌控够高（不点亮"刚炸过"）
+      await h.toolResult(undefined, T0 + MIN)
+      await h.stepBegin(T0 + 2 * MIN)
+      const text = h.lastText()
+      const scores = scoresFromText(text)
+      const example = (moodPartOf(text) ?? '').split('\n').find((l) => l.includes(scene.lines[0]))
+      check('Q4', 7, '【例子行】命中场景的那一行**逐字**长这样：`  ·（亲近 .NN）「句」「句」`',
+        example, `  ·（亲近 ${scores === undefined ? '??' : fmtScore(scores.closeness)}）「${scene.lines[0]}」「${scene.lines[1]}」`)
+      // ⚠️ 挂阳性对照：连"命中的那一行"都没递出来时，"别的场景不在"是**空跑成绿**的。
+      checkIf(typeof example === 'string', 'Q5', 7,
+        '没命中的场景**不许**出现在情绪段里（这一格没有"刚炸过"、没有"一路绿到底"）',
+        typeof text === 'string' && text.includes('第三次了哥们，这次我把它钉死。') ? '混进来了' : '没有', '没有')
+    } finally {
+      rmSync(q4dir, { recursive: true, force: true })
+    }
   }
   {
-    // 口径 14：**同一份 harness、同一个夹具**，只改 mood.md 里的常数 ⇒ 下一次分数跟着变（不用重启）。
+    // 口径 12：**同一份 harness、同一个夹具**，只改 mood.md 里的常数 ⇒ 下一次分数跟着变（不用重启）。
+    // 这一条量的是"常数真住在文件里"，所以**挑一个这一批新加的常数**（`fullScaleMinutes`）：
+    // 净干 180 分钟 ⇒ 满量程 360 时疲劳 .50、满量程 180 时疲劳 1.00（**越大**的那个满量程反而**越小**）。
     // ⚠️ 必须用**自己那份夹具**：这一组会改 mood.md，共用的话后面几族会跟着变。
     const hFixture = buildFixture()
     try {
       const h = await harness(hFixture)
       const runOnce = async (t) => {
-        await h.turnStart(t)
-        await h.iSpeak(t)
-        await h.toolResult(errorResultEvent(), t)             // 失败 1 ⇒ 计数 1
-        await h.toolResult(undefined, t + 10 * MIN)           // 计数 2
-        await h.toolResult(undefined, t + 10 * MIN)           // 计数 3 ⇒ 响
-        await h.stepBegin(t + 10 * MIN + MIN)
+        // ⚠️ 先推一条**早一点**的事件：净工作时长量的是"上一次记账 → 现在"，
+        //    不先垫一条，`lastWorkAt` 就落在这一刻上 ⇒ interval 恒 0 ⇒ 疲劳永远是 0。
+        await h.turnStart(t - HOUR)
+        await h.toolResult(undefined, t - HOUR)
+        await h.boss(undefined, t)
+        await h.stepBegin(t)
         return scoresFromText(h.lastText())
       }
-      const slow = await runOnce(T0)
-      writeFileSync(join(hFixture, 'mood.md'), FIXTURE_MOOD(2, 0.6), 'utf8')   // 半衰 20 分钟 → 2 分钟
-      const fast = await runOnce(T0 + HOUR)
-      checkTrue('Q6', 14, '只改 `mood.md` 的 `halfLifeMinutes`（20 → 2）⇒ 同一段信号打出**不同**的分（存盘即生效）',
-        typeof slow?.control === 'number' && typeof fast?.control === 'number' && fast.control > slow.control,
-        `半衰 20 的掌控 ${slow?.control ?? '拿不到'} · 半衰 2 的掌控 ${fast?.control ?? '拿不到'}`)
+      // 开工 09:00（当日 log 首条）⇒ 12:00 那一刻净干了 3 小时 = 180 分钟：
+      // 满量程 360 ⇒ 疲劳 .50 · 满量程 180 ⇒ 疲劳 1.00（满量程越小，同一个数越到顶）。
+      const slow = await runOnce(T0 + 3 * HOUR)
+      writeFileSync(join(hFixture, 'mood.md'), FIXTURE_MOOD({ fullScaleMinutes: 180 }), 'utf8')
+      const fast = await runOnce(T0 + 3 * HOUR)
+      checkTrue('Q6', 12, '只改 `mood.md` 的 `fullScaleMinutes`（360 → 180）⇒ 同一段信号打出**不同**的分（存盘即生效）',
+        typeof slow?.fatigue === 'number' && typeof fast?.fatigue === 'number' && fast.fatigue > slow.fatigue,
+        `满量程 360 的疲劳 ${slow?.fatigue ?? '拿不到'} · 满量程 180 的疲劳 ${fast?.fatigue ?? '拿不到'}`)
     } finally {
       rmSync(hFixture, { recursive: true, force: true })
     }
   }
   {
-    // 读不到 mood.md ⇒ 尾巴照贴 style、**不贴情绪段**，而且要出声（契约 3.1）。
+    // 🔴 **那四档刻度也得从 `mood.md` 读**（2026-09-26 返修 · 评审条件 ③(a)）。
+    //    以前 `moodConstants()` 返回的是**白名单对象**：`reunionScaleMinutes` / `reunionBase` /
+    //    `praiseStep` / `blameStep` **根本传不进去** ⇒ 往块里写什么都没人读，
+    //    而 `inject.js` 的注释却写着"以文件里的为准"（那句话当时是假的）。
+    //    判据形状与 `V4`（词表住文件里）、`Q6`（满量程住文件里）同源：
+    //    **同一串事件、只换文件里那个数 ⇒ 读数按算出来的量走**。
+    //    四个数写死在 `.js` 里的实现，两格读数会**一模一样** ⇒ 当场红。
+    /**
+     * 老板隔 `gapMinutes` 分钟之前说过一句（传 `null` = 他从没开过口），现在这一句是 `said`。
+     * 走到回答他那一步 ⇒ 从情绪段读亲近。起点固定 09:00（夹具当日 log 首条）。
+     */
+    const closenessRun = async (gapMinutes, said, over = {}) => {
+      const dir = buildFixture({ mood: FIXTURE_MOOD(over) })
+      try {
+        const h = await harness(dir)
+        await h.turnStart(T0 - 8 * HOUR)
+        if (gapMinutes !== null) {
+          // 🔴 **他上一次开口那一步的时刻 = 那句话的时刻**（`stepBegin` 与 `bossText` 同刻）。
+          //    理由：`sincePrevBossMin` 有两个记账点 —— pre-step 用**消息自带的时间**、
+          //    `user/message` 事件那条兜底用**本步的时间**，而事件排在 pre-step 之后 ⇒ 后者赢。
+          //    两者不同刻时，读数会差"上一步的滞后"（本票实测：差 1 分钟 ⇒ .90 读成 .89）。
+          //    同刻之后两个记账点写的是同一个数 ⇒ 期望值能算准。
+          await h.bossText('（上一句话）', T0 - gapMinutes * MIN)
+          await h.stepBegin(T0 - gapMinutes * MIN)
+        }
+        await h.bossText(said, T0)
+        await h.stepBegin(T0 + MIN)
+        return scoresFromText(h.lastText())?.closeness
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+    const near = (a, b) => typeof a === 'number' && Math.abs(a - Number(b)) < 5e-3
+    const show = (x) => (typeof x === 'number' ? Number(x.toFixed(4)) : x)
+
+    // 重逢项 = `reunionBase × clamp01(间隔 ÷ reunionScaleMinutes)`（契约 3.2）。
+    const scaleA = await closenessRun(120, '今天就这样')
+    const scaleB = await closenessRun(120, '今天就这样', { reunionScaleMinutes: 120 })
+    checkTrue('Q11', 13, '【四档刻度·量程】只改文件里的 `reunionScaleMinutes`（240 → 120），隔 2 小时开口 ⇒ 亲近 .45 → .90',
+      near(scaleA, 0.45) && near(scaleB, 0.90),
+      `量程 240 ⇒ ${show(scaleA)}（期望 .45） · 量程 120 ⇒ ${show(scaleB)}（期望 .90）`)
+
+    const baseA = await closenessRun(480, '今天就这样')
+    const baseB = await closenessRun(480, '今天就这样', { reunionBase: 0.45 })
+    checkTrue('Q12', 13, '【四档刻度·顶】只改文件里的 `reunionBase`（.90 → .45），隔 8 小时开口（比值已到顶）⇒ 亲近 .90 → .45',
+      near(baseA, 0.90) && near(baseB, 0.45),
+      `底 .90 ⇒ ${show(baseA)}（期望 .90） · 底 .45 ⇒ ${show(baseB)}（期望 .45）`)
+
+    const praiseA = await closenessRun(null, '真棒')
+    const praiseB = await closenessRun(null, '真棒', { praiseStep: 0.20 })
+    checkTrue('Q13', 13, '【四档刻度·夸】只改文件里的 `praiseStep`（.06 → .20），他第一次开口就夸一句 ⇒ 亲近 .06 → .20',
+      near(praiseA, 0.06) && near(praiseB, 0.20),
+      `一档 .06 ⇒ ${show(praiseA)}（期望 .06） · 一档 .20 ⇒ ${show(praiseB)}（期望 .20）`)
+
+    const blameA = await closenessRun(240, '真笨')
+    const blameB = await closenessRun(240, '真笨', { blameStep: -0.20 })
+    checkTrue('Q14', 13, '【四档刻度·骂】只改文件里的 `blameStep`（−.08 → −.20），重逢项到顶时骂一句 ⇒ 亲近 .82 → .70（**键值带负号**：加法的写法才对吧）',
+      near(blameA, 0.82) && near(blameB, 0.70),
+      `一档 −.08 ⇒ ${show(blameA)}（期望 .82） · 一档 −.20 ⇒ ${show(blameB)}（期望 .70）`)
+
+    // 最后一条量的是"**存盘即生效**"：同一个 harness（同一个模块实例，没重启）、同一份夹具，
+    // 只把 `mood.md` 里的四个数换掉 ⇒ 下一次读数跟着换（`readMoodConstants()` 每次现读）。
+    const hSame = buildFixture()
+    try {
+      const h = await harness(hSame)
+      const run = async (at, said) => {
+        await h.turnStart(at - 8 * HOUR)
+        await h.bossText(said, at)
+        await h.stepBegin(at + MIN)
+        return scoresFromText(h.lastText())?.closeness
+      }
+      const before = await run(T0, '真棒')            // 他第一次开口 ⇒ 重逢项 0 ⇒ 只剩夸那一档 .06
+      writeFileSync(join(hSame, 'mood.md'),
+        FIXTURE_MOOD({ reunionScaleMinutes: 1, reunionBase: 0.3, praiseStep: 0.2, blameStep: -0.4 }), 'utf8')
+      // 这一次开口离上一次 4 小时 = 240 分钟 ≥ 量程 1 ⇒ 比值 1 ⇒ 重逢项 .30；
+      // 一句夸 +.20、一句骂 −.40 ⇒ .30 + .20 − .40 = .10。
+      const after = await run(T0 + 4 * HOUR, '真棒，这一版很好。真笨，这块写错了。')
+      checkTrue('Q15', 13, '【四档刻度·不用重启】同一个 harness 里只换文件（量程 1 · 底 .30 · 夸 +.20 · 骂 −.40）⇒ 下一次读数 .10（四个数写死在 `.js` 里的话是 .88）',
+        near(before, 0.06) && near(after, 0.10),
+        `改文件前 ${show(before)}（期望 .06） · 改文件后 ${show(after)}（期望 .10；写死的话 .88）`)
+    } finally {
+      rmSync(hSame, { recursive: true, force: true })
+    }
+  }
+  {
+    // 读不到 mood.md ⇒ 尾巴照贴 style、**不贴情绪段**，而且要出声（契约 3.1，口径 2 的老半边）。
     const noMood = buildFixture({ mood: null })
     try {
       const before = stderrSeen.length
@@ -1552,12 +1956,12 @@ try {
       await h.turnStart(T0)
       await bossThenStep(h)
       const text = h.lastText()
-      checkIf(moodSectionWorks, 'Q7', 8,
+      checkIf(moodSectionWorks, 'Q7', 2,
         '读不到 `mood.md` ⇒ 尾巴**只贴 style 段**，不贴分数行（宁可不说，不许瞎说）',
         moodPartOf(text) === undefined ? '（没有情绪段）' : brief(moodPartOf(text)), '（没有情绪段）')
-      check('Q8', 8, '而且 style 段照贴、逐字不差（不是"整条不贴"）',
+      check('Q8', 2, '而且 style 段照贴、逐字不差（不是"整条不贴"）',
         stylePartOf(text), cutTail(FIXTURE_STYLE(3)))
-      checkTrue('Q9', 8, '读不到 `mood.md` **要出声**（`console.error`，报文里点到 mood.md）—— 不许静默',
+      checkTrue('Q9', 2, '读不到 `mood.md` **要出声**（`console.error`，报文里点到 mood.md）—— 不许静默',
         stderrSeen.slice(before).some((m) => /mood\.md/.test(m)),
         `这一段里 console.error 收到的是：${brief(stderrSeen.slice(before).join(' | ') || '（一声都没有）')}`)
     } finally {
@@ -1565,30 +1969,560 @@ try {
     }
   }
   {
-    // 口径 13：**作息三行真的被读** —— 同一时刻、只换 me-aqua.md 的"下班：HH:MM"。
-    const early = buildFixture({ meAqua: FIXTURE_ME_AQUA('18:00') })
-    const late = buildFixture({ meAqua: FIXTURE_ME_AQUA('23:00') })
-    const T_1750 = Date.parse('2026-09-26T17:50:00+08:00')
-    const arousalAt = async (dir) => {
-      const h = await harness(dir)
-      await h.turnStart(T_1750 - HOUR)
-      await h.iSpeak(T_1750 - HOUR)
-      await h.toolResult(undefined, T_1750 - MIN)
-      await h.toolResult(undefined, T_1750 - MIN)
-      await h.toolResult(undefined, T_1750)
-      await h.stepBegin(T_1750)
-      return scoresFromText(h.lastText())
+    // 口径 13：**三个新常数住在 `mood.md`，`.js` 里一个都没有**（正则 + 全流程两半边）。
+    //   ① 文件那半边：夹具的 ```mood 块里三个键都在；
+    //   ② `.js` 那半边：源码里不许出现这三个数（`15` / `60` / `360` 各自作为**常数名**的赋值）。
+    const c = CONSTANTS ?? {}
+    const missing = ['presenceMinutes', 'absenceHalfLifeMinutes', 'fullScaleMinutes']
+      .filter((k) => typeof c[k] !== 'number')
+    check('Q10', 13, '`mood.md` 的 ```mood 块里有三个新常数：`presenceMinutes` / `absenceHalfLifeMinutes` / `fullScaleMinutes`',
+      missing.length === 0 ? ['presenceMinutes', 'absenceHalfLifeMinutes', 'fullScaleMinutes'].map((k) => `${k}=${c[k]}`) : `缺：${missing.join('、')}`,
+      ['presenceMinutes=15', 'absenceHalfLifeMinutes=60', 'fullScaleMinutes=360'])
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n═══ B · 掌控：滑动窗口 + 跨回合 + 错误指纹（口径 3、4、5）═══')
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🔴 这一族量的是**这一批的四件事之一**（方案第三节【2】）。三条病：
+  //    P2 成功率是一条直线（只看本回合）· P3 跨回合的失败被 `turn/start` 清零 ·
+  //    P4 "同一个坑"数的是"连续失败"而不是"是不是同一个错"。
+  {
+    /** 浮点比：期望值是按 4 位小数手算的，判据放到 5e-3（够窄：任何一档 .06/.08 的错都跑不掉）。 */
+    const near4 = (a, b) => typeof a === 'number' && Math.abs(a - Number(b)) < 5e-3
+    const shown = (x) => (typeof x === 'number' ? Number(x.toFixed(4)) : x)
+
+    // ① 滑动窗口：**跨回合不清零**。老实现 `turn/start` 把 errors/oks 清零 ⇒ 窗口里只剩本回合。
+    //    ⚠️ 期望值按契约 3.2 那条式子手算：`success = (rate-.4)/.6`、失败影响 `weight` 在本格 = 1
+    //       （窗口里那次失败的 `lastErrorAt` = 本步时刻 ⇒ 时间折扣和回合折扣都是 1）
+    //       ⇒ `control = .8958 − .5 = .3958`。**老实现给 1.00**。
+    const h = await harness(fixture)
+    await h.turnStart(T0)
+    await h.toolResult(errorResultEvent(), T0 + MIN)        // 回合 1：一个失败
+    await h.turnStart(T0 + 2 * MIN)                          // 新回合（老实现会把它抹掉）
+    for (let k = 0; k < 15; k++) await h.toolResult(undefined, T0 + 3 * MIN)   // 回合 2：15 个绿
+    await h.stepBegin(T0 + 3 * MIN)                          // 这一步的就是"最近一条事件"⇒ 折扣 = 1
+    const crossScores = scoresFromText(h.lastText())
+    // 窗口 = 最近 20 次 = 1 失败 + 15 绿 ⇒ rate .9375 ⇒ success .8958。
+    // 🔴 那次失败在**上一个回合** ⇒ 两个时钟都动了：时间折扣 e^(−2/20) 与回合折扣 0.6
+    //    ⇒ `weight = .9048 × .6 = .5429` ⇒ `control = .8958 − .2714 = .6244`。
+    //    老实现：`turn/start` 把 errors 清零 ⇒ 权重 0 ⇒ 掌控 1.00（一条直线）。
+    checkTrue('D2-1', 3, '【滑动窗口】上一回合那个失败**还在窗口里**（1 败 + 15 绿 + 隔一个回合 ⇒ 掌控 .6244，不是 1.00）',
+      near4(crossScores?.control, 0.6244),
+      `实测 ${shown(crossScores?.control)} / 期望 0.6244（老实现：窗口里只剩本回合的 15 个绿 ⇒ 1.00）`)
+    checkTrue('D2-2', 3, '【滑动窗口·窗口长度】窗口里的失败**会一直算到 20 个之后才挤出去**（不是"只看最近几个"）',
+      typeof crossScores?.control === 'number' && crossScores.control < 0.99,
+      `实测掌控 ${shown(crossScores?.control)} —— 老实现这里是 1.00（一条直线）`)
+
+    // ② 跨回合的失败**有影响，但被两个时钟打折**（P3 的正题）。
+    //    同一次失败、同一组别的信号，只差"它是在本回合还是 6 小时前" ⇒ 分数必须**不同**。
+    const fresh = scoresOf(callMood({
+      ...NEUTRAL_SIGNALS, recentResults: ['fail', 'ok', 'ok', 'ok', 'ok', 'ok'],
+      lastErrorAt: T0, roundsSinceError: 0,
+    }))
+    const stale = scoresOf(callMood({
+      ...NEUTRAL_SIGNALS, recentResults: ['fail', 'ok', 'ok', 'ok', 'ok', 'ok'],
+      lastErrorAt: T0 - 6 * HOUR, roundsSinceError: 1,
+    }))
+    checkTrue('D2-3', 4, '【治 P3·形态】同一组信号、只把那次失败挪到 6 小时前 + 隔了一个回合 ⇒ 掌控**不一样**（旧账被打折，没被抹掉）'
+      + '（本格手算：rate .8333 ⇒ success .7222；本回合 −.5 ⇒ .2222 · 六小时前 −.5×e⁻¹⁸×.6 ≈ 0 ⇒ .7222）',
+      near4(fresh?.control, 0.2222) && near4(stale?.control, 0.7222),
+      `本回合 ${shown(fresh?.control)}（期望 .2222） · 六小时前 ${shown(stale?.control)}（期望 .7222）`)
+    checkTrue('D2-4', 4, '【治 P3·判据】那一维**不是被清零**：隔了一个回合的那次失败，掌控仍 < 0.95（老实现这里恒 1.00）',
+      typeof stale?.control === 'number' && stale.control < 0.95,
+      `实测 ${stale?.control ?? '拿不到'}（老实现：errors 在 turn/start 被清 0 ⇒ 权重 0 ⇒ 恒 1.00）`)
+
+    // ③ **两个不同的错 ≠ 同一个坑**（P4 的正题）：只按"连续失败次数"数的实现分不开这两组。
+    const twoDiff = scoresOf(callMood({
+      ...NEUTRAL_SIGNALS, recentResults: ['fail', 'fail', 'ok', 'ok'],
+      pitCounts: { 'pwsh|拒绝访问': 1, 'read|文件不存在': 1 },
+    }))
+    const sameTwice = scoresOf(callMood({
+      ...NEUTRAL_SIGNALS, recentResults: ['fail', 'fail', 'ok', 'ok'],
+      pitCounts: { 'pwsh|拒绝访问': 2 },
+    }))
+    checkTrue('D2-5', 5, '【治 P4】**两个不同的坑**各一次 ⇒ 没有"同一个坑"的扣分（掌控 = 成功率那一档）',
+      typeof twoDiff?.control === 'number' && typeof sameTwice?.control === 'number'
+      && twoDiff.control > sameTwice.control,
+      `两个不同的坑 ${twoDiff?.control ?? '拿不到'} · 同一个坑两次 ${sameTwice?.control ?? '拿不到'}`)
+    check('D2-6', 5, '【治 P4·刻度】同一个坑第 2 次 ⇒ 只扣**一档**（`pitStep` = .08）',
+      typeof sameTwice?.control === 'number' && typeof twoDiff?.control === 'number'
+        ? Number((sameTwice.control - twoDiff.control).toFixed(4)) : '拿不到', -0.08)
+
+    // ④ 采集端：真事件流里，"同一个坑"必须真的**按指纹**攒起来（不是只喂纯函数）。
+    //    形状照真日志：`tool/result` 的 `data.message.content[0]` 里既有 `isError` 也有错误报文。
+    const hPit = await harness(fixture)
+    await hPit.turnStart(T0)
+    await hPit.toolResult(errorResultEvent(), T0 + MIN)
+    await hPit.turnStart(T0 + 2 * MIN)                       // 跨回合：坑要跟过去
+    await hPit.toolResult(errorResultEvent(), T0 + 3 * MIN)
+    await hPit.toolResult(undefined, T0 + 3 * MIN)
+    await hPit.toolResult(undefined, T0 + 3 * MIN)
+    await hPit.stepBegin(T0 + 3 * MIN + MIN)
+    const pitScores = scoresFromText(hPit.lastText())
+    // 同一个坑第 2 次 ⇒ 成功率 (2 绿 / 4) = .5 ⇒ success .1667，再扣 .08 .5 ⇒ 贴地 0
+    check('D2-7', 5, '【采集端】两个**同形**的报错（同工具 + 同报文）跨一个回合 ⇒ 攒成"同一个坑第 2 次"（掌控贴地 .00）',
+      pitScores?.control, 0)
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n═══ C · 亲近：重逢项 + 夸 / 骂（口径 6、7）═══')
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🔴 **重逢项量的是"他这一次开口之前离了多久"**（契约 3.3 钉死 `sincePreviousBossMinutes`）。
+  //    方案原话是「取"他开口**之前**那一刻的『多久没见』"」—— 老实现取的是"现在离他上一句多久"，
+  //    `bossAt` 一刷就归零 ⇒ **「他久别归来」永远亮不了**（诊断 P5）。
+  // 🔴 三项相加（重逢 + 夸 − 骂），因为它们要能**分开看**。
+  {
+    const step6 = (from, want) => (typeof from === 'number' ? Number((from + want).toFixed(4)) : '拿不到')
+    /** 浮点比：读数按 4 位小数对齐再比（`0.45+0.06` 这类加法在二进制里不精确）。 */
+    const near4 = (a, b) => typeof a === 'number' && Math.abs(a - Number(b)) < 1e-6
+    const shown = (x) => (typeof x === 'number' ? Number(x.toFixed(4)) : x)
+
+    // ① 他刚打完招呼（上一次开口 = 刚刚）⇒ 重逢项 0；② 他隔了 8 小时才开口 ⇒ 到顶。
+    //    ⚠️ 这一条**不是**在量"他开口那一刻分数归零" —— 归零的是"重逢项"这个**分量**，
+    //       而老实现归零的是**整个亲近分**（它只有这一个分量）。
+    const justSpoke = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 0 }))
+    const goneLong = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 480 }))
+    check('E2-1', 6, '【重逢项·零点】他上一次开口就是刚刚（间隔 0 分钟）⇒ 重逢项 = 0.00',
+      justSpoke?.closeness, 0)
+    check('E2-2', 6, '【重逢项·顶端】他上一次开口在 8 小时前（≫ 量程 240 分钟）⇒ 重逢项到顶 = 0.90',
+      goneLong?.closeness, 0.9)
+    // ③ 治 P5 的**可判定形态**：同样"他刚开口"，隔了 8 小时之后的那一句 ⇒ 亲近 ≥ .65
+    //    ⇒「他久别归来」那条场景**真的会被递出来**（这才是老板要看的那件事）。
+    checkTrue('E2-3', 6, '【治 P5】隔了 8 小时之后他再开口 ⇒ 亲近 .90 ≥ .65 ⇒「他久别归来」**亮得起来**',
+      typeof goneLong?.closeness === 'number' && goneLong.closeness >= 0.65,
+      `实测 ${goneLong?.closeness ?? '拿不到'}（老实现：\`sinceBoss\` 被刷成 0 ⇒ 0.00 ⇒ 永远亮不了）`)
+    // ④ 重逢项 ≠ 互动项：同一格上夸 / 骂能把读数挪开（三格各不相同）。
+    const praised = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 480, keywordPraise: 1 }))
+    const scolded = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 480, keywordBlame: 1 }))
+    checkTrue('E2-4', 6, '【重逢项 ≠ 互动项】同一格（隔 8 小时、他刚开口）：不夸不骂 .90 · 夸 .96 · 骂 .82 —— **三格各不相同**',
+      near4(praised?.closeness, 0.96) && near4(scolded?.closeness, 0.82),
+      `不夸不骂 ${shown(goneLong?.closeness)} · 夸 ${shown(praised?.closeness)} · 骂 ${shown(scolded?.closeness)}`)
+
+    // ⑤ 夸 / 骂的**四格**（口径 7）。契约 3.3 把两个入参钉成**句数**：
+    //    `keywordPraise` = "带夸奖关键词"的**句子数**（一句最多算一档）· `keywordBlame` 同理
+    //    · **同一句话两个都命中 ⇒ 只算骂**（骂赢）。
+    const P = { ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 120 }   // 重逢项固定在中段（.45）
+    const base = scoresOf(callMood({ ...P, keywordPraise: 0, keywordBlame: 0 }))?.closeness
+    const p1 = scoresOf(callMood({ ...P, keywordPraise: 1 }))?.closeness
+    const b1 = scoresOf(callMood({ ...P, keywordBlame: 1 }))?.closeness
+    const both = scoresOf(callMood({ ...P, keywordPraise: 1, keywordBlame: 1 }))?.closeness
+    const p2 = scoresOf(callMood({ ...P, keywordPraise: 2 }))?.closeness
+    const p3b1 = scoresOf(callMood({ ...P, keywordPraise: 3, keywordBlame: 1 }))?.closeness
+    checkTrue('E2-5', 7, '【夸一句】夸 ⇒ 比不夸**高**（+一档 .06）',
+      near4(p1, step6(base, 0.06)), `不夸 ${shown(base)} ⇒ 夸 ${shown(p1)}（期望 ${step6(base, 0.06)}）`)
+    checkTrue('E2-6', 7, '【骂一句】骂 ⇒ 比不骂**低**（−一档 .08，骂比夸更响）',
+      near4(b1, step6(base, -0.08)), `不骂 ${shown(base)} ⇒ 骂 ${shown(b1)}（期望 ${step6(base, -0.08)}）`)
+    checkTrue('E2-7', 7, '【纯函数那一层是"各自累计"】夸与骂同时非零 ⇒ 两项各加各减（`.45 + .06 − .08 = .43`）—— 判"双命中"要先知道**是不是同一句**，那是采集端的事（下一条）',
+      near4(both, step6(base, -0.02)),
+      `夸 ${shown(p1)} · 两个都非零 ${shown(both)} · 骂 ${shown(b1)}`)
+    /**
+     * 🔴 口径 7 的"**骂赢**"真正发生的地方在**关键词计数那一层**（一句话里两个词都出现）。
+     * 纯函数拿到的只是两个句数，它分不出"同一句"还是"两句" —— 所以这一条必须走**全流程**。
+     */
+    const oneLine = await (async () => {
+      const dir = buildFixture({ mood: FIXTURE_MOOD({ keywordPraise: ['棒'], keywordBlame: ['笨'] }) })
+      try {
+        const h = await harness(dir)
+        await h.turnStart(T0 - 4 * HOUR)
+        await h.bossText('（上一句话）', T0 - 4 * HOUR)
+        await h.stepBegin(T0 - 4 * HOUR + 5 * MIN)
+        await h.bossText('这版挺棒，不过这块写得真笨', T0)   // ⚠️ 两句话：一句夸、一句骂
+        await h.stepBegin(T0 + MIN)
+        return scoresFromText(h.lastText())?.closeness
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })()
+    const blameOnly = await (async () => {
+      const dir = buildFixture({ mood: FIXTURE_MOOD({ keywordPraise: ['棒'], keywordBlame: ['笨'] }) })
+      try {
+        const h = await harness(dir)
+        await h.turnStart(T0 - 4 * HOUR)
+        await h.bossText('（上一句话）', T0 - 4 * HOUR)
+        await h.stepBegin(T0 - 4 * HOUR + 5 * MIN)
+        await h.bossText('这块写得真笨', T0)
+        await h.stepBegin(T0 + MIN)
+        return scoresFromText(h.lastText())?.closeness
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })()
+    check('E7b', 7, '【双命中·采集端】同一句话里既夸又骂 ⇒ 读数 == **只按骂算**那一格（骂赢在数句子的那一层）',
+      oneLine, blameOnly)
+    checkTrue('E2-8', 7, '【一句最多一档 / 跨句累计】两句各夸一次 ⇒ +.12',
+      near4(p2, step6(base, 0.12)), `夸一句 ${shown(p1)} ⇒ 夸两句 ${shown(p2)}（期望 ${step6(base, 0.12)}）`)
+    checkTrue('E2-9', 7, '【夸与骂各自累计】三句夸 + 一句骂 ⇒ 净 +.10',
+      near4(p3b1, step6(base, 0.10)), `实测 ${shown(p3b1)} / 期望 ${step6(base, 0.10)}`)
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n═══ W · 关键词：`der` 整词匹配（口径 8）═══')
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🔴 **口径 8 点名要阳性对照**：光证"`under` / `order` / `header` 不命中"是不够的 ——
+  //    一个把关键词表整个丢掉、永远返回 0 的实现也能让那三条**空跑成绿**。
+  //    ⇒ 同一批里必须有**会命中的**（`der` 整词 / `棒` / `笨`），而且整词那两格要**同一份夹具**。
+  {
+    /**
+     * 老板发一句话、走到回答他那一步 ⇒ 从情绪段里读亲近分。
+     * 🔴 **先让他 4 小时没开口再说这一句**：不然重逢项只有 .0038（1 分钟 ÷ 240 × .90），
+     *    往下减一档骂就**贴着 0 被夹住**了 —— 那样"谁都不命中"和"命中了骂"读数一样，
+     *    负例就变成了空跑（本票实测踩过：`棒 .06 · 笨 .00 · 平 .00`）。
+     * ⚠️ 这次的"他上一次开口"是他自己刚说的那一句，所以间隔 = 4 小时 ⇒ 重逢项 .90。
+     */
+    const closenessAfter = async (said, { mood } = {}) => {
+      const dir = buildFixture(mood === undefined ? {} : { mood })
+      try {
+        const h = await harness(dir)
+        // 🔴 **老板那句话的时刻必须给他**（`bossText` 的第二参）：重逢项量的是
+        //    "他这一次开口**之前**离了多久"，而那条 `user/message` 要到**本步落笔时**才写。
+        //    ⇒ 贴出去的那一条是在 pre-step 上算的，它只能从**消息自带的时间**里读这个距离。
+        //    （不给的话实现退回"本步的时刻"，读数会差一点 —— 本票实测踩过：重逢项恒 0。）
+        await h.turnStart(T0 - 4 * HOUR)
+        await h.bossText('（上一句话）', T0 - 4 * HOUR)
+        await h.stepBegin(T0 - 4 * HOUR + 5 * MIN)
+        await h.bossText(said, T0)
+        await h.stepBegin(T0 + MIN)          // 老板那句话说于 T0 ⇒ 此处读到 245 分钟
+        return { 值: scoresFromText(h.lastText())?.closeness, 句子: said }
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
     }
+    /** 把关键词表钉成**只有一个** `der`（+一个中文骂词），正反两格就走同一份夹具 —— 对照才干净。 */
+    const DER_ONLY = FIXTURE_MOOD({ keywordPraise: ['der', '棒'], keywordBlame: ['笨'] })
+
+    const derWord = await closenessAfter('der', { mood: DER_ONLY })
+    const derInside = await closenessAfter('under order header', { mood: DER_ONLY })
+    const derGlued = await closenessAfter('nader derx', { mood: DER_ONLY })
+    const derUpper = await closenessAfter('DER', { mood: DER_ONLY })
+    const praiseCn = await closenessAfter('棒')
+    const blameCn = await closenessAfter('笨')
+    const plain = await closenessAfter('今天就这样')
+    checkTrue('V1', 8, '【阳性对照·字母词】`der` **整词**出现 ⇒ 命中夸（不是"永远不命中"）',
+      typeof derWord.值 === 'number' && typeof derInside.值 === 'number' && derWord.值 > derInside.值,
+      `「der」 ⇒ 亲近 ${derWord.值 ?? '拿不到'} · 「under order header」 ⇒ ${derInside.值 ?? '拿不到'}`)
+    checkTrue('V2', 8, '【整词·负例】`under` / `order` / `header`（都**含有** `der`）⇒ 一个都不许命中（＝"谁也不命中"那一格）',
+      typeof derInside.值 === 'number' && typeof plain.值 === 'number' && derInside.值 === plain.值,
+      `「under order header」 ⇒ ${derInside.值 ?? '拿不到'} · 「今天就这样」 ⇒ ${plain.值 ?? '拿不到'}`)
+    checkTrue('V2b', 8, '【整词·边界】`nader` / `derx`（`der` 贴在别的字母上）⇒ 同样不许命中',
+      typeof derGlued.值 === 'number' && typeof plain.值 === 'number' && derGlued.值 === plain.值,
+      `「nader derx」 ⇒ ${derGlued.值 ?? '拿不到'} · 「今天就这样」 ⇒ ${plain.值 ?? '拿不到'}`)
+    checkTrue('V2c', 8, '【大小写】`DER`（大写）⇒ 仍然命中（整词匹配不该被大小写搅掉）',
+      typeof derUpper.值 === 'number' && typeof derWord.值 === 'number' && derUpper.值 === derWord.值,
+      `「DER」 ⇒ ${derUpper.值 ?? '拿不到'} · 「der」 ⇒ ${derWord.值 ?? '拿不到'}`)
+    checkTrue('V3', 8, '【中文按子串·阳性对照】`棒` 命中夸、`笨` 命中骂、`今天就这样` 谁都不命中（三格分得开）',
+      typeof praiseCn.值 === 'number' && typeof blameCn.值 === 'number' && typeof plain.值 === 'number'
+      && praiseCn.值 > plain.值 && blameCn.值 < plain.值,
+      `棒 ${praiseCn.值 ?? '拿不到'} · 笨 ${blameCn.值 ?? '拿不到'} · 平 ${plain.值 ?? '拿不到'}`)
+    // 口径 9：**词表真的从文件读** —— 同一句「超级棒」，只换 `mood.md` 里的夸词表：
+    //  · 词表 A = `['der','棒']` ⇒ 「超级棒」里有「棒」⇒ **命中**
+    //  · 词表 B = `['der','挺好']` ⇒ 一个都不含 ⇒ **不命中**
+    // 词表写死在 `.js` 里的实现，这两格会一模一样。
+    // ⚠️ 这两格**必须**和他离开的距离一起看：重逢项到顶（.90）时 +.06 会被 1.00 夹住，
+    //    两格读数相同 ⇒ 判据变成空跑（本票实测踩过：两格都是 .94）。
+    const WORD_A = FIXTURE_MOOD({ keywordPraise: ['der', '棒'], keywordBlame: ['笨'] })
+    const WORD_B = FIXTURE_MOOD({ keywordPraise: ['der', '挺好'], keywordBlame: ['笨'] })
+    const hitA = await closenessAfter('超级棒', { mood: WORD_A })
+    const hitB = await closenessAfter('超级棒', { mood: WORD_B })
+    checkTrue('V4', 9, '【词表住在文件里】同一句「超级棒」：词表含 `棒` 的那份**命中夸**、不含的那份**不命中**',
+      typeof hitA.值 === 'number' && typeof hitB.值 === 'number' && hitA.值 > hitB.值,
+      `词表=['der','棒'] ⇒ ${hitA.值 ?? '拿不到'} · 词表=['der','挺好'] ⇒ ${hitB.值 ?? '拿不到'}`)
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n═══ K · 疲劳：开工时刻 + 净工作时长（口径 10、11、12）═══')
+  // ═══════════════════════════════════════════════════════════════════════════
+  {
+    /**
+     * 净工作时长的**两个端点**（口径 12 的前半：在场累加）。
+     * ⚠️ 老那版这里写着"下限 0 的线性回退"——**已经作废**：契约 3.3 钉的是
+     *    `net × e^(−(离开−在场判据)/absenceHalfLifeMinutes)`（见 K4）。
+     */
+    const tired = scoresOf(callMood({ ...NEUTRAL_SIGNALS, netWorkMinutes: 360 }))
+    const justIn = scoresOf(callMood({ ...NEUTRAL_SIGNALS, netWorkMinutes: 0 }))
+    checkTrue('X1', 12, '【在场累加】净干满量程 360 分钟 ⇒ 疲劳到顶（≥ .95）',
+      typeof tired?.fatigue === 'number' && tired.fatigue >= 0.95, `实测 ${tired?.fatigue ?? '拿不到'}`)
+    checkTrue('X2', 12, '【刚开工】净干 0 分钟 ⇒ 疲劳贴地（≤ .05）',
+      typeof justIn?.fatigue === 'number' && justIn.fatigue <= 0.05, `实测 ${justIn?.fatigue ?? '拿不到'}`)
+
+    /**
+     * 🔴 **这一条才是治 P6 的**：老实现吃的是"本回合时长"，而回合被老板开口切成 2–4 分钟
+     * ⇒ 一整天只从 .10 动到 .11。判据必须**跨很多个回合**量，不能拿"一个长回合"冒充。
+     * 这里喂 26 个回合（每个 14 分钟、中间他都开过口）⇒ 净工作时长该累到满量程。
+     */
+    const hLong = await harness(fixture)
+    const startOfDay = Date.parse('2026-09-26T09:00:00+08:00')
+    await hLong.turnStart(startOfDay)
+    for (let i = 0; i < 26; i++) {
+      await hLong.bossText(`第 ${i + 1} 句话`, startOfDay + (i + 1) * 14 * MIN)                   // 他一直在旁边 ⇒ 在场
+      await hLong.stepBegin(startOfDay + (i + 1) * 14 * MIN)     // 机制② 出口 ⇒ 情绪段
+    }
+    const longRun = scoresFromText(hLong.lastText())
+    checkTrue('X3', 12, '【治 P6】26 个回合、每回 14 分钟、他一直在旁边 ⇒ 疲劳 ≥ .95（老实现吃"本回合时长" ⇒ 恒 .1x 的一条直线）',
+      typeof longRun?.fatigue === 'number' && longRun.fatigue >= 0.95,
+      `实测疲劳 ${longRun?.fatigue ?? '拿不到'}（老实现：本回合 14 分钟 ⇒ .10 + .8×(14/300) ≈ .14）`)
+
+    /**
+     * 离开 ⇒ **按 `absenceHalfLifeMinutes`（60）半衰回退**（口径 12 后半）。
+     * 两格对照：同样"干了 4 小时"，他走了 15 分钟 / 走了 2 小时 ⇒ 后者明显更低。
+     * 🔴 **回退算在采集端**（契约 3.2 末尾）：`moodOf` 只拿一个**已经算好**的
+     *    `netWorkMinutes` 去打分。所以这里喂的数是**回退之后**的那个时长 ——
+     *    240·e⁻² ≈ 32.5 分钟 ⇒ 疲劳 .0902。两边各算一次会把衰减乘两遍（疲劳恒 0）。
+     */
+    const AWAY_2H = 240 * Math.exp(-2)
+    const awayShort = scoresOf(callMood({ ...NEUTRAL_SIGNALS, netWorkMinutes: 240 }))
+    const awayLong = scoresOf(callMood({ ...NEUTRAL_SIGNALS, netWorkMinutes: AWAY_2H }))
+    checkTrue('X4', 12, '【离开回退·打分端】净干 240 分钟 ⇒ 疲劳 .6667；走了 2 小时之后回退到 32.5 分钟 ⇒ .0902（半衰 60）',
+      typeof awayShort?.fatigue === 'number' && typeof awayLong?.fatigue === 'number'
+      && Math.abs(awayShort.fatigue - 240 / 360) < 1e-6
+      && Math.abs(awayLong.fatigue - AWAY_2H / 360) < 1e-6,
+      `没走 ${Number((awayShort?.fatigue ?? NaN).toFixed(4))}（期望 .6667） · 走了两小时 ${Number((awayLong?.fatigue ?? NaN).toFixed(4))}（期望 .0902）`)
+    checkTrue('X5', 12, '【回退不是清零】回退之后的那个数仍然是正的（他回来时疲劳还在，不是从 0 重来）',
+      typeof awayLong?.fatigue === 'number' && awayLong.fatigue > 0.05,
+      `实测 ${Number((awayLong?.fatigue ?? NaN).toFixed(4))}`)
+
+    /**
+     * 🔴 **采集端那一支（今天零覆盖）**：`X1`–`X5` 全是**手工喂一个算好的 `netWorkMinutes`** 给
+     * `moodOf` —— `advanceWork()` 里"他离开 ⇒ 攒下的按半衰往回退"那一行**一条断言都穿不过去**
+     * （评审条件 ②：`X4` 的注释自己也写着"这里喂的数是回退之后的那个时长"）。
+     * 这一组走**真事件流**，把组长拍的语义钉死：
+     *   · 在场（间隔 ≤ `presenceMinutes` 15）⇒ 整段累加；
+     *   · 离开 ≥ 15 分钟 ⇒ 攒下的那一段按 `absenceHalfLifeMinutes`（60）**半衰回退，不是清零**；
+     *   · 他回来 ⇒ **接着累加**（不是从 0 重来）。
+     * ⚠️ 疲劳只在**贴尾巴那一步**推进（`emotionTextOf` → `advanceWork`），
+     *    而 `now` 取的是**最近一条事件的 `time`** ⇒ 采集端的账**按每 15 分钟一个尾巴**走：
+     *    工具结果每 5 分钟一条（`every: 3`）⇒ 每 15 分钟贴一条 ⇒ 每格正好记满 15 分钟。
+     */
+    {
+      const at = (m) => T0 + m * MIN
+      const hWork = await harness(fixture)
+      await hWork.turnStart(at(0))
+      await hWork.bossText('开工', at(0))
+      await hWork.stepBegin(at(1))                 // 他开过口了（`bossHeard`）⇒ 攒下的那一段算数
+      // ⚠️ **守门 B**：机制② 刚摆过的那**一个**工具结果不计数（"不叠"）⇒ 第 1 条结果被吃掉，
+      //    尾巴落在第 4、7、10…37 条结果上（共 12 个），每个之间都是 15 分钟。
+      for (let k = 1; k <= 37; k++) await toolStep(hWork, at(k * 5))
+      const inPresence = scoresFromText(hWork.lastText())?.fatigue
+      checkTrue('X6', 12, `【采集端·在场累加】每次间隔 15 分钟（= 在场判据）⇒ 12 个尾巴攒满 180 分钟 ⇒ 疲劳 .50（实测 ${inPresence ?? '拿不到'}；走的是真事件流，不是喂纯函数）`,
+        typeof inPresence === 'number' && Math.abs(inPresence - 0.50) < 5e-3,
+        `实测 ${inPresence ?? '拿不到'}（期望 .50 = 180 ÷ 360）`)
+
+      // 他离开 2 小时：这一段里**一个尾巴都没有**（采集端那个钟不推进，那段时间不算工时）。
+      // 恢复干活：305 / 310 / 315 三条结果 ⇒ 机制① 在 315 那一步贴。
+      // 采集端在那一刻看到的是"上一个尾巴（185 分）→ 现在（315 分）"= 130 分钟：
+      // 超出在场的 15 分钟之外是 115 分钟 ⇒ 攒下的 180 按半衰 60 退成 180·e^(−115/60) ≈ 26.5，
+      // 再记在场那 15 分钟 ⇒ 41.5 ÷ 360 ≈ .115。
+      // 🔴 **判据给的是窗口，不是那一位小数**：这一步的读数取决于"哪一个事件推进那个钟"
+      //    （只在贴尾巴那一步推 ⇒ .115；每个事件都推 ⇒ .156）。
+      //    窗口 [.08, .17] 覆盖"同一条规则、记账时刻差一步"，而**三个错的行为都在窗外**：
+      //    清零 ⇒ 15 ÷ 360 = .04 · 不折 ⇒ 195 ÷ 360 = .54 · 半衰写错（30 / 120）⇒ .05 / .23。
+      for (let k = 61; k <= 63; k++) await toolStep(hWork, at(k * 5))
+      const afterAway = scoresFromText(hWork.lastText())?.fatigue
+      checkTrue('X7', 12, `【采集端·离开回退】他离开 2 小时（这段一个尾巴都没有）之后接着干活 ⇒ 攒下的 180 分钟**按半衰 60 退**（实测疲劳 ${afterAway ?? '拿不到'}；只在尾巴那步记账是 .115、每个事件都记账是 .156）—— 清零 .04 · 不折 .54 都在窗外`,
+        typeof afterAway === 'number' && afterAway >= 0.08 && afterAway <= 0.17,
+        `实测 ${afterAway ?? '拿不到'}（期望落在 [.08, .17]；清零 .04 · 不折 .54 · 半衰 30 ⇒ .05）`)
+
+      // 回来之后**接着累加**：再干 15 分钟 ⇒ 正好 +15 ÷ 360 = +.0417
+      // （一个"他回来就从头算"的实现给不出这个增量 —— 除非它连在场那段也丢了）。
+      for (let k = 64; k <= 66; k++) await toolStep(hWork, at(k * 5))
+      const resumed = scoresFromText(hWork.lastText())?.fatigue
+      const delta = typeof afterAway === 'number' && typeof resumed === 'number'
+        ? Number((resumed - afterAway).toFixed(4)) : '拿不到'
+      checkTrue('X8', 12, `【采集端·回来接着累加】再干 15 分钟 ⇒ 疲劳**正好 +.0417**（实测增量 ${delta}）—— 在攒下的那个数上继续加，不是从 0 重来`,
+        typeof delta === 'number' && Math.abs(delta - 15 / 360) < 5e-3,
+        `回退后 ${afterAway ?? '拿不到'} ⇒ 再干 15 分钟 ${resumed ?? '拿不到'}（增量 ${delta}，期望 .0417）`)
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n═══ U · 尾巴全长：style 段 + 情绪段（口径 15 · 悬项 ⑧）═══')
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🔴 **悬项 ⑧（`.team/leader/now.md`）**：`I7` 只卡 **style 段**（380 字符），
+  //    而真发出去的是 **549/564/566 字符** —— 情绪板那 ~170-186 字符**不在任何断言的量程里**。
+  //    口径 15 就是收它：**全长**（style 段 + 情绪段）必须有人守。
+  {
+    const h = await harness(fixture)
+    await h.turnStart(T0)
+    await bossThenStep(h)
+    const text = h.lastText()
+    const { 条数, 字符数 } = h.stat()
+    check('Y1', 15, '【前提】这一步确实贴了一条尾巴（否则下面两条是空跑）', { 条数, 尾部字符数: 字符数 }, { 条数: 1, 尾部字符数: 字符数 })
+    const styleLen = typeof text === 'string' ? stylePartOf(text).length : 0
+    const moodLen = typeof text === 'string' ? (moodPartOf(text) ?? '').length : 0
+    checkTrue('Y2', 15, `【口径 15·全长】贴出去那一条 = style 段 + 情绪段，**逐字量出来**（style ${styleLen} + 情绪 ${moodLen} = ${typeof text === 'string' ? text.length : '拿不到'}）`,
+      typeof text === 'string' && text.length === styleLen + moodLen + 2,
+      `实测全长 ${typeof text === 'string' ? text.length : '拿不到'}（两段之间一个空行 = 2 个字符）`)
+    checkTrue('Y3', 15, '【口径 15·上限】全长 ≤ 1000 字符【测试位代拍】（方案只说"顺手收悬项 ⑧"，没给数；这个数取自上一批 `P7`）',
+      typeof text === 'string' && text.length <= 1000, `实测 ${typeof text === 'string' ? text.length : '拿不到'} 字符`)
+    // ⚠️ **真产物那条**在 `I` 族（真 style.md + 真 mood.md），这条只是夹具。
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n═══ A · 接线：疲劳的"开工时刻"从当日 log 首条读（口径 10、11）═══')
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🔴 方案第三节【4】点名的**形状接口**：`.team/leader/<今天>/log.md` 的首条 `## HH:MM`。
+  //    这个形状改了 ⇒ 开工时刻读不出来 ⇒ **静默退化**（同 `me-aqua.md` 的下班三行那种死法）。
+  {
+    /** 一份夹具、两个抽屉：只换"首条记录时间"，看疲劳跟不跟着动。 */
+    const fatigueAt = async (first, now) => {
+      const dir = buildFixture({ leaderLog: FIXTURE_LEADER_LOG(first) })
+      try {
+        const h = await harness(dir)
+        await h.turnStart(now)
+        await h.bossText('开工', now)
+        await h.stepBegin(now)
+        return scoresFromText(h.lastText())?.fatigue
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+    const morning = await fatigueAt('09:00', T0 + 6 * HOUR)
+    const noon = await fatigueAt('15:00', T0 + 6 * HOUR)
+    checkTrue('Z1', 10, '【口径 10】同一时刻、只把当日 log 的首条记录从 `09:00` 换成 `15:00` ⇒ 疲劳**明显更低**（首条真的被读）',
+      typeof morning === 'number' && typeof noon === 'number' && morning > noon,
+      `首条 09:00 ⇒ 疲劳 ${morning ?? '拿不到'} · 首条 15:00 ⇒ 疲劳 ${noon ?? '拿不到'}`)
+
+    // 口径 11：**今天没有 log ⇒ 降级到会话首帧**，而且要出声（不许静默失效）。
+    // ⚠️ 事件序列：`turn/start` + 一个工具结果把 `lastEventAt` 推到 T0，**最后**才让老板开口
+    //    （这样"距上次开口"= 0 ⇒ 在场 ⇒ 从会话首帧 T0 到 T0+6h 的 6 小时全部累加）。
+    const noLog = buildFixture({ leaderLog: null })
     try {
-      const at18 = await arousalAt(early)
-      const at23 = await arousalAt(late)
-      checkTrue('Q10', 13, '同一时刻（17:50）、只换 `下班：18:00` → `下班：23:00` ⇒ 唤起不同（作息三行真的被读）',
-        typeof at18?.arousal === 'number' && typeof at23?.arousal === 'number' && at18.arousal > at23.arousal,
-        `18:00 的唤起 ${at18?.arousal ?? '拿不到'} · 23:00 的唤起 ${at23?.arousal ?? '拿不到'}`)
+      const before = stderrSeen.length
+      const h = await harness(noLog)
+      await h.turnStart(T0)
+      // 🔴 造一段**像样的工作日**：他每 14 分钟搭一句话（在场累加），一路干到 6 小时。
+      //    ⚠️ 只发一条"开工"然后跳到 6 小时后是不行的：那 6 小时里他几乎都不在，
+      //       按口径 12 的规矩**不算干活**（疲劳读数 15 分钟 ⇒ .04，判据当场红）。
+      //       本条要钉的是"**降级那条路**"（没有 log ⇒ 用会话首帧当开工时刻），
+      //       不是"他不在也算干活"，所以工作日的形状必须真实。
+      for (let i = 0; i < 26; i++) {
+        const at = T0 + i * 14 * MIN
+        await h.bossText(`第 ${i + 1} 句话`, at)
+        await h.stepBegin(at + 14 * MIN)
+      }
+      const degraded = scoresFromText(h.lastText())?.fatigue
+      checkTrue('Z2', 11, '【口径 11】**今天没有 log** ⇒ 降级用**会话首帧**当开工时刻（6 小时的会话 ⇒ 疲劳到顶）',
+        typeof degraded === 'number' && degraded >= 0.95, `实测疲劳 ${degraded ?? '拿不到'}`)
+      checkTrue('Z3', 11, '【口径 11·不许静默】降级那一刻**要出声**（`console.error`，报文里点到 log / 开工时刻）',
+        stderrSeen.slice(before).some((m) => /log\.md|开工时刻|首条/.test(m)),
+        `这一段里 console.error 收到的是：${brief(stderrSeen.slice(before).join(' | ') || '（一声都没有）')}`)
     } finally {
-      rmSync(early, { recursive: true, force: true })
-      rmSync(late, { recursive: true, force: true })
+      rmSync(noLog, { recursive: true, force: true })
     }
+
+    // 🔴 **只认 `<日期>/log.md` 那个抽屉，不认 `.team/leader/log.md`**（方案第三节【4】末尾那句）。
+    //    现场：抽屉里没有 log，但累计日志在 ⇒ 拿累计日志的首条当开工时刻就错了。
+    const cumulative = buildFixture({ leaderLog: null })
+    try {
+      mkdirSync(join(cumulative, '.team', 'leader'), { recursive: true })
+      writeFileSync(join(cumulative, '.team', 'leader', 'log.md'),
+        '# log（累计日志 · 这是另一个东西）\n\n## 07:00 · 很早的一条\n', 'utf8')
+      const h = await harness(cumulative)
+      await h.turnStart(T0)
+      await h.toolResult(undefined, T0)
+      await h.bossText('开工', T0)
+      await h.stepBegin(T0 + 6 * HOUR)
+      const fell = scoresFromText(h.lastText())?.fatigue
+      // 会话首帧 = T0（09:00）⇒ 干了 6 小时 ⇒ 1.00；累计日志那条 07:00 ⇒ 8 小时 ⇒ 也是 1.00。
+      // ⇒ 这一条**分不开**两种实现（两种都到顶），所以它只钉"降级那条路有值、不静默"。
+      checkTrue('Z4', 11, '【口径 11·同一件事】抽屉里没有 log 时，**降级**这条路的读数不静默（疲劳有值、不是 undefined）',
+        typeof fell === 'number', `实测疲劳 ${fell ?? '拿不到'}`)
+    } finally {
+      rmSync(cumulative, { recursive: true, force: true })
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n═══ M · 组员一条都不贴（口径 16 · 回归）═══')
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 老板 2026-09-25：「组员完全不需要语气」。**情绪段跟着 style 走同一个出口**
+  // ⇒ 组员那边情绪段也不存在。这一批改了情绪模块，这条**必须回归**。
+  // 🔴 **编号（2026-09-26 返修）**：这一族原来是 `M4`/`M2`/`M6`/`M4` —— `M2` 与 `M4` 各撞一次，
+  //    而 `M4` 那两处还是**两件不同的事**（机制② / 机制①）。现在照契约 §3.6 那张表逐格对齐：
+  //    机制② = `M4`（组长对照）/`M5`（组员）· 机制① = `M6`（组长对照）/`M7`（组员）。
+  //    上一族（口径 5）用的是 `M0`–`M3`，两族合起来没有一个重号（收尾 `Z9` 自己会查）。
+  {
+    // 机制②：老板开口 ⇒ 组长的这一步会贴；组员的不许贴。
+    const lead2 = await harness(fixture)
+    await lead2.turnStart(T0)
+    await bossThenStep(lead2)
+    check('M4', 16, '【机制②·对照·组长】老板一句 + 走到那一步（装配不带标记）⇒ 注入 1 条', lead2.count(), 1)
+
+    const mem2 = await harness(fixture, { member: 'test' })
+    await mem2.turnStart(T0)
+    await bossThenStep(mem2)
+    checkIf(lead2.count() === 1, 'M5', 16, '【机制②·组员】同样一串事件 ⇒ 一条都不贴（情绪段也不许漏出去）',
+      mem2.count(), 0)
+
+    // 机制①：攒够 n 个工具结果 ⇒ 组长的会贴；组员的不许贴。
+    const lead3 = await harness(fixture)
+    await lead3.turnStart(T0)
+    for (let k = 0; k < 3; k++) await toolStep(lead3, T0 + k * MIN)
+    check('M6', 16, '【机制①·对照·组长】3 个工具结果 ⇒ 机制① 响一次', lead3.count(), 1)
+
+    const mem3 = await harness(fixture, { member: 'test' })
+    await mem3.turnStart(T0)
+    for (let k = 0; k < 3; k++) await toolStep(mem3, T0 + k * MIN)
+    checkIf(lead3.count() === 1, 'M7', 16, '【机制①·组员】同样 3 个工具结果 ⇒ 一条都不贴',
+      mem3.count(), 0)
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n═══ F · 静态形状：常数与关键词表住在文件里（口径 13、14、1）═══')
+  // ═══════════════════════════════════════════════════════════════════════════
+  {
+    const src = readFileSync(PRESET_ENTRY, 'utf8')
+    checkTrue('H6', 1, '`inject.js` 里不再有"愉悦 / 唤起 / 新异"这三个中文维度名（口径 1 的静态半边）',
+      !/愉悦|唤起|新异/.test(src),
+      ['愉悦', '唤起', '新异'].filter((w) => src.includes(w)).map((w) => `还写着「${w}」`).join('、') || '（干净）')
+    checkTrue('H7', 1, '`inject.js` 里不再有 `pleasure` / `arousal` / `novelty` 这三个键（口径 1 的静态半边）',
+      !/\b(pleasure|arousal|novelty)\b/.test(src),
+      ['pleasure', 'arousal', 'novelty'].filter((w) => new RegExp(`\\b${w}\\b`).test(src)).join('、') || '（干净）')
+    // 口径 13：三个新常数**一个都不许写进 `.js`**。
+    const hard = [
+      ['presenceMinutes 的值 15', /presence\w*\s*[:=]\s*15|15\s*[,;]?\s*\/\/\s*在场/],
+      ['absenceHalfLifeMinutes 的值 60', /absence\w*\s*[:=]\s*60/],
+      ['fullScaleMinutes 的值 360', /fullScale\w*\s*[:=]\s*360/],
+    ].filter(([, re]) => re.test(src)).map(([name]) => name)
+    check('H8', 13, '`.js` 里没有"三个新常数"的硬编码值（它们只许住在 `mood.md`）',
+      hard.length === 0 ? '（干净）' : `硬编码了：${hard.join('、')}`, '（干净）')
+    // 口径 9：关键词表住在 `mood.md` —— `.js` 里不许有**写死的词**。
+    // ⚠️ 判据**不能**写成"源码里不许出现 `der` 这三个字符"：一份照契约写的实现必然要在
+    //    **注释**里举 `under` / `order` 当反例（参考夹具就是）。注释不是词表。
+    //    ⇒ 先剥注释，再看**代码里**有没有那几个词。
+    const codeOnly = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    const hardWords = ['棒', '笨', 'der'].filter((w) => codeOnly.includes(`'${w}'`) || codeOnly.includes(`"${w}"`) || codeOnly.includes(`\`${w}\``))
+    checkTrue('H9', 9, '`.js` **代码里**没有写死的夸 / 骂词（`棒` / `笨` / `der` 只许住在 `mood.md`）',
+      hardWords.length === 0,
+      hardWords.length === 0 ? '（干净：注释里提到的不算）' : `写死在代码里的是：${hardWords.join('、')}`)
+    // 口径 14：那句"分数是调语气用的，不是绩效报表"**还在 `mood.md` 里**。
+    // ⚠️ 这条量的是**产物内容**：拿参考夹具当被测对象时（换入口）它不适用 —— 记挂起，不染红对照。
+    const moodRaw = existsSync(join(PRODUCT_DIR, 'mood.md'))
+      ? readFileSync(join(PRODUCT_DIR, 'mood.md'), 'utf8') : ''
+    checkIf(TESTING_PRODUCT, 'H10', 14, '`mood.md` 里「分数是调语气用的，不是绩效报表」**还在**',
+      /分数是调语气用的/.test(moodRaw) ? '在' : '不在了 —— 老板 2026-09-26 下午点名要它留着', '在')
+    // 口径 10：**时间与"今天"都必须从事件时间推**。
+    // ⚠️ `new Date(now)` 这类**带参数**的构造是合法的（参数就是从事件里来的时间戳）；
+    //    不许的是 `Date.now()` / `new Date()` 这种"读真实时钟"的写法 ——
+    //    它们会让"今天的抽屉是哪个"跟着跑的那天漂。
+    const clockHits = [...src.matchAll(/Date\.now\s*\(|new Date\s*\(\s*\)/g)].map((m) => m[0])
+    // ⚠️ 只对**产物入口**判：参考夹具里用 `new Date(事件时间戳)` 把"今天"推出来是**合规**的
+    //    （带参数 = 不读真实时钟）；而"无参 `new Date()`"才是禁的。
+    checkIf(PRESET_ENTRY === join(PRESET_DIR, 'inject.js'), 'H11', 10, '`inject.js` 里没有 `Date.now()` / 无参 `new Date()`（时间与"今天"全从事件自带的时间戳进）',
+      clockHits.length === 0 ? '（一次都没有）' : clockHits, '（一次都没有）')
+  }
+
+  // ── 自检 · 编号唯一（契约 §6.1）────────────────────────────────────────────
+  // 🔴 这一条钉的是**探针自己**：同一次运行里一个编号只许有一个意思。
+  //    2026-09-26 那批 `M2` ×2、`M4` ×2（且 `M4` 两处是两件不同的事）、还有 `N5` ×2 ——
+  //    第 5 关照契约表引编号就会引错。以前只有"加新族之前人肉跑一次查重"这条纪律，
+  //    人一忙就会漏 ⇒ 改成每次运行自己判。
+  {
+    const seen = new Map()
+    for (const id of usedIds) seen.set(id, (seen.get(id) ?? 0) + 1)
+    const dup = [...seen].filter(([, n]) => n > 1).map(([id, n]) => `${id} ×${n}`)
+    checkTrue('Z9', '§形状',
+      `探针自己的编号全局唯一（这次判了 ${seen.size} 个编号；一个编号一个意思，否则照契约表引编号会引错）`,
+      dup.length === 0, dup.length === 0 ? '（没有重复）' : `重号：${dup.join('、')}`)
   }
 
   // ── 收尾 ───────────────────────────────────────────────────────────────────

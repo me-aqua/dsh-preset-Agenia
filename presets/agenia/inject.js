@@ -77,26 +77,22 @@ const DEFAULT_EVERY = 3
 const TAIL_MARK = /<!--\s*尾巴到此为止\s*-->/
 
 /**
- * 情绪板那两份内容文件。
- * `mood.md` —— 两个衰减常数 + 六个场景的区间，**只在 ⑤ 里读**（分数每步都在变，
- * 进快照就是每步重发一次、缓存全废）。常数住在那儿 ⇒ 改它不用重启（口径 14）。
- * `me-aqua.md` —— 关于老板的那份；这里只用它那三行作息算「距下班还有多久」（口径 13）。
+ * 情绪板那份内容文件。
+ * `mood.md` —— 常数 + **恰好三条**场景的区间 + 关键词表，**只在 ⑤ 里读**（分数每步都在变，
+ * 进快照就是每步重发一次、缓存全废）。常数住在那儿 ⇒ 改它不用重启（口径 13）。
  */
 const MOOD_FILE = 'mood.md'
-const ME_FILE = 'me-aqua.md'
 
 /**
- * 情绪板的六个维度（键 + 中文），**次序就是贴出去那一行的次序**（契约 3.4 钉死）。
- * 🔴 六个就是六个 —— 没有"确定"（口径 9）。
- * 🔴 `fatigue` 与 `arousal` 是**两个独立的数**：高步数 + 刚开工 ⇒ 唤起高、疲劳低（"来劲"）；
- *    连干拉长 ⇒ 疲劳自己涨上去（"烦躁"）。合成一维 = 这两个字就分不出来了。
+ * 情绪板的三个维度（键 + 中文），**次序就是贴出去那一行的次序**（契约 §二 钉死）。
+ * 掌控 = 干活的成败 · 疲劳 = 今天净干了多久 · 亲近 = 他多久没见 + 他夸还是骂。
+ * 🔴 三个就是三个，没有第四个。
+ * 🔴 掌控与疲劳是**两根独立的数**：连着翻车 + 刚开工 ⇒ 掌控低而疲劳低；
+ *    一路顺 + 干满一天 ⇒ 两个都高。合成一维，这两种状态就分不出来了。
  */
 const DIMS = [
-  ['pleasure', '愉悦'],
-  ['arousal', '唤起'],
   ['control', '掌控'],
   ['fatigue', '疲劳'],
-  ['novelty', '新异'],
   ['closeness', '亲近'],
 ]
 const DIM_KEYS = new Set(DIMS.map(([key]) => key))
@@ -261,15 +257,22 @@ function landsInOffice(target, agent) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 情绪板：六维打分（契约 3.2）。**导出的纯函数** —— 时间只能从参数进。
+// 情绪板：三维打分（契约 §三）。**导出的纯函数** —— 时间只能从参数进。
 // 为什么必须导出：不导出就只能隔着整条尾巴路测它，"喂假信号验单调性"这件事
 // 根本做不了（退化成"读代码觉得对"）。探针的 N 族就钉在这上面。
 //
-// 衰减常数**不在这个文件里**：它们住在 `mood.md` 的 ```mood 块里（口径 14），
+// 常数**不在这个文件里**：它们住在 `mood.md` 的 ```mood 块里（口径 13/14），
 // 每次要贴尾巴时现读 ⇒ 改常数不用重启 harness。这里只写"怎么用"，不写"用多少"。
+// ⚠️ 写在 `num(c.xxx, 默认)` 里的那几个数**只是缺省值**（那个块里没写这个键时的兜底）——
+//    块里给了就**以文件里的为准**：`moodConstants()` 把它们一起收进白名单再传进来。
+//    ⇒ 四档刻度（重逢量程 / 重逢顶 / 夸一步 / 骂一步）与一、二级常数同路，改文件即生效。
 // ─────────────────────────────────────────────────────────────────────────────
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x)
 const num = (x, fallback = 0) => (typeof x === 'number' && Number.isFinite(x) ? x : fallback)
+const MINUTE = 60 * 1000
+
+/** 掌控那个滑动窗口有多长（口径 3：最近 **20 次**工具结果，跨回合不清零）。 */
+const RECENT_WINDOW = 20
 
 /**
  * 一次失败的影响还剩多少：**现实时间半衰 × 每回合折扣**（两个时钟）。
@@ -283,7 +286,7 @@ function decayOf(signals, constants) {
   const halfLife = constants?.halfLifeMinutes
   if (typeof now !== 'number' || typeof last !== 'number') return 0
   if (typeof halfLife !== 'number' || !(halfLife > 0)) return 0
-  const minutes = Math.max(0, (now - last) / 60000)
+  const minutes = Math.max(0, (now - last) / MINUTE)
   const rounds = Math.max(0, num(signals?.roundsSinceError))
   const decay = constants?.roundDecay
   const perRound = typeof decay === 'number' && decay > 0 && decay <= 1 ? decay ** rounds : 1
@@ -291,48 +294,92 @@ function decayOf(signals, constants) {
 }
 
 /**
- * 六维分数 + 命中的场景。**同步、纯函数、不碰真实时钟**（口径 10/11/12）。
+ * 滑动窗口里的成功率（口径 3）：窗口空 ⇒ 退回 `oks / (oks + errors)`；两边都没有 ⇒ 0.5（中性）。
+ * ⚠️ 窗口**跨回合不清零**（治"回合一切、成功率永远是一条直线"）—— 那是采集端的事。
+ */
+function successRateOf(signals) {
+  const window = Array.isArray(signals?.recentResults) ? signals.recentResults : undefined
+  if (window !== undefined && window.length > 0) {
+    return window.filter((result) => result === 'ok').length / window.length
+  }
+  const errors = Math.max(0, num(signals?.errors))
+  const oks = Math.max(0, num(signals?.oks))
+  const total = errors + oks
+  return total === 0 ? 0.5 : oks / total
+}
+
+/**
+ * "同一个坑"重复了几次（口径 5）：取 `pitCounts` 里**最深**的那一个。
+ * ⚠️ 它数的是**同一个错**（工具名 + 报文首行那个指纹）出现过几次 —— 不是"连续失败几次"：
+ *    两个不同的坑各一次 ⇒ 这里是 1 ⇒ 不扣分（只按连续失败数的实现分不开这两组）。
+ */
+function worstPitRepeat(pitCounts) {
+  if (pitCounts === null || typeof pitCounts !== 'object') return 0
+  let worst = 0
+  for (const value of Object.values(pitCounts)) worst = Math.max(worst, num(value))
+  return worst
+}
+
+/**
+ * 三维分数 + 命中的场景。**同步、纯函数、不碰真实时钟**（口径 10/12）。
  * 每一维吃哪根信号、为什么是这个形状：`mood.md` 第二节那张表（老板不读 `.js`）。
  * 缺项按"中性"算，**不许抛** —— 少一个信号不该让整条尾巴没得贴。
  *
- * @param signals   契约 3.2 那张表（`now` 必填，其余缺项按中性）
- * @param constants `mood.md` 里那个 ```mood 块（常数 + 场景例库）
+ * @param signals   契约 §四 那张表（`now` 必填，其余缺项按中性）
+ * @param constants `mood.md` 里那个 ```mood 块（常数 + 关键词表 + 场景例库）
  * @returns `{ scores, scenes }` —— `scenes` 是按 `constants.scenes` 的先后**全部**命中项
  */
 export function moodOf(signals, constants) {
   const s = signals ?? {}
-  const errors = Math.max(0, num(s.errors))
-  const oks = Math.max(0, num(s.oks))
-  const total = errors + oks
-  const rate = total === 0 ? 0.5 : oks / total
-  const same = Math.max(1, num(s.sameErrorCount, 1))
-  const steps = Math.max(0, num(s.steps))
-  const cont = Math.max(0, num(s.continuousMinutes))
-  const sinceBoss = Math.max(0, num(s.sinceBossMinutes))
-  const novel = Math.max(0, num(s.newThings))
-  const toOff = typeof s.minutesToOffWork === 'number' && Number.isFinite(s.minutesToOffWork)
-    ? s.minutesToOffWork
-    : undefined
+  const c = constants ?? {}
 
-  // 失败的影响：只有真的失败过才算（`errors > 0`），而且要先过那两个时钟。
-  const weight = errors > 0 ? decayOf(s, constants) : 0
-  // 成功率直接读；"快到下班点了"抬唤起（`toOff` 缺了 ⇒ 这一项不参与）。
+  // ── 掌控 = 干活的成败（口径 3/4/5）────────────────────────────────────────
+  const rate = successRateOf(s)
   const success = clamp01((rate - 0.4) / 0.6)
-  const offFactor = toOff === undefined ? 0 : clamp01(1 - Math.max(0, toOff) / 240)
+  // 失败的影响：只要**窗口里还有失败**就算，**不再要求"本回合出过错"**（治 P3）——
+  // 上一回合那次失败照样按"时间半衰 × 回合折扣"往下减，只是越久越轻。
+  const hasFail = Array.isArray(s.recentResults)
+    ? s.recentResults.includes('fail')
+    : Math.max(0, num(s.errors)) > 0
+  const weight = hasFail ? decayOf(s, c) : 0
+  const pitRepeat = worstPitRepeat(s.pitCounts)
+  const control = clamp01(success - 0.5 * weight - num(c.pitStep, 0.08) * Math.max(0, pitRepeat - 1))
 
-  const scores = {
-    pleasure: clamp01(success - 0.5 * weight),
-    arousal: clamp01(0.1 + 0.5 * clamp01(steps / 40) + 0.4 * offFactor),
-    control: clamp01(success - 0.5 * weight - 0.08 * (same - 1)),
-    fatigue: clamp01(0.1 + 0.8 * clamp01(cont / 300)),
-    novelty: clamp01(novel / 4),
-    closeness: clamp01(sinceBoss / 720),
-  }
+  // ── 疲劳 = 今天净干了多久（口径 12）──────────────────────────────────────
+  // ⚠️ 回退（他离开 ⇒ 那一段不算、之前攒的按半衰退烧）**算在采集端**，这里只收一个
+  //    已经算好的数：两边各算一次会把同一个衰减乘两遍（实测踩过：疲劳恒 0）。
+  const fullScale = c.fullScaleMinutes
+  const fatigue = typeof fullScale === 'number' && fullScale > 0
+    ? clamp01(Math.max(0, num(s.netWorkMinutes)) / fullScale)
+    : 0
+
+  // ── 亲近 = 重逢项 + 夸 / 骂（口径 6/7）───────────────────────────────────
+  const sinceBoss = Math.max(0, num(s.sinceBossMinutes))
+  // 重逢项量的是"他**这一次开口之前**离了多久"（治 P5）：老实现量"现在离他上一句多久"，
+  // 老板一开口那个数就被刷成 0 ⇒「他久别归来」永远亮不了。
+  // ⚠️ 缺这个信号就退回 `sinceBossMinutes`（"他越久没开口 ⇒ 越想他"那条单调性仍然成立）。
+  const gap = typeof s.sincePreviousBossMinutes === 'number' && Number.isFinite(s.sincePreviousBossMinutes)
+    ? Math.max(0, s.sincePreviousBossMinutes)
+    : sinceBoss
+  const reunionScale = num(c.reunionScaleMinutes, 240)
+  const reunion = clamp01(num(c.reunionBase, 0.9) * clamp01(reunionScale > 0 ? gap / reunionScale : 0))
+  // 🔴 **骂赢是"一句之内"的规矩，不是"整段"的**（口径 7）：同一句话里夸词和骂词都出现 ⇒
+  //    那一句只算骂 —— 那一步在数句子的那一层（`keywordCounts`）做完了，这里拿到的是两个句数。
+  //    不同句子各自记账：三句夸 + 一句骂 ⇒ 净 +3×.06 − .08。
+  // ⚠️ 两档都是**带符号的**：`mood.md` 那份块里 `blameStep` 写的就是负的（骂是往下）。
+  //    谁把符号写歪（或者在这里给它挂个多余的减号），方向当场反过来，而分数行长得一样"正常"。
+  const closeness = clamp01(
+    reunion
+    + num(c.praiseStep, 0.06) * Math.max(0, num(s.keywordPraise))
+    + num(c.blameStep, -0.08) * Math.max(0, num(s.keywordBlame)),
+  )
+
+  const scores = { control, fatigue, closeness }
 
   // 命中 = `when` 里**每一个**维度都落进它的区间；递出去的次序 = `mood.md` 里的先后。
-  // 不做数量上限：区间满足却没递出来，和"实现漏了"分不开（口径 12）。
+  // 不做数量上限：区间满足却没递出来，和"实现漏了"分不开。
   const hits = []
-  for (const scene of Array.isArray(constants?.scenes) ? constants.scenes : []) {
+  for (const scene of Array.isArray(c.scenes) ? c.scenes : []) {
     const when = scene?.when
     if (when === null || typeof when !== 'object') continue
     const hit = Object.entries(when).every(([dim, band]) =>
@@ -343,9 +390,55 @@ export function moodOf(signals, constants) {
 }
 
 /**
- * 从 `mood.md` 里抠出那个 ```mood JSON 块并校验：两个常数 + **正好 6 条**场景 + 区间合法。
- * 任何一处不合法 ⇒ `undefined` = **整块不认**：调用方只贴 style 段并出声（契约 3.1）。
- * ⚠️ `lines` 只把"空数组 / 不是字符串"当不合法 —— 契约 3.1 的 2~3 句是**惯例**，
+ * 一个词在句子里命中了吗？（口径 8）
+ * - **全是 ASCII 字母数字**的词（`der`）⇒ **整词匹配**：`under` / `order` / `header` / `nader`
+ *   都不算（它们只是**含有**那三个字母）。
+ * - 其余（中文）⇒ **子串匹配**。
+ * ⚠️ 大小写不敏感；整词那一路**不许用 `\b`** —— `der-x` 会被 `\b` 认成命中，
+ *    判据是"两侧不是字母数字"。
+ */
+function wordHits(sentence, word) {
+  if (typeof sentence !== 'string' || typeof word !== 'string' || word.length === 0) return false
+  const text = sentence.toLowerCase()
+  const lower = word.toLowerCase()
+  if (/^[a-z0-9]+$/.test(lower)) {
+    const escaped = lower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`).test(text)
+  }
+  return text.includes(lower)
+}
+
+/**
+ * 一句话里数出两样东西（口径 7）：**带夸奖关键词的句子数**、**带骂关键词的句子数**。
+ * **同一句话两个都命中 ⇒ 只算骂**（骂赢）—— 这是"一句之内"的规矩；
+ * 不同的句子各自记账（三句夸 + 一句骂 = 净 +.10），整段清零那条写法是错的。
+ */
+function keywordCounts(sentences, constants) {
+  const praise = Array.isArray(constants?.keywordPraise) ? constants.keywordPraise : []
+  const blame = Array.isArray(constants?.keywordBlame) ? constants.keywordBlame : []
+  let keywordPraise = 0
+  let keywordBlame = 0
+  for (const sentence of Array.isArray(sentences) ? sentences : []) {
+    if (blame.some((word) => wordHits(sentence, word))) {
+      keywordBlame += 1
+      continue
+    }
+    if (praise.some((word) => wordHits(sentence, word))) keywordPraise += 1
+  }
+  return { keywordPraise, keywordBlame }
+}
+
+/**
+ * 从 `mood.md` 里抠出那个 ```mood JSON 块并校验：两个衰减常数 + **三个疲劳常数**
+ * （在场判据 / 离开半衰 / 满量程）+ **四档亲近刻度**（重逢量程 / 重逢顶 / 夸一步 / 骂一步）
+ * + **正好 3 条**场景 + 区间合法。
+ * 任何一处不合法 ⇒ `undefined` = **整块不认**：调用方只贴 style 段并出声（契约 §四）。
+ * 🔴 「场景数必须正好 **3**」那一行校验必须和 `mood.md` 里的条数**同步**（口径 2）：
+ *    改一边没改另一边 ⇒ 整块不认 ⇒ 情绪段整个不贴、只 `warnOnce` 一次然后永久闭嘴
+ *    —— 那是一条**安静**的失效（探针 `I9` 直接抠源码里那个数字，所以这里只留一处）。
+ * ⚠️ 关键词表 / `pitStep` / 四档刻度**可以缺**（缺 = `moodOf` 里写着的默认值，不加不减）：
+ *    少一个键不该让**整个情绪段**消失。**给了但不合法**才按上面那条办：整块不认 + 出声。
+ * ⚠️ `lines` 只把"空数组 / 不是字符串"当不合法 —— 2~3 句是**惯例**，
  *    多一句少一句不该让整块失效（那会把一个格式瑕疵放大成"情绪段整个消失"）。
  */
 function moodConstants(markdown) {
@@ -363,7 +456,7 @@ function moodConstants(markdown) {
     && value.every((v) => typeof v === 'number' && Number.isFinite(v))
     && value[0] >= 0 && value[0] <= value[1] && value[1] <= 1
   const scenes = parsed?.scenes
-  if (!Array.isArray(scenes) || scenes.length !== 6) return undefined
+  if (!Array.isArray(scenes) || scenes.length !== 3) return undefined
   for (const scene of scenes) {
     if (typeof scene?.id !== 'string') return undefined
     if (!Array.isArray(scene?.lines) || scene.lines.length === 0) return undefined
@@ -378,7 +471,46 @@ function moodConstants(markdown) {
   if (typeof halfLife !== 'number' || !(halfLife > 0)) return undefined
   const decay = parsed?.roundDecay
   if (typeof decay !== 'number' || !(decay > 0) || decay > 1) return undefined
-  return { halfLifeMinutes: halfLife, roundDecay: decay, scenes }
+  // 三个新常数（口径 13）：缺了就没法算疲劳 ⇒ 同样整块不认。
+  const presence = parsed?.presenceMinutes
+  if (typeof presence !== 'number' || !(presence > 0)) return undefined
+  const absence = parsed?.absenceHalfLifeMinutes
+  if (typeof absence !== 'number' || !(absence > 0)) return undefined
+  const fullScale = parsed?.fullScaleMinutes
+  if (typeof fullScale !== 'number' || !(fullScale > 0)) return undefined
+  // 四档刻度（口径 14）：**它们和上面那几条一样由这个块说了算** —— 写进白名单，
+  // 改 `mood.md` 就换刻度、不用重启 harness（"块里给了以文件为准"这句话对它们也成立）。
+  // ⚠️ **缺 = `moodOf` 里那个默认值**（不加不减，同 `pitStep` / 词表那条）；**给了就得是个刻度**：
+  //    量程要正，另外三个是 0~1 那一档的分数，`blameStep` 带负号（骂是往下）。
+  //    一个写歪的符号会让"夸涨 / 骂跌"整个反过来，而分数行长得一模一样 ⇒ 这种块不认，出声。
+  const dial = (value) => typeof value === 'number' && Number.isFinite(value)
+  const fraction = (value) => dial(value) && value >= 0 && value <= 1
+  const scale = parsed?.reunionScaleMinutes
+  if (scale !== undefined && !(dial(scale) && scale > 0)) return undefined
+  const base = parsed?.reunionBase
+  if (base !== undefined && !fraction(base)) return undefined
+  const praise = parsed?.praiseStep
+  if (praise !== undefined && !fraction(praise)) return undefined
+  const blame = parsed?.blameStep
+  if (blame !== undefined && !(dial(blame) && blame <= 0 && blame >= -1)) return undefined
+  /** 关键词表：不是字符串数组就当空表（口径 9：它缺了不算整块不合法）。 */
+  const wordList = (value) =>
+    (Array.isArray(value) ? value.filter((word) => typeof word === 'string' && word.length > 0) : [])
+  return {
+    halfLifeMinutes: halfLife,
+    roundDecay: decay,
+    presenceMinutes: presence,
+    absenceHalfLifeMinutes: absence,
+    fullScaleMinutes: fullScale,
+    pitStep: parsed?.pitStep,
+    reunionScaleMinutes: scale,
+    reunionBase: base,
+    praiseStep: praise,
+    blameStep: blame,
+    keywordPraise: wordList(parsed?.keywordPraise),
+    keywordBlame: wordList(parsed?.keywordBlame),
+    scenes,
+  }
 }
 
 /**
@@ -638,7 +770,7 @@ export async function apply(ctx, config = {}) {
   //      ⇒ 窗口里**只碰内存**；贴的那一下放在 `agent/pre-step`：那儿的 `decision.messages`
   //        就是"这一步会送出去的请求"，改它不写 session。
   //      ⇒ 两条机制因此合成同一个出口：情绪板拼在同一条消息里，两边永远同时出现
-  //        （口径 1/2 的"记账在 session/event、贴在 pre-step"）。
+  //        （机制① 的**记账**在 `session/event`、**贴**的那一下在 `pre-step`）。
   //
   // 🔴 **机制② 为什么必须做在"本步 messages"上**（同一天按源码次序定下来的）：
   //      `system-prompt/assemble` 排在 `inbox.claim()` **之后**（`dsh-agent-loop` L889/L890），
@@ -691,24 +823,17 @@ export async function apply(ctx, config = {}) {
     const id = session === null || session === undefined ? undefined : session.id
     if (typeof id !== 'string' || event === null || event === undefined) return
     const at = typeof event.time === 'number' ? event.time : undefined
-    const mood = moodStateOf(id, at)
+    const mood = moodStateOf(id, at, session?.header?.cwd)
     if (at !== undefined) mood.lastEventAt = at
     const type = event.type
 
-    // 组员：机制①② 都不成立，整条丢掉（口径 5）。认的是装配时登记的那份岗位。
+    // 组员：机制①② 都不成立，整条丢掉（口径 16）。认的是装配时登记的那份岗位。
     if (roleOfAgent.has(id)) return
 
     if (type === 'turn/start') {
       counts.set(id, 0)
-      // 情绪那六维按"回合"算（契约 3.5）：新回合从零起，`roundsSinceError` 数的是
-      // "最近那次失败之后过了几个回合"（旧账按回合打折，就是拿它算的）。
-      mood.errors = 0
-      mood.oks = 0
-      mood.sameErrorCount = 1
-      mood.steps = 0
-      mood.seenTools = new Set()
-      mood.newThings = 0
-      mood.turnStartAt = at
+      // 🔴 滑动窗口（`recent`）与错误指纹（`pits`）**跨回合不清零**（口径 3/5）——
+      //    新回合只推进"最近那次失败之后过了几个回合"，旧账靠它打折，不靠它消失。
       mood.roundsSinceError = mood.lastErrorAt === undefined ? 0 : mood.roundsSinceError + 1
       return
     }
@@ -720,38 +845,32 @@ export async function apply(ctx, config = {}) {
     if (type === 'user/message') {
       // 只有老板本人算。`plugin` / `agent-instructions` / `skill-catalog` 这几路都是
       // 系统自己发的，算进来就是自己喂自己（那就是死循环了）。
-      // ⚠️ 这一条现在只管**守门 A** 和"他多久没开口"：机制② 不再听事件，它在
+      // ⚠️ 这一条只管**守门 A** 与那条兜底的重逢账：机制② 不再听事件，它在
       //    `agent/pre-step` 上看本步的 messages（老板那句话的 `user/message` 要到装配
-      //    **之后**才落笔，事件驱动赶不上它）。
+      //    **之后**才落笔，事件驱动赶不上它 —— 见 pre-step 那段说明）。
       // ⚠️ 判据**只能**认 `source.kind`：工具结果那条消息的 `role` 也是 `'user'`。
       if (event.data?.source?.kind !== 'user') return
       bossWaiting.add(id)
-      mood.bossAt = at
-      return
-    }
-    if (type === 'step/start') {
-      mood.steps += 1
-      return
-    }
-    if (type === 'tool/call') {
-      const name = toolNameOf(event)
-      if (typeof name === 'string' && !mood.seenTools.has(name)) {
-        mood.seenTools.add(name)
-        mood.newThings += 1
+      // 重逢项的兜底：先记"他上一次开口离这一次多久"，**再**刷新 `bossAt`。
+      if (typeof at === 'number' && typeof mood.bossAt === 'number') {
+        mood.sincePrevBossMin = Math.max(0, (at - mood.bossAt) / MINUTE)
       }
+      mood.bossAt = at
+      mood.bossHeard = true
       return
     }
     if (type !== 'tool/result') return
 
-    // 情绪那一路先记成败 —— 它跟机制① 的计数互不影响：报错的结果**两边都算一次**。
-    if (hasErrorFlag(event)) {
-      mood.errors += 1
-      mood.sameErrorCount += 1
+    // ── 掌控那一路：**最近 20 次**结果的滑动窗口 + 错误指纹（口径 3/5）─────────
+    // 它跟机制① 的计数互不影响：报错的结果**两边都算一次**。
+    const failed = hasErrorFlag(event)
+    mood.recent.push(failed ? 'fail' : 'ok')
+    if (mood.recent.length > RECENT_WINDOW) mood.recent = mood.recent.slice(-RECENT_WINDOW)
+    if (failed) {
+      const key = pitKeyOf(event)
+      mood.pits[key] = num(mood.pits[key]) + 1
       if (at !== undefined) mood.lastErrorAt = at
       mood.roundsSinceError = 0
-    } else {
-      mood.oks += 1
-      mood.sameErrorCount = 1
     }
 
     // ── 机制① 的记账（只挂一个内存标记；贴的那一下在 `agent/pre-step`）──────────
@@ -852,56 +971,114 @@ export async function apply(ctx, config = {}) {
   }
 
   /**
-   * `me-aqua.md` 里那三行作息 → "距下班还有多少分钟"（**可负** = 已经过点了）。
-   * 读不到 ⇒ `undefined`，并且**出声**：这条信号无声无息地缺着，分数会一直偏在一边。
+   * 把一个时间戳写成**当地日期**（`YYYY-MM-DD`）与"当地零点"。
+   * ⚠️ **不许读真实时钟**（无参构造就是那个写法）：参数一定是从事件里来的时间戳，
+   *    否则"今天是哪个抽屉"会跟着跑探针的那一天漂 —— 断言半夜自己变红（口径 10）。
    */
-  function minutesToOffWork(now) {
-    let raw
-    try {
-      raw = readFileSync(join(contentDir, ME_FILE), 'utf8')
-    } catch {
-      raw = undefined
-    }
-    if (raw === undefined) {
-      warnOnce('me-aqua', `[agenia] 读不到 ${ME_FILE} —— "距下班"这条信号缺着，情绪分按没有它算。`)
-      return undefined
-    }
-    const hit = /下班[:：]\s*(\d{1,2}):(\d{2})/.exec(raw)
-    if (hit === null) {
-      warnOnce('me-aqua-off', `[agenia] ${ME_FILE} 里没有 \`下班：HH:MM\` 那一行 —— "距下班"这条信号缺着。`)
-      return undefined
-    }
-    if (typeof now !== 'number') return undefined
-    const at = new Date(now)
-    return Number(hit[1]) * 60 + Number(hit[2]) - (at.getHours() * 60 + at.getMinutes())
+  function localDateOf(at) {
+    const d = new Date(at)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  function localMidnightOf(at) {
+    const d = new Date(at)
+    d.setHours(0, 0, 0, 0)
+    return d.getTime()
   }
 
   /**
-   * 这个会话的情绪段：分数行 + 命中的场景例子（格式由契约 3.4 逐字钉死）。
-   * 信号全从事件里攒（`moods`），`now` 取**最近一条会话事件的 `time`** —— 不调 `Date.now()`。
+   * 开工时刻（口径 10/11）= `${cwd}/.team/leader/<今天>/log.md` 的**首条记录**（`## HH:MM`）。
+   * - "今天"从**事件时间**推，不读真实时钟；
+   * - **只认那个抽屉**，不认 `.team/leader/log.md`（那是累计日志，另一回事）；
+   * - 抽屉里没有 log ⇒ 降级用**会话首帧**，并且**出声**（口径 11：不许静默失效）。
+   * ⚠️ `## HH:MM` 那个**形状就是接口**：改了它 ⇒ 开工时刻读不出来 ⇒ 静默退化。
+   */
+  function startOfWork(state) {
+    if (typeof state.startOfWork === 'number') return state.startOfWork
+    const at = typeof state.lastEventAt === 'number' ? state.lastEventAt : state.startAt
+    const date = localDateOf(at)
+    const cwd = typeof state.cwd === 'string' ? state.cwd : '.'
+    const file = join(cwd, '.team', 'leader', date, 'log.md')
+    let raw
+    try {
+      raw = readFileSync(file, 'utf8')
+    } catch {
+      raw = undefined
+    }
+    const hit = raw === undefined ? null : /^##\s*(\d{1,2}):(\d{2})/m.exec(raw)
+    if (hit === null) {
+      if (!state.workWarned) {
+        state.workWarned = true
+        console.error(`[agenia] 读不到今天的开工时刻（\`${file}\` 不在，或者首条不是 \`## HH:MM\`）`
+          + ' —— 疲劳降级成"从会话第一帧算起"，分数会偏一边。')
+      }
+      state.startOfWork = typeof state.startAt === 'number' ? state.startAt : at
+      return state.startOfWork
+    }
+    state.startOfWork = localMidnightOf(at) + (Number(hit[1]) * 60 + Number(hit[2])) * MINUTE
+    return state.startOfWork
+  }
+
+  /**
+   * 净工作时长（口径 12）：**他在不在**决定这一段时间算不算干活。
+   * - 这一段间隔里，前 `presenceMinutes` 分钟算在场 ⇒ **整段累加**；
+   * - 超出的那一截（他离开的那段）不算，而且**之前攒的那一段按半衰退烧**；
+   * - 🔴 **退烧不是清零**：他回来时是在那个退过烧的数上**接着往上累加**，不是从头开始；
+   * - **他开没开过口不参与这条判据**（他从没开过口也一样算）：那个标记只喂"他多久没见"
+   *   （亲近那一维的重逢项）。
+   * ⚠️ **单位**：间隔是**毫秒**、那几个常数是**分钟** —— 直接比就会永远判"他不在"、
+   *    疲劳恒 0（这个坑测试位和实现岗各踩过一次，症状都长得像"信号没接上"）。
+   * ⚠️ 起点：第一次调用时把 `lastWorkAt` 落在**开工时刻**（当日 log 首条），那一段也算数。
+   * ⚠️ 两个常数由 `moodConstants()` 保证是正数（缺了整块不认）⇒ 这里**没有兜底数字**：
+   *    一个瞎编的默认值会让"改了 `mood.md` 却没生效"看不出来（同 `decayOf` 那条规矩）。
+   */
+  function advanceWork(state, now, constants) {
+    if (typeof now !== 'number') return
+    if (typeof state.lastWorkAt !== 'number') {
+      state.lastWorkAt = startOfWork(state)
+      state.netWorkMinutes = 0
+    }
+    const interval = Math.max(0, now - state.lastWorkAt)
+    if (interval === 0) return
+    state.lastWorkAt = now
+    const presence = Math.max(0, num(constants?.presenceMinutes))
+    const gone = Math.max(0, interval / MINUTE - presence)
+    // 攒下的那一段**只按半衰回退**（下面的 `faded`）；这里没有任何一条分支把它抹成 0 ——
+    // 抹成 0 = "他离开一次 ⇒ 今天白干"，那是另一回事，不是这一维要量的东西。
+    const banked = Math.max(0, num(state.netWorkMinutes))
+    const halfLife = Math.max(0, num(constants?.absenceHalfLifeMinutes))
+    const faded = halfLife > 0 ? banked * Math.exp(-gone / halfLife) : banked
+    state.netWorkMinutes = faded + Math.max(0, interval / MINUTE - gone)
+  }
+
+  /**
+   * 这个会话的情绪段：分数行 + 命中的场景例子（格式由契约 §五 逐字钉死）。
+   * 信号全从事件里攒（`moods`），`now` 取**最近一条会话事件的 `time`** —— 一律不读真实时钟。
+   * ⚠️ 净工作时长在这里推进一次（**回退算在采集端**，`moodOf` 只收结果）。
    * 读不到 `mood.md` ⇒ `undefined`（这一段整块不贴）。
    */
   function emotionTextOf(state) {
     const constants = readMoodConstants()
     if (constants === undefined) return undefined
     const now = state.lastEventAt
-    const since = typeof state.bossAt === 'number' ? state.bossAt : state.startAt
+    advanceWork(state, now, constants)
+    // 他从来没开过口 ⇒ "他多久没见"只能从会话第一帧算起。
+    const since = state.bossHeard && typeof state.bossAt === 'number' ? state.bossAt : state.startAt
     const { scores, scenes } = moodOf({
       now,
+      recentResults: state.recent,
+      pitCounts: state.pits,
       lastErrorAt: state.lastErrorAt,
       roundsSinceError: state.roundsSinceError,
-      errors: state.errors,
-      oks: state.oks,
-      sameErrorCount: state.sameErrorCount,
-      steps: state.steps,
-      continuousMinutes: typeof state.turnStartAt === 'number' && typeof now === 'number'
-        ? Math.max(0, (now - state.turnStartAt) / 60000)
-        : 0,
       sinceBossMinutes: typeof since === 'number' && typeof now === 'number'
-        ? Math.max(0, (now - since) / 60000)
+        ? Math.max(0, (now - since) / MINUTE)
         : 0,
-      newThings: state.newThings,
-      minutesToOffWork: minutesToOffWork(now),
+      // 重逢项：他**这一次开口之前**离了多久 —— 由 pre-step 从那条消息自己的 `time` 上记下来
+      // （事件驱动赶不上它，见 pre-step 那一段）。他从没开过口 ⇒ 它是 0。
+      sincePreviousBossMinutes: Math.max(0, num(state.sincePrevBossMin)),
+      netWorkMinutes: Math.max(0, num(state.netWorkMinutes)),
+      keywordPraise: Math.max(0, num(state.keywords?.keywordPraise)),
+      keywordBlame: Math.max(0, num(state.keywords?.keywordBlame)),
     }, constants)
 
     // 分数写法：`toFixed(2)`，以 `0.` 开头就去掉那个 `0`（`0.62` → `.62`、`1` → `1.00`）。
@@ -914,7 +1091,7 @@ export async function apply(ctx, config = {}) {
       '【这种状态，人一般这么说话】',
     ]
     for (const scene of scenes) {
-      // 括注里只列**当前真的满足**的那几维（按六维次序）—— 那是给她看的"为什么轮到你"。
+      // 括注里只列**当前真的满足**的那几维（按三维次序）—— 那是给她看的"为什么轮到你"。
       const when = scene.when ?? {}
       const inner = DIMS
         .filter(([key]) => Array.isArray(when[key]) && scores[key] >= when[key][0] && scores[key] <= when[key][1])
@@ -926,28 +1103,32 @@ export async function apply(ctx, config = {}) {
   }
 
   /**
-   * 这个会话的情绪信号（第一次碰到就建一份）。`at` = 首帧事件的 `time`。
-   * 为什么首帧要留：他**从来没开过口**的时候，"他多久没开口"只能从会话开头算起（契约 3.5）。
+   * 这个会话的情绪信号（第一次碰到就建一份）。
+   * `at` = 首帧事件的 `time`（他**从来没开过口**时，"他多久没见"只能从会话开头算起）；
+   * `cwd` = 会话的工作目录（开工时刻是从 `${cwd}/.team/leader/<今天>/log.md` 里读的，口径 10）。
+   * 🔴 `recent`（滑动窗口）与 `pits`（错误指纹）**跨回合不清零** —— 那是这一批的正题。
    */
-  function moodStateOf(id, at) {
+  function moodStateOf(id, at, cwd) {
     let state = moods.get(id)
     if (state === undefined) {
       state = {
-        startAt: at, lastEventAt: at, bossAt: undefined, turnStartAt: at,
-        lastErrorAt: undefined, roundsSinceError: 0,
-        errors: 0, oks: 0, sameErrorCount: 1, steps: 0,
-        seenTools: new Set(), newThings: 0,
+        startAt: at, lastEventAt: at, cwd,
+        bossAt: undefined, bossHeard: false, sincePrevBossMin: 0,
+        keywords: { keywordPraise: 0, keywordBlame: 0 },
+        recent: [], pits: {}, lastErrorAt: undefined, roundsSinceError: 0,
+        netWorkMinutes: 0, lastWorkAt: undefined, startOfWork: undefined, workWarned: false,
       }
       moods.set(id, state)
     }
     if (state.startAt === undefined && at !== undefined) state.startAt = at
+    if (typeof state.cwd !== 'string' && typeof cwd === 'string') state.cwd = cwd
     return state
   }
 
   /**
    * 这条 `tool/result` 是**报错**的吗？真形状：`data.message.content[].isError === true`
    * （`.team/dev/2026-09-26` 量过 45269 条结果，979 条报错）。
-   * ⚠️ 它**不影响**机制① 的计数（口径点 1：有一条结果就算一次）—— 它只喂情绪那六维。
+   * ⚠️ 它**不影响**机制① 的计数（口径点 1：有一条结果就算一次）—— 它只喂掌控那个窗口。
    */
   const hasErrorFlag = (event) => {
     const content = event?.data?.message?.content
@@ -955,13 +1136,22 @@ export async function apply(ctx, config = {}) {
   }
 
   /**
-   * `tool/call` 里那个工具名 —— "本回合第一次见的东西"数它（`newThings`）。
-   * 形状取几个可能的落点，认不出就不算：这一条的**采集端**在契约第六节申报为已知缺口
-   * （`moodOf` 那一端有探针 N7 的单调性钉着）。
+   * 错误指纹（口径 5）= **工具名 + 错误报文里那行关键话** —— 用它认"是不是同一个坑"。
+   * ⚠️ **不许认 `callId`**：同一个坑的两次调用各有各的 id，拿它当指纹就永远攒不起来
+   *    （探针那两条同形报错的 `callId` 就是不同的：`probe-call-1` / `probe-call-2`）。
+   * 报文的取法按真形状（`data.message.content[].content[].text`）；
+   * `data.tool` / `data.line` 是两个便利字段 —— 有就直接用。
    */
-  const toolNameOf = (event) => {
-    const data = event?.data
-    return data?.name ?? data?.message?.name ?? data?.message?.toolName ?? data?.message?.content?.[0]?.name
+  const pitKeyOf = (event) => {
+    const data = event?.data ?? {}
+    const parts = Array.isArray(data.message?.content) ? data.message.content : []
+    const text = parts.flatMap((part) => (Array.isArray(part?.content) ? part.content : []))
+      .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+      .join('\n')
+    const tool = typeof data.tool === 'string' ? data.tool
+      : (typeof data.name === 'string' ? data.name
+        : (typeof data.message?.name === 'string' ? data.message.name : '（未知工具）'))
+    return `${tool}|${String(data.line ?? text).split('\n')[0].slice(0, 80)}`
   }
 
   /**
@@ -994,7 +1184,7 @@ export async function apply(ctx, config = {}) {
   // 机制① 的账（`pendingTail`）**追加在本步 messages 的末尾** —— 那正是
   // 「工具结果 → 我下一次开口」之间。
   // ⚠️ **同一批里 style 恒 ≤ 1 条**：② 赢下这一格就把 ① 的挂账清掉（"不叠"）。
-  // 组员：整条丢（口径 5）—— 装配排在 pre-step 前面，那一刻角色已经登记好了。
+  // 组员：整条丢（口径 16）—— 装配排在 pre-step 前面，那一刻角色已经登记好了。
   // ─────────────────────────────────────────────────────────────
   ctx.on('agent/pre-step', async ({ agent }, next) => {
     const decision = await next()
@@ -1011,6 +1201,37 @@ export async function apply(ctx, config = {}) {
     const messages = Array.isArray(decision.messages) ? decision.messages : []
     const at = messages.findLastIndex(isBossMessage)
     const byTwo = at >= 0
+    const state = moods.get(id)
+
+    // 🔴 **先把这一步领到的老板消息记进账，再去算要贴什么**（契约 §5.1 的次序坑）。
+    //    重逢项量的是"他这一次开口**之前**离了多久"，而那条 `user/message` 要到**本步落笔时**
+    //    才写（claim → 装配 → pre-step → step/start → 落笔）—— 只从 `session/event` 记账的实现，
+    //    在 pre-step 上算出来的是**上上次**的距离。
+    //    症状是"亲近恒 .06，而 `mood.md` 与常数全对"（测试位替我们踩过这个坑）。
+    //    ⚠️ 老板那句话的**时刻**挂在消息自己身上（`message.time`）；缺了就退回"最近一条事件的时间"。
+    if (state !== undefined && byTwo) {
+      const said = messages.filter(isBossMessage)
+        .flatMap((message) => (Array.isArray(message?.content) ? message.content : []))
+        .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+        .filter((text) => text.length > 0)
+        .flatMap((text) => text.split(/[。！？!?\n]+/))
+        .map((sentence) => sentence.trim())
+        .filter((sentence) => sentence.length > 0)
+      const constants = readMoodConstants()
+      // 夸 / 骂按**句数**数（一句最多一档、同一句里两个都命中 ⇒ 只算骂）—— 每一次开口重新数。
+      if (constants !== undefined) state.keywords = keywordCounts(said, constants)
+      // 他**这次开口的时刻**：真日志里消息自带 `time`；没有就退回"最近一条事件的时间"
+      // （那是这一步之前的最新时刻 —— 对"他离了多久"来说仍然是同一个量，只是粗一点）。
+      const saidAt = messages[at]?.time
+      const bossTime = typeof saidAt === 'number' ? saidAt : state.lastEventAt
+      if (typeof bossTime === 'number' && typeof state.bossAt === 'number') {
+        state.sincePrevBossMin = Math.max(0, (bossTime - state.bossAt) / MINUTE)
+      }
+      // 他从没开过口 ⇒ 上面那一步不成立，重逢项就是 0（还没有"重逢"这回事）。
+      state.bossAt = bossTime
+      state.bossHeard = true
+    }
+
     const byOne = !byTwo && pendingTail.has(id)
     if (!byTwo && !byOne) return decision               // 这一步既不关 ② 的事、也没有 ① 的账
 

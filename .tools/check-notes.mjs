@@ -261,9 +261,9 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   yes('preset', 'officeBound 正好是 review + retro（只留做判断的岗位）',
     office.join(',') === 'review,retro', office.join(', ') || '（空）')
 
-  // ── 口径 8 / 9 / 13：情绪模块的内容 + `me-aqua.md`（2026-09-26 加）──────────
-  // ⚠️ 这几条量的是**内容文件**，判不了"分打得对不对"——那是探针 N/O/Q 族的事。
-  //    这里只钉"文件在不在、机器那半边读不读得出来、六维有没有漂"。
+  // ── 口径 1 / 2 / 9 / 13 / 14：情绪模块的内容 + `me-aqua.md`（2026-09-26 加）──────
+  // ⚠️ 这几条量的是**内容文件**，判不了"分打得对不对"——那是探针 N/O/Q/D2/E2/V/X/Y/Z 族的事。
+  //    这里只钉"文件在不在、机器那半边读不读得出来、三维有没有漂"。
   const moodPath = join(PRESET, 'mood.md')
   const moodText = existsSync(moodPath) ? read(moodPath) : undefined
   yes('preset', '`mood.md` 在（口径 8）', moodText !== undefined,
@@ -275,47 +275,67 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   } catch {
     moodJson = undefined
   }
-  yes('preset', '`mood.md` 里有一个 ```mood JSON 块：常数 + 恰好 6 条场景（口径 8）',
-    moodJson !== undefined && Array.isArray(moodJson.scenes) && moodJson.scenes.length === 6,
+  // 🔴 **2026-09-26 晚 · 事实变了**：场景库从 6 条砍到 **3 条**（他久别归来 · 一路绿到底 · 刚炸过），
+  //    所以这条从 6 改成 3 —— 改的是**事实**，不是把红改绿。
+  //    `inject.js` 的 `moodConstants()` 里那个"正好几条"的校验必须同步（那半边归探针 `I9`）。
+  yes('preset', '`mood.md` 里有一个 ```mood JSON 块：常数 + 恰好 3 条场景（口径 2）',
+    moodJson !== undefined && Array.isArray(moodJson.scenes) && moodJson.scenes.length === 3,
     moodJson === undefined
       ? '没有这个块 / JSON 不合法'
       : `scenes = ${Array.isArray(moodJson.scenes) ? moodJson.scenes.length : '（不是数组）'}`)
-  // 六维**次序也钉住**（口径 9）。
+  // 三维**次序也钉住**（口径 1）。
   // ⚠️ **2026-09-26 换测法**：原来是"六个名字要在**同一行**里按序出现"（正则分词比对）。
-  //    老板当天精简 `mood.md`、删掉了那句一行式的声明 —— 而**事实（表格里的六维次序）还在**，
-  //    红的是**文案**。⇒ 改成钉「**六个名字首次出现的先后次序**」：
+  //    老板当天精简 `mood.md`、删掉了那句一行式的声明 —— 而**事实（表格里的次序）还在**，
+  //    红的是**文案**。⇒ 改成钉「**名字首次出现的先后次序**」：
   //    表格拆成几行、句子怎么措辞都不影响；**换序 / 少一维照样红**。
   //    🔴 **判据要跟着事实走，不跟着文案走。**（改前先问：我钉的是那件事，还是那句话？）
-  const dimNames = ['愉悦', '唤起', '掌控', '疲劳', '新异', '亲近']
+  // 🔴 **2026-09-26 晚 · 事实又变了**：情绪模块砍到**三维 = 掌控 · 疲劳 · 亲近**（口径 1）。
+  //    砍掉的那几个不是"少了"，是**不许回来** ⇒ 这条同时钉两半：三个按序在 + 砍掉的一个都不出现。
+  const dimNames = ['掌控', '疲劳', '亲近']
+  const goneDims = ['愉悦', '唤起', '新异']
   const firstAt = dimNames.map((d) => (moodText ?? '').indexOf(d))
   const missing = dimNames.filter((_, i) => firstAt[i] < 0)
   const outOfOrder = missing.length === 0 && !firstAt.every((v, i) => i === 0 || v > firstAt[i - 1])
-  yes('preset', '六维 = 愉悦 · 唤起 · 掌控 · 疲劳 · 新异 · 亲近，而且次序没漂（口径 9）',
-    missing.length === 0 && !outOfOrder,
+  const backAgain = goneDims.filter((d) => (moodText ?? '').includes(d))
+  yes('preset', '三维 = 掌控 · 疲劳 · 亲近，次序没漂、砍掉的那三个没回来（口径 1）',
+    missing.length === 0 && !outOfOrder && backAgain.length === 0,
     missing.length > 0
       ? `少了：${missing.join('、')}`
       : outOfOrder
-        ? `六个都在，但**次序漂了**（首次出现的位置 ${firstAt.join(' / ')}）`
-        : `六个都在，首次出现的次序对（位置 ${firstAt.join(' / ')}）`)
+        ? `三个都在，但**次序漂了**（首次出现的位置 ${firstAt.join(' / ')}）`
+        : backAgain.length > 0
+          ? `砍掉的那几维又回来了：${backAgain.join('、')}`
+          : `三个都在，首次出现的次序对（位置 ${firstAt.join(' / ')}）`)
   const dingLines = (moodText ?? '').split('\n').filter((l) => l.includes('确定'))
-  yes('preset', '「确定」没有作为第七维回来（口径 9）',
+  yes('preset', '「确定」没有作为第四个维度回来（口径 1）',
     dingLines.every((l) => /不|没有|别/.test(l)),
     dingLines.length === 0 ? '一次都没出现' : `出现了，且不像在否定：${dingLines[0].trim().slice(0, 60)}`)
-  // ⚠️ **2026-09-26 在这里删掉一条断言** —— 原来钉的是
-  //    「`mood.md` 里写死了「分数是调语气用的，不是绩效报表」（口径 8）」。
-  //    老板当天精简 `mood.md`、把整个 §五「边界」删了（含这一句），并**明确拍板「删的都是我想删的」**
-  //    ⇒ 这条口径**他不留了** ⇒ 断言的存在前提没了。
-  //    🔴 **这是"事实变了"、不是"判据自己烂掉"** —— 删它不算橡皮筋，但**出处必须留在这行里**：
-  //    否则下一个读代码的人会以为这里的断言可以随便删。
-  //    （同批一起不要的还有 §五 另外两条：「系统故障不算情绪」「分数不改判断」。）
+  // 🔴 **2026-09-26 晚 · 这条回来了**（口径 14）：上一批它被删掉，是因为老板当天精简 `mood.md`、
+  //    把整个 §五「边界」删了（含这一句），并拍板「删的都是我想删的」⇒ 那条口径当时没有了。
+  //    当天下午老板又把它要回来（口径 14）—— 它是"分数只用来调语气"的唯一落点。
+  //    ⇒ **事实变了，断言跟着回来**：删它 / 加它都得在这儿留出处，谁改谁交代。
+  //    探针 `H10` 钉的是同一件事（**两处都得有**）。
+  yes('preset', '`mood.md` 里写着「分数是调语气用的，不是绩效报表」（口径 14）',
+    /分数是调语气用的/.test(moodText ?? ''),
+    '这句话是"分数只用来调语气"那条口径的唯一落点；删了它，下一个读的人会以为分数是绩效')
 
   const mePath = join(PRESET, 'me-aqua.md')
   const meText = existsSync(mePath) ? read(mePath) : undefined
   yes('preset', '`me-aqua.md` 在（口径 13）', meText !== undefined,
     meText === undefined ? '文件不存在' : `${meText.length} 字符`)
-  yes('preset', '`me-aqua.md` 的「下班：HH:MM」机器读得出来（口径 13 的作息三行）',
-    /下班[:：]\s*(\d{1,2}):(\d{2})/.test(meText ?? ''),
-    '读不出来 ⇒ "距下班"这条信号永远缺着（静默退化）')
+  // 🔴 **2026-09-26 晚 · 换判据，不换文案**（评审条件 ⑤，测试位）。
+  //    原来是「`me-aqua.md` 的「下班：HH:MM」**机器读得出来**」—— 它测的东西**已经死了**：
+  //    唤起被砍 ⇒ `ME_FILE` / `minutesToOffWork` / 「距下班」那条信号整个删掉，
+  //    **没有任何机器读那三行了**。前提没了、谓语还成立 ⇒ 正则照样命中 ⇒ **永远绿**。
+  //    按公共记忆 §三：**不能翻面（该绿时绿、该红时红）的判据不是判据，是装饰。**
+  //    ⇒ 换成一条**真的会翻面**的：**`inject.js` 里不许再有读 `me-aqua.md` 的代码**。
+  //       谁哪天把"距下班"接回来，这条**当场红**；而"那三行还在不在"由**人**看（形状与来历留着）。
+  //    （`me-aqua.md` 那份文件本身在不在，由上面那三条断言管。）
+  const injectSrc = read(join(PRESET, 'inject.js'))
+  yes('preset', '`inject.js` 里没有读 `me-aqua.md` 的代码（唤起被砍 ⇒ 那条信号整个删掉，别接回来）',
+    !/ME_FILE|minutesToOffWork|距下班/.test(injectSrc),
+    ['ME_FILE', 'minutesToOffWork', '距下班'].filter((w) => injectSrc.includes(w)).join('、')
+      || '（干净：一个都没有）')
   yes('preset', '`me-aqua.md` 真的进了 `leaderOrder`（口径 13）', leader.includes('me-aqua'),
     '写了没接上 = 它一辈子不进提示词（假绿比红更坏）')
   yes('preset', '`me-aqua.md` 里没有「他会突然消失」那一节（组长 09-26 点名删）',
