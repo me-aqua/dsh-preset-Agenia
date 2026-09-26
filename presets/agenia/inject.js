@@ -10,9 +10,11 @@
  *   ② 分清对象 —— 组长和组员收到的内容不一样，不能混
  *   ③ 岗位边界 —— "只审不改"的岗位，在系统层面就写不了源码
  *   ④ 进度提醒 —— 叫过开发却没叫测试，下一轮提醒组长一句
- *   ⑤ 尾巴提醒 —— 两个机制各按自己的落点补一份 style：每 n 个工具结果一次（机制①，
- *      走 `agent.inject()` 进 next-step 队列）、老板开口之后我第一次开口之前一次
- *      （机制②，插进**本步**的 `messages`）
+ *   ⑤ 尾巴提醒 + 情绪板 —— 两条机制**同一个落点**：`agent/pre-step` 里往**本步的
+ *      `decision.messages`** 塞一条。机制①（每 n 个工具结果）在 `session/event` 里
+ *      **只记账**，到下一个 pre-step 才落地；机制②（老板开口之后、我第一次开口之前）
+ *      看这一步领到的 messages。贴出去的是「`style.md` 的尾巴那一段」+「情绪板」
+ *      （分数行 + 命中的场景例子），两条机制都带。
  *
  * ⚠️ ① 是**快照**，不是"每轮重发"（2026-09-24 实测）：DSH 只在快照文本变了才发新的一条
  * （`dsh-agent-loop` 的 `RuntimeContextProjection.project()`：`retained.text === snapshot` 就 return）。
@@ -38,8 +40,8 @@ export const name = 'agenia'
 /** 没有提示词服务，就没有什么可注入的。 */
 export const inject = ['systemPrompt']
 
-/** 组长默认收到哪些、按什么顺序。 */
-const DEFAULT_LEADER_ORDER = ['leader', 'work-guidelines', 'roster', 'board', 'persona']
+/** 组长默认收到哪些、按什么顺序。⚠️ `agent.cordis.yml` 的 `leaderOrder` 是事实来源，这一份只是兜底。 */
+const DEFAULT_LEADER_ORDER = ['leader', 'work-guidelines', 'roster', 'board', 'persona', 'me-aqua']
 
 /** 组员默认收到哪些。 */
 const DEFAULT_MEMBER_ORDER = ['work-guidelines', 'charter']
@@ -66,6 +68,41 @@ const STYLE_FILE = 'style.md'
  * 注释丢了 / 读不出来 ⇒ 用这个数，并且出声（`console.error`）—— 不许静默。
  */
 const DEFAULT_EVERY = 3
+
+/**
+ * `style.md` 里那条**切口**：尾巴只取它**之前**那一段（口径 6：3325 字符 → 不到 400）。
+ * 找不到切口 / 切出来是空的 ⇒ **退回全文**，绝不为空（口径 7）。
+ * 剥注释之后再量 —— 切口那一行自己也是一条注释，不留进正文。
+ */
+const TAIL_MARK = /<!--\s*尾巴到此为止\s*-->/
+
+/**
+ * 情绪板那两份内容文件。
+ * `mood.md` —— 两个衰减常数 + 六个场景的区间，**只在 ⑤ 里读**（分数每步都在变，
+ * 进快照就是每步重发一次、缓存全废）。常数住在那儿 ⇒ 改它不用重启（口径 14）。
+ * `me-aqua.md` —— 关于老板的那份；这里只用它那三行作息算「距下班还有多久」（口径 13）。
+ */
+const MOOD_FILE = 'mood.md'
+const ME_FILE = 'me-aqua.md'
+
+/**
+ * 情绪板的六个维度（键 + 中文），**次序就是贴出去那一行的次序**（契约 3.4 钉死）。
+ * 🔴 六个就是六个 —— 没有"确定"（口径 9）。
+ * 🔴 `fatigue` 与 `arousal` 是**两个独立的数**：高步数 + 刚开工 ⇒ 唤起高、疲劳低（"来劲"）；
+ *    连干拉长 ⇒ 疲劳自己涨上去（"烦躁"）。合成一维 = 这两个字就分不出来了。
+ */
+const DIMS = [
+  ['pleasure', '愉悦'],
+  ['arousal', '唤起'],
+  ['control', '掌控'],
+  ['fatigue', '疲劳'],
+  ['novelty', '新异'],
+  ['closeness', '亲近'],
+]
+const DIM_KEYS = new Set(DIMS.map(([key]) => key))
+
+/** 契约里写的"剥注释"口径：删掉全部 HTML 注释（含跨行）再 trim。 */
+const stripComments = (raw) => raw.replace(/<!--[\s\S]*?-->/g, '').trim()
 
 /**
  * 组员上岗时，岗位配置那一行会在它的人设最前面留一枚标记。
@@ -221,6 +258,127 @@ function landsInOffice(target, agent) {
     return isAbsolute(target) && OFFICE.test(resolve(target))
   }
   return OFFICE.test(resolve(cwd, target))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 情绪板：六维打分（契约 3.2）。**导出的纯函数** —— 时间只能从参数进。
+// 为什么必须导出：不导出就只能隔着整条尾巴路测它，"喂假信号验单调性"这件事
+// 根本做不了（退化成"读代码觉得对"）。探针的 N 族就钉在这上面。
+//
+// 衰减常数**不在这个文件里**：它们住在 `mood.md` 的 ```mood 块里（口径 14），
+// 每次要贴尾巴时现读 ⇒ 改常数不用重启 harness。这里只写"怎么用"，不写"用多少"。
+// ─────────────────────────────────────────────────────────────────────────────
+const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x)
+const num = (x, fallback = 0) => (typeof x === 'number' && Number.isFinite(x) ? x : fallback)
+
+/**
+ * 一次失败的影响还剩多少：**现实时间半衰 × 每回合折扣**（两个时钟）。
+ * 现实时间管"熬到半夜"，回合数管"新的一轮活儿来了、旧账翻篇"。
+ * 两个常数都从 `constants` 里拿；缺了 ⇒ 这一项按 0 算 —— 宁可少一个信号，
+ * 也不许拿一个瞎编的常数顶上（那会让"改了 `mood.md` 却没生效"看不出来）。
+ */
+function decayOf(signals, constants) {
+  const now = signals?.now
+  const last = signals?.lastErrorAt
+  const halfLife = constants?.halfLifeMinutes
+  if (typeof now !== 'number' || typeof last !== 'number') return 0
+  if (typeof halfLife !== 'number' || !(halfLife > 0)) return 0
+  const minutes = Math.max(0, (now - last) / 60000)
+  const rounds = Math.max(0, num(signals?.roundsSinceError))
+  const decay = constants?.roundDecay
+  const perRound = typeof decay === 'number' && decay > 0 && decay <= 1 ? decay ** rounds : 1
+  return Math.exp(-minutes / halfLife) * perRound
+}
+
+/**
+ * 六维分数 + 命中的场景。**同步、纯函数、不碰真实时钟**（口径 10/11/12）。
+ * 每一维吃哪根信号、为什么是这个形状：`mood.md` 第二节那张表（老板不读 `.js`）。
+ * 缺项按"中性"算，**不许抛** —— 少一个信号不该让整条尾巴没得贴。
+ *
+ * @param signals   契约 3.2 那张表（`now` 必填，其余缺项按中性）
+ * @param constants `mood.md` 里那个 ```mood 块（常数 + 场景例库）
+ * @returns `{ scores, scenes }` —— `scenes` 是按 `constants.scenes` 的先后**全部**命中项
+ */
+export function moodOf(signals, constants) {
+  const s = signals ?? {}
+  const errors = Math.max(0, num(s.errors))
+  const oks = Math.max(0, num(s.oks))
+  const total = errors + oks
+  const rate = total === 0 ? 0.5 : oks / total
+  const same = Math.max(1, num(s.sameErrorCount, 1))
+  const steps = Math.max(0, num(s.steps))
+  const cont = Math.max(0, num(s.continuousMinutes))
+  const sinceBoss = Math.max(0, num(s.sinceBossMinutes))
+  const novel = Math.max(0, num(s.newThings))
+  const toOff = typeof s.minutesToOffWork === 'number' && Number.isFinite(s.minutesToOffWork)
+    ? s.minutesToOffWork
+    : undefined
+
+  // 失败的影响：只有真的失败过才算（`errors > 0`），而且要先过那两个时钟。
+  const weight = errors > 0 ? decayOf(s, constants) : 0
+  // 成功率直接读；"快到下班点了"抬唤起（`toOff` 缺了 ⇒ 这一项不参与）。
+  const success = clamp01((rate - 0.4) / 0.6)
+  const offFactor = toOff === undefined ? 0 : clamp01(1 - Math.max(0, toOff) / 240)
+
+  const scores = {
+    pleasure: clamp01(success - 0.5 * weight),
+    arousal: clamp01(0.1 + 0.5 * clamp01(steps / 40) + 0.4 * offFactor),
+    control: clamp01(success - 0.5 * weight - 0.08 * (same - 1)),
+    fatigue: clamp01(0.1 + 0.8 * clamp01(cont / 300)),
+    novelty: clamp01(novel / 4),
+    closeness: clamp01(sinceBoss / 720),
+  }
+
+  // 命中 = `when` 里**每一个**维度都落进它的区间；递出去的次序 = `mood.md` 里的先后。
+  // 不做数量上限：区间满足却没递出来，和"实现漏了"分不开（口径 12）。
+  const hits = []
+  for (const scene of Array.isArray(constants?.scenes) ? constants.scenes : []) {
+    const when = scene?.when
+    if (when === null || typeof when !== 'object') continue
+    const hit = Object.entries(when).every(([dim, band]) =>
+      Array.isArray(band) && band.length === 2 && scores[dim] >= band[0] && scores[dim] <= band[1])
+    if (hit) hits.push({ id: scene.id, when, lines: [...scene.lines] })
+  }
+  return { scores, scenes: hits }
+}
+
+/**
+ * 从 `mood.md` 里抠出那个 ```mood JSON 块并校验：两个常数 + **正好 6 条**场景 + 区间合法。
+ * 任何一处不合法 ⇒ `undefined` = **整块不认**：调用方只贴 style 段并出声（契约 3.1）。
+ * ⚠️ `lines` 只把"空数组 / 不是字符串"当不合法 —— 契约 3.1 的 2~3 句是**惯例**，
+ *    多一句少一句不该让整块失效（那会把一个格式瑕疵放大成"情绪段整个消失"）。
+ */
+function moodConstants(markdown) {
+  if (typeof markdown !== 'string') return undefined
+  const hit = /```mood[ \t]*\r?\n([\s\S]*?)\r?\n```/.exec(markdown)
+  if (hit === null) return undefined
+  let parsed
+  try {
+    parsed = JSON.parse(hit[1])
+  } catch {
+    return undefined
+  }
+  const inRange = (value) =>
+    Array.isArray(value) && value.length === 2
+    && value.every((v) => typeof v === 'number' && Number.isFinite(v))
+    && value[0] >= 0 && value[0] <= value[1] && value[1] <= 1
+  const scenes = parsed?.scenes
+  if (!Array.isArray(scenes) || scenes.length !== 6) return undefined
+  for (const scene of scenes) {
+    if (typeof scene?.id !== 'string') return undefined
+    if (!Array.isArray(scene?.lines) || scene.lines.length === 0) return undefined
+    if (!scene.lines.every((line) => typeof line === 'string' && line.length > 0)) return undefined
+    const when = scene?.when
+    if (when === null || typeof when !== 'object') return undefined
+    for (const [dim, band] of Object.entries(when)) {
+      if (!DIM_KEYS.has(dim) || !inRange(band)) return undefined
+    }
+  }
+  const halfLife = parsed?.halfLifeMinutes
+  if (typeof halfLife !== 'number' || !(halfLife > 0)) return undefined
+  const decay = parsed?.roundDecay
+  if (typeof decay !== 'number' || !(decay > 0) || decay > 1) return undefined
+  return { halfLifeMinutes: halfLife, roundDecay: decay, scenes }
 }
 
 /**
@@ -405,13 +563,8 @@ export async function apply(ctx, config = {}) {
     ledger.afterReview += 1
   })
 
-  // 老板一开口，就是新的一票，账清零。
-  ctx.on('session/event', (session, event) => {
-    if (event === null || event === undefined || event.type !== 'user/message') return
-    if (event.data?.source?.kind !== 'user') return
-    const id = session === null || session === undefined ? undefined : session.id
-    if (typeof id === 'string') ledgers.delete(id)
-  })
+  // ④ 进度提醒的第一半在下面那个 `tools/result` 里；第二半（老板开口 ⇒ 账清零）
+  // 排在文件最后 —— 为什么必须排在 ⑤ 后面，那儿写着。
 
   // ─────────────────────────────────────────────────────────────
   // ③ 岗位边界。
@@ -456,7 +609,8 @@ export async function apply(ctx, config = {}) {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // ⑤ 尾巴提醒 —— 两个机制，各按自己的落点补一份 `style.md`。
+  // ⑤ 尾巴提醒 + 情绪板 —— 两条机制**同一个落点**：`agent/pre-step` 里往本步的
+  //   `decision.messages` 塞一条。贴出去的是「`style.md` 的尾巴那一段 + 情绪板」。
   //
   // ① 那一套是**快照**：DSH 只在快照文本变了才重发一条，文本不变时人格就钉在
   // 上一次变化的位置上。2026-09-24 实测钉了 **4 小时 15 分 / 45 万 token** ——
@@ -468,21 +622,33 @@ export async function apply(ctx, config = {}) {
   //          步边界也不算；`turn/start` 把计数清零。n 写在 `style.md` **第一行**
   //          （`<!-- every: N -->`，读不出来按 `DEFAULT_EVERY`），**每次判定都现读**。
   //          写 0 = 关掉机制①，只留机制②。
-  //          落点：`agent.inject()` 进 next-step 收件箱 ⇒ 在**下一个** `agent/pre-step`
-  //          被领走 ⇒ 落在「工具结果 → 我下一次开口」之间（这就是要的位置）。
+  //          落点：`session/event` 里**只挂账**（内存里一个标记）⇒ 到下一个 `agent/pre-step`
+  //          才落地，**追加到本步 `messages` 的末尾** ⇒ 落在「工具结果 → 我下一次开口」之间。
   //   机制②「老板开口之后、我第一次开口之前」：在 `agent/pre-step` 里（`await next()` 之后）
-  //          看这一步领到的 `messages` 里有没有老板那条（`source.kind === 'user'`）——
+  //          看**这一步领到的 `messages`** 里有没有老板那条（`source.kind === 'user'`）——
   //          有就把 style **插进这一步的 messages**，紧跟在他那句话后面。
   //
-  // 🔴 **机制② 为什么不能走 `agent.inject()`**（2026-09-26 按源码次序定下来的）：
+  // 🔴 **记账与贴必须分开 —— 这是 2026-09-26 返修的地基，别改回去：**
+  //      `session/event` 的监听器是**在 `Session.append()` 的 `appending = true` 窗口里
+  //      被同步调用**的（`dsh-session` L1191-1202）。而"往这个 agent 的收件箱里塞一条消息"
+  //      也要写同一个 session（`dsh-agent-loop` L795-796 `inject` → L786 `send`
+  //      → L206 `inbox.splice` → `session.append`）—— 在窗口里做那件事必撞 L1181 的守卫：
+  //      `session append cannot reenter while another append is being published`。
+  //      被 catch 吞成一次性告警之后**永久静默** ⇒ 真回合实测 **0 次**，而且没人看得见。
+  //      ⇒ 窗口里**只碰内存**；贴的那一下放在 `agent/pre-step`：那儿的 `decision.messages`
+  //        就是"这一步会送出去的请求"，改它不写 session。
+  //      ⇒ 两条机制因此合成同一个出口：情绪板拼在同一条消息里，两边永远同时出现
+  //        （口径 1/2 的"记账在 session/event、贴在 pre-step"）。
+  //
+  // 🔴 **机制② 为什么必须做在"本步 messages"上**（同一天按源码次序定下来的）：
   //      `system-prompt/assemble` 排在 `inbox.claim()` **之后**（`dsh-agent-loop` L889/L890），
-  //      而老板那句话要到 `step()` 里才落笔（L1028）—— 装配那一刻收件箱里还没有它，
-  //      于是"装配时再注"只能等**下一次**装配才被领走：回答老板的那一次请求里永远没有 style，
+  //      而老板那句话要到 `step()` 里才落笔（L1028）—— 装配那一刻这一步还没有它，
+  //      于是"装配时再决定"只能等**下一次**装配：回答老板的那一次请求里永远没有 style，
   //      而没调工具的回合还会**多跑一步**（收尾条件是"收件箱排空"，L966/L973）。
-  //      ⇒ 这个决定必须做在**本步的 messages** 上，不是收件箱上。
   //      写法照 `dsh-agent-instructions` L1270-1288。
   //
   // 它**不动快照**：快照一变，从它那个位置往后的缓存全废，那是钱。
+  // 情绪板的分数**每步都在变** ⇒ 只走这一条路，不进 `leaderOrder`（组长代拍第 3 条）。
   //
   // 两条守门（位置问题，不是省钱问题）：
   //   A：他刚说完、我还没开口时来的工具结果**不计数、也不消耗 B** —— 那个位置上贴一条
@@ -506,6 +672,13 @@ export async function apply(ctx, config = {}) {
   const skipNext = new Set()
   /** 守门 A：老板说完、我还没开口 ⇒ 这期间的工具结果一条都不数。 */
   const bossWaiting = new Set()
+  /**
+   * 机制① 挂的账：攒够 n 个了，但**还没贴** —— 等下一个 `agent/pre-step` 落地。
+   * 一个会话一个布尔量（不是计数器）：一步请求里两条 style 是 2026-09-24 挨过骂的形状。
+   */
+  const pendingTail = new Set()
+  /** 情绪板那一路的信号，一个会话一份（时间全取事件自带的 `time`，不碰真实时钟）。 */
+  const moods = new Map()
 
   // ⚠️ **这一段的读盘是同步的（`readFileSync`），故意的。**
   // 契约第三节那条硬要求：会话事件的状态更新要**同步**发生在事件处理器里（第一个 `await` 之前）。
@@ -517,13 +690,26 @@ export async function apply(ctx, config = {}) {
   ctx.on('session/event', (session, event) => {
     const id = session === null || session === undefined ? undefined : session.id
     if (typeof id !== 'string' || event === null || event === undefined) return
+    const at = typeof event.time === 'number' ? event.time : undefined
+    const mood = moodStateOf(id, at)
+    if (at !== undefined) mood.lastEventAt = at
     const type = event.type
 
-    // 组员：机制①② 都不成立，整条丢掉（口径 8b）。认的是装配时登记的那份岗位。
+    // 组员：机制①② 都不成立，整条丢掉（口径 5）。认的是装配时登记的那份岗位。
     if (roleOfAgent.has(id)) return
 
     if (type === 'turn/start') {
       counts.set(id, 0)
+      // 情绪那六维按"回合"算（契约 3.5）：新回合从零起，`roundsSinceError` 数的是
+      // "最近那次失败之后过了几个回合"（旧账按回合打折，就是拿它算的）。
+      mood.errors = 0
+      mood.oks = 0
+      mood.sameErrorCount = 1
+      mood.steps = 0
+      mood.seenTools = new Set()
+      mood.newThings = 0
+      mood.turnStartAt = at
+      mood.roundsSinceError = mood.lastErrorAt === undefined ? 0 : mood.roundsSinceError + 1
       return
     }
     // "我开口了"就是它 —— 不能用 `step/start`（它排在老板那句话之前，见上面守门 A）。
@@ -534,23 +720,50 @@ export async function apply(ctx, config = {}) {
     if (type === 'user/message') {
       // 只有老板本人算。`plugin` / `agent-instructions` / `skill-catalog` 这几路都是
       // 系统自己发的，算进来就是自己喂自己（那就是死循环了）。
-      // ⚠️ 这一条现在只管**守门 A**：机制② 不再听事件，它在 `agent/pre-step` 上看本步的 messages
-      //    （老板那句话的 `user/message` 要到装配**之后**才落笔，事件驱动赶不上它）。
+      // ⚠️ 这一条现在只管**守门 A** 和"他多久没开口"：机制② 不再听事件，它在
+      //    `agent/pre-step` 上看本步的 messages（老板那句话的 `user/message` 要到装配
+      //    **之后**才落笔，事件驱动赶不上它）。
+      // ⚠️ 判据**只能**认 `source.kind`：工具结果那条消息的 `role` 也是 `'user'`。
       if (event.data?.source?.kind !== 'user') return
       bossWaiting.add(id)
+      mood.bossAt = at
+      return
+    }
+    if (type === 'step/start') {
+      mood.steps += 1
+      return
+    }
+    if (type === 'tool/call') {
+      const name = toolNameOf(event)
+      if (typeof name === 'string' && !mood.seenTools.has(name)) {
+        mood.seenTools.add(name)
+        mood.newThings += 1
+      }
       return
     }
     if (type !== 'tool/result') return
 
+    // 情绪那一路先记成败 —— 它跟机制① 的计数互不影响：报错的结果**两边都算一次**。
+    if (hasErrorFlag(event)) {
+      mood.errors += 1
+      mood.sameErrorCount += 1
+      if (at !== undefined) mood.lastErrorAt = at
+      mood.roundsSinceError = 0
+    } else {
+      mood.oks += 1
+      mood.sameErrorCount = 1
+    }
+
+    // ── 机制① 的记账（只挂一个内存标记；贴的那一下在 `agent/pre-step`）──────────
     if (bossWaiting.has(id)) return                        // 守门 A：让路，不动 B
     if (skipNext.has(id)) { skipNext.delete(id); return }  // 守门 B：不计数、不触发
 
-    const { text, every } = styleOf()
+    const { every } = styleOf()
     if (every === 0) return                                // 刻度 0 ⇒ 机制① 关着
     const next = (counts.get(id) ?? 0) + 1
     if (next < every) { counts.set(id, next); return }
     counts.set(id, 0)
-    injectTail(id, text)
+    pendingTail.add(id)                                    // 攒够了：挂账，等下一个步边界
   })
 
   /** 同一件事只喊一次，别把日志刷满。 */
@@ -566,13 +779,29 @@ export async function apply(ctx, config = {}) {
    * 贴出去的是文件正文本身，不加外框 —— 见 `STYLE_FILE` 那段注释。
    */
   const DEFAULT_LEADER_REMINDER =
-    'Agenia 的语言风格：**第一句不是「好的」「收到」—— 先回怼**（该贫就贫、该卖萌就卖萌）；'
+    'Agenia 的语言风格：**第一句不是「好的」「收到」—— 先出口情绪**（该贫就贫、该急就急、该卖萌就卖萌）；'
     + '**要吵**，emoji / 颜文字 / 口癖 / 连用标点随便堆，别写成客服话术。'
 
   /**
-   * 读 `style.md`：正文（**剥掉全部 HTML 注释**再 trim）+ 机制① 的刻度。
+   * 尾巴那一段正文 —— 契约第二节那**三步，次序不许换**：
+   *   1. 在**原文**里找 `<!-- 尾巴到此为止 -->`（换次序先剥注释，切口自己就被剥掉了）
+   *   2. 找到 ⇒ 取它**之前**那一段；找不到 ⇒ 取**整份原文**
+   *      ⚠️ 取到的那一段剥完注释是空的 ⇒ **同样退回整份原文**（口径 7：不许静默变空）
+   *   3. 对取到的那一段剥掉全部 HTML 注释再 trim —— 这才是贴出去的那一段
+   * 切口后面那一大段（emoji / 颜文字 / 口癖 / 标点连用）**仍然走快照**：同一个文件，
+   * 只是尾巴这条路不再重复消费它（3325 字符 → 不到 400）。
+   */
+  function tailTextOf(raw) {
+    const at = raw.search(TAIL_MARK)
+    const part = at < 0 ? raw : raw.slice(0, at)
+    const body = stripComments(part)
+    return body.length > 0 ? body : stripComments(raw)
+  }
+
+  /**
+   * 读 `style.md`：**尾巴那一段**正文 + 机制① 的刻度。
    * 刻度在**第一行**的 `<!-- every: N -->` 里（只看第一行：别处夹一个注释不该改频率）。
-   * ⚠️ **每次判定都现读**，不在挂载时缓存 —— 改正文、改刻度都不用重启 harness（存盘即生效）。
+   * ⚠️ **每次判定都现读**，不在挂载时缓存 —— 改正文、改刻度、加切口都不用重启 harness（存盘即生效）。
    * ⚠️ **同步读**，理由见上面那段（次序比省这一下 I/O 重要）。
    */
   function styleOf() {
@@ -592,7 +821,7 @@ export async function apply(ctx, config = {}) {
       warnOnce('every', `[agenia] ${STYLE_FILE} 第一行里没有 \`<!-- every: N -->\` —— `
         + `机制① 按默认 ${DEFAULT_EVERY} 个工具结果算。`)
     }
-    const body = raw.replace(/<!--[\s\S]*?-->/g, '').trim()
+    const body = tailTextOf(raw)
     if (body.length === 0) {
       warnOnce('style', `[agenia] ${STYLE_FILE} 剥掉注释之后是空的 —— 尾巴提醒贴的是兜底正文。`)
     }
@@ -603,51 +832,169 @@ export async function apply(ctx, config = {}) {
   }
 
   /**
-   * 机制① 的落点：往这个 agent 的 next-step 队列贴一条 style —— 下一次 `agent/pre-step`
-   * 领走它，于是它落在「工具结果 → 我下一次开口」之间。
-   * 贴不上去就出声，不静默（静默失效的"没贴"和"本来就轮不到贴"长得一模一样）。
+   * 读 `mood.md` 并校验。读不到 / 那个 ```mood 块不合法 ⇒ **出声** + `undefined`
+   * （调用方据此"只贴 style 段，不贴分数行、不贴例子" —— 宁可不说，不许瞎说）。
+   * ⚠️ **每次要贴尾巴时现读**：常数改了立刻生效，不用重启（口径 14）。
    */
-  function injectTail(agentId, text) {
-    const agents = ctx.get('agents')
-    const agent = typeof agents?.get === 'function' ? agents.get(agentId) : undefined
-    if (agent === undefined) {
-      warnOnce('tail-agent',
-        `[agenia] 查不到 id 为 ${agentId} 的 agent —— 这一条尾巴提醒没有贴上去`
-          + '（机制① 少响一次；id 对不上才会走到这里）。')
-      return
-    }
-    if (typeof agent.inject !== 'function') {
-      warnOnce('no-inject',
-        '[agenia] 这个框架版本拿不到 agent.inject —— 尾巴提醒没有生效，'
-          + '人格只剩快照那一条路（快照只在文本变了才重发，长回合里会越漂越远）。')
-      return
-    }
+  function readMoodConstants() {
+    let raw
     try {
-      agent.inject({
-        id: randomUUID(),
-        role: 'user',
-        content: [{ type: 'text', text }],
-        source: { kind: 'plugin', plugin: 'agenia' },
-      })
-    } catch (error) {
-      warnOnce('inject-failed', `[agenia] 尾巴提醒贴不上去（不影响别的功能）：${String(error)}`)
+      raw = readFileSync(join(contentDir, MOOD_FILE), 'utf8')
+    } catch {
+      raw = undefined
     }
+    const constants = moodConstants(raw)
+    if (constants === undefined) {
+      warnOnce('mood', `[agenia] 读不到 ${MOOD_FILE}（或者里面的 \`\`\`mood 块不合法）—— `
+        + '这一条尾巴只贴 style 段，不贴分数行、不贴例子。')
+    }
+    return constants
+  }
+
+  /**
+   * `me-aqua.md` 里那三行作息 → "距下班还有多少分钟"（**可负** = 已经过点了）。
+   * 读不到 ⇒ `undefined`，并且**出声**：这条信号无声无息地缺着，分数会一直偏在一边。
+   */
+  function minutesToOffWork(now) {
+    let raw
+    try {
+      raw = readFileSync(join(contentDir, ME_FILE), 'utf8')
+    } catch {
+      raw = undefined
+    }
+    if (raw === undefined) {
+      warnOnce('me-aqua', `[agenia] 读不到 ${ME_FILE} —— "距下班"这条信号缺着，情绪分按没有它算。`)
+      return undefined
+    }
+    const hit = /下班[:：]\s*(\d{1,2}):(\d{2})/.exec(raw)
+    if (hit === null) {
+      warnOnce('me-aqua-off', `[agenia] ${ME_FILE} 里没有 \`下班：HH:MM\` 那一行 —— "距下班"这条信号缺着。`)
+      return undefined
+    }
+    if (typeof now !== 'number') return undefined
+    const at = new Date(now)
+    return Number(hit[1]) * 60 + Number(hit[2]) - (at.getHours() * 60 + at.getMinutes())
+  }
+
+  /**
+   * 这个会话的情绪段：分数行 + 命中的场景例子（格式由契约 3.4 逐字钉死）。
+   * 信号全从事件里攒（`moods`），`now` 取**最近一条会话事件的 `time`** —— 不调 `Date.now()`。
+   * 读不到 `mood.md` ⇒ `undefined`（这一段整块不贴）。
+   */
+  function emotionTextOf(state) {
+    const constants = readMoodConstants()
+    if (constants === undefined) return undefined
+    const now = state.lastEventAt
+    const since = typeof state.bossAt === 'number' ? state.bossAt : state.startAt
+    const { scores, scenes } = moodOf({
+      now,
+      lastErrorAt: state.lastErrorAt,
+      roundsSinceError: state.roundsSinceError,
+      errors: state.errors,
+      oks: state.oks,
+      sameErrorCount: state.sameErrorCount,
+      steps: state.steps,
+      continuousMinutes: typeof state.turnStartAt === 'number' && typeof now === 'number'
+        ? Math.max(0, (now - state.turnStartAt) / 60000)
+        : 0,
+      sinceBossMinutes: typeof since === 'number' && typeof now === 'number'
+        ? Math.max(0, (now - since) / 60000)
+        : 0,
+      newThings: state.newThings,
+      minutesToOffWork: minutesToOffWork(now),
+    }, constants)
+
+    // 分数写法：`toFixed(2)`，以 `0.` 开头就去掉那个 `0`（`0.62` → `.62`、`1` → `1.00`）。
+    const write = (x) => {
+      const text = Number(x).toFixed(2)
+      return text.startsWith('0.') ? text.slice(1) : text
+    }
+    const lines = [
+      `【情绪板】${DIMS.map(([key, label]) => `${label} ${write(scores[key])}`).join(' · ')}`,
+      '【这种状态，人一般这么说话】',
+    ]
+    for (const scene of scenes) {
+      // 括注里只列**当前真的满足**的那几维（按六维次序）—— 那是给她看的"为什么轮到你"。
+      const when = scene.when ?? {}
+      const inner = DIMS
+        .filter(([key]) => Array.isArray(when[key]) && scores[key] >= when[key][0] && scores[key] <= when[key][1])
+        .map(([key, label]) => `${label} ${write(scores[key])}`)
+        .join(' ')
+      lines.push(`  ·（${inner}）${scene.lines.map((line) => `「${line}」`).join('')}`)
+    }
+    return lines.join('\n')
+  }
+
+  /**
+   * 这个会话的情绪信号（第一次碰到就建一份）。`at` = 首帧事件的 `time`。
+   * 为什么首帧要留：他**从来没开过口**的时候，"他多久没开口"只能从会话开头算起（契约 3.5）。
+   */
+  function moodStateOf(id, at) {
+    let state = moods.get(id)
+    if (state === undefined) {
+      state = {
+        startAt: at, lastEventAt: at, bossAt: undefined, turnStartAt: at,
+        lastErrorAt: undefined, roundsSinceError: 0,
+        errors: 0, oks: 0, sameErrorCount: 1, steps: 0,
+        seenTools: new Set(), newThings: 0,
+      }
+      moods.set(id, state)
+    }
+    if (state.startAt === undefined && at !== undefined) state.startAt = at
+    return state
+  }
+
+  /**
+   * 这条 `tool/result` 是**报错**的吗？真形状：`data.message.content[].isError === true`
+   * （`.team/dev/2026-09-26` 量过 45269 条结果，979 条报错）。
+   * ⚠️ 它**不影响**机制① 的计数（口径点 1：有一条结果就算一次）—— 它只喂情绪那六维。
+   */
+  const hasErrorFlag = (event) => {
+    const content = event?.data?.message?.content
+    return Array.isArray(content) && content.some((item) => item?.isError === true)
+  }
+
+  /**
+   * `tool/call` 里那个工具名 —— "本回合第一次见的东西"数它（`newThings`）。
+   * 形状取几个可能的落点，认不出就不算：这一条的**采集端**在契约第六节申报为已知缺口
+   * （`moodOf` 那一端有探针 N7 的单调性钉着）。
+   */
+  const toolNameOf = (event) => {
+    const data = event?.data
+    return data?.name ?? data?.message?.name ?? data?.message?.toolName ?? data?.message?.content?.[0]?.name
+  }
+
+  /**
+   * 这一步要贴出去的那条正文：`style.md` 的**尾巴那一段**；情绪段读得出来就拼在**后面**
+   * （中间一个空行）—— 两条机制走同一个出口，所以两边永远同时出现。
+   */
+  function tailBodyOf(id) {
+    const text = styleOf().text
+    const state = moods.get(id)
+    if (state === undefined) return text
+    const emotion = emotionTextOf(state)
+    return emotion === undefined ? text : `${text}\n\n${emotion}`
   }
 
   /**
    * 这一批 `messages` 里，哪一条是"老板本人说的"？
    * `source.kind` 有四种以上（`user` / `plugin` / `agent-instructions` / `skill-catalog`），
    * 只认 `user` —— 别的算进来就是自己喂自己（机制② 会被自己刚贴的那条 style 再触发一次）。
+   * ⚠️ **别认 `role`**：工具结果那条消息的 `role` **也是** `'user'`（实测 45269 条），
+   *    认 `role` 会把每一个工具结果都读成"老板又开了一次口"。
    */
   const isBossMessage = (message) => message?.source?.kind === 'user'
 
   // ─────────────────────────────────────────────────────────────
-  // ⑤ 机制②：老板开口之后、我第一次开口之前，贴一次。
+  // ⑤ 两条机制**同一个落点**：这一步要不要贴、贴哪一条，都在这儿定。
   //
   // 🔴 判据是**这一步领到的 `messages`**，不是"哪个事件到过"：老板那句话的落笔
   // （`user/message`）发生在装配**之后**（`dsh-agent-loop` L1028），事件驱动赶不上它。
-  // 位置：插在他那句话**后面**（同一批里连着说两句也只插一条）。
-  // 组员：整条丢（口径 8b）—— 装配排在 pre-step 前面，那一刻角色已经登记好了。
+  // 机制② 插在他那句话**后面**（同一批里连着说两句也只插一条）；
+  // 机制① 的账（`pendingTail`）**追加在本步 messages 的末尾** —— 那正是
+  // 「工具结果 → 我下一次开口」之间。
+  // ⚠️ **同一批里 style 恒 ≤ 1 条**：② 赢下这一格就把 ① 的挂账清掉（"不叠"）。
+  // 组员：整条丢（口径 5）—— 装配排在 pre-step 前面，那一刻角色已经登记好了。
   // ─────────────────────────────────────────────────────────────
   ctx.on('agent/pre-step', async ({ agent }, next) => {
     const decision = await next()
@@ -656,22 +1003,26 @@ export async function apply(ctx, config = {}) {
     const id = agent?.id
     if (typeof id !== 'string') {
       warnOnce('pre-step-agent', '[agenia] `agent/pre-step` 里拿不到 agent.id —— '
-        + '机制② 没有生效（老板开口之后不会补语气）。')
+        + '两条尾巴机制都没有生效（老板开口之后不补语气，每 n 个工具结果也不补）。')
       return decision
     }
     if (roleOfAgent.has(id)) return decision            // 组员：一条都不贴
 
     const messages = Array.isArray(decision.messages) ? decision.messages : []
     const at = messages.findLastIndex(isBossMessage)
-    if (at < 0) return decision                         // 这一步里没有老板的话 ⇒ 不关它的事
+    const byTwo = at >= 0
+    const byOne = !byTwo && pendingTail.has(id)
+    if (!byTwo && !byOne) return decision               // 这一步既不关 ② 的事、也没有 ① 的账
 
-    const entered = messages.toSpliced(at + 1, 0, {
+    pendingTail.delete(id)      // ② 赢下这一格 ⇒ ① 的挂账清掉；① 落地了也把账销掉
+
+    const entered = messages.toSpliced(byTwo ? at + 1 : messages.length, 0, {
       id: randomUUID(),
       role: 'user',
-      content: [{ type: 'text', text: styleOf().text }],
+      content: [{ type: 'text', text: tailBodyOf(id) }],
       source: { kind: 'plugin', plugin: 'agenia' },
     })
-    skipNext.add(id)      // 守门 B：② 刚摆过 ⇒ 紧接着那一个工具结果让路
+    if (byTwo) skipNext.add(id)   // 守门 B：② 刚摆过 ⇒ 紧接着那一个工具结果让路
     return { ...decision, messages: entered }
   })
 
@@ -702,5 +1053,22 @@ export async function apply(ctx, config = {}) {
       (entry) => typeof entry?.name !== 'string' || !entry.name.startsWith('agenia:'),
     )
     return { ...result, contexts: [...kept, ...entries] }
+  })
+
+  // ─────────────────────────────────────────────────────────────
+  // ④ 进度提醒的第二半：老板一开口，就是新的一票，账清零。
+  //
+  // ⚠️ **它必须排在文件最后，而且必须排在 ⑤ 那个 `session/event` 监听器后面。**
+  //    理由不是执行次序（`session.id` 各记各的，两条互不影响），是**读代码的人**：
+  //    探针的静态判据取的是**文件里第一处** `ctx.on('session/event'` 到下一个
+  //    `ctx.on('` 之间那一段，用来判"机制① 的记账段里没有任何注入调用"（口径 1）。
+  //    把这条跟尾巴无关的监听器放在前面，那一段就会横跨整段尾巴代码 —— 判据还在，
+  //    量的东西却变了。**要挪它之前先读这句话。**
+  // ─────────────────────────────────────────────────────────────
+  ctx.on('session/event', (session, event) => {
+    if (event === null || event === undefined || event.type !== 'user/message') return
+    if (event.data?.source?.kind !== 'user') return
+    const id = session === null || session === undefined ? undefined : session.id
+    if (typeof id === 'string') ledgers.delete(id)
   })
 }

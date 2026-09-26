@@ -220,13 +220,16 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const member = orderOf('memberOrder')
   const office = orderOf('officeBound')
 
-  yes('preset', 'leaderOrder 是 leader → work-guidelines → roster → board → persona → style',
-    leader.join(',') === 'leader,work-guidelines,roster,board,persona,style', leader.join(' → '))
+  yes('preset', 'leaderOrder 是 leader → work-guidelines → roster → board → persona → me-aqua → style',
+    leader.join(',') === 'leader,work-guidelines,roster,board,persona,me-aqua,style', leader.join(' → '))
   // persona（她是谁）与 style（她怎么说话）排最后：越靠后离请求末尾越近，权重越高。
   // ⚠️ style **同时**是 inject.js 第 ⑤ 件事读的那个文件 —— 快照这条路和尾巴那条路读同一个文件，
   //    所以永远不会分叉（2026-09-24 老板定：不再分"开头注入的"和"每 n 步注入的"两份）。
-  yes('preset', 'leaderOrder 里 style 排最后、persona 紧随其后',
-    leader[leader.length - 1] === 'style' && leader[leader.length - 2] === 'persona',
+  // ⚠️ **2026-09-26 改**：`me-aqua.md`（关于老板的那份）加在 `persona` 之后、`style` 之前
+  //    —— 组长 2026-09-25 拍的（`方案清单-回滚后.md` §三.2）。这条断言跟着事实改，
+  //    不是删：它仍然钉着"style 排最后"和"me-aqua 就在它前面"。
+  yes('preset', 'leaderOrder 里 style 排最后、me-aqua 紧随其后（口径 13）',
+    leader[leader.length - 1] === 'style' && leader[leader.length - 2] === 'me-aqua',
     leader.slice(-2).join(' → '))
   yes('preset', 'memberOrder 是 work-guidelines → charter（组员不读 leader / persona）',
     member.join(',') === 'work-guidelines,charter', member.join(' → '))
@@ -237,12 +240,14 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //  · `charter` 展开成 `team/<岗位>.md`（组员只拿自己那份 —— "team/ 的文件与 yml 行
   //    一一对应"另有一条断言钉着）；
   //  · ⚠️ `说明.md` **故意排除**：它是给维护的人看的，**不进提示词**（AGENTS.md §7 明写）。
+  //  · ⚠️ **2026-09-26 起 `mood.md` 也排除**：它也不进快照 —— 它由 inject.js 第 ⑤ 件事读
+  //    （常数 + 场景例库），贴出去的只有**分数行 + 命中的例子**，而分数**每步都在变**。
+  //    进快照 = 每步重发一次 = 缓存全废（组长 2026-09-26 代拍第 3 条）。
   // 🔴 **为什么写成"目录里每一份"而不是点名排除某一份**：口径 9 要的就是"下一批接
-  //    `me-aqua.md` 的时候别静默漏送"。它现在**不在目录里**（本批不做）⇒ 今天这条是绿的；
-  //    哪天它落进 `presets/agenia/` 而没人往 `leaderOrder` 里加，**这条当场变红**。
-  //    写成"除 `me-aqua.md` 外"的话，那件正事发生时就没人拦了。
+  //    `me-aqua.md` 的时候别静默漏送"。它 2026-09-26 落进目录 **并且** 进了 `leaderOrder`
+  //    ⇒ 这条现在是绿的；哪天再落一份进来而没人往名单里加，**这条当场变红**。
   const deliverable = [
-    ...readdirSync(PRESET).filter((f) => f.endsWith('.md') && f !== '说明.md').map((f) => f.slice(0, -3)),
+    ...readdirSync(PRESET).filter((f) => f.endsWith('.md') && f !== '说明.md' && f !== 'mood.md').map((f) => f.slice(0, -3)),
     ...readdirSync(join(PRESET, 'team')).filter((f) => f.endsWith('.md')).map((f) => `team/${f.slice(0, -3)}`),
   ]
   const sentKeys = new Set([...leader, ...member])
@@ -255,6 +260,51 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       : `没人送：${unwired.join(', ')} —— 加进 leaderOrder 或 memberOrder，别让它静默漏掉`)
   yes('preset', 'officeBound 正好是 review + retro（只留做判断的岗位）',
     office.join(',') === 'review,retro', office.join(', ') || '（空）')
+
+  // ── 口径 8 / 9 / 13：情绪模块的内容 + `me-aqua.md`（2026-09-26 加）──────────
+  // ⚠️ 这几条量的是**内容文件**，判不了"分打得对不对"——那是探针 N/O/Q 族的事。
+  //    这里只钉"文件在不在、机器那半边读不读得出来、六维有没有漂"。
+  const moodPath = join(PRESET, 'mood.md')
+  const moodText = existsSync(moodPath) ? read(moodPath) : undefined
+  yes('preset', '`mood.md` 在（口径 8）', moodText !== undefined,
+    moodText === undefined ? '文件不存在 —— 情绪模块没落地' : `${moodText.length} 字符`)
+  const moodBlock = moodText === undefined ? null : /```mood[ \t]*\r?\n([\s\S]*?)\r?\n```/.exec(moodText)
+  let moodJson
+  try {
+    moodJson = moodBlock === null || moodBlock === undefined ? undefined : JSON.parse(moodBlock[1])
+  } catch {
+    moodJson = undefined
+  }
+  yes('preset', '`mood.md` 里有一个 ```mood JSON 块：常数 + 恰好 6 条场景（口径 8）',
+    moodJson !== undefined && Array.isArray(moodJson.scenes) && moodJson.scenes.length === 6,
+    moodJson === undefined
+      ? '没有这个块 / JSON 不合法'
+      : `scenes = ${Array.isArray(moodJson.scenes) ? moodJson.scenes.length : '（不是数组）'}`)
+  // 六维**次序也钉住**：分词比对防漂（口径 9 的原话是"分词比对，防漂"）。
+  const dimNames = ['愉悦', '唤起', '掌控', '疲劳', '新异', '亲近']
+  const ordered = new RegExp(dimNames.join('[^\\n]{0,40}'))
+  yes('preset', '六维 = 愉悦 · 唤起 · 掌控 · 疲劳 · 新异 · 亲近，而且次序没漂（口径 9）',
+    ordered.test(moodText ?? '') && dimNames.every((d) => (moodText ?? '').includes(d)),
+    dimNames.filter((d) => !(moodText ?? '').includes(d)).join('、') || '六个都在')
+  const dingLines = (moodText ?? '').split('\n').filter((l) => l.includes('确定'))
+  yes('preset', '「确定」没有作为第七维回来（口径 9）',
+    dingLines.every((l) => /不|没有|别/.test(l)),
+    dingLines.length === 0 ? '一次都没出现' : `出现了，且不像在否定：${dingLines[0].trim().slice(0, 60)}`)
+  yes('preset', '`mood.md` 里写死了「分数是调语气用的，不是绩效报表」（口径 8）',
+    /不是绩效报表/.test(moodText ?? ''))
+
+  const mePath = join(PRESET, 'me-aqua.md')
+  const meText = existsSync(mePath) ? read(mePath) : undefined
+  yes('preset', '`me-aqua.md` 在（口径 13）', meText !== undefined,
+    meText === undefined ? '文件不存在' : `${meText.length} 字符`)
+  yes('preset', '`me-aqua.md` 的「下班：HH:MM」机器读得出来（口径 13 的作息三行）',
+    /下班[:：]\s*(\d{1,2}):(\d{2})/.test(meText ?? ''),
+    '读不出来 ⇒ "距下班"这条信号永远缺着（静默退化）')
+  yes('preset', '`me-aqua.md` 真的进了 `leaderOrder`（口径 13）', leader.includes('me-aqua'),
+    '写了没接上 = 它一辈子不进提示词（假绿比红更坏）')
+  yes('preset', '`me-aqua.md` 里没有「他会突然消失」那一节（组长 09-26 点名删）',
+    !/突然消失/.test(meText ?? ''),
+    '留着它 ⇒ 老板长时间不说话会被她解释成"正常"，而不是张嘴问一句')
 
   // 受限岗位名单和队伍名单要能对上 —— 写个不存在的岗位名，那条限制永远不生效、也不报错。
   const orphan = office.filter((o) => !roles.includes(o))
@@ -337,23 +387,28 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   yes('injector', '认不出岗位的 agent 一律放行（别把组长自己挡住）',
     /role === undefined \|\| !officeBound\.has\(role\)\) return undefined/.test(src))
 
-  // ── 2026-09-24 加的两条：为什么"每轮注入"这句话当年是假的 ────────────────
-  // ① 那一套是**快照**，DSH 只在文本变了才重发一条（dsh-agent-loop 的
-  //    RuntimeContextProjection.project()）。实测钉过 4 小时 15 分 / 45 万 token。
-  //    所以"真的每轮"靠的是尾巴那一句 —— 它走 agent.inject()，拿不到就必须出声。
-  yes('injector', '尾巴提醒走 agent.inject，拿不到时会报错（不静默失效）',
-    /agent\.inject\(/.test(src) && /拿不到 agent\.inject/.test(src),
-    '缺了这条，人格又只剩"变了才发"的快照那一条路')
+  // ── 2026-09-26 改：这条钉的是**被推翻的旧事实** ─────────────────────────────
+  // 原文是「尾巴提醒走 `agent.inject`，拿不到时会报错」—— 机制① 走那条路会撞
+  // `dsh-session` L1181 的 `appending` 守卫（`session/event` 的监听器是在
+  // `appending = true` 窗口里同步调的），被 catch 吞成 warnOnce ⇒ **真回合 0 次**。
+  // ⇒ 这条**改成它的反面**（不是删）：两条机制都从 `agent/pre-step` 的 `decision.messages` 出去。
+  //    "不静默失效"那半边留着：拿不到 `agent.id` 时必须出声（下面那条 pre-step-agent）。
+  yes('injector', '机制① 不再走 `agent.inject()`（口径 1）—— 那条路在真 harness 里会撞 appending 守卫',
+    !/agent\.inject\s*\(/.test(src),
+    '还在用它 ⇒ 派发窗口里必抛、被 catch 吞成 warnOnce（只喊一次然后永久静默）')
 
   // ①-b **2026-09-26 补**：AGENTS.md 3e⑤ 写着"查不到 agent / 认不出 agent.id 也要出声，
   //    有断言盯着" —— 而当时只有上面那一条被钉着，另外两处**只有话没有断言**。
-  //    第 4 关第二轮评审点名了这一处（"说三处有断言，实际只有一条成立"）。下面两条把它补上。
-  yes('injector', '查不到 agent 时会出声（不静默丢一条尾巴）',
-    /warnOnce\('tail-agent'/.test(src) && /查不到 id 为/.test(src),
-    '缺了这条，查不到 agent 就静默 return —— 尾巴少贴一条，谁都不知道')
+  //    第 4 关第二轮评审点名了这一处（"说三处有断言，实际只有一条成立"）。
+  //    ⚠️ **2026-09-26 晚再改**：机制① 不再查 agent（它不走 `agent.inject()` 了）
+  //    ⇒ "查不到 agent 要出声"那一格**没有了**（那个失败模式不存在了），换成这一批
+  //    真正会静默失效的那一处：**情绪段读不到**。
+  yes('injector', '情绪段读不到时会出声（口径 8）—— 有出声的口子',
+    /mood\.md/.test(src) && /(warnOnce|console\.error)/.test(src),
+    '这条只钉得住"有出声的口子"；"真的出声了"归探针 Q7/Q9（行为判据）')
   yes('injector', 'pre-step 里拿不到 agent.id 时会出声',
     /warnOnce\('pre-step-agent'/.test(src) && /拿不到 agent\.id/.test(src),
-    '缺了这条，机制② 认不出是谁就整条不生效，而且是静默的')
+    '缺了这条，两条机制认不出是谁就整条不生效，而且是静默的')
 
   // ② 快照里唯一会变的是 agenia:board，而板子按 team_<岗位> 认人。
   //    2026-09-24 那天组长 42 次起人全走裸 subagent ⇒ 板子恒空 ⇒ 快照一整天没变。
@@ -391,6 +446,21 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     leakedToPersona.length > 0
       ? `persona.md 里还留着：${leakedToPersona.join('、')}（两张表各存一份，迟早分叉）`
       : `style.md ${inStyle}/4 张表`)
+
+  // ── 2026-09-26 加的两条：情绪模块的**代码那一半**（口径 10 / 14）─────────────
+  // 口径 10：`moodOf` 必须是**导出的**——不导出，探针就只能隔着整条尾巴路测它，
+  //          喂假信号、验单调性这些事全部做不了（那就退化成"读代码觉得对"）。
+  yes('injector', '`moodOf` 是**导出**的函数（口径 10）',
+    /export\s+(?:async\s+)?function\s+moodOf\b|export\s+const\s+moodOf\b/.test(src),
+    '找不到导出的 moodOf ⇒ 探针的 N 族（单调性）一条都跑不了')
+  // 口径 14：衰减常数住在 `mood.md` 的 ```mood 块里，`.js` 里一个都不许有 ——
+  //          写死在代码里 ⇒ 调参要重启 harness（ESM 按 URL 缓存，AGENTS.md 3d）。
+  yes('injector', '衰减常数不在 `.js` 里，住在 `mood.md`（口径 14）',
+    !/halfLifeMinutes\s*[:=]\s*\d/.test(src) && !/roundDecay\s*[:=]\s*[\d.]/.test(src),
+    '写死在 .js 里 ⇒ 改一个数要重启 harness；口径 14 要的是"改文件就生效"')
+  yes('injector', '两条机制都落在 `agent/pre-step` 上（口径 1/2 的读代码那半边）',
+    /ctx\.on\('agent\/pre-step'/.test(src) && /(pendingTail|dangling|[Tt]ail)/.test(src),
+    '找不到 pre-step 里的尾巴判定')
 }
 
 // ── 4 · 队伍的地方（.team/）────────────────────────────────────────────────
