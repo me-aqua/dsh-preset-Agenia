@@ -10,7 +10,9 @@
  *   ② 分清对象 —— 组长和组员收到的内容不一样，不能混
  *   ③ 岗位边界 —— "只审不改"的岗位，在系统层面就写不了源码
  *   ④ 进度提醒 —— 叫过开发却没叫测试，下一轮提醒组长一句
- *   ⑤ 尾巴提醒 —— 每次组装都往**请求最末尾**再塞一句短的
+ *   ⑤ 尾巴提醒 —— 两个机制各按自己的落点补一份 style：每 n 个工具结果一次（机制①，
+ *      走 `agent.inject()` 进 next-step 队列）、老板开口之后我第一次开口之前一次
+ *      （机制②，插进**本步**的 `messages`）
  *
  * ⚠️ ① 是**快照**，不是"每轮重发"（2026-09-24 实测）：DSH 只在快照文本变了才发新的一条
  * （`dsh-agent-loop` 的 `RuntimeContextProjection.project()`：`retained.text === snapshot` 就 return）。
@@ -25,6 +27,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,7 +51,7 @@ const DEFAULT_OFFICE_BOUND = ['review', 'retro']
  * 「语言风格」那一份 —— ⑤ 尾巴提醒读它。
  * ⚠️ ① 的快照那一层由 `agent.cordis.yml` 的 `leaderOrder` 里那个 `style` 行送 ——
  * **两条路读的是同一个文件**，所以永远不会分叉（2026-09-24 老板定：不再分两份）。
- * 它不进快照机制 ⇒ 改它**不用重启 harness**（存盘即生效）；频率也写在它第一行的注释里。
+ * 它不进快照机制 ⇒ 改它**不用重启 harness**（存盘即生效）；机制① 的刻度也写在它第一行的注释里。
  *
  * ⚠️ **贴出去的就是文件正文，不加任何外框**（2026-09-24 老板：「记得把那个【自动提醒】也删了，没用」）。
  * 曾经加过一层「不是老板的消息，别回它」的护栏 —— 起因是提醒被当成老板开口、模型回了它两条；
@@ -57,13 +60,12 @@ const DEFAULT_OFFICE_BOUND = ['review', 'retro']
 const STYLE_FILE = 'style.md'
 
 /**
- * 尾巴提醒的默认频率：**至少隔这么多步**才补一句（文件里可以用 `<!-- every: N -->` 覆盖）。
- * 为什么要有这个数：一开始是"每个步边界都贴"，老板看到 GUI 里一串"上下文注入"当场喊停
- * （2026-09-24：「好像有点太高频了哥们，还是降降吧」）。现在的规矩两头都占：
- * **有真消息进来 ⇒ 下个组装必贴一句**（每回合开头一定有一句），
- * 之后**每 N 步**才补一句（长回合里不至于一路漂远）。
+ * 机制① 的默认刻度：**每这么多个工具结果**补一份 `style.md`。
+ * 刻度写在那个文件的**第一行**：`<!-- every: N -->`（释义 2026-09-25 老板定）。
+ * 写 `0` = 关掉机制①，只留机制②。
+ * 注释丢了 / 读不出来 ⇒ 用这个数，并且出声（`console.error`）—— 不许静默。
  */
-const REMINDER_EVERY_DEFAULT = 8
+const DEFAULT_EVERY = 3
 
 /**
  * 组员上岗时，岗位配置那一行会在它的人设最前面留一枚标记。
@@ -305,8 +307,8 @@ export async function apply(ctx, config = {}) {
   })
 
   // ─────────────────────────────────────────────────────────────
-  // ③ 和 ④ 都要知道"这个 agent 是哪个岗位"，这张表就是它们之间的桥。
-  // 表在装配时登记（那里才知道角色），门禁和台账按编号来查。
+  // ③ / ④ / ⑤ 都要知道"这个 agent 是哪个岗位"，这张表就是它们之间的桥。
+  // 表在装配时登记（那里才知道角色），门禁、台账、尾巴提醒按编号来查。
   // ─────────────────────────────────────────────────────────────
   const roleOfAgent = new Map()
 
@@ -454,93 +456,170 @@ export async function apply(ctx, config = {}) {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // ⑤ 尾巴提醒。
+  // ⑤ 尾巴提醒 —— 两个机制，各按自己的落点补一份 `style.md`。
   //
   // ① 那一套是**快照**：DSH 只在快照文本变了才重发一条，文本不变时人格就钉在
   // 上一次变化的位置上。2026-09-24 实测钉了 **4 小时 15 分 / 45 万 token** ——
   // 那一次老板质问她，她没还嘴也没带表情；查下来人格根本没丢，是**离得太远、太旧**。
   //
-  // 这一条补上"真的每轮"：每次组装都往**请求最末尾**塞一句短的。
-  // 走 `agent.inject()`（落点是下一个步边界），所以：
-  //   * 不动快照 —— 快照一变，从它那个位置往后的缓存全废，那是钱；
-  //   * 也不压上下文 —— 一句一百来字，贴在末尾。
-  // 刻度用"这个会话最近一条事件的 seq"：同一个刻度只贴一次，一次组装最多一句。
+  // 这一条补上"真的每轮"。触发点**只有两个**（2026-09-25 老板定：就这两个，别加第三个）：
+  //
+  //   机制①「每 n 个工具结果」：只数 `tool/result` 事件 —— 老板说话不算、我回话不算、
+  //          步边界也不算；`turn/start` 把计数清零。n 写在 `style.md` **第一行**
+  //          （`<!-- every: N -->`，读不出来按 `DEFAULT_EVERY`），**每次判定都现读**。
+  //          写 0 = 关掉机制①，只留机制②。
+  //          落点：`agent.inject()` 进 next-step 收件箱 ⇒ 在**下一个** `agent/pre-step`
+  //          被领走 ⇒ 落在「工具结果 → 我下一次开口」之间（这就是要的位置）。
+  //   机制②「老板开口之后、我第一次开口之前」：在 `agent/pre-step` 里（`await next()` 之后）
+  //          看这一步领到的 `messages` 里有没有老板那条（`source.kind === 'user'`）——
+  //          有就把 style **插进这一步的 messages**，紧跟在他那句话后面。
+  //
+  // 🔴 **机制② 为什么不能走 `agent.inject()`**（2026-09-26 按源码次序定下来的）：
+  //      `system-prompt/assemble` 排在 `inbox.claim()` **之后**（`dsh-agent-loop` L889/L890），
+  //      而老板那句话要到 `step()` 里才落笔（L1028）—— 装配那一刻收件箱里还没有它，
+  //      于是"装配时再注"只能等**下一次**装配才被领走：回答老板的那一次请求里永远没有 style，
+  //      而没调工具的回合还会**多跑一步**（收尾条件是"收件箱排空"，L966/L973）。
+  //      ⇒ 这个决定必须做在**本步的 messages** 上，不是收件箱上。
+  //      写法照 `dsh-agent-instructions` L1270-1288。
+  //
+  // 它**不动快照**：快照一变，从它那个位置往后的缓存全废，那是钱。
+  //
+  // 两条守门（位置问题，不是省钱问题）：
+  //   A：他刚说完、我还没开口时来的工具结果**不计数、也不消耗 B** —— 那个位置上贴一条
+  //      `role:'user'` 的 style，会被读成"老板又开了一次口"（2026-09-24 17:05:44 真现场：
+  //      她回了「那条不是你的话」）。解除 A 的是 `assistant/message`，**不是** `step/start`
+  //      —— 真日志里 `step/start` 排在老板那句话**之前**（seq 767 在 768 前面）。
+  //   B：机制② 刚摆过的那**一个**工具结果不计数、也不触发（"不叠"）—— 否则
+  //      "你的话 + 机制② + 第一个工具结果"会让同一个请求里出现两条 style。
+  //
+  // 组员整个不贴（2026-09-25 老板：「组员完全不需要语气，不需要这个东西」）：
+  // 认人用装配时登记的那份岗位（`roleOfAgent`，第 ② 件事那张表）——
+  //   机制② 在 pre-step 那一刻认出是组员 ⇒ 整条丢；
+  //   机制① 也按同一份登记整条丢掉（工具结果一定发生在首次装配之后：模型得先被装配出来
+  //   才会去调工具，所以来得及）。
+  // ⚠️ **装配排在 `agent/pre-step` 前面**（L890 早于 L894）⇒ 到 pre-step 那一刻，角色是现成的。
+  // ⚠️ 关的是**语气**，不是**身份** —— 那枚 `【组员:xxx】` 标记还要给第 ② 件事分流用。
   // ─────────────────────────────────────────────────────────────
-  const latestSeq = new Map()
-  const remindedAt = new Map()
-  /** 这个会话走到第几步了（数 step/start）—— 控频用。 */
-  const steps = new Map()
-  /** 上一次贴提醒是在第几步。 */
-  const lastRemindStep = new Map()
-  /** 有"真消息"进来了（老板开口 / 组员接到任务）⇒ 下一个组装必贴一句。 */
-  const armed = new Map()
+  /** 机制① 的计数器：这个会话攒了几个"该数的"工具结果。 */
+  const counts = new Map()
+  /** 守门 B：机制② 刚摆过 ⇒ 紧接着那一个工具结果不计数、不触发，然后清掉。 */
+  const skipNext = new Set()
+  /** 守门 A：老板说完、我还没开口 ⇒ 这期间的工具结果一条都不数。 */
+  const bossWaiting = new Set()
+
+  // ⚠️ **这一段的读盘是同步的（`readFileSync`），故意的。**
+  // 契约第三节那条硬要求：会话事件的状态更新要**同步**发生在事件处理器里（第一个 `await` 之前）。
+  // 计数只要异步落地，`turn/start` 的清零就可能插到它前面那条结果的计数**之前** ——
+  // "哪一个是第 n 个"从此跟着读盘快慢漂。同步读把它从"看运气"变成"由构造保证"。
+  // 机制② 用同一份同步读：判据是"本步的 messages"，同样不该排在一次读盘后面。
+  // 代价：每个工具结果多读一次约 7 KB 的 .md（量级可忽略；但它在事件循环上，换机器 / 网络盘要留意）。
 
   ctx.on('session/event', (session, event) => {
     const id = session === null || session === undefined ? undefined : session.id
-    if (typeof id !== 'string') return
-    const seq = event === null || event === undefined ? undefined : event.seq
-    if (typeof seq === 'number') latestSeq.set(id, seq)
-    const type = event === null || event === undefined ? undefined : event.type
-    if (type === 'step/start') steps.set(id, (steps.get(id) ?? 0) + 1)
-    // 只有"真消息"才点亮。**提醒自己不算** —— 它也是 user/message，
-    // 但来源是 plugin；不排除掉的话就会自己喂自己（那就是死循环了）。
-    if (type === 'user/message' && event.data?.source?.kind === 'user') armed.set(id, true)
+    if (typeof id !== 'string' || event === null || event === undefined) return
+    const type = event.type
+
+    // 组员：机制①② 都不成立，整条丢掉（口径 8b）。认的是装配时登记的那份岗位。
+    if (roleOfAgent.has(id)) return
+
+    if (type === 'turn/start') {
+      counts.set(id, 0)
+      return
+    }
+    // "我开口了"就是它 —— 不能用 `step/start`（它排在老板那句话之前，见上面守门 A）。
+    if (type === 'assistant/message') {
+      bossWaiting.delete(id)
+      return
+    }
+    if (type === 'user/message') {
+      // 只有老板本人算。`plugin` / `agent-instructions` / `skill-catalog` 这几路都是
+      // 系统自己发的，算进来就是自己喂自己（那就是死循环了）。
+      // ⚠️ 这一条现在只管**守门 A**：机制② 不再听事件，它在 `agent/pre-step` 上看本步的 messages
+      //    （老板那句话的 `user/message` 要到装配**之后**才落笔，事件驱动赶不上它）。
+      if (event.data?.source?.kind !== 'user') return
+      bossWaiting.add(id)
+      return
+    }
+    if (type !== 'tool/result') return
+
+    if (bossWaiting.has(id)) return                        // 守门 A：让路，不动 B
+    if (skipNext.has(id)) { skipNext.delete(id); return }  // 守门 B：不计数、不触发
+
+    const { text, every } = styleOf()
+    if (every === 0) return                                // 刻度 0 ⇒ 机制① 关着
+    const next = (counts.get(id) ?? 0) + 1
+    if (next < every) { counts.set(id, next); return }
+    counts.set(id, 0)
+    injectTail(id, text)
   })
 
+  /** 同一件事只喊一次，别把日志刷满。 */
+  const warned = new Set()
+  function warnOnce(key, message) {
+    if (warned.has(key)) return
+    warned.add(key)
+    console.error(message)
+  }
+
   /**
-   * 组长那一份的**兜底**版本（`style.md` 读不到时才用）。
+   * 组长那一份的**兜底**版本（`style.md` 读不到、或者剥完注释是空的时才用）。
    * 贴出去的是文件正文本身，不加外框 —— 见 `STYLE_FILE` 那段注释。
    */
   const DEFAULT_LEADER_REMINDER =
     'Agenia 的语言风格：**第一句不是「好的」「收到」—— 先回怼**（该贫就贫、该卖萌就卖萌）；'
     + '**要吵**，emoji / 颜文字 / 口癖 / 连用标点随便堆，别写成客服话术。'
 
-  /** 组员那一句：他自己说明书的第一行 + 两句全组通用的话。 */
-  function memberReminder(charter) {
-    const first = (charter ?? '').split('\n').find((line) => line.trim().length > 0) ?? ''
-    const who = first.replace(/^#+\s*/, '').trim()
-    return `${who.length > 0 ? `${who}：` : ''}`
-      + '交东西要带证据（跑了什么、结果是什么），说话别写成客服话术；有疑问当场问，别猜。'
-  }
-
   /**
-   * 这一句的正文 + 频率：组长那份从 `style.md` 读（**改正文和频率都不用重启 harness**）。
-   * 频率写在同一个文件第一行的注释里：`<!-- every: 8 -->` = 至少隔 8 步才补一句；
-   * 写 0 = 只在每个回合开头贴一句。注释会被剥掉，不进提示词。
+   * 读 `style.md`：正文（**剥掉全部 HTML 注释**再 trim）+ 机制① 的刻度。
+   * 刻度在**第一行**的 `<!-- every: N -->` 里（只看第一行：别处夹一个注释不该改频率）。
+   * ⚠️ **每次判定都现读**，不在挂载时缓存 —— 改正文、改刻度都不用重启 harness（存盘即生效）。
+   * ⚠️ **同步读**，理由见上面那段（次序比省这一下 I/O 重要）。
    */
-  async function tailText(role, charter) {
-    if (role !== undefined) return { text: memberReminder(charter), every: REMINDER_EVERY_DEFAULT }
-    const raw = await readText(join(contentDir, STYLE_FILE))
-    if (raw === undefined) return { text: DEFAULT_LEADER_REMINDER, every: REMINDER_EVERY_DEFAULT }
-    const hit = /<!--\s*every:\s*(\d+)\s*-->/.exec(raw)
+  function styleOf() {
+    let raw
+    try {
+      raw = readFileSync(join(contentDir, STYLE_FILE), 'utf8')
+    } catch {
+      raw = undefined
+    }
+    if (raw === undefined || raw.trim().length === 0) {
+      warnOnce('style', `[agenia] 读不到 ${STYLE_FILE} —— 尾巴提醒贴的是兜底正文，`
+        + `机制① 的刻度按默认 ${DEFAULT_EVERY} 算。`)
+      return { text: DEFAULT_LEADER_REMINDER, every: DEFAULT_EVERY }
+    }
+    const hit = /<!--\s*every:\s*(\d+)\s*-->/.exec(raw.split('\n')[0] ?? '')
+    if (hit === null) {
+      warnOnce('every', `[agenia] ${STYLE_FILE} 第一行里没有 \`<!-- every: N -->\` —— `
+        + `机制① 按默认 ${DEFAULT_EVERY} 个工具结果算。`)
+    }
     const body = raw.replace(/<!--[\s\S]*?-->/g, '').trim()
+    if (body.length === 0) {
+      warnOnce('style', `[agenia] ${STYLE_FILE} 剥掉注释之后是空的 —— 尾巴提醒贴的是兜底正文。`)
+    }
     return {
       text: body.length > 0 ? body : DEFAULT_LEADER_REMINDER,
-      every: hit === null ? REMINDER_EVERY_DEFAULT : Number(hit[1]),
+      every: hit === null ? DEFAULT_EVERY : Number(hit[1]),
     }
   }
 
-  let reminderWarned = false
-
-  /** 往这个 agent 的请求末尾贴一句提醒。贴不上去就出声，不静默。 */
-  async function remind(agentId, role, charter) {
-    const seq = latestSeq.get(agentId)
-    if (typeof seq !== 'number' || remindedAt.get(agentId) === seq) return
-    const { text, every } = await tailText(role, charter)
-    // 控频：有真消息（每回合开头）或隔够步数，才贴。**不是每个步边界都贴。**
-    const step = steps.get(agentId) ?? 0
-    if (armed.get(agentId) !== true && step - (lastRemindStep.get(agentId) ?? -1) < every) return
+  /**
+   * 机制① 的落点：往这个 agent 的 next-step 队列贴一条 style —— 下一次 `agent/pre-step`
+   * 领走它，于是它落在「工具结果 → 我下一次开口」之间。
+   * 贴不上去就出声，不静默（静默失效的"没贴"和"本来就轮不到贴"长得一模一样）。
+   */
+  function injectTail(agentId, text) {
     const agents = ctx.get('agents')
     const agent = typeof agents?.get === 'function' ? agents.get(agentId) : undefined
-    if (agent === undefined) return
+    if (agent === undefined) {
+      warnOnce('tail-agent',
+        `[agenia] 查不到 id 为 ${agentId} 的 agent —— 这一条尾巴提醒没有贴上去`
+          + '（机制① 少响一次；id 对不上才会走到这里）。')
+      return
+    }
     if (typeof agent.inject !== 'function') {
-      if (!reminderWarned) {
-        reminderWarned = true
-        console.error(
-          '[agenia] 这个框架版本拿不到 agent.inject —— 尾巴提醒没有生效，'
-            + '人格只剩快照那一条路（快照只在文本变了才重发，长回合里会越漂越远）。',
-        )
-      }
+      warnOnce('no-inject',
+        '[agenia] 这个框架版本拿不到 agent.inject —— 尾巴提醒没有生效，'
+          + '人格只剩快照那一条路（快照只在文本变了才重发，长回合里会越漂越远）。')
       return
     }
     try {
@@ -550,16 +629,51 @@ export async function apply(ctx, config = {}) {
         content: [{ type: 'text', text }],
         source: { kind: 'plugin', plugin: 'agenia' },
       })
-      remindedAt.set(agentId, seq)
-      lastRemindStep.set(agentId, step)
-      armed.set(agentId, false)
     } catch (error) {
-      if (!reminderWarned) {
-        reminderWarned = true
-        console.error(`[agenia] 尾巴提醒贴不上去（不影响别的功能）：${String(error)}`)
-      }
+      warnOnce('inject-failed', `[agenia] 尾巴提醒贴不上去（不影响别的功能）：${String(error)}`)
     }
   }
+
+  /**
+   * 这一批 `messages` 里，哪一条是"老板本人说的"？
+   * `source.kind` 有四种以上（`user` / `plugin` / `agent-instructions` / `skill-catalog`），
+   * 只认 `user` —— 别的算进来就是自己喂自己（机制② 会被自己刚贴的那条 style 再触发一次）。
+   */
+  const isBossMessage = (message) => message?.source?.kind === 'user'
+
+  // ─────────────────────────────────────────────────────────────
+  // ⑤ 机制②：老板开口之后、我第一次开口之前，贴一次。
+  //
+  // 🔴 判据是**这一步领到的 `messages`**，不是"哪个事件到过"：老板那句话的落笔
+  // （`user/message`）发生在装配**之后**（`dsh-agent-loop` L1028），事件驱动赶不上它。
+  // 位置：插在他那句话**后面**（同一批里连着说两句也只插一条）。
+  // 组员：整条丢（口径 8b）—— 装配排在 pre-step 前面，那一刻角色已经登记好了。
+  // ─────────────────────────────────────────────────────────────
+  ctx.on('agent/pre-step', async ({ agent }, next) => {
+    const decision = await next()
+    if (decision?.kind === 'reject') return decision
+
+    const id = agent?.id
+    if (typeof id !== 'string') {
+      warnOnce('pre-step-agent', '[agenia] `agent/pre-step` 里拿不到 agent.id —— '
+        + '机制② 没有生效（老板开口之后不会补语气）。')
+      return decision
+    }
+    if (roleOfAgent.has(id)) return decision            // 组员：一条都不贴
+
+    const messages = Array.isArray(decision.messages) ? decision.messages : []
+    const at = messages.findLastIndex(isBossMessage)
+    if (at < 0) return decision                         // 这一步里没有老板的话 ⇒ 不关它的事
+
+    const entered = messages.toSpliced(at + 1, 0, {
+      id: randomUUID(),
+      role: 'user',
+      content: [{ type: 'text', text: styleOf().text }],
+      source: { kind: 'plugin', plugin: 'agenia' },
+    })
+    skipNext.add(id)      // 守门 B：② 刚摆过 ⇒ 紧接着那一个工具结果让路
+    return { ...decision, messages: entered }
+  })
 
   // ─────────────────────────────────────────────────────────────
   // ① + ② 注入正文，并按标记分辨这次该给哪一拨人。
@@ -570,6 +684,7 @@ export async function apply(ctx, config = {}) {
     // 没有作用域的装配不是会话，跳过。
     if (context === null || context === undefined || context.scope === undefined) return result
 
+    // 登记这次开口的是谁 —— ⑤ 两条机制（还有 ③ 的门禁）都靠这张表认人。
     const role = roleOf(assembly) ?? roleOf(result)
     const agentId = context.scope.id
     if (typeof agentId === 'string' && role !== undefined) roleOfAgent.set(agentId, role)
@@ -579,12 +694,6 @@ export async function apply(ctx, config = {}) {
       role,
       board: role === undefined ? boardOf(agentId) : undefined,
     })
-
-    // ⑤ 尾巴提醒。内容这里已经有了，不多读一次盘（组长那份正文另外从 style.md 读）。
-    if (typeof agentId === 'string') {
-      const charter = entries.find((entry) => entry.name.startsWith('agenia:charter:'))?.text
-      await remind(agentId, role, charter)
-    }
 
     if (entries.length === 0) return result
 

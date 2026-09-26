@@ -22,14 +22,17 @@
  *  2. **"该摆几次"来自契约的参考模型**（`.team/test/2026-09-25/技术契约-尾巴注入两个机制.md`
  *     第三节那段伪代码）。参考模型和 inject.js 是两份独立的东西，对不上才有信息量。
  *     参考模型自己用 `--self-test` 里的手算样例钉住。
- *  3. **只喂会话事件 + 一处推断出来的装配点。** 契约把机制① 钉在事件上（`tool/result`），
- *     把机制② 钉在 `system-prompt/assemble`（挂账 + 到装配才注）。
- *     而**装配不是会话事件**（它是 Cordis 的钩子），日志里没有 —— 所以这条工具在
- *     **每一条 `assistant/message` 之前插一个装配点**。
- *     依据：模型必须先被装配出来才会开口；实测每个 `step/start…step/end` 里恰好一条
- *     `assistant/message`（`session-eee21b3c`：80 步 / 80 条），日志里那 3 条 `request/header`
- *     也都排在 `assistant/message` 前面。
- *     ⚠️ 这是**推断**，不是量出来的：装配的确切时刻日志里没有。
+ *  3. **只喂会话事件 + 一处推断出来的「一步的 claim 点」。** 契约把机制① 钉在事件上
+ *     （`tool/result`），把机制② 钉在**这一步领到的 messages** 上（`agent/pre-step`）。
+ *     claim 不是会话事件（它是 Cordis 钩子），日志里没有 —— 所以这条工具在**每个
+ *     `step/start` 之前**插一个 claim 点，并把"这一步里出现的老板那几句"记在它上面。
+ *     依据（`dsh-agent-loop` L889/L890/L894/L951/L1028，2026-09-26 按源码核过）：
+ *     `inbox.claim()` → `system-prompt/assemble` → `agent/pre-step` → `step/start`
+ *     → 这批 messages 落笔成 `user/message`。
+ *     ⇒ **老板那句话出现在某一步的 `step/start` 之后**，而它是**这一步的 claim 领进来的**。
+ *     契约 §2 第 4 条那组真 seq 就是这个形状：`step/start`(767) 在 `user/message`(768) 前面。
+ *     ⚠️ claim 的确切时刻仍是**推断**（日志里没有这个事件）；形状有两处实测撑着（上面那条 +
+ *     "每个 step 里恰好一条 `assistant/message`"）。**落点**由探针的 L 族判，不靠这条工具。
  *
  * ⚠️ 本工具只读日志、只 import 预设，**不写 `presets/` 下任何东西、不起会话、不花 token**。
  */
@@ -130,6 +133,10 @@ function findLogs(root, depth = 0) {
 // 二 · 参考模型（契约第三节那段伪代码，逐行照抄）
 //   跟 inject.js 是**两份独立的东西** —— 对不上才有信息量。
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * 参考模型（契约第三节那段伪代码，逐行照抄；2026-09-26 机制② 的落点按修好后改写）。
+ * 跟 inject.js 是**两份独立的东西** —— 对不上才有信息量。
+ */
 function referenceModel(events, every, { member = false } = {}) {
   const out = { expected: 0, byOne: 0, byTwo: 0, aBlocks: 0, bSkips: 0, fires: [], counts: [] }
   // 口径 8b：组员整个不贴 —— 机制① 和机制② 都不该落到他身上。
@@ -137,13 +144,12 @@ function referenceModel(events, every, { member = false } = {}) {
   let count = 0             // 机制① 的计数器
   let skipNext = false      // 守门 B
   let bossWaiting = false   // 守门 A
-  let pendingWarmup = false // 机制② 的挂账（布尔量）
   for (const event of events) {
     const type = event?.type
-    // 装配点（这条工具插进来的）：机制② 到这里才真的摆。
-    if (type === 'assemble') {
-      if (!pendingWarmup) continue
-      pendingWarmup = false
+    // 一步的 claim 点（这条工具插进来的）：机制② 看"这一步领到了老板的话没有"。
+    // 领到了一律只摆一条（挂账是布尔量：同一步里连着说两句也只摆一条）。
+    if (type === 'prestep') {
+      if (!Array.isArray(event.bossMessages) || event.bossMessages.length === 0) continue
       skipNext = true
       out.expected += 1
       out.byTwo += 1
@@ -153,7 +159,6 @@ function referenceModel(events, every, { member = false } = {}) {
     if (type === 'turn/start') { count = 0; continue }
     if (type === 'user/message' && event.data?.source?.kind === 'user') {
       bossWaiting = true
-      pendingWarmup = true     // 只挂账，不在这里摆
       continue
     }
     if (type === 'assistant/message') { bossWaiting = false; continue }
@@ -161,6 +166,7 @@ function referenceModel(events, every, { member = false } = {}) {
     if (every === 0) continue          // n=0 ⇒ 机制① 关着
     if (bossWaiting) { out.aBlocks += 1; continue }     // 守门 A：不计数、不触发、不动 skipNext
     if (skipNext) { skipNext = false; out.bSkips += 1; continue }  // 守门 B：不计数、不触发
+    // ⚠️ 不看 `data.message.isError`：报错的、被门禁拒的**都算一次**（口径点 1）。
     count += 1
     out.counts.push(count)
     if (count === every) {
@@ -174,16 +180,48 @@ function referenceModel(events, every, { member = false } = {}) {
 }
 
 /**
- * 在时间线上插入装配点：**每一条 `assistant/message` 之前插一个**。
- * 依据见文件头第 3 条 —— 这是推断，日志里没有装配事件。
+ * 在时间线上插入**一步的 claim 点**：每个 `step/start` **之前**（次序见文件头第 3 条）。
+ *
+ * 老板那句话出现在某一步的 `step/start` **之后**（它是 `step()` 里落笔的，L1028），
+ * 可是它是**这一步的 claim 领进来的**（claim 在 `step/start` 之前，L889 早于 L951）。
+ * ⇒ 得先预扫一遍：把第 N 步里出现的老板消息，记到第 N 步的 claim 点上。
+ *
+ * 返回 `{ timeline, orphans }`：`orphans` = 落在任何 step 之外的老板消息条数。
+ * 真实日志里应当是 0；不是 0 就说明这条推断在这份日志上不成立，报表会打出来。
  */
-function withAssemblyPoints(events) {
-  const out = []
+function withPrestepPoints(events) {
+  const bossOfStep = []
+  // ⚠️ 下标只在 `step/start` 上 +1，`step/end` 只翻"人在不在步里"——
+  //    早先一版把 `step/end` 也当成"下标归位"，于是第二步的老板消息记到了第一步头上
+  //    （自检 ⑧ 当场抓住：实测 [1,0] / 期望 [0,1]）。
+  let stepIndex = -1
+  let inStep = false
+  let orphans = 0
   for (const event of events) {
-    if (event?.type === 'assistant/message') out.push({ type: 'assemble', seq: event.seq })
-    out.push(event)
+    const type = event?.type
+    if (type === 'step/start') { stepIndex += 1; bossOfStep.push([]); inStep = true; continue }
+    if (type === 'step/end') { inStep = false; continue }
+    if (type !== 'user/message' || event.data?.source?.kind !== 'user') continue
+    if (!inStep) { orphans += 1; continue }
+    // ⚠️ 记的是**消息本身**（`event.data`），不是事件 —— claim 领到的是消息，
+    //    实现的判据读的也是消息的 `source.kind`（早先一版把整个事件塞进去，② 一条都没落地）。
+    bossOfStep[stepIndex].push(event.data)
   }
-  return out
+  const timeline = []
+  let step = -1
+  for (const event of events) {
+    if (event?.type === 'step/start') {
+      step += 1
+      timeline.push({
+        type: 'prestep',
+        seq: event.seq,
+        step: step + 1,
+        bossMessages: bossOfStep[step] ?? [],
+      })
+    }
+    timeline.push(event)
+  }
+  return { timeline, orphans }
 }
 
 /** 从日志里认出这个组员是哪个岗位（`subagent/descriptor` 的 persona 或系统提示里带着那枚标记）。 */
@@ -208,7 +246,24 @@ async function replayThroughInjector(events, sessionId, contentDir, header = {},
   //    而注入那一侧按 `context.scope.id`（短 id）去查，查不到 ⇒ 一条都不贴。
   //    实测踩过：日志读数是"实际 0 条"，看着像实现不贴，其实是这里的锅。
   const session = { ...header, id: sessionId, header: { ...header } }
-  const agent = { id: sessionId, session, inject: (message) => { injected.push({ at: Date.now(), message }) } }
+  /**
+   * next-step 收件箱 —— 真语义：`agent.inject()` 进这里，**下一个** claim 领走。
+   * 机制① 的落点就靠它建模（不进收件箱的话，`inject()` 会被当成"当场进请求"，
+   * 而那正是被评审打回的那条旧模型）。注入出来的那条**不回灌**成会话事件：
+   * 实现只认 `source.kind === 'user'`，回灌也只会被它自己忽略。
+   */
+  const inbox = []
+  /** 实现这边按机制分开数：`agent.inject()` 的是机制①，pre-step 插进 messages 的是机制②。 */
+  const seen = { one: 0, two: 0 }
+  const agent = {
+    id: sessionId,
+    session,
+    inject: (message) => {
+      inbox.push(message)
+      injected.push({ at: Date.now(), message })
+      seen.one += 1
+    },
+  }
   const ctx = {
     baseUrl: pathToFileURL(contentDir + sep).href,
     get(name) {
@@ -228,23 +283,56 @@ async function replayThroughInjector(events, sessionId, contentDir, header = {},
 
   const listeners = handlers.get('session/event') ?? []
   const assemblers = handlers.get('system-prompt/assemble') ?? []
+  const preSteps = handlers.get('agent/pre-step') ?? []
+
+  /** 一次装配：`sections` 里带不带那枚 `【组员:xx】`，决定实现认不认得出"这次是组员"。 */
+  const assembleOnce = async () => {
+    const assembly = {
+      sections: [{
+        name: 'deployment:persona-prefix',
+        text: memberRole === undefined ? '（组长的装配，没有组员标记）' : `【组员:${memberRole}】`,
+      }],
+      contexts: [],
+      tools: [],
+      variables: {},
+    }
+    for (const assemble of assemblers) {
+      await assemble(assembly, { scope: { id: sessionId } }, async () => assembly)
+    }
+  }
+
+  /** 假 ctx 上的 `agent/pre-step` 瀑布（注册顺序 = 外层到内层，和 Cordis 一样）。 */
+  const runPreStep = async (messages, step) => {
+    const payload = {
+      agent,
+      messages,
+      step,
+      turn: 1,
+      signal: { aborted: false, throwIfAborted() {} },
+    }
+    let next = async () => ({ kind: 'enter', messages: payload.messages })
+    for (let i = preSteps.length - 1; i >= 0; i--) {
+      const handler = preSteps[i]
+      const inner = next
+      next = () => handler(payload, inner)
+    }
+    return await next()
+  }
 
   for (const event of events) {
-    if (event.type === 'assemble') {
-      // 装配的 `sections` 里放什么，决定了实现认不认得出"这次是组员" ——
-      // 组长拍的设计里认人就在这一刻做（那里角色是现成的）。
-      const assembly = {
-        sections: [{
-          name: 'deployment:persona-prefix',
-          text: memberRole === undefined ? '（组长的装配，没有组员标记）' : `【组员:${memberRole}】`,
-        }],
-        contexts: [],
-        tools: [],
-        variables: {},
+    if (event.type === 'prestep') {
+      // 真次序：claim（L889）→ 装配（L890）→ `agent/pre-step`（L894）。
+      // 领到的那一批 = 收件箱里排着的 + **这一步里老板说的那几句**。
+      const claimed = [...inbox.splice(0, inbox.length), ...(event.bossMessages ?? [])]
+      await assembleOnce()
+      const decision = await runPreStep(claimed, event.step)
+      // ② 的观测量：pre-step 往这一步的 messages 里**新插**了几条。
+      if (decision?.kind !== 'reject' && Array.isArray(decision?.messages)) {
+        const before = new Set(claimed)
+        for (const message of decision.messages) if (!before.has(message)) seen.two += 1
       }
-      for (const assemble of assemblers) {
-        await assemble(assembly, { scope: { id: sessionId } }, async () => assembly)
-      }
+      // 这批 messages 随后会落笔成 `user/message`（L1028）—— 会话事件照日志原样继续走，
+      // 所以不做第二次派发（老板那几句本来的位置就在这个 `step/start` 后面）。
       continue
     }
     for (const listener of listeners) listener(session, event)
@@ -261,7 +349,10 @@ async function replayThroughInjector(events, sessionId, contentDir, header = {},
     quiet = injected.length === before ? quiet + 1 : 0
     if (quiet >= 5000 && Date.now() - t0 >= 120) break
   }
-  return injected
+  // ⚠️ 总数是**两条路加起来**：`injected` 只数得到机制①（`agent.inject()`），
+  //    机制② 是插进 `decision.messages` 的，得单独数（早先一版拿 `injected.length` 当总数，
+  //    于是 ② 那 28 条凭空没了）。
+  return { ...seen, total: seen.one + seen.two }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -280,37 +371,69 @@ function selfTest() {
   const ev = (type, extra = {}) => ({ type, ...extra })
   const boss = ev('user/message', { data: { source: { kind: 'user' } } })
   const tool = ev('tool/result')
+  const toolErr = ev('tool/result', {
+    data: {
+      message: {
+        id: 'x',
+        role: 'user',
+        source: { kind: 'tool', callId: 'x' },
+        content: [{ type: 'tool-result', toolCallId: 'x', content: [], isError: true }],
+      },
+      error: { name: 'FsError', code: 'X' },
+    },
+  })
   const speak = ev('assistant/message')
   const turn = ev('turn/start')
-  const asm = ev('assemble')      // 机制② 现在挂在装配上
+  const stepStart = ev('step/start')
+  /** 一步的 claim 点：`n` = 这一步的 claim 领进来几句老板的话（领到的是**消息**，不是事件）。 */
+  const claim = (n = 0) => ev('prestep', {
+    bossMessages: Array.from({ length: n }, () => ({ role: 'user', content: [], source: { kind: 'user' } })),
+  })
 
   // ① 每 3 个工具结果：第 3、第 6 个响 ⇒ 2 次
-  expect('6 个工具结果（无老板、无装配）⇒ 2 次',
+  expect('6 个工具结果（无老板、无 claim 点）⇒ 2 次',
     referenceModel([turn, speak, tool, speak, tool, speak, tool, speak, tool, speak, tool, speak, tool], 3).expected, 2)
-  // ② 老板挂账、装配才摆：3 条老板消息 + 1 次装配 ⇒ 1 次（不是 3 次，挂账是布尔量）
-  expect('3 条老板消息 + 1 次装配 ⇒ 1 次（布尔挂账）',
-    referenceModel([turn, boss, boss, boss, asm, speak, tool], 3).expected, 1)
+  // ② 老板的话被**这一步**领进来：同一步里三条也只摆 1 条（布尔量）
+  expect('同一步领进 3 条老板消息 + 1 个 claim 点 ⇒ 1 次（不是 3 次）',
+    referenceModel([turn, claim(3), stepStart, boss, boss, boss, speak, tool], 3).expected, 1)
   // ③ 守门 A：老板说完、我还没开口时来 2 个工具结果 ⇒ 0 次 ①（只有 ② 那 1 次）
   expect('守门 A 窗口里 2 个工具结果 ⇒ 只有 ② 的 1 次',
-    referenceModel([turn, speak, tool, speak, tool, boss, asm, ev('step/start'), tool, tool], 3).expected, 1)
-  // ④ 老板说话**不算**进计数：老板之后仍要喂满 3 个"被计数的"工具结果才响
-  expect('老板挂账 + 装配 + 4 个工具结果 ⇒ 2 次（B 吃 1 个，剩 3 个凑满）',
-    referenceModel([turn, boss, asm, speak, tool, speak, tool, speak, tool, speak, tool], 3).expected, 2)
+    referenceModel([turn, speak, tool, speak, tool, claim(1), stepStart, boss, tool, tool], 3).expected, 1)
+  // ④ 老板说话**不算**进计数：他那句话之后仍要喂满 3 个"被计数的"工具结果才响
+  expect('老板的话被领进来 + 4 个工具结果 ⇒ 2 次（B 吃 1 个，剩 3 个凑满）',
+    referenceModel([turn, claim(1), stepStart, boss, speak, tool, speak, tool, speak, tool, speak, tool], 3).expected, 2)
   // ⑤ n=0：机制① 关着，只剩机制②
-  expect('n=0 + 2 条老板消息（各自装配）+ 9 个工具结果 ⇒ 2 次（全是 ②）',
-    referenceModel([turn, boss, asm, boss, asm, ...Array.from({ length: 9 }, () => [speak, tool]).flat()], 0).expected, 2)
+  expect('n=0 + 2 个 claim 点（各领进一句）+ 9 个工具结果 ⇒ 2 次（全是 ②）',
+    referenceModel([turn, claim(1), stepStart, boss, claim(1), stepStart, boss,
+      ...Array.from({ length: 9 }, () => [speak, tool]).flat()], 0).expected, 2)
   // ⑥ turn/start 清零：上一回合攒了 2 个，新回合从 0 起
   expect('回合交界清零：2 个结果 + turn/start + 1 个结果 ⇒ 0 次',
     referenceModel([turn, speak, tool, speak, tool, turn, speak, tool], 3).expected, 0)
   // ⑦ 守门 B 之后再攒：skip 掉 1 个，接下来 3 个凑满 ⇒ 多 1 次
   expect('守门 B 之后重新攒满 ⇒ 多 1 次',
-    referenceModel([turn, speak, tool, speak, tool, boss, asm, speak, tool, speak, tool, speak, tool, speak, tool], 3).expected, 2)
-  // ⑧ 图省事也得对：每条 assistant/message 之前插装配点
-  expect('插装配点：3 条 assistant/message ⇒ 3 个装配点',
-    withAssemblyPoints([turn, speak, tool, speak, tool, speak]).filter((e) => e.type === 'assemble').length, 3)
+    referenceModel([turn, speak, tool, speak, tool, claim(1), stepStart, boss,
+      speak, tool, speak, tool, speak, tool, speak, tool], 3).expected, 2)
+  // ⑧ claim 点插在**每个 `step/start` 之前**，老板那几句记在**它所在那一步**上
+  {
+    const { timeline, orphans } = withPrestepPoints([
+      stepStart, speak, ev('step/end'),
+      stepStart, boss, speak, ev('step/end'),
+    ])
+    expect('插 claim 点：2 个 step/start ⇒ 2 个点，各带 0 / 1 条老板消息',
+      timeline.filter((e) => e.type === 'prestep').map((e) => e.bossMessages.length), [0, 1])
+    expect('claim 点排在它那一步的 step/start 之前（真次序：claim 早于 step/start）',
+      timeline.findIndex((e) => e.type === 'prestep') < timeline.findIndex((e) => e.type === 'step/start'), true)
+    expect('落在任何 step 之外的老板消息计数（真实日志里应当是 0）', orphans, 0)
+  }
   // ⑨ 组员：整段 0 次（口径 8b）
-  expect('组员：老板 + 装配 + 9 个工具结果 ⇒ 0 次',
-    referenceModel([turn, boss, asm, ...Array.from({ length: 9 }, () => [speak, tool]).flat()], 3, { member: true }).expected, 0)
+  expect('组员：老板的话被领进来 + 9 个工具结果 ⇒ 0 次',
+    referenceModel([turn, claim(1), stepStart, boss,
+      ...Array.from({ length: 9 }, () => [speak, tool]).flat()], 3, { member: true }).expected, 0)
+  // ⑩ 口径点 1：**报错的工具结果也算一次**（`data.message.isError: true`，跟成败无关）
+  expect('报错的工具结果也算一次：3 个 isError 的结果 ⇒ 1 次',
+    referenceModel([turn, speak, toolErr, speak, toolErr, speak, toolErr], 3).expected, 1)
+  expect('报错的和成功的一起数：1 个报错 + 2 个成功 ⇒ 1 次（不是"报错的不算所以还差一个"）',
+    referenceModel([turn, speak, toolErr, speak, tool, speak, tool], 3).expected, 1)
 
   console.log('\n── 自检 2 · 分帧 zstd 解析器 ──')
   const root = process.env.DSH_SESSION_ROOT ?? join(homedir(), '.dsh', 'sessions')
@@ -379,14 +502,19 @@ for (const path of logs) {
   const id = /([0-9a-f]{8})/.exec(path.split(/[\\/]/).slice(-2)[0] ?? '')?.[1] ?? path
   const bossCount = events.filter((e) => e.type === 'user/message' && e.data?.source?.kind === 'user').length
   const toolCount = events.filter((e) => e.type === 'tool/result').length
+  // 报错的工具结果**也算一次**（口径点 1）—— 数出来是为了让"这批日志里真有报错的结果、
+  // 而参考模型与实现照样把它们算进去"变成一条看得见的读数，不是一句口径。
+  // ⚠️ 真形状：报错标记在 `data.message.content[].isError`（量过 45269 条，979 条报错）。
+  const erroredTools = events.filter((e) => e.type === 'tool/result'
+    && (e.data?.message?.content ?? []).some((c) => c?.isError === true)).length
   // 组员 = 这个会话是被人叫起来的（首帧自带 parentSession / delegationDepth / origin）。
   const member = header.delegationDepth > 0 || typeof header.parentSession === 'string'
-  // 插装配点：机制② 现在挂在 `system-prompt/assemble` 上（见文件头第 3 条）。
-  const timeline = withAssemblyPoints(events)
+  // 插 claim 点：机制② 现在挂在"这一步领到的 messages"上（见文件头第 3 条）。
+  const { timeline, orphans } = withPrestepPoints(events)
   // 组员的岗位名从日志里认 —— 装配的 `sections` 要原样带上那枚标记，
   // 实现才知道"这次开口的是组员"（口径 8b 就靠它）。
   const memberRole = member ? memberRoleOf(events) : undefined
-  loaded.push({ path, id, events, timeline, memberRole, bossCount, toolCount, member, header, preset: header.agentPreset })
+  loaded.push({ path, id, events, timeline, orphans, memberRole, bossCount, toolCount, erroredTools, member, header, preset: header.agentPreset })
 }
 const leaders = loaded.filter((s) => s.error === undefined && !s.member)
   .sort((a, b) => (b.bossCount + b.toolCount) - (a.bossCount + a.toolCount))
@@ -425,8 +553,8 @@ for (const item of chosen) {
     continue
   }
   const reference = referenceModel(item.timeline, every, { member: item.member })
-  const injected = await replayThroughInjector(item.timeline, item.id, PRESET_DIR, item.header, item.memberRole)
-  const actual = injected.length
+  const seen = await replayThroughInjector(item.timeline, item.id, PRESET_DIR, item.header, item.memberRole)
+  const actual = seen.total
   const ok = actual === reference.expected
   if (!ok) mismatches++
   rows.push({
@@ -442,6 +570,8 @@ for (const item of chosen) {
     aBlocks: reference.aBlocks,
     bSkips: reference.bSkips,
     actual,
+    actualOne: seen.one,
+    actualTwo: seen.two,
     verdict: ok ? 'ok' : 'RED',
     fires: reference.fires,
   })
@@ -460,9 +590,10 @@ for (const item of chosen) {
 const pad = (text, width) => String(text).padEnd(width, ' ')
 console.log(
   `${pad('会话', 12)} ${pad('身份', 5)} ${pad('老板', 5)} ${pad('回合', 5)} ${pad('步', 5)} ${pad('工具结果', 9)} `
-  + `${pad('该摆', 6)} ${pad('实际', 6)} ${pad('①', 5)} ${pad('②', 5)} ${pad('A拦', 5)} ${pad('B跳', 5)} 判定`,
+  + `${pad('该摆', 6)} ${pad('实际', 6)} ${pad('①该', 5)} ${pad('①实', 5)} ${pad('②该', 5)} ${pad('②实', 5)} `
+  + `${pad('A拦', 5)} ${pad('B跳', 5)} 判定`,
 )
-console.log('─'.repeat(102))
+console.log('─'.repeat(120))
 for (const row of rows) {
   if (row.verdict === '读取失败') {
     console.log(`${pad(row.id, 12)}  读取失败：${row.error}`)
@@ -470,11 +601,12 @@ for (const row of rows) {
   }
   console.log(
     `${pad(row.id, 12)} ${pad(row.who, 5)} ${pad(row.boss, 5)} ${pad(row.turns, 5)} ${pad(row.steps, 5)} ${pad(row.tools, 9)} `
-    + `${pad(row.expected, 6)} ${pad(row.actual, 6)} ${pad(row.byOne, 5)} ${pad(row.byTwo, 5)} `
+    + `${pad(row.expected, 6)} ${pad(row.actual, 6)} ${pad(row.byOne, 5)} ${pad(row.actualOne, 5)} `
+    + `${pad(row.byTwo, 5)} ${pad(row.actualTwo, 5)} `
     + `${pad(row.aBlocks, 5)} ${pad(row.bSkips, 5)} ${row.verdict}`,
   )
 }
-console.log('─'.repeat(102))
+console.log('─'.repeat(120))
 const totalExpected = rows.reduce((sum, r) => sum + (r.expected ?? 0), 0)
 const totalActual = rows.reduce((sum, r) => sum + (r.actual ?? 0), 0)
 const totalA = rows.reduce((sum, r) => sum + (r.aBlocks ?? 0), 0)
@@ -512,13 +644,29 @@ if (memberRows.length === 0) {
   )
 }
 console.log(`守门 A 在这些真日志里拦下 ${totalA} 次 —— ${totalA === 0 ? '⚠️ 是真日志里 0 次命中的分支，它只有探针的合成序列在验' : '确有命中'}`)
+// 口径点 1 的真读数：报错的工具结果**照样算一次**。参考模型与实现都不看 `isError`，
+// 所以这一行是"这批日志里真有报错的结果，而它们被算进去了"——不是一句口径。
+const totalErrored = chosen.reduce((sum, s) => sum + (s.erroredTools ?? 0), 0)
+const totalOrphans = chosen.reduce((sum, s) => sum + (s.orphans ?? 0), 0)
 console.log(
-  '\n⚠️ 这条工具量的是**次数**，量不出**落点**（贴出去的那条在请求里插在第几条消息）。\n'
-  + '   落点要真回合才知道 —— 见契约第九节「自动验不了的部分」。',
+  `口径点 1（报错的工具结果也算一次）：这批日志里有 ${totalErrored} 个 \`data.message.content[].isError: true\` 的结果`
+  + ` —— 参考模型和实现都不看 isError，它们照样占机制① 的计数`
+  + (totalErrored === 0 ? '（⚠️ 这一批一个都没有 ⇒ 这条口径**本批没被真数据覆盖**）' : ''),
 )
 console.log(
-  '⚠️ 装配点是**推断**出来的（每条 `assistant/message` 之前插一个），日志里没有装配事件。\n'
-  + '   机制② 现在就挂在那上面 ⇒ 这条读数跟"装配到底发生在哪一刻"绑在一起。\n'
+  `claim 点建模：落在任何 \`step\` 之外的老板消息 ${totalOrphans} 条`
+  + (totalOrphans === 0
+    ? '（0 = 上面那条"老板的话记在它所在那一步"的推断，在这批日志上成立）'
+    : '（⚠️ 不是 0 ⇒ 这条推断在这批日志上不成立，机制② 的"该摆"要打问号）'),
+)
+console.log(
+  '\n⚠️ 这条工具量的是**次数**，量不出**落点**（贴出去的那条在请求里插在第几条消息）。\n'
+  + '   落点归探针的 L 族判（假 ctx 按 claim → 装配 → pre-step 的次序建模）。',
+)
+console.log(
+  '⚠️ claim 点是**推断**出来的（每个 `step/start` 之前插一个，老板那几句记在它所在那一步上），\n'
+  + '   日志里没有 claim 事件。依据是 `dsh-agent-loop` 的 L889/L890/L894/L951/L1028 与\n'
+  + '   契约 §2 第 4 条那组真 seq（`step/start` 767 排在 `user/message` 768 之前）。\n'
   + '   组员的岗位名从日志里认（`subagent/descriptor` 的 persona 那枚标记），原样放进装配的 sections。',
 )
 

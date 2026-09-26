@@ -230,6 +230,29 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     leader.slice(-2).join(' → '))
   yes('preset', 'memberOrder 是 work-guidelines → charter（组员不读 leader / persona）',
     member.join(',') === 'work-guidelines,charter', member.join(' → '))
+
+  // ── 口径 9：**每一份要送的 `.md` 都得有人送**（2026-09-26 返修加）─────────────
+  // 形状：把 `leaderOrder` / `memberOrder` 里那些 key 摊开，逐个 `.md` 对过去。
+  //  · `roster` / `board` 不是文件（inject.js 里算出来的正文），不参与；
+  //  · `charter` 展开成 `team/<岗位>.md`（组员只拿自己那份 —— "team/ 的文件与 yml 行
+  //    一一对应"另有一条断言钉着）；
+  //  · ⚠️ `说明.md` **故意排除**：它是给维护的人看的，**不进提示词**（AGENTS.md §7 明写）。
+  // 🔴 **为什么写成"目录里每一份"而不是点名排除某一份**：口径 9 要的就是"下一批接
+  //    `me-aqua.md` 的时候别静默漏送"。它现在**不在目录里**（本批不做）⇒ 今天这条是绿的；
+  //    哪天它落进 `presets/agenia/` 而没人往 `leaderOrder` 里加，**这条当场变红**。
+  //    写成"除 `me-aqua.md` 外"的话，那件正事发生时就没人拦了。
+  const deliverable = [
+    ...readdirSync(PRESET).filter((f) => f.endsWith('.md') && f !== '说明.md').map((f) => f.slice(0, -3)),
+    ...readdirSync(join(PRESET, 'team')).filter((f) => f.endsWith('.md')).map((f) => `team/${f.slice(0, -3)}`),
+  ]
+  const sentKeys = new Set([...leader, ...member])
+  const unwired = deliverable.filter((key) =>
+    !(sentKeys.has(key) || (key.startsWith('team/') && sentKeys.has('charter'))))
+  yes('preset', '每一份要送的 `.md` 都在 leaderOrder / memberOrder 名单里（口径 9）',
+    unwired.length === 0,
+    unwired.length === 0
+      ? `${deliverable.length} 份都有主：${deliverable.join(', ')}`
+      : `没人送：${unwired.join(', ')} —— 加进 leaderOrder 或 memberOrder，别让它静默漏掉`)
   yes('preset', 'officeBound 正好是 review + retro（只留做判断的岗位）',
     office.join(',') === 'review,retro', office.join(', ') || '（空）')
 
@@ -321,6 +344,16 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   yes('injector', '尾巴提醒走 agent.inject，拿不到时会报错（不静默失效）',
     /agent\.inject\(/.test(src) && /拿不到 agent\.inject/.test(src),
     '缺了这条，人格又只剩"变了才发"的快照那一条路')
+
+  // ①-b **2026-09-26 补**：AGENTS.md 3e⑤ 写着"查不到 agent / 认不出 agent.id 也要出声，
+  //    有断言盯着" —— 而当时只有上面那一条被钉着，另外两处**只有话没有断言**。
+  //    第 4 关第二轮评审点名了这一处（"说三处有断言，实际只有一条成立"）。下面两条把它补上。
+  yes('injector', '查不到 agent 时会出声（不静默丢一条尾巴）',
+    /warnOnce\('tail-agent'/.test(src) && /查不到 id 为/.test(src),
+    '缺了这条，查不到 agent 就静默 return —— 尾巴少贴一条，谁都不知道')
+  yes('injector', 'pre-step 里拿不到 agent.id 时会出声',
+    /warnOnce\('pre-step-agent'/.test(src) && /拿不到 agent\.id/.test(src),
+    '缺了这条，机制② 认不出是谁就整条不生效，而且是静默的')
 
   // ② 快照里唯一会变的是 agenia:board，而板子按 team_<岗位> 认人。
   //    2026-09-24 那天组长 42 次起人全走裸 subagent ⇒ 板子恒空 ⇒ 快照一整天没变。
@@ -434,8 +467,12 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   // ★ 承重的一条：今天的复盘在不在。
   // 这一条是"半硬方案"里唯一能**在没人记得的时候自己响**的形态 ——
   // 所以它必须留在这儿，而且必须为绿。红了不要删它，去叫流程位补。
-  const review = join(teamRoot, 'retro', today, '每日复盘.md')
-  yes('office', `今天的复盘在（.team/retro/${today}/每日复盘.md）`, existsSync(review),
+  // ⚠️ 文件名是 **`前日复盘.md`** —— 口径（2026-09-23）：抽屉日期 = **写它的那天**，
+  //    里面覆盖的是**前一天**，所以叫"前日"。`retro/2026-09-20`、`retro/2026-09-22`
+  //    那两份老档案还叫旧名（**档案不改名**），这里钉的是新名。
+  //    断言吃旧名的时候，流程位交得再对也是红的 —— **假红比不红更坏**：它会教人学会忽略脚本。
+  const review = join(teamRoot, 'retro', today, '前日复盘.md')
+  yes('office', `今天的复盘在（.team/retro/${today}/前日复盘.md）`, existsSync(review),
     '开工第一步该由流程位做一份覆盖「上次复盘到现在」的复盘；不在 ⇒ 叫流程位补，'
     + '一次覆盖整段（别按天补、别按票叫）')
   if (existsSync(review)) {

@@ -6,10 +6,10 @@
  *
  *   机制①「每 n 个工具结果」：只认 `tool/result`；n 写在 `presets/agenia/style.md`
  *          第一行 `<!-- every: N -->`；计数器在 `turn/start` 时清零；n=0 = 关掉机制①。
- *   机制②「老板开口之后、我第一次开口之前」：`user/message`（`source.kind === 'user'`）
- *          到达时**挂账**，到下一次 `system-prompt/assemble` 才注入 —— 落点没变
- *          （装配就在那句话之后、我第一次开口之前），变的是**决策推迟到装配时做**，
- *          于是"他是组长还是组员"在同一个函数里就定了（组长 2026-09-25 拍）。
+ *   机制②「老板开口之后、我第一次开口之前」：在 `agent/pre-step` 里看**这一步领到的
+ *          `messages`** 里有没有老板那条（`source.kind === 'user'`）—— 有就把 style
+ *          **插进本步的 messages**，紧跟在他那句话后面（2026-09-26 按源码次序定的落点：
+ *          装配排在 `inbox.claim()` 之后、老板那句话落笔之前，装配里做的决定赶不上本次请求）。
  *
  * 两条守门（位置问题，不是省钱问题）：
  *   守门 A：机制① 在"他刚说完、我还没开口"时不许触发。
@@ -21,6 +21,10 @@
  *
  * ⚠️ 它在一个**假的 ctx** 上挂真 `inject.js`，所以判据是"这段逻辑有没有按契约跑"，
  *    **不代替**挂载测试与真回合（见 .tools/mount-test/README.md）。
+ * ⚠️ 假 ctx 按真 harness 的次序建模（`dsh-agent-loop` L889/L890/L894/L951/L1028）：
+ *    **claim → 装配 → `agent/pre-step` → `step/start` → 这批 messages 落笔成 `user/message`**。
+ *    `agent.inject()` 进 next-step 收件箱、**下一次** claim 才被领走。
+ *    ⇒ 「机制② 落在回答老板那一次请求里」这件事，**不用真回合就能红**（L 族）。
  * ⚠️ 它**一个字节都不改 `presets/`**：夹具正文住在系统临时目录里，
  *    "改文件即生效"那一族量的是夹具，不是产物。
  */
@@ -44,7 +48,7 @@ const PRESET_ENTRY = process.env.AGENIA_PROBE_ENTRY ?? join(PRESET_DIR, 'inject.
 /** 口径编号 → 一句话（红的时候直接印出来，省得来回翻 now.md）。 */
 const CRITERION = {
   1: '机制①：每 n 个工具结果注入一次（n=3，写在 style.md 第一行）',
-  2: '机制②：老板开口 ⇒ 挂账 ⇒ 下一次装配注入一次（组长拍：决策推迟到装配）',
+  2: '机制②：老板开口 ⇒ 这一步的 messages 里插一条 style（在他那句话之后、我开口之前）',
   3: '老板说话不算进机制① 的计数',
   4: '守门 A：机制① 在"他刚说完、我还没开口"时让路',
   5: '守门 B：机制② 刚摆过的那一步，机制① 跳过（不叠）',
@@ -106,6 +110,12 @@ const checkIf = (premise, id, criterion, label, got, want) => {
 
 // ── 挂载假 ctx ────────────────────────────────────────────────────────────────
 /**
+ * 贴出来那条 style 长什么样（形状由契约第六节钉着）——
+ * 假 ctx 用它认"这一条是尾巴提醒"，落点断言（L 族）也用它。
+ */
+const isStyleMessage = (m) => m?.source?.kind === 'plugin' && m?.source?.plugin === 'agenia'
+
+/**
  * 让 inject.js 的 `apply()` 在一个假 ctx 上跑一遍。
  * 每次调用都是一份**全新的状态**（apply 里的 Map 都在闭包里），所以各测各的、互不串味。
  *
@@ -120,10 +130,36 @@ async function harness(contentDir, { member } = {}) {
   const handlers = new Map()
   const injected = []
   const AGENT_ID = 'probe-agent'
+  /**
+   * **next-step 收件箱** —— 真 harness 里"老板那句话"和 `agent.inject()` 都先落在这里，
+   * 到下一个 `agent/pre-step` 被 `inbox.claim()` **一次**领走（`dsh-agent-loop` L889）。
+   *
+   * 🔴 假 ctx 的模型就从这儿来，旧探针错在哪儿也在这儿：
+   *    · 装配排在 claim **之后**（L889 在 L890 前面）；
+   *    · 老板那句话的 `user/message` 要到 `step()` 里才落笔（L1028），比装配**晚**。
+   *    ⇒ 装配那一刻，"这一步会不会带上老板那句话"是**看不见**的。
+   *    旧探针让 `boss()` 直接发 `user/message` 事件、装配单独摆一次 —— 于是"装配里做决定"
+   *    那条错落点看着是通的（还在 `assistant/message` 之前插装配点，正好差一格）。
+   *    那是在**错的模型上全绿**（2026-09-26 评审打回的主因）。
+   */
+  const inbox = []
+  /** 每一步实际会送出去的 messages —— 机制② 的落点就从这儿读。 */
+  const steps = []
+  const recorded = new Set()
+  // ⚠️ 只按**身份**记，不按形状认：形状是契约钉的，形状对不上的时候该红的是 G 族，
+  //    不该是"这条没被数进去"（自喂自那条 plugin 消息长得和 style 一模一样，按形状认会把它算成一次注入）。
+  const record = (message) => {
+    if (recorded.has(message)) return
+    recorded.add(message)
+    injected.push({ owner: AGENT_ID, message })
+  }
+  let queued = 0
   const agent = {
     id: AGENT_ID,
     session: { header: { cwd: REPO } },
-    inject: (message) => { injected.push({ owner: AGENT_ID, message }) },
+    // 真语义（`agent.inject()` → `send(input, 'next-step', false)`）：进收件箱，
+    // **下一次** pre-step 才被领走 —— 不是当场进本次请求。
+    inject: (message) => { inbox.push(message); record(message) },
   }
   const ctx = {
     baseUrl: pathToFileURL(contentDir + sep).href,
@@ -173,7 +209,10 @@ async function harness(contentDir, { member } = {}) {
     await settle()
   }
 
-  /** 跑一次装配 —— 真 harness 里它发生在"事件收完、模型开口之前"。 */
+  /**
+   * 跑一次装配 —— 真 harness 里它排在 `inbox.claim()` **之后**、`agent/pre-step` **之前**
+   * （L889 → L890）。角色登记就在这一步做完。
+   */
   const assemble = async () => {
     seq += 1
     const assembly = {
@@ -188,21 +227,82 @@ async function harness(contentDir, { member } = {}) {
     await settle()
   }
 
+  /** 假 ctx 上的 `agent/pre-step` 瀑布：注册过的按注册顺序一层层包起来（和 Cordis 一样）。 */
+  async function preStepWaterfall(payload) {
+    const list = handlers.get('agent/pre-step') ?? []
+    let next = async () => ({ kind: 'enter', messages: payload.messages })
+    for (let i = list.length - 1; i >= 0; i--) {
+      const handler = list[i]
+      const inner = next
+      next = () => handler(payload, inner)
+    }
+    return await next()
+  }
+
+  /**
+   * 走完**一个步的开头**，次序照真 harness：
+   *   `claim`（L889）→ 装配（L890）→ `agent/pre-step` 瀑布（L894）→ `step/start`（L951）
+   *   → 这批 messages 逐条落笔成 `user/message`（L1028，排在装配**之后**）。
+   * 返回 `{ step, claimed, messages }` —— `messages` 就是**这一步送出去的请求里会有哪些消息**，
+   * 机制② 的落点只能从这里读。
+   */
+  async function stepBegin() {
+    const claimed = inbox.splice(0, inbox.length)
+    // 瀑布**之前**拍一张身份快照：实现要是就地改这个数组，这张也不受影响。
+    const claimedSet = new Set(claimed)
+    await assemble()
+    const payload = {
+      agent,
+      messages: claimed,
+      step: steps.length + 1,
+      turn: 1,
+      signal: { aborted: false, throwIfAborted() {} },
+    }
+    const decision = await preStepWaterfall(payload)
+    const messages = decision?.kind === 'reject'
+      ? []
+      : (Array.isArray(decision?.messages) ? decision.messages : [])
+    // 新插进来的那一条（不在 claim 里的）= 这一步摆出来的 style。
+    for (const message of messages) if (!claimedSet.has(message)) record(message)
+    const entry = { step: steps.length + 1, claimed, messages }
+    steps.push(entry)
+    await fire('step/start', { turn: 1, step: entry.step })
+    // 落笔：`decision.messages` 在 `step()` 里逐条 append —— 位置在装配**之后**（L1028）。
+    for (const message of messages) await fire('user/message', message)
+    return entry
+  }
+
+  const queue = (source, text) => {
+    queued += 1
+    inbox.push({
+      id: `probe-${queued}`,
+      role: 'user',
+      content: [{ type: 'text', text }],
+      source,
+    })
+  }
+
   return {
     injected,
     ctx,
-    /** 累计贴了几条 —— 这就是"落点到了几次"的观测量。 */
+    /** 累计贴了几条（机制①② 都算）—— 次数口径，和落点无关。 */
     count: () => injected.length,
     last: () => injected[injected.length - 1]?.message,
+    /** 每一步送出去的 messages（落点口径）。 */
+    steps,
     assemble,
+    stepBegin,
     turnStart: () => fire('turn/start'),
     stepStart: () => fire('step/start'),
     stepEnd: () => fire('step/end'),
     iSpeak: () => fire('assistant/message'),
     toolCall: () => fire('tool/call'),
-    toolResult: () => fire('tool/result'),
-    boss: () => fire('user/message', { source: { kind: 'user' } }),
-    plugin: () => fire('user/message', { source: { kind: 'plugin', plugin: 'agenia' } }),
+    // ⚠️ `data.message.isError === true` 的结果**也算一次**（口径点 1）—— 原样把它交给实现，
+    //    断言 A6 钉着"实现不看 isError"。
+    toolResult: (data) => fire('tool/result', data),
+    // 老板那句话**只进收件箱**：它变成 `user/message` 是后面 `stepBegin()` 里落笔那一下的事。
+    boss: () => queue({ kind: 'user' }, '老板的话'),
+    plugin: () => queue({ kind: 'plugin', plugin: 'agenia' }, '系统自己发的消息'),
   }
 }
 
@@ -212,10 +312,15 @@ async function toolStep(h) {
   await h.toolResult()
 }
 
-/** "老板说一句、我这个步装配一次" —— 真日志里的形状（装配排在 assistant/message 之前）。 */
-async function bossThenAssemble(h) {
+/**
+ * "老板说一句、我这边走到回答他的那一步" —— 真 harness 的形状：
+ * 他那句话进收件箱 ⇒ 下一个步边界 `claim` 领走 ⇒ 装配 ⇒ `agent/pre-step`
+ * ⇒ 这就定下了"回答他那一次的请求里有什么"。
+ * ⚠️ 旧版本这里是 `boss()` + 单独一次 `assemble()` —— 那对应"装配里做决定"的错落点。
+ */
+async function bossThenStep(h) {
   await h.boss()
-  await h.assemble()
+  return await h.stepBegin()
 }
 
 // ── 夹具：一份内容根，正文和频率都由探针自己说了算 ─────────────────────────────
@@ -267,30 +372,64 @@ try {
       seen.slice(4, 6), [1, 1])
     check('A5', 1, '第 6 个 tool/result 再多贴 1 条', { [names[6]]: seen[6] }, { [names[6]]: 2 })
   }
+  {
+    // 🔴 **口径点 1：报错的工具结果也算一次**（组长 2026-09-25 拍：老板说的是"每 n 个工具结果"，
+    //    没提成败；被拒的那次调用一样占上下文）。这条口径以前**一条断言都没有**
+    //    —— 探针和重放里 `isError` 零命中，哪天有人顺手在计数前滤一下，没人会红。
+    // ⚠️ 形状按真日志（`.team/dev/2026-09-26/_probe-log-shape.mjs` 量过 45269 条 `tool/result`）：
+    //    `{ turn, step, message: { id, role:'user', source:{kind:'tool',callId},
+    //      content: [{ type:'tool-result', toolCallId, content:[…], isError:true }] }, error?:{…} }`
+    //    ⇒ 报错标记在 **`data.message.content[0].isError`**（45269 条里 979 条是真报错）。
+    //    ⚠️ 顺带一条：工具结果的 `role` 也是 `'user'` —— 机制② 的判据**只能**认 `source.kind`，
+    //       认 `role` 的话每个工具结果都会被读成"老板又开口了"。
+    const errorResult = {
+      turn: 1,
+      step: 1,
+      message: {
+        id: 'probe-error-result',
+        role: 'user',
+        source: { kind: 'tool', callId: 'probe-call' },
+        content: [{
+          type: 'tool-result',
+          toolCallId: 'probe-call',
+          content: [{ type: 'text', text: 'Error: 探针造的报错结果' }],
+          isError: true,
+        }],
+      },
+      error: { name: 'ProbeError', code: 'PROBE' },
+    }
+    const err = await harness(fixture)
+    await err.turnStart()
+    await err.toolResult(errorResult)
+    await err.toolResult(errorResult)
+    await err.toolResult(errorResult)
+    check('A6', 1, '【口径点 1】3 个**报错**的 tool/result（`data.message.content[0].isError: true`）照样凑满 n ⇒ 机制① 响一次',
+      err.count(), 1)
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  console.log('\n═══ B · 机制②：老板开口 → 挂账 → 下一次装配注入（口径 2）═══')
+  console.log('\n═══ B · 机制②：老板开口 ⇒ 回答他那一次的 messages 里多一条（口径 2）═══')
   // ═══════════════════════════════════════════════════════════════════════════
   {
     const h = await harness(fixture)
     await h.turnStart()
     await h.boss()
-    check('B1', 2, '老板开口那一下**不注入**（只挂账；组长拍的就是"决策推迟到装配"）', h.count(), 0)
-    await h.assemble()
-    check('B2', 2, '紧接着那次装配 ⇒ 注入 1 条', h.count(), 1)
+    check('B1', 2, '老板开口那一下**不注入**（他那句话还挂在收件箱里，没到步边界）', h.count(), 0)
+    await h.stepBegin()
+    check('B2', 2, '他那句话被领进这一步 ⇒ 注入 1 条', h.count(), 1)
     await h.boss()
     await h.boss()
-    await h.assemble()
-    check('B3', 2, '【口径点 4】两条老板消息之间没有装配 ⇒ 只摆 1 条（挂账是布尔量，不是计数器）', h.count(), 2)
+    await h.stepBegin()
+    check('B3', 2, '【口径点 4】同一步里两条老板消息 ⇒ 只摆 1 条（挂账是布尔量，不是计数器）', h.count(), 2)
     await h.plugin()
     await h.plugin()
-    await h.assemble()
-    check('B4', 2, 'plugin 自己的 user/message 不挂账（防自己喂自己）', h.count(), 2)
+    await h.stepBegin()
+    check('B4', 2, 'plugin 自己的 user/message 被领进这一步也不算老板开口（防自己喂自己）', h.count(), 2)
     await h.boss()
-    await h.assemble()
-    check('B5', 2, '老板再开口 ⇒ 再一次装配再多 1 条（整段里没有任何 tool/result）', h.count(), 3)
+    await h.stepBegin()
+    check('B5', 2, '老板再开口 ⇒ 回答他的下一步再多 1 条（整段里没有任何 tool/result）', h.count(), 3)
     await h.stepStart()
-    await h.assemble()
+    await h.stepBegin()
     check('B6', 2, '补一个 step/start 也不额外贴（步边界不是触发点）', h.count(), 3)
   }
 
@@ -302,8 +441,8 @@ try {
     await h.turnStart()
     await h.boss()
     await h.boss()
-    await h.assemble()
-    check('C1', 3, '两条老板消息 + 一次装配 ⇒ 只有机制② 的 1 条', h.count(), 1)
+    await h.stepBegin()
+    check('C1', 3, '两条老板消息 + 走到步边界 ⇒ 只有机制② 的 1 条', h.count(), 1)
     await h.iSpeak()   // "我开口了" ⇒ 清掉守门 A，别让 A 替机制① 顶罪
     await h.toolResult()
     check('C2', 3, '② 之后那一个工具结果不额外贴（守门 B 的独立现场在 E 族）', h.count(), 1)
@@ -335,8 +474,8 @@ try {
     await toolStep(h)                    // 计数 1
     await toolStep(h)                    // 计数 2 —— 再来一个就该响
     console.log('       · 前置：已经把机制① 的计数喂到 n-1 = 2（否则下面 D3 会因为"还没到 n"而假绿）')
-    await bossThenAssemble(h)            // ② 跟着装配摆 1 条；老板在等，我还没开口
-    check('D1', 4, '老板开口 + 这次装配 ⇒ 1 条（② 的落点就是"那句话之后、我开口之前"）', h.count(), 1)
+    await bossThenStep(h)                // 回答他的那一步：② 插进本步 messages；老板在等，我还没开口
+    check('D1', 4, '老板开口 + 走到这一步 ⇒ 1 条（② 的落点就是"那句话之后、我开口之前"）', h.count(), 1)
     await h.stepStart()                  // ⚠️ step/start 排在老板那句话**之前**（真日志 seq 767→768）
     await h.toolResult()                 // 守门 A 拦住；若没有 A，守门 B 也只会吃掉这一个
     checkIf(oneWorks, 'D2', 4, '老板说完、我还没开口时来了一个工具结果 ⇒ 不让路就不对了', h.count(), 1)
@@ -357,7 +496,7 @@ try {
     await h.turnStart()
     await toolStep(h)                    // 计数 1
     await toolStep(h)                    // 计数 2
-    await bossThenAssemble(h)            // ② 摆 1 条
+    await bossThenStep(h)                // ② 摆 1 条（插进本步的 messages）
     await h.iSpeak()                     // 我开口了 ⇒ 守门 A 不成立，这一组只测守门 B
     await h.toolResult()                 // 🔴 若没有守门 B：计数到 3 ⇒ 同一个请求里两条 style
     check('E1', 5, '"老板的话 + 机制② + 第一个工具结果"里 style 只出现一次', h.count(), 1)
@@ -372,10 +511,10 @@ try {
     // 先立阳性对照：证明"这一套挂载确实会贴"。后面的 0 才有意义。
     const ctl = await harness(fixture)
     await ctl.turnStart()
-    await bossThenAssemble(ctl)
-    check('F1', 6, '【阳性对照】老板开口 + 一次装配 ⇒ 立刻 1 条', ctl.count(), 1)
+    await bossThenStep(ctl)
+    check('F1', 6, '【阳性对照】老板开口 + 走到这一步 ⇒ 立刻 1 条', ctl.count(), 1)
     for (let k = 0; k < 5; k++) await ctl.assemble()
-    check('F2', 6, '再装配 5 次（没有新挂账）⇒ 还是那 1 条', ctl.count(), 1)
+    check('F2', 6, '再装配 5 次（收件箱里没有老板的话）⇒ 还是那 1 条', ctl.count(), 1)
     for (let k = 0; k < 4; k++) await toolStep(ctl)   // 第 1 个被守门 B 吃掉，第 4 个让机制① 响
     check('F3', 6, '等机制① 也响过一次 ⇒ 2 条', ctl.count(), 2)
     for (let k = 0; k < 5; k++) await ctl.assemble()
@@ -449,7 +588,7 @@ try {
       await toolStep(h)
       await toolStep(h)
       check('H4', 8, 'every: 0 ⇒ 4 个工具结果一条都不贴（机制① 关掉）', h.count(), 2)
-      await bossThenAssemble(h)
+      await bossThenStep(h)
       check('H5', 8, 'every: 0 时机制② 照常 ⇒ n=0 的意思是"只留机制②"', h.count(), 3)
     } finally {
       rmSync(hFixture, { recursive: true, force: true })
@@ -470,12 +609,53 @@ try {
 
     const h = await harness(PRESET_DIR)   // 真产物、真正文
     await h.turnStart()
-    await bossThenAssemble(h)
+    await bossThenStep(h)
     const text = h.last()?.content?.[0]?.text
     check('I3', 7, '真产物贴出来的正文 === 真 `style.md` 剥注释后的正文（逐字）', text, stripComments(raw))
     checkTrue('I4', 7, '真产物贴出来的正文里不含 `<!--`', typeof text === 'string' && !text.includes('<!--'))
     checkTrue('I5', 7, '真产物贴出来的正文不是兜底那两句（读到了文件，不是回退默认值）',
       typeof text === 'string' && text.includes('# 语言风格'))
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n═══ L · 落点：机制② 落在"回答老板那一次"的 messages 里（口径 2）═══')
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🔴 这一族是 2026-09-26 返修专门加的"能红的断言"。
+  //    旧的假 ctx 里 `inject()` 只是被记一笔，装配点还插在 `assistant/message` **之前** ——
+  //    于是"装配里 inject ⇒ 落到下一步"这个错落点**结构上量不出来**（56/56 全绿，而落点是错的）。
+  //    现在次序照真 harness：老板那句话进收件箱 ⇒ 步边界 `claim` 领走 ⇒ 装配 ⇒ `agent/pre-step`
+  //    ⇒ **这一步的 messages 定了稿**（`stepBegin()` 的返回值就是它）。
+  //    ⇒ 把落点改回"装配里 inject / 落到下一步"，L1/L2/L3/L6 当场红。
+  {
+    const h = await harness(fixture)
+    await h.turnStart()
+    await h.boss()
+    const step = await h.stepBegin()          // 这一趟 = "回答老板的那一次"
+    const bossAt = step.messages.findIndex((m) => m?.source?.kind === 'user')
+    const styleAt = step.messages.findIndex(isStyleMessage)
+    check('L0', 2, '【前提】这一步确实领到了老板那句话（否则下面几条是空跑）',
+      { 领到的条数: step.claimed.length, 老板在第几条: bossAt }, { 领到的条数: 1, 老板在第几条: 0 })
+    check('L1', 2, '机制② 的 style 落在**本步**（= 回答老板那一次的请求）的 messages 里',
+      { 'style 在第几条': styleAt }, { 'style 在第几条': 1 })
+    check('L2', 2, '它排在老板那句话**之后**',
+      { 老板在第几条: bossAt, 'style 在第几条': styleAt }, { 老板在第几条: 0, 'style 在第几条': 1 })
+    check('L3', 2, '这一步里只有一条 style（不是每条老板消息各来一条）',
+      step.messages.filter(isStyleMessage).length, 1)
+
+    const next = await h.stepBegin()          // 下一步：收件箱已经空了
+    check('L4', 2, '**下一步**的 messages 里一条 style 都没有（落点不是"推迟一格"）',
+      next.messages.filter(isStyleMessage).length, 0)
+
+    // 老板的话还挂在收件箱里时，**装配本身**不许贴 —— 钉死"落点不是装配"。
+    // （真 harness 里装配排在 claim 之后、他那句话落笔之前：那一刻它还没见过这句话。）
+    const h2 = await harness(fixture)
+    await h2.turnStart()
+    await h2.boss()
+    await h2.assemble()
+    check('L5', 2, '老板的话还在收件箱里时，装配本身一条都不贴', h2.count(), 0)
+    const step2 = await h2.stepBegin()
+    check('L6', 2, '走到这一步才贴，而且就贴在本步',
+      { 累计: h2.count(), 本步: step2.messages.filter(isStyleMessage).length }, { 累计: 1, 本步: 1 })
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -487,19 +667,19 @@ try {
     const lead = await harness(fixture)
     await lead.assemble()
     await lead.turnStart()
-    await bossThenAssemble(lead)
+    await bossThenStep(lead)
     for (let k = 0; k < 4; k++) await toolStep(lead)
     check('M0', '8b', '【阳性对照·组长完整回合】机制② 1 条 + 机制① 1 条 ⇒ 2 条', lead.count(), 2)
 
     // 最小对照对（组长点名要的那条）：两条序列**逐事件相同**，只差装配里有没有那枚标记。
     const minLead = await harness(fixture)
     await minLead.turnStart()
-    await bossThenAssemble(minLead)
-    check('M1', '8b', '【最小对照·组长】开场消息 + 一次不带标记的装配 ⇒ 注入 1 条', minLead.count(), 1)
+    await bossThenStep(minLead)
+    check('M1', '8b', '【最小对照·组长】老板一句 + 走到那一步（装配不带标记）⇒ 注入 1 条', minLead.count(), 1)
 
     const minMate = await harness(fixture, { member: 'test' })
     await minMate.turnStart()
-    await bossThenAssemble(minMate)
+    await bossThenStep(minMate)
     checkIf(minLead.count() === 1, 'M2', '8b',
       '【最小对照·组员】同一序列、装配带 `【组员:test】` ⇒ **0 条**（组员的开场消息不会换来一次注入）',
       minMate.count(), 0)
@@ -507,7 +687,7 @@ try {
     const mate = await harness(fixture, { member: 'test' })
     await mate.assemble()          // 装配带标记 ⇒ 登记角色
     await mate.turnStart()
-    await bossThenAssemble(mate)
+    await bossThenStep(mate)
     for (let k = 0; k < 4; k++) await toolStep(mate)
     checkIf(lead.count() === 2, 'M3', '8b',
       '【组员完整回合】机制① 和机制② 都不生效 ⇒ 0 条', mate.count(), 0)
@@ -519,7 +699,7 @@ try {
   {
     const src = readFileSync(PRESET_ENTRY, 'utf8')
     for (const [id, criterion, name, pattern, why] of [
-      ['J1', 1, '`armed` 已删（被机制② 的挂账取代）', /\barmed\b/,
+      ['J1', 1, '`armed` 已删（被机制② 的 pre-step 落点取代）', /\barmed\b/,
         '旧口径"有真消息 ⇒ 下个组装必贴"是**落点看运气**的那一版，正是 09-24 出事的地方'],
       ['J2', 1, '`steps` / `lastRemindStep` 已删（"每 N 步"那套）', /\b(lastRemindStep|steps\s*=\s*new Map)\b/,
         '老板 09-25 定的是"每 n 个**工具结果**"，不是"每 n 步"'],
@@ -560,12 +740,13 @@ try {
   console.log(
     '\n退出码：0 = 全过 · 1 = 有红 · 2 = 没红但有挂起（未验，≠ 通过）\n'
     + '\n本探针**不验**这些（自动验不了，留给真回合 / 组长）：\n'
-    + '  · 🔴 **在装配里调 `agent.inject()`，落的是本步的请求还是下一步的？**\n'
-    + '    这一步归组长真回合验。若落的是**下一步**，落点就漂到"我第一次开口之后"——\n'
-    + '    那正是 2026-09-24 出事的位置。假 ctx 里 `inject()` 只是被记一笔，量不出落点。\n'
-    + '  · GUI 里会不会被读成"老板又开了一次口"\n'
+    + '  · GUI 里会不会被读成"老板又开了一次口"（2026-09-24 那个现场）\n'
     + '  · 改完 `inject.js` 要不要重启才生效（ESM 按 URL 缓存 —— 只有真重启才知道）\n'
     + '  · token 账单（要真请求才量得出来）\n'
+    + '  · 机制① 走 `agent.inject()` 的落点：这里假 ctx 按真语义建模（进 next-step 队列、\n'
+    + '    下一个 claim 领走），但"真 harness 里到底是不是这样"要真回合才看得见。\n'
+    + '  · 机制② 的落点**已经在这里判了**（L 族）：老板那句话进收件箱 ⇒ 步边界 claim ⇒\n'
+    + '    `agent/pre-step` 里插进本步的 messages。这条以前量不出来，是 2026-09-26 返修补的。\n'
     + '详见 .team/test/2026-09-25/技术契约-尾巴注入两个机制.md 第九节。',
   )
   exitCode = reds.length > 0 ? 1 : skips.length > 0 ? 2 : 0
