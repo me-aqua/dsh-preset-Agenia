@@ -85,15 +85,18 @@ const MOOD_FILE = 'mood.md'
 
 /**
  * 情绪板的三个维度（键 + 中文），**次序就是贴出去那一行的次序**（契约 §二 钉死）。
- * 掌控 = 干活的成败 · 疲劳 = 今天净干了多久 · 亲近 = 他多久没见 + 他夸还是骂。
+ * 掌控 = 干活的成败 · 活力 = 今天还剩多少劲 · 亲密 = 他多久没见 + 他夸还是骂。
  * 🔴 三个就是三个，没有第四个。
- * 🔴 掌控与疲劳是**两根独立的数**：连着翻车 + 刚开工 ⇒ 掌控低而疲劳低；
- *    一路顺 + 干满一天 ⇒ 两个都高。合成一维，这两种状态就分不出来了。
+ * 🔴 掌控与活力是**两根独立的数**：连着翻车 + 刚开工 ⇒ 掌控低而活力高；
+ *    一路顺 + 干满一天 ⇒ 掌控高而活力低。合成一维，这两种状态就分不出来了。
+ * ⚠️ **键名还叫 `fatigue` / `closeness`**（改名会牵动 `mood.md` 里 `when` 的键）——
+ *    但 `fatigue` 那个键装的值**已经是"活力"**：`1 − 净工时/满量程`，**分越高越有劲**
+ *    （老板 2026-09-26 改名时一起定的方向）。看见 `.8` 别读成"累趴了"。
  */
 const DIMS = [
   ['control', '掌控'],
-  ['fatigue', '疲劳'],
-  ['closeness', '亲近'],
+  ['fatigue', '活力'],
+  ['closeness', '亲密'],
 ]
 const DIM_KEYS = new Set(DIMS.map(([key]) => key))
 
@@ -345,13 +348,16 @@ export function moodOf(signals, constants) {
   const pitRepeat = worstPitRepeat(s.pitCounts)
   const control = clamp01(success - 0.5 * weight - num(c.pitStep, 0.08) * Math.max(0, pitRepeat - 1))
 
-  // ── 疲劳 = 今天净干了多久（口径 12）──────────────────────────────────────
+  // ── 活力 = 今天还剩多少劲（口径 12）──────────────────────────────────────
   // ⚠️ 回退（他离开 ⇒ 那一段不算、之前攒的按半衰退烧）**算在采集端**，这里只收一个
-  //    已经算好的数：两边各算一次会把同一个衰减乘两遍（实测踩过：疲劳恒 0）。
+  //    已经算好的数：两边各算一次会把同一个衰减乘两遍（实测踩过：活力恒满）。
+  // 🔴 **这一维是反着算的**（老板 2026-09-26 定）：干得越久 ⇒ 分越低。
+  //    改名之前它叫"疲劳"，那时是"干得越久分越高" —— 名字一改，方向跟着翻，
+  //    否则会出现"我活力 .80"其实是累趴了这种反着读的数。
   const fullScale = c.fullScaleMinutes
   const fatigue = typeof fullScale === 'number' && fullScale > 0
-    ? clamp01(Math.max(0, num(s.netWorkMinutes)) / fullScale)
-    : 0
+    ? clamp01(1 - Math.max(0, num(s.netWorkMinutes)) / fullScale)
+    : 1
 
   // ── 亲近 = 重逢项 + 夸 / 骂（口径 6/7）───────────────────────────────────
   const sinceBoss = Math.max(0, num(s.sinceBossMinutes))
@@ -369,7 +375,12 @@ export function moodOf(signals, constants) {
   // ⚠️ 两档都是**带符号的**：`mood.md` 那份块里 `blameStep` 写的就是负的（骂是往下）。
   //    谁把符号写歪（或者在这里给它挂个多余的减号），方向当场反过来，而分数行长得一样"正常"。
   const closeness = clamp01(
-    reunion
+    // 🔴 **基线 0.50**（老板 2026-09-26 定）：他还没开过口、会话刚开始时就是 .50，不是 .00。
+    //    它跟重逢项 / 夸 / 骂是**加法**关系 —— 那三样还是原来的刻度，只是从一个抬高的底往上加。
+    //    ⚠️ 它同时改变了「他久别归来」的触发频率：那个门**没动**（还是 .65）⇒
+    //       他离开约 40 分钟再开口就会亮。**老板知情并接受，别再当 bug 修**（`mood.md` 里有同一条注记）。
+    num(c.closenessBase, 0.5)
+    + reunion
     + num(c.praiseStep, 0.06) * Math.max(0, num(s.keywordPraise))
     + num(c.blameStep, -0.08) * Math.max(0, num(s.keywordBlame)),
   )
@@ -429,8 +440,8 @@ function keywordCounts(sentences, constants) {
 }
 
 /**
- * 从 `mood.md` 里抠出那个 ```mood JSON 块并校验：两个衰减常数 + **三个疲劳常数**
- * （在场判据 / 离开半衰 / 满量程）+ **四档亲近刻度**（重逢量程 / 重逢顶 / 夸一步 / 骂一步）
+ * 从 `mood.md` 里抠出那个 ```mood JSON 块并校验：两个衰减常数 + **三个活力常数**
+ * （在场判据 / 离开半衰 / 满量程）+ **四档亲密刻度**（重逢量程 / 重逢顶 / 夸一步 / 骂一步）
  * + **正好 3 条**场景 + 区间合法。
  * 任何一处不合法 ⇒ `undefined` = **整块不认**：调用方只贴 style 段并出声（契约 §四）。
  * 🔴 「场景数必须正好 **3**」那一行校验必须和 `mood.md` 里的条数**同步**（口径 2）：
@@ -496,6 +507,27 @@ function moodConstants(markdown) {
   /** 关键词表：不是字符串数组就当空表（口径 9：它缺了不算整块不合法）。 */
   const wordList = (value) =>
     (Array.isArray(value) ? value.filter((word) => typeof word === 'string' && word.length > 0) : [])
+  // 亲密基线（老板 2026-09-26 定）：0~1 的分数，**缺 = `moodOf` 里的 0.5**；
+  // 给了但不是一个 0~1 的数 ⇒ 整块不认（同四档刻度那条规矩）。
+  const closenessBase = parsed?.closenessBase
+  if (closenessBase !== undefined && !fraction(closenessBase)) return undefined
+  // 正反词表（老板 2026-09-26 定）：**贴出去的时候两侧的词都写**。
+  // 形状 = 每个维度 `{ positive: [...], negative: [...] }`，两侧各至少要有一个词。
+  // ⚠️ 某一维**没给** ⇒ 那一格退回"只写分数"（一个词表瑕疵不该把整个情绪段干掉）；
+  //    **给了但形状不对 / 出现不认识的维度名**才按整块不认办（同关键词表那条）。
+  const words = {}
+  if (parsed?.words !== undefined) {
+    const rawWords = parsed.words
+    if (rawWords === null || typeof rawWords !== 'object' || Array.isArray(rawWords)) return undefined
+    for (const [dim, pair] of Object.entries(rawWords)) {
+      if (!DIM_KEYS.has(dim)) return undefined
+      if (pair === null || typeof pair !== 'object' || Array.isArray(pair)) return undefined
+      const positive = wordList(pair.positive)
+      const negative = wordList(pair.negative)
+      if (positive.length === 0 || negative.length === 0) return undefined
+      words[dim] = { positive, negative }
+    }
+  }
   return {
     halfLifeMinutes: halfLife,
     roundDecay: decay,
@@ -507,6 +539,8 @@ function moodConstants(markdown) {
     reunionBase: base,
     praiseStep: praise,
     blameStep: blame,
+    closenessBase,
+    words,
     keywordPraise: wordList(parsed?.keywordPraise),
     keywordBlame: wordList(parsed?.keywordBlame),
     scenes,
@@ -1010,7 +1044,7 @@ export async function apply(ctx, config = {}) {
       if (!state.workWarned) {
         state.workWarned = true
         console.error(`[agenia] 读不到今天的开工时刻（\`${file}\` 不在，或者首条不是 \`## HH:MM\`）`
-          + ' —— 疲劳降级成"从会话第一帧算起"，分数会偏一边。')
+          + ' —— 活力降级成"从会话第一帧算起"，分数会偏一边。')
       }
       state.startOfWork = typeof state.startAt === 'number' ? state.startAt : at
       return state.startOfWork
@@ -1086,8 +1120,15 @@ export async function apply(ctx, config = {}) {
       const text = Number(x).toFixed(2)
       return text.startsWith('0.') ? text.slice(1) : text
     }
+    // 每一格 = `中文 分数（正词/正词 ↔ 反词/反词）`（老板 2026-09-26 定）：分数说"偏多少"、词说"偏哪边"。
+    // 词表住 `mood.md` 的 `words`；那一维没给词 ⇒ **只写分数**（缺一个词表不该让整个情绪段消失）。
+    const withWords = (key, label) => {
+      const pair = constants.words?.[key]
+      const tail = pair === undefined ? '' : `（${pair.positive.join('/')} ↔ ${pair.negative.join('/')}）`
+      return `${label} ${write(scores[key])}${tail}`
+    }
     const lines = [
-      `【情绪板】${DIMS.map(([key, label]) => `${label} ${write(scores[key])}`).join(' · ')}`,
+      `【情绪板】${DIMS.map(([key, label]) => withWords(key, label)).join(' · ')}`,
       '【这种状态，人一般这么说话】',
     ]
     for (const scene of scenes) {

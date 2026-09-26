@@ -16,7 +16,7 @@
  *          **插进本步的 messages**，紧跟在他那句话后面（它是好的，这一批不许退化）。
  *   尾巴限长：`tailText()` 按 `style.md` 里的 `<!-- 尾巴到此为止 -->` 切；**标记缺失
  *          或切出来是空 ⇒ 退回全文**（口径 7）。P 族。
- *   情绪模块：`moodOf(signals, constants)` **三维**打分（掌控 · 疲劳 · 亲近）+ 场景命中；
+ *   情绪模块：`moodOf(signals, constants)` **三维**打分（掌控 · 活力 · 亲密）+ 场景命中；
  *          分数行 + 例子拼在尾巴那条 style 后面；常数住在 `mood.md` 的 ```mood 块里
  *          （改它不用重启）。N / O / Q 族。
  *   🔴 **2026-09-26 第二批「情绪模块改三维」**：六维砍到三维（愉悦 / 唤起 / 新异 全删）、
@@ -28,6 +28,16 @@
  *      六维 → 三维、6 条场景 → 3 条，都是**事实动了**，不是判据松了。
  *      新族：`B` 掌控 · `C` 亲近 · `W` 关键词 · `K` 疲劳 · `U` 尾巴全长 · `F` 接线 ·
  *      `Y` 静默失效 · `X` 收官形状 · `S`（本批新增的 `S1`–`S14` 那一段）场景库与条数同步。
+ *   🔴 **2026-09-26 第三批「情绪板改名 + 正反词 + 亲密基线」**（方案
+ *      `.team/leader/2026-09-26/方案-情绪板改名与正反词.md`）：
+ *      **改名**（`疲劳 → 活力` · `亲近 → 亲密`，键名 `fatigue`/`closeness` 不动）·
+ *      **活力反算**（`1 − 净工时/满量程`：干得越久分越低）·
+ *      **亲密基线 `.50`**（`closenessBase`，加法）· **每维正反词**（块里的 `words`，两侧都贴）。
+ *      编号在新契约 `.team/test/2026-09-26/技术契约-情绪板改名与正反词.md` 里逐条对到方案第七节。
+ *      ⚠️ 这一批**只动判据侧**（`presets/` 一个字没碰）：
+ *      凡是"钉着旧名字 / 旧活力方向 / 旧亲密值 / 旧行形状"的期望值，改的是**事实**，不是把红改绿。
+ *      🔴 **`口径 6` 那条 `E2-4` 是改写成新事实、不是删**（方案第六节 · 老板选了选项 B）：
+ *      低重逢区间三格仍各不相同；**高重逢区间逐字验证"封顶在 1.00"**。
  *
  * 两条守门（位置问题，不是省钱问题）：
  *   守门 A：机制① 在"他刚说完、我还没开口"时不许触发。
@@ -96,18 +106,18 @@ const loadEntry = async () => (ENTRY_MODULE ??= await import(pathToFileURL(PRESE
  *    字符串键（`§…`）是契约内部项（方案里没编号），印出来时不带"口径"两个字。
  */
 const CRITERION = {
-  1: '维度 = 三个（掌控 · 疲劳 · 亲近）；愉悦/唤起/新异不再出现',
+  1: '维度 = 三个（掌控 · 活力 · 亲密）；愉悦/唤起/新异不再出现',
   2: '场景库条数与 `moodConstants` 的校验**同步**（改一边没改另一边 ⇒ 整块不认）',
   3: '掌控：成功率是**滑动窗口**（最近 20 次结果，跨回合不清零）',
   4: '掌控：**上一回合的错，下一回合仍有影响**（治 P3）',
   5: '掌控：两个**不同的错**不算"同一个坑"（治 P4）',
-  6: '亲近：**重逢项在他开口那一刻不归零**（治 P5）',
-  7: '亲近：夸涨 / 骂跌 / 双命中骂赢 / 一句最多一档',
+  6: '亲密：**重逢项在他开口那一刻不归零**（治 P5）',
+  7: '亲密：夸涨 / 骂跌 / 双命中骂赢 / 一句最多一档',
   8: '关键词 `der` **整词匹配**：`under`/`order`/`header` 不许命中',
   9: '关键词表住 `mood.md`；改词不用重启',
-  10: '疲劳：开工时刻从**当日 log 首条**读得到',
-  11: '疲劳：今天没 log ⇒ **降级到会话首帧**，不静默失效',
-  12: '疲劳：在场累加 / 离开 ≥15 分钟按半衰 60 回退（时间从参数进）',
+  10: '活力：开工时刻从**当日 log 首条**读得到',
+  11: '活力：今天没 log ⇒ **降级到会话首帧**，不静默失效',
+  12: '活力：`1 − 净工时/满量程`（**干得越久分越低**）；在场累加 / 离开 ≥15 分钟按半衰 60 回退（时间从参数进）',
   13: '三个新常数住在 `mood.md`，`.js` 里一个都没有',
   14: '`mood.md` 的「分数是调语气用的，不是绩效报表」还在',
   15: '尾巴全长（style 段 + 情绪段）有人守（收悬项 ⑧）',
@@ -117,6 +127,12 @@ const CRITERION = {
   '§形状': '注入消息的形状与拼接线（契约 3.4 / 老口径 7 的形状那半边）',
   '§产物': '真 presets/agenia/ 的内容文件（口径 1/2/6/14 的产物那半边）',
   '§夹具': '夹具内容根自己的形状（改夹具 = 换量程，要交代）',
+  // ── 2026-09-26 第三批新加的四条（方案第七节 #1–#10 的落点，编号是契约内部项）─────
+  '§改名': '维度改名彻底：`疲劳` / `亲近` **作为维度名**不再出现在真产物与三份文档里（键名不动）',
+  '§基线': '亲密基线 `.50`（`closenessBase`，与重逢项 / 夸 / 骂是**加法**；地板被抬高是定好的）',
+  '§正反词': '每维正反词：形状 `正/正 ↔ 反/反`、词**逐字**来自 `mood.md` 的 `words`、'
+    + '缺一维 ⇒ 那一格只写分数、形状不对 ⇒ 整块不认 + 出声、改它不用重启',
+  '§封顶': '老板拍板选项 B「封顶就封顶」：高重逢区间里夸 / 骂**不动数**，亲密逐字 `1.00`',
 }
 
 /** `[A1 · 口径1]` / `[J6 · §形状]` */
@@ -578,11 +594,25 @@ const FIXTURE_SCENES = [
 
 /** 三个维度的键（次序就是贴出去那一行的次序，契约 3.4 钉死）。 */
 const DIM_KEYS_3 = ['control', 'fatigue', 'closeness']
-/** 中文名（按同一个次序）。 */
-const DIM_LABELS_3 = ['掌控', '疲劳', '亲近']
+/** 中文名（按同一个次序）。2026-09-26 改名：`疲劳 → 活力`、`亲近 → 亲密`（键名没动）。 */
+const DIM_LABELS_3 = ['掌控', '活力', '亲密']
 /** 被砍掉的三个维度（口径 1：**不再出现**）。 */
 const DIM_KEYS_GONE = ['pleasure', 'arousal', 'novelty']
 const DIM_LABELS_GONE = ['愉悦', '唤起', '新异']
+
+/**
+ * 夹具那一份**正反词表** —— 与真 `presets/agenia/mood.md` 的 `words` **逐字对齐**
+ * （老板 2026-09-26 逐字拍的那份，方案第五节表 1）。
+ * ⚠️ **为什么不从真文件读**：夹具是"另一个内容根"，它必须能独立成立；
+ *    真文件那一份由 `I14` 单独钉（逐字比老板拍的表），两处一起看才算"两边都对上了"。
+ * 🔴 **夹具不补 `words` 会有假绿**：不补 ⇒ 每一格都退回"只写分数"（那是**合法的**降级路），
+ *    于是"分数行有没有词"这件事在夹具模式下**永远量不到** —— `Q1` 会拿着一条没词的行走绿。
+ */
+const FIXTURE_WORDS = {
+  control: { positive: ['笃定', '喜悦'], negative: ['混乱', '失落'] },
+  fatigue: { positive: ['精神', '清醒'], negative: ['疲惫', '懒惰'] },
+  closeness: { positive: ['爱慕', '亲近'], negative: ['疏离', '冷淡'] },
+}
 
 /**
  * 夹具的 `mood.md` —— 契约 3.1 钉的那个 ```mood JSON 块。
@@ -610,6 +640,9 @@ const FIXTURE_MOOD = (over = {}) =>
     reunionBase: 0.9,
     praiseStep: 0.06,
     blameStep: -0.08,
+    // 🔴 **亲密基线 .50 + 正反词**（2026-09-26 第三批）：跟真文件对齐，理由见上面 `FIXTURE_WORDS`。
+    closenessBase: 0.5,
+    words: FIXTURE_WORDS,
     keywordPraise: ['棒', '厉害', 'der'],
     keywordBlame: ['笨', '又错了', '不是这么写的'],
     ...over,
@@ -756,12 +789,14 @@ function scoreFromToken(token) {
 
 /**
  * 从一条注入正文里读**三维**分数（读不到 ⇒ undefined）。
- * 行形状（契约 3.4 钉死）：`【情绪板】掌控 .62 · 疲劳 .30 · 亲近 .90`
- * ⚠️ 六维那一版是上一批的事实；这一批是三维（口径 1）。
+ * 行形状（契约 3.4，2026-09-26 起）：`【情绪板】掌控 .62（笃定/喜悦 ↔ 混乱/失落） · 活力 .30（…） · 亲密 .90（…）`
+ * ⚠️ 名字改过一轮：`疲劳 → 活力`（**方向也跟着翻了**：分越高越有劲）、`亲近 → 亲密`。
+ * ⚠️ **词表那一截是可选**的（`mood.md` 的 `words` 里没给那一维 ⇒ 只有分数）⇒ 先把 `（…）` 整段剥掉再读。
  */
 function scoresFromText(text) {
   const line = (moodPartOf(text) ?? '').split('\n')[0] ?? ''
-  const hit = /^【情绪板】掌控 (\S+) · 疲劳 (\S+) · 亲近 (\S+)$/.exec(line)
+  const bare = line.replace(/（[^）]*）/g, '')
+  const hit = /^【情绪板】掌控 (\S+) · 活力 (\S+) · 亲密 (\S+)$/.exec(bare)
   if (hit === null) return undefined
   const values = hit.slice(1).map(scoreFromToken)
   if (values.some((v) => v === undefined)) return undefined
@@ -1034,7 +1069,7 @@ try {
   // 🔴 **但"不判"不等于"消失"**（2026-09-26 返修）：夹具模式下这 12 条**逐条记挂起、照样进分母** ——
   //    这条清单必须和下面真正判的那 12 个编号一一对应（`Z9` 与"三种跑法分母对照"是它的守卫）。
   if (!TESTING_PRODUCT) {
-    console.log('（I 族：这次测的是夹具，不是产物 —— 12 条记挂起，分母不缩）')
+    console.log('（I 族：这次测的是夹具，不是产物 —— 17 条记挂起，分母不缩）')
     // ⚠️ `O7`（"产物那个块解析得出 3 条场景"）也只在产物模式下判 —— 它同样必须进分母。
     skip('O7', 2, '产物的 `mood.md` 解析得出恰好 3 条场景：这次测的是夹具，不是产物 ⇒ **未验**')
     for (const [id, criterion, what] of [
@@ -1049,7 +1084,12 @@ try {
       ['I11', 15, '真产物全长 ≤ 1000 字符'],
       ['I8', 2, '真 `mood.md` 解析得出恰好 3 条场景'],
       ['I9', 2, '`inject.js` 里"场景数必须正好 N"那个 N = 3'],
-      ['I12', 13, '真 `mood.md` 的块里有那四档刻度、键名与值对'],
+      ['I12', 13, '真 `mood.md` 的块里有那几档刻度（含亲密基线）、键名与值对'],
+      ['I13', '§正反词', '真产物那一行 = 新形状：词**逐字**来自真 `mood.md` 的 `words`、正在前反在后、维度次序钉死'],
+      ['I14', '§正反词', '真 `mood.md` 的 `words` **逐字** = 老板 2026-09-26 拍的那份表'],
+      ['I15', '§改名', '真产物那条尾巴里 `疲劳` / `亲近` **不作为维度名**出现'],
+      ['I16', 6, '真 `mood.md` 的「他久别归来」那道门还是 `.65`（没跟着基线一起抬）'],
+      ['I17', 6, '真产物那一路上：他第一次开口、没夸没骂 ⇒ 亲密恰好 .50（基线）'],
     ]) skip(id, criterion, `${what}：这次测的是夹具，不是产物 ⇒ **未验**`)
   } else {
     const raw = readFileSync(STYLE_FILE, 'utf8')
@@ -1112,10 +1152,98 @@ try {
     //    "真的从文件读"由 `Q11`–`Q15` 那五条行为判据证。
     const fourKeys = [
       ['reunionScaleMinutes', 240], ['reunionBase', 0.90], ['praiseStep', 0.06], ['blameStep', -0.08],
+      // 🔴 2026-09-26 第三批：**亲密基线**也是"块说了算"的一档刻度 ⇒ 一起钉键名与值。
+      ['closenessBase', 0.5],
     ]
-    check('I12', 13, '真 `mood.md` 的 ```mood 块里有那四档刻度，键名与值 = `reunionScaleMinutes` 240 · `reunionBase` .90 · `praiseStep` .06 · `blameStep` −.08',
+    check('I12', 13, '真 `mood.md` 的 ```mood 块里有那几档刻度（四档 + 亲密基线），键名与值 = `reunionScaleMinutes` 240 · `reunionBase` .90 · `praiseStep` .06 · `blameStep` −.08 · `closenessBase` .50',
       fourKeys.map(([key]) => `${key}=${parsed?.[key] ?? '（没有）'}`),
       fourKeys.map(([key, value]) => `${key}=${value}`))
+
+    // ── 2026-09-26 第三批新增的四条（改名的产物那半边 + 正反词的产物那半边）──────────
+    /**
+     * 🔴 **方案第七节 #1 / #2 / #3**（一条判据一起钉，因为它们是**同一行**的三个侧面）：
+     *    真产物贴出去的那一行 = `【情绪板】掌控 P（正/正 ↔ 反/反） · 活力 P（…） · 亲密 P（…）`，
+     *    其中**每一维的词逐字等于真 `mood.md` 的 `words`**、**正在前反在后**、**维度次序钉死**。
+     * ⚠️ 词**不是从 `DIM_LABELS_3` 那类常量比的**，是从**刚读进来的那份文件**比 ——
+     *    这样"文件改了、实现没跟上"和"实现自己编了一套词"都会被抓住。
+     */
+    const realLine = typeof text === 'string' ? ((moodPartOf(text) ?? '').split('\n')[0] ?? '') : ''
+    const groups = realLine.startsWith('【情绪板】') ? realLine.slice('【情绪板】'.length).split(' · ') : []
+    const cell = (g) => {
+      const hit = /^(\S+) (1\.00|\.[0-9]{2})（(.+) ↔ (.+)）$/.exec(String(g))
+      return hit === null ? undefined : { 标签: hit[1], 分: hit[2], 正: hit[3], 反: hit[4] }
+    }
+    const cells = groups.map(cell)
+    const wantCells = DIM_KEYS_3.map((dim, i) => {
+      const w = parsed?.words?.[dim]
+      return {
+        标签: DIM_LABELS_3[i],
+        正: Array.isArray(w?.positive) ? w.positive.join('/') : '（文件里没有这一维的正词）',
+        反: Array.isArray(w?.negative) ? w.negative.join('/') : '（文件里没有这一维的反词）',
+      }
+    })
+    // ⚠️ 判据写成"**逐格比**（标签 / 正词 / 反词）+ 三格齐全"，**不比分数**：
+    //    这一行里那个分数是**这一步的信号**算出来的，逐字比它会变成比"这一格跑了多少活"。
+    //    分数的**写法**（`.NN` / `1.00`）已经由 `cell()` 那个正则钉住（解析不出来就是 undefined）。
+    const lineOk = cells.length === 3 && cells.every((c, i) => c !== undefined
+      && c.标签 === wantCells[i].标签 && c.正 === wantCells[i].正 && c.反 === wantCells[i].反)
+    checkTrue('I13', '§正反词', '真产物那一行 = 新形状：词**逐字**来自真 `mood.md` 的 `words`、正在前反在后、维度次序钉死（方案第七节 #1/#2/#3）',
+      lineOk,
+      `实测那一行 ${JSON.stringify(realLine)}`
+      + `（逐格：${cells.map((c) => (c === undefined ? '解析不出来' : `${c.标签}（${c.正} ↔ ${c.反}）`)).join(' | ')}）`)
+
+    /**
+     * 🔴 **方案第五节表 1**：那份词表是**老板逐字拍的**（他当天还改了两个词：麻木→懒惰、热络→爱慕）。
+     *    这一条钉的是**文件本身**：谁把 `words` 改了（哪怕改得更通顺），这条当场红。
+     * ⚠️ 逐维比、不整块 `JSON.stringify`：`words` 里那几个键的**先后**不影响贴出来的那一行
+     *    （那一行的次序由 `DIMS` 决定），拿它去红人是过约束。
+     */
+    const WANT_WORDS = {
+      control: ['笃定', '喜悦', '混乱', '失落'],
+      fatigue: ['精神', '清醒', '疲惫', '懒惰'],
+      closeness: ['爱慕', '亲近', '疏离', '冷淡'],
+    }
+    const gotWords = Object.fromEntries(DIM_KEYS_3.map((dim) => {
+      const w = parsed?.words?.[dim]
+      return [dim, [...(Array.isArray(w?.positive) ? w.positive : []), ...(Array.isArray(w?.negative) ? w.negative : [])]]
+    }))
+    check('I14', '§正反词', '真 `mood.md` 的 `words` **逐字** = 老板 2026-09-26 拍的那份表（每维：正词们在前、反词们在后）',
+      DIM_KEYS_3.map((dim) => `${dim}=${gotWords[dim].join('/') || '（空）'}`),
+      DIM_KEYS_3.map((dim) => `${dim}=${WANT_WORDS[dim].join('/')}`))
+
+    /**
+     * 🔴 **方案第七节 #6（改名的产物那半边）**：`疲劳` / `亲近` **作为维度名**不许再出现在真产物里。
+     * ⚠️ 判据**不能**写成"整条尾巴里不许出现这两个词"：`亲近` 是**亲密那一维的正词之一**
+     *    （`爱慕/亲近`）—— 词表里合法出现，那是**词**不是**维度名**。
+     *    ⇒ 精确形状 = 「旧名字 + 后面跟一个分数」（`疲劳 .96` / `亲近 1.00`），
+     *      分数行和例子行的括注都是这个形状。
+     */
+    const moodText = typeof text === 'string' ? (moodPartOf(text) ?? '') : ''
+    const staleAsLabel = ['疲劳', '亲近'].filter((w) => new RegExp(`${w}\\s*(?:1\\.00|\\.\\d\\d)`).test(moodText))
+    checkTrue('I15', '§改名', '真产物那条尾巴里 `疲劳` / `亲近` **不作为维度名**出现（`亲近` 作为**词**出现在 `爱慕/亲近` 里是合法的，不算）',
+      staleAsLabel.length === 0,
+      staleAsLabel.length === 0 ? '（干净）' : `还当维度名用着：${staleAsLabel.join('、')}`)
+
+    /**
+     * 🔴 **方案第五节【3】· 第四节"不做清单"**：「他久别归来」那道门**没跟着基线抬**，还是 `.65`。
+     *    ⇒ 老板知情并接受"他离开约 40 分钟就会亮"。谁回头把门抬到 `.8x` 去"修"这件事，
+     *      这条当场红 —— 它是那个决定在文件里的唯一落点（行为那一半归 `E2-10`）。
+     */
+    const welcome = (parsed?.scenes ?? []).find((s) => s?.id === '他久别归来')
+    check('I16', 6, '真 `mood.md` 的「他久别归来」那道门还是 `closeness: [0.65, 1]`（老板拍了"门不动"，别拿它去修"40 分钟就亮"）',
+      JSON.stringify(welcome?.when?.closeness ?? '（没找到这条场景）'), JSON.stringify([0.65, 1]))
+
+    /**
+     * 🔴 **方案第七节 #4 的"真产物那一路"**（纯函数那一路是 `E2-1`；文件那一半是 `I12`）。
+     *    同一个 harness、**真 `mood.md` + 真 `inject.js`**：他**第一次开口**、那一句里没夸没骂
+     *    ⇒ 重逢项 0、互动项 0 ⇒ 亲密就是**基线 .50**。
+     *    ⚠️ 这一步的推论链要写清楚，免得被读成"照着读数编的"：
+     *      他从没开过口 ⇒ `sincePreviousBossMinutes` = 0 · `boss()` 那句固定正文（"老板的话"）
+     *      里一个夸 / 骂词都没有 ⇒ 两个句数都是 0 ⇒ 算式里只剩 `closenessBase`。
+     */
+    const realScores = scoresFromText(text)
+    check('I17', 6, '【基线·真产物那一路】真 `mood.md` + 真 `inject.js`：他第一次开口、没夸没骂 ⇒ 亲密**恰好 .50**（方案第七节 #4）',
+      realScores?.closeness, 0.5)
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1326,12 +1454,17 @@ try {
       strong: { recentResults: Array(20).fill('ok'), pitCounts: {} },
       weak: { recentResults: Array(20).fill('fail'), pitCounts: { 'pwsh|拒绝访问': 5 } },
     },
-    // 疲劳：刚开工（净干 0）→ 净干满量程（360 分钟）
-    fatigue: { strong: { netWorkMinutes: 360 }, weak: { netWorkMinutes: 0 } },
-    // 亲近：就在手边 → 想他了（量程 240 分钟）
+    // 活力：**分越高越有劲**（2026-09-26 改名时方向跟着翻了）⇒ 强 = 刚开工（净干 0）、
+    //       弱 = 净干满量程（360 分钟）。⚠️ 这一对**必须跟名字一起翻**：
+    //       还按"干满 = 强"写的话，`N9`/`N10` 会拿一个**满身疲惫的剖面**去要高分。
+    fatigue: { strong: { netWorkMinutes: 0 }, weak: { netWorkMinutes: 360 } },
+    // 亲密：就在手边 → 想他了（量程 240 分钟）
+    // ⚠️ **弱剖面必须带骂句**：基线 .50 把地板抬到了 .50，
+    //    只拧"重逢项"的话弱剖面就是 .50 —— 落不到 ≤ .35（那是老板 09-26 拍下的定义，不是实现没做）。
+    //    ⇒ 弱 = 重逢项 0 **且** 三句骂（`.50 − 3×.08 = .26`）。这样"亲密真的拉得开"照样是一条能翻面的判据。
     closeness: {
       strong: { sinceBossMinutes: 240, sincePreviousBossMinutes: 240 },
-      weak: { sinceBossMinutes: 0, sincePreviousBossMinutes: 0 },
+      weak: { sinceBossMinutes: 0, sincePreviousBossMinutes: 0, keywordPraise: 0, keywordBlame: 3 },
     },
   }
 
@@ -1630,30 +1763,31 @@ try {
     const backAgain = DIM_KEYS_GONE.filter((k) => legacyFed !== undefined && k in legacyFed)
     check('N3', 1, '【砍掉的三个维度】喂满"愉悦/唤起/新异"的老信号（oks 6 · steps 40 · newThings 6）⇒ 那三个键**不许出现**',
       backAgain.length === 0 ? '（一个都没回来）' : `回来了：${backAgain.join('、')}`, '（一个都没回来）')
-    check('N4', 12, '【单调性·疲劳】净工作时长 0→60→180→360 ⇒ 疲劳**不降**',
-      sweep('fatigue', 'netWorkMinutes', [0, 60, 180, 360], 'up'), ok)
+    check('N4', 12, '【单调性·活力】净工作时长 0→60→180→360 ⇒ 活力**不升**（干得越久分越低；方向随改名一起翻）',
+      sweep('fatigue', 'netWorkMinutes', [0, 60, 180, 360], 'down'), ok)
     check('N5', 5, '【单调性·掌控·同一个坑】同一个坑 1→3→5 次（窗口全绿）⇒ 掌控**不升**',
       sweep('control', 'pitRepeat', [1, 3, 5], 'down'), ok)
     check('N6', 3, '【单调性·掌控·滑动窗口】窗口里失败数 0→5→10→20（总 20 次）⇒ 掌控**不降/不升**（成功率↓ ⇒ 分数↓）',
       sweep('control', 'windowFailures', [0, 5, 10, 20], 'down'), ok)
     check('N7', 3, '【单调性·掌控】窗口里的绿 0→20 次（全绿）⇒ 掌控不降（老 N7 的位置换了维度，见契约第八节）',
       sweep('control', 'windowOks', [0, 5, 10, 20], 'up'), ok)
-    check('N8', 6, '【单调性·亲近】他"这一次开口之前"离了 0→30→120→240 分钟 ⇒ 亲近**不降**',
+    check('N8', 6, '【单调性·亲密】他"这一次开口之前"离了 0→30→120→240 分钟 ⇒ 亲密**不降**',
       sweep('closeness', 'sincePreviousBossMinutes', [0, 30, 120, 240], 'up', { sinceBossMinutes: 240 }), ok)
 
     /**
-     * ④ **疲劳与掌控是两个独立的数**（老版那条"唤起 ≠ 疲劳"的对应条）：
-     *    连着翻车但是刚开工 ⇒ 掌控低、疲劳低；一路顺但干了一整天 ⇒ 掌控高、疲劳高。
+     * ④ **活力与掌控是两个独立的数**（老版那条"唤起 ≠ 疲劳"的对应条）：
+     *    连着翻车但是干满一天 ⇒ 掌控低、活力低；一路顺但是刚开工 ⇒ 掌控高、活力高。
      *    合成一维的话这四格就分不开了。
+     * ⚠️ 措辞跟 `EXTREME.fatigue` **同一批翻过**：强 = 刚开工、弱 = 干满。
      */
     const tiredBad = scoresOf(callMood({ ...NEUTRAL_SIGNALS, ...EXTREME.fatigue.weak, ...EXTREME.control.weak }))
     const freshGood = scoresOf(callMood({ ...NEUTRAL_SIGNALS, ...EXTREME.fatigue.strong, ...EXTREME.control.strong }))
-    checkTrue('N9', 1, '【分开验】掌控与疲劳是两根独立的数：连着翻车+刚开工 ⇒ 掌控低而疲劳低；一路顺+干满 ⇒ 掌控高而疲劳高',
+    checkTrue('N9', 1, '【分开验】掌控与活力是两根独立的数：连着翻车+干满 ⇒ 掌控低而活力低；一路顺+刚开工 ⇒ 掌控高而活力高',
       typeof tiredBad?.control === 'number' && typeof tiredBad?.fatigue === 'number'
       && typeof freshGood?.control === 'number' && typeof freshGood?.fatigue === 'number'
       && tiredBad.control < 0.35 && tiredBad.fatigue < 0.35
       && freshGood.control > 0.65 && freshGood.fatigue > 0.65,
-      `翻车+刚开工：掌控 ${tiredBad?.control} 疲劳 ${tiredBad?.fatigue} · 顺+干满：掌控 ${freshGood?.control} 疲劳 ${freshGood?.fatigue}`)
+      `翻车+干满：掌控 ${tiredBad?.control} 活力 ${tiredBad?.fatigue} · 顺+刚开工：掌控 ${freshGood?.control} 活力 ${freshGood?.fatigue}`)
 
     // ⑤ 三个"强"剖面真的进得了高区间、"弱"剖面进得了低区间 ——
     //    否则场景区间没得写（分数全挤在 0.4~0.6 就是装饰）。
@@ -1667,7 +1801,7 @@ try {
       const weak = scoresOf(callMood({ ...NEUTRAL_SIGNALS, ...ex.weak }))?.[dim]
       return `${dim} ${weak}→${strong}`
     }).join(' · ')
-    checkTrue('N10', 3, '每一维的"强"剖面 ≥ 0.65、"弱"剖面 ≤ 0.35（分数真的拉得开）',
+    checkTrue('N10', 3, '每一维的"强"剖面 ≥ 0.65、"弱"剖面 ≤ 0.35（分数真的拉得开；亲密那个弱剖面**带骂句**，理由见 `EXTREME.closeness`）',
       spanOk, spanDetail)
 
     // ⑥ 缺信号不许炸：只给 `now`。
@@ -1790,9 +1924,19 @@ try {
     const text = h.lastText()
     const mood = moodPartOf(text)
     const lines = (mood ?? '').split('\n')
-    const scoreLine = /^【情绪板】掌控 (?:1\.00|\.[0-9]{2}) · 疲劳 (?:1\.00|\.[0-9]{2}) · 亲近 (?:1\.00|\.[0-9]{2})$/
-    moodSectionWorks = scoreLine.test(lines[0] ?? '')
-    checkTrue('Q1', 1, '尾巴那条消息里有【情绪板】分数行：**三维齐全**、次序照契约、分数写成 `.NN`',
+    // 🔴 **2026-09-26 第三批：分数行带正反词了**（老板拍的"两侧都写出来，这样信息更多"）。
+    //    形状 = `【情绪板】掌控 P（正/正 ↔ 反/反） · 活力 P（…） · 亲密 P（…）`。
+    //    ⚠️ **分隔符是 ` · `（`·` 两边各一个空格）**：出处是老板真回合里那条尾巴
+    //       （`技术契约-情绪板改名与正反词.md` §2 抄了那一行逐字）；
+    //       方案第二节的示例把空格省了 —— 那种写法**不作为逐字依据**（它只是示意图）。
+    //    ⚠️ 期望那一行**从夹具的 `words` 现算**，不抄一遍：抄一遍的话，
+    //       "夹具换了词表、实现没跟上"这两边会一起漂，判据就废了。
+    const wantLine = new RegExp('^【情绪板】' + DIM_KEYS_3.map((dim, i) => {
+      const w = FIXTURE_WORDS[dim]
+      return `${DIM_LABELS_3[i]} (?:1\\.00|\\.[0-9]{2})（${w.positive.join('/')} ↔ ${w.negative.join('/')}）`
+    }).join(' · ') + '$')
+    moodSectionWorks = wantLine.test(lines[0] ?? '')
+    checkTrue('Q1', '§正反词', '尾巴那条消息里有【情绪板】分数行：**三维齐全、次序照契约、每维都带正反词**，分数写成 `.NN`',
       moodSectionWorks, `第 1 行实测 ${JSON.stringify(lines[0] ?? '（没有情绪段）')}`)
     check('Q2', '§形状', '情绪段第 2 行恒为 `【这种状态，人一般这么说话】`',
       lines[1], '【这种状态，人一般这么说话】')
@@ -1823,8 +1967,8 @@ try {
       const text = h.lastText()
       const scores = scoresFromText(text)
       const example = (moodPartOf(text) ?? '').split('\n').find((l) => l.includes(scene.lines[0]))
-      check('Q4', 7, '【例子行】命中场景的那一行**逐字**长这样：`  ·（亲近 .NN）「句」「句」`',
-        example, `  ·（亲近 ${scores === undefined ? '??' : fmtScore(scores.closeness)}）「${scene.lines[0]}」「${scene.lines[1]}」`)
+      check('Q4', 7, `【例子行】命中场景的那一行**逐字**长这样：\`  ·（${DIM_LABELS_3[2]} .NN）「句」「句」\``,
+        example, `  ·（${DIM_LABELS_3[2]} ${scores === undefined ? '??' : fmtScore(scores.closeness)}）「${scene.lines[0]}」「${scene.lines[1]}」`)
       // ⚠️ 挂阳性对照：连"命中的那一行"都没递出来时，"别的场景不在"是**空跑成绿**的。
       checkIf(typeof example === 'string', 'Q5', 7,
         '没命中的场景**不许**出现在情绪段里（这一格没有"刚炸过"、没有"一路绿到底"）',
@@ -1836,28 +1980,32 @@ try {
   {
     // 口径 12：**同一份 harness、同一个夹具**，只改 mood.md 里的常数 ⇒ 下一次分数跟着变（不用重启）。
     // 这一条量的是"常数真住在文件里"，所以**挑一个这一批新加的常数**（`fullScaleMinutes`）：
-    // 净干 180 分钟 ⇒ 满量程 360 时疲劳 .50、满量程 180 时疲劳 1.00（**越大**的那个满量程反而**越小**）。
+    // 净工时 > 0 ⇒ 满量程 360 的活力 `1 − 净/360` 比满量程 180 的 `1 − 净/180` **高**
+    // （满量程越小 ⇒ 同一段工时越压得低）。
     // ⚠️ 必须用**自己那份夹具**：这一组会改 mood.md，共用的话后面几族会跟着变。
     const hFixture = buildFixture()
     try {
       const h = await harness(hFixture)
       const runOnce = async (t) => {
         // ⚠️ 先推一条**早一点**的事件：净工作时长量的是"上一次记账 → 现在"，
-        //    不先垫一条，`lastWorkAt` 就落在这一刻上 ⇒ interval 恒 0 ⇒ 疲劳永远是 0。
+        //    不先垫一条，`lastWorkAt` 就落在这一刻上 ⇒ interval 恒 0 ⇒ 净工时永远是 0。
         await h.turnStart(t - HOUR)
         await h.toolResult(undefined, t - HOUR)
         await h.boss(undefined, t)
         await h.stepBegin(t)
         return scoresFromText(h.lastText())
       }
-      // 开工 09:00（当日 log 首条）⇒ 12:00 那一刻净干了 3 小时 = 180 分钟：
-      // 满量程 360 ⇒ 疲劳 .50 · 满量程 180 ⇒ 疲劳 1.00（满量程越小，同一个数越到顶）。
+      // 这一条只钉**方向**：`净 > 0` 时那个不等式由算式本身成立，**不需要知道采集端记了几分钟**
+      // （采集端记多少是 X 族的事）。两个读数的**绝对值**在 `X1`/`X2`/`X4` 那一层钉 ——
+      // 那里 `netWorkMinutes` 是入参，期望值能从算式直接算出来。
       const slow = await runOnce(T0 + 3 * HOUR)
       writeFileSync(join(hFixture, 'mood.md'), FIXTURE_MOOD({ fullScaleMinutes: 180 }), 'utf8')
       const fast = await runOnce(T0 + 3 * HOUR)
-      checkTrue('Q6', 12, '只改 `mood.md` 的 `fullScaleMinutes`（360 → 180）⇒ 同一段信号打出**不同**的分（存盘即生效）',
-        typeof slow?.fatigue === 'number' && typeof fast?.fatigue === 'number' && fast.fatigue > slow.fatigue,
-        `满量程 360 的疲劳 ${slow?.fatigue ?? '拿不到'} · 满量程 180 的疲劳 ${fast?.fatigue ?? '拿不到'}`)
+      checkTrue('Q6', 12, '只改 `mood.md` 的 `fullScaleMinutes`（360 → 180）⇒ 同一段信号打出**不同**的分：满量程越小、活力越低（存盘即生效）',
+        typeof slow?.fatigue === 'number' && typeof fast?.fatigue === 'number'
+        && fast.fatigue < slow.fatigue && slow.fatigue < 1 && fast.fatigue < 1,
+        `满量程 360 的活力 ${slow?.fatigue ?? '拿不到'} · 满量程 180 的活力 ${fast?.fatigue ?? '拿不到'}`
+        + '（两个都要 < 1 —— 否则这一格是拿两个 1.00 空跑，净工时根本没进来）')
     } finally {
       rmSync(hFixture, { recursive: true, force: true })
     }
@@ -1872,7 +2020,7 @@ try {
     //    四个数写死在 `.js` 里的实现，两格读数会**一模一样** ⇒ 当场红。
     /**
      * 老板隔 `gapMinutes` 分钟之前说过一句（传 `null` = 他从没开过口），现在这一句是 `said`。
-     * 走到回答他那一步 ⇒ 从情绪段读亲近。起点固定 09:00（夹具当日 log 首条）。
+     * 走到回答他那一步 ⇒ 从情绪段读**亲密**。起点固定 09:00（夹具当日 log 首条）。
      */
     const closenessRun = async (gapMinutes, said, over = {}) => {
       const dir = buildFixture({ mood: FIXTURE_MOOD(over) })
@@ -1898,30 +2046,40 @@ try {
     const near = (a, b) => typeof a === 'number' && Math.abs(a - Number(b)) < 5e-3
     const show = (x) => (typeof x === 'number' ? Number(x.toFixed(4)) : x)
 
-    // 重逢项 = `reunionBase × clamp01(间隔 ÷ reunionScaleMinutes)`（契约 3.2）。
-    const scaleA = await closenessRun(120, '今天就这样')
-    const scaleB = await closenessRun(120, '今天就这样', { reunionScaleMinutes: 120 })
-    checkTrue('Q11', 13, '【四档刻度·量程】只改文件里的 `reunionScaleMinutes`（240 → 120），隔 2 小时开口 ⇒ 亲近 .45 → .90',
-      near(scaleA, 0.45) && near(scaleB, 0.90),
-      `量程 240 ⇒ ${show(scaleA)}（期望 .45） · 量程 120 ⇒ ${show(scaleB)}（期望 .90）`)
+    // 亲密 = `clamp01(closenessBase .50 + reunionBase × clamp01(间隔 ÷ reunionScaleMinutes)
+    //        + praiseStep×夸句数 + blameStep×骂句数)`（方案第五节 · 第六节）。
+    // 🔴 **四档刻度那几条一律要落在"没被 clamp 夹住"的区间里**（2026-09-26 第三批改的）：
+    //    基线 .50 之后，上半段（重逢项大 + 夸）会**顶到 1.00**，两格读数一样 ⇒ 判据当场变成空跑。
+    //    ⇒ 取点全部下移（量程那条用 48 分钟、骂那条用 2 小时、底那条把基线按 0 传进去）。
+    //    ⚠️ 这不是"把期望值改小"，是**换个还能分辨的取点**：四个数写死在 `.js` 里的实现照样红。
+    // ⚠️ 取点还要**避开两位小数读数的舍入边界**：这些格是从分数行上读回来的（分辨率 .01），
+    //    取 `.725` 那种值只能看出 `.72`/`.73`，期望值就没法逐字钉 —— 所以取能落到整分位的点。
+    const scaleA = await closenessRun(48, '今天就这样')
+    const scaleB = await closenessRun(48, '今天就这样', { reunionScaleMinutes: 120 })
+    checkTrue('Q11', 13, '【四档刻度·量程】只改文件里的 `reunionScaleMinutes`（240 → 120），隔 48 分钟开口 ⇒ 亲密 .50+.18=.68 → .50+.36=.86',
+      near(scaleA, 0.68) && near(scaleB, 0.86),
+      `量程 240 ⇒ ${show(scaleA)}（期望 .68） · 量程 120 ⇒ ${show(scaleB)}（期望 .86）`)
 
-    const baseA = await closenessRun(480, '今天就这样')
-    const baseB = await closenessRun(480, '今天就这样', { reunionBase: 0.45 })
-    checkTrue('Q12', 13, '【四档刻度·顶】只改文件里的 `reunionBase`（.90 → .45），隔 8 小时开口（比值已到顶）⇒ 亲近 .90 → .45',
+    // ⚠️ 这一格把 `closenessBase` 按 **0** 传：让"顶端 = 重逢项本身"重新能被看见。
+    //    （基线 .50 时，真文件那个 `reunionBase` .90 在顶端会被 clamp 成 1.00 ——
+    //      `.90` 这个值本身由 `I12` 钉键值、由 `N8` 在**线性区**钉行为。）
+    const baseA = await closenessRun(480, '今天就这样', { closenessBase: 0 })
+    const baseB = await closenessRun(480, '今天就这样', { closenessBase: 0, reunionBase: 0.45 })
+    checkTrue('Q12', 13, '【四档刻度·顶】只改文件里的 `reunionBase`（.90 → .45），隔 8 小时开口（比值已到顶）⇒ 重逢项 .90 → .45（基线按 0 传，免得顶到 clamp）',
       near(baseA, 0.90) && near(baseB, 0.45),
       `底 .90 ⇒ ${show(baseA)}（期望 .90） · 底 .45 ⇒ ${show(baseB)}（期望 .45）`)
 
     const praiseA = await closenessRun(null, '真棒')
     const praiseB = await closenessRun(null, '真棒', { praiseStep: 0.20 })
-    checkTrue('Q13', 13, '【四档刻度·夸】只改文件里的 `praiseStep`（.06 → .20），他第一次开口就夸一句 ⇒ 亲近 .06 → .20',
-      near(praiseA, 0.06) && near(praiseB, 0.20),
-      `一档 .06 ⇒ ${show(praiseA)}（期望 .06） · 一档 .20 ⇒ ${show(praiseB)}（期望 .20）`)
+    checkTrue('Q13', 13, '【四档刻度·夸】只改文件里的 `praiseStep`（.06 → .20），他第一次开口就夸一句 ⇒ 亲密 .50+.06=.56 → .50+.20=.70',
+      near(praiseA, 0.56) && near(praiseB, 0.70),
+      `一档 .06 ⇒ ${show(praiseA)}（期望 .56） · 一档 .20 ⇒ ${show(praiseB)}（期望 .70）`)
 
-    const blameA = await closenessRun(240, '真笨')
-    const blameB = await closenessRun(240, '真笨', { blameStep: -0.20 })
-    checkTrue('Q14', 13, '【四档刻度·骂】只改文件里的 `blameStep`（−.08 → −.20），重逢项到顶时骂一句 ⇒ 亲近 .82 → .70（**键值带负号**：加法的写法才对吧）',
-      near(blameA, 0.82) && near(blameB, 0.70),
-      `一档 −.08 ⇒ ${show(blameA)}（期望 .82） · 一档 −.20 ⇒ ${show(blameB)}（期望 .70）`)
+    const blameA = await closenessRun(120, '真笨')
+    const blameB = await closenessRun(120, '真笨', { blameStep: -0.20 })
+    checkTrue('Q14', 13, '【四档刻度·骂】只改文件里的 `blameStep`（−.08 → −.20），隔 2 小时开口时骂一句 ⇒ 亲密 .50+.45−.08=.87 → .50+.45−.20=.75（**键值带负号**：加法的写法才对吧）',
+      near(blameA, 0.87) && near(blameB, 0.75),
+      `一档 −.08 ⇒ ${show(blameA)}（期望 .87） · 一档 −.20 ⇒ ${show(blameB)}（期望 .75）`)
 
     // 最后一条量的是"**存盘即生效**"：同一个 harness（同一个模块实例，没重启）、同一份夹具，
     // 只把 `mood.md` 里的四个数换掉 ⇒ 下一次读数跟着换（`readMoodConstants()` 每次现读）。
@@ -1934,15 +2092,15 @@ try {
         await h.stepBegin(at + MIN)
         return scoresFromText(h.lastText())?.closeness
       }
-      const before = await run(T0, '真棒')            // 他第一次开口 ⇒ 重逢项 0 ⇒ 只剩夸那一档 .06
+      const before = await run(T0, '真棒')   // 他第一次开口 ⇒ 重逢项 0 ⇒ 只剩基线 .50 + 夸那一档 .06
       writeFileSync(join(hSame, 'mood.md'),
         FIXTURE_MOOD({ reunionScaleMinutes: 1, reunionBase: 0.3, praiseStep: 0.2, blameStep: -0.4 }), 'utf8')
       // 这一次开口离上一次 4 小时 = 240 分钟 ≥ 量程 1 ⇒ 比值 1 ⇒ 重逢项 .30；
-      // 一句夸 +.20、一句骂 −.40 ⇒ .30 + .20 − .40 = .10。
+      // 一句夸 +.20、一句骂 −.40 ⇒ .50 + .30 + .20 − .40 = .60。
       const after = await run(T0 + 4 * HOUR, '真棒，这一版很好。真笨，这块写错了。')
-      checkTrue('Q15', 13, '【四档刻度·不用重启】同一个 harness 里只换文件（量程 1 · 底 .30 · 夸 +.20 · 骂 −.40）⇒ 下一次读数 .10（四个数写死在 `.js` 里的话是 .88）',
-        near(before, 0.06) && near(after, 0.10),
-        `改文件前 ${show(before)}（期望 .06） · 改文件后 ${show(after)}（期望 .10；写死的话 .88）`)
+      checkTrue('Q15', 13, '【四档刻度·不用重启】同一个 harness 里只换文件（量程 1 · 底 .30 · 夸 +.20 · 骂 −.40）⇒ 下一次读数 .60（四个数写死在 `.js` 里的话是 1.00）',
+        near(before, 0.56) && near(after, 0.60),
+        `改文件前 ${show(before)}（期望 .56） · 改文件后 ${show(after)}（期望 .60；四个数写死的话 1.00）`)
     } finally {
       rmSync(hSame, { recursive: true, force: true })
     }
@@ -1978,6 +2136,112 @@ try {
     check('Q10', 13, '`mood.md` 的 ```mood 块里有三个新常数：`presenceMinutes` / `absenceHalfLifeMinutes` / `fullScaleMinutes`',
       missing.length === 0 ? ['presenceMinutes', 'absenceHalfLifeMinutes', 'fullScaleMinutes'].map((k) => `${k}=${c[k]}`) : `缺：${missing.join('、')}`,
       ['presenceMinutes=15', 'absenceHalfLifeMinutes=60', 'fullScaleMinutes=360'])
+  }
+  {
+    // 🔴 **方案第七节 #7**（2026-09-26 第三批新加）：`words` 里**只给两维** ⇒
+    //    缺的那一格（活力）**只写分数**，其余两格照写词、**整个情绪段照贴** ——
+    //    一个词表瑕疵不该把整段干掉。
+    // ⚠️ 判据必须**两头一起钉**：只钉"活力没有词"的话，一个"干脆一个词都不写"的实现照样绿。
+    const dir = buildFixture({ mood: FIXTURE_MOOD({
+      words: { control: FIXTURE_WORDS.control, closeness: FIXTURE_WORDS.closeness },
+    }) })
+    try {
+      const h = await harness(dir)
+      await h.turnStart(T0)
+      await bossThenStep(h)
+      const line = (moodPartOf(h.lastText()) ?? '').split('\n')[0] ?? ''
+      const group = (i) => line.replace(/^【情绪板】/, '').split(' · ')[i] ?? ''
+      const pairText = (dim) => `（${FIXTURE_WORDS[dim].positive.join('/')} ↔ ${FIXTURE_WORDS[dim].negative.join('/')}）`
+      const noWordsOnFatigue = /^活力 (?:1\.00|\.[0-9]{2})$/.test(group(1))
+      const othersStillHaveWords = group(0).includes(pairText('control')) && group(2).includes(pairText('closeness'))
+      checkTrue('Q16', '§正反词', '某一维**没给词** ⇒ 那一格只写分数，其余两格照写词、情绪段照贴（方案第七节 #7）',
+        noWordsOnFatigue && othersStillHaveWords,
+        `第 1 行实测 ${JSON.stringify(line || '（没有情绪段）')}`
+        + `（活力那格没词 = ${noWordsOnFatigue}；另两格照写词 = ${othersStillHaveWords}）`)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+  {
+    /**
+     * 🔴 **方案第七节 #8**：`words` **给了**但形状不对 ⇒ **整块不认 + 出声**（不静默）。
+     * ⚠️ 与 `Q16`（缺一维 ⇒ 那一格只写分数）是**两件事**，必须分开钉：
+     *    缺一维是**合法降级**、形状不对是**坏块** —— 合在一条里，两个方向里总有一个量不到。
+     */
+    const badWordsRun = async (what, words) => {
+      const dir = buildFixture({ mood: FIXTURE_MOOD({ words }) })
+      try {
+        const before = stderrSeen.length
+        const h = await harness(dir)
+        await h.turnStart(T0)
+        await bossThenStep(h)
+        return {
+          场景: what,
+          情绪段: moodPartOf(h.lastText()) === undefined ? '不贴' : '还贴着',
+          出声: stderrSeen.slice(before).some((m) => /mood\.md/.test(m)) ? '出了' : '一声不吭',
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+    const noNeg = await badWordsRun('某一维只有 positive、没有 negative', { control: { positive: ['笃定'] } })
+    check('Q17', '§正反词', '`words` 里某一维**只有 positive、没有 negative** ⇒ 整块不认（情绪段不贴）+ 出声',
+      noNeg, { 场景: '某一维只有 positive、没有 negative', 情绪段: '不贴', 出声: '出了' })
+    const bogus = await badWordsRun('出现不认识的维度名', { control: FIXTURE_WORDS.control, pleasure: FIXTURE_WORDS.control })
+    check('Q17b', '§正反词', '`words` 里出现**不认识的维度名**（`pleasure`）⇒ 同样整块不认 + 出声',
+      bogus, { 场景: '出现不认识的维度名', 情绪段: '不贴', 出声: '出了' })
+  }
+  {
+    // 🔴 **方案第七节 #9**：改 `mood.md` 的 `words` / `closenessBase` **不用重启**。
+    //    同一个 harness（同一个模块实例）、同一份夹具，只把文件换掉 ⇒ 下一次读数跟着换：
+    //      · 词换了 ⇒ 那一格括号里的字跟着换（`words` 真的被**现读**）
+    //      · 基线 .50 → .80 ⇒ 读数 +.30（`closenessBase` 真的被**现读**）
+    //    ⚠️ 两半必须一起钉：只钉词的话，一个"词现读、基线写死在 `.js` 里"的实现照样绿。
+    const near5 = (a, b) => typeof a === 'number' && Math.abs(a - Number(b)) < 5e-3
+    const hWords = buildFixture()
+    try {
+      const h = await harness(hWords)
+      const run = async (at) => {
+        await h.turnStart(at - 8 * HOUR)
+        await h.bossText('开工', at)       // 没夸没骂；他第一次开口 ⇒ 重逢项 0 ⇒ 读数 = 基线
+        await h.stepBegin(at + MIN)
+        const text = h.lastText()
+        return { 分: scoresFromText(text)?.closeness, 行: (moodPartOf(text) ?? '').split('\n')[0] ?? '' }
+      }
+      const before = await run(T0)
+      writeFileSync(join(hWords, 'mood.md'), FIXTURE_MOOD({
+        closenessBase: 0.8,
+        words: { ...FIXTURE_WORDS, closeness: { positive: ['黏你'], negative: ['生分'] } },
+      }), 'utf8')
+      const after = await run(T0)
+      const wordsSwapped = before.行.includes('爱慕/亲近 ↔ 疏离/冷淡') && after.行.includes('黏你 ↔ 生分')
+      checkTrue('Q18', '§正反词', '只改 `mood.md` 的 `words` / `closenessBase`（词换一对、基线 .50 → .80）⇒ 同一 harness 里下一次读数跟着换（不用重启，方案第七节 #9）',
+        wordsSwapped && near5(before.分, 0.50) && near5(after.分, 0.80),
+        `改前 ${before.分 ?? '拿不到'}（期望 .50）· 改后 ${after.分 ?? '拿不到'}（期望 .80）；词跟着换 = ${wordsSwapped}`)
+    } finally {
+      rmSync(hWords, { recursive: true, force: true })
+    }
+  }
+  {
+    // 🔴 **缺 `closenessBase` 时的兜底** —— 这一条是**变异体逼出来的**（2026-09-26 · 第三批）：
+    //    夹具与真 `mood.md` **都带着这个键** ⇒ `moodOf` 里那个兜底值**够不着**，
+    //    于是"把兜底改回 0"这个半修形状**一条断言都碰不到**：实测改完 **0 条红、静默存活**。
+    //    ⇒ 补这一格：**把键整个拿掉**（`JSON.stringify` 会把 `undefined` 那个键丢掉），
+    //      基线还得是 `.50` —— 方案第七节 #4 那句承诺**不该依赖文件里写没写这个键**。
+    //    ⚠️ 口径缝（如实记在契约 §5）：方案只写了"`moodConstants()` 收下并校验两个新键"，
+    //       **没写"键缺了怎么办"**；这里按 #4 判"缺也得是 .50"，与"一个常数瑕疵不该把
+    //       整段情绪干掉"那条精神一致（`mood.md` 里那个键在，所以这一格是防未来的）。
+    const dir = buildFixture({ mood: FIXTURE_MOOD({ closenessBase: undefined }) })
+    try {
+      const h = await harness(dir)
+      await h.turnStart(T0 - 8 * HOUR)
+      await h.bossText('开工', T0)     // 没夸没骂；他第一次开口 ⇒ 重逢项 0 ⇒ 读数 = 基线
+      await h.stepBegin(T0 + MIN)
+      check('Q19', 6, '`closenessBase` **整个不在块里** ⇒ 兜底仍然是 **.50**（不是老实现的 .00；方案第七节 #4 不依赖文件里写没写这个键）',
+        scoresFromText(h.lastText())?.closeness, 0.5)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2077,31 +2341,61 @@ try {
     const near4 = (a, b) => typeof a === 'number' && Math.abs(a - Number(b)) < 1e-6
     const shown = (x) => (typeof x === 'number' ? Number(x.toFixed(4)) : x)
 
-    // ① 他刚打完招呼（上一次开口 = 刚刚）⇒ 重逢项 0；② 他隔了 8 小时才开口 ⇒ 到顶。
-    //    ⚠️ 这一条**不是**在量"他开口那一刻分数归零" —— 归零的是"重逢项"这个**分量**，
-    //       而老实现归零的是**整个亲近分**（它只有这一个分量）。
+    // ① **基线**：他上一次开口就是刚刚（重逢项 0）、没夸没骂 ⇒ 亲密 = **基线 .50**
+    //    （老板 2026-09-26 定：会话刚开始时她跟老板不是"毫无关系"）。
+    //    ⚠️ 老实现这里读 .00 —— 这条判据就是钉"地板被抬高"这件事本身。
     const justSpoke = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 0 }))
+    check('E2-1', 6, '【基线·零点】他上一次开口就是刚刚（间隔 0 分钟）、没夸没骂 ⇒ 亲密 = 基线 **.50**',
+      justSpoke?.closeness, 0.5)
+    // ② **线性区**：隔 2 小时（量程 240 的一半）⇒ 重逢项 .90×.5 = .45 ⇒ 亲密 .50+.45 = **.95**。
+    //    取中段而不是顶端：基线 .50 之后顶端会被 clamp 夹住（见 `E2-4b`），取顶端就量不出 `reunionBase` 了。
     const goneLong = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 480 }))
-    check('E2-1', 6, '【重逢项·零点】他上一次开口就是刚刚（间隔 0 分钟）⇒ 重逢项 = 0.00',
-      justSpoke?.closeness, 0)
-    check('E2-2', 6, '【重逢项·顶端】他上一次开口在 8 小时前（≫ 量程 240 分钟）⇒ 重逢项到顶 = 0.90',
-      goneLong?.closeness, 0.9)
-    // ③ 治 P5 的**可判定形态**：同样"他刚开口"，隔了 8 小时之后的那一句 ⇒ 亲近 ≥ .65
+    const halfWay = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 120 }))
+    check('E2-2', 6, '【重逢项·线性区】他上一次开口在 2 小时前（量程 240 的一半）⇒ 亲密 .50 + .90×½ = **.95**',
+      halfWay?.closeness, 0.95)
+    // ③ 治 P5 的**可判定形态**：同样"他刚开口"，隔了 8 小时之后的那一句 ⇒ 亲密 ≥ .65
     //    ⇒「他久别归来」那条场景**真的会被递出来**（这才是老板要看的那件事）。
-    checkTrue('E2-3', 6, '【治 P5】隔了 8 小时之后他再开口 ⇒ 亲近 .90 ≥ .65 ⇒「他久别归来」**亮得起来**',
+    checkTrue('E2-3', 6, '【治 P5】隔了 8 小时之后他再开口 ⇒ 亲密 1.00 ≥ .65 ⇒「他久别归来」**亮得起来**',
       typeof goneLong?.closeness === 'number' && goneLong.closeness >= 0.65,
       `实测 ${goneLong?.closeness ?? '拿不到'}（老实现：\`sinceBoss\` 被刷成 0 ⇒ 0.00 ⇒ 永远亮不了）`)
-    // ④ 重逢项 ≠ 互动项：同一格上夸 / 骂能把读数挪开（三格各不相同）。
+    // ④ 🔴 **低重逢区间：重逢项 ≠ 互动项**（同一格上夸 / 骂能把读数挪开，三格各不相同）。
+    //    ⚠️ 取点必须选在 **clamp 之下**：隔 1 小时 ⇒ 重逢项 .225 ⇒ 底 .725，
+    //       夸 .785 · 骂 .645 —— 三格都在 (0,1) 里，谁都夹不住。
+    //       （老那版取隔 8 小时：基线 .50 之后三格**全是 1.00**，判据自己变成了空跑。）
+    const lowBase = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 60 }))
+    const lowPraise = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 60, keywordPraise: 1 }))
+    const lowBlame = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 60, keywordBlame: 1 }))
+    checkTrue('E2-4', 6, '【重逢项 ≠ 互动项·低重逢】同一格（隔 1 小时、他刚开口）：不夸不骂 .725 · 夸 .785 · 骂 .645 —— **三格各不相同**',
+      near4(lowBase?.closeness, 0.725) && near4(lowPraise?.closeness, 0.785) && near4(lowBlame?.closeness, 0.645),
+      `不夸不骂 ${shown(lowBase?.closeness)} · 夸 ${shown(lowPraise?.closeness)} · 骂 ${shown(lowBlame?.closeness)}`)
+    // ④b 🔴 **高重逢区间：封顶就封顶**（老板 2026-09-26 拍的**选项 B**，方案第六节）。
+    //    基线 .50 + 重逢顶 .90 = 1.40 ⇒ 被 `clamp01` 截成 **1.00** ⇒ 夸 / 骂**不动数**。
+    //    ⇒ 这是**定义好的行为，不是 bug**：别去"修"它，也别把它写成红。
+    //    ⚠️ 这一格看着像"三个 1.00 的空跑"，其实**能翻面** —— 落选的那两个方案都会让它红：
+    //       选项 A（缩放）：骂那一格 < 1.00 · 选项 C（砍重逢顶）：不夸不骂那一格 < 1.00。
     const praised = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 480, keywordPraise: 1 }))
     const scolded = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 480, keywordBlame: 1 }))
-    checkTrue('E2-4', 6, '【重逢项 ≠ 互动项】同一格（隔 8 小时、他刚开口）：不夸不骂 .90 · 夸 .96 · 骂 .82 —— **三格各不相同**',
-      near4(praised?.closeness, 0.96) && near4(scolded?.closeness, 0.82),
-      `不夸不骂 ${shown(goneLong?.closeness)} · 夸 ${shown(praised?.closeness)} · 骂 ${shown(scolded?.closeness)}`)
+    checkTrue('E2-4b', '§封顶', '【封顶·高重逢】隔 8 小时开口：不夸不骂 / 夸 / 骂 **逐字都是 1.00**（老板拍的选项 B：满就满，夸骂不动数）',
+      near4(goneLong?.closeness, 1) && near4(praised?.closeness, 1) && near4(scolded?.closeness, 1),
+      `不夸不骂 ${shown(goneLong?.closeness)} · 夸 ${shown(praised?.closeness)} · 骂 ${shown(scolded?.closeness)}`
+      + '（选项 A 会让"骂"掉下来、选项 C 会让"不夸不骂"掉下来 —— 那两个都不许实现）')
+    // ④c **门没跟着抬**（方案第五节【3】· 知情并接受）：基线 .50 之后
+    //     `重逢项 = .15`（隔 40 分钟）就够到「他久别归来」那条门（`.65`）。
+    //     ⇒ 隔 40 分钟**亮**、隔 20 分钟**不亮** —— 这两格把那个日子钉死，免得谁回头偷偷把门抬高。
+    const doorIn = callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 40 })?.值
+    const doorOut = callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 20 })?.值
+    const hitIn = Array.isArray(doorIn?.scenes) && doorIn.scenes.some((s) => s.id === '他久别归来')
+    const hitOut = Array.isArray(doorOut?.scenes) && doorOut.scenes.some((s) => s.id === '他久别归来')
+    checkTrue('E2-10', 6, '【门不动】隔 40 分钟开口 ⇒ 亲密 .50+.15=.65 ⇒「他久别归来」**亮**；隔 20 分钟 ⇒ .575 ⇒ **不亮**（门还是 .65）',
+      near4(doorIn?.scores?.closeness, 0.65) && near4(doorOut?.scores?.closeness, 0.575) && hitIn && !hitOut,
+      `隔 40 分钟 ⇒ ${shown(doorIn?.scores?.closeness)}（亮=${hitIn}） · 隔 20 分钟 ⇒ ${shown(doorOut?.scores?.closeness)}（亮=${hitOut}）`)
 
     // ⑤ 夸 / 骂的**四格**（口径 7）。契约 3.3 把两个入参钉成**句数**：
     //    `keywordPraise` = "带夸奖关键词"的**句子数**（一句最多算一档）· `keywordBlame` 同理
     //    · **同一句话两个都命中 ⇒ 只算骂**（骂赢）。
-    const P = { ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 120 }   // 重逢项固定在中段（.45）
+    // 🔴 **取点隔 1 小时**（重逢项 .225 ⇒ 底 .725）：基线 .50 之后，隔 2 小时的话
+    //    `.95 + .06 = 1.01` 会被 clamp 夹成 1.00 ⇒ 夸 / 骂那几条**又变成空跑**。
+    const P = { ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 60 }   // 底 = .50 + .225 = .725
     const base = scoresOf(callMood({ ...P, keywordPraise: 0, keywordBlame: 0 }))?.closeness
     const p1 = scoresOf(callMood({ ...P, keywordPraise: 1 }))?.closeness
     const b1 = scoresOf(callMood({ ...P, keywordBlame: 1 }))?.closeness
@@ -2112,21 +2406,24 @@ try {
       near4(p1, step6(base, 0.06)), `不夸 ${shown(base)} ⇒ 夸 ${shown(p1)}（期望 ${step6(base, 0.06)}）`)
     checkTrue('E2-6', 7, '【骂一句】骂 ⇒ 比不骂**低**（−一档 .08，骂比夸更响）',
       near4(b1, step6(base, -0.08)), `不骂 ${shown(base)} ⇒ 骂 ${shown(b1)}（期望 ${step6(base, -0.08)}）`)
-    checkTrue('E2-7', 7, '【纯函数那一层是"各自累计"】夸与骂同时非零 ⇒ 两项各加各减（`.45 + .06 − .08 = .43`）—— 判"双命中"要先知道**是不是同一句**，那是采集端的事（下一条）',
+    checkTrue('E2-7', 7, '【纯函数那一层是"各自累计"】夸与骂同时非零 ⇒ 两项各加各减（`.50 + .225 + .06 − .08 = .705`）—— 判"双命中"要先知道**是不是同一句**，那是采集端的事（下一条）',
       near4(both, step6(base, -0.02)),
       `夸 ${shown(p1)} · 两个都非零 ${shown(both)} · 骂 ${shown(b1)}`)
     /**
      * 🔴 口径 7 的"**骂赢**"真正发生的地方在**关键词计数那一层**（一句话里两个词都出现）。
      * 纯函数拿到的只是两个句数，它分不出"同一句"还是"两句" —— 所以这一条必须走**全流程**。
+     * ⚠️ **取点隔 1 小时**（不复用 V 族那个 4 小时）：基线 .50 + 重逢顶 .90 = 1.40 会被 clamp 夹住 ⇒
+     *    两格都读 1.00、**什么样的实现都相等**，判据当场变空跑。隔 1 小时 ⇒ 底 .725，
+     *    骂一档 ⇒ .645：既没夹住，也离"两个都算"（.705）差得开。
      */
     const oneLine = await (async () => {
       const dir = buildFixture({ mood: FIXTURE_MOOD({ keywordPraise: ['棒'], keywordBlame: ['笨'] }) })
       try {
         const h = await harness(dir)
-        await h.turnStart(T0 - 4 * HOUR)
-        await h.bossText('（上一句话）', T0 - 4 * HOUR)
-        await h.stepBegin(T0 - 4 * HOUR + 5 * MIN)
-        await h.bossText('这版挺棒，不过这块写得真笨', T0)   // ⚠️ 两句话：一句夸、一句骂
+        await h.turnStart(T0 - 1 * HOUR)
+        await h.bossText('（上一句话）', T0 - 1 * HOUR)
+        await h.stepBegin(T0 - 1 * HOUR)
+        await h.bossText('这版挺棒，不过这块写得真笨', T0)   // ⚠️ 一句里既夸又骂
         await h.stepBegin(T0 + MIN)
         return scoresFromText(h.lastText())?.closeness
       } finally {
@@ -2137,9 +2434,9 @@ try {
       const dir = buildFixture({ mood: FIXTURE_MOOD({ keywordPraise: ['棒'], keywordBlame: ['笨'] }) })
       try {
         const h = await harness(dir)
-        await h.turnStart(T0 - 4 * HOUR)
-        await h.bossText('（上一句话）', T0 - 4 * HOUR)
-        await h.stepBegin(T0 - 4 * HOUR + 5 * MIN)
+        await h.turnStart(T0 - 1 * HOUR)
+        await h.bossText('（上一句话）', T0 - 1 * HOUR)
+        await h.stepBegin(T0 - 1 * HOUR)
         await h.bossText('这块写得真笨', T0)
         await h.stepBegin(T0 + MIN)
         return scoresFromText(h.lastText())?.closeness
@@ -2163,12 +2460,16 @@ try {
   //    ⇒ 同一批里必须有**会命中的**（`der` 整词 / `棒` / `笨`），而且整词那两格要**同一份夹具**。
   {
     /**
-     * 老板发一句话、走到回答他那一步 ⇒ 从情绪段里读亲近分。
-     * 🔴 **先让他 4 小时没开口再说这一句**：不然重逢项只有 .0038（1 分钟 ÷ 240 × .90），
-     *    往下减一档骂就**贴着 0 被夹住**了 —— 那样"谁都不命中"和"命中了骂"读数一样，
-     *    负例就变成了空跑（本票实测踩过：`棒 .06 · 笨 .00 · 平 .00`）。
-     * ⚠️ 这次的"他上一次开口"是他自己刚说的那一句，所以间隔 = 4 小时 ⇒ 重逢项 .90。
+     * 老板发一句话、走到回答他那一步 ⇒ 从情绪段里读**亲密**分。
+     * 🔴 **取点：让他隔 30 分钟没开口**（这次量的是"命中 / 不命中"，不是重逢项本身）。
+     *    为什么不是老那版的 4 小时：基线 .50 之后 `.50 + .90 = 1.40` 会被 clamp 夹成 1.00 ⇒
+     *    **所有格都是 1.00**，"命中了"和"谁都不命中"读数一样，整个 W 族变成空跑
+     *    （改前实测：`der 1 · under order header 1`）。
+     *    取 30 分钟 ⇒ 底 .50 + .1125 ≈ `.61`，往上往下都离 clamp 与 0 很远。
+     *    ⚠️ 顺带：老那版要避开的是**下界**（重逢项 .0038 时减一档骂会贴 0 被夹住），
+     *       基线 .50 把那个坑填掉了 —— 现在要避开的是**上界**。方向反过来了。
      */
+    const V_GAP_MIN = 30
     const closenessAfter = async (said, { mood } = {}) => {
       const dir = buildFixture(mood === undefined ? {} : { mood })
       try {
@@ -2177,16 +2478,27 @@ try {
         //    "他这一次开口**之前**离了多久"，而那条 `user/message` 要到**本步落笔时**才写。
         //    ⇒ 贴出去的那一条是在 pre-step 上算的，它只能从**消息自带的时间**里读这个距离。
         //    （不给的话实现退回"本步的时刻"，读数会差一点 —— 本票实测踩过：重逢项恒 0。）
-        await h.turnStart(T0 - 4 * HOUR)
-        await h.bossText('（上一句话）', T0 - 4 * HOUR)
-        await h.stepBegin(T0 - 4 * HOUR + 5 * MIN)
+        // ⚠️ `stepBegin` 与 `bossText` **同刻**（同 `closenessRun` 那条纪律）：
+        //    `sincePrevBossMin` 有两个记账点，不同刻时读数会差"上一步的滞后"。
+        await h.turnStart(T0 - (V_GAP_MIN + 1) * MIN)
+        await h.bossText('（上一句话）', T0 - V_GAP_MIN * MIN)
+        await h.stepBegin(T0 - V_GAP_MIN * MIN)
         await h.bossText(said, T0)
-        await h.stepBegin(T0 + MIN)          // 老板那句话说于 T0 ⇒ 此处读到 245 分钟
+        await h.stepBegin(T0 + MIN)
         return { 值: scoresFromText(h.lastText())?.closeness, 句子: said }
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
     }
+    /**
+     * 两格读数之差 ≈ 某一档刻度（容差 .011：那些格是**从两位小数的分数行上读回来的**，
+     * 一格的分辨率就是 .01 —— 逐字比会变成比舍入，不是比行为）。
+     * 🔴 **判据写成"差 = 一档"而不是"谁比谁大"**：两格共用同一个重逢项（同刻、同夹具），
+     *    所以那一项在减法里**消掉**，剩下来的只能是关键词那一档 —— 这样连
+     *    "重逢项被算错"都盖不住它，而且完全不需要知道重逢项到底记了几分钟。
+     */
+    const stepOf = (a, b) => (typeof a === 'number' && typeof b === 'number' ? Number((a - b).toFixed(4)) : '拿不到')
+    const nearStep = (diff, want) => typeof diff === 'number' && Math.abs(diff - want) < 0.011
     /** 把关键词表钉成**只有一个** `der`（+一个中文骂词），正反两格就走同一份夹具 —— 对照才干净。 */
     const DER_ONLY = FIXTURE_MOOD({ keywordPraise: ['der', '棒'], keywordBlame: ['笨'] })
 
@@ -2197,9 +2509,10 @@ try {
     const praiseCn = await closenessAfter('棒')
     const blameCn = await closenessAfter('笨')
     const plain = await closenessAfter('今天就这样')
-    checkTrue('V1', 8, '【阳性对照·字母词】`der` **整词**出现 ⇒ 命中夸（不是"永远不命中"）',
-      typeof derWord.值 === 'number' && typeof derInside.值 === 'number' && derWord.值 > derInside.值,
-      `「der」 ⇒ 亲近 ${derWord.值 ?? '拿不到'} · 「under order header」 ⇒ ${derInside.值 ?? '拿不到'}`)
+    checkTrue('V1', 8, '【阳性对照·字母词】`der` **整词**出现 ⇒ 命中夸：读数比"谁也不命中"那一格**正好高一档 `.06`**（不是"永远不命中"）',
+      typeof derWord.值 === 'number' && typeof plain.值 === 'number' && derWord.值 > plain.值
+      && nearStep(stepOf(derWord.值, plain.值), 0.06),
+      `「der」 ⇒ 亲密 ${derWord.值 ?? '拿不到'} · 「今天就这样」 ⇒ ${plain.值 ?? '拿不到'}（差 ${stepOf(derWord.值, plain.值)}，期望 .06）`)
     checkTrue('V2', 8, '【整词·负例】`under` / `order` / `header`（都**含有** `der`）⇒ 一个都不许命中（＝"谁也不命中"那一格）',
       typeof derInside.值 === 'number' && typeof plain.值 === 'number' && derInside.值 === plain.值,
       `「under order header」 ⇒ ${derInside.值 ?? '拿不到'} · 「今天就这样」 ⇒ ${plain.值 ?? '拿不到'}`)
@@ -2209,23 +2522,27 @@ try {
     checkTrue('V2c', 8, '【大小写】`DER`（大写）⇒ 仍然命中（整词匹配不该被大小写搅掉）',
       typeof derUpper.值 === 'number' && typeof derWord.值 === 'number' && derUpper.值 === derWord.值,
       `「DER」 ⇒ ${derUpper.值 ?? '拿不到'} · 「der」 ⇒ ${derWord.值 ?? '拿不到'}`)
-    checkTrue('V3', 8, '【中文按子串·阳性对照】`棒` 命中夸、`笨` 命中骂、`今天就这样` 谁都不命中（三格分得开）',
+    checkTrue('V3', 8, '【中文按子串·阳性对照】`棒` 命中夸（+.06）、`笨` 命中骂（−.08）、`今天就这样` 谁都不命中（三格分得开）',
       typeof praiseCn.值 === 'number' && typeof blameCn.值 === 'number' && typeof plain.值 === 'number'
-      && praiseCn.值 > plain.值 && blameCn.值 < plain.值,
-      `棒 ${praiseCn.值 ?? '拿不到'} · 笨 ${blameCn.值 ?? '拿不到'} · 平 ${plain.值 ?? '拿不到'}`)
+      && praiseCn.值 > plain.值 && blameCn.值 < plain.值
+      && nearStep(stepOf(praiseCn.值, plain.值), 0.06) && nearStep(stepOf(plain.值, blameCn.值), 0.08),
+      `棒 ${praiseCn.值 ?? '拿不到'} · 笨 ${blameCn.值 ?? '拿不到'} · 平 ${plain.值 ?? '拿不到'}`
+      + `（棒−平 ${stepOf(praiseCn.值, plain.值)} 期望 .06 · 平−笨 ${stepOf(plain.值, blameCn.值)} 期望 .08）`)
     // 口径 9：**词表真的从文件读** —— 同一句「超级棒」，只换 `mood.md` 里的夸词表：
     //  · 词表 A = `['der','棒']` ⇒ 「超级棒」里有「棒」⇒ **命中**
     //  · 词表 B = `['der','挺好']` ⇒ 一个都不含 ⇒ **不命中**
     // 词表写死在 `.js` 里的实现，这两格会一模一样。
-    // ⚠️ 这两格**必须**和他离开的距离一起看：重逢项到顶（.90）时 +.06 会被 1.00 夹住，
-    //    两格读数相同 ⇒ 判据变成空跑（本票实测踩过：两格都是 .94）。
+    // ⚠️ 老那段注释写着"重逢项到顶（.90）时 +.06 会被 1.00 夹住"——那是**老基线**的坑；
+    //    基线 .50 之后取点已经挪到 .61 一带（见 `closenessAfter`），两格差得开。
     const WORD_A = FIXTURE_MOOD({ keywordPraise: ['der', '棒'], keywordBlame: ['笨'] })
     const WORD_B = FIXTURE_MOOD({ keywordPraise: ['der', '挺好'], keywordBlame: ['笨'] })
     const hitA = await closenessAfter('超级棒', { mood: WORD_A })
     const hitB = await closenessAfter('超级棒', { mood: WORD_B })
-    checkTrue('V4', 9, '【词表住在文件里】同一句「超级棒」：词表含 `棒` 的那份**命中夸**、不含的那份**不命中**',
-      typeof hitA.值 === 'number' && typeof hitB.值 === 'number' && hitA.值 > hitB.值,
-      `词表=['der','棒'] ⇒ ${hitA.值 ?? '拿不到'} · 词表=['der','挺好'] ⇒ ${hitB.值 ?? '拿不到'}`)
+    checkTrue('V4', 9, '【词表住在文件里】同一句「超级棒」：词表含 `棒` 的那份**命中夸**（比不含的那份正好高一档 `.06`）',
+      typeof hitA.值 === 'number' && typeof hitB.值 === 'number' && hitA.值 > hitB.值
+      && nearStep(stepOf(hitA.值, hitB.值), 0.06),
+      `词表=['der','棒'] ⇒ ${hitA.值 ?? '拿不到'} · 词表=['der','挺好'] ⇒ ${hitB.值 ?? '拿不到'}`
+      + `（差 ${stepOf(hitA.值, hitB.值)}，期望 .06）`)
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2237,12 +2554,15 @@ try {
      * ⚠️ 老那版这里写着"下限 0 的线性回退"——**已经作废**：契约 3.3 钉的是
      *    `net × e^(−(离开−在场判据)/absenceHalfLifeMinutes)`（见 K4）。
      */
+    // 🔴 **活力是反着算的**（老板 2026-09-26 改名时定的方向）：`活力 = 1 − 净工时/满量程`。
+    //    ⇒ 两个端点是**恰好** 0 与 1（不是 ≥.95 / ≤.05 那种"差不多到顶"）——
+    //      老那版用 ≥/≤ 是因为旧方向下"到顶"只是个近似；新算式两端是精确值，就该按精确值钉。
     const tired = scoresOf(callMood({ ...NEUTRAL_SIGNALS, netWorkMinutes: 360 }))
     const justIn = scoresOf(callMood({ ...NEUTRAL_SIGNALS, netWorkMinutes: 0 }))
-    checkTrue('X1', 12, '【在场累加】净干满量程 360 分钟 ⇒ 疲劳到顶（≥ .95）',
-      typeof tired?.fatigue === 'number' && tired.fatigue >= 0.95, `实测 ${tired?.fatigue ?? '拿不到'}`)
-    checkTrue('X2', 12, '【刚开工】净干 0 分钟 ⇒ 疲劳贴地（≤ .05）',
-      typeof justIn?.fatigue === 'number' && justIn.fatigue <= 0.05, `实测 ${justIn?.fatigue ?? '拿不到'}`)
+    checkTrue('X1', 12, '【在场累加】净干满量程 360 分钟 ⇒ 活力**恰好 .00**（干得越久分越低，干满 ⇒ 0）',
+      typeof tired?.fatigue === 'number' && Math.abs(tired.fatigue) < 1e-6, `实测 ${tired?.fatigue ?? '拿不到'}`)
+    checkTrue('X2', 12, '【刚开工】净干 0 分钟 ⇒ 活力**恰好 1.00**（还有的是劲）',
+      typeof justIn?.fatigue === 'number' && Math.abs(justIn.fatigue - 1) < 1e-6, `实测 ${justIn?.fatigue ?? '拿不到'}`)
 
     /**
      * 🔴 **这一条才是治 P6 的**：老实现吃的是"本回合时长"，而回合被老板开口切成 2–4 分钟
@@ -2257,28 +2577,32 @@ try {
       await hLong.stepBegin(startOfDay + (i + 1) * 14 * MIN)     // 机制② 出口 ⇒ 情绪段
     }
     const longRun = scoresFromText(hLong.lastText())
-    checkTrue('X3', 12, '【治 P6】26 个回合、每回 14 分钟、他一直在旁边 ⇒ 疲劳 ≥ .95（老实现吃"本回合时长" ⇒ 恒 .1x 的一条直线）',
-      typeof longRun?.fatigue === 'number' && longRun.fatigue >= 0.95,
-      `实测疲劳 ${longRun?.fatigue ?? '拿不到'}（老实现：本回合 14 分钟 ⇒ .10 + .8×(14/300) ≈ .14）`)
+    checkTrue('X3', 12, '【治 P6】26 个回合、每回 14 分钟、他一直在旁边 ⇒ 活力 ≤ .05（干了一整天；老实现吃"本回合时长" ⇒ 恒 .1x 的一条直线）',
+      typeof longRun?.fatigue === 'number' && longRun.fatigue <= 0.05,
+      `实测活力 ${longRun?.fatigue ?? '拿不到'}（老实现：本回合 14 分钟 ⇒ 疲劳 .10 + .8×(14/300) ≈ .14）`)
 
     /**
      * 离开 ⇒ **按 `absenceHalfLifeMinutes`（60）半衰回退**（口径 12 后半）。
-     * 两格对照：同样"干了 4 小时"，他走了 15 分钟 / 走了 2 小时 ⇒ 后者明显更低。
+     * 两格对照：同样"干了 4 小时"，他走了 15 分钟 / 走了 2 小时 ⇒ 后者攒下的少 ⇒ **活力更高**。
      * 🔴 **回退算在采集端**（契约 3.2 末尾）：`moodOf` 只拿一个**已经算好**的
      *    `netWorkMinutes` 去打分。所以这里喂的数是**回退之后**的那个时长 ——
-     *    240·e⁻² ≈ 32.5 分钟 ⇒ 疲劳 .0902。两边各算一次会把衰减乘两遍（疲劳恒 0）。
+     *    240·e⁻² ≈ 32.5 分钟 ⇒ 活力 1 − 32.5/360 = .9097。
+     *    两边各算一次会把衰减乘两遍（老那版实测：活力恒满）。
      */
     const AWAY_2H = 240 * Math.exp(-2)
     const awayShort = scoresOf(callMood({ ...NEUTRAL_SIGNALS, netWorkMinutes: 240 }))
     const awayLong = scoresOf(callMood({ ...NEUTRAL_SIGNALS, netWorkMinutes: AWAY_2H }))
-    checkTrue('X4', 12, '【离开回退·打分端】净干 240 分钟 ⇒ 疲劳 .6667；走了 2 小时之后回退到 32.5 分钟 ⇒ .0902（半衰 60）',
+    checkTrue('X4', 12, '【离开回退·打分端】净干 240 分钟 ⇒ 活力 1−240/360 = .3333；走了 2 小时之后回退到 32.5 分钟 ⇒ 1−32.5/360 = .9097（半衰 60）',
       typeof awayShort?.fatigue === 'number' && typeof awayLong?.fatigue === 'number'
-      && Math.abs(awayShort.fatigue - 240 / 360) < 1e-6
-      && Math.abs(awayLong.fatigue - AWAY_2H / 360) < 1e-6,
-      `没走 ${Number((awayShort?.fatigue ?? NaN).toFixed(4))}（期望 .6667） · 走了两小时 ${Number((awayLong?.fatigue ?? NaN).toFixed(4))}（期望 .0902）`)
-    checkTrue('X5', 12, '【回退不是清零】回退之后的那个数仍然是正的（他回来时疲劳还在，不是从 0 重来）',
-      typeof awayLong?.fatigue === 'number' && awayLong.fatigue > 0.05,
-      `实测 ${Number((awayLong?.fatigue ?? NaN).toFixed(4))}`)
+      && Math.abs(awayShort.fatigue - (1 - 240 / 360)) < 1e-6
+      && Math.abs(awayLong.fatigue - (1 - AWAY_2H / 360)) < 1e-6,
+      `没走 ${Number((awayShort?.fatigue ?? NaN).toFixed(4))}（期望 .3333） · 走了两小时 ${Number((awayLong?.fatigue ?? NaN).toFixed(4))}（期望 .9097）`)
+    // ⚠️ **边界跟着方向翻**：老那版写的是 `> 0.05`（疲劳还在），翻成活力之后那句话变成
+    //    "活力没满" ⇒ **上界**。照抄旧下界的话，`1.00`（= 账被清零）也满足 `> 0.05`，
+    //    判据当场变成恒真 —— 这正是"静默失效"的形状。
+    checkTrue('X5', 12, '【回退不是清零】走了两小时之后，活力**严格小于 1**（攒下的那笔账还在；清零的实现是 1 − 15/360 = .9583）',
+      typeof awayLong?.fatigue === 'number' && awayLong.fatigue <= 0.93,
+      `实测 ${Number((awayLong?.fatigue ?? NaN).toFixed(4))}（清零 ⇒ .9583，应当在窗外）`)
 
     /**
      * 🔴 **采集端那一支（今天零覆盖）**：`X1`–`X5` 全是**手工喂一个算好的 `netWorkMinutes`** 给
@@ -2302,34 +2626,36 @@ try {
       //    尾巴落在第 4、7、10…37 条结果上（共 12 个），每个之间都是 15 分钟。
       for (let k = 1; k <= 37; k++) await toolStep(hWork, at(k * 5))
       const inPresence = scoresFromText(hWork.lastText())?.fatigue
-      checkTrue('X6', 12, `【采集端·在场累加】每次间隔 15 分钟（= 在场判据）⇒ 12 个尾巴攒满 180 分钟 ⇒ 疲劳 .50（实测 ${inPresence ?? '拿不到'}；走的是真事件流，不是喂纯函数）`,
+      checkTrue('X6', 12, `【采集端·在场累加】每次间隔 15 分钟（= 在场判据）⇒ 12 个尾巴攒满 180 分钟 ⇒ 活力 .50（实测 ${inPresence ?? '拿不到'}；走的是真事件流，不是喂纯函数）`,
         typeof inPresence === 'number' && Math.abs(inPresence - 0.50) < 5e-3,
-        `实测 ${inPresence ?? '拿不到'}（期望 .50 = 180 ÷ 360）`)
+        `实测 ${inPresence ?? '拿不到'}（期望 .50 = 1 − 180 ÷ 360）`)
 
       // 他离开 2 小时：这一段里**一个尾巴都没有**（采集端那个钟不推进，那段时间不算工时）。
       // 恢复干活：305 / 310 / 315 三条结果 ⇒ 机制① 在 315 那一步贴。
       // 采集端在那一刻看到的是"上一个尾巴（185 分）→ 现在（315 分）"= 130 分钟：
       // 超出在场的 15 分钟之外是 115 分钟 ⇒ 攒下的 180 按半衰 60 退成 180·e^(−115/60) ≈ 26.5，
-      // 再记在场那 15 分钟 ⇒ 41.5 ÷ 360 ≈ .115。
+      // 再记在场那 15 分钟 ⇒ 41.5 分钟 ⇒ 活力 1 − 41.5/360 ≈ .885。
       // 🔴 **判据给的是窗口，不是那一位小数**：这一步的读数取决于"哪一个事件推进那个钟"
-      //    （只在贴尾巴那一步推 ⇒ .115；每个事件都推 ⇒ .156）。
-      //    窗口 [.08, .17] 覆盖"同一条规则、记账时刻差一步"，而**三个错的行为都在窗外**：
-      //    清零 ⇒ 15 ÷ 360 = .04 · 不折 ⇒ 195 ÷ 360 = .54 · 半衰写错（30 / 120）⇒ .05 / .23。
+      //    （只在贴尾巴那一步推 ⇒ 41.5 分钟 ⇒ 活力 .885；每个事件都推 ⇒ 56.2 ⇒ .844）。
+      //    窗口 [.83, .92] 覆盖"同一条规则、记账时刻差一步"（它是老窗口 [.08, .17] 按
+      //    `1 − x` 翻过来的 —— 这两件事本来就是同一件事的正反两面）。
+      //    而**三个错的行为都在窗外**：清零 ⇒ 1 − 15/360 = .958 · 不折 ⇒ 1 − 195/360 = .458 ·
+      //    半衰写错（30 / 120）⇒ 1 − 18/360 ≈ .95 / 1 − 77/360 ≈ .79。
       for (let k = 61; k <= 63; k++) await toolStep(hWork, at(k * 5))
       const afterAway = scoresFromText(hWork.lastText())?.fatigue
-      checkTrue('X7', 12, `【采集端·离开回退】他离开 2 小时（这段一个尾巴都没有）之后接着干活 ⇒ 攒下的 180 分钟**按半衰 60 退**（实测疲劳 ${afterAway ?? '拿不到'}；只在尾巴那步记账是 .115、每个事件都记账是 .156）—— 清零 .04 · 不折 .54 都在窗外`,
-        typeof afterAway === 'number' && afterAway >= 0.08 && afterAway <= 0.17,
-        `实测 ${afterAway ?? '拿不到'}（期望落在 [.08, .17]；清零 .04 · 不折 .54 · 半衰 30 ⇒ .05）`)
+      checkTrue('X7', 12, `【采集端·离开回退】他离开 2 小时（这段一个尾巴都没有）之后接着干活 ⇒ 攒下的 180 分钟**按半衰 60 退**（实测活力 ${afterAway ?? '拿不到'}；只在尾巴那步记账是 .885、每个事件都记账是 .844）—— 清零 .96 · 不折 .46 都在窗外`,
+        typeof afterAway === 'number' && afterAway >= 0.83 && afterAway <= 0.92,
+        `实测 ${afterAway ?? '拿不到'}（期望落在 [.83, .92]；清零 ⇒ .96 · 不折 ⇒ .46 · 半衰 30 ⇒ .95）`)
 
-      // 回来之后**接着累加**：再干 15 分钟 ⇒ 正好 +15 ÷ 360 = +.0417
+      // 回来之后**接着累加**：再干 15 分钟 ⇒ 活力**正好 −15 ÷ 360 = −.0417**
       // （一个"他回来就从头算"的实现给不出这个增量 —— 除非它连在场那段也丢了）。
       for (let k = 64; k <= 66; k++) await toolStep(hWork, at(k * 5))
       const resumed = scoresFromText(hWork.lastText())?.fatigue
       const delta = typeof afterAway === 'number' && typeof resumed === 'number'
         ? Number((resumed - afterAway).toFixed(4)) : '拿不到'
-      checkTrue('X8', 12, `【采集端·回来接着累加】再干 15 分钟 ⇒ 疲劳**正好 +.0417**（实测增量 ${delta}）—— 在攒下的那个数上继续加，不是从 0 重来`,
-        typeof delta === 'number' && Math.abs(delta - 15 / 360) < 5e-3,
-        `回退后 ${afterAway ?? '拿不到'} ⇒ 再干 15 分钟 ${resumed ?? '拿不到'}（增量 ${delta}，期望 .0417）`)
+      checkTrue('X8', 12, `【采集端·回来接着累加】再干 15 分钟 ⇒ 活力**正好 −.0417**（实测增量 ${delta}）—— 在攒下的那个数上继续加，不是从 0 重来`,
+        typeof delta === 'number' && Math.abs(delta + 15 / 360) < 5e-3,
+        `回退后 ${afterAway ?? '拿不到'} ⇒ 再干 15 分钟 ${resumed ?? '拿不到'}（增量 ${delta}，期望 −.0417）`)
     }
   }
 
@@ -2377,9 +2703,9 @@ try {
     }
     const morning = await fatigueAt('09:00', T0 + 6 * HOUR)
     const noon = await fatigueAt('15:00', T0 + 6 * HOUR)
-    checkTrue('Z1', 10, '【口径 10】同一时刻、只把当日 log 的首条记录从 `09:00` 换成 `15:00` ⇒ 疲劳**明显更低**（首条真的被读）',
-      typeof morning === 'number' && typeof noon === 'number' && morning > noon,
-      `首条 09:00 ⇒ 疲劳 ${morning ?? '拿不到'} · 首条 15:00 ⇒ 疲劳 ${noon ?? '拿不到'}`)
+    checkTrue('Z1', 10, '【口径 10】同一时刻、只把当日 log 的首条记录从 `09:00` 换成 `15:00` ⇒ 活力**明显更高**（开工晚 ⇒ 净工时短；首条真的被读）',
+      typeof morning === 'number' && typeof noon === 'number' && noon > morning,
+      `首条 09:00 ⇒ 活力 ${morning ?? '拿不到'} · 首条 15:00 ⇒ 活力 ${noon ?? '拿不到'}`)
 
     // 口径 11：**今天没有 log ⇒ 降级到会话首帧**，而且要出声（不许静默失效）。
     // ⚠️ 事件序列：`turn/start` + 一个工具结果把 `lastEventAt` 推到 T0，**最后**才让老板开口
@@ -2400,8 +2726,8 @@ try {
         await h.stepBegin(at + 14 * MIN)
       }
       const degraded = scoresFromText(h.lastText())?.fatigue
-      checkTrue('Z2', 11, '【口径 11】**今天没有 log** ⇒ 降级用**会话首帧**当开工时刻（6 小时的会话 ⇒ 疲劳到顶）',
-        typeof degraded === 'number' && degraded >= 0.95, `实测疲劳 ${degraded ?? '拿不到'}`)
+      checkTrue('Z2', 11, '【口径 11】**今天没有 log** ⇒ 降级用**会话首帧**当开工时刻（6 小时的工作日 ⇒ 活力贴地）',
+        typeof degraded === 'number' && degraded <= 0.05, `实测活力 ${degraded ?? '拿不到'}`)
       checkTrue('Z3', 11, '【口径 11·不许静默】降级那一刻**要出声**（`console.error`，报文里点到 log / 开工时刻）',
         stderrSeen.slice(before).some((m) => /log\.md|开工时刻|首条/.test(m)),
         `这一段里 console.error 收到的是：${brief(stderrSeen.slice(before).join(' | ') || '（一声都没有）')}`)
@@ -2422,10 +2748,10 @@ try {
       await h.bossText('开工', T0)
       await h.stepBegin(T0 + 6 * HOUR)
       const fell = scoresFromText(h.lastText())?.fatigue
-      // 会话首帧 = T0（09:00）⇒ 干了 6 小时 ⇒ 1.00；累计日志那条 07:00 ⇒ 8 小时 ⇒ 也是 1.00。
-      // ⇒ 这一条**分不开**两种实现（两种都到顶），所以它只钉"降级那条路有值、不静默"。
-      checkTrue('Z4', 11, '【口径 11·同一件事】抽屉里没有 log 时，**降级**这条路的读数不静默（疲劳有值、不是 undefined）',
-        typeof fell === 'number', `实测疲劳 ${fell ?? '拿不到'}`)
+      // 会话首帧 = T0（09:00）⇒ 干了 6 小时 ⇒ 活力 .00；累计日志那条 07:00 ⇒ 8 小时 ⇒ 也是 .00。
+      // ⇒ 这一条**分不开**两种实现（两种都贴地），所以它只钉"降级那条路有值、不静默"。
+      checkTrue('Z4', 11, '【口径 11·同一件事】抽屉里没有 log 时，**降级**这条路的读数不静默（活力有值、不是 undefined）',
+        typeof fell === 'number', `实测活力 ${fell ?? '拿不到'}`)
     } finally {
       rmSync(cumulative, { recursive: true, force: true })
     }

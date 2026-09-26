@@ -291,13 +291,15 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    🔴 **判据要跟着事实走，不跟着文案走。**（改前先问：我钉的是那件事，还是那句话？）
   // 🔴 **2026-09-26 晚 · 事实又变了**：情绪模块砍到**三维 = 掌控 · 疲劳 · 亲近**（口径 1）。
   //    砍掉的那几个不是"少了"，是**不许回来** ⇒ 这条同时钉两半：三个按序在 + 砍掉的一个都不出现。
-  const dimNames = ['掌控', '疲劳', '亲近']
+  // 🔴 **2026-09-26 第三批 · 改名**：`疲劳 → 活力` · `亲近 → 亲密`（键名一个字没动）。
+  //    改的是**事实**（老板当天定名），不是把红改绿 —— 旧名字那一条由下面那条"文档那半边"接着钉。
+  const dimNames = ['掌控', '活力', '亲密']
   const goneDims = ['愉悦', '唤起', '新异']
   const firstAt = dimNames.map((d) => (moodText ?? '').indexOf(d))
   const missing = dimNames.filter((_, i) => firstAt[i] < 0)
   const outOfOrder = missing.length === 0 && !firstAt.every((v, i) => i === 0 || v > firstAt[i - 1])
   const backAgain = goneDims.filter((d) => (moodText ?? '').includes(d))
-  yes('preset', '三维 = 掌控 · 疲劳 · 亲近，次序没漂、砍掉的那三个没回来（口径 1）',
+  yes('preset', '三维 = 掌控 · 活力 · 亲密，次序没漂、砍掉的那三个没回来（口径 1）',
     missing.length === 0 && !outOfOrder && backAgain.length === 0,
     missing.length > 0
       ? `少了：${missing.join('、')}`
@@ -306,6 +308,24 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
         : backAgain.length > 0
           ? `砍掉的那几维又回来了：${backAgain.join('、')}`
           : `三个都在，首次出现的次序对（位置 ${firstAt.join(' / ')}）`)
+  // 🔴 **2026-09-26 第三批新增 · 改名彻底（方案第七节 #6 的"体检"那半边）** ────────────
+  //    老板当天把维度改叫**掌控 · 活力 · 亲密**，而**三份文档**里还写着旧名字。
+  //    ⇒ 这条盯的是"**笔记与现状对不上**"：那三份是给人读的，它们不改，
+  //      下一个读的人就会照旧名字去找信号（`疲劳三档` / `亲近的重逢项` 那些说法已经不成立了）。
+  //    ⚠️ **只在这三份文件里判**：`mood.md` 是一个例外 —— 那是**词表**，
+  //      `爱慕/亲近` 里的"亲近"是**词**、不是维度名（拿它红人是量错了东西）。
+  //    ⚠️ 探针 `I15` 钉的是同一件事的**产物那半边**（真贴出去的那一行）。
+  {
+    // ⚠️ 路径都从 `REPO` 拼（**不看 cwd**）：从别的目录跑这个脚本时，相对路径会静默读到"没有"。
+    const staleDocs = [join(REPO, 'AGENTS.md'), join(PRESET, '说明.md'), join(PRESET, 'me-aqua.md')]
+    const dirty = staleDocs
+      .map((p) => [p, existsSync(p) ? read(p) : undefined])
+      .filter(([, t]) => t === undefined || /疲劳|亲近/.test(t))
+      .map(([p, t]) => (t === undefined ? `${p}（读不到）` : `${p} 里 ${(t.match(/疲劳|亲近/g) ?? []).length} 处`))
+    yes('preset', '改名彻底：`AGENTS.md` · `说明.md` · `me-aqua.md` 里旧维度名 `疲劳` / `亲近` 一个字都不剩（口径 6）',
+      dirty.length === 0,
+      dirty.length === 0 ? '三份都干净' : `还写着旧名字：${dirty.join(' · ')}`)
+  }
   const dingLines = (moodText ?? '').split('\n').filter((l) => l.includes('确定'))
   yes('preset', '「确定」没有作为第四个维度回来（口径 1）',
     dingLines.every((l) => /不|没有|别/.test(l)),
