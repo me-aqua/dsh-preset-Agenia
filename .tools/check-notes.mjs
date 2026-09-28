@@ -605,6 +605,21 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       ? '还写着 { kind: \'plugin\', … } —— v4 的会话格式会拒收它，整轮运行直接失败'
       : '写的是 plugin:agenia（生产者的名字）')
 
+  // 🔴 2026-09-28 加：**`source.form` 决定那条注入在 GUI 里长什么样**。
+  //    来历：老板报"看不到情绪板了"。查下来 v4 起消息的显示形态由**生产者自己声明**
+  //    （客户端 `contextBody()` 按 `source.form` 分派 instructions / catalog / snapshot /
+  //    notice / relay / recall），**不声明就掉进 `OpaqueBody`** —— 那一支把 source 的字段
+  //    当原始数据摊开，界面上就成了一坨看不懂的东西。同类的
+  //    `@deepseek-ai/dsh-repeat-tool-reminder` 写的是 `{ kind, form: 'notice', summary }`。
+  //    ⇒ 这两条钉住 `form: 'notice'` 与 `summary` 都在 —— 少任何一个，那一行就不可读。
+  //    ⚠️ **不认识 form 名同样掉进 opaque**（客户端源码原话），所以别自创名字。
+  yes('injector', '尾巴那条消息声明了 source.form（v4 起 GUI 按它分派渲染，不写就成 opaque）',
+    /form:\s*'notice'/.test(src),
+    '没声明 form ⇒ 那条注入在界面上退化成 OpaqueBody（就是"看不到情绪板"那个症状）')
+  yes('injector', '尾巴那条消息带 source.summary，且摘要是**情绪板那一行**（折叠时一眼看到分数）',
+    /summary:\s*summarizeTail\(/.test(src) && /function summarizeTail/.test(src) && /【情绪板】/.test(src),
+    'summary 只在 notice 形态下显示；摘要取错行（比如取到「# 语言风格」）折叠行就没有分数')
+
   // ② 快照里唯一会变的是 agenia:board，而板子按 team_<岗位> 认人。
   //    2026-09-24 那天组长 42 次起人全走裸 subagent ⇒ 板子恒空 ⇒ 快照一整天没变。
   //    所以起人也算"叫了人"（算外聘）—— 认的是"起过人"，不是"用哪个工具名起的"。

@@ -1208,6 +1208,20 @@ export async function apply(ctx, config = {}) {
   }
 
   /**
+   * 折叠那一行上显示的一句话（`source.summary`，只有 `form: 'notice'` 会读它）。
+   *
+   * 挑法：**优先情绪板那一行**（`【情绪板】…`，三个分数都在上面），没有就退回正文第一行。
+   * 为什么不是"正文第一行"：`tailBodyOf` 拼的是 `style 段 + 情绪段`，
+   * 第一行永远是语言风格的开头（「# 语言风格」），对"她现在什么情绪"这个问题毫无信息量。
+   * ⚠️ 只截断、不改写 —— 这一行是给人扫一眼的，不是第二份数据源。
+   */
+  function summarizeTail(text) {
+    const lines = String(text).split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
+    const mood = lines.find((line) => line.includes('【情绪板】')) ?? lines[0] ?? ''
+    return mood.length > 160 ? `${mood.slice(0, 157)}…` : mood
+  }
+
+  /**
    * 这一批 `messages` 里，哪一条是"老板本人说的"？
    * `source.kind` 有四种以上（`user` / `plugin` / `agent-instructions` / `skill-catalog`），
    * 只认 `user` —— 别的算进来就是自己喂自己（机制② 会被自己刚贴的那条 style 再触发一次）。
@@ -1278,10 +1292,11 @@ export async function apply(ctx, config = {}) {
 
     pendingTail.delete(id)      // ② 赢下这一格 ⇒ ① 的挂账清掉；① 落地了也把账销掉
 
+    const tail = tailBodyOf(id)
     const entered = messages.toSpliced(byTwo ? at + 1 : messages.length, 0, {
       id: randomUUID(),
       role: 'user',
-      content: [{ type: 'text', text: tailBodyOf(id) }],
+      content: [{ type: 'text', text: tail }],
       // 🔴 `kind` 必须是**生产者自己的名字**，不能写 `'plugin'`。
       //    会话格式升到 v4 之后，`'plugin'` 这个笼统的身份**被拒收**了 ——
       //    真回合的报错原文（2026-09-28 实测）：
@@ -1291,7 +1306,19 @@ export async function apply(ctx, config = {}) {
       //    没登记过的生产者一律映射成 `plugin:<插件名>` —— 沿用它，别自创。
       //    ⚠️ 这**不影响** ② 认"老板的话"：那条判据看的是 `kind === 'user'`，
       //       而这条消息的 `kind` 永远是 `plugin:agenia` ⇒ 不会被自己喂自己。
-      source: { kind: 'plugin:agenia' },
+      //
+      // 🔴 `form` 是**给 GUI 看的**（2026-09-28 补，老板问"看不到情绪板了"）。
+      //    v4 起消息的显示形态由**生产者自己声明**（客户端 `contextBody()` 按 source.form
+      //    分派：instructions / catalog / snapshot / notice / relay / recall）——
+      //    **不声明就掉进 `OpaqueBody`**，那一支把 source 的字段当原始数据摊开，
+      //    于是那条注入在界面上变成一坨看不懂的东西（老板就是这个症状）。
+      //    同类的 `@deepseek-ai/dsh-repeat-tool-reminder` 写的是
+      //    `source: { kind, form: 'notice', summary }`，正文由 `NoticeBody` 原样渲染 ——
+      //    照抄它这一行的形状，别自己发明 form 名（不认识的名字同样掉进 opaque，
+      //    客户端源码里那句注释写着：*this is what every form this UI version does not recognize renders as*）。
+      //    `summary` 是**折叠那一行上的一句话**：这里取 mood.md 的正文（`tailBodyOf` 里
+      //    情绪板就排在最前面）⇒ 老板不用展开就能一眼看到当前三维分数。
+      source: { kind: 'plugin:agenia', form: 'notice', summary: summarizeTail(tail) },
     })
     if (byTwo) skipNext.add(id)   // 守门 B：② 刚摆过 ⇒ 紧接着那一个工具结果让路
     return { ...decision, messages: entered }
