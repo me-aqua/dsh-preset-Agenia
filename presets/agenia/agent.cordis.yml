@@ -346,8 +346,25 @@
         toolFilter:
           deny: [workflow, ralph]
 
-    - id: workflow-worker-thread
-      name: '@deepseek-ai/dsh-workflow-worker-thread'
+    # ⚠️ 2026-09-28 换版（0.1.7）：这一格原来写着
+    #      `- id: workflow-worker-thread / name: '@deepseek-ai/dsh-workflow-worker-thread'
+    #       config: {provider: spawn}`
+    #    ——**那一行整个删掉了**，来历值得记下来（我一开始补错了方向）：
+    #
+    #    · 0.1.7 里 `@deepseek-ai/dsh-workflow-worker-thread` 这个包**不存在了**
+    #      （实测：`node_modules/@deepseek-ai/` 下没有它，全机也没有任何包再注册那个模块名）。
+    #    · 换上来的是 `@deepseek-ai/dsh-workflow`，但**那个包不是"引擎实现"，是引擎的契约本身** ——
+    #      它 `class WorkflowEngine extends Service`，自我描述是
+    #      "Workflow capability seam: ctx.workflowEngine service"，
+    #      而且**全机没有任何一个 cordis.patch.yml / presets/*.patch.yml 引用它**
+    #      （实测：`grep` 所有补丁文件，零命中）。
+    #    · 出厂的四个预设**没有一个**声明它 —— 契约由框架自己装，preset 只声明**实现**。
+    #      我们的 `- id: workflow` 那一行因此是**凭空多出来的**（`onlyInAgenia` 当场报出来）。
+    #    ⇒ 「标准有的必须有」这条规矩**反着也成立**：standard 没有的，别自己加。
+    #
+    #    下面是出厂 standard 原样的三行 —— 照抄，别凭印象改：
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
       config:
         provider: spawn
 
@@ -378,3 +395,15 @@
 
 - id: present
   name: '@deepseek-ai/dsh-tool-present'
+
+# ⚠️ 2026-09-28 换版（0.1.7）补抄：**出厂 standard 多了这一行，而且是关着的。**
+# 它给模型一个 `plugin_manager` 工具（装/卸插件、开关 bundle）。出厂四份预设里
+# **没有一份**打开它（standard 那一行就是 `disabled: true`）——
+# 所以这里也照抄成关着的，**不是为了用，是为了"和 standard 逐行一致"**：
+# 3b 的规矩是集合比对，"出厂有一行、我们没有"本身就算漂移，
+# 哪怕它是关着的、哪怕我们永远不打开它。
+# 要真打开它（让组长自己装插件），改的就是这一行 —— 但先想清楚：那是把
+# 整个 profile 的插件层交给一个会话里的模型。
+- id: tool-plugin-manager
+  name: '@deepseek-ai/dsh-plugin-manager/tools'
+  disabled: true

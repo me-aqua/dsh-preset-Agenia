@@ -1,8 +1,13 @@
 {
   "name": "agenia-injector",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "main": "./inject.js",
-  "description": "每轮注入人格与岗位说明书。跟着 preset 文件夹一起走。"
+  "description": "每轮注入人格与岗位说明书。跟着 preset 文件夹一起走。",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
 }

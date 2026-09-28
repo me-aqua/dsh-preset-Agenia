@@ -22,17 +22,66 @@ const HOME = process.env.USERPROFILE ?? process.env.HOME
 const PROFILES = join(HOME, '.dsh', 'profiles')
 
 /**
- * 出厂预设随 dsh 本体发布。本机是 npx 装的那一份，缓存目录名里带哈希、会变，
- * 所以按 glob 找，不写死那串哈希（写死过，升级一次就找不到）。
+ * 出厂预设随 dsh 本体发布 —— **找的是那个目录，不是"某一种安装方式"**。
+ *
+ * 🔴 2026-09-28 换版（DSH 0.1.5 → 0.1.7）：**出厂预设搬家了，这里跟着搬。**
+ *   · 旧位置 `…/node_modules/@deepseek-ai/dsh-agent-presets/presets/<id>/agent.cordis.yml`
+ *     —— 那个包现在**根本不存在**了（实测 `require.resolve` 报 MODULE_NOT_FOUND）。
+ *   · 新位置 `…/node_modules/@deepseek-ai/dsh-web-app/presets/<id>.patch.yml`
+ *     —— 出厂四份是**四个补丁文件**，不是四个目录；`standard` 的组合本体内联在
+ *        `standard.patch.yml` 里（`config.plugins:` 下面那一串），所以下面照样用
+ *        `idLines()` 数行 —— **方言不同，数法相同**。
+ *   · **判定形状钉在"标准模式那份在不在"上**，因为整个 composition 家族的比对都是
+ *     围着它转的 —— 这正是它值得当判据的理由。
+ *
+ * ⚠️ **为什么原来那条会红，而且红得比看上去严重**：`shippedPresets()` 返回 undefined
+ *   ⇒ 下面 `else` 那一整支（standard vs agenia 的集合比对，AGENTS.md 3b 的规矩）
+ *   **整段被跳过** —— 它既绿不了也红不了。一条"找不到目录"的红，悄悄吃掉了六条断言。
+ *   所以现在那条红会把**找过的每个落点**打出来，而且 `standard.patch.yml` 存在但数出
+ *   0 行时另有一条红（防的是"文件还在、方言变了、正则一条都命中不了"那种假绿）。
+ *
+ * ⚠️ **搜索顺序 = 先找 dsh 本体在哪，再从它身边找预设**，不写死任何一种安装方式：
+ *   本机 0.1.7 跑的是**全局安装**那份（`C:\Users\DAVID\AppData\Roaming\npm\node_modules`），
+ *   而 0.1.5 时代是 `_npx` 缓存（目录名带哈希，会随版本变 —— 写死过，升级一次就找不到）。
+ *   两条都留着：`_npx` 是上一版的形状，哪天回去跑还在。
  */
+const shippedDirections = () => [
+  // ① 上一版的形状：npx 缓存（哈希目录名会变，所以枚举）
+  ...(existsSync(join(process.env.LOCALAPPDATA ?? '', 'npm-cache', '_npx'))
+    ? readdirSync(join(process.env.LOCALAPPDATA ?? '', 'npm-cache', '_npx'))
+      .map((h) => join(process.env.LOCALAPPDATA, 'npm-cache', '_npx', h, 'node_modules', '@deepseek-ai', 'dsh'))
+    : []),
+  // ② 本机现在的形状：全局安装
+  join(process.env.APPDATA ?? '', 'npm', 'node_modules', '@deepseek-ai', 'dsh'),
+  // ③ npm 自己说的全局 root（前面两条都落空时的兜底；跑不动就跳过，不影响判定）
+  (() => {
+    try {
+      return join(execFileSync('npm', ['root', '-g'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(),
+        '@deepseek-ai', 'dsh')
+    } catch { return '' }
+  })(),
+]
+
 function shippedPresets() {
-  const cache = join(process.env.LOCALAPPDATA ?? '', 'npm-cache', '_npx')
-  if (!existsSync(cache)) return undefined
-  for (const entry of readdirSync(cache)) {
-    const p = join(cache, entry, 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets')
-    if (existsSync(p)) return p
+  for (const dsh of shippedDirections()) {
+    if (dsh === '' || !existsSync(dsh)) continue
+    for (const candidate of [
+      join(dsh, 'node_modules', '@deepseek-ai', 'dsh-web-app', 'presets'), // 0.1.7 起
+      join(dsh, 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets'), // 0.1.5 的旧位置
+    ]) {
+      if (existsSync(join(candidate, 'standard.patch.yml'))
+        || existsSync(join(candidate, 'standard', 'agent.cordis.yml'))) return candidate
+    }
   }
   return undefined
+}
+
+/** 出厂 `standard` 的组合本体：新形状是补丁文件，旧形状是目录里的 agent.cordis.yml。 */
+function standardComposition(dir) {
+  const patch = join(dir, 'standard.patch.yml')
+  if (existsSync(patch)) return patch
+  const legacy = join(dir, 'standard', 'agent.cordis.yml')
+  return existsSync(legacy) ? legacy : undefined
 }
 
 const rows = []
@@ -60,7 +109,9 @@ const ageDays = (ymd) => {
 const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] ?? '') ?? [])[1]
 
 // ── 1 · 能力行：集合比对，不是肉眼比对 ──────────────────────────────────────
-// 规矩见 README「和能力的关系」：**standard 有的必须有、多出来的每一项都要写下来**。
+// 规矩在 AGENTS.md §3b：**standard 有的必须有、多出来的每一项都要写下来**。
+// ⚠️ 2026-09-28：这句原来引的是 README「和能力的关系」那一节 —— **那节已经不在了**，
+//    而权威数字现在住 AGENTS.md §3b。引文跟着事实走（同一条规矩管注释）。
 {
   const ageniaFile = join(PRESET, 'agent.cordis.yml')
   const multi = (xs) => xs.reduce((m, x) => m.set(x, (m.get(x) ?? 0) + 1), new Map())
@@ -73,24 +124,78 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const agenia = idLines(read(ageniaFile))
   const shipped = shippedPresets()
 
-  // 换到新预设后这几个数没变过（2026-09-20 实测）—— 换的是谁在建队，不是队伍大小。
-  // ⚠️ 2026-09-22 破例一次：`tool-subagent-fork` 那一行**被关掉**（老板拍板，来历见 yml 里那段注释）
-  //    ⇒ `disabled` 的行数 4 → 5。**上面三个数（37 / 5 / 1）一个没动** —— 关掉不等于删掉。
-  eq('composition', 'agenia 能力行总数', agenia.length, 37)
+  // 🔴 2026-09-28 换版（0.1.5 → 0.1.7）：**这一族数字全部重测过**（换版后第一次真的跑起来）。
+  //    出厂那边：`standard` **33** 行（旧记录 31 —— 多了 `preset-standard` 那行**自声明**
+  //    与 `tool-plugin-manager` 那行**关着的**外部插件管理工具）。
+  //    ⚠️ `preset-standard` 是 `standard.patch.yml` 的注册行、**不是能力行**，
+  //       所以下面的比对会先把它剔掉（`PRESET_DECL`）—— 不剔的话"出厂多一行"就成了假红。
+  //    我们这边：**38** 行（旧记录 37）—— 换版后补了**一处漏抄**：`workflow-ptc`
+  //    （编排实现；出厂有、我们没有 ⇒ `onlyInStandard` 非空，脚本自己抓到的）。
+  //    ⚠️ 2026-09-22 破例一次：`tool-subagent-fork` 那一行**被关掉**（老板拍板，来历见 yml 里那段注释）
+  //    ⚠️ 2026-09-28 又改一条判据：`disabled` 原来数的是**全文里 `disabled:` 出现的次数**（含注释），
+  //       实测 7 处 —— 而**生效的只有 4 行**。⇒ 换成有效行判据（下面那条），数字 4。
+  //    **"差异恒为六项"那个数一个没动** —— 关掉不等于删掉，补抄也不是加能力。
+  eq('composition', 'agenia 能力行总数', agenia.length, 38)
   eq('composition', 'team-* 子行数', agenia.filter((r) => r.startsWith('team-')).length, 5)
   eq('composition', 'persona-injector 行数', agenia.filter((r) => r === 'persona-injector').length, 1)
-  eq('composition', 'agent.cordis.yml 里 disabled 的行数',
-    (read(ageniaFile).match(/disabled:/g) ?? []).length, 5)
+  // 🔴 2026-09-28：这条原来数的是**全文里 `disabled:` 出现的次数**（含注释），
+  //    实测 7 处 —— 而**生效的只有 4 行**：`tool-subagent-fork` / `tool-subagent-codex` /
+  //    `tool-subagent-claude-code`（都是 `disabled: true`）+ `tool-plugin-manager`。
+  //    另外两处是 `!!js` 表达式（tool-bash / tool-pwsh 的平台二选一），**不算"关着的行"**。
+  //    ⇒ 换成**有效行判据**：剔掉注释行再数，而且只认 `disabled: true`。
+  //    强得多：谁把某一行从"关着"改成"开着"（或者反过来），这条**当场红**，
+  //    而旧的写法在注释里多写一个词就跟着漂（旧笔记里那个"5"就是这么来的）。
+  const effectiveYml = read(ageniaFile).split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')
+  eq('composition', 'agent.cordis.yml 里 disabled: true 的行数（有效行，不含注释）',
+    (effectiveYml.match(/^\s*disabled:\s*true\s*$/gm) ?? []).length, 4)
+
+  // 🔴 2026-09-28 换版加：**workflow 那三行**。
+  //    来历：0.1.7 把 `@deepseek-ai/dsh-workflow-worker-thread`（0.1.5 里那一行，带 provider: spawn）
+  //    换掉了 —— 那个包在新版里**整个不存在**，也没有任何包再注册那个模块名。
+  //    ⚠️ **我第一版修错了方向**：以为换上来的是 `@deepseek-ai/dsh-workflow`，
+  //       就在组合里补了一行 `- id: workflow`。跑体检脚本当场红（`onlyInAgenia` 多出 `workflow`）——
+  //       查下来那个包**不是引擎实现，是引擎的契约本身**（`class WorkflowEngine extends Service`），
+  //       而且**全机没有任何补丁文件引用它**（出厂四份预设一份都没声明）。
+  //       ⇒ 契约由框架自己装，preset 只声明**实现**（`workflow-ptc`）。
+  //       ⇒ 「standard 有的必须有」这条**反着也成立**：standard 没有的，**别自己加**。
+  //    所以这三条钉的是：老名字不许回来 · 实现行必须在 · 宿主级的契约行不许被我们抄进来。
+  yes('composition', '老的 workflow-worker-thread 名字不再出现（0.1.7 里那个包已经不存在）',
+    !/dsh-workflow-worker-thread/.test(effectiveYml),
+    '那个包在 0.1.7 里没了 —— 写着它，这一行解析不出来，整份预设挂不起来')
+  yes('composition', 'workflow-ptc 编排实现行在，且带 provider: spawn（出厂 standard 的原文）',
+    /- id: workflow-ptc\n\s+name: '@deepseek-ai\/dsh-workflow-ptc'\n\s+config:\n\s+provider: spawn/.test(effectiveYml),
+    '缺了它，tool-workflow 在、能编排的东西是空的（出厂 standard 有这一行）')
+  yes('composition', '没有多声明宿主级的 workflow 服务契约（standard 四份预设都不声明它）',
+    !/name: '@deepseek-ai\/dsh-workflow'/.test(effectiveYml),
+    'dsh-workflow 是服务契约本身、由框架装；preset 只声明实现。多写一行 = onlyInAgenia 漂移')
+
+  // 那份补丁自己的注册行（`preset-standard`）不是能力行 —— 它是"这份补丁怎么被发现"，
+  // 我们那份的对应物是 `cordis.patch.yml` 里的 `preset-agenia`（在另一个文件里，进不了这个集合）。
+  // 不剔掉它，`onlyInStandard` 会永远非空，而这跟"我们少抄了一行能力"完全是两回事。
+  const PRESET_DECL = /^preset-/
 
   if (shipped === undefined) {
-    add('composition', '找得到出厂预设目录', false, 'npm-cache/_npx/*/node_modules/@deepseek-ai/dsh-agent-presets/presets 里没找到')
+    add('composition', '找得到出厂预设目录', false,
+      '找过这些落点，一个都没有：'
+      + shippedDirections().filter((d) => d !== '').map((d) => join(d, 'node_modules', '@deepseek-ai', 'dsh-web-app', 'presets')).join(' · ')
+      + ' —— 0.1.7 起出厂预设住 @deepseek-ai/dsh-web-app/presets/<id>.patch.yml')
   } else {
-    const stdFile = join(shipped, 'standard', 'agent.cordis.yml')
-    if (!existsSync(stdFile)) {
-      add('composition', '找得到出厂 standard 预设', false, `找不到 ${stdFile}`)
+    const stdFile = standardComposition(shipped)
+    if (stdFile === undefined) {
+      add('composition', '找得到出厂 standard 预设', false,
+        `${shipped} 里既没有 standard.patch.yml，也没有 standard/agent.cordis.yml`)
     } else {
-      const std = idLines(read(stdFile))
-      eq('composition', 'standard 能力行总数', std.length, 31)
+      const rawStd = idLines(read(stdFile))
+      eq('composition', 'standard 能力行总数（含它自己那行注册声明）', rawStd.length, 33)
+      const std = rawStd.filter((r) => !PRESET_DECL.test(r))
+      // 🔴 2026-09-28 补：**文件在、方言变了** ⇒ 正则可以一条都不命中，
+      //    于是数出 0 行、差集变成"agenia 多出 38 项"，下面每一条都红得莫名其妙。
+      //    这条把病因直接点出来（实测新方言下命中的是 33，剔掉注册行是 32）。
+      yes('composition', '出厂 standard 那份数得出能力行（防"文件在、正则全哑"）',
+        rawStd.length > 0,
+        rawStd.length > 0
+          ? `${rawStd.length} 行 · 剔掉注册行 ${std.length} 行（${stdFile}）`
+          : `${stdFile} 里一条能力行都没数出来 —— 先确认它的方言还是 \`- id:\` 那种，别去改下面的数`)
       const onlyStd = diff(std, agenia)
       const onlyAge = diff(agenia, std)
       yes('composition', 'onlyInStandard 为空', onlyStd.length === 0, onlyStd.join(', ') || '空')
@@ -102,12 +207,30 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
         onlyAge.length === want.length && onlyAge.every((x, i) => x === want[i]),
         onlyAge.join(', ') || '空（只有 persona 遮蔽行时说明岗位行丢了）')
 
-      // README「和能力的关系」是全体广播那段，它写错一个数四天里没人发现过。
-      // 用反向断言：只拦"又写回八项"，不管它怎么措辞 —— 正向那句是散文，钉不住。
+      // 🔴 2026-09-28：**权威数字只在 AGENTS.md 一处**。
+      //    换版后我先给 README 也加了这条，跑出来是红的 —— 查下来 README 里
+      //    **根本没有"六项"这句话**（它那节在改写时没了），我钉的是**别处的措辞**。
+      //    ⇒ 按"判据跟着事实走、不跟着文案走"：README 只留它真正说的那句
+      //      （"标准模式有的工具她一样不少"），数字由 AGENTS.md 3b 那一条钉。
+      //    ⚠️ AGENTS.md 写的是「这份预设相对 standard 的差异是六项」——
+      //      谁把六改成七/八，或者加了能力行却不动文档，这条当场红。
+      const agents = join(REPO, 'AGENTS.md')
+      if (existsSync(agents)) {
+        const text = read(agents)
+        yes('composition', 'AGENTS.md 说差异是"六项"（3b 的规矩：多出来的必须写下来）',
+          /差异是六项/.test(text) && !/(差异是八项|差异是七项|这八项)/.test(text),
+          '文书与实测 6 项对不上 —— 改文档，别改这个数')
+      }
+      // 旧口径：只拦 README 又写回八项那一种措辞。它钉的是 README 的散文，留着。
+      // 另加一条：README 那句"只会多不会少"是**对外的全称承诺**，是它唯一会误导人的话。
       const readme = join(REPO, 'README.md')
       if (existsSync(readme)) {
+        const text = read(readme)
         yes('composition', 'README 不再说差异是"八项"',
-          !/(这八项|差异是八行|差异是八项)/.test(read(readme)), '文书与实测 6 项对不上')
+          !/(这八项|差异是八行|差异是八项)/.test(text), '文书与实测 6 项对不上')
+        yes('composition', 'README 里那句全称承诺还在（标准模式有的她一样不少）',
+          /标准模式有的工具她一样不少/.test(text),
+          'README 的"只会多不会少"没了 —— 那是这份预设对外唯一的能力承诺')
       }
     }
   }
@@ -466,6 +589,22 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     /warnOnce\('pre-step-agent'/.test(src) && /拿不到 agent\.id/.test(src),
     '缺了这条，两条机制认不出是谁就整条不生效，而且是静默的')
 
+  // 🔴 2026-09-28 加：**尾巴那条消息的 `source.kind` 不许写 `'plugin'`**。
+  //    来历：真回合里整轮运行失败，报文是
+  //      `format v4 message requires a producer-owned source kind`
+  //    —— 会话格式升到 v4 之后，`'plugin'` 这个笼统身份**被拒收**，
+  //    每个生产者必须用自己的名字（判据在 `dsh-session-format-v3-to-v4` 的 `source()`：
+  //    `kind` 必须非空、且不得等于 `'plugin'`；同包的 `producerKind()` 给的一般形状是
+  //    `plugin:<插件名>`）。**修之前那份代码写的正是 `{ kind: 'plugin', plugin: 'agenia' }`。**
+  //    这条一起钉两半：新写法在、旧写法不在。
+  //    ⚠️ 验它不用真回合：那个包导出了 `releasedV4SessionFormatCodec.encodeEvent`，
+  //       把整条消息喂进去就会当场抛（实测：旧写法抛、新写法过）。
+  yes('injector', '尾巴那条消息的 source.kind 是自己的名字，不是笼统的 \'plugin\'（v4 会拒收）',
+    /kind:\s*'plugin:agenia'/.test(src) && !/kind:\s*'plugin'\s*,/.test(src),
+    /kind:\s*'plugin'\s*,/.test(src)
+      ? '还写着 { kind: \'plugin\', … } —— v4 的会话格式会拒收它，整轮运行直接失败'
+      : '写的是 plugin:agenia（生产者的名字）')
+
   // ② 快照里唯一会变的是 agenia:board，而板子按 team_<岗位> 认人。
   //    2026-09-24 那天组长 42 次起人全走裸 subagent ⇒ 板子恒空 ⇒ 快照一整天没变。
   //    所以起人也算"叫了人"（算外聘）—— 认的是"起过人"，不是"用哪个工具名起的"。
@@ -645,11 +784,55 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const userRoot = join(HOME, '.dsh', '.agent-presets')
   add('host', '用户根 ~/.dsh/.agent-presets/ 的条目数',
     true, existsSync(userRoot) ? `${readdirSync(userRoot).length} 条` : '目录不存在')
-  // 交付路径不许依赖 roots 登记：拷文件夹才是装法。
-  // 名字原来写的是「预设不靠 roots 登记」—— 那是**结论**，量到的其实是"目录里没有那个补丁文件"。
-  // 判据和名字对不上的断言，红的时候会把人引去查 roots。
-  yes('host', '预设目录里没有 cordis.patch.yml（拷文件夹就能装）',
-    !existsSync(join(PRESET, 'cordis.patch.yml')))
+  // 2026-09-28 换版（DSH 0.1.5 → 0.1.7）：预设不再靠"扫目录"发现 —— 框架自己的 skill 写着
+  // `Nothing reads that directory any more.`（连 ~/.dsh/.agent-presets/ 一起作废；
+  // profile 里那行 agent-presets 与它的 roots 键在新版里**根本不存在**，写了只会被跳过）。
+  // 现在一份预设是一个 **bundle**：package.json 里声明 dsh.bundle.patch，旁边放那个补丁，
+  // 补丁里用一行 @deepseek-ai/dsh-agent-preset 把它注册进 agent-preset-registry。
+  // 所以旧断言「预设目录里没有 cordis.patch.yml」正好反了 —— 现在**必须有**。
+  // 守的东西没变：交付物要能自己装上去，不靠这台机器上别的东西。
+  // 旧口径「拷文件夹就能装」的来历见 git 历史与 INSTALL.md 第 10 节，别照它改回去。
+  const bundlePatch = join(PRESET, 'cordis.patch.yml')
+  let bundlePatchDeclared
+  try {
+    bundlePatchDeclared = JSON.parse(read(join(PRESET, 'package.json')))?.dsh?.bundle?.patch
+  } catch {
+    bundlePatchDeclared = undefined
+  }
+  yes('host', '预设是个 bundle（补丁文件在，且 package.json 声明了 dsh.bundle.patch）',
+    existsSync(bundlePatch) && bundlePatchDeclared === './cordis.patch.yml',
+    `补丁文件${existsSync(bundlePatch) ? '在' : '不在'} · package.json 声明的是 ${String(bundlePatchDeclared)}`)
+  // 🔴 2026-09-28 换版当天最贵的一组：**交付补丁的形状**。
+  //    来历（读数全在 `.tools/mount-test/README.md`，是在**真 web 档**里量的）：
+  //      · 原来那份补丁用 `cordis:include` 把 `agent.cordis.yml` 引进来 ——
+  //        实测 `generation=false`、整份 `broken`（全部行 never started）；
+  //        而**同一个组合本体内联**进去就正常（38 行全起）。出厂四份预设**没有一份**用 include。
+  //      · 改成内联之后又踩到两处**必须绝对路径**的地方：
+  //        `./inject.js` ⇒ 那一行 never started（整份 broken）；
+  //        不写 `contentDir` ⇒ 那些 `.md` 全读不到，**而且不报错**（静默注入 0 字符）。
+  //    ⇒ 这几条钉的就是"三个坑都填上了"，谁改回去谁当场红。
+  {
+    const patch = existsSync(bundlePatch) ? read(bundlePatch) : ''
+    // ⚠️ 判"用没用它"必须**先剔掉注释行** —— 这份补丁的头部正好有一段说明在讲
+    //    "为什么不用 cordis:include"，把注释算进去就成了永远红的假红（当场踩过）。
+    const effectivePatch = patch.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')
+    yes('host', '交付补丁**不用** cordis:include 引组合本体（实测那样挂不起来）',
+      patch.length > 0 && !/cordis:include/.test(effectivePatch),
+      patch.length === 0
+        ? '补丁文件读不到'
+        : /cordis:include/.test(effectivePatch)
+          ? '又用回 include 了 —— 真 web 档实测它 generation=false、整份 broken'
+          : '内联的（照出厂四份预设的形状）')
+    yes('host', '补丁里注入器的行名是绝对的 file:/// URL（相对路径那一行 never started）',
+      /name:\s*'file:\/\/\/[^']*\/inject\.js'/.test(patch),
+      '行名写成 ./inject.js 会让整份预设判 broken —— 实测过')
+    yes('host', '补丁里注入器那行写着 contentDir（不写它那些 .md 全读不到，且不报错）',
+      /contentDir:\s*'[A-Za-z]:[\\/]/.test(patch),
+      '不写 ⇒ ctx.baseUrl 是调起进程的工作目录 ⇒ 静默注入 0 字符（实测 stderr 一串「找不到对应文件」）')
+    yes('host', '补丁是 agent.cordis.yml 的派生物，且有生成器能对账',
+      existsSync(join(REPO, '.tools', 'make-bundle-patch.mjs')),
+      '没有生成器 ⇒ 两份会各走各的；跑 <node> .tools/make-bundle-patch.mjs --check 对账')
+  }
   // 用测试架子跑过之后要还原，忘了就是个坑（见 .tools/mount-test/README.md）。
   const probe = join(HOME, '.dsh', 'profiles', 'headless', 'cordis.patch.yml')
   const probeOn = existsSync(probe) && !/^\[\]\s*$/.test(read(probe))

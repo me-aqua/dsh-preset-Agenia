@@ -1282,7 +1282,16 @@ export async function apply(ctx, config = {}) {
       id: randomUUID(),
       role: 'user',
       content: [{ type: 'text', text: tailBodyOf(id) }],
-      source: { kind: 'plugin', plugin: 'agenia' },
+      // 🔴 `kind` 必须是**生产者自己的名字**，不能写 `'plugin'`。
+      //    会话格式升到 v4 之后，`'plugin'` 这个笼统的身份**被拒收**了 ——
+      //    真回合的报错原文（2026-09-28 实测）：
+      //      `本轮运行失败 · format v4 message requires a producer-owned source kind`
+      //    判据在 `dsh-session-format-v3-to-v4` 的 `source()`：`kind` 必须是非空字符串、
+      //    且**不得**等于 `'plugin'`。而同一个包的 `producerKind()` 给出了一般形状：
+      //    没登记过的生产者一律映射成 `plugin:<插件名>` —— 沿用它，别自创。
+      //    ⚠️ 这**不影响** ② 认"老板的话"：那条判据看的是 `kind === 'user'`，
+      //       而这条消息的 `kind` 永远是 `plugin:agenia` ⇒ 不会被自己喂自己。
+      source: { kind: 'plugin:agenia' },
     })
     if (byTwo) skipNext.add(id)   // 守门 B：② 刚摆过 ⇒ 紧接着那一个工具结果让路
     return { ...decision, messages: entered }

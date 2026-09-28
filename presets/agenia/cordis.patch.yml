@@ -1,0 +1,408 @@
+# Agenia 作为一个 DSH bundle 的补丁文件 —— 这份预设的**注册入口**。
+#
+# ── 为什么需要它（2026-09-28 换版）─────────────────────────────────────────
+# DSH 0.1.7 起，"用户预设"的发现机制整个换掉了：
+#   · 以前：往 profile 的 cordis.patch.yml 里登记一个 `roots` 目录，由扫描器去扫目录里
+#     的 agent.cordis.yml（那一行的 id 叫 `agent-presets`）。
+#   · 现在：**没有任何东西会扫目录**（框架自己的 skill 原话：Nothing reads that
+#     directory any more —— 连 ~/.dsh/.agent-presets/ 一起作废）。
+#     一份预设 = 一行 @deepseek-ai/dsh-agent-preset 声明，由某个 bundle 的补丁带进来。
+#   ⇒ 旧的 `agent-presets` 行与 `roots` 键在新版里**根本不存在**，写它只会得到一句
+#     `patch: entry %C not found` 然后被跳过。症状：预设菜单里**只剩出厂那四个**
+#     （standard / ptc / minimal / cordis）—— 2026-09-28 真发生过一次。
+#
+# 出厂那四份就是这个形状，住在 @deepseek-ai/dsh-web-app/presets/<id>.patch.yml。
+# 照抄它，别自己发挥。装法见同目录的 说明.md「怎么装」。
+#
+# ── 🔴 为什么下面那些行是**内联**的，而不是 `cordis:include` 进来的 ──────────────
+# 2026-09-28 实测（在**真 web 档**里读的注册表）：
+#
+#   standard / ptc / minimal / cordis : generation=true  行=32/33/7/33  broken=无
+#   我们这份（include 写法）           : generation=false 行=-        broken=persona… never started
+#   同一个组合本体、同一个位置、内联   : generation=true  行=1        broken=无
+#
+# —— **`cordis:include` 在预设里挂不起来**：那份补丁的全部行都停在"等宿主服务"，
+#    整份预设被判 broken（菜单里那条**被 UI 藏掉**，所以症状是"压根看不见 Agenia"）。
+#    出厂四份预设**没有一份**用 include，它们的 plugins 全是内联的。这一条在无头档里
+#    也同样复现（那里是 29 行全废）。⇒ **别再改回 include。**
+#
+# ⚠️ 所以这份文件是 `agent.cordis.yml` 的**派生物**：
+#    那份仍是唯一来源，这份由 `.tools/make-bundle-patch.mjs` 生成 ——
+#    **改了 agent.cordis.yml 就跑一次它**，体检脚本有一条断言盯着两份是否一致。
+#
+# ⚠️ 下面那个 `persona-injector` 的行名与 `contentDir` 都是**绝对路径**，
+#    两处都由生成器改写（见 `.tools/make-bundle-patch.mjs` 里 INJECTOR / CONTENT_DIR 两段说明）：
+#      · 行名写 `./inject.js` ⇒ 那一行 never started ⇒ **整份预设 broken**（实测）
+#      · 不写 contentDir   ⇒ 那些 .md 全读不到，**而且不报错**（静默注入 0 字符）
+#    ⇒ **换机器 / 换目录，改生成器里那两行，再跑一次生成器。**
+- insert:
+    - id: preset-agenia # 行名按约定写 preset-<预设 id>
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: agenia # 预设 id：小写字母、数字、短横线
+        name: Agenia 模式 # 菜单里显示的名字（旧 preset.yml 那一份搬到这里了）
+        description: 带班子的工程组长。她自己分诊、派人、验收；手下五个固定岗位按次序干活，只审不改的岗位碰不到源码。
+        order: 10 # 名册里的位置：出厂四个是 1..4，我们排在它们后面
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                你的身份、年龄和说话风格见每轮注入的内容。
+
+                （Who you are is defined in the content injected for every turn.
+                Follow it exactly; it is your persona, not background information.）
+              suffix: 你在 {{cwd}} 干活。
+
+          # ── 每轮注入 ────────────────────────────────────────────────────────────────
+
+          # 真正的入口。它每一轮读一遍前面那些 .md，按下面写的顺序拼好，贴到请求的最末尾。
+          # 这就是"防止遗忘"的全部做法。
+          - id: persona-injector
+            name: 'file:///E:/Harness/presets/agenia/inject.js'
+            config:
+              # 组长收到的，按这个顺序拼。名字就是根目录下那些 .md 的文件名。
+              # persona 是"她是谁"（身份 + 基本说明），me-aqua 是"老板这个人"（称呼 / 作息三行 / 脾气 /
+              # 习惯 / 知识边界），style 是"她怎么说话"（情绪化表达 / emoji / 颜文字 / 口癖 / 标点）。
+              # ⚠️ style 这一份**同时**是 inject.js 第 ⑤ 件事（机制②：老板开口之后、我开口之前一次；
+              #    机制①：之后每 n 个工具结果一次。n 写在 style.md 第一行）读的那个文件 ——
+              #    **两条路读同一个文件**，所以永远不会分叉（2026-09-24 老板定：不再分两份）。
+              # ⚠️ me-aqua 的作息三行 **2026-09-26 起不再被任何机器读**（曾经是「距下班」那条信号的接口）。
+              # ⚠️ `mood.md` **不在这张名单里**：情绪板的分数每步都在变，进快照 = 每步重发一次、缓存全废。
+              #    它只由 inject.js 第 ⑤ 件事读，贴出去的只有分数行 + 命中的例子（组长 2026-09-26 代拍第 3 条）。
+              # persona 与 style 都放在后面：越靠后离请求末尾越近，权重越高。
+              contentDir: 'E:/Harness/presets/agenia'
+              leaderOrder:
+                - leader
+                - work-guidelines
+                - roster        # 算出来的：队伍一览
+                - board         # 算出来的：这一票干到哪了
+                - persona       # 她是谁
+                - me-aqua       # 老板这个人
+                - style         # 她怎么说话（同一份也走尾巴提醒）
+
+              # 组员收到的，按这个顺序拼。
+              # 组员不读 leader —— 那里面是队伍设定和她怎么带队，跟他们没关系。
+              # 组员也不读 persona —— 那是组长的身份，不是他们的。
+              # charter 是"他自己那份岗位说明书"。
+              memberOrder:
+                - work-guidelines
+                - charter
+
+              # 这几个岗位：写文件只能落在项目的 .team/ 里，而且没有命令行。
+              # 让某个岗位不再受限制 = 把它的名字从这一行删掉。
+              #
+              # 只留"做判断"的岗位。评审和复盘的产出必须是意见、不能是改动，
+              # 否则独立性就没了 —— 限制和他们的工作正好对得上。
+              #
+              # 复盘每天要缩别人的 memory.md，看着像越权 —— 它没越。别人的 memory.md
+              # 也在 .team/ 里面，这条边界本来就是"只能写 .team/"，正好够它用。
+              # 不需要为它开任何后门。
+              #
+              # 设计和美工不在名单里：她的产出本来就是文件（设计稿、HTML、渲染 PDF），
+              # 这些活都要跑命令行，而命令行是一条通用写入通道 ——
+              # 给她命令行的同时留着这道写边界，边界就是纸的。两样不能兼得，所以放开。
+              officeBound:
+                - review
+                - retro
+
+          # 项目自己的 AGENTS.md / AGENTS.local.md 照常加载，和人格不冲突。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+
+          # ── 命令行 ──────────────────────────────────────────────────────────────────
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+
+          # ── 文件 ────────────────────────────────────────────────────────────────────
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+
+          # ── 后台任务 ────────────────────────────────────────────────────────────────
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+
+          # ── 技能 ────────────────────────────────────────────────────────────────────
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+
+          # ── 目标 ────────────────────────────────────────────────────────────────────
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+
+          # ── 计划模式 ────────────────────────────────────────────────────────────────
+          - id: planning
+            name: cordis:group
+            group: true
+            isolate:
+              planMode: true
+            config:
+              - id: plan-mode
+                name: '@deepseek-ai/dsh-plan-mode'
+                # section 是必填的。下面是框架的原文，照抄的，别改。
+                config:
+                  section: |
+                        You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+                        Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+                        The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+                        Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+                        Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+                        When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+
+          # ── 上下文压缩 ──────────────────────────────────────────────────────────────
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+          # ── 派活与队伍 ──────────────────────────────────────────────────────────────
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+
+              - id: tool-subagent-list-agents
+                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+              # 临时外聘的通道：组长写一份招聘要求，起一个用一次就散的人。
+              # 下面那段 persona 是必需的那枚标记 —— 少了它，外聘的人会以为自己是组长。
+              #
+              # ⚠️ 2026-09-24：**这一行只给临时外聘用。** 五个固定岗位走下面的 team_* ——
+              #    只有走那条路，组员才拿得到自己那份说明书、才受 officeBound 约束。
+              #    实测（TavernGame 2026-09-24）：42 次用这一行起固定岗位，子会话的装配段全是
+              #    `agenia:charter:hire`（外聘那张纸），评审/复盘的写权限边界整条没生效。
+              #    分工教在 `leader.md`「叫谁走哪条路」那一节里 —— 六个工具的说明文字是模块生成的、
+              #    逐字一样，光靠描述教不会她，只能写进提示词。
+              # ⚠️ maxDepth: 1 是 2026-09-24 补的：这一行原来没写 ⇒ 默认 3 ⇒ **外聘还能自己再招人**
+              #    （跟被关掉的 subagent_fork 同一类风险）。补上之后，外聘也招不动人了。
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelectionSettings: true
+                  backgroundMode: continuable
+                  maxDepth: 1
+                  persona: |-
+                    【组员:hire】你是这个组临时外聘的专家，干完就走。
+                    队伍的来龙去脉、干活的次序、以及你自己的岗位说明书会随请求自动注入 —— 开工前先读它们。
+
+              # ⚠️ 2026-09-22 老板拍板：**这一行关掉**（出厂 standard 里它是开的）。
+              #
+              # 关的理由：它继承的不是摘要，是**整段会话记录的副本**（分身会话的记录里，连父会话的
+              # seq 与时间戳都逐字相同）；而这一行**不带任何组员标记** —— 注入器的分流是
+              # "扫不到标记就当组长"，于是每个分身都拿到**组长的全套注入**
+              # （leader.md / 名册 / 进度板 / persona）**和组长的写权限**，还能再招人（这行没有 maxDepth）。
+              # 真回合取证（TavernGame，2026-09-22）：5 次分身长出 **19 个会话**，分身以为自己是组长、
+              # 往组长账本里写，并把**并行的兄弟**当成了"另一个会话"，组长信了。
+              #
+              # 为什么是关掉而不是加限制：这支队伍的延续方式是**写本子**（now / memory / log），
+              # 不是继承上下文 —— 要人手就派组员（team_*）或外聘（subagent，带 hire 那枚标记）。
+              #
+              # ⚠️ 再打开它之前先读 AGENTS.md 3e：五条 team-* 的 deny 里**不能再写 subagent_fork**
+              # （关掉的行不再注册工具名，写一个不存在的名字会让五个岗位一起启动失败）。
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+                  backgroundMode: continuable
+
+              # 这两个要装了对应的包才能开，先关着。
+              - id: tool-subagent-codex
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: codex
+                  toolName: subagent_codex
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+
+              - id: tool-subagent-claude-code
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: claude-code
+                  toolName: subagent_claude_code
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+
+              # ── 队伍 ────────────────────────────────────────────────────────────────
+              #
+              # 每个岗位一行。组长按名字叫他们，每个人都有自己那一份说明书。
+              #
+              # 加一个岗位，三步：
+              #   1. 在 team/ 里放一个 .md（第一行当岗位名字，正文就是说明书）
+              #   2. 在这里复制一行，改三处：id、toolName、persona 里的标记
+              #   3. 如果这个岗位要受限，把它加进上面 officeBound
+              #
+              #   ⚠️ toolName 必须写成 team_<岗位名>（岗位名 = 你刚放进去那个 .md 的文件名）。
+              #      进度板按这个约定认人（inject.js 里的 TEAM_TOOL）：写成别的形状**不会报错**，
+              #      只是那个人永远不出现在板子上。体检脚本有一条断言盯着这个形状。
+              #
+              # 下面几处是踩过坑的，别顺手改：
+              #   * persona 里那枚【组员:xxx】标记是必需的 —— 少了它，组员会以为自己是组长。
+              #   * maxDepth: 1 —— 组员自己不能再招人，这是结构上的硬拦。
+              #   * backgroundMode: continuable —— **组员默认后台跑**（老板 2026-09-20 拍板）。
+              #     意义是：组员干活的时候，组长还能跟老板说话、还能接着派下一件。
+              #     ⚠️ 它同时削掉了两条结构性保护，替代措施写在 `leader.md`「派工」那一节，
+              #        改这个键之前先读那一节：关卡次序不再由"等结果"强制，评审期间也不再物理锁住组长。
+              #   * toolFilter 里只能写"组员继承得到的"工具名。写一个只属于他自己那一层的名字，
+              #     会让整个岗位启动失败（五个人一起挂）。错了会打印可用的完整名单，照着读。
+              #   * ⚠️ 2026-09-22 起 **deny 里不许再写 subagent_fork** —— 上面那一行已经关了，
+              #     它的工具名不再注册，写一个不存在的名字同样会让五个岗位一起挂。
+              #     （这条是推论、没实测；真要再打开那一行，先跑一次挂载测试。）
+              #   * 不要在 toolFilter 里写 pwsh/bash —— 两个平台只注册其中一个，写错那个同样会挂。
+              #     平台差异交给底层处理，别在这里表达。
+
+              - id: team-design
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: team_design
+                  backgroundMode: continuable
+                  maxDepth: 1
+                  persona: '【组员:design】你是这个项目的设计和美工。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
+                  toolFilter:
+                    deny: [workflow, ralph]
+
+              - id: team-dev
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: team_dev
+                  backgroundMode: continuable
+                  maxDepth: 1
+                  persona: '【组员:dev】你是这个项目的实现者。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
+                  toolFilter:
+                    deny: [workflow, ralph]
+
+              - id: team-test
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: team_test
+                  backgroundMode: continuable
+                  maxDepth: 1
+                  persona: '【组员:test】你是这个项目的测试与流水线负责人。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
+                  toolFilter:
+                    deny: [workflow, ralph]
+
+              - id: team-review
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: team_review
+                  backgroundMode: continuable
+                  maxDepth: 1
+                  persona: '【组员:review】你是这个项目的独立评审。你只审不改。岗位说明书会随请求自动注入 —— 开工前先读它。'
+                  toolFilter:
+                    deny: [workflow, ralph]
+
+              - id: team-retro
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: team_retro
+                  backgroundMode: continuable
+                  maxDepth: 1
+                  persona: '【组员:retro】你是这个组的流程与复盘。你只提案，不落笔。岗位说明书会随请求自动注入 —— 开工前先读它。'
+                  toolFilter:
+                    deny: [workflow, ralph]
+
+              # ⚠️ 2026-09-28 换版（0.1.7）：这一格原来写着
+              #      `- id: workflow-worker-thread / name: '@deepseek-ai/dsh-workflow-worker-thread'
+              #       config: {provider: spawn}`
+              #    ——**那一行整个删掉了**，来历值得记下来（我一开始补错了方向）：
+              #
+              #    · 0.1.7 里 `@deepseek-ai/dsh-workflow-worker-thread` 这个包**不存在了**
+              #      （实测：`node_modules/@deepseek-ai/` 下没有它，全机也没有任何包再注册那个模块名）。
+              #    · 换上来的是 `@deepseek-ai/dsh-workflow`，但**那个包不是"引擎实现"，是引擎的契约本身** ——
+              #      它 `class WorkflowEngine extends Service`，自我描述是
+              #      "Workflow capability seam: ctx.workflowEngine service"，
+              #      而且**全机没有任何一个 cordis.patch.yml / presets/*.patch.yml 引用它**
+              #      （实测：`grep` 所有补丁文件，零命中）。
+              #    · 出厂的四个预设**没有一个**声明它 —— 契约由框架自己装，preset 只声明**实现**。
+              #      我们的 `- id: workflow` 那一行因此是**凭空多出来的**（`onlyInAgenia` 当场报出来）。
+              #    ⇒ 「标准有的必须有」这条规矩**反着也成立**：standard 没有的，别自己加。
+              #
+              #    下面是出厂 standard 原样的三行 —— 照抄，别凭印象改：
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+
+              - id: tool-ralph
+                name: '@deepseek-ai/dsh-tool-ralph'
+                config:
+                  subagentProvider: spawn
+                  maxRounds: 64
+
+          # ── 其余面向模型的工具 ──────────────────────────────────────────────────────
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+
+          # ⚠️ 2026-09-28 换版（0.1.7）补抄：**出厂 standard 多了这一行，而且是关着的。**
+          # 它给模型一个 `plugin_manager` 工具（装/卸插件、开关 bundle）。出厂四份预设里
+          # **没有一份**打开它（standard 那一行就是 `disabled: true`）——
+          # 所以这里也照抄成关着的，**不是为了用，是为了"和 standard 逐行一致"**：
+          # 3b 的规矩是集合比对，"出厂有一行、我们没有"本身就算漂移，
+          # 哪怕它是关着的、哪怕我们永远不打开它。
+          # 要真打开它（让组长自己装插件），改的就是这一行 —— 但先想清楚：那是把
+          # 整个 profile 的插件层交给一个会话里的模型。
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
