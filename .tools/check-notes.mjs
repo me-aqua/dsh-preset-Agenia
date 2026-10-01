@@ -86,6 +86,13 @@ function standardComposition(dir) {
 
 const rows = []
 const add = (family, name, ok, detail) => rows.push({ family, name, ok, detail })
+// 🆕 2026-10-01 加：**第三态「挂起」**（`ok: null`）—— 被测对象不在、这条断言这一轮判不了。
+//    为什么必须有它：那几条断言原来被 `if (existsSync(review))` 包着，**复盘不在时整段消失**：
+//    分母 100 对分母 102 —— `100/100` 读起来像全绿，**而恰恰是那天最需要它们响**。
+//    （`.team/memory.md` §三 记的第四形态："分母随被测对象变 ⇒ 直接从输出里消失"。）
+//    ⇒ 挂起**留在分母里、在输出里明写**，既不当绿也不当红。
+//    退出码跟着分三档：0 全过 · **2 有挂起（未验 ≠ 通过）** · 1 有红。
+const pending = (family, name, detail = '') => rows.push({ family, name, ok: null, detail })
 const eq = (family, name, got, want) =>
   add(family, name, got === want, `笔记 ${want} / 实测 ${got}`)
 const yes = (family, name, cond, detail = '') => add(family, name, cond, detail)
@@ -657,6 +664,49 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       ? `persona.md 里还留着：${leakedToPersona.join('、')}（两张表各存一份，迟早分叉）`
       : `style.md ${inStyle}/4 张表`)
 
+  // ④ 进快照的 .md 里不许夹**跨行**的 HTML 注释（2026-09-25 加，2026-10-01 从被强推丢掉的那一笔里找回）。
+  //    来历：style.md 里那段 6 行维护说明曾**跟着快照进了提示词** —— 快照那条路是整份文件照着贴、
+  //    **不剥注释**（只有尾巴那条路剥）。单行指令（如频率那行）放行。
+  //    🔴 **2026-10-01 修正：判据不能用一行正则。** 找回来的原稿写的是
+  //       `/<!--[\s\S]*?\n[\s\S]*?-->/`，它**当场在 style.md 上假红** ——
+  //       它把第 1 行 `<!-- every: 3 -->` 的 `-->` 与第 16 行的 `-->` 配成了一对。
+  //       ⇒ 任何"单行指令 + 后面还有别的注释"的文件都会被误报，而原稿自己的注释
+  //         白纸黑字写着"单行指令放行"（**原意就是要放行，是那版正则做不到**）。
+  //       换成"（1）先按 `<!--([\s\S]*?)-->` 逐条取出注释、（2）再看**体内**有没有换行"，
+  //       八格对照（单行×2 / 真跨行×3 / CRLF×2 / 无注释 / 未闭合）全对 —— 见 `.team/leader/2026-10-01/log.md`。
+  //       ⚠️ **别改回成一行正则**：修它时先跑那八格，两种坏法（假红 / 假绿）各栽过一次。
+  const snapshotDocs = ['persona.md', 'leader.md', 'work-guidelines.md', 'me-aqua.md', 'style.md']
+  const multilineIn = (text) => {
+    for (const m of text.matchAll(/<!--([\s\S]*?)-->/g)) if (/\r?\n/.test(m[1])) return true
+    return false
+  }
+  const multiline = snapshotDocs.filter((f) => {
+    const path = join(PRESET, f)
+    return existsSync(path) && multilineIn(read(path))
+  })
+  yes('injector', '进快照的 .md 里没有跨行 HTML 注释（会被原样贴进提示词）',
+    multiline.length === 0,
+    multiline.length > 0
+      ? `${multiline.join('、')} 里有跨行注释 —— 快照那条路不剥注释，会跟着进上下文`
+      : `${snapshotDocs.join('、')} 干净`)
+
+  // 🆕 2026-10-01 加：`leader.md` 里必须留着"当场叫流程位补"那一句的授权。
+  //    来历：这条规矩**被静默丢掉过两次**（09-25 落了那一笔，当晚被回滚退掉；09-26 强推 main 时又没带上），
+  //    两次都没人发现，直到 10-01 复盘逐字读全文才核出来。⇒ **被静默丢掉两次的规矩，该有判据钉着。**
+  //    ⚠️ 同族纪律：别把这条要抠的那两个词原样抄进注释里（memory §三：注释也算进静态判据）。
+  // 🆕 2026-10-01 加：`leader.md` 的开工第一步里要有"先报一句我跑在哪份预设上"那一格。
+  //    来历：09-28 / 09-30 两天里 9 个会话只有 3 个真跑在 agenia 上（会话流实测），
+  //    而"跑错预设"的症状**不是报错，是"她看起来很普通"** —— 没有任何读数会说。
+  //    ⚠️ 同族纪律：别把这条要抠的字符原样抄进注释（memory §三）。
+  //    ⚠️ 两条都读同一份 `leader.md` ⇒ **共用一个常量，不读两遍**（复盘 6.4 点名要求）。
+  const leaderText = read(join(PRESET, 'leader.md'))
+  yes('injector', 'leader.md 里留着"当场叫流程位补"的授权（自己叫，不请示老板）',
+    /自己叫/.test(leaderText) && /不用问老板/.test(leaderText),
+    '缺了它，复盘会停在"等老板点头"（9-22 → 9-24 连着三天就是这么断的）')
+  yes('injector', 'leader.md 的开工第一步含"报出当前生效预设"那一格',
+    /跑在哪份预设/.test(leaderText),
+    '缺了它，"跑错预设"只有出事了才会被发现（预设定义的断言管不到会话实际用了哪份）')
+
   // ── 2026-09-26 加的两条：情绪模块的**代码那一半**（口径 10 / 14）─────────────
   // 口径 10：`moodOf` 必须是**导出的**——不导出，探针就只能隔着整条尾巴路测它，
   //          喂假信号、验单调性这些事全部做不了（那就退化成"读代码觉得对"）。
@@ -760,6 +810,12 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     yes('office', '复盘里有「我的把握有多大」那一行', /我的把握有多大/.test(body))
     yes('office', '三块齐全（坑 / 哪一关漏的 / 原文 → 新文）',
       /哪一关/.test(body) && /原文/.test(body) && /新文/.test(body))
+  } else {
+    // 🆕 2026-10-01：这两条**不再跟着复盘一起消失**（见 `pending()` 那段说明）。
+    pending('office', '复盘里有「我的把握有多大」那一行',
+      `今天的复盘还不在（.team/retro/${today}/前日复盘.md）—— 这一条挂起，**不是通过**`)
+    pending('office', '三块齐全（坑 / 哪一关漏的 / 原文 → 新文）',
+      '同上：复盘不在，形状无从判起')
   }
   const days = existsSync(join(teamRoot, 'retro'))
     ? readdirSync(join(teamRoot, 'retro'), { withFileTypes: true })
@@ -780,6 +836,14 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     'INSTALL.md', 'LICENSE', 'README.md',
     'api.txt',
     'presets',
+    // 🆕 2026-10-01 加：老板把桌面客户端装在仓库根（本机安装，不是仓库内容；.gitignore 也挡上了）。
+    //    ⚠️ 装机包（*.exe）**不加进白名单** —— 那是可重下的临时文件：**删掉**（或挪进 `.tools/_backup/`）。
+    //    白名单不是垃圾桶；一条长期红着的判据 = 教人忽略脚本（memory §三 恒红 ⇒ 空扫描）。
+    'CLI',
+    // 🆕 2026-10-01 加：**这台机器**装 DeepSeek VPN 通道用的运维脚本（老板 2026-10-01 装的桌面端要靠它）。
+    //    它在根上是对的（人还要用），但**不进版本库** —— 里面是本机路径与安装动作，别人照抄只会装坏，
+    //    `.gitignore` 已经挡着它。⇒ **白名单管"它在根上合不合规"，gitignore 管"它进不进库"，两条分开**。
+    'install-deepseek-vpn.ps1',
   ])
   const stray = readdirSync(REPO).filter((n) => !allowed.has(n))
   yes('repo', '仓库根只许出现白名单里的条目（临时文件当场红）', stray.length === 0,
@@ -856,18 +920,28 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
 }
 
 // ── 输出 ───────────────────────────────────────────────────────────────────
-const failed = rows.filter((r) => !r.ok)
+// 三个态：`ok: true` 绿 · `ok: false` 红 · `ok: null` **挂起**（判不了，留分母、明写）。
+const failed = rows.filter((r) => r.ok === false)
+const held = rows.filter((r) => r.ok === null)
 let family = ''
 for (const r of rows) {
   if (r.family !== family) {
     family = r.family
     console.log(`\n── ${family} ──`)
   }
-  console.log(`${r.ok ? '  ok  ' : '  RED '} ${r.name}${r.detail ? `  ·  ${r.detail}` : ''}`)
+  const mark = r.ok === true ? '  ok  ' : r.ok === false ? '  RED ' : ' HOLD '
+  console.log(`${mark} ${r.name}${r.detail ? `  ·  ${r.detail}` : ''}`)
 }
-console.log(`\n${rows.length - failed.length}/${rows.length} 条通过`)
+console.log(`\n${rows.length - failed.length - held.length}/${rows.length} 条通过`
+  + (held.length > 0 ? ` · ${held.length} 条挂起` : ''))
 if (failed.length > 0) {
   console.log('\n红的是「笔记与现状对不上」。要么改笔记，要么改事实 —— 但不许两边都留着。')
   for (const r of failed) console.log(`  · ${r.family} / ${r.name} —— ${r.detail}`)
 }
-process.exit(failed.length > 0 ? 1 : 0)
+if (held.length > 0) {
+  console.log('\n挂起的是**这一轮判不了**的（被测对象不在）。⚠️ **挂起 ≠ 通过** —— '
+    + '它留在分母里就是为了不让"整段消失"读成满分。')
+  for (const r of held) console.log(`  · ${r.family} / ${r.name} —— ${r.detail}`)
+}
+console.log('\n退出码：0 = 全过 · **2 = 没红但有挂起（未验 ≠ 通过）** · 1 = 有红')
+process.exit(failed.length > 0 ? 1 : held.length > 0 ? 2 : 0)
