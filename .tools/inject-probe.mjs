@@ -229,7 +229,19 @@ const stderrSeen = []
  * 贴出来那条 style 长什么样（形状由契约第六节钉着）——
  * 假 ctx 用它认"这一条是尾巴提醒"，落点断言（L 族）也用它。
  */
-const isStyleMessage = (m) => m?.source?.kind === 'plugin' && m?.source?.plugin === 'agenia'
+/**
+ * 这条消息是不是"我们贴的那条风格尾巴"？
+ *
+ * 🔴 **2026-10-01 修**：原来是 `kind === 'plugin' && plugin === 'agenia'` —— **认的是 v4 之前的形状**。
+ *    09-28 那份 `24b8d4c` 把 `source` 改成了 v4 的形状（`kind: 'plugin:agenia'` + `form` + `summary`，
+ *    因为 v4 **拒收**笼统的 `'plugin'`，见 `check-notes` 那条断言），而**这个 helper 没跟着改**。
+ *    ⇒ 后果：**七条判据全调它**找"style 在第几条"（L1/L2/L3/L6、R1/R2、R5），它恒返回 false
+ *    ⇒ 恒 `-1` ⇒ **七条恒红**，而实现是好的。这不是"探针比实现旧"，是**探针被打坏了一格**。
+ *    ⚠️ **判据照 `kind` 认，别照 `form`/`summary` 认** —— 那两格有自己的断言（G 族）管着；
+ *      这里只要认出"这条是我们贴的"就够了（同 `inject.js` 里 `isBossMessage` 只认 `kind` 的道理）。
+ */
+const isStyleMessage = (m) =>
+  m?.source?.kind === 'plugin:agenia' || (m?.source?.kind === 'plugin' && m?.source?.plugin === 'agenia')
 
 /**
  * 让 inject.js 的 `apply()` 在一个假 ctx 上跑一遍。
@@ -1279,26 +1291,16 @@ try {
     const styleAt = step.messages.findIndex(isStyleMessage)
     check('L0', 3, '【前提】这一步确实领到了老板那句话（否则下面几条是空跑）',
       { 领到的条数: step.claimed.length, 老板在第几条: bossAt }, { 领到的条数: 1, 老板在第几条: 0 })
-    // ── 🔴 2026-10-01：L1/L2/L3/L6（+ 下面 R1/R2/R5）**改记挂起**，理由逐条在下面 ──────────
-    // 这七条在本探针的假 ctx 上读 0，但**真回合里是好的** —— 有硬证据，不是"我觉得"：
-    //   我把今天（2026-10-01）桌面端那条路的真会话流解开，逐条对过装配次序
-    //   （`.tools/asar-cli/zstd-frames.mjs` 解多帧 zstd，别用 `zstdDecompressSync` 只解第一帧）：
-    //     · turn#1（老板第一句之后）与 turn#2 的 **step1** 各有一条 `plugin:agenia` ⇒ **机制② 落在本步**；
-    //     · 之后在工具结果累计 **4 / 7 / 11 / 13 / 17 / 19 / 22 / 25** 上各补一条 ⇒ **机制① 也在响**；
-    //     · 两条都落在老板那句话**之后**（seq 18 = 老板 → seq 19 = `plugin:agenia`）。
-    //   ⇒ 这一族量的**不是产物的行为**，是**本探针假 ctx 对自己那个模型的建模还准不准** ——
-    //     读数 0 说明**模型旧了**（这一族本来就是 2026-09-26 按当时那条落点写的）。
-    // ⚠️ **我为什么不把它们改成"期望 0"让它变绿**：那等于**自己改判据让自己通过**（比红更坏）。
-    // ⚠️ **也不删**：删了就是拿"红"换"看不见"。
-    // ⇒ 只记挂起：**未验 ≠ 通过**（本文件 `skip()` 的原话）。谁来收这一笔：
-    //   **玛尔塔那份契约的主人** —— 要么把假 ctx 的建模改到跟真 harness 一致（那它又能真红了），
-    //   要么由她判定这七条**该不该**继续用假 ctx 量（口径 3/2/4 归她）。
-    skip('L1', 3, '机制② 的 style 落在**本步**（= 回答老板那一次的请求）的 messages 里',
-      '假 ctx 的建模比实现旧 —— 真回合已量到它是对的')
-    skip('L2', 3, '它排在老板那句话**之后**',
-      '假 ctx 的建模比实现旧 —— 真回合已量到它是对的')
-    skip('L3', 3, '这一步里只有一条 style（不是每条老板消息各来一条）',
-      '假 ctx 的建模比实现旧 —— 真回合已量到它是对的')
+    // 🔴 2026-10-01：这一族（L1/L2/L3/L6 + R1/R2/R5）曾被误判成"假 ctx 模型旧了"而挂起 ——
+    //    真因是 `isStyleMessage` 没跟上 v4 的 `source` 形状（改成 `kind: 'plugin:agenia'` 之后
+    //    它还在认 `source.plugin`）⇒ 七条恒红。**helper 修好之后，这一族是好的**，
+    //    原文逐字放回（它们本来就是这个形状，别因为"红过"就改它们的期望值）。
+    check('L1', 3, '机制② 的 style 落在**本步**（= 回答老板那一次的请求）的 messages 里',
+      { 'style 在第几条': styleAt }, { 'style 在第几条': 1 })
+    check('L2', 3, '它排在老板那句话**之后**',
+      { 老板在第几条: bossAt, 'style 在第几条': styleAt }, { 老板在第几条: 0, 'style 在第几条': 1 })
+    check('L3', 3, '这一步里只有一条 style（不是每条老板消息各来一条）',
+      step.messages.filter(isStyleMessage).length, 1)
 
     const next = await h.stepBegin()          // 下一步：收件箱已经空了
     check('L4', 3, '**下一步**的 messages 里一条 style 都没有（落点不是"推迟一格"）',
@@ -1312,8 +1314,8 @@ try {
     await h2.assemble()
     check('L5', 3, '老板的话还在收件箱里时，装配本身一条都不贴', h2.count(), 0)
     const step2 = await h2.stepBegin()
-    skip('L6', 3, '走到这一步才贴，而且就贴在本步',
-      '假 ctx 的建模比实现旧 —— 真回合已量到它是对的')
+    check('L6', 3, '走到这一步才贴，而且就贴在本步',
+      { 累计: h2.count(), 本步: step2.messages.filter(isStyleMessage).length }, { 累计: 1, 本步: 1 })
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1613,11 +1615,11 @@ try {
 
     await h.toolResult(undefined, T0 + 3000)      // 第 3 个 ⇒ 挂账
     const at = await h.stepBegin(T0 + 3500)
-    // 🔴 2026-10-01：R1/R2 改记挂起 —— 与上面 L1 同一笔账（假 ctx 模型旧了，真回合是好的）。
-    skip('R1', 2, '第 n 个工具结果之后的**下一步** ⇒ 本步 messages 里有 1 条 style',
-      '假 ctx 的建模比实现旧 —— 真回合已量到它是对的')
-    skip('R2', 2, '它**追加在末尾**（工具结果 → 我下一次开口 之间），不是插在最前面',
-      '假 ctx 的建模比实现旧 —— 真回合已量到它是对的')
+    check('R1', 2, '第 n 个工具结果之后的**下一步** ⇒ 本步 messages 里有 1 条 style',
+      at.messages.filter(isStyleMessage).length, 1)
+    checkTrue('R2', 2, '它**追加在末尾**（工具结果 → 我下一次开口 之间），不是插在最前面',
+      at.messages.length > 0 && isStyleMessage(at.messages[at.messages.length - 1]),
+      `本步 ${at.messages.length} 条，最后一条是 ${isStyleMessage(at.messages[at.messages.length - 1]) ? 'style' : '别的'}`)
     const after = await h.stepBegin(T0 + 4000)
     check('R3', 2, '再下一步 ⇒ 0 条（落点不许推迟一格）',
       after.messages.filter(isStyleMessage).length, 0)
@@ -1633,8 +1635,8 @@ try {
     await h.toolResult(undefined, T0 + 3000)      // 第 3 个 ⇒ 机制① 挂账
     await h.boss()                                // 老板这就开口了（还没到步边界）
     const step = await h.stepBegin(T0 + 4000)
-    skip('R5', 4, '同一批里既有老板的话、又有到期的机制① ⇒ 本步 style **恰好 1 条**（不叠）',
-      '假 ctx 的建模比实现旧 —— 真回合已量到它是对的')
+    check('R5', 4, '同一批里既有老板的话、又有到期的机制① ⇒ 本步 style **恰好 1 条**（不叠）',
+      step.messages.filter(isStyleMessage).length, 1)
     const next = await h.stepBegin(T0 + 5000)
     check('R6', 4, '② 赢下这一格 ⇒ ① 的挂账清掉（下一步也不再补一条）',
       next.messages.filter(isStyleMessage).length, 0)
