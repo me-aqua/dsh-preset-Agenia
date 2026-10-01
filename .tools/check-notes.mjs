@@ -606,6 +606,16 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    这条一起钉两半：新写法在、旧写法不在。
   //    ⚠️ 验它不用真回合：那个包导出了 `releasedV4SessionFormatCodec.encodeEvent`，
   //       把整条消息喂进去就会当场抛（实测：旧写法抛、新写法过）。
+  // 🆕 2026-10-01 加：**这条消息的 source 是一个字段组，一起看**。
+  //    来历：09-28 是真回合撞出 kind 那一格（整轮运行失败），09-30 才发现同一个对象上的 form 缺了
+  //    （界面渲染成 opaque，"看不到情绪板"）—— **两个面，同一个坑**。
+  //    ⇒ 改这一处之前，先照抄一个同类生产者的**整行**（`dsh-repeat-tool-reminder` 写的是
+  //      `{ kind, form: 'notice', summary }`）；下面三条各管一格，**不许只改其中一条就收工**。
+  const sourceFields = ['kind:', 'form:', 'summary:'].filter((k) => src.includes(k))
+  yes('injector', '尾巴那条消息的 source 三个字段都在（kind / form / summary —— 一起看，别只钉一格）',
+    sourceFields.length === 3,
+    `在 ${sourceFields.length}/3：${sourceFields.join(' ') || '（一个都没有）'}`)
+
   yes('injector', '尾巴那条消息的 source.kind 是自己的名字，不是笼统的 \'plugin\'（v4 会拒收）',
     /kind:\s*'plugin:agenia'/.test(src) && !/kind:\s*'plugin'\s*,/.test(src),
     /kind:\s*'plugin'\s*,/.test(src)
@@ -706,6 +716,17 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   yes('injector', 'leader.md 的开工第一步含"报出当前生效预设"那一格',
     /跑在哪份预设/.test(leaderText),
     '缺了它，"跑错预设"只有出事了才会被发现（预设定义的断言管不到会话实际用了哪份）')
+  // 🆕 2026-10-01 加（补记 6.4）：**"这个会话实际跑在哪份预设上"有没有读数** ——
+  //    只提**静态**那一半（🔴 **不做常驻的"会话检查工具"**：老板 2026-09-26 拍过
+  //    「删了吧，也不用开新」，那天的解包是**一次性取证**，用完就扔）。
+  //    来历：09-28 / 09-30 两天里 9 个会话只有 3 个真跑在 agenia 上（会话流实测），
+  //    而"跑错预设"的症状**不是报错，是"她看起来很普通"** —— 没有任何读数会说。
+  //    ⚠️ 同族纪律：别把这条要抠的字符原样抄进注释（memory §三）。
+  //    ⚠️ 上面那条已经在钉"开工第一步里有这一格"；这一条钉的是**同一份文件里那一格的内容**，
+  //       两条一起才算"静态那一半齐了"（一条管"有没有报"、一条管"报什么"）。
+  yes('injector', 'leader.md 的开工第一步说明白了"报错的两种形态"（不是预设 / 说不出）',
+    /不是 Agenia/.test(leaderText) && /先切预设/.test(leaderText),
+    '只写"报一句"不够 —— 得写清"报出来不对时怎么办"（切回 Agenia 模式并重走这一步）')
 
   // ── 2026-09-26 加的两条：情绪模块的**代码那一半**（口径 10 / 14）─────────────
   // 口径 10：`moodOf` 必须是**导出的**——不导出，探针就只能隔着整条尾巴路测它，
@@ -810,12 +831,19 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     yes('office', '复盘里有「我的把握有多大」那一行', /我的把握有多大/.test(body))
     yes('office', '三块齐全（坑 / 哪一关漏的 / 原文 → 新文）',
       /哪一关/.test(body) && /原文/.test(body) && /新文/.test(body))
+    // 🆕 2026-10-01 加：复盘必须带一张「提案台账」（上一份提的逐条给状态与判据）。
+    //    来历：09-25 提 8 处 → 09-26 数出 0.5/8；09-26 又提 8 处 → 10-01 数出 0/8。
+    //    "提案的落地状态没有任何量尺"，于是"落了又被退"和"从来没落"长得一模一样。
+    yes('office', '复盘里有「提案台账」那一节（上一份提的逐条有状态）', /提案台账/.test(body),
+      '没有这一节 ⇒ 上一份复盘提的东西落到哪了，谁也答不上来')
   } else {
-    // 🆕 2026-10-01：这两条**不再跟着复盘一起消失**（见 `pending()` 那段说明）。
-    pending('office', '复盘里有「我的把握有多大」那一行',
-      `今天的复盘还不在（.team/retro/${today}/前日复盘.md）—— 这一条挂起，**不是通过**`)
-    pending('office', '三块齐全（坑 / 哪一关漏的 / 原文 → 新文）',
-      '同上：复盘不在，形状无从判起')
+    // 🆕 2026-10-01 加：**第三态「挂起」** —— 复盘不在时，上面那几条**不许从分母里消失**。
+    //    现场：10-01 那份落盘前分母 100、落盘后 102 ⇒ 恰恰在"复盘不在"的那天，
+    //    它们整个不出现，而 `100/100` 读起来像全绿（memory §三 第四形态：分母随被测对象变）。
+    //    ⚠️ **挂起不是通过** —— 这一行的 detail 必须把这个词写出来（修法与口径见 memory §三）。
+    pending('office', '复盘的三条形状断言（把握行 / 三块齐 / 提案台账）',
+      '**挂起** —— 复盘不在，这几条今天不适用。**别把挂起读成通过**：'
+      + '`今天的复盘在` 那条已经红了，去叫流程位补。')
   }
   const days = existsSync(join(teamRoot, 'retro'))
     ? readdirSync(join(teamRoot, 'retro'), { withFileTypes: true })
@@ -852,6 +880,28 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
 
 // ── 5 · 这台机器的既成事实 ─────────────────────────────────────────────────
 {
+  // 🆕 2026-10-01 加：**读数要自带口径** —— 这个脚本找得到哪几份 dsh、各是哪一版。
+  //    来历：客户端里那份是 0.2.0-rc.2、npm 全局那份是 0.1.7-rc.2，而笔记里写着 0.1.5-rc.2；
+  //    AGENTS.md 的**全部**实测都只在其中一版上做过，而"机器换版本"这件事当时**没有任何判据**盯着 ——
+  //    发现路径是"老板装机报错 → 才去读 asar"。⇒ 先给一条读数，谁看脚本谁知道量的是哪一版。
+  //    ⚠️ **只列找到的第一个会误导**：这台机器上同时躺着三份（`_npx` 那份还是 0.1.5 的旧垃圾、
+  //       目录在但 `package.json` 不在）—— 所以**逐份列出来 + 各自版本**，找不到就照实说。
+  //    ⚠️ 只报不红：客户端那一份在 asar 里，这个脚本够不着（要 `.tools/asar-cli/`）——
+  //    能自动对账的只有"笔记里的数"与"这条读数"，而笔记是散文，抠字符串有代价（memory §三）。
+  {
+    const seen = shippedDirections().filter((d) => d !== '' && existsSync(d))
+    const rows = seen.map((d) => {
+      let v = '（目录在，但没有 package.json —— 旧版残留？）'
+      try { v = JSON.parse(read(join(d, 'package.json'))).version } catch { /* 读不到就照实说 */ }
+      // 只留能认出是哪一份的那一段（全路径太长，这条是给人扫一眼的）
+      const label = d.includes('_npx') ? `_npx\\${d.split('_npx\\')[1].split('\\')[0]}`
+        : d.includes('Roaming') ? '（npm 全局安装）' : d
+      return `${label} ⇒ dsh@${v}`
+    })
+    add('host', `这个脚本找得到哪几份 dsh、各是哪一版（读数自带口径 · 共 ${rows.length} 份）`, true,
+      (rows.join(' · ') || '（一份都没找到）')
+      + ' ｜ ⚠️ 笔记里客户端那份是 0.2.0-rc.2（在 asar 里，这里够不着）')
+  }
   const nm = join(PROFILES, 'node_modules')
   if (existsSync(nm)) {
     const n = readdirSync(nm).length
