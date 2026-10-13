@@ -782,6 +782,29 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     yes('office', `${d} 的长期记忆在上限内`, n <= 2000, `${n} 字（上限 2000）`)
   }
 
+  // 🆕 2026-10-13：公共记忆的量尺（老板当天追责超限后加）。
+  //   · 已有规矩（work-guidelines / team/retro）：必读卷上限 3000 汉字；三卷 = 必读卷 + 规矩卷 + 资料卷。
+  //   · 失效现场：2026-10-13 量到 `.team/memory.md` = 3625 字，两副卷文件不存在，
+  //     而旧脚本只量了岗位私人本 → "有上限、没读数"，跨了 12 天没人被机器叫住。
+  //   · 口径：hanCount 只数汉字；副卷不限字数，但必须是独立文件、必读卷要指得到。
+  //   · 三条都具翻面能力：超限 / 副卷丢 / 主卷丢指针，会当场红。
+  const publicMemory = join(teamRoot, 'memory.md')
+  if (!existsSync(publicMemory)) {
+    pending('office', '公共必读卷的量尺（上限 3000）', '.team/memory.md 不在 —— 这一轮判不了')
+  } else {
+    const pubN = hanCount(read(publicMemory))
+    const rulesVolume = join(teamRoot, 'memory-规矩卷.md')
+    const dataVolume = join(teamRoot, 'memory-资料卷.md')
+    const pubText = read(publicMemory)
+    yes('office', '公共必读卷（.team/memory.md）在上限内', pubN <= 3000, `${pubN} 字（上限 3000）`)
+    yes('office', '公共记忆两副卷都在（规矩卷 + 资料卷）',
+      existsSync(rulesVolume) && existsSync(dataVolume),
+      `规矩卷${existsSync(rulesVolume) ? '在' : '缺'} · 资料卷${existsSync(dataVolume) ? '在' : '缺'}`)
+    yes('office', '公共必读卷指得到两副卷',
+      pubText.includes('memory-规矩卷') && pubText.includes('memory-资料卷'),
+      '主卷不指路 = 两副卷写了也没人知道去哪查')
+  }
+
   // ★ now.md 的时效（2026-09-22 加，**只报不红**）。
   // 来历：`now.md` 的规矩是"每天开工整个重写"，但**没有任何东西量过它到底多久没动**——
   // 于是 2026-09-21 全天零活动（`git log` 没有那天的提交、`~/.dsh/sessions` 里没有那天的目录）
