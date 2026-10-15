@@ -40,11 +40,26 @@
  *    · 真实模式下每个 **`writes: true`** 的 op 成功之后**多落一条** `audit`（kind = `real-mode-write`）；
  *      那份写命令名单**从 `lib/cli-inventory.mjs` 现算**，本文件不另写一份。
  *    · 🔴 **`init-real` 与 `--real-mode` 并存，不合并** —— `init-real` 比它更窄（还要求根不存在）。
+ *
+ * 🔴 **会话包入口：`--op session-packet`（2026-10-15 加，活二）。**
+ *    它是 `lib/packet.mjs`（REV-01，v1.5/v1.6 冻结）的**壳**，不是第二份引擎：
+ *      · 解帧 / 帧边界 / "坏帧不留半包" / "先分类后解压" / 原子落盘 **全部**住在那个模块里，
+ *        本文件**一行都不重写**（重写第二份 = 迟早解出两个不同的包）；
+ *      · 本文件只做三件事：把入参翻成那个模块的形状 · 把落点钉进
+ *        `<工作区>/.team/retro/<day>/conversation-packet/` · 落完之后**再校验一遍**并把读数带出来；
+ *      · 🔴 **源流目录一律只读**（真实运行 = `~\.dsh\sessions\…`）：临时件落点照那个模块头部
+ *        冻死的规则走，**本文件不另选一格**、也不越过它去碰源流目录。
+ *
+ * 🔴 **两个真实根怎么来的（2026-10-15 修 P1 · 技术评审 F4）**：`lib/paths.mjs` 里一条绝对路径都不写 ——
+ *    脑根从"预设自己住在哪"推出来，路线根从**工作区**推出来。而工作区只有这条 CLI 手里有
+ *    （`--workspace` / `payload.workspace`）⇒ 所以**根判定之前先把 payload 读出来**
+ *    （`resolveRoot()` 多了一个 `realRoots` 入参，喂进去的就是那个工作区算出来的那张表）。
+ *    ⚠️ 没给工作区时用 `cwd`（跑命令时站的那个工作区）；**绝不退回某个写死的路径**。
  */
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 import { CODES } from '../lib/error-codes.mjs'
-import { dataRootVerdict, realInitVerdict, realModeVerdict, TEST_ROOT_MARKER, testModeOf } from '../lib/paths.mjs'
+import { dataRootVerdict, realInitVerdict, realModeVerdict, realRootsFor, TEST_ROOT_MARKER, testModeOf, workspaceWriteVerdict } from '../lib/paths.mjs'
 import { acquireLock, releaseLock, writeJsonAtomic } from '../lib/atomic.mjs'
 import { capacityVerdict, isCullEligible } from '../lib/memory.mjs'
 import { LEASES } from '../lib/liveness.mjs'
@@ -55,6 +70,7 @@ import * as PROP from '../lib/proposals.mjs'
 import { healthVerdict, buildHealthCard } from '../lib/health.mjs'
 import { openAdoptedTicketIds } from '../lib/tickets.mjs'
 import { COMMANDS } from '../lib/cli-inventory.mjs'
+import { PACKET_MANIFEST_FIELDS, buildSessionPacket, validateSessionPacket } from '../lib/packet.mjs'
 
 const CLI_NAME = 'agenia-brain.mjs'
 
@@ -63,7 +79,7 @@ const OP_NAMES = Object.freeze([
   'init', 'init-real', 'state-read', 'daily-start', 'claim-update', 'candidates-freeze', 'judge-start',
   'judge-commit', 'review-start', 'proposal-import', 'maintenance-import', 'snapshot-read',
   'snapshot-list', 'entry-count', 'report-read', 'health-read', 'job-mark', 'audit-append',
-  'snapshot-archive', 'cs-confirm', 'help',
+  'snapshot-archive', 'cs-confirm', 'session-packet', 'help',
 ])
 
 /**
@@ -131,30 +147,99 @@ function readPayload(args) {
   }
 }
 
+/** 测试模式（`--test-mode` 或环境里那个运行根）—— 一处说法，三处调用共用。 */
+function testModeOfArgs(args) {
+  return args.testMode === true || testModeOf({}, process.env)
+}
+
+/** 测试运行根（没有 ⇒ `null`）；测试模式下 `mustBeUnder` 用的就是它。 */
+function runRootOfEnv() {
+  return typeof process.env.AGENIA_TEST_RUN_ROOT === 'string' && process.env.AGENIA_TEST_RUN_ROOT.trim() !== ''
+    ? process.env.AGENIA_TEST_RUN_ROOT
+    : null
+}
+
+/**
+ * 盘上那个根带不带 `.agenia-test-root`（**只探，不判**——判在 `lib/paths.mjs` 那几支里）。
+ * 只有形状像绝对路径时才去 `stat`，免得把相对名解析到 cwd 上。
+ */
+function hasTestMarker(raw) {
+  if (typeof raw !== 'string' || !/^[A-Za-z]:[\\/]/.test(raw)) return false
+  try {
+    return statSync(path.join(raw, TEST_ROOT_MARKER)).isFile()
+  } catch {
+    return false
+  }
+}
+
 /**
  * 根判定 —— **每一条 op 都先过这一关**（写面与读面一视同仁；`--data-root` 缺了就当场拒）。
  * 判定顺序由 `lib/paths.mjs::dataRootVerdict` 冻结；这里只负责把盘上事实（marker 在不在）喂给它。
+ *
+ * `realRoots`：那张"真实根"拒绝名单（`undefined` ⇒ `dataRootVerdict` 用它自己那一份 =
+ * **缺省工作区（cwd）**算出来的）。`--data-root` 那一档由 `main()` 把**本 op 的工作区**喂进来
+ * （见下面的 `guardWorkspaceOf`）—— 于是"另一个工作区跑同一份代码"时，路线根那一格指的是**那个**
+ * 工作区的 `.team/route`，不是写死的某一条路。
+ * ⚠️ **工作区自己那一档不喂**（`resolveWorkspace` 用的是缺省表）：工作区**一定包住它自己的**
+ *    `<ws>/.team/route`，拿"包住真实根"那条去判它自己，恒等于自拒。
+ * ⚠️ `session-packet` 连**工作区那一档**也不走这里 —— 它走 `resolvePacketWorkspace()`（判落点）。
  */
-function resolveRoot(args, { label = '--data-root', raw = args.dataRoot } = {}) {
-  const testMode = args.testMode === true || testModeOf({}, process.env)
-  const runRoot = typeof process.env.AGENIA_TEST_RUN_ROOT === 'string' && process.env.AGENIA_TEST_RUN_ROOT.trim() !== ''
-    ? process.env.AGENIA_TEST_RUN_ROOT
-    : null
-  let markerExists = false
-  if (typeof raw === 'string' && /^[A-Za-z]:[\\/]/.test(raw)) {
-    try {
-      markerExists = statSync(path.join(raw, TEST_ROOT_MARKER)).isFile()
-    } catch {
-      markerExists = false
-    }
-  }
+function resolveRoot(args, { label = '--data-root', raw = args.dataRoot, realRoots } = {}) {
+  const testMode = testModeOfArgs(args)
   const verdict = dataRootVerdict(raw, {
     testMode,
-    markerExists,
-    mustBeUnder: testMode ? runRoot : null,
+    markerExists: hasTestMarker(raw),
+    realRoots, // ← `undefined` ⇒ 默认表（缺省工作区那一档），判定语义一个字不动
+    mustBeUnder: testMode ? runRootOfEnv() : null,
   })
   if (!verdict.ok) throw cliError(verdict.code, `${label}：${verdict.message}`)
   return { root: verdict.root, testMode }
+}
+
+/**
+ * 这条 op 的**工作区**（只管一件事：让"真实路线根"那一格算对）。
+ *
+ * 取法按序（和 `resolveWorkspace` 认的是同一个东西，只是这里**不验证**、只要那个字符串）：
+ *   ① `payload.workspace`（`--in` 里那份）；② `--workspace`；③ 都没有 ⇒ `undefined` ⇒
+ *   `lib/paths.mjs` 回落到 `process.cwd()`（跑命令时站的那个工作区）。
+ *
+ * ⚠️ 这里**不做任何路径判定**（缺 / 相对 / C 盘……一律交给 `resolveWorkspace` 去拒）——
+ *    它只回答"路线根那一格该拿哪个工作区去算"。判在这儿做，等于把两条判定揉成一条。
+ */
+function guardWorkspaceOf(args, payload) {
+  const fromPayload = typeof payload?.workspace === 'string' && payload.workspace.trim() !== '' ? payload.workspace : null
+  return fromPayload ?? args.workspace ?? undefined
+}
+
+/**
+ * `session-packet` 的**工作区 + 落点** —— 这条 op 不走 `resolveWorkspace()`，判的是落点。
+ *
+ * 🔴 为什么（2026-10-15 组长裁，别改回去）：这条 op 的写面是
+ *    `<工作区>\.team\retro\<day>\conversation-packet\` **一格窄目录**，而真实库就住在工作区**里面**。
+ *    拿 `dataRootVerdict` 的"包住真实根"去判工作区，等于判"工作区不许包住自己的东西" ⇒
+ *    `--workspace E:\Harness` **永远自拒**（实测过：`E_ROOT_REAL_BRAIN` / `E:\Harness ⊇ …\.runtime`），
+ *    那不是保护，是死锁。⇒ 改判**落点**：落点不许落在任何真实根里（含与真实根相等）。
+ *    ⚠️ `--data-root` 那条判法**一个字都没动**（它要写整个根，"包住也拒"是对的）；判据住在
+ *    `lib/paths.mjs::workspaceWriteVerdict`，形状（缺/相对/UNC/C 盘）与测试模式两格（marker / 越界）照旧。
+ *
+ * @returns {{workspace:string, target:string}} 两个都是 canonical
+ */
+function resolvePacketWorkspace(args, payload, relPath) {
+  const raw = guardWorkspaceOf(args, payload)
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    throw cliError('E_ARG_SCHEMA', '缺 workspace（payload.workspace 或 --workspace 二选一）')
+  }
+  const testMode = testModeOfArgs(args)
+  const verdict = workspaceWriteVerdict(raw, {
+    relPath,
+    testMode,
+    markerExists: hasTestMarker(raw),
+    mustBeUnder: testMode ? runRootOfEnv() : null,
+    // 路线根那一格按**这个**工作区算（同一个工作区喂给 data-root 的那张表，就是这一份）
+    realRoots: realRootsFor(raw),
+  })
+  if (!verdict.ok) throw cliError(verdict.code, `--workspace / 包落点：${verdict.message}`, { workspace: verdict.workspace, target: verdict.target })
+  return { workspace: verdict.workspace, target: verdict.target }
 }
 
 /**
@@ -198,7 +283,11 @@ function resolveRealMode(args) {
   return { root: verdict.root, testMode: false, realMode: true }
 }
 
-/** 工作区（`.team` 的家）也走同一套隔离判定 —— 它同样"不许是 C 盘、不许越界"。 */
+/**
+ * 工作区（`.team` 的家）也走同一套隔离判定 —— 它同样"不许是 C 盘、不许越界"。
+ * ⚠️ 它**不喂 `realRoots`**（用 `lib/paths.mjs` 的缺省表）：工作区一定包住它自己的
+ *    `<ws>/.team/route`，拿"包住真实根"那条去判它自己，恒等于自拒 —— 理由见上面 `resolveRoot`。
+ */
 function resolveWorkspace(args, payload) {
   const raw = typeof payload?.workspace === 'string' && payload.workspace.trim() !== '' ? payload.workspace : args.workspace
   if (raw === null || raw === undefined || String(raw).trim() === '') {
@@ -902,6 +991,143 @@ function opHealthRead({ root, args, payload }) {
   return { health, health_path: healthFile, workspace: ws, day, input_shape: Object.keys(input) }
 }
 
+// ── op：冻结会话包（`lib/packet.mjs` 的**入口**，不是第二份引擎）─────────────────────
+/**
+ * `session-packet`：给**哪一天 / 哪个窗口**，就在 `<工作区>/.team/retro/<day>/conversation-packet/`
+ * 落一个冻结会话包，落完之后**自己再校验一遍**并把读数带回 stdout。
+ *
+ * 🔴 **本函数是壳。** 解帧 / 帧边界（子进程调 `.tools/asar-cli/zstd-frames.mjs`）/ 坏帧不留半包 /
+ *    先分类后解压 / 原子改名 —— **全部**住在 `lib/packet.mjs::buildSessionPacket` 里（v1.5/v1.6 冻结）。
+ *    这里**一行都不重写**：两份实现迟早解出两个不同的包，而"哪个才是评审看过的那一版"就再也说不清了。
+ * 🔴 **源流目录一律只读。** 临时件落点照那个模块头部冻死的规则走（`outDir` 内的 token 格 /
+ *    `AGENIA_SCRATCH_DIR`），**本文件不另选一格**，也不替它往源流目录里写任何东西
+ *    （包括帧工具的 `--json-out` 与首帧那一段的切件）。
+ *
+ * 入参（`--in` 那份 JSON）：
+ * ```
+ * { day: "YYYY-MM-DD",                                  // 必填。抽屉日期 = 落点日期
+ *   sources: [{session_id, project, file, last_event_at,   // 必填数组（v1.6 ②：空源也要显式给 []）
+ *              window?}],                                 // v1.7：可选的**单源裁剪窗口**
+ *   project?: "…",              // 缺省 = 工作区目录名（`sources[].project` 拿它比 ⇒ 别的项目一律排除）
+ *   now?: "ISO8601",            // 窗口**上界**；缺省 = 本机时钟（lib/clock.mjs）
+ *   status_root?: "绝对路径",    // 路线在哪（`<它>/route/current.json`）；缺省 = `<工作区>/.team`
+ *   exclude_session_ids?: ["…"] }  // 本次 / 历史评审自己的会话（v1.6 ② 的 `self_review` 那一类）
+ * ```
+ * 🔴 **v1.7（2026-10-15）：`sources[].window` 是这条源的可选裁剪窗口** —— 形状
+ *    `{from?: ISO8601|null, to?: ISO8601}`，语义是"**只把这条流里落在这段窗口内的事件放进包**"。
+ *    本 op **原文透传** `sources`（一个键都不碰）：判形状 / 与包窗口求交 / 逐行裁，
+ *    全部住在 `lib/packet.mjs`（文件头追加裁定 v1.7 写明改了什么、什么没动）。
+ *    ⇒ 一句话：**"换一个窗口"仍然是"换 `now` + 推进路线"**（`from` 的来路没变，v1.6 ①）；
+ *    而 `sources[].window` 是调用方对**单条流**再加一道下界/上界，用来把"跨天的长流"切成一天。
+ *    不给这个键 ⇒ 与 v1.6 逐字相同（向后兼容的判据在 `lib/packet.mjs` 文件头）。
+ * ⚠️ 窗口的 `from` **不由本 op 决定**（v1.6 ①：取 `route/current.json` 里最近一次 review **完成事件**）。
+ *    ⇒ "换一个窗口"= 换 `now` **加**让组长先推进路线；想凭一个参数改写 `from` 是做不到的，也不该做到。
+ *
+ * 返回值里三样是**必核读数**：包的落点 · manifest 必填字段齐不齐 · `validateSessionPacket` 的读数。
+ *
+ * 🔴 **工作区与落点由 `resolvePacketWorkspace()` 判**（`lib/paths.mjs::workspaceWriteVerdict`）：
+ *    判的是"**我会写到哪里**"，不是"我在哪儿开工" —— 理由见那个函数上面的 🔴（工作区包住真实库是设计如此）。
+ */
+function opSessionPacket({ root, args, payload }) {
+  const day = requireString(payload?.day, 'day')
+  if (!S.isDayKey(day)) throw cliError('E_ARG_SCHEMA', `day 必须是 YYYY-MM-DD，实得 ${JSON.stringify(day)}`)
+  // `sources` 是**必填数组**（v1.6 ②）：本 op 不替调用方去会话目录里"猜有哪些流" ——
+  // 猜出来的源 id 与评审报告里写的那个必须逐字相同，猜错就是"评了别的会话还以为评了这一段"。
+  const sources = payload?.sources
+  if (!Array.isArray(sources)) {
+    throw cliError('E_ARG_SCHEMA', 'sources 必填数组（v1.6 ②；空源请显式给 []）—— 本 op 不自己挑源会话')
+  }
+  // 工作区 + 包落点：**判据在 `lib/paths.mjs`，这里只把"落到哪一格"告诉它**。
+  const { workspace: ws, target: outDir } = resolvePacketWorkspace(args, payload, path.join('.team', 'retro', day, 'conversation-packet'))
+  const projectRaw = typeof payload?.project === 'string' ? payload.project.trim() : ''
+  const project = projectRaw === '' ? path.basename(ws) : projectRaw
+  const statusRootRaw = typeof payload?.status_root === 'string' ? payload.status_root.trim() : ''
+  if (statusRootRaw !== '' && !/^[A-Za-z]:[\\/]/.test(statusRootRaw) && !/^\\\\/.test(statusRootRaw)) {
+    throw cliError('E_ARG_SCHEMA', `status_root 给了就必须是绝对路径（相对路径会按 cwd 解析，那是个说不清的地方）：${statusRootRaw}`)
+  }
+  const statusRoot = statusRootRaw === '' ? path.join(ws, '.team') : path.resolve(statusRootRaw)
+  const nowRaw = typeof payload?.now === 'string' ? payload.now.trim() : ''
+  if (nowRaw !== '' && Number.isNaN(Date.parse(nowRaw))) {
+    throw cliError('E_ARG_SCHEMA', `now 必须是 ISO8601（窗口上界），实得 ${JSON.stringify(payload.now)}`)
+  }
+  const excludeSessionIds = Array.isArray(payload?.exclude_session_ids) ? payload.exclude_session_ids.map(String) : []
+
+  // ↓ 引擎在这儿。本文件只交三样东西：入参形状 / 落点 / 之后那一次校验。
+  //   v1.7（2026-10-15）：`sources` 每项多一个**可选**的 `window: {from,to}`（裁剪窗口）——
+  //   本文件**原文透传**（一个键都不删、不改名）：判形状、求交、逐行裁全在 `lib/packet.mjs` 里，
+  //   这里只把引擎回来的那把账（`cropped`）记进 audit 与返回值 —— 因为那十个 manifest 字段不许动，
+  //   盘上要能查到"这份包被裁过、裁掉了多少"。
+  const built = buildSessionPacket({
+    project,
+    outDir,
+    statusRoot,
+    now: nowRaw === '' ? undefined : nowRaw, // undefined ⇒ 走 lib/clock.mjs 的可注入时钟
+    sources,
+    excludeSessionIds,
+  })
+
+  const check = validateSessionPacket(built.dir)
+  if (check.ok !== true) {
+    // 走到这里说明"自己产的包没过自己的校验" —— 那是内部 bug，不许当成功报回去。
+    throw cliError(check.code ?? 'E_INTERNAL', `包落盘之后再校验没过（${check.code ?? 'E_INTERNAL'}）：${JSON.stringify(check.problems).slice(0, 240)}`, { packet_dir: built.dir })
+  }
+  const manifest = check.manifest ?? {}
+  const present = PACKET_MANIFEST_FIELDS.filter((key) => Object.hasOwn(manifest, key))
+  const missing = PACKET_MANIFEST_FIELDS.filter((key) => !Object.hasOwn(manifest, key))
+
+  const at = S.nowIso()
+  const audit = S.appendAudit(root, {
+    kind: 'session-packet',
+    detail: {
+      day,
+      workspace: ws,
+      packet_id: built.packet_id,
+      packet_dir: built.dir,
+      content_sha256: built.content_sha256,
+      window: manifest.window ?? null,
+      source_ids: manifest.source_ids ?? [],
+      excluded: (manifest.excluded ?? []).map((item) => item?.session_id ?? null),
+      validation_ok: check.ok === true,
+      // v1.7：裁剪的账落在这里（manifest 那十个字段不能动）—— 没裁时恒为空数组。
+      cropped: (built.cropped ?? []).map((item) => ({
+        session_id: item.session_id,
+        window: item.window,
+        kept_events: item.kept_events,
+        dropped_events: item.dropped_events,
+        untimed_lines: item.untimed_lines,
+        frames: item.frames,
+      })),
+    },
+    at,
+  })
+
+  return {
+    packet_dir: built.dir,
+    packet_id: built.packet_id,
+    manifest_path: built.manifest_path,
+    content_sha256: built.content_sha256,
+    frames: built.frames,
+    excluded: built.excluded,
+    // v1.7：裁剪的账（每源生效窗口 / 留了几条 / 丢了几条 / 几行没有时间戳 / 有贡献的帧数）。
+    // 没给裁剪窗口时恒为 `[]` —— 旧调用方看到的东西一个字段都没变。
+    cropped: built.cropped ?? [],
+    window: manifest.window ?? null,
+    source_ids: manifest.source_ids ?? [],
+    // 「manifest 必填字段齐不齐」这里给的是**字段表本身**的读数（表里有几个、缺哪几个），不另立一份名单。
+    manifest_fields: { required: PACKET_MANIFEST_FIELDS.length, present: present.length, missing },
+    validation: {
+      ok: check.ok === true,
+      code: check.code ?? null,
+      problems: check.problems ?? [],
+      content_sha256: check.content_sha256 ?? null,
+    },
+    audit: { seq: audit.seq, audit_path: audit.audit_path },
+    workspace: ws,
+    day,
+    out_dir: outDir,
+  }
+}
+
 // ── 入口 ───────────────────────────────────────────────────────────────────
 const OPS = {
   init: opInit,
@@ -924,6 +1150,7 @@ const OPS = {
   'audit-append': opAuditAppend,
   'snapshot-archive': opSnapshotArchive,
   'cs-confirm': opCsConfirm,
+  'session-packet': opSessionPacket,
 }
 
 function emit(envelope) {
@@ -942,16 +1169,24 @@ function main(argv) {
       return 0
     }
     if (!Object.hasOwn(OPS, op)) throw cliError('E_USAGE', `未知 op：${JSON.stringify(op)}；可用：${OP_NAMES.join(' / ')}`)
+    // 🔴 **先读 payload、再做根判定**（2026-10-15 改的次序，理由只有一个）：
+    //    "真实路线根"那一格要拿**这条 op 的工作区**去算（`lib/paths.mjs::realRootsFor`），
+    //    而工作区可能住在 payload 里（`payload.workspace` 优先于 `--workspace`）——
+    //    所以根判定之前必须先把 payload 读出来。
+    //    ⚠️ 代价（照实写）：`--in` 那份文件坏掉时，现在会**先报 `E_ARG_USAGE`/`E_ARG_SCHEMA`**，
+    //       而不是先报根的问题。两条都是非零退出 + 零写入，谁先谁后都不写盘。
+    const payload = readPayload(args)
     // 根判定三档，次序是刻意的：
     //   ① 正面清单里的 op（`init-real`）⇒ 自己那套闸（还要求根必须不存在）；
     //   ② **显式给了 `--real-mode`** ⇒ 真实模式那道闸；
-    //   ③ 其余一切（含**没给** `--real-mode` 的全部情形）⇒ 老的 `resolveRoot()`，**一个字不变**。
+    //   ③ 其余一切（含**没给** `--real-mode` 的全部情形）⇒ 老的 `resolveRoot()`，
+    //      **判定语义一个字不变**；唯一多出来的是"真实根那张表按本 op 的工作区算"。
     // ⇒ "老行为没退化"靠的是**根本没执行到新的那两支**，不是靠新函数里的某个判断。
+    const guardWorkspace = guardWorkspaceOf(args, payload)
     const rootCtx = OPS_WITH_OWN_ROOT_GATE.includes(op)
       ? resolveInitReal(args)
-      : (args.realMode === true ? resolveRealMode(args) : resolveRoot(args))
+      : (args.realMode === true ? resolveRealMode(args) : resolveRoot(args, { realRoots: realRootsFor(guardWorkspace) }))
     const { root } = rootCtx
-    const payload = readPayload(args)
     const out = OPS[op]({ root, args, payload, op })
     // 真实模式下：`writes:true` 的 op 成功之后**多落一条**审计（只读 op 不落 —— 它们不改变权威状态）。
     // 🔴 它写在 op 成功之后：失败的那一次已经被 op 自己的失败路径记过（或它压根没写盘），

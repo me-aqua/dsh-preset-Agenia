@@ -21,7 +21,7 @@
 /** 三支 CLI 的文件名（与 §B1.3 的落点表一致）。 */
 export const CLI_NAMES = Object.freeze(['agenia-brain.mjs', 'agenia-route.mjs', 'agenia-local.mjs'])
 
-/** 共享脑：根是 `--data-root`，20 个写/读 op 加 `help`。 */
+/** 共享脑：根是 `--data-root`，21 个写/读 op 加 `help`（2026-10-15 加 `session-packet`）。 */
 const BRAIN_OPS = Object.freeze([
   { op: 'init', writes: true },
   // `init-real` 是**唯一**能落真实脑根的那一下（`lib/paths.mjs::realInitVerdict` 的三道硬闸）。
@@ -48,6 +48,11 @@ const BRAIN_OPS = Object.freeze([
   { op: 'audit-append', writes: true },
   { op: 'snapshot-archive', writes: true },
   { op: 'cs-confirm', writes: true },
+  // `session-packet`（2026-10-15 加）：冻结会话包 —— 落到 `<工作区>/.team/retro/<day>/conversation-packet/`，
+  // 同时往脑侧记一条 `session-packet` 审计。⇒ **它改的是权威状态**（那两份评审唯一的输入就是它）
+  // ⇒ `writes: true`；根是共享脑根 ⇒ `needsDataRoot: true`（由下面 `rowsFor` 按 CLI 统一给）。
+  // ⚠️ 它会因此进 DR-01 的"非法根 × 写命令"矩阵 —— 那是对的：非法根必须在**任何写之前**就被拒。
+  { op: 'session-packet', writes: true },
   { op: 'help', writes: false },
 ])
 

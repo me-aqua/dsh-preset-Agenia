@@ -7,12 +7,15 @@
  *
  * 追加裁定 **v1.10 ②** 补冻两个派生码：`E_ARG_SCHEMA` ⇒ **2** · `E_TXN_IO` ⇒ **4**
  * （"入参不成形状"与"打包 IO 失败"两处调用它们；值就是下面表里那两个，别处不许再写一份）。
- * 🔴 `E_PACKET_*` 五个（`MANIFEST` / `FRAMES` / `CONTENT_SHA` / `WINDOW` / `EXCLUDE`）**不在本表**：
+ * 🔴 `E_PACKET_*` 五个（`MANIFEST` / `FRAMES` / `CONTENT_SHA` / `WINDOW` / `EXCLUDE`）**原先不在本表**：
  *    它们是 `lib/packet.mjs` 里 `validateSessionPacket` 的**返回码**，不是 CLI 退出码（v1.10 ② 明写"不许混"）。
- *    哪天有 CLI 暴露它们，**同批**搬进本表。
+ *    **2026-10-15 起有 CLI 暴露它们了**（`bin/agenia-brain.mjs --op session-packet`）⇒ 按那条规矩
+ *    **同批搬进本表**：码名从 `lib/packet.mjs` 的 `PACKET_CODES` **取值**（不再抄一遍），这里只补退出码。
+ *    ⚠️ 不搬的后果是"稳定码变 `E_INTERNAL`"——CLI 的 catch 只认本表里的码，别的全折成内部错误，
+ *    于是"包坏了"和"程序有 bug"在报文里长得一模一样。
  *
  * 域：ARG|ROOT|PATH|LOCK|CAS|TXN|STATE|DATA|CAP|STREAK|CS|JOB|CLAIM|FENCE|COVERAGE|RECEIPT|
- *     TICKET|EVIDENCE|STAGE|TASK|ROUTE|GUARD|INSTALL|MANIFEST|SCAN|INTERNAL
+ *     TICKET|EVIDENCE|STAGE|TASK|ROUTE|GUARD|INSTALL|MANIFEST|PACKET|SCAN|INTERNAL
  *
  * 两条纪律：
  *   ① 码名与退出码**不许**在两处各写一份 —— CLI 取 `CODES[code].exit`，测试读 `FROZEN.exitCodes`，
@@ -24,6 +27,20 @@
  *    （`RECEIPT_CODES`），本文件只做汇总 —— 退出码的值仍只在这一处。
  */
 import { RECEIPT_CODES } from './receipt.mjs'
+import { PACKET_CODES } from './packet.mjs'
+
+/**
+ * 会话包那五个码 ⇒ **退出码 5（校验拒绝）**。
+ * 码名**从 `lib/packet.mjs` 取**（`PACKET_CODES` 才是它们唯一的一份），这里只补"CLI 该退几"。
+ * ⚠️ 五个都是"校验没过"：包不合法就该停，不是数据缺失（7）也不是内部错误（8）。
+ */
+const PACKET_EXIT = Object.freeze({
+  [PACKET_CODES.MANIFEST]: { exit: 5, zh: '会话包的 manifest 不合（v1.5 的字段表：缺字段 / 形状错 / schema 不是 agenia.session-packet/1）' },
+  [PACKET_CODES.FRAMES]: { exit: 5, zh: '会话包的帧读数不合（坏帧 / 截断 / 逐帧实解字节与落盘文本对不上 / 字符数对不上）' },
+  [PACKET_CODES.CONTENT_SHA]: { exit: 5, zh: '会话包 content.jsonl 的字节 sha256 与 manifest.content_sha256 不一致' },
+  [PACKET_CODES.WINDOW]: { exit: 5, zh: '会话包的评审窗口不合（from/to 不是 ISO8601，或 from 比 to 还晚）' },
+  [PACKET_CODES.EXCLUDE]: { exit: 5, zh: '会话包的排除项不合（不在 other_project / self_review / outside_window 三类里）' },
+})
 
 /** 退出码族（只作可读常量；表里每个码自带数字）。 */
 export const CODES = Object.freeze({
@@ -83,6 +100,8 @@ export const CODES = Object.freeze({
   E_RECEIPT_HASH: { exit: 5, zh: '回执/报告的锚点哈希对不上（findings 那条独立锚点）' },
   // 回执覆盖那个码：键名从 `lib/receipt.mjs` 取（C-6 —— 它的产生面只有那一个文件）。
   ...RECEIPT_CODES,
+  // 会话包那五个码：键名从 `lib/packet.mjs` 取（同一条道理 —— 产生面只有那一个文件）。
+  ...PACKET_EXIT,
   E_CS_UNCONFIRMED: { exit: 5, zh: '常识改了却没有老板确认' },
   E_CS_CHANGED: { exit: 5, zh: '判决运行中常识又变了 ⇒ 拒提交' },
   E_CAP_COUNT: { exit: 5, zh: '长期记忆条数超过硬限 200' },

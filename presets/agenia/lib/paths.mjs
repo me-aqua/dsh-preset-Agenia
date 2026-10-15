@@ -1,5 +1,6 @@
 /**
- * 路径与隔离 —— data-root 判定、**init-real / --real-mode 两道专用闸**、基准目录内的解析、测试模式判定。
+ * 路径与隔离 —— data-root 判定、**init-real / --real-mode 两道专用闸**、**工作区+落点判定**
+ * （`workspaceWriteVerdict`，只给"写面是工作区里一格窄目录"的 op 用）、基准目录内的解析、测试模式判定。
  *
  * 冻结依据：提案 §B1.5（签名）+ §B1.7（判定**顺序**与 canonical 解析）+ 契约 §2.4（data-root 硬规则）。
  *
@@ -10,8 +11,10 @@
  *      盘上存在的走 `realpath`（连 junction/symlink 一起吃掉）；不存在的退回 `resolve`。
  *   ③ **纯函数、不摸盘**：marker 在不在由调用方给（`markerExists`），盘符怎么算可以注入（`driveOf`）。
  *
- * ⚠️ 本文件**不新增**退出码：所以这里**没有**"必须在 E 盘"这一条判据 —— E 盘只落在常量上
- *    （真实根、staging、运行根都在 E 盘）。C 盘拒绝是提案 §B1.7 明列的 `E_ROOT_C_DRIVE`。
+ * ⚠️ 本文件**不新增**退出码：所以这里**没有**"必须在 E 盘"这一条判据。C 盘拒绝是提案 §B1.7
+ *    明列的 `E_ROOT_C_DRIVE`（它管的是**调用方给的根**，不是本文件里的常量）。
+ *    🔴 2026-10-15 起本文件**一条绝对路径都没有**：两个真实根是算出来的（怎么算见下），
+ *    不再假设"装在 E 盘" —— 换机器 / 换安装目录之后，"真实根"照样指向装好之后那一份。
  *
  * 🔴 **`dataRootVerdict` 的 `REAL_ROOTS` 无条件拒，一个字都不许改。** 它挡的是"日常工具误写真实库"。
  *    落到真实库一共**两条**窄路，都单独住在本文件下半、都不改那张表：
@@ -19,21 +22,76 @@
  *      · `realModeVerdict` ⇒ `--real-mode`：日常 op 落真实库（**必须显式给开关**，且与测试模式互斥）。
  *    刻意不合并进 `dataRootVerdict` —— 合并等于在那张防误写的表上开条件分支，
  *    它会立刻不再是"无条件"。
+ *
+ * 🔴 **第三条路也不是"开的后门"，是另一条判据（2026-10-15 组长裁）**：
+ *    `workspaceWriteVerdict` ⇒ `--op session-packet`。它**不用** `REAL_ROOTS` 那张表，也**没碰**
+ *    `dataRootVerdict` 一分一毫：那条判的是"这个**根**危险吗"（两个方向都拒），这条判的是
+ *    "这个**落点**危险吗"（只拒"落在真实根里"）。两者管的是两种写面，别拿一条去套另一条 ——
+ *    详见那个函数自己的注释（"工作区包住真实库是设计如此，拿它判工作区＝永远自拒"）。
  */
 import { realpathSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-/** 真实脑根（**任何测试/演练都不许写**；当前在盘上不存在）。 */
-export const REAL_BRAIN_ROOT = 'E:\\Harness\\presets\\agenia\\.runtime'
+// ── 两个"真实根"是**怎么算出来的**（本文件里一条绝对路径都不写）───────────────────────
+//
+// 🔴 它们不是配置，是 `dataRootVerdict` 的**判据常量**（那张默认拒绝名单的靶子）。
+//    写成本机字面量的话，换台机器 / 换个安装目录 ⇒ 靶子指向一个不存在的路径 ⇒
+//    "日常工具不许写真实库"当场**失败开（fail-open）**，而测试会全绿、看不出差别
+//    （2026-10-15 技术评审 F4，P1）。
+//
+// ① **脑根 = `<预设目录>/.runtime`** —— 预设目录由**本文件自己的位置**推（`import.meta.url`）。
+//    于是它天然跟着预设走：整个 `presets/agenia` 拷到哪儿（另一台机器、另一个安装目录、
+//    演练用的假预设），它指的就是那儿的 `.runtime`。⇒ 那道闸永远认得自己的靶子。
+//
+// ② **路线根 = `<工作区>/.team/route`** —— 工作区是**运行时**才知道的，从预设目录推不出来。
+//    规则的**唯一一份**住在下面那个 `realRouteRootOf()`；它取哪个工作区，按序：
+//      · 调用方**显式**给了（`--workspace` / `payload.workspace`）⇒ 就用它
+//        （`bin/agenia-brain.mjs` 把工作区喂进 `dataRootVerdict` 的 `realRoots`，走的就是这条）；
+//      · 没给 ⇒ `process.cwd()`（**跑这个命令时站在哪个工作区里，那就是这个工作区**）。
+//    ⚠️ 兜底**绝不退回"本文件写死的那一条"**：那只是把 fail-open 换个名字。
+//    ⇒ 同一份代码在另一台机器、另一个工作区跑，指到的一定是对的那个 `.team/route`。
 
-/** 真实路线根（**任何测试/演练都不许写**；当前在盘上不存在）。 */
-export const REAL_ROUTE_ROOT = 'E:\\Harness\\.team\\route'
+/** 预设目录：本文件住在 `<预设目录>/lib/paths.mjs` ⇒ 往上两层就是它。 */
+export const PRESET_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+/** 真实脑根 = `<预设目录>/.runtime`（**任何测试/演练都不许写**）。 */
+export const REAL_BRAIN_ROOT = path.join(PRESET_DIR, '.runtime')
+
+/**
+ * 工作区 → 真实路线根（`<工作区>/.team/route`）—— **这条规则只有这一份**。
+ *
+ * 工作区缺省（`undefined` / `null` / 空串）⇒ `process.cwd()`：跑命令时站的那个工作区。
+ * ⚠️ 不 canonical、不 realpath：这张表是要被 `isUnder()` 比的，而 `isUnder` 自己会 canonical
+ *    （见下面 `canonicalPath` —— 两份口径，但只有一处说"要不要 realpath"）。
+ */
+export function realRouteRootOf(workspace) {
+  const raw = typeof workspace === 'string' ? workspace.trim() : ''
+  const base = raw === '' ? path.resolve(process.cwd()) : path.resolve(raw)
+  return path.join(base, '.team', 'route')
+}
+
+/** 真实根名单（给**某一个**工作区）：顺序冻结 = 先脑根、后路线根。 */
+export function realRootsFor(workspace) {
+  return [REAL_BRAIN_ROOT, realRouteRootOf(workspace)]
+}
+
+/**
+ * 真实路线根 —— **缺省工作区那一档**（`cwd`）。
+ * 调用方没显式说工作区时，看到的就是它；显式说了，就该用 `realRouteRootOf(<那个工作区>)`。
+ */
+export const REAL_ROUTE_ROOT = realRouteRootOf()
 
 /** 测试根标记文件名（提案 §B1.7 的三层 marker 用它）。 */
 export const TEST_ROOT_MARKER = '.agenia-test-root'
 
-/** 真实根名单（`dataRootVerdict` 的默认拒绝集）。 */
-const REAL_ROOTS = [REAL_BRAIN_ROOT, REAL_ROUTE_ROOT]
+/**
+ * 真实根名单（`dataRootVerdict` 的默认拒绝集）—— 缺省工作区（`cwd`）算出来的那一份。
+ *
+ * 🔴 **依旧是"无条件拒"**：这张表的语义一个字没动（落进这两条里、或包住这两条，一律拒），
+ *    变的只是**靶子怎么算出来**。调用方要换工作区，就把 `realRoots: realRootsFor(ws)` 传进去。
+ */
+const REAL_ROOTS = Object.freeze(realRootsFor())
 
 /** 盘符（`C:` / `E:`…）；不认识 ⇒ null。 */
 function driveOfPath(p) {
@@ -311,6 +369,91 @@ export function resolveWithin(base, target) {
     return { ok: false, code: 'E_PATH_ESCAPE', message: `目标逃出了基准目录：${abs} ⊄ ${baseAbs}` }
   }
   return { ok: true, code: null, path: abs, message: '' }
+}
+
+/**
+ * **工作区 + 落点** 两件套判据 —— 只给"写面是工作区里**一格窄目录**"的 op 用（目前只有
+ * `bin/agenia-brain.mjs --op session-packet`）。判的是「**我会写到哪里**」，不是「我在哪儿开工」。
+ *
+ * 🔴 **为什么它和 `dataRootVerdict` 不是同一条判据（2026-10-15 组长裁）**：
+ *   · `--data-root` 要写的是**整个根** ⇒ "落进真实根"和"**包住**真实根"都危险（后者一把 init
+ *     就可能把里面的真实库一起端掉）⇒ 那张表两个方向都拒，**语义一个字不许改**；
+ *   · 工作区的写面是 `<工作区>\.team\retro\<day>\conversation-packet\` 这一格 ⇒
+ *     "工作区包住真实库"**是设计如此**（真实库就住在工作区里面！）—— 拿"包住"去判工作区，
+ *     等于判"工作区不许包住自己的东西"，**永远自拒，那不是保护**。
+ *   ⇒ 所以这条判据只判一件事：**落点**（`target`）不许落在任何真实根里（含与真实根相等）。
+ *     反方向（落点**包住**真实根）刻意**不判**：落点是个叶子目录，包住只是路径巧合；
+ *     往里写一个字节都碰不到那个真实根（要动真实根得走 `init-real` / `--real-mode` 两条窄路）。
+ *
+ * 判定顺序（冻结，同一输入每次同一个码）：
+ *   MISSING → RELATIVE → UNC → C_DRIVE → **落点在真实根里** → NO_MARKER（仅测试模式）→ OUTSIDE（仅测试模式）。
+ *   ⚠️ 前四条判**工作区**的形状（与 `dataRootVerdict` 同一套说法、同一套码）；第五条判**落点**。
+ *   ⚠️ marker / 越界两格判的还是**工作区**（测试模式的根必须带 `.agenia-test-root`、必须落在运行根之下）——
+ *      那是 data-root 与 workspace 两档共有的一条，本判据不另立一份。
+ *
+ * @param {string|undefined|null} rawWorkspace 调用方给的工作区（`payload.workspace` / `--workspace`）
+ * @param {object} [options]
+ * @param {string} [options.relPath]        **相对工作区**的落点（例 `.team\retro\2026-10-15\conversation-packet`）
+ * @param {boolean} [options.testMode]      测试模式（只看 NO_MARKER / OUTSIDE 两格）
+ * @param {boolean} [options.markerExists]  盘上工作区里有没有 `.agenia-test-root`（由调用方探）
+ * @param {string|null} [options.mustBeUnder] 越界判据（测试模式下 = `AGENIA_TEST_RUN_ROOT`）
+ * @param {string[]} [options.realRoots]    真实根名单（默认脑根 + **默认工作区**的路线根；
+ *                                          调用方该喂 `realRootsFor(<这个工作区>)`）
+ * @param {(p:string)=>string|null} [options.driveOf] 盘符函数（默认本文件那份）
+ * @returns {{ok:true,code:null,workspace:string,target:string,message:string}
+ *          |{ok:false,code:string,workspace:string|null,target:string|null,message:string}}
+ */
+export function workspaceWriteVerdict(rawWorkspace, options = {}) {
+  const {
+    relPath = '',
+    testMode = false,
+    markerExists = false,
+    mustBeUnder = null,
+    realRoots = REAL_ROOTS,
+    driveOf = driveOfPath,
+  } = options ?? {}
+
+  const fail = (code, message, workspace = null, target = null) => ({ ok: false, code, workspace, target, message })
+
+  // ① 工作区的形状：缺 / 相对 / UNC —— 与 data-root 同一套说法（同一件事只有一处说法）
+  if (rawWorkspace === undefined || rawWorkspace === null || String(rawWorkspace).trim() === '') {
+    return fail('E_ROOT_MISSING', '工作区路径缺失（省略 / 空串都算缺失）')
+  }
+  const raw = String(rawWorkspace)
+  if (!isAbsoluteish(raw)) return fail('E_ROOT_RELATIVE', `工作区必须是绝对路径：${raw}`)
+  if (isUnc(raw)) return fail('E_ROOT_UNC', `工作区不许是 UNC：${raw}`)
+
+  const workspace = canonicalPath(raw)
+  if (driveOf(workspace) === 'C:') return fail('E_ROOT_C_DRIVE', `工作区不许在 C 盘：${workspace}`)
+
+  // ② 落点 = 工作区 + relPath（relPath 只许是相对路径，且必须落回工作区里）
+  if (typeof relPath !== 'string' || relPath.trim() === '') {
+    return fail('E_ARG_SCHEMA', 'relPath 必填（相对工作区的落点）', workspace)
+  }
+  if (path.isAbsolute(relPath)) {
+    return fail('E_ARG_SCHEMA', `relPath 只许是相对工作区的那一段，实得绝对路径：${relPath}`, workspace)
+  }
+  const target = path.resolve(workspace, relPath)
+  if (!isUnder(target, workspace)) {
+    return fail('E_ROOT_OUTSIDE', `落点跑出了工作区（${relPath}）：${target} ⊄ ${workspace}`, workspace, target)
+  }
+
+  // ③ 🔴 **本判据的正题**：落点不许落在任何真实根里（含与真实根逐字相等）
+  for (const real of realRoots ?? []) {
+    if (isUnder(target, real)) {
+      return fail('E_ROOT_REAL_BRAIN', `包落点落在真实根里：${target} ⊆ ${canonicalPath(real)}`, workspace, target)
+    }
+  }
+
+  // ④ 测试模式的两格：marker 在不在 / 落点是不是跑出了运行根（判的都是工作区）
+  if (testMode && markerExists !== true) {
+    return fail('E_ROOT_NO_MARKER', `测试模式的工作区必须带 ${TEST_ROOT_MARKER}：${workspace}`, workspace, target)
+  }
+  if (mustBeUnder && !isUnder(workspace, mustBeUnder)) {
+    return fail('E_ROOT_OUTSIDE', `工作区越界（要求落在 ${canonicalPath(mustBeUnder)} 之下）：${workspace}`, workspace, target)
+  }
+
+  return { ok: true, code: null, workspace, target, message: '' }
 }
 
 /**
