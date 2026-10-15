@@ -115,7 +115,8 @@ export function treeHash(root) {
 
 /**
  * 真实根快照 —— 契约 §2.4 第 5 条：执行前后各量一次，任何变化 = 立即停测。
- * 只读；**当前两者都不存在**，那就写"不存在"。
+ * 只读。**真实脑根 2026-10-15 起是"存在"的**（`--op init-real` 亲手开过，exit 0），
+ * 真实路线仍然不存在 —— 两格都**如实写盘上是什么**，不预设"应该不存在"。
  */
 export function realRootsSnapshot() {
   const snap = {
@@ -125,6 +126,47 @@ export function realRootsSnapshot() {
     livePreset: treeHash(PATHS.finalPreset),
   }
   return snap
+}
+
+/**
+ * 真实库的**内容级**读数 —— 只读，一个字节都不写。
+ *
+ * 为什么树哈希之外还要拆这三样：真实库**已经开出来了**（2026-10-15，`--op init-real` 亲手跑过，exit 0）。
+ * 从那一刻起，「真实根不存在」不再是可用判据；还能护着它的判据只剩「**内容没变**」。
+ * 而"内容没变"要让人一眼看出**变的是哪一样**，所以点名三样：
+ *   ① `audit.jsonl` 的**行数** —— 任何一次 audit 写入都会让它 +1（哪怕只落一条审计）；
+ *   ② `v0.json` 的**哈希** —— 开库产物，任何重开 / 重建 / 误初始化都会让它变；
+ *   ③ **整棵树**的哈希（兜底：其它任何文件被写 / 被删 / 被加）。
+ *
+ * ⚠️ 这三样**只用来判"变没变"**，不判"应该是什么值" —— 真实库每写一次本来就该变，
+ *    测试没有资格规定它长什么样。
+ */
+export function realRootContent(root = PATHS.realBrainRoot) {
+  const audit = path.join(root, 'audit.jsonl')
+  const v0 = path.join(root, 'memory', 'snapshots', 'v0.json')
+  const tree = treeHash(root)
+  const auditLines = existsSync(audit)
+    ? readFileSync(audit, 'utf8').split(/\r?\n/).filter((l) => l.trim() !== '').length
+    : null
+  return {
+    root: tree.path,
+    exists: tree.exists,
+    tree_files: tree.count,
+    tree_sha256: tree.sha256,
+    audit_lines: auditLines,
+    audit_sha256: existsSync(audit) ? sha256File(audit) : null,
+    v0_sha256: existsSync(v0) ? sha256File(v0) : null,
+  }
+}
+
+/**
+ * 两份 `realRootContent` 的差异（空数组 = 一字未变）。
+ * 逐项点名 ⇒ 红基线里读到的是"谁变了"，不是一个"哈希不同"。
+ */
+export function realRootContentDiff(before, after) {
+  if (!before || !after) return ['（缺一相位：判不了）']
+  const fields = ['exists', 'tree_files', 'tree_sha256', 'audit_lines', 'audit_sha256', 'v0_sha256']
+  return fields.filter((k) => before[k] !== after[k]).map((k) => `${k}: ${before[k]} → ${after[k]}`)
 }
 
 /** oracle 读数来源 —— 只读；缺失如实写（**不许静默换源**，拍板 I3 / 契约 PH0-5）。 */

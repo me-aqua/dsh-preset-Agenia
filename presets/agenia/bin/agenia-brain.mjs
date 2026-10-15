@@ -22,11 +22,29 @@
  * 🔴 `health-read` 的判定**住在 `lib/health.mjs`**（追加裁定 v1.12 C-1：形状照真实入参冻结，
  *    逻辑整体搬进那个模块并导出 `healthVerdict(input)`）。本文件**只做薄调用**：装输入、转出结果、写派生卡。
  *    同一份判定还有第二个入口 `agenia-local.mjs --op health` —— 一份实现、两个入口，绝不各写一遍。
+ *
+ * 🔴 **唯一一个"根判定例外"：`--op init-real`。**
+ *    它是"第一次开真实库"那一下 —— 走**自己的**三道硬闸（`lib/paths.mjs::realInitVerdict`），
+ *    并且**只有它**能落到 `REAL_BRAIN_ROOT`。
+ *    · 别的任何 op 给了真实根 ⇒ 照旧 `E_ROOT_REAL_BRAIN`（exit 3）。**这道反面对照不许退化** ——
+ *      `dataRootVerdict` 的 `REAL_ROOTS` 无条件拒，就是"日常工具误写真实库"的全部防线。
+ *    · 它的**实际动作**复用 `opInit`（`ensureLayout` + 常识骨架 + v0 快照 + 审计），
+ *      **不另写一份"差不多"的初始化** —— 两份来源迟早不一致。
+ *    · 成功之后另落一条 `audit`（kind = `init-real`），写清"根 / v0 版本 / 常识哈希 / 触发它的 op 名"。
+ *
+ * 🔴 **第二条窄路：`--real-mode`。** 日常 op 落真实库的那道开关（`lib/paths.mjs::realModeVerdict`）。
+ *    · **不给开关 ⇒ 老行为一个字不变**（走 `resolveRoot()`，真实根照旧 `E_ROOT_REAL_BRAIN`）。
+ *      靠的是"根本没执行到新的那两支"，不是靠新函数里的某个判断。
+ *    · 给了 ⇒ ① `--data-root` 必须逐字等于 `REAL_BRAIN_ROOT`；② 与 `--test-mode` **互斥**；
+ *      ③ 根**不必**不存在（"必须不存在"是 `init-real` 独有的语义）。
+ *    · 真实模式下每个 **`writes: true`** 的 op 成功之后**多落一条** `audit`（kind = `real-mode-write`）；
+ *      那份写命令名单**从 `lib/cli-inventory.mjs` 现算**，本文件不另写一份。
+ *    · 🔴 **`init-real` 与 `--real-mode` 并存，不合并** —— `init-real` 比它更窄（还要求根不存在）。
  */
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 import { CODES } from '../lib/error-codes.mjs'
-import { dataRootVerdict, TEST_ROOT_MARKER, testModeOf } from '../lib/paths.mjs'
+import { dataRootVerdict, realInitVerdict, realModeVerdict, TEST_ROOT_MARKER, testModeOf } from '../lib/paths.mjs'
 import { acquireLock, releaseLock, writeJsonAtomic } from '../lib/atomic.mjs'
 import { capacityVerdict, isCullEligible } from '../lib/memory.mjs'
 import { LEASES } from '../lib/liveness.mjs'
@@ -36,16 +54,32 @@ import * as SNAP from '../lib/snapshot.mjs'
 import * as PROP from '../lib/proposals.mjs'
 import { healthVerdict, buildHealthCard } from '../lib/health.mjs'
 import { openAdoptedTicketIds } from '../lib/tickets.mjs'
+import { COMMANDS } from '../lib/cli-inventory.mjs'
 
 const CLI_NAME = 'agenia-brain.mjs'
 
 /** op 清单（顺序即 `--op help` 的打字顺序；新增 op 必须同批进 `lib/cli-inventory.mjs` 与冻结表）。 */
 const OP_NAMES = Object.freeze([
-  'init', 'state-read', 'daily-start', 'claim-update', 'candidates-freeze', 'judge-start',
+  'init', 'init-real', 'state-read', 'daily-start', 'claim-update', 'candidates-freeze', 'judge-start',
   'judge-commit', 'review-start', 'proposal-import', 'maintenance-import', 'snapshot-read',
   'snapshot-list', 'entry-count', 'report-read', 'health-read', 'job-mark', 'audit-append',
   'snapshot-archive', 'cs-confirm', 'help',
 ])
+
+/**
+ * 走**自己那套根判定**的 op（目前只有 `init-real`）。
+ * ⚠️ 这张表是**正面清单**：不在这张表里的 op 一律走 `resolveRoot()`（`REAL_ROOTS` 无条件拒）。
+ * 反过来写（"把某几个 op 排除掉"）迟早会漏一个 —— 漏出去的那一个就是真实库的后门。
+ */
+const OPS_WITH_OWN_ROOT_GATE = Object.freeze(['init-real'])
+
+/**
+ * 真实模式下要"多落一条审计"的 op —— **从 `lib/cli-inventory.mjs` 现算，不另写一份名单**。
+ * 两份名单迟早分叉，而分叉的那一天表现是"某个写命令悄悄不记审计"，谁都不会发现。
+ */
+const REAL_MODE_WRITE_OPS = Object.freeze(
+  COMMANDS.filter((c) => c.cli === CLI_NAME && c.writes === true).map((c) => c.op),
+)
 
 function cliError(code, message, details = null) {
   const err = new Error(message)
@@ -57,7 +91,7 @@ function cliError(code, message, details = null) {
 
 // ── 参数 ───────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const out = { op: null, dataRoot: null, workspace: null, statusRoot: null, inFile: null, testMode: false, forceRecover: false, unknown: [] }
+  const out = { op: null, dataRoot: null, workspace: null, statusRoot: null, inFile: null, testMode: false, realMode: false, forceRecover: false, unknown: [] }
   for (let i = 0; i < argv.length; i += 1) {
     const raw = argv[i]
     const eq = raw.indexOf('=')
@@ -71,6 +105,7 @@ function parseArgs(argv) {
       case '--status-root': out.statusRoot = take(); break
       case '--in': out.inFile = take(); break
       case '--test-mode': out.testMode = true; break
+      case '--real-mode': out.realMode = true; break
       case '--force-recover': out.forceRecover = true; break
       default: out.unknown.push(raw); break
     }
@@ -120,6 +155,47 @@ function resolveRoot(args, { label = '--data-root', raw = args.dataRoot } = {}) 
   })
   if (!verdict.ok) throw cliError(verdict.code, `${label}：${verdict.message}`)
   return { root: verdict.root, testMode }
+}
+
+/**
+ * `init-real` 的根判定 —— **不走** `dataRootVerdict`，走它自己那三道硬闸。
+ *
+ * 为什么只能在这里绕开：`REAL_ROOTS` 无条件拒是"日常工具误写真实库"的**全部**防线。
+ * 那条防线留在原处不动；开库这一个动作单独一个入口（见文件头那条 🔴）。
+ *
+ * @returns {{root:string, testMode:false}} `testMode` 恒为 `false`（互斥闸已经拒掉了 true）
+ */
+function resolveInitReal(args) {
+  const testMode = args.testMode === true || testModeOf({}, process.env)
+  const raw = args.dataRoot
+  // `exists` 由这里探（纯函数不摸盘）。只有形状像绝对路径时才去探，免得把相对名解析到 cwd 上。
+  let exists = false
+  if (typeof raw === 'string' && /^[A-Za-z]:[\\/]/.test(raw)) {
+    exists = existsSync(path.resolve(raw))
+  }
+  const verdict = realInitVerdict(raw, { exists, testMode })
+  if (!verdict.ok) throw cliError(verdict.code, `--data-root：${verdict.message}`)
+  return { root: verdict.root, testMode: false }
+}
+
+/**
+ * `--real-mode` 的根判定 —— 日常 op 落真实库的那条窄路（**开关关着时根本不会走到这里**）。
+ *
+ * `main()` 里的次序是刻意的：**没给 `--real-mode` ⇒ 连这个函数都不调**，直接走老的
+ * `resolveRoot()`。所以"老行为一个字不变"不是靠这个函数判断出来的，是靠**根本没执行到**。
+ *
+ * @returns {{root:string, testMode:false, realMode:true}} 两个模式位都是定值（互斥闸已经把可疑的组合拒了）
+ */
+function resolveRealMode(args) {
+  const testMode = args.testMode === true || testModeOf({}, process.env)
+  const raw = args.dataRoot
+  let exists = false
+  if (typeof raw === 'string' && /^[A-Za-z]:[\\/]/.test(raw)) {
+    exists = existsSync(path.resolve(raw))
+  }
+  const verdict = realModeVerdict(raw, { realMode: args.realMode === true, exists, testMode })
+  if (!verdict.ok) throw cliError(verdict.code, `--data-root：${verdict.message}`)
+  return { root: verdict.root, testMode: false, realMode: true }
 }
 
 /** 工作区（`.team` 的家）也走同一套隔离判定 —— 它同样"不许是 C 盘、不许越界"。 */
@@ -180,6 +256,43 @@ function opInit({ root }) {
     snapshot_version: 'v0',
     common_sense_sha256: cs.sha256,
     snapshot_path: snapFile,
+  }
+}
+
+// ── op：init-real（**唯一**能落真实库的那一下）────────────────────────────────
+/**
+ * `init-real`：第一次开真实库。
+ *
+ * **三道硬闸住 `lib/paths.mjs::realInitVerdict`**（纯函数，可脱盘测）：
+ *   ① 根必须**逐字等于** `REAL_INIT_ROOT`（相等，不是"落在里面"）；
+ *   ② 根必须**还不存在** ⇒ 这是"一次性"保护，开过就再也开不了第二次；
+ *   ③ C 盘 / 相对 / UNC 照旧拒，且**不接受测试模式**（互斥）。
+ *
+ * 🔴 **实际动作就是 `opInit`** —— 一行不多写。两份"初始化"迟早不一致，
+ *    而不一致的后果是"真实库和测试库长得不一样"，那种毛病只有在真出事那天才看得见。
+ *
+ * 成功之后**另外**落一条 `audit`（kind = `init-real`）：`opInit` 自己已经记了 `kind:'init'`，
+ * 这一条记的是"**是谁、从哪个 op 开的库**"——审计链上那份"第一次写入"的可读证据。
+ */
+function opInitReal({ root }) {
+  const out = opInit({ root }) // ← 复用：ensureLayout + 常识骨架 + v0 快照 + audit(init)
+  // ⚠️ `at` 必须在 `opInit` **之后**取：审计链是按 `seq` 递增的，而人读的是 `at`。
+  //    先取 `at` 会让"seq 2 比 seq 1 更早"，读起来像被人改写过分（实测真实根第一次开库就这样）。
+  const at = S.nowIso()
+  const audit = S.appendAudit(root, {
+    kind: 'init-real',
+    detail: {
+      data_root: root,
+      snapshot_version: out.snapshot_version,
+      common_sense_sha256: out.common_sense_sha256,
+      triggered_by_op: 'init-real',
+    },
+    at,
+  })
+  return {
+    ...out,
+    initiated_via: 'init-real',
+    init_real_audit: { seq: audit.seq, audit_path: audit.audit_path },
   }
 }
 
@@ -792,6 +905,7 @@ function opHealthRead({ root, args, payload }) {
 // ── 入口 ───────────────────────────────────────────────────────────────────
 const OPS = {
   init: opInit,
+  'init-real': opInitReal,
   'state-read': opStateRead,
   'daily-start': opDailyStart,
   'claim-update': opClaimUpdate,
@@ -828,10 +942,30 @@ function main(argv) {
       return 0
     }
     if (!Object.hasOwn(OPS, op)) throw cliError('E_USAGE', `未知 op：${JSON.stringify(op)}；可用：${OP_NAMES.join(' / ')}`)
-    const { root } = resolveRoot(args)
+    // 根判定三档，次序是刻意的：
+    //   ① 正面清单里的 op（`init-real`）⇒ 自己那套闸（还要求根必须不存在）；
+    //   ② **显式给了 `--real-mode`** ⇒ 真实模式那道闸；
+    //   ③ 其余一切（含**没给** `--real-mode` 的全部情形）⇒ 老的 `resolveRoot()`，**一个字不变**。
+    // ⇒ "老行为没退化"靠的是**根本没执行到新的那两支**，不是靠新函数里的某个判断。
+    const rootCtx = OPS_WITH_OWN_ROOT_GATE.includes(op)
+      ? resolveInitReal(args)
+      : (args.realMode === true ? resolveRealMode(args) : resolveRoot(args))
+    const { root } = rootCtx
     const payload = readPayload(args)
     const out = OPS[op]({ root, args, payload, op })
-    emit({ ok: true, op, ...out })
+    // 真实模式下：`writes:true` 的 op 成功之后**多落一条**审计（只读 op 不落 —— 它们不改变权威状态）。
+    // 🔴 它写在 op 成功之后：失败的那一次已经被 op 自己的失败路径记过（或它压根没写盘），
+    //    这里再记一条会让人误以为"写过一次"。
+    let auditSuffix = null
+    if (rootCtx.realMode === true && REAL_MODE_WRITE_OPS.includes(op)) {
+      const audit = S.appendAudit(root, {
+        kind: 'real-mode-write',
+        detail: { op, data_root: root },
+        at: S.nowIso(),
+      })
+      auditSuffix = { kind: 'real-mode-write', seq: audit.seq, audit_path: audit.audit_path }
+    }
+    emit({ ok: true, op, ...out, ...(auditSuffix === null ? {} : { real_mode_audit: auditSuffix }) })
     return 0
   } catch (err) {
     const code = typeof err?.code === 'string' && Object.hasOwn(CODES, err.code) ? err.code : 'E_INTERNAL'

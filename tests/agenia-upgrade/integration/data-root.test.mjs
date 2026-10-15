@@ -9,7 +9,30 @@
  *   · **分母是清单**（`lib/cli-inventory.mjs` 的 `COMMANDS`）：清单没列的共享写命令不许存在；
  *     清单与冻结 op 表对不上也要红（新增 op 必须同批进清单、进测试）。
  *   · **正例必须存在**：只有"合法测试根写成功"这一侧过了，"拒绝"才不是"命令坏掉蒙对"（§9.5 第 1 条）。
- *   · 真实根前后哈希随每个会写盘的子用例记（§2.4 第 5 条）；任何变化 = **安全违规**，不是普通红。
+ *   · 真实库前后**内容**随每个会碰它的子用例量（§2.4 第 5 条）：树哈希 + `audit.jsonl` 行数
+ *     + `v0.json` 哈希；任何变化 = **安全违规**，不是普通红。
+ *     ⚠️ 判据**不是**"它必须不存在"。旧断言 `existsSync(REAL_BRAIN_ROOT) ⇒ SECURITY-VIOLATION`
+ *     的前提（"本轮真实根必须不存在"）**2026-10-15 已作废**：真实库那天起就是**真数据**。
+ *     留着那条会变成"每天都红、而红的原因与有没有人写它无关"的假红。
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ * 🔴🔴 **死命令 —— 想给这个文件加用例的人，先读完这一段再动手**
+ *
+ *   **任何用例都不许让 `--real-mode`（或 `--op init-real`）+ 真实根 + `writes: true` 的 op 真跑起来。**
+ *
+ *   · 真实库 `E:\Harness\presets\agenia\.runtime` 是**真数据**：2026-10-15 有人亲手用 `--op init-real`
+ *     把它开出来（exit 0），`.runtime\audit.jsonl` 里那两条 `init` / `init-real` 就是凭据。**它不是演练。**
+ *   · `audit-append` 那种 op **光落一条审计**就把这个库的事写进去了；`init` 会把它重开一遍。
+ *     一次"顺手加个用例"就能把真库烧掉，而且烧掉之后**看不出是测试干的**。
+ *   · ⇒ **真实根那一侧只许跑只读 op**：`entry-count` / `state-read` / `health-read`。
+ *   · ⇒ 写 op 只许出现在**「没给开关」**或**「根不是真实根」**的格子里；
+ *     真要在一个"给了开关 + 真实根"的格子里放写 op，那是把真实库押在"闸不会坏"上 —— **禁止**。
+ *   · ⇒ 那几条闸里，凡是"必须亲手碰真实根才看得见"的那一档，**一律改成纯函数断言**
+ *     （`realInitVerdict` / `realModeVerdict` 都是**不摸盘**的纯函数，见下面的 ②b）。
+ *     例：`init-real` 的「根必须不存在」那条一次性保护 ⇒ 纯函数注入 `exists:true` 来钉，
+ *     绝不许拿盘上那个真根去撞。
+ *   · 🔴 万一哪天真跑上了：**立即停测、如实报现场、别自己清理**（清理才是把它写坏的那一下）。
+ * ══════════════════════════════════════════════════════════════════════════════════════════
  */
 import { before, describe, test } from 'node:test'
 import { existsSync, readFileSync } from 'node:fs'
@@ -17,8 +40,11 @@ import path from 'node:path'
 import { ENV, FROZEN, PATHS } from '../support/env.mjs'
 import {
   caseFail,
+  caseHold,
   preflight,
   problem,
+  realRootContent,
+  realRootContentDiff,
   realRootsSnapshot,
   runCase,
   sha256File,
@@ -71,7 +97,9 @@ describe('integration · data-root (DR)', () => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
       rec.readings.staging = stagingReadings()
-      const realBefore = treeHash(REAL_BRAIN_ROOT)
+      // 真实库的**内容级**读数（树哈希 + audit 行数 + v0 哈希）—— 只读，见 support/evidence.mjs。
+      const realRoot = PATHS.realBrainRoot
+      const realBefore = realRootContent(realRoot)
 
       // ── ① 清单本身（分母）：必须存在、必须与冻结 op 表一致 ──────────────
       const inv = await loadStagedModule('lib/cli-inventory.mjs', [])
@@ -104,7 +132,7 @@ describe('integration · data-root (DR)', () => {
       }
 
       // ── ② 纯函数：dataRootVerdict 的判定顺序 + canonical 解析 ───────────
-      const pathLib = await loadStagedModule('lib/paths.mjs', ['dataRootVerdict', 'resolveWithin', 'testModeOf'])
+      const pathLib = await loadStagedModule('lib/paths.mjs', ['dataRootVerdict', 'resolveWithin', 'testModeOf', 'realInitVerdict', 'realModeVerdict'])
       if (pathLib.surfaceMissing) push('SUT-SURFACE-MISSING', 'staged/lib/paths.mjs 不在 —— 根判定拿不到（预期的首跑红）')
       for (const n of pathLib.missing) push('SUT-SURFACE-MISSING', `staged/lib/paths.mjs 没有导出 ${n}`)
       if (pathLib.mod?.dataRootVerdict) {
@@ -164,12 +192,102 @@ describe('integration · data-root (DR)', () => {
         if (got['{testMode:true}'] !== true) push('TEST-MODE', `testModeOf({testMode:true}) 必须为 true，实得 ${got['{testMode:true}']}`)
       }
 
+      // ── ②b 两道新闸的**纯函数**面：`init-real` 与 `--real-mode` ────────────────
+      // 🔴 为什么这一半必须走纯函数（而不是真跑 CLI）：它们各有几档"只有**真碰真实库**才看得见"，
+      //    而真碰就是事故（见文件头那条死命令）。两个函数都**不摸盘**（`exists` 由调用方注入）
+      //    ⇒ 能把"根必须不存在"这种一次性保护**在盘外**钉死，一个字节都不冒险。
+      // 【钉什么】闸的**码**与**判定次序**：形状 → 测试模式互斥 → 专名（逐字相等）→ 一次性。
+      // 【怎么翻面】① 把 `realModeVerdict` 里"必须显式给开关"那条删掉 ⇒ 「真实根 + 没给开关」那一格
+      //            从 `E_ROOT_REAL_BRAIN` 变成 ok ⇒ 当场红（那正是"真实库后门"的形状）；
+      //            ② 把测试模式互斥闸删掉 ⇒ 两处 `E_ARG_SCHEMA` 变 `E_DATA_EXISTS`/ok ⇒ 红；
+      //            ③ 把"逐字相等"改成"落在里面就算" ⇒ 「子路径」那一格从 `E_ROOT_OUTSIDE` 变 ok ⇒ 红。
+      if (pathLib.mod?.realInitVerdict) {
+        const v = pathLib.mod.realInitVerdict
+        const cases = [
+          ['省略根', undefined, 'E_ROOT_MISSING', { exists: false, testMode: false }],
+          ['相对路径', 'brain-root', 'E_ROOT_RELATIVE', { exists: false, testMode: false }],
+          ['UNC', '\\\\server\\share', 'E_ROOT_UNC', { exists: false, testMode: false }],
+          ['C 盘（非法姿势）', 'C:\\Temp\\agenia', 'E_ROOT_C_DRIVE', { exists: false, testMode: false }],
+          // 🔴 互斥闸：带测试模式 ⇒ 一律 E_ARG_SCHEMA（**不是** E_ROOT_REAL_BRAIN —— 那是日常 op 的码）
+          ['真实根 + 测试模式', realRoot, 'E_ARG_SCHEMA', { exists: false, testMode: true }],
+          ['真实根 + 测试模式（根已存在也还是先报互斥）', realRoot, 'E_ARG_SCHEMA', { exists: true, testMode: true }],
+          // 一次性保护 —— **注入** `exists:true` 来钉，绝不许拿盘上那个真根去撞
+          ['真实根（已经在盘上 ⇒ 一次性保护）', realRoot, 'E_DATA_EXISTS', { exists: true, testMode: false }],
+          // 专名闸：**是相等，不是"落在里面"**
+          ['真实根的子路径', `${realRoot}\\sub`, 'E_ROOT_OUTSIDE', { exists: false, testMode: false }],
+          ['真实根的父目录', `${PATHS.finalPreset}`, 'E_ROOT_OUTSIDE', { exists: false, testMode: false }],
+          // ★ 正例：**只做纯函数**。真开库那一下永远不许在测试里跑（真库已经在盘上了）。
+          //    ⚠️ 这里注入 `exists:false` 钉的是**判定逻辑**，不是盘上事实 —— 盘上事实是 exists:true
+          //    （读数见 DR-01 ④ 的 `real_brain`）。
+          ['真实根 + 还不存在（正例）', realRoot, null, { exists: false, testMode: false }],
+        ]
+        const got = {}
+        for (const [label, raw, wantCode, o] of cases) {
+          let out = null
+          try { out = v(raw, o) } catch (err) { push('INIT-REAL-VERDICT', `realInitVerdict(${label}) 抛错：${String(err.message).slice(0, 160)}`); continue }
+          got[label] = { ok: out?.ok ?? null, code: out?.code ?? null }
+          if (wantCode === null) {
+            if (out?.ok !== true) push('INIT-REAL-VERDICT', `${label} 应当通过，实得 ok=${out?.ok} code=${out?.code}`)
+          } else if (out?.ok !== false || out?.code !== wantCode) {
+            push('INIT-REAL-VERDICT', `${label} 应为 ${wantCode}，实得 ok=${out?.ok} code=${out?.code}`)
+          }
+        }
+        rec.readings.init_real_verdict = got
+        // 次序冻结：同一输入两次同一个码
+        const twice = [v(realRoot, { exists: true, testMode: true })?.code, v(realRoot, { exists: true, testMode: true })?.code]
+        if (twice[0] !== twice[1]) push('INIT-REAL-VERDICT-ORDER', `realInitVerdict 同一输入两次得到不同码：${JSON.stringify(twice)}（判定次序必须冻结）`)
+      }
+      if (pathLib.mod?.realModeVerdict) {
+        const v = pathLib.mod.realModeVerdict
+        const nonReal = `${PATHS.repo}\\.tools\\_scratch\\agenia-dr-outside`
+        const cases = [
+          ['省略根', undefined, 'E_ROOT_MISSING', { realMode: true }],
+          ['相对路径', 'brain-root', 'E_ROOT_RELATIVE', { realMode: true }],
+          ['UNC', '\\\\server\\share', 'E_ROOT_UNC', { realMode: true }],
+          ['C 盘（非法姿势）', 'C:\\Temp\\agenia', 'E_ROOT_C_DRIVE', { realMode: true }],
+          // **命门**：与测试模式互斥（"给开关 + 真实根 + --test-mode" 就是撞这一条）
+          ['真实根 + 开关 + 测试模式', realRoot, 'E_ARG_SCHEMA', { realMode: true, testMode: true }],
+          // 老行为不许退化：没给开关 ⇒ 真实根照旧无条件拒
+          ['真实根 + 没给开关', realRoot, 'E_ROOT_REAL_BRAIN', { realMode: false }],
+          // 专名闸：**是相等，不是"落在里面"**
+          ['非真实根 + 开关', nonReal, 'E_ROOT_OUTSIDE', { realMode: true }],
+          ['真实根的子路径 + 开关', `${realRoot}\\sub`, 'E_ROOT_OUTSIDE', { realMode: true }],
+          // ★ 正例（纯函数）：开关真的能把那道门打开
+          ['真实根 + 开关（正例）', realRoot, null, { realMode: true }],
+        ]
+        const got = {}
+        for (const [label, raw, wantCode, o] of cases) {
+          let out = null
+          try { out = v(raw, o) } catch (err) { push('REAL-MODE-VERDICT', `realModeVerdict(${label}) 抛错：${String(err.message).slice(0, 160)}`); continue }
+          got[label] = { ok: out?.ok ?? null, code: out?.code ?? null }
+          if (wantCode === null) {
+            if (out?.ok !== true) push('REAL-MODE-VERDICT', `${label} 应当通过，实得 ok=${out?.ok} code=${out?.code}`)
+          } else if (out?.ok !== false || out?.code !== wantCode) {
+            push('REAL-MODE-VERDICT', `${label} 应为 ${wantCode}，实得 ok=${out?.ok} code=${out?.code}`)
+          }
+        }
+        rec.readings.real_mode_verdict = got
+      }
+
       // ── ③ 逐命令 × 逐姿势（真子进程）────────────────────────────────────
       if (!stagingExists(path.join('bin', 'agenia-brain.mjs'))) {
         push('SUT-SURFACE-MISSING', 'staged/bin/agenia-brain.mjs 不在 ⇒ 逐命令的 data-root 矩阵跑不起来（预期的首跑红）')
       }
-      const writeCommands = (commands ?? []).filter((c) => c.writes === true && c.needsDataRoot === true)
+      // 🔴 `init-real` **不进这张矩阵**（单列在下面的 ③a）。
+      //    理由：矩阵里「真实脑根（原样）」那一格会把真实根**原样**交给它。那一格现在之所以安全，
+      //    只因为"`init-real` 与 `--test-mode` 互斥"那一道闸 —— 派工单的定性是：
+      //    那是"碰巧对"，不是"看得出来在护什么"（真漏了闸，这一格会**当场把真实库开一遍**）。
+      // ⇒ 单列一组：码钉死（E_ARG_SCHEMA）、跑前跑后真实库内容钉死。
+      // ⚠️ 它也因此没有"合法测试根"那一条正向对照 —— `init-real` 在测试模式下**永远**是 E_ARG_SCHEMA，
+      //    它的正例只存在于纯函数那一档（②b 的「真实根 + 还不存在」）。
+      const writeCommands = (commands ?? []).filter((c) => c.writes === true && c.needsDataRoot === true && c.op !== 'init-real')
       rec.readings.write_commands = writeCommands.map((c) => `${c.cli}#${c.op}`)
+      // 分母不许空：`init-real` 若从清单里消失，③a 那一组就会**空着一路绿**（"清单就是分母"）。
+      const initRealRows = (commands ?? []).filter((c) => c.cli === 'agenia-brain.mjs' && c.op === 'init-real')
+      rec.readings.init_real_row = initRealRows.map((c) => ({ writes: c.writes, needsDataRoot: c.needsDataRoot }))
+      if (commands !== null && initRealRows.length === 0) {
+        push('CLI-INVENTORY', '清单里没有 `agenia-brain.mjs#init-real` —— ③a 那一组的分母是空的（它在不在盘上都必须被清点点名）')
+      }
       const postureResults = {}
       for (const cmd of writeCommands) {
         for (const { label, spec } of badRootPostures()) {
@@ -212,13 +330,182 @@ describe('integration · data-root (DR)', () => {
       }
       rec.readings.postures = postureResults
 
-      // ── ④ 零写入 / 真实根不变 ──────────────────────────────────────────
-      const realAfter = treeHash(REAL_BRAIN_ROOT)
-      rec.readings.real_brain = { before: realBefore, after: realAfter }
-      if (realBefore.exists !== realAfter.exists || (realBefore.exists && realBefore.sha256 !== realAfter.sha256)) {
-        push('SECURITY-VIOLATION', `真实脑根在 DR-01 期间被改动（${realBefore.exists ? realBefore.sha256 : '不存在'} → ${realAfter.exists ? realAfter.sha256 : '不存在'}）—— 立即停测并报事故，不许自行清理现场`)
+      // ── ③a `init-real`：**单列一组**（它已经不在上面那张矩阵里了）──────────────────
+      // 【钉什么】
+      //   ① 「真实根姿势」那四格（原样 / 大写盘符 / 尾斜杠 / `..` 绕）⇒ **E_ARG_SCHEMA**（互斥闸），
+      //      **不是** E_ROOT_REAL_BRAIN —— 后者是"日常 op 误写真实库"那个码，`init-real` 不走那张表。
+      //   ② 非真实根姿势的码各自钉死（缺失 / 相对 / C 盘 / UNC / 专名闸 E_ROOT_OUTSIDE）。
+      //   ③ 这一组跑前跑后，真实库**内容一字未变**：`audit.jsonl` 行数 / `v0.json` 哈希 / 整树哈希。
+      // 【怎么翻面】
+      //   · 把 `realInitVerdict` 的测试模式互斥闸删掉 ⇒ 四格的真实根姿势从 E_ARG_SCHEMA 变成
+      //     E_DATA_EXISTS（真库已在盘上）⇒ ① 当场红；真让它写进去 ⇒ ③ 红（而且那是**安全违规**级别的红）。
+      //   · 把"逐字相等"放宽成"落在里面就算" ⇒ 「运行根之外」那一格的 E_ROOT_OUTSIDE 会变 ok ⇒ 红。
+      //   · 把 `init-real` 从清单里删掉 ⇒ 分母空了 ⇒ 上面的 `CLI-INVENTORY` 红（不许空着一路绿）。
+      const initRealBefore = realRootContent(realRoot)
+      // 缺面时别在这里刷一串"跑不起来"：`③` 开头那条 `SUT-SURFACE-MISSING` 已经把缺面报红了，
+      // 这里再报 7 条只会把"被测对象没实现"读成一堆噪声。
+      const brainCliOk = stagingExists(path.join('bin', 'agenia-brain.mjs'))
+      rec.readings.brain_cli_present = brainCliOk
+      const initRealShapeCodes = {
+        '省略 --data-root': 'E_ROOT_MISSING',
+        '空串': 'E_ROOT_MISSING',
+        '相对路径': 'E_ROOT_RELATIVE',
+        'C 盘（非法姿势）': 'E_ROOT_C_DRIVE',
+        'UNC': 'E_ROOT_UNC',
       }
-      if (existsSync(REAL_BRAIN_ROOT)) push('SECURITY-VIOLATION', `真实脑根 ${REAL_BRAIN_ROOT} 竟然存在了 —— 本轮它必须是不存在的状态`)
+      const initRealCases = []
+      for (const { label, spec } of badRootPostures()) {
+        const touchesReal = /^真实/.test(label)
+        const want = touchesReal ? 'E_ARG_SCHEMA' : (initRealShapeCodes[label] ?? null)
+        if (want === null) continue // 「运行根之外」在下面单独跑（要剥测试模式才看得到专名闸）
+        initRealCases.push({ label, extra: spec.mode === 'value' ? ['--data-root', spec.value] : [], want, strip: false, touchesReal })
+      }
+      const outsidePosture = badRootPostures().find(({ label }) => label === '运行根之外')
+      // 专名闸要**不带测试模式**才看得到（带测试模式时先撞互斥闸，永远只看到 E_ARG_SCHEMA）。
+      // 剥 `AGENIA_TEST_RUN_ROOT` 是安全的：根判定跑在 op 分派**之前**，被拒的那一次不写盘；
+      // 而且这一格的根是运行根之外的 `_scratch` 子目录，**不是**真实根。
+      initRealCases.push({
+        label: '运行根之外（不带测试模式）',
+        extra: ['--data-root', outsidePosture.spec.value],
+        want: 'E_ROOT_OUTSIDE',
+        strip: true,
+        touchesReal: false,
+      })
+      const initRealResults = {}
+      for (const c of initRealCases) {
+        if (!brainCliOk) break
+        let res = null
+        try {
+          res = runCli('agenia-brain.mjs', { op: 'init-real', testMode: !c.strip, extra: c.extra }, {
+            env: process.env,
+            ...(c.strip ? { stripEnv: [ENV.RUN_ROOT] } : {}),
+          })
+        } catch (err) {
+          initRealResults[c.label] = { threw: String(err.message).slice(0, 160) }
+          push('INIT-REAL-THREW', `init-real 用「${c.label}」跑不起来（连拒绝都没给出来）：${String(err.message).slice(0, 160)}`)
+          continue
+        }
+        const code = res.json?.error?.code ?? null
+        const wantExit = FROZEN.exitCodes[c.want]
+        initRealResults[c.label] = { exit_code: res.exit_code, code, want: c.want, touches_real_root: c.touchesReal }
+        if (res.exit_code === 0) {
+          push('INIT-REAL-ACCEPTED', `init-real 用「${c.label}」竟然 exit 0 —— 这一格必须被拒：${res.stdout.trim().slice(0, 200)}`)
+          continue
+        }
+        if (code !== c.want) {
+          push('INIT-REAL-CODE', `init-real 用「${c.label}」应报 ${c.want}，实得 ${code ?? '(无码)'}：${res.stdout.trim().slice(0, 240)}`)
+        }
+        if (typeof wantExit === 'number' && res.exit_code !== wantExit) {
+          push('INIT-REAL-EXIT', `init-real 用「${c.label}」的 ${c.want} 应配退出码 ${wantExit}，实得 ${res.exit_code}`)
+        }
+      }
+      const initRealAfter = realRootContent(realRoot)
+      const initRealDiff = realRootContentDiff(initRealBefore, initRealAfter)
+      rec.readings.init_real = { before: initRealBefore, after: initRealAfter, diff: initRealDiff, cases: initRealResults }
+      if (initRealDiff.length > 0) {
+        push('SECURITY-VIOLATION', `真实库在 init-real 那一组里被改动了（${initRealDiff.join('；')}）—— 立即停测并报事故，不许自行清理现场`)
+      }
+      if (!initRealAfter.exists && initRealBefore.exists) {
+        push('SECURITY-VIOLATION', `真实库在 init-real 之后不见了（${initRealAfter.root}）—— 它在盘上是既定事实，测试不许把它拿走`)
+      }
+      if (!initRealBefore.exists) {
+        // 空对空永远"前后同值" ⇒ 这一组此刻**判不了**。挂起（HOLD）而不是绿，也不是红：
+        // 真库还没开出来这一档本来就无从判（换台机器 / 重新克隆时就是这种态）。
+        caseHold(rec, 'INIT-REAL-VACUOUS', `真实库 ${initRealBefore.root} 不在盘上 ⇒ 「跑前跑后同值」这一组判不了（空对空永远相等）。**这一格不是绿。**`)
+      }
+
+      // ── ③b `--real-mode`（**开关**，不是 op）：三条 + 一条只读正例 ──────────────
+      // 它不在冻结 op 表里（`--op help` 照样 21 个），但"有行为就必须有用例"照样成立。
+      // 🔴 死命令（文件头）：这几格里**任何一格**都不许让 `--real-mode` + 真实根 + 写 op 真跑起来。
+      //    ⇒ 真实根那一侧**只用只读 op**（`entry-count`）；互斥闸是 **op 无关**的（跑在 op 分派之前），
+      //      所以用只读 op 钉到的正是同一件事，却不用把真库押在"闸不会坏"上。
+      const realModeBefore = realRootContent(realRoot)
+      const realModeResults = {}
+      const runRealMode = (label, opts, strip) => {
+        if (!brainCliOk) return null // 缺面已由 ③ 那条 SUT-SURFACE-MISSING 报过（同上）
+        try {
+          const res = runCli('agenia-brain.mjs', opts, { env: process.env, ...(strip ? { stripEnv: [ENV.RUN_ROOT] } : {}) })
+          realModeResults[label] = { exit_code: res.exit_code, code: res.json?.error?.code ?? null, args: res.args.join(' ') }
+          return res
+        } catch (err) {
+          realModeResults[label] = { threw: String(err.message).slice(0, 160) }
+          push('REAL-MODE-THREW', `${label}：跑不起来（连拒绝都没给出来）：${String(err.message).slice(0, 160)}`)
+          return null
+        }
+      }
+      const expectReject = (label, res, want) => {
+        if (res === null) return
+        if (res.exit_code === 0) {
+          push('REAL-MODE-ACCEPTED', `${label} 竟然 exit 0 —— 这一格必须被 ${want} 拒：${res.stdout.trim().slice(0, 200)}`)
+          return
+        }
+        const code = res.json?.error?.code ?? null
+        if (code !== want) push('REAL-MODE-CODE', `${label} 应报 ${want}，实得 ${code ?? '(无码)'}：${res.stdout.trim().slice(0, 240)}`)
+        const wantExit = FROZEN.exitCodes[want]
+        if (typeof wantExit === 'number' && res.exit_code !== wantExit) {
+          push('REAL-MODE-EXIT', `${label} 的 ${want} 应配退出码 ${wantExit}，实得 ${res.exit_code}`)
+        }
+      }
+
+      // ① 不给开关 + 真实根 + **写 op** ⇒ `E_ROOT_REAL_BRAIN`（老行为没退化）
+      //    🔴 两个写 op 都是**结构上写不出去**的（就算根判定那一道闸坏了，也写不进真实库）：
+      //      · `init`：真实库非空 ⇒ op 自己就 `E_DATA_EXISTS`（D-B3），一个字节不写；
+      //      · `audit-append`：空载荷缺 `kind` ⇒ 在 `appendAudit` **之前**被 `E_ARG_SCHEMA` 拒
+      //        （这一只正是派工单点名的"光落一条审计就把真库写了"那条 op）。
+      for (const op of ['init', 'audit-append']) {
+        const label = `不给开关 · 真实根 · ${op}`
+        expectReject(label, runRealMode(label, { op, testMode: true, extra: ['--data-root', realRoot] }, false), 'E_ROOT_REAL_BRAIN')
+      }
+
+      // ② 给开关 + 真实根 + `--test-mode` ⇒ `E_ARG_SCHEMA`（**命门**：互斥闸）
+      {
+        const label = '给了开关 · 真实根 · --test-mode'
+        expectReject(label, runRealMode(label, { op: 'entry-count', testMode: true, extra: ['--data-root', realRoot, '--real-mode'] }, false), 'E_ARG_SCHEMA')
+      }
+
+      // ③ 给开关 + **非**真实根 ⇒ `E_ROOT_OUTSIDE`（专名闸：只认那一个根）
+      //    必须剥 `AGENIA_TEST_RUN_ROOT`：留着它 ⇒ testMode 恒 true ⇒ 先撞互斥闸 ⇒ 永远看不到这一格。
+      {
+        const label = '给了开关 · 非真实根'
+        const nonReal = scenarioWorkspace('DR-01', 'real-mode-nonreal')
+        expectReject(label, runRealMode(label, { op: 'entry-count', testMode: false, extra: ['--data-root', nonReal, '--real-mode'] }, true), 'E_ROOT_OUTSIDE')
+      }
+
+      // ★ 正例（只读 op）：开关真能把门打开。
+      //   没有这一条，上面那三条"被拒"就可能是"命令坏了蒙对"（§9.5 第 1 条：正例必须存在）。
+      //   `entry-count` 是**只读**的 ⇒ 真实库一个字节都不会变（死命令允许的正是这一类）。
+      {
+        const label = '给了开关 · 真实根 · 只读 op（正例）'
+        const res = runRealMode(label, { op: 'entry-count', testMode: false, extra: ['--data-root', realRoot, '--real-mode'] }, true)
+        if (res !== null) {
+          if (res.exit_code !== 0) {
+            push('REAL-MODE-POSITIVE', `${label} 必须成功（开关真能把门打开），实得 exit=${res.exit_code} / ${res.json?.error?.code ?? '(无码)'}：${res.stdout.trim().slice(0, 240)}`)
+          } else if (res.json?.ok !== true) {
+            push('REAL-MODE-POSITIVE', `${label} 的 stdout 信封必须 ok=true，实得 ${JSON.stringify(res.json)?.slice(0, 240)}`)
+          } else {
+            realModeResults[label].count = res.json.count ?? null
+            realModeResults[label].snapshot = res.json.snapshot ?? null
+          }
+        }
+      }
+      const realModeAfter = realRootContent(realRoot)
+      const realModeDiff = realRootContentDiff(realModeBefore, realModeAfter)
+      rec.readings.real_mode = { before: realModeBefore, after: realModeAfter, diff: realModeDiff, cases: realModeResults }
+      if (realModeDiff.length > 0) {
+        push('SECURITY-VIOLATION', `真实库在 --real-mode 那一组里被改动了（${realModeDiff.join('；')}）—— 立即停测并报事故`)
+      }
+
+      // ── ④ 零写入 / 真实库内容不变 ──────────────────────────────────────
+      // 🔴 判据是「**前后同值**」，**不是**"它必须不存在"。
+      //    旧断言 `existsSync(REAL_BRAIN_ROOT) ⇒ SECURITY-VIOLATION` 的前提（"本轮真实根必须不存在"）
+      //    2026-10-15 已作废：真实库那天起就是**真数据**（`--op init-real` 亲手开过，exit 0）。
+      //    留着它 = 每天都红、而红的原因跟"有没有人写它"无关 —— 假红比不红更坏（AGENTS.md §6）。
+      const realAfter = realRootContent(realRoot)
+      const realDiff = realRootContentDiff(realBefore, realAfter)
+      rec.readings.real_brain = { before: realBefore, after: realAfter, diff: realDiff, exists: realBefore.exists }
+      if (realDiff.length > 0) {
+        push('SECURITY-VIOLATION', `真实库在 DR-01 期间被改动（${realDiff.join('；')}）—— 立即停测并报事故，不许自行清理现场`)
+      }
 
       caseFail(problems)
     })

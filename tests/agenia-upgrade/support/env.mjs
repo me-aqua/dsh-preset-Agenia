@@ -370,10 +370,25 @@ export const FROZEN = {
     E_GUARD_OFFICE_SHELL: 5, E_GUARD_OFFICE_WRITE: 5, E_GUARD_CONFIG_MISSING: 5,
   },
 
-  /** 三个 CLI 的 op 清单（提案 §B1.4）—— DR 用例的分母；新增 op 必须同批进清单。 */
+  /**
+   * 三个 CLI 的 op 清单（提案 §B1.4）—— DR 用例的分母；新增 op 必须同批进清单。
+   *
+   * 🔴 **`--real-mode` 不在这张表里，也永远不许进** —— 它不是 op，是**开关**：
+   *    `--op help` 的 op 数照样只由这里那几张表决定，开关一个都不占。
+   *    它有自己的用例（`integration/data-root.test.mjs` 的 DR-01 里那组 `real-mode-*` 读数）——
+   *    "有行为就必须有用例"这条规矩照样成立，只是落点不在 op 表上。
+   *
+   * ⚠️ `init-real` 是**唯一**能落真实库的 op（`lib/paths.mjs::realInitVerdict` 三道硬闸）。
+   *    它 `writes: true` ⇒ 进 DR-01 的"写命令"名单；但它**不进那张非法根矩阵** ——
+   *    矩阵里「真实脑根（原样）」那一格会真把真实根交给它，安全与否只取决于"与 `--test-mode` 互斥"
+   *    那一道闸（派工单定性：那是"碰巧对"，不是"看得出来在护什么"）⇒ DR-01 把它**单列一组**钉码。
+   */
   ops: {
     'agenia-brain.mjs': [
-      { op: 'init', writes: true }, { op: 'state-read', writes: false },
+      { op: 'init', writes: true },
+      // 一次性开库（只在"还不存在"的真实根上成功）—— 详见上面那段 ⚠️。
+      { op: 'init-real', writes: true },
+      { op: 'state-read', writes: false },
       { op: 'daily-start', writes: true }, { op: 'claim-update', writes: true },
       { op: 'candidates-freeze', writes: true }, { op: 'judge-start', writes: true },
       { op: 'judge-commit', writes: true }, { op: 'review-start', writes: true },

@@ -200,16 +200,35 @@ function parseEnvelope(stdout) {
 }
 
 /**
+ * 子进程环境 + **一处可剥的变量**（`stripEnv`）。
+ *
+ * 存在的唯一理由：`--real-mode` / `init-real` 那两道**互斥闸**只在"子进程**不是**测试模式"时
+ * 才可能被单独看见 —— 只要 `AGENIA_TEST_RUN_ROOT` 还留在环境里，`testModeOf()` 就恒为 true，
+ * 于是所有姿势都只能读到 `E_ARG_SCHEMA`，`E_ROOT_OUTSIDE` 那一格**永远测不到**。
+ *
+ * 🔴 **剥掉它只许用在"根会被拒"的姿势上**：根判定跑在 op 分派**之前**，
+ *    被拒的那一次一个字节都不会写。**剥着它去跑真写 op = 把真实库押在"闸不会坏"上 —— 禁止**
+ *    （`integration/data-root.test.mjs` 的文件头有这条死命令）。
+ */
+function childProcessEnv(env, stripEnv = []) {
+  const out = childEnv(env)
+  for (const key of stripEnv) delete out[key]
+  return out
+}
+
+/**
  * 同步跑一次 CLI（**缺面 ⇒ SUT-SURFACE-MISSING**）。
  * 契约 §9.5 第 5 条：退出码用不截断管道收集，失败也留 stdout/stderr。
+ *
+ * `stripEnv`：要给子进程**剥掉**的环境变量名（见 `childProcessEnv` 那条 🔴）。
  */
-export function runCli(cliName, opts = {}, { env = process.env, timeoutMs = 60000 } = {}) {
+export function runCli(cliName, opts = {}, { env = process.env, timeoutMs = 60000, stripEnv = [] } = {}) {
   const spec = callSpec(cliName, opts, env)
   if (!existsSync(spec.abs)) throw new SutSurfaceMissing(`bin/${cliName}`, spec.abs)
   const started = Date.now()
   const res = spawnSync(NODE_BIN, [spec.abs, ...spec.args], {
     cwd: spec.cwd,
-    env: childEnv(env),
+    env: childProcessEnv(env, stripEnv),
     encoding: 'utf8',
     timeout: timeoutMs,
     maxBuffer: 64 * 1024 * 1024,

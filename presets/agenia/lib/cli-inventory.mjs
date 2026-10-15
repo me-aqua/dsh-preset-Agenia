@@ -21,9 +21,15 @@
 /** 三支 CLI 的文件名（与 §B1.3 的落点表一致）。 */
 export const CLI_NAMES = Object.freeze(['agenia-brain.mjs', 'agenia-route.mjs', 'agenia-local.mjs'])
 
-/** 共享脑：根是 `--data-root`，19 个写/读 op 加 `help`。 */
+/** 共享脑：根是 `--data-root`，20 个写/读 op 加 `help`。 */
 const BRAIN_OPS = Object.freeze([
   { op: 'init', writes: true },
+  // `init-real` 是**唯一**能落真实脑根的那一下（`lib/paths.mjs::realInitVerdict` 的三道硬闸）。
+  // 它同样是"改权威状态"⇒ `writes: true`；根也是共享脑根 ⇒ `needsDataRoot: true`。
+  // ⚠️ 它会因此进 DR-01 的"非法根 × 写命令"矩阵 —— 那是对的：
+  //    矩阵**总是带 `--test-mode`**，而 `init-real` 与测试模式互斥 ⇒ 每次都被 `E_ARG_SCHEMA` 拒，
+  //    真实根一个字节都不会被建出来。
+  { op: 'init-real', writes: true },
   { op: 'state-read', writes: false },
   { op: 'daily-start', writes: true },
   { op: 'claim-update', writes: true },
