@@ -29,7 +29,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -46,8 +46,16 @@ const DEFAULT_LEADER_ORDER = ['leader', 'work-guidelines', 'roster', 'board', 'p
 /** 组员默认收到哪些。 */
 const DEFAULT_MEMBER_ORDER = ['work-guidelines', 'charter']
 
-/** 受限岗位默认是哪几个。 */
-const DEFAULT_OFFICE_BOUND = ['review', 'retro']
+/**
+ * 受限岗位默认是哪几个。
+ * 🔴 它必须与 `agent.cordis.yml` 里 `persona-injector` 那一行的 `officeBound` **逐项一致**
+ * （配置没给 `officeBound` 时走这一份兜底；两份分叉 = 两套边界）。静态用例钉着这一条。
+ * 2026-10-15（执行一 · 批次 I2）：加进两个评审类作业 `memory-review` / `conversation-review`。
+ * 🔴 2026-10-15（执行二 · 批次 I15）：`retro` 去掉 —— 复盘岗撤销、`team/retro.md` 删除、
+ *    `team-retro` 行已关。名单现在是**恰好 3 项**，与 yml 的 `officeBound` 逐项一致。
+ *    `memory-judge` 与 `technical-review` 仍不在里面（它们要写共享脑 / 跑测试）。
+ */
+const DEFAULT_OFFICE_BOUND = ['review', 'memory-review', 'conversation-review']
 
 /**
  * 「语言风格」那一份 —— ⑤ 尾巴提醒读它。
@@ -115,8 +123,16 @@ const WRITE_TARGET = { write: 'file_path', edit: 'file_path' }
 /** 一条通用命令行就是一条通用写入通道。受限岗位不能留着它。 */
 const SHELL = ['bash', 'pwsh']
 
-/** 团队的办公桌：项目里的 .team/ 目录。受限岗位只能写这里。 */
-const OFFICE = /(^|[\\/])\.team([\\/]|$)/
+/**
+ * 团队的办公桌：**`resolve(cwd, '.team')` 这一棵子树**（含它自己）。受限岗位只能写这里。
+ *
+ * 🔴 判据是 **containment**（追加裁定 v1.7 · B4），不是"解析后的路径里含 `.team` 段"：
+ *    段匹配在"cwd 自己就在某个 `.team` 之下"时会把外面误判成里面
+ *    （实测：夹具 `AGENIA_TEST_WORKSPACE` = `E:\Harness\.team\test\…` ⇒ `ws\x.md` 被放行）。
+ *    语义与 `lib/paths.mjs` 的 `resolveWithin` 一致：先 `resolve` 吃掉 `..`，
+ *    盘上存在再 `realpath` 吃掉 junction/symlink（AGENTS.md 3e：路径判断必须算落点）。
+ */
+const OFFICE_DIR = '.team'
 
 /**
  * 队伍的工具名 → 岗位名。约定：`team_<岗位名>`，而岗位名就是 `team/<岗位名>.md`
@@ -246,17 +262,210 @@ function roleOf(assembly) {
 }
 
 /**
+ * canonical：先 `resolve`（吃掉 `..` 与 `.`），盘上存在再 `realpath`（吃掉 junction/symlink）。
+ * 盘上没有这个路径就退回 `resolve` —— 与 `lib/paths.mjs` 的 `canonicalPath` 同形。
+ */
+function canonicalPath(p) {
+  const resolved = resolve(p)
+  try {
+    return realpathSync.native(resolved)
+  } catch {
+    return resolved
+  }
+}
+
+/** 可比较形状：canonical + 正斜杠 + 去尾斜杠 + 小写。 */
+function pathKey(p) {
+  let s = canonicalPath(p).replace(/\\/g, '/')
+  while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1)
+  return s.toLowerCase()
+}
+
+/** `child` 是否落在 `parent` 之下（含相等）。 */
+function isUnder(child, parent) {
+  const c = pathKey(child)
+  const p = pathKey(parent)
+  return c === p || c.startsWith(`${p}/`)
+}
+
+/** 盘符（`C:` / `E:`…）；不认识（UNC、相对路径）⇒ null。 */
+function driveOfPath(p) {
+  const m = /^([A-Za-z]):/.exec(String(p ?? ''))
+  return m ? `${m[1].toUpperCase()}:` : null
+}
+
+/**
  * 这个路径落在团队的办公桌上吗？
- * 一定要先算出真实落点再判断 —— 只看字符串的话，
- * `.team/review/../../x.txt` 里含有 `.team/`，可它落在项目根。
+ *
+ * 三条口径（追加裁定 v1.7 · B4）：
+ *   · **先算落点再比** —— 先 `resolve`（吃掉 `..` 与 `.`），盘上存在再 `realpath`；
+ *     只匹配字符串的话，`.team/review/../../x.txt` 里含有 `.team/` 却落在项目根；
+ *   · **containment** —— 落点要在 `resolve(cwd, '.team')` 之下（含相等与子目录）才算组内；
+ *   · **空目标 · 解析不出 cwd · 落点在 C 盘** ⇒ 一律算"不在组内"（C 盘是本机硬禁区）。
+ *
+ * ⚠️ 它与活体那版（段匹配）**语义不同**，是有意的收紧，安装后由 R1 验。
  */
 function landsInOffice(target, agent) {
   if (typeof target !== 'string' || target.length === 0) return false
   const cwd = agent === null || agent === undefined ? undefined : agent.session?.header?.cwd
-  if (typeof cwd !== 'string') {
-    return isAbsolute(target) && OFFICE.test(resolve(target))
+  if (typeof cwd !== 'string' || cwd.trim().length === 0) return false
+  const landing = canonicalPath(resolve(cwd, target))
+  if (driveOfPath(landing) === 'C:') return false
+  return isUnder(landing, canonicalPath(resolve(cwd, OFFICE_DIR)))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 委派门禁（**纯函数**）：名单从组合 config 读，代码里不硬编码。
+//
+// 为什么这四个必须导出：不导出就只能隔着整条 apply 路测它们，"喂假 config 验错误态"
+// 这件事根本做不了（退化成"读代码觉得对"）。裁定 Q1 冻了命名 export，静态用例按名字取。
+//
+// 两条判定的返回值形状是冻结的：**null = 放行**，`{ code, message }` = 拒绝。
+// 拒绝报文里那几个子串（`必须后台运行` · `run_in_background: true` · `（省略即后台）`）也是冻的。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 委派名单那个 config 键的名字 —— `apply` 的出声报文与 `delegationPolicy` 读的是同一个。 */
+const DELEGATION_TOOLS_KEY = 'delegationTools'
+
+/** `delegationTools` 里允许的两个模式值（别的值一律算非法配置）。 */
+const DELEGATION_MODES = ['one-shot', 'continuable']
+
+/** 配置坏掉时的错误码（裁定 A4 第 3 条）。 */
+const GUARD_CONFIG_ERROR = 'E_GUARD_CONFIG_MISSING'
+
+/**
+ * 配置坏掉时**仍然要拦**的委派名（追加裁定 v1.1 · A13，逐字）：
+ *   · 精确名 `subagent`（裸外聘那条路）；
+ *   · `team_` 前缀（五个固定岗位）；
+ *   · `job_memory_` / `job_conversation_` / `job_technical_` 前缀（四条一次性作业）。
+ *
+ * 🔴 **明确放行** `job_output` / `job_kill` / `job_list` —— 它们是**框架自己的**任务工具，
+ *    配置坏了还得靠它们把作业结果收回来。更早那版写的是 `^(subagent|team_|job_)`，
+ *    会连它们一起误杀（症状：现场再也收不回结果）⇒ 那条形状已作废，别再改回去。
+ */
+const DELEGATION_CONFIG_ERROR_REJECT = (toolName) =>
+  toolName === 'subagent'
+  || toolName.startsWith('team_')
+  || ['job_memory_', 'job_conversation_', 'job_technical_'].some((prefix) => toolName.startsWith(prefix))
+
+/**
+ * 从组合 config 算出委派政策（**裁定 A4**）。
+ *
+ * 入参形状**只有一种**：`config.delegationTools` = `{ <工具名>: 'one-shot' | 'continuable' }`。
+ * 缺 / `null` / 不是映射（数组、字符串）/ 空映射 / 有非法模式值 ⇒
+ * `configError = 'E_GUARD_CONFIG_MISSING'` —— 调用方必须出声，**不许静默放前台**。
+ *
+ * `backgroundExposed` = 这份名单里**暴露了 `run_in_background` 参数**的那些工具。
+ * 唯一会把参数拿掉的是行 config 里的 `enableRunInBackground: false`，而组合里一行都没写它
+ * ⇒ 名单里每个工具都暴露着。这条不变量是有用的：那四条 `one-shot` 的"必须显式 true"
+ * 全靠它才可能被满足（拍板 I1）。
+ *
+ * @param {object} config - `persona-injector` 那一行的 config 段。
+ * @returns {{ mode: Map<string,string>, backgroundExposed: Set<string>, configError: string|null }}
+ */
+export function delegationPolicy(config) {
+  const raw = config === null || config === undefined ? undefined : config[DELEGATION_TOOLS_KEY]
+  const broken = () => ({ mode: new Map(), backgroundExposed: new Set(), configError: GUARD_CONFIG_ERROR })
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return broken()
+  const entries = Object.entries(raw)
+  if (entries.length === 0) return broken()
+  const mode = new Map()
+  for (const [toolName, value] of entries) {
+    if (typeof toolName !== 'string' || toolName.length === 0) return broken()
+    if (!DELEGATION_MODES.includes(value)) return broken()
+    mode.set(toolName, value)
   }
-  return OFFICE.test(resolve(cwd, target))
+  return { mode, backgroundExposed: new Set(mode.keys()), configError: null }
+}
+
+/**
+ * 名单的键（升序、去重）—— 给静态对账与文档用，与 `subagentBackgroundVerdict` 读同一张表。
+ * 形状不合法就返回空数组（**不抛**）：要判"配置坏了"请读 `delegationPolicy` 的 `configError`。
+ */
+export function delegationToolNames(config) {
+  return [...delegationPolicy(config).mode.keys()].sort()
+}
+
+/**
+ * 调用前判定（**纯函数**）：`null` = 放行；`{ code, message }` = 拒绝（**绝不启动子代理**）。
+ *
+ * 规则（提案 §B1.5 逐字）：
+ *   · 名单里是 `one-shot` ⇒ 只有 `args.run_in_background === true` 才放行，否则 `E_GUARD_JOB_FOREGROUND`；
+ *     省略 / `false` / `'true'` / `null` / `0` 一律算"会前台等着"，全拒（判据是 `=== true`，不是真值）。
+ *   · 名单里是 `continuable` ⇒ 省略或 `true` 放行，只有显式 `false` 才拒（`E_GUARD_SELF_FOREGROUND`）。
+ *   · 不在名单里 ⇒ 放行 —— 无关工具（含框架自己的 `job_output` / `job_kill` / `job_list`）
+ *     一个都不许误伤；判定只看**工具名 + 这一个参数**。
+ *   · `policy.configError` 非空 ⇒ 按 A13 那条窄形状拦委派名，其余照常放行。
+ */
+export function subagentBackgroundVerdict(toolName, args, policy) {
+  const name = typeof toolName === 'string' ? toolName : ''
+  const configError = policy === null || policy === undefined ? GUARD_CONFIG_ERROR : policy.configError
+  if (configError !== null && configError !== undefined) {
+    if (!DELEGATION_CONFIG_ERROR_REJECT(name)) return null
+    return {
+      code: GUARD_CONFIG_ERROR,
+      message: `「${name}」这次调用被拒：委派名单配置坏了（${GUARD_CONFIG_ERROR}）—— `
+        + `persona-injector 那一行的 ${DELEGATION_TOOLS_KEY} 缺失或非法。`
+        + '修好配置再派活；要让它后台跑，调用时必须显式写 run_in_background: true。',
+    }
+  }
+  const mode = policy.mode instanceof Map ? policy.mode.get(name) : undefined
+  if (mode === undefined) return null
+  const flag = args === null || typeof args !== 'object' ? undefined : args.run_in_background
+  if (mode === 'one-shot') {
+    if (flag === true) return null
+    return {
+      code: 'E_GUARD_JOB_FOREGROUND',
+      message: `「${name}」是一次性作业，必须后台运行 —— 请显式传 run_in_background: true`
+        + '（省略、false 或别的值都会让它在前台等着，把组长卡住）。',
+    }
+  }
+  if (flag === false) {
+    return {
+      code: 'E_GUARD_SELF_FOREGROUND',
+      message: `「${name}」必须后台运行（省略即后台）—— 只有显式 run_in_background: false 才会被拒；`
+        + '把它去掉，或改成 true。',
+    }
+  }
+  return null
+}
+
+/**
+ * 岗位写边界 —— 把原来内联的那段判定抽成纯函数（提案 §B1.5 冻的签名与返回形状）。
+ * `null` = 放行；`{ code, message }` = 拒绝。两个码（`E_GUARD_OFFICE_SHELL` /
+ * `E_GUARD_OFFICE_WRITE`）与报文前缀「你的岗位（<role>）」都是冻结的判据，别换措辞。
+ *
+ * 三条语义（改之前先想清楚）：
+ *   · 角色认不出 / 不在名单里 ⇒ 放行 —— 这道边界是挡几个岗位的，**绝不能反过来挡组长**；
+ *   · `bash` / `pwsh` 一律拒（一条通用命令行就是一条通用写入通道，留着它边界就是纸的）；
+ *   · `write` / `edit` 按**落点**判：落点要在 `resolve(cwd, '.team')` 之下才放行
+ *     （containment，追加裁定 v1.7 · B4 —— `landsInOffice` 那一节写着三条口径）。
+ */
+export function officeBoundVerdict(role, toolName, args, agent, officeBoundSet) {
+  const bound = officeBoundSet instanceof Set
+    ? officeBoundSet
+    : new Set(Array.isArray(officeBoundSet) ? officeBoundSet : DEFAULT_OFFICE_BOUND)
+  if (typeof role !== 'string' || !bound.has(role)) return null
+
+  if (SHELL.includes(toolName)) {
+    return {
+      code: 'E_GUARD_OFFICE_SHELL',
+      message: `你的岗位（${role}）没有命令行。命令行等于什么都能写，留着它这道边界就是纸的。`
+        + '要什么材料 —— 代码差异、命令输出、文件清单 —— 找组长要，他给你。',
+    }
+  }
+
+  const key = WRITE_TARGET[toolName]
+  if (key === undefined) return null
+  const target = args === null || typeof args !== 'object' ? undefined : args[key]
+  if (landsInOffice(target, agent)) return null
+
+  return {
+    code: 'E_GUARD_OFFICE_WRITE',
+    message: `你的岗位（${role}）只能写项目里 .team/ 下面的东西。`
+      + `你这次要写的是「${String(target)}」，按落点算在你的地盘外面。`
+      + '要改什么，写成意见交回组长。',
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -565,6 +774,19 @@ export async function apply(ctx, config = {}) {
     Array.isArray(config.officeBound) ? config.officeBound : DEFAULT_OFFICE_BOUND,
   )
 
+  // 委派名单（裁定 A4）：从 config 算一遍，门禁与"配置坏了"的出声都用它。
+  // 配置坏了**不抛** —— 队伍照常挂载，但门禁降级成 A13 那条窄形状，而且这里必须出声：
+  // 悄悄失效比明着失败更糟（评审会以为自己被门禁挡着，其实没有）。
+  const delegation = delegationPolicy(config)
+  if (delegation.configError !== null) {
+    console.error(
+      `[agenia] config 里的 ${DELEGATION_TOOLS_KEY} 缺失或非法（${delegation.configError}）—— `
+        + '四个一次性作业的后台硬门拿不到名单；错误态下只拦委派类工具'
+        + '（subagent / team_* / job_memory_* / job_conversation_* / job_technical_*），'
+        + 'job_output / job_kill / job_list 照常放行（配置坏了也要能把作业结果收回来）。',
+    )
+  }
+
   // ─────────────────────────────────────────────────────────────
   // 配置自检。
   // 这一份文件是在**用户的机器上**跑的，那边没有体检脚本 —— 配置拼错的时候，
@@ -575,7 +797,9 @@ export async function apply(ctx, config = {}) {
   // 为什么不 export Config 交给框架校验：那要 import 一个 schema 库，而这份预设的
   // 装法是"拷一个文件夹"，用户机器上没有 node_modules —— 为了查错把安装搞坏不值。
   // ─────────────────────────────────────────────────────────────
-  const KNOWN_CONFIG = ['leaderOrder', 'memberOrder', 'officeBound', 'contentDir']
+  // ⚠️ 新加的 config 键必须**同批**进这张白名单，否则每次挂载都会误报"不认识的配置键"
+  //    （2026-10-15 批次 I2 加 `delegationTools` 时就是这么加进来的）。
+  const KNOWN_CONFIG = ['leaderOrder', 'memberOrder', 'officeBound', 'contentDir', DELEGATION_TOOLS_KEY]
   /** 这三个 key 是算出来的，不是文件。 */
   const COMPUTED_KEYS = ['roster', 'board', 'charter']
 
@@ -733,44 +957,39 @@ export async function apply(ctx, config = {}) {
   // 排在文件最后 —— 为什么必须排在 ⑤ 后面，那儿写着。
 
   // ─────────────────────────────────────────────────────────────
-  // ③ 岗位边界。
-  // 受限岗位：写文件只能落在 .team/ 里面，而且没有命令行。
-  // 认不出岗位的 agent 一律放行 —— 这道边界是用来挡住几个岗位的，
-  // 绝不能反过来把组长自己挡住。
+  // ③ 岗位边界 + 后台硬门。**同一道门禁里两条判定，次序是定的：**
+  //   ① 后台硬门（`subagentBackgroundVerdict`）先判 —— 它对**所有角色**都生效；
+  //   ② 岗位写边界（`officeBoundVerdict`）后判 —— 认不出岗位的一律放行。
+  //   ⚠️ **次序别倒过来**：受限岗位若先被岗位判定放行/拒绝，就轮不到后台硬门了，
+  //      而 GRD-01 要的正是"门禁覆盖所有角色"。（真正的语义证明只能靠 R1 真挂载，
+  //      这里这条只是文件序代理 —— 追加裁定 v1.1 · A15。）
   // ─────────────────────────────────────────────────────────────
   const tools = ctx.get('tools')
   if (tools !== undefined && typeof tools.guard === 'function') {
     ctx.effect(
       () =>
         tools.guard((call) => {
-          const id = call === null || call === undefined ? undefined : call.agent?.id
+          const toolName = call === null || call === undefined ? undefined : call.name
+          const args = call === null || call === undefined ? undefined : call.arguments
+          const who = call === null || call === undefined ? undefined : call.agent
+
+          const background = subagentBackgroundVerdict(toolName, args, delegation)
+          if (background !== null) return background.message
+
+          const id = who === null || who === undefined ? undefined : who.id
           const role = typeof id === 'string' ? roleOfAgent.get(id) : undefined
-          if (role === undefined || !officeBound.has(role)) return undefined
-
-          if (SHELL.includes(call.name)) {
-            return `你的岗位（${role}）没有命令行。命令行等于什么都能写，留着它这道边界就是纸的。`
-              + '要什么材料 —— 代码差异、命令输出、文件清单 —— 找组长要，他给你。'
-          }
-
-          const key = WRITE_TARGET[call.name]
-          if (key === undefined) return undefined
-          const target = call.arguments === null || typeof call.arguments !== 'object'
-            ? undefined
-            : call.arguments[key]
-          if (landsInOffice(target, call.agent)) return undefined
-
-          return `你的岗位（${role}）只能写项目里 .team/ 下面的东西。`
-            + `你这次要写的是「${String(target)}」，按落点算在你的地盘外面。`
-            + '要改什么，写成意见交回组长。'
+          const office = officeBoundVerdict(role, toolName, args, who, officeBound)
+          return office === null ? undefined : office.message
         }),
-      'agenia：岗位写权限边界',
+      'agenia：岗位写权限边界 + 后台硬门',
     )
   } else {
-    // 悄悄失效比明着失败更糟：评审和复盘会以为自己"只审不改"，
-    // 实际上什么都能改。这里必须出声，不然没人会发现。
+    // 悄悄失效比明着失败更糟：评审和复盘会以为自己"只审不改"、作业会在前台等着，
+    // 实际上什么都能改、还卡着组长。这里必须出声，不然没人会发现。
     console.error(
-      `[agenia] 这个框架版本没有 tools.guard，岗位写权限边界没有生效 —— `
-        + `现在 ${[...officeBound].join('、')} 这几个岗位可以写任何地方、也能跑命令行。`,
+      `[agenia] 这个框架版本没有 tools.guard —— 岗位写权限边界没有生效（现在 `
+        + `${[...officeBound].join('、')} 这几个岗位可以写任何地方、也能跑命令行），`
+        + 'subagent 后台硬门未生效（四条一次性作业省略 run_in_background 会在前台等着，把组长卡住）。',
     )
   }
 

@@ -1,0 +1,62 @@
+# 作业书 · technical-review
+
+> 你是**技术评审**（一次性的后台作业，工具 `job_technical_review`）。**这份文件不进提示词** ——
+> 你上岗时自动收到的只有 `team/technical-review.md`（岗位说明书）。
+> **开工第一件事：读这份作业书全文**（本机落点 `E:\Harness\presets\agenia\job-briefs\technical-review.md`）。
+> 读不到、或者下面清单里的路径在你手里不存在 ⇒ **当场停**，报给父级，**不许拿猜的顶上**。
+
+## 一、这一票要交什么
+
+| 产物 | 落点（`<WS>` = 项目工作区根） | 说明 |
+|---|---|---|
+| 技术评审报告 | `<WS>\.team\retro\<日期>\技术评审.md` | 人读：结论 + 每条发现的展开 |
+| findings 机读清单 | `<WS>\.team\retro\<日期>\技术评审.findings.json` | **作业产物 = 锚点**：回执/健康都读它 |
+| 提案草稿 | `<WS>\.team\retro\<日期>\proposals\*.json` | 机读：交组长导入 |
+
+**同一天跑第二场**：文件名加后缀 `.2`（`技术评审.2.md` / `技术评审.2.findings.json`）；
+真实路径由本地状态的 `technical.report_path` 承载 —— **别让下游靠文件名猜。**
+
+### `技术评审.findings.json` 的字段（一个都不能省）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `schema` | integer | `1` |
+| `day` | `YYYY-MM-DD` | 报告日 |
+| `report_path` | string（相对工作区、正斜杠） | 例 `retro/2026-10-14/技术评审.md` |
+| `report_sha256` | 64 hex | **报告正文的 SHA256**（你自己算，不靠回执自报） |
+| `generated_at` | ISO8601（带偏移） | |
+| `code_fingerprint` | object | `{ before_sha256, after_sha256, equal: true }` —— `equal` 不是 true ⇒ 本次作废 |
+| `findings` | array | **零条也要有 `[]`** |
+| `findings_set_sha256` | 64 hex | 对**规范化后的 findings** 取 SHA256：`JSON.stringify(findings, 键按字典序, 无空白)` |
+
+**单条 finding**：`id`（`F1`、`F2`… **同一报告内唯一且连续**）· `title`（老板能懂的一句话）·
+`severity`（`P0|P1|P2|P3`）· `evidence`（**至少 1 条** `{kind:'file'|'cmd'|'log', ref, note?}`）· `summary`（一句话摘要）。
+
+## 二、必读输入清单（**只读这里点名的东西**）
+
+`<DR>` = 任务书给你的 data root（绝对路径）。
+
+| # | 输入 | 路径 | 读哪一版 | 核对什么 |
+|---|---|---|---|---|
+| 1 | **代码根** | 任务书点名的绝对路径 | **派工那一刻那一版**（这一版的"版本号"就是 `before_sha256`） | `before_sha256`（派工时给你）；交活前自己算 `after_sha256` |
+| 2 | 常识 | `<DR>\common-sense.md` | 任务书点名的那个 SHA256 | **必核 SHA256**：与共享状态里的 `common_sense_sha256` 逐字一致 |
+| 3 | 快照 | `<DR>\memory\snapshots\<vN>.json` | 任务书点名的那一版 | `version` / `totals` 与 `distribution` —— 对"当时队伍以为知道什么" |
+| 4 | 共享状态 | `<DR>\state\update\<day>.json` | 任务书点名的 `generation` | `phase` / `snapshot_available`；记下 `common_sense_sha256` |
+| 5 | 路线 | `<WS>\.team\route\current.json` | —— | **本作业不读**（技术评审只看代码 + 快照 + 常识）；**更不许写** —— 票与路线是组长的活 |
+
+🔴 **缺任何一样、代码根不是任务书点名的那一版、或者哈希对不上 ⇒ 当场停**：
+不出半份 findings，把它当成「这一票没做成」报回去。
+⚠️ 一条测试跑不动 ≠ 可以跳过：**写清"哪条没跑、为什么"**；**不许**把没跑写成通过。
+
+## 三、地基：前后 CODE 指纹必须相同
+
+- 你**可以跑测试**（你有 shell），**不许改生产代码、不许改 `tests/**`**。
+- 交活前：算一遍 `after_sha256`，与 `before_sha256` 比 —— **不相等 ⇒ 这一票作废并显式失败**
+  （`code_fingerprint.equal: false` 就是"作废"的意思，照实写，别把不等说成"差不多"）。
+- 共享脑（`<DR>` 下的一切）**只读**：你不写记忆、不写快照、不写状态。
+
+## 四、交活
+
+报告里写清：**评的是哪一版代码**（含前后 SHA256）· **逐条发现**（id / 严重度 / 证据 / 摘要）·
+**跑了哪些命令、哪条没跑** · **判不了的条目 + 需要什么才能判** · findings 文件与报告文件的 SHA256。
+零条发现就交空清单 —— **"没发现问题"和"没查"要能分得出来**：把你查过什么写下来。

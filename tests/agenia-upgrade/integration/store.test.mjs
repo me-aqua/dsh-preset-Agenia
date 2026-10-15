@@ -1,0 +1,499 @@
+/**
+ * STO-01 / STO-02 / STO-03 / STO-04 —— 存储 / 锁 / 事务 / claim（集成层）。
+ *
+ * 冻结依据：契约 §6.3 + 提案 §B1.4（`agenia-brain.mjs` / `agenia-local.mjs` 的 op/payload/退出码）
+ * + §B3.6（`state/update` · `state/jobs` · `local-state` 的 schema）+ §B3.7（原子写 / 独占锁 / CAS / 审计）
+ * + §B1.6（**真子进程**：不许用"同进程两次调用"冒充并发；时钟用 `AGENIA_NOW_FILE`）
+ * + 追加裁定 v1.3（`E_DATA_EXISTS` ⇒ exit 7；并发/锁/CAS ⇒ 4；状态不变量 ⇒ 6）。
+ *
+ * 三条纪律：
+ *   · 锁 / CAS / 审计 / 路径校验 **一律不许 mock**（契约 §9.5 第 4 条）；
+ *   · 并发必须是**两个真进程**（`runCliAsync`）；
+ *   · 故障注入只用**真文件系统事实**（例如把目标文件的位置先占成目录 ⇒ 写入必失败），
+ *     不发明"注入开关"那类接口。
+ */
+import { before, describe, test } from 'node:test'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import { ENV, FROZEN } from '../support/env.mjs'
+import { caseFail, caseHold, preflight, problem, runCase, sha256File, stagingReadings, treeHash, writeJson } from '../support/evidence.mjs'
+import { canonical, ensureMarkedDir } from '../support/root-guard.mjs'
+import { brainPaths, countJsonlLines, runBrain, runCli, runCliAsync, runLocal, stagingExists, writeFixture } from '../support/sut.mjs'
+
+before(() => {
+  preflight()
+})
+
+/** 起 staged 的 CLI（缺面就返回一个等价的"缺面"结果，不抛 —— 这条用例还有别的断言要收）。 */
+const runCliSoft = (cli, opts) => {
+  try {
+    return runCli(cli, opts, { env: process.env })
+  } catch (err) {
+    return { exit_code: null, json: { error: { code: err?.code ?? 'THREW' } }, stdout: '', stderr: String(err.message) }
+  }
+}
+
+const DAY = '2026-10-14'
+
+/** 每例一个带 marker 的空脑根（D-B3：`init` 只在空根成功）。 */
+function caseBrainRoot(id, name) {
+  const runRoot = canonical(process.env[ENV.RUN_ROOT])
+  const root = ensureMarkedDir(path.join(runRoot, `brain-${id.toLowerCase()}-${name}`), {
+    runRoot,
+    runId: path.basename(runRoot),
+    kind: 'agenia-test-brain-root',
+  })
+  return brainPaths({ ...process.env, [ENV.TEST_DATA_ROOT]: root })
+}
+
+/** 每例一个带 marker 的工作区（路线/本地状态的家）。 */
+function caseWorkspace(id, name) {
+  const runRoot = canonical(process.env[ENV.RUN_ROOT])
+  return ensureMarkedDir(path.join(runRoot, `ws-${id.toLowerCase()}-${name}`), {
+    runRoot,
+    runId: path.basename(runRoot),
+    kind: 'agenia-test-workspace',
+  })
+}
+
+const requireBrain = (problems, why) => {
+  if (stagingExists('bin/agenia-brain.mjs')) return true
+  problems.push(problem('SUT-SURFACE-MISSING', `staged/bin/agenia-brain.mjs 不在 ⇒ ${why} 拿不到（预期的首跑红）`))
+  return false
+}
+const requireLocal = (problems, why) => {
+  if (stagingExists('bin/agenia-local.mjs')) return true
+  problems.push(problem('SUT-SURFACE-MISSING', `staged/bin/agenia-local.mjs 不在 ⇒ ${why} 拿不到（预期的首跑红）`))
+  return false
+}
+const requireNotify = (problems, why) => {
+  if (stagingExists('bin/bg-notify.mjs')) return true
+  problems.push(problem('SUT-SURFACE-MISSING', `staged/bin/bg-notify.mjs 不在 ⇒ ${why} 拿不到（预期的首跑红）`))
+  return false
+}
+
+/** 读一个 JSON 文件；读不到就返回 null（不抛）。 */
+const readJson = (file) => {
+  try { return JSON.parse(readFileSync(file, 'utf8')) } catch { return null }
+}
+
+const CALL = 'claim-update'
+const claimPayload = (over = {}) => ({ day: DAY, owner_project: 'harness', owner_session: 'session-a-0000', ...over })
+
+describe('integration · store (STO)', () => {
+  test('STO-01 判决提交原子性：三个阶段各注入失败 + 成功事务的正例', async () => {
+    await runCase('STO-01', async (rec) => {
+      const problems = []
+      const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
+      rec.readings.staging = stagingReadings()
+      const bp = caseBrainRoot('STO-01', 'main')
+      if (!requireBrain(problems, '判决事务')) caseFail(problems)
+
+      // ① 正例：claim → freeze → judge-start → judge-commit
+      const init = runBrain('init', {}, { dataRoot: bp.root })
+      if (init.exit_code !== 0) { push('STO01-INIT', `init 必须成功（正例），实得 exit=${init.exit_code} / ${init.json?.error?.code ?? '(无码)'}`); caseFail(problems) }
+      const claim = runBrain(CALL, claimPayload(), { dataRoot: bp.root })
+      rec.readings.claim = { exit_code: claim.exit_code, code: claim.json?.error?.code ?? null, generation: claim.json?.generation ?? null, attempt: claim.json?.attempt ?? null, job_intent_path: claim.json?.job_intent_path ?? null }
+      if (claim.exit_code !== 0) { push('STO01-CLAIM', `claim-update 必须成功（正例），实得 exit=${claim.exit_code} / ${claim.json?.error?.code ?? '(无码)'}`); caseFail(problems) }
+      const generation = claim.json?.generation ?? 1
+      const attempt = claim.json?.attempt ?? 1
+      const freeze = runBrain('candidates-freeze', { generation, candidate_ids: ['c-0001'] }, { dataRoot: bp.root })
+      if (freeze.exit_code !== 0) push('STO01-FREEZE', `candidates-freeze 必须成功（正例），实得 exit=${freeze.exit_code} / ${freeze.json?.error?.code ?? '(无码)'}`)
+      const start = runBrain('judge-start', { generation, attempt, token: 'tok-a', job_id: 'job-memory-judge-1' }, { dataRoot: bp.root })
+      rec.readings.judge_start = { exit_code: start.exit_code, code: start.json?.error?.code ?? null }
+      if (start.exit_code !== 0) push('STO01-START', `judge-start 必须成功（正例），实得 exit=${start.exit_code} / ${start.json?.error?.code ?? '(无码)'}`)
+      // `judging` 期间：`snapshot_available` 必须是 false（不变量）
+      const midState = readJson(bp.updateState(DAY))
+      rec.readings.mid_state = midState ? { phase: midState.phase, snapshot_available: midState.snapshot_available } : null
+      if (midState) {
+        if (midState.phase === 'judging' && midState.snapshot_available === true) {
+          push('STO01-INVARIANT', '`phase==="judging"` 时 `snapshot_available` 必须是 false（B3.6 的不变量）')
+        }
+      } else {
+        // 🔴 v1.14：「前置本不该失败」⇒ 红（judge-start 之后状态必须读得出来，否则这条不变量根本没判）
+        push('STO01-INVARIANT', `judge-start 之后 \`state/update\` 必须读得出来（"judging ⇒ snapshot_available=false"这条全押在它上面），实得读不到 ${bp.updateState(DAY)}`)
+      }
+      const commitPayload = (over = {}) => ({
+        generation, attempt, token: 'tok-a', base_snapshot: 'v0',
+        entries_patch: [{ kind: 'add', entry: { id: 'm-00000001', type: 'general', text: '（夹具）一条', raw: 0.5, imp_share: 1, fresh_share: 1, double_low_streak: 0, is_double_low: false, last_evidence_review: DAY, known_from: 'fixture', created_at: '2026-10-14T00:00:00+08:00', type_changed_at: null } }],
+        accepted: ['c-0001'], maintenance_decisions: [],
+        common_sense_sha256: init.json?.common_sense_sha256 ?? 'a'.repeat(64),
+        report: { memory_update: `reports/memory-update/${DAY}.json` },
+        ...over,
+      })
+      const commit = runBrain('judge-commit', commitPayload(), { dataRoot: bp.root })
+      rec.readings.commit = { exit_code: commit.exit_code, code: commit.json?.error?.code ?? null, new_snapshot: commit.json?.new_snapshot ?? null, snapshot_available: commit.json?.snapshot_available ?? null, phase: commit.json?.phase ?? null, report_path: commit.json?.report_path ?? null }
+      if (commit.exit_code !== 0) {
+        push('STO01-COMMIT', `judge-commit 必须成功（正例），实得 exit=${commit.exit_code} / ${commit.json?.error?.code ?? '(无码)'}`)
+      } else {
+        if (commit.json?.snapshot_available !== true) push('STO01-FIELDS', `成功提交必须给 snapshot_available:true，实得 ${JSON.stringify(commit.json?.snapshot_available)}`)
+        if (commit.json?.phase !== 'awaiting_review_start') push('STO01-FIELDS', `成功提交后 phase 应为 awaiting_review_start，实得 ${JSON.stringify(commit.json?.phase)}`)
+        const after = readJson(bp.updateState(DAY))
+        rec.readings.after_state = after ? { phase: after.phase, snapshot_available: after.snapshot_available, new_snapshot: after.new_snapshot } : null
+        if (after && after.snapshot_available !== true) push('STO01-FIELDS', '提交成功后 `state/update` 里的 snapshot_available 必须为 true')
+        // 快照与报告必须真的落盘
+        const snapList = runBrain('snapshot-list', {}, { dataRoot: bp.root })
+        rec.readings.snapshot_list = { exit_code: snapList.exit_code, code: snapList.json?.error?.code ?? null, versions: snapList.json?.versions ?? null, current: snapList.json?.current ?? null }
+        // 🔴 裁定 v1.13 ②③：「期望必须存在」前置 —— `snapshot-list` 读不出来时，下面那条"应当多一个快照"**不许静默跳过**
+        if (snapList.exit_code !== 0 || !Array.isArray(snapList.json?.versions)) {
+          push('SNAPSHOT-LIST-UNREADABLE', `提交成功后 snapshot-list 必须能读出快照列表（"多出一个快照版本"这条全押在它上面），实得 exit=${snapList.exit_code} / ${snapList.json?.error?.code ?? '(无码)'} / versions=${JSON.stringify(snapList.json?.versions)}`)
+        } else if (snapList.json.versions.length < 2) {
+          push('STO01-ARTIFACTS', `提交成功后应当多出一个快照版本（v0 + 新版本），实得 ${JSON.stringify(snapList.json?.versions)}`)
+        }
+        const reportFile = path.join(bp.root, 'reports', 'memory-update', `${DAY}.json`)
+        if (!existsSync(reportFile)) push('STO01-ARTIFACTS', `成功提交必须落记忆更新报告 ${reportFile}`)
+      }
+
+      // ② 故障注入（真文件系统事实）：把目标位置先占成**目录** ⇒ 写入必失败，事务必须回滚
+      const injectAt = (label, target) => {
+        const b2 = caseBrainRoot('STO-01', label)
+        const i2 = runBrain('init', {}, { dataRoot: b2.root })
+        if (i2.exit_code !== 0) return { label, skipped: `init 失败：${i2.json?.error?.code ?? i2.exit_code}` }
+        runBrain(CALL, claimPayload(), { dataRoot: b2.root })
+        runBrain('judge-start', { generation: 1, attempt: 1, token: 'tok-b', job_id: 'job-memory-judge-1' }, { dataRoot: b2.root })
+        const beforeList = runBrain('snapshot-list', {}, { dataRoot: b2.root })
+        const beforeTree = treeHash(b2.root)
+        // 占位：把要被写的那条路径做成目录（写入必然失败 —— 真文件系统事实，不是"注入开关"）
+        mkdirSync(target(b2), { recursive: true })
+        const res = runBrain('judge-commit', commitPayload({ token: 'tok-b' }), { dataRoot: b2.root })
+        const afterList = runBrain('snapshot-list', {}, { dataRoot: b2.root })
+        const afterState = readJson(b2.updateState(DAY))
+        return {
+          label,
+          exit_code: res.exit_code,
+          code: res.json?.error?.code ?? null,
+          before_versions: beforeList.json?.versions ?? null,
+          after_versions: afterList.json?.versions ?? null,
+          after_phase: afterState?.phase ?? null,
+          after_snapshot_available: afterState?.snapshot_available ?? null,
+          tree_changed: beforeTree.sha256 !== treeHash(b2.root).sha256,
+        }
+      }
+      const injections = [
+        injectAt('快照写入失败', (b) => path.join(b.snapshotsDir, 'v1.json')),
+        injectAt('报告写入失败', (b) => path.join(b.root, 'reports', 'memory-update', `${DAY}.json`)),
+      ]
+      rec.readings.injections = injections
+      for (const inj of injections) {
+        if (inj.skipped) { push('STO01-INJECT', `${inj.label} 注入前置失败：${inj.skipped}`); continue }
+        if (inj.exit_code === 0) push('STO01-ATOMIC', `${inj.label} 时提交竟然成功了 —— 写入失败必须让整个事务失败`)
+        // v1.14 分界：**注入前**的列表读不出来 = 前置本不该失败 ⇒ 红；**注入后**读不出来 = 那一档判不了 ⇒ HOLD
+        if (!inj.before_versions) {
+          push('STO01-ATOMIC', `${inj.label}：注入**之前**的 \`snapshot-list\` 必须读得出来（"列表没变"这条押在它上面），实得 ${JSON.stringify(inj.before_versions)}`)
+        } else if (!inj.after_versions) {
+          caseHold(rec, 'STO01-AFTER-LIST-UNREADABLE', `${inj.label}：注入**之后** \`snapshot-list\` 读不出来 ⇒ "列表有没有变"这一档判不了（不适用）`)
+        } else if (JSON.stringify(inj.before_versions) !== JSON.stringify(inj.after_versions)) {
+          push('STO01-ATOMIC', `${inj.label} 之后快照列表变了（${JSON.stringify(inj.before_versions)} → ${JSON.stringify(inj.after_versions)}）—— 不许出现半写快照`)
+        }
+        if (inj.after_phase === 'judging' && inj.after_snapshot_available === true) {
+          push('STO01-INVARIANT', `${inj.label} 之后出现了 judging && snapshot_available=true`)
+        }
+      }
+      rec.readings.process_exit_pending = {
+        status: 'PENDING',
+        note: '"写到一半进程退出"需要一个**确定的**杀点（提案 §B1.6 只给了通知/时钟/父死三个接缝，没有"故障注入开关"）⇒ 本条只用真文件系统事实（占位成目录）注入写失败；进程中途被杀的那一档归 R1/STO-02 的过期锁路径。',
+      }
+      rec.readings.other_project_review = {
+        note: '"成功提交后其它项目可以启动本地评审" = commit 之后 `local-claim` 能成功（STO-04/JOB-03 主验）。',
+      }
+
+      caseFail(problems)
+    })
+  })
+
+  test('STO-02 两项目抢同一天记忆更新：一个 claim、过期锁不静默顶掉、字段落盘', async () => {
+    await runCase('STO-02', async (rec) => {
+      const problems = []
+      const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
+      rec.readings.staging = stagingReadings()
+      const bp = caseBrainRoot('STO-02', 'race')
+      if (!requireBrain(problems, 'claim/锁')) caseFail(problems)
+      const init = runBrain('init', {}, { dataRoot: bp.root })
+      if (init.exit_code !== 0) { push('STO02-INIT', `init 必须成功（正例），实得 exit=${init.exit_code} / ${init.json?.error?.code ?? '(无码)'}`); caseFail(problems) }
+
+      // ① 真并发：两个 owner 同时抢
+      const fileA = writeFixture('STO-02', 'claim-a', claimPayload({ owner_project: 'A', owner_session: 'session-a-0000' }))
+      const fileB = writeFixture('STO-02', 'claim-b', claimPayload({ owner_project: 'B', owner_session: 'session-b-0000' }))
+      const [ra, rb] = await Promise.all([
+        runCliAsync('agenia-brain.mjs', { op: CALL, dataRoot: bp.root, inFile: fileA, testMode: true }, { env: process.env }),
+        runCliAsync('agenia-brain.mjs', { op: CALL, dataRoot: bp.root, inFile: fileB, testMode: true }, { env: process.env }),
+      ])
+      const winners = [ra, rb].filter((r) => r.exit_code === 0)
+      rec.readings.concurrent_claim = [
+        { exit_code: ra.exit_code, code: ra.json?.error?.code ?? null },
+        { exit_code: rb.exit_code, code: rb.json?.error?.code ?? null },
+      ]
+      if (winners.length !== 1) push('STO02-RACE', `并发 claim 应当**恰好一个**成功，实得 ${winners.length} 个（exit=${ra.exit_code}/${rb.exit_code}）`)
+      for (const [label, r] of [['A', ra], ['B', rb]]) {
+        if (r.exit_code !== 0 && !['E_LOCK_HELD', 'E_LOCK_STALE', 'E_CAS_STALE'].includes(r.json?.error?.code)) {
+          push('STO02-RACE', `失败方（${label}）的错误码应是锁冲突/旧版本，实得 ${r.json?.error?.code}`)
+        }
+      }
+      // 失败方"只报告已有状态"：不许改 owner
+      const st = readJson(bp.updateState(DAY))
+      rec.readings.state_after_race = st ? { phase: st.phase, owner_project: st.owner_project, generation: st.generation, attempt: st.judge_attempt } : null
+      if (st && st.owner_project && ra.exit_code !== 0 && rb.exit_code !== 0) push('STO02-RACE', '两个 claim 都失败了 —— 至少要有一个成功')
+
+      // ② 从同一状态再抢（顺序）⇒ 不许产生第二个 claim
+      const again = runBrain(CALL, claimPayload({ owner_project: 'B', owner_session: 'session-b-0000' }), { dataRoot: bp.root })
+      rec.readings.second_claim = { exit_code: again.exit_code, code: again.json?.error?.code ?? null }
+      if (again.exit_code === 0) {
+        const st2 = readJson(bp.updateState(DAY))
+        if (st2 && st.owner_project === 'B') push('STO02-SECOND', '第二个 owner 从同一状态又抢成功了并改写了 owner —— 同一天只许一个 claim')
+        else push('STO02-SECOND', '第二个 owner 的 claim 返回成功（即便没改 owner）—— 应当明确拒绝（E_LOCK_HELD）')
+      }
+
+      // ③ 崩溃残留锁：一个死 pid 的锁文件 ⇒ 不静默顶掉，要显式恢复
+      const lockDir = bp.locksDir
+      mkdirSync(lockDir, { recursive: true })
+      const lockFile = path.join(lockDir, `update-${DAY}.lock`)
+      writeFileSync(lockFile, `${JSON.stringify({ pid: 999999, session_id: 'session-dead-0000', at: '2026-10-14T00:00:00+08:00', ttl_ms: 1 })}\n`, 'utf8')
+      const beforeState = readJson(bp.updateState(DAY))
+      const locked = runBrain(CALL, claimPayload({ owner_project: 'C', owner_session: 'session-c-0000' }), { dataRoot: bp.root })
+      const afterState = readJson(bp.updateState(DAY))
+      rec.readings.stale_lock = { exit_code: locked.exit_code, code: locked.json?.error?.code ?? null }
+      if (locked.exit_code === 0) push('STO02-STALE-LOCK', '留着死 pid 的锁时 claim 仍然成功了 —— 过期锁不许被静默顶掉（要显式恢复）')
+      else if (!['E_LOCK_STALE', 'E_LOCK_HELD'].includes(locked.json?.error?.code)) {
+        push('STO02-STALE-LOCK', `过期锁的错误码应为 E_LOCK_STALE（或 E_LOCK_HELD），实得 ${locked.json?.error?.code}`)
+      }
+      if (JSON.stringify(beforeState) !== JSON.stringify(afterState)) push('STO02-STALE-LOCK', '被过期锁挡住的那次 claim 改动了状态 —— 拒绝必须零副作用')
+      // 显式恢复
+      const forced = runBrain(CALL, claimPayload({ owner_project: 'C', owner_session: 'session-c-0000' }), { dataRoot: bp.root, extra: ['--force-recover'] })
+      rec.readings.force_recover = { exit_code: forced.exit_code, code: forced.json?.error?.code ?? null }
+      if (forced.exit_code !== 0) push('STO02-RECOVER', `--force-recover 显式恢复必须能继续（正例），实得 exit=${forced.exit_code} / ${forced.json?.error?.code ?? '(无码)'}`)
+
+      // ④ 字段落盘：owner / attempt / token / launch intent / job id
+      const finalState = readJson(bp.updateState(DAY))
+      const claimJson = (winners[0] ?? {}).json ?? {}
+      rec.readings.claim_fields = { claim: claimJson, state: finalState }
+      for (const key of ['generation', 'attempt', 'token']) {
+        if (!(key in claimJson)) push('STO02-FIELDS', `claim-update 的返回缺 ${key}（提案 §B1.4）`)
+      }
+      if (!claimJson.job_intent_path) push('STO02-FIELDS', 'claim-update 必须给 `job_intent_path`（launch intent 落盘的地方）')
+      if (finalState) {
+        for (const [key, why] of [['owner_project', '归属'], ['owner_session', '会话'], ['judge_attempt', 'attempt'], ['judge_token', 'token'], ['frozen_proposal_ids', '冻结清单'], ['started_at', '开始时间']]) {
+          if (!(key in finalState)) push('STO02-FIELDS', `state/update 缺 ${key}（${why}）`)
+        }
+        // 🔴 裁定 v1.13 ②③：`judge_token` 必须是字符串（B3.6 冻的是"只存 sha256 前 16 位"）——
+        //    原来只有 `if (typeof … === 'string' && …)`：类型不对时**静默跳过**，长度那条根本没跑。
+        if (typeof finalState.judge_token !== 'string') {
+          push('STO02-FIELDS', `judge_token 必须是字符串（B3.6），实得 ${JSON.stringify(finalState.judge_token)}（typeof=${typeof finalState.judge_token}）—— 类型不对时长度那条根本不会跑`)
+        } else if (finalState.judge_token.length > 32) {
+          push('STO02-FIELDS', `judge_token 只许存 sha256 前 16 位（B3.6），实得长度 ${finalState.judge_token.length}`)
+        }
+        if (!existsSync(path.join(bp.root, 'state', 'jobs'))) push('STO02-FIELDS', 'claim 之后应当有 `state/jobs/` 目录（job 记录与 launch intent 落在那里）')
+      }
+      // 审计：只增
+      const audit = path.join(bp.root, 'audit.jsonl')
+      rec.readings.audit_lines = countJsonlLines(audit)
+
+      caseFail(problems)
+    })
+  })
+
+  test('STO-03 重做与迟到：旧 token / 旧通知 / 旧候选一律拒；同日最多一个新快照', async () => {
+    await runCase('STO-03', async (rec) => {
+      const problems = []
+      const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
+      rec.readings.staging = stagingReadings()
+      const bp = caseBrainRoot('STO-03', 'attempt')
+      if (!requireBrain(problems, 'attempt/fence')) caseFail(problems)
+      const init = runBrain('init', {}, { dataRoot: bp.root })
+      if (init.exit_code !== 0) { push('STO03-INIT', `init 必须成功（正例），实得 exit=${init.exit_code} / ${init.json?.error?.code ?? '(无码)'}`); caseFail(problems) }
+
+      // attempt A：claim + start（拿 token A）
+      const cA = runBrain(CALL, claimPayload({ owner_session: 'session-a-0000' }), { dataRoot: bp.root })
+      if (cA.exit_code !== 0) { push('STO03-CLAIM', `第一次 claim 必须成功（正例），实得 exit=${cA.exit_code} / ${cA.json?.error?.code ?? '(无码)'}`); caseFail(problems) }
+      const genA = cA.json?.generation ?? 1
+      const attA = cA.json?.attempt ?? 1
+      const sA = runBrain('judge-start', { generation: genA, attempt: attA, token: 'tok-A', job_id: 'job-memory-judge-A' }, { dataRoot: bp.root })
+      rec.readings.start_A = { exit_code: sA.exit_code, code: sA.json?.error?.code ?? null }
+      if (sA.exit_code !== 0) push('STO03-START', `attempt A 的 judge-start 必须成功（正例），实得 ${sA.exit_code} / ${sA.json?.error?.code ?? '(无码)'}`)
+
+      // 手动重做 ⇒ generation 递增、attempt B。
+      // **E-B5（追加裁定 v1.4）冻结了入口形状**：`redo:true` 必须同时带 `previous_attempt_id` 与
+      // **`boss_redo_evidence`**（原话/动作 + source_session_id + occurred_at）；缺老板点名证据 ⇒
+      // `E_REDO_NOT_AUTHORIZED`（exit 5）。
+      // ① 负例一：只有 `redo:true`（没有老板证据）
+      const redoBare = runBrain(CALL, claimPayload({ owner_session: 'session-a-0000', redo: true }), { dataRoot: bp.root })
+      rec.readings.redo_bare = { exit_code: redoBare.exit_code, code: redoBare.json?.error?.code ?? null }
+      if (redoBare.exit_code === 0) push('REDO-NOT-AUTHORIZED', '`redo:true` 不带老板证据竟然成功了 —— E-B5：必须 `E_REDO_NOT_AUTHORIZED`（exit 5）')
+      else {
+        if (redoBare.json?.error?.code !== 'E_REDO_NOT_AUTHORIZED') push('REDO-NOT-AUTHORIZED', `无老板证据的重做应以 E_REDO_NOT_AUTHORIZED 拒绝，实得 ${redoBare.json?.error?.code}`)
+        if (redoBare.exit_code !== FROZEN.exitCodes.E_REDO_NOT_AUTHORIZED) push('REDO-NOT-AUTHORIZED', `无老板证据的重做退出码应为 ${FROZEN.exitCodes.E_REDO_NOT_AUTHORIZED}，实得 ${redoBare.exit_code}`)
+      }
+      // ② 负例二：带了 `previous_attempt_id`、但没有 `boss_redo_evidence`
+      const redoNoEvidence = runBrain(CALL, claimPayload({ owner_session: 'session-a-0000', redo: true, previous_attempt_id: 'attempt-0001' }), { dataRoot: bp.root })
+      rec.readings.redo_no_evidence = { exit_code: redoNoEvidence.exit_code, code: redoNoEvidence.json?.error?.code ?? null }
+      if (redoNoEvidence.exit_code === 0) push('REDO-NOT-AUTHORIZED', '带了 previous_attempt_id 但没有 boss_redo_evidence 竟然成功了 —— 必须拒')
+      else if (redoNoEvidence.json?.error?.code !== 'E_REDO_NOT_AUTHORIZED') push('REDO-NOT-AUTHORIZED', `缺 boss_redo_evidence 应以 E_REDO_NOT_AUTHORIZED 拒绝，实得 ${redoNoEvidence.json?.error?.code}`)
+      // ③ 正例：两样都带 ⇒ 放行，且 generation 递增
+      const redo = runBrain(CALL, claimPayload({
+        owner_session: 'session-a-0000',
+        redo: true,
+        previous_attempt_id: 'attempt-0001',
+        boss_redo_evidence: {
+          kind: 'quote',
+          verbatim: '（夹具）重做一次，把上一轮的判决作废',
+          source_session_id: 'session-c0dabefd-13fe-4380-abdf-1cc1e52ea89a',
+          occurred_at: '2026-10-14T11:30:00+08:00',
+        },
+      }), { dataRoot: bp.root })
+      rec.readings.redo = { exit_code: redo.exit_code, code: redo.json?.error?.code ?? null, generation: redo.json?.generation ?? null, attempt: redo.json?.attempt ?? null }
+      if (redo.exit_code !== 0) {
+        push('STO03-REDO', `带齐 previous_attempt_id + boss_redo_evidence 的重做必须成功（正例），实得 exit=${redo.exit_code} / ${redo.json?.error?.code ?? '(无码)'}`)
+      }
+      const genB = redo.json?.generation ?? genA + 1
+      const attB = redo.json?.attempt ?? attA + 1
+      if (genB <= genA) push('STO03-REDO', `重做之后 generation 必须递增（${genA} → ${genB}）`)
+      const sB = runBrain('judge-start', { generation: genB, attempt: attB, token: 'tok-B', job_id: 'job-memory-judge-B' }, { dataRoot: bp.root })
+      if (sB.exit_code !== 0) push('STO03-REDO', `attempt B 的 judge-start 必须成功（正例），实得 ${sB.exit_code} / ${sB.json?.error?.code ?? '(无码)'}`)
+
+      const mkCommit = (over) => ({
+        generation: genA, attempt: attA, token: 'tok-A', base_snapshot: 'v0',
+        entries_patch: [{ kind: 'add', entry: { id: 'm-00000002', type: 'general', text: '（夹具）旧 attempt 想写的东西', raw: 0.5, imp_share: 1, fresh_share: 1, double_low_streak: 0, is_double_low: false, last_evidence_review: DAY, known_from: 'fixture', created_at: '2026-10-14T00:00:00+08:00', type_changed_at: null } }],
+        accepted: [], maintenance_decisions: [],
+        common_sense_sha256: init.json?.common_sense_sha256 ?? 'a'.repeat(64),
+        report: {},
+        ...over,
+      })
+      // ① 旧 token 提交 ⇒ 拒，且不许改状态/快照
+      const stateBefore = readJson(bp.updateState(DAY))
+      const listBefore = runBrain('snapshot-list', {}, { dataRoot: bp.root })
+      const stale = runBrain('judge-commit', mkCommit({}), { dataRoot: bp.root })
+      const stateAfter = readJson(bp.updateState(DAY))
+      const listAfter = runBrain('snapshot-list', {}, { dataRoot: bp.root })
+      rec.readings.stale_token = { exit_code: stale.exit_code, code: stale.json?.error?.code ?? null }
+      if (stale.exit_code === 0) push('STO03-STALE-TOKEN', '旧 attempt 的 token 提交竟然成功了 —— 必须拒绝（E_TXN_TOKEN）')
+      else if (stale.json?.error?.code !== 'E_TXN_TOKEN') push('STO03-STALE-TOKEN', `旧 token 应以 E_TXN_TOKEN 拒绝，实得 ${stale.json?.error?.code}`)
+      if (JSON.stringify(stateBefore) !== JSON.stringify(stateAfter)) push('STO03-STALE-TOKEN', '被拒的旧 token 提交改动了状态')
+      if (JSON.stringify(listBefore.json?.versions) !== JSON.stringify(listAfter.json?.versions)) push('STO03-STALE-TOKEN', '被拒的旧 token 提交动了快照')
+
+      // ② 旧 job 的迟到通知 ⇒ 只能记审计，不许改 job_state
+      if (requireNotify(problems, '旧通知的 fence')) {
+        const jobFile = bp.jobFile('job-memory-judge-A')
+        const beforeJob = readJson(jobFile)
+        const late = runCliSoft('bg-notify.mjs', {
+          op: 'deliver', dataRoot: bp.root,
+          extra: ['--status-root', path.join(bp.root, '..'), '--job', 'memory-judge', '--job-id', 'job-memory-judge-A', '--state', 'done', '--result-file', writeFixture('STO-03', 'late-result', { ok: true })],
+        })
+        const afterJob = readJson(jobFile)
+        const jobBytesBefore = existsSync(jobFile) ? readFileSync(jobFile, 'utf8') : null
+        rec.readings.late_notice = { exit_code: late.exit_code, code: late.json?.error?.code ?? null, before_job: beforeJob === null ? null : { state: beforeJob.state, fence: beforeJob.fence }, after_job: afterJob === null ? null : { state: afterJob.state, fence: afterJob.fence } }
+        // 🔴 v1.17 ③：**"被拒"不是"不适用"** —— 它是可用"零写入"验证的结果。
+        //    ① 成功 ⇒ job_state 不许被改（`JSON.stringify` 比：以前是两次 `JSON.parse` 的**对象引用**比较，恒真 ⇒ 假红）；
+        //    ② 被拒（合法 fence）⇒ 必须**零写入**（job 记录字节不许变）。
+        if (late.exit_code !== 0) {
+          if (jobBytesBefore !== null && readFileSync(jobFile, 'utf8') !== jobBytesBefore) {
+            push('STO03-LATE-NOTICE', `旧 job 的迟到通知被拒（${late.json?.error?.code ?? 'exit≠0'}）却**动了盘**—— 拒必须零写入`)
+          }
+        } else if (beforeJob === null || afterJob === null) {
+          caseHold(rec, 'STO03-LATE-NO-RECORD', '旧 job id 本来就没有 job 记录 ⇒ "状态有没有被改"无从比较（不适用）')
+        } else if (JSON.stringify(beforeJob) !== JSON.stringify(afterJob)) {
+          push('STO03-LATE-NOTICE', `旧 job 的迟到通知改动了 job 记录（${JSON.stringify(beforeJob)} → ${JSON.stringify(afterJob)}）—— 只许记审计（E_JOB_FENCE_STALE 或仅追加审计）`)
+        }
+      }
+
+      // ③ 旧 attempt 的候选导入 ⇒ 拒（E_FENCE_STALE）
+      const staleImport = runBrain('proposal-import', {
+        source: 'dev/2026-10-14/旧 attempt 的候选.json', sha256: 'b'.repeat(64),
+        base_snapshot: 'v0', update_generation: genA, review_attempt: attA,
+        payload: { entry: { id: 'm-00000003', type: 'general', text: '（夹具）旧 attempt 的候选' } },
+      }, { dataRoot: bp.root })
+      rec.readings.stale_import = { exit_code: staleImport.exit_code, code: staleImport.json?.error?.code ?? null }
+      if (staleImport.exit_code === 0) push('STO03-STALE-IMPORT', '旧 generation/attempt 的候选竟然导入成功了 —— 必须拒绝（E_FENCE_STALE）')
+      else if (staleImport.json?.error?.code !== 'E_FENCE_STALE') push('STO03-STALE-IMPORT', `旧候选应以 E_FENCE_STALE 拒绝，实得 ${staleImport.json?.error?.code}`)
+
+      // ④ 同日最多一个新成功快照：attempt B 成功提交之后，快照数只 +1
+      const b4 = runBrain('snapshot-list', {}, { dataRoot: bp.root })
+      const okB = runBrain('judge-commit', mkCommit({ generation: genB, attempt: attB, token: 'tok-B' }), { dataRoot: bp.root })
+      const after = runBrain('snapshot-list', {}, { dataRoot: bp.root })
+      rec.readings.commit_B = { exit_code: okB.exit_code, code: okB.json?.error?.code ?? null }
+      rec.readings.snapshot_counts = { before: b4.json?.versions?.length ?? null, after: after.json?.versions?.length ?? null }
+      if (okB.exit_code !== 0) push('STO03-NEW-ATTEMPT', `新 attempt 的提交必须成功（正例），实得 exit=${okB.exit_code} / ${okB.json?.error?.code ?? '(无码)'}`)
+      else if ((after.json?.versions?.length ?? 0) - (b4.json?.versions?.length ?? 0) !== 1) {
+        push('STO03-ONE-SNAPSHOT', `同一天只该多出 1 个新快照，实得 ${b4.json?.versions?.length} → ${after.json?.versions?.length}`)
+      }
+      rec.readings.redo_entry_ambiguity = {
+        note: '"手动重做"的**调用形状**（我这里用"再 claim 一次 + redo:true"）提案没有逐字冻结 ⇒ 若实现另有正式入口，请回组长冻形状；断言只要求"generation 递增 + 旧 token 被拒"这两件可证的事。',
+      }
+
+      caseFail(problems)
+    })
+  })
+
+  test('STO-04 会话评审 + 技术评审各自独立 claim；同场重复拒；维护案 fence 不混用', async () => {
+    await runCase('STO-04', async (rec) => {
+      const problems = []
+      const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
+      rec.readings.staging = stagingReadings()
+      const ws = caseWorkspace('STO-04', 'fields')
+      if (!requireLocal(problems, '本地 claim')) caseFail(problems)
+      const call = (op, payload, extra = []) => runLocal('STO-04', op, payload, { workspace: ws, extra })
+      const base = { project: 'harness', day: DAY, snapshot: 'v7', attempt: 1 }
+
+      // ① 两场各自独立 claim，可并行
+      const [rc, rt] = await Promise.all([
+        runCliAsync('agenia-local.mjs', { op: 'local-claim', workspace: ws, inFile: writeFixture('STO-04', 'claim-conversation', { ...base, field: 'conversation', job_id: 'job-conversation-review-1' }), testMode: true }, { env: process.env }),
+        runCliAsync('agenia-local.mjs', { op: 'local-claim', workspace: ws, inFile: writeFixture('STO-04', 'claim-technical', { ...base, field: 'technical', job_id: 'job-technical-review-1' }), testMode: true }, { env: process.env }),
+      ])
+      rec.readings.parallel_claims = [
+        { field: 'conversation', exit_code: rc.exit_code, code: rc.json?.error?.code ?? null },
+        { field: 'technical', exit_code: rt.exit_code, code: rt.json?.error?.code ?? null },
+      ]
+      if (rc.exit_code !== 0 || rt.exit_code !== 0) {
+        push('STO04-PARALLEL', `会话评审与技术评审必须能**各自独立** claim（两把锁），实得 exit=${rc.exit_code}/${rt.exit_code}（${rc.json?.error?.code ?? '-'} / ${rt.json?.error?.code ?? '-'}）`)
+      }
+      // ② 同一场重复 claim ⇒ E_CLAIM_HELD
+      const dup = call('local-claim', { ...base, field: 'conversation', job_id: 'job-conversation-review-1', attempt: 2 })
+      rec.readings.duplicate_claim = { exit_code: dup.exit_code, code: dup.json?.error?.code ?? null }
+      if (dup.exit_code === 0) push('STO04-DUP', '同一场（同项目/日期/快照/字段）重复 claim 竟然成功 —— 必须 E_CLAIM_HELD')
+      else if (dup.json?.error?.code !== 'E_CLAIM_HELD') push('STO04-DUP', `重复 claim 应以 E_CLAIM_HELD 拒绝，实得 ${dup.json?.error?.code}`)
+      // ③ 维护案 fence 不许与本地场 claim 混用
+      const mixed = call('local-claim', { ...base, field: 'memory-review', job_id: 'job-memory-review-1', maintenance_fence: { update_generation: 1, review_attempt: 1 } })
+      rec.readings.mixed_fence = { exit_code: mixed.exit_code, code: mixed.json?.error?.code ?? null }
+      if (mixed.exit_code === 0) push('STO04-MIXED', '把记忆复核的维护案 fence 塞进本地场 claim 竟然成功 —— 必须 E_CLAIM_MIXED')
+      else if (mixed.json?.error?.code !== 'E_CLAIM_MIXED') push('STO04-MIXED', `混用 fence 应以 E_CLAIM_MIXED 拒绝，实得 ${mixed.json?.error?.code}`)
+      // ④ 每场失败只影响该场
+      const failed = call('local-fail', { ...base, field: 'conversation', failure_reason: '（夹具）会话评审作业退出码非 0' })
+      rec.readings.local_fail = { exit_code: failed.exit_code, code: failed.json?.error?.code ?? null }
+      const state = call('local-read', base)
+      rec.readings.local_state = { exit_code: state.exit_code, conversation: state.json?.state?.conversation?.state ?? null, technical: state.json?.state?.technical?.state ?? null }
+      // v1.14：「前置本不该失败」⇒ 红（`local-fail` / `local-read` 都是冻结 op，读不出来就没法判隔离）
+      if (failed.exit_code !== 0) push('STO04-ISOLATION', `local-fail 必须成功（"一场失败只影响该场"押在它上面），实得 exit=${failed.exit_code} / ${failed.json?.error?.code ?? '(无码)'}`)
+      if (state.exit_code !== 0) push('STO04-ISOLATION', `local-read 必须能读出来（同上），实得 exit=${state.exit_code} / ${state.json?.error?.code ?? '(无码)'}`)
+      if (failed.exit_code === 0 && state.exit_code === 0) {
+        const s = state.json?.state ?? {}
+        if (s.conversation?.state !== 'failed') push('STO04-ISOLATION', `会话评审失败后它的状态应为 failed，实得 ${JSON.stringify(s.conversation?.state)}`)
+        if (s.technical?.state === 'failed') push('STO04-ISOLATION', '会话评审失败把技术评审那场也带挂了 —— 每场失败只许影响自己那一场')
+      }
+      // ⑤ 旧 attempt 的通知不许覆盖
+      if (requireNotify(problems, '旧 attempt 通知')) {
+        const late = runCliSoft('bg-notify.mjs', {
+          op: 'deliver', dataRoot: process.env[ENV.TEST_DATA_ROOT],
+          extra: ['--status-root', path.join(ws, '.team'), '--job', 'conversation-review', '--job-id', 'job-conversation-review-OLD', '--state', 'done', '--result-file', writeFixture('STO-04', 'old-result', { ok: true })],
+        })
+        rec.readings.old_attempt_notice = { exit_code: late.exit_code, code: late.json?.error?.code ?? null }
+        const state2 = call('local-read', base)
+        rec.readings.old_attempt_state = { exit_code: state2.exit_code, code: state2.json?.error?.code ?? null, conversation: state2.json?.state?.conversation?.state ?? null }
+        // v1.14：「前置本不该失败」⇒ 红（投完通知后本地状态必须读得出来）
+        if (state2.exit_code !== 0) {
+          push('STO04-OLD-NOTICE', `投完旧通知之后 \`local-read\` 必须能读出来（"旧 attempt 不许覆盖"押在它上面），实得 exit=${state2.exit_code} / ${state2.json?.error?.code ?? '(无码)'}`)
+        } else if (state2.json?.state?.conversation?.state === 'done') {
+          push('STO04-OLD-NOTICE', '旧 job id 的通知把会话评审那场推成了 done —— 旧 attempt 不许覆盖')
+        }
+      }
+      rec.readings.claim_files = {
+        note: '两把锁的落点由实现定（提案只写"两个节点两把锁"）；本用例只验"各自独立 + 重复拒 + 混用拒 + 失败隔离"四件事。',
+      }
+      rec.readings.pending_r1 = {
+        status: 'PENDING',
+        note: '两场**真并行跑完**（各自 job 真起、真回来、真写产物）在 R1-02/R1-05；本用例只到 claim/state 层。',
+      }
+
+      caseFail(problems)
+    })
+  })
+})
+
+// ── 小工具见文件顶部（`runCliSoft`）────────────────────────────────────────

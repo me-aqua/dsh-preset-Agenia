@@ -130,7 +130,7 @@ export function build() {
       config:
         id: agenia # 预设 id：小写字母、数字、短横线
         name: Agenia 模式 # 菜单里显示的名字（旧 preset.yml 那一份搬到这里了）
-        description: 带班子的工程组长。她自己分诊、派人、验收；手下五个固定岗位按次序干活，只审不改的岗位碰不到源码。
+        description: 带班子的工程组长。她自己分诊、派人、验收；手下四个固定岗位按次序干活，只审不改的岗位碰不到源码。
         order: 10 # 名册里的位置：出厂四个是 1..4，我们排在它们后面
         plugins:
 ${body}

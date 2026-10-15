@@ -41,7 +41,7 @@
       config:
         id: agenia # 预设 id：小写字母、数字、短横线
         name: Agenia 模式 # 菜单里显示的名字（旧 preset.yml 那一份搬到这里了）
-        description: 带班子的工程组长。她自己分诊、派人、验收；手下五个固定岗位按次序干活，只审不改的岗位碰不到源码。
+        description: 带班子的工程组长。她自己分诊、派人、验收；手下四个固定岗位按次序干活，只审不改的岗位碰不到源码。
         order: 10 # 名册里的位置：出厂四个是 1..4，我们排在它们后面
         plugins:
           - id: persona
@@ -92,19 +92,51 @@
               # 这几个岗位：写文件只能落在项目的 .team/ 里，而且没有命令行。
               # 让某个岗位不再受限制 = 把它的名字从这一行删掉。
               #
-              # 只留"做判断"的岗位。评审和复盘的产出必须是意见、不能是改动，
+              # 只留"做判断"的岗位。评审的产出必须是意见、不能是改动，
               # 否则独立性就没了 —— 限制和他们的工作正好对得上。
               #
-              # 复盘每天要缩别人的 memory.md，看着像越权 —— 它没越。别人的 memory.md
-              # 也在 .team/ 里面，这条边界本来就是"只能写 .team/"，正好够它用。
-              # 不需要为它开任何后门。
+              # 2026-10-15（执行一 · 批次 I2）：四个一次性作业里，**两个评审类**也进这张名单 ——
+              # `memory-review` / `conversation-review` 的产出是意见、只写自己那份抽屉；
+              # 另外两个（`memory-judge` / `technical-review`）**不在**名单里：判决要写共享脑、
+              # 技术评审要跑测试 ⇒ 都需要全工具。名单**恰好 3 项**，多一个少一个都算漂移。
+              # 🔴 2026-10-15（执行二 · 批次 I15）：`retro` 从名单里去掉了 —— 复盘岗撤销、
+              #    `team/retro.md` 删除、`team-retro` 行已关（下面那一行）。留着它，
+              #    注入器启动自检会报「officeBound 里的「retro」不是队伍里的岗位」。
+              # ⚠️ 这条边界只保证"没有命令行 + 只能写 .team/"，**不细分** `.team/review` 与
+              # `.team/retro` 子目录 —— 子目录约束来自作业书与审计，不是结构门禁。
               #
               # 设计和美工不在名单里：她的产出本来就是文件（设计稿、HTML、渲染 PDF），
               # 这些活都要跑命令行，而命令行是一条通用写入通道 ——
               # 给她命令行的同时留着这道写边界，边界就是纸的。两样不能兼得，所以放开。
               officeBound:
                 - review
-                - retro
+                - memory-review
+                - conversation-review
+
+              # 委派工具的**名单与模式**：键 = 工具名，值 = `one-shot` | `continuable`。
+              #
+              # 它是 `inject.js` 里 `delegationPolicy(config)` 的**唯一入参形状**（裁定 A4）——
+              # 名单从这一行读，**代码里不硬编码**；以后加一条委派行，必须同批加进这张表
+              # （多一个少一个都会被静态对账抓住）。
+              #
+              # 四条一次性作业是 `one-shot`：省略 `run_in_background` 会在**前台等结果** ⇒ 门禁
+              # 要求调用方显式传 `true`；四条固定岗位与裸 `subagent` 是 `continuable`：省略即后台，
+              # 只有显式 `false` 才被拒。
+              # 🔴 2026-10-15（执行二 · 批次 I15）：`team_retro` 从这张表里去掉了 —— 那一行已关（下面），
+              #    关掉的行不注册那个工具名，名单与"已启用的具名实例"因此重新对齐（9 个）。
+              #
+              # 🔴 与 job 行那个禁忌配对看：**不许给 job 行写 `enableRunInBackground`**（那是 config 键，
+              #    写了等于把 `run_in_background` 参数从工具里拿掉）；调用参数叫 `run_in_background`。
+              delegationTools:
+                job_memory_judge: one-shot
+                job_memory_review: one-shot
+                job_conversation_review: one-shot
+                job_technical_review: one-shot
+                team_design: continuable
+                team_dev: continuable
+                team_test: continuable
+                team_review: continuable
+                subagent: continuable
 
           # 项目自己的 AGENTS.md / AGENTS.local.md 照常加载，和人格不冲突。
           - id: agent-instructions
@@ -205,7 +237,7 @@
               # 临时外聘的通道：组长写一份招聘要求，起一个用一次就散的人。
               # 下面那段 persona 是必需的那枚标记 —— 少了它，外聘的人会以为自己是组长。
               #
-              # ⚠️ 2026-09-24：**这一行只给临时外聘用。** 五个固定岗位走下面的 team_* ——
+              # ⚠️ 2026-09-24：**这一行只给临时外聘用。** 四个固定岗位走下面的 team_* ——
               #    只有走那条路，组员才拿得到自己那份说明书、才受 officeBound 约束。
               #    实测（TavernGame 2026-09-24）：42 次用这一行起固定岗位，子会话的装配段全是
               #    `agenia:charter:hire`（外聘那张纸），评审/复盘的写权限边界整条没生效。
@@ -238,7 +270,7 @@
               # 不是继承上下文 —— 要人手就派组员（team_*）或外聘（subagent，带 hire 那枚标记）。
               #
               # ⚠️ 再打开它之前先读 AGENTS.md 3e：五条 team-* 的 deny 里**不能再写 subagent_fork**
-              # （关掉的行不再注册工具名，写一个不存在的名字会让五个岗位一起启动失败）。
+              # （关掉的行不再注册工具名，写一个不存在的名字会让四个岗位一起启动失败）。
               - id: tool-subagent-fork
                 name: '@deepseek-ai/dsh-tool-subagent'
                 disabled: true
@@ -287,9 +319,9 @@
               #     ⚠️ 它同时削掉了两条结构性保护，替代措施写在 `leader.md`「派工」那一节，
               #        改这个键之前先读那一节：关卡次序不再由"等结果"强制，评审期间也不再物理锁住组长。
               #   * toolFilter 里只能写"组员继承得到的"工具名。写一个只属于他自己那一层的名字，
-              #     会让整个岗位启动失败（五个人一起挂）。错了会打印可用的完整名单，照着读。
+              #     会让整个岗位启动失败（四条一起挂）。错了会打印可用的完整名单，照着读。
               #   * ⚠️ 2026-09-22 起 **deny 里不许再写 subagent_fork** —— 上面那一行已经关了，
-              #     它的工具名不再注册，写一个不存在的名字同样会让五个岗位一起挂。
+              #     它的工具名不再注册，写一个不存在的名字同样会让四个岗位一起挂。
               #     （这条是推论、没实测；真要再打开那一行，先跑一次挂载测试。）
               #   * 不要在 toolFilter 里写 pwsh/bash —— 两个平台只注册其中一个，写错那个同样会挂。
               #     平台差异交给底层处理，别在这里表达。
@@ -338,14 +370,92 @@
                   toolFilter:
                     deny: [workflow, ralph]
 
+              # 🔴 2026-10-15（执行二 · 批次 I15）：**这一行关掉**（关掉不删，跟 tool-subagent-fork 同一个做法）。
+              #
+              # 老板原话（逐字）：「amara的旧岗就可以撤了，她现在做技术评审吧」
+              #         又：「为什么还在写每日复盘，现在有新的技术复盘和会话复盘了，旧的就不用再做了啊」
+              # 关联四处同批改动（少一处就是半截）：
+              #   ① `team/retro.md` 已删除 ⇒ 名册 10 → 9 行、`【组员:retro】` 不再是任何人的标记；
+              #   ② `officeBound` 里的 `retro` 已去掉（名单 4 → 3）；
+              #   ③ `delegationTools` 里的 `team_retro` 已去掉（10 → 9）；
+              #   ④ `.tools/check-notes.mjs` 的编制表把 retro 标成"已撤岗"。
+              # ⚠️ 为什么是关掉而不是删掉：跟 `tool-subagent-fork` 同一条做法 —— 能力行不动，
+              #    "关掉 ≠ 删掉"，组合的行数与差集（42 行 / 十项）因此一个都不用改。
+              # ⚠️ 关掉之后这个工具名不再注册 ⇒ **别再把它写进任何 toolFilter / delegationTools**。
               - id: team-retro
                 name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
                 config:
                   provider: spawn
                   toolName: team_retro
                   backgroundMode: continuable
                   maxDepth: 1
                   persona: '【组员:retro】你是这个组的流程与复盘。你只提案，不落笔。岗位说明书会随请求自动注入 —— 开工前先读它。'
+                  toolFilter:
+                    deny: [workflow, ralph]
+
+              # ── 四个一次性作业（2026-10-15 · 执行一 · 批次 I2）───────────────────────
+              #
+              # 记忆判决 / 记忆复核 / 会话评审 / 技术评审 —— 每个岗位两份纸：
+              #   · `team/<角色>.md`   = 岗位说明书，**注入**（memberOrder 里那个 charter）
+              #   · `job-briefs/<角色>.md` = 这一次的作业书，**不注入**，由组长连活儿一起交过去
+              #
+              # 四行的形状是**冻结**的（提案 §B2.2 + 裁定 A4/I1），十项逐条都要对：
+              #   * `provider: spawn` · `maxDepth: 1`（作业不许再招人）
+              #   * `backgroundMode: one-shot` —— 一次性作业**默认前台**，所以门禁要求调用方
+              #     显式传 `run_in_background: true`（省略就等着，会把组长卡住）
+              #   * `toolFilter.deny: [workflow, ralph]` —— **恰为这两个**；不许在这里写 `pwsh`/`bash`
+              #     （平台二选一，写错那个会让整行启动失败）
+              #   * **绝不写 `enableRunInBackground`**：它是 config 键，写了等于把 `run_in_background`
+              #     参数从工具里拿掉，"必须显式 true"那条门禁就永远无法满足
+              #   * `persona` 开头那枚【组员:<角色>】是分流用的锚点（`ROLE_MARK`）—— 少了它，
+              #     作业会当自己是组长，拿到组长那份注入
+              #   * `toolName` 的形状是 `job_<角色下划线形式>`；它**不是** `team_*`，所以
+              #     `TEAM_TOOL` 不认它 ⇒ 作业**不进旧进度板**的五关计数（这是有意的，不是漏的）
+              #
+              # ⚠️ 四行都**开着**（没有 `disabled`）；`toolFilter` 只写 deny 这两个名字，
+              #    不要把被关掉的行里的工具名（例如 `subagent_fork`）写进来。
+              - id: tool-job-memory-judge
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: job_memory_judge
+                  backgroundMode: one-shot
+                  maxDepth: 1
+                  persona: '【组员:memory-judge】你是一次性后台作业：记忆判决。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
+                  toolFilter:
+                    deny: [workflow, ralph]
+
+              - id: tool-job-memory-review
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: job_memory_review
+                  backgroundMode: one-shot
+                  maxDepth: 1
+                  persona: '【组员:memory-review】你是一次性后台作业：记忆复核。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
+                  toolFilter:
+                    deny: [workflow, ralph]
+
+              - id: tool-job-conversation-review
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: job_conversation_review
+                  backgroundMode: one-shot
+                  maxDepth: 1
+                  persona: '【组员:conversation-review】你是一次性后台作业：会话评审。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
+                  toolFilter:
+                    deny: [workflow, ralph]
+
+              - id: tool-job-technical-review
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: job_technical_review
+                  backgroundMode: one-shot
+                  maxDepth: 1
+                  persona: '【组员:technical-review】你是一次性后台作业：技术评审。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
                   toolFilter:
                     deny: [workflow, ralph]
 

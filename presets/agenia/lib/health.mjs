@@ -1,0 +1,235 @@
+/**
+ * brain-health —— 判定（`healthVerdict`）· 过期的转出（`staleVerdict`）· 工作区来源与健康卡。
+ *
+ * 冻结依据：提案 §B1.3（`lib/health.mjs` = "brain-health 判定（纯函数 + 读取器）"）· §B1.5（签名）·
+ *   §B3.6（`<WS>\brain\<day>\health.json` 的字段表）· §B3.3（未关闭的采纳票必须看得见）·
+ *   提案 §4（update **90** / local **45** 两档租约"不许出现 60"）·
+ *   🔴 追加裁定 **v1.12 C-1**：入参形状照 CLI 带回的真实形状**冻结**，判定逻辑**整体搬进本文件**，
+ *   "CLI 只做薄调用"（搬完 HLT-01 / HLT-02 复跑）。
+ *
+ * 四条口径：
+ *   ① **过期判定不在这儿重写**：`staleVerdict` 从 `lib/liveness.mjs` 转出（一份实现、两个入口）——
+ *      C-5 的 `age >= lease` 只写在一处。
+ *   ② **`RUNNING ≠ GREEN`**：有作业在跑、而且 liveness 还新鲜 ⇒ 状态是 `RUNNING`，绝不许显示绿。
+ *   ③ **"技术复盘完成"≠"发现已解决"**：未关闭的采纳票另立字段，而且**不许被绿掩盖**（非空 ⇒ 不给绿）。
+ *   ④ **纯函数那一段不摸盘**：`healthVerdict(input)` 只吃入参；盘上的读取在下面那两个读取器里，
+ *      调用方（`agenia-brain.mjs` / `agenia-local.mjs`）自己装输入 —— 薄调用就是薄在这儿。
+ */
+import { readFileSync, existsSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import path from 'node:path'
+import { LEASES, staleVerdict } from './liveness.mjs'
+import { distributionOf } from './memory.mjs'
+import { nodeStaleVerdict } from './local-state.mjs'
+import { now as clockNow } from './clock.mjs'
+
+export { staleVerdict }
+
+/** 四个状态（B3.6）。`RUNNING` 与 `HOLD` 都**不是**"绿"。 */
+export const HEALTH_STATUSES = Object.freeze(['GREEN', 'RED', 'RUNNING', 'HOLD'])
+
+/** 健康卡里那几条判红用的码（**reason 码，不是 CLI 退出码** —— 与 `E_PACKET_*` 同一条口径）。 */
+export const HEALTH_REASON_CODES = Object.freeze({
+  NO_UPDATE_TODAY: 'E_NO_UPDATE_TODAY',
+  LOCAL_FAILED: 'E_LOCAL_FAILED',
+  LOCAL_STALE: 'E_LOCAL_STALE',
+  LOCAL_INCOMPLETE: 'E_LOCAL_INCOMPLETE',
+  RECEIPT_MISSING: 'E_RECEIPT_MISSING',
+  RECEIPT_ANCHOR: 'E_RECEIPT_ANCHOR',
+  RECEIPT_HASH: 'E_RECEIPT_HASH',
+  TICKETS_OPEN: 'E_TICKETS_OPEN',
+  DATA_MISSING: 'E_DATA_MISSING',
+  DATA_CORRUPT: 'E_DATA_CORRUPT',
+})
+
+/** 本地那三个节点（顺序即卡上的次序）。 */
+const NODE_KEYS = Object.freeze(['memory_review', 'conversation', 'technical'])
+
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
+const isFilledString = (v) => typeof v === 'string' && v.trim() !== ''
+
+/**
+ * 一份脑健康的判定（**C-1 冻结的入参与返回**）。
+ *
+ * @param {object} input
+ *   `project` · `day` · `now` · `leases:{update,local}` · `state` · `snapshot` · `report` ·
+ *   `local` · `receipt` · `daily` · `route` · `reads`（7 份各自的 `{ok,code,path}`）。
+ *   缺的键按"这一份还没读到"处理（`null`），**不许**因此抛错 —— 卡读不出来比卡判错更糟。
+ *   加性可选键：`open_adopted_tickets`（未关闭的采纳票，B3.3）· `anchor_problems`（锚点核对结果）。
+ * @returns {{status:'GREEN'|'RED'|'RUNNING'|'HOLD', reasons:Array<{code:string,detail:string,source_path:string|null}>}}
+ */
+export function healthVerdict(input = {}) {
+  const reasons = []
+  const push = (code, detail, sourcePath) => reasons.push({ code, detail, source_path: sourcePath ?? null })
+
+  const leases = { update: LEASES.update, local: LEASES.local, ...(isObject(input?.leases) ? input.leases : {}) }
+  const nowIso = isFilledString(input?.now) ? input.now : clockNow().toISOString()
+  const localReadPath = input?.reads?.local?.path ?? null
+  const local = isObject(input?.local) ? input.local : null
+  const nodes = local === null ? [] : NODE_KEYS.map((key) => [key, isObject(local[key]) ? local[key] : null])
+
+  // ① 没开工 ⇒ HOLD；开过工但状态缺 ⇒ RED（v1.12 的头两条）
+  if (local === null) {
+    if (input?.daily !== null && input?.daily !== undefined) {
+      push(HEALTH_REASON_CODES.DATA_MISSING, '今天开过工（每日状态在），但本地状态还没有 —— 本地双评审没启动', localReadPath)
+      return { status: 'RED', reasons }
+    }
+    return {
+      status: 'HOLD',
+      reasons: [{ code: HEALTH_REASON_CODES.NO_UPDATE_TODAY, detail: '今天还没有开工痕迹（既无本地状态也无每日状态）', source_path: localReadPath }],
+    }
+  }
+
+  // ② 过期判定走 `lib/liveness.mjs`（C-5 唯一来源），节点的"看哪个时间戳"走 `lib/local-state.mjs`
+  //    （本地状态的形状归它管）—— "答不出来"一律当过期。
+  const staleOf = (node) => nodeStaleVerdict(node, nowIso).stale
+  const failed = nodes.filter(([, n]) => n?.state === 'failed' || n?.state === 'stale')
+  const running = nodes.filter(([, n]) => n?.state === 'running' && !staleOf(n))
+  const expiredRunning = nodes.filter(([, n]) => n?.state === 'running' && staleOf(n))
+  const done = nodes.filter(([, n]) => n?.state === 'done')
+
+  for (const [name, node] of failed) {
+    push(HEALTH_REASON_CODES.LOCAL_FAILED, `${name} 失败：${node?.failure_reason ?? '(没给原因)'}`, localReadPath)
+  }
+  for (const [name, node] of expiredRunning) {
+    push(HEALTH_REASON_CODES.LOCAL_STALE, `${name} 在跑但 liveness 已经过期（本地租约 ${leases.local} 分钟，最后事件 ${node?.liveness_at ?? node?.claim?.claimed_at ?? '无'}）`, localReadPath)
+  }
+
+  // ③ 技术评审：缺回执 ≠ 完成（v1.12 的第五条）
+  if (input?.receipt === null || input?.receipt === undefined) {
+    const technicalDone = nodes.some(([name, n]) => name === 'technical' && n?.state === 'done')
+    if (technicalDone) {
+      push(HEALTH_REASON_CODES.RECEIPT_MISSING, '技术评审跑完了但没有回执 ⇒ 技术复盘未完成（缺回执不是"完成"）', input?.reads?.receipt?.path ?? null)
+    }
+  } else {
+    const node = isObject(local?.technical) ? local.technical : {}
+    const anchors = [node.report_sha256, node.findings_set_sha256, node.receipt_sha256].filter((v) => isFilledString(v))
+    if (anchors.length > 0 && anchors.length < 3) {
+      push(HEALTH_REASON_CODES.RECEIPT_ANCHOR, '技术复盘的三个锚点（报告 / 发现集 / 回执）不齐 —— 回执与产物对不上账', localReadPath)
+    }
+  }
+  for (const [name, node] of nodes) {
+    if (node === null) push(HEALTH_REASON_CODES.DATA_MISSING, `${name} 这一场还没有任何痕迹（既没 claim 也没产物）`, localReadPath)
+  }
+
+  // ④ 加性：锚点核对（报告盘上字节 vs 状态里的锚点）+ 未关闭的采纳票
+  for (const problem of Array.isArray(input?.anchor_problems) ? input.anchor_problems : []) {
+    push(problem?.code ?? HEALTH_REASON_CODES.RECEIPT_HASH, problem?.detail ?? '锚点核对未通过', problem?.source_path ?? localReadPath)
+  }
+  const openTickets = Array.isArray(input?.open_adopted_tickets) ? input.open_adopted_tickets.filter(isFilledString) : []
+  if (openTickets.length > 0) {
+    push(HEALTH_REASON_CODES.TICKETS_OPEN, `技术复盘已完成，但仍有 ${openTickets.length} 张采纳票未关闭（${openTickets.join(', ')}）—— "完成"不等于"发现已解决"`, input?.reads?.route?.path ?? null)
+  }
+
+  // ⑤ 状态判定（次序即 v1.12 的规则次序）：红压过一切；有新鲜的在跑 ⇒ RUNNING（≠ GREEN）
+  if (failed.length > 0 || expiredRunning.length > 0 || reasons.length > 0) return { status: 'RED', reasons }
+  if (running.length > 0) return { status: 'RUNNING', reasons: [] }
+  if (done.length === NODE_KEYS.length && input?.receipt !== null && input?.receipt !== undefined) return { status: 'GREEN', reasons: [] }
+  push(HEALTH_REASON_CODES.LOCAL_INCOMPLETE, `三场没跑齐（done=${done.length}/${NODE_KEYS.length}）`, localReadPath)
+  return { status: 'RED', reasons }
+}
+
+/**
+ * 读一份 JSON（**缺**与**坏**分得开；`present:false` 也带上路径，好让卡上给得出处）。
+ *
+ * @returns {{ok:boolean, code:string|null, value:unknown, path:string, message:string}}
+ */
+export function readJsonSource(file) {
+  const target = path.resolve(String(file))
+  if (!existsSync(target)) return { ok: false, code: 'E_DATA_MISSING', value: null, path: target, message: `文件不存在：${target}` }
+  try {
+    return { ok: true, code: null, value: JSON.parse(readFileSync(target, 'utf8')), path: target, message: '' }
+  } catch (err) {
+    return { ok: false, code: 'E_DATA_CORRUPT', value: null, path: target, message: `不是可解析 JSON（${String(err?.message).slice(0, 120)}）：${target}` }
+  }
+}
+
+/**
+ * 读**工作区那一侧**的四份来源（`:local` / `:daily` / `:receipt` / `:route`）—— `health.mjs` 的"读取器"那一半。
+ *
+ * 回执落点：优先用本地状态 `technical.receipt_path`（`local-receipt-set` 登记过就用它），
+ * 否则取 B3.2 的默认 `<team>\leader\<day>\技术复盘回执.json`。
+ *
+ * @param {{teamDir:string, day:string, receiptPath?:string|null}} spec
+ * @returns {{local:object|null, daily:object|null, receipt:object|null, route:object|null,
+ *            reads:{local:object, daily:object, receipt:object, route:object}, receipt_path:string}}
+ */
+export function readWorkspaceHealthSources(spec = {}) {
+  const teamDir = path.resolve(String(spec.teamDir))
+  const day = String(spec.day)
+  const localRead = readJsonSource(path.join(teamDir, 'state', 'local', `${day}.json`))
+  const dailyRead = readJsonSource(path.join(teamDir, 'state', 'daily', `${day}.json`))
+  const routeRead = readJsonSource(path.join(teamDir, 'route', 'current.json'))
+  const registered = isFilledString(spec.receiptPath) ? String(spec.receiptPath).trim()
+    : (isFilledString(localRead.value?.technical?.receipt_path) ? String(localRead.value.technical.receipt_path).trim() : null)
+  const receiptRel = registered ?? path.join('leader', day, '技术复盘回执.json').replace(/\\/g, '/')
+  const receiptRead = readJsonSource(path.join(teamDir, receiptRel.replace(/\//g, path.sep)))
+  const src = (read) => ({ ok: read.ok, code: read.code, path: read.path })
+  return {
+    local: localRead.ok ? localRead.value : null,
+    daily: dailyRead.ok ? dailyRead.value : null,
+    receipt: receiptRead.ok ? receiptRead.value : null,
+    route: routeRead.ok ? routeRead.value : null,
+    receipt_path: receiptRead.path,
+    reads: { local: src(localRead), daily: src(dailyRead), receipt: src(receiptRead), route: src(routeRead) },
+  }
+}
+
+/**
+ * 锚点核对（**读取器**）：技术节点的 `report_sha256` 必须等于报告**盘上字节**的哈希。
+ *
+ * · 报告文件不在盘上 ⇒ **不判**（锚点无从核对；这一条在 C-1 的规则表里没有，不许凭空判红）；
+ * · 在盘上但对不上 ⇒ 一条 `E_RECEIPT_HASH` 的 reason 素材（"改报告一字即红"的载体）。
+ *
+ * @returns {Array<{code:string, detail:string, source_path:string|null}>}
+ */
+export function receiptAnchorProblems(workspace, localState) {
+  const node = isObject(localState?.technical) ? localState.technical : null
+  if (node === null || !isFilledString(node.report_path) || !isFilledString(node.report_sha256)) return []
+  const root = path.resolve(String(workspace))
+  const abs = path.resolve(root, String(node.report_path).replace(/\//g, path.sep))
+  if (abs !== root && !abs.startsWith(`${root}${path.sep}`)) {
+    return [{ code: HEALTH_REASON_CODES.RECEIPT_HASH, detail: `技术报告路径逃出了工作区：${node.report_path}`, source_path: abs }]
+  }
+  if (!existsSync(abs) || !statSync(abs).isFile()) return []
+  const actual = createHash('sha256').update(readFileSync(abs)).digest('hex')
+  if (actual.toLowerCase() === String(node.report_sha256).trim().toLowerCase()) return []
+  return [{
+    code: HEALTH_REASON_CODES.RECEIPT_HASH,
+    detail: `技术报告盘上字节与状态里的锚点对不上（登记 ${String(node.report_sha256).slice(0, 12)}…，盘上 ${actual.slice(0, 12)}…）—— 锚点来自作业产物，不来自回执自报`,
+    source_path: abs,
+  }]
+}
+
+/**
+ * 装一张健康卡（B3.6 的字段表）。
+ *
+ * @param {object} spec `{input, verdict, extra}`；`extra` 里放 `open_adopted_tickets` / `distribution` / `health_path`
+ * @returns {object} 要落盘的 `health.json` 对象
+ */
+export function buildHealthCard(spec = {}) {
+  const input = spec.input ?? {}
+  const verdict = spec.verdict ?? { status: 'RED', reasons: [] }
+  const extra = spec.extra ?? {}
+  const report = isObject(input.report) ? input.report : null
+  return {
+    schema: 1,
+    day: input.day ?? null,
+    project: input.project ?? null,
+    status: verdict.status,
+    reasons: verdict.reasons,
+    checked_at: isFilledString(input.now) ? input.now : clockNow().toISOString(),
+    now_file: process.env.AGENIA_NOW_FILE ?? null,
+    paths: {
+      snapshot: input?.reads?.snapshot?.path ?? null,
+      state: input?.reads?.state?.path ?? null,
+      local: input?.reads?.local?.path ?? null,
+      receipt: input?.reads?.receipt?.path ?? null,
+      route: input?.reads?.route?.path ?? null,
+    },
+    open_adopted_tickets: Array.isArray(extra.open_adopted_tickets) ? extra.open_adopted_tickets : [],
+    distribution: Array.isArray(extra.distribution) ? extra.distribution : distributionOf([]),
+    ...(isFilledString(extra.health_path) ? { health_path: String(extra.health_path) } : {}),
+    ...(report === null ? {} : { report_day: report.day ?? null }),
+  }
+}

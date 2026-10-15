@@ -64,7 +64,7 @@
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, sep } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const REPO = fileURLToPath(new URL('..', import.meta.url))
@@ -133,6 +133,11 @@ const CRITERION = {
   '§正反词': '每维正反词：形状 `正/正 ↔ 反/反`、词**逐字**来自 `mood.md` 的 `words`、'
     + '缺一维 ⇒ 那一格只写分数、形状不对 ⇒ 整块不认 + 出声、改它不用重启',
   '§封顶': '老板拍板选项 B「封顶就封顶」：高重逢区间里夸 / 骂**不动数**，亲密逐字 `1.00`',
+  // 🆕 2026-10-15（批次 I4c）：委派后台硬门那一族的判据（STAT-03 点名的三个标记就在这一族里）。
+  '§硬门': '委派后台硬门：名单从组合的 `delegationTools` 读（代码里不硬编码）· 一次性作业省略后台 ⇒ '
+    + '`E_GUARD_JOB_FOREGROUND`（报文含「必须后台运行」/「run_in_background: true」）· continuable 只有显式 false 才拒'
+    + '（`E_GUARD_SELF_FOREGROUND`）· 配置坏了按 A13 窄形状拦委派名（放行 `job_output`/`job_kill`/`job_list`）· '
+    + '拿不到 `tools.guard` 必须出声（「subagent 后台硬门未生效」）',
 }
 
 /** `[A1 · 口径1]` / `[J6 · §形状]` */
@@ -244,6 +249,66 @@ const isStyleMessage = (m) =>
   m?.source?.kind === 'plugin:agenia' || (m?.source?.kind === 'plugin' && m?.source?.plugin === 'agenia')
 
 /**
+ * 从组合里读出**委派**那两样东西（**真读文件，不是读注释**）——
+ * guard 那一族（`GD*`）拿它对账，判"名单 = 组合自己"。
+ *
+ *   · `enabled`：已启用的具名 `@deepseek-ai/dsh-tool-subagent` 实例的 `toolName`（升序）
+ *   · `table`：`persona-injector` 那行 config 里 `delegationTools`（工具名 → `one-shot` | `continuable`）
+ *
+ * 只认这两个形状 —— **别把它扩成通用 YAML 解析器**（这里够用就行；解析器越宽，判据越像"读代码觉得对"）。
+ * 注释行先剔掉：判"配置值里有没有"时，注释里提一句名字不算。
+ */
+function readDelegationConfig(text) {
+  const effective = String(text).split('\n').filter((l) => !/^\s*#/.test(l))
+  const blocks = []
+  let cur = null
+  for (const line of effective) {
+    const hit = /^\s*- id:\s*(\S+)\s*$/.exec(line)
+    if (hit !== null) {
+      cur = { id: hit[1], lines: [] }
+      blocks.push(cur)
+      continue
+    }
+    if (cur !== null) cur.lines.push(line)
+  }
+  const bodyOf = (b) => b.lines.join('\n')
+  const field = (b, key) => {
+    const hit = new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm').exec(bodyOf(b))
+    return hit === null ? undefined : hit[1].replace(/^['"]|['"]$/g, '')
+  }
+  const enabled = blocks
+    .filter((b) => field(b, 'name') === '@deepseek-ai/dsh-tool-subagent')
+    .filter((b) => !/^\s*disabled:\s*true\s*$/m.test(bodyOf(b)))
+    .map((b) => field(b, 'toolName'))
+    .filter((x) => typeof x === 'string' && x.length > 0)
+    .sort()
+  // 那一行自己的 `backgroundMode`（工具名 → 模式）—— 名单里的**值**要跟它逐条对账。
+  const modes = {}
+  for (const b of blocks) {
+    const n = field(b, 'toolName')
+    const m = field(b, 'backgroundMode')
+    if (typeof n === 'string' && typeof m === 'string') modes[n] = m
+  }
+  const inj = blocks.find((b) => b.id === 'persona-injector')
+  let table = null
+  if (inj !== undefined) {
+    const at = inj.lines.findIndex((l) => /^\s*delegationTools:\s*$/.test(l))
+    if (at >= 0) {
+      const indent = inj.lines[at].length - inj.lines[at].trimStart().length
+      table = {}
+      for (const line of inj.lines.slice(at + 1)) {
+        if (line.trim() === '') continue
+        if (line.length - line.trimStart().length <= indent) break
+        const hit = /^\s*([A-Za-z0-9_-]+):\s*(\S+)\s*$/.exec(line)
+        if (hit !== null) table[hit[1]] = hit[2]
+      }
+      if (Object.keys(table).length === 0) table = null
+    }
+  }
+  return { enabled, table, modes }
+}
+
+/**
  * 让 inject.js 的 `apply()` 在一个假 ctx 上跑一遍。
  * 每次调用都是一份**全新的状态**（apply 里的 Map 都在闭包里），所以各测各的、互不串味。
  *
@@ -253,8 +318,15 @@ const isStyleMessage = (m) =>
  *                   ⚠️ 故意**不**在会话头上塞 `parentSession` / `delegationDepth`：
  *                   组长拍下来的设计里，认人发生在装配那一刻（那里角色是现成的）；
  *                   多给一条路会掩盖"认人到底发生了没有"。
+ * @param guard      🔴 2026-10-15（I4c）新增的两档（**不填 = 原来那个空门禁，一个字节没变**）：
+ *                   · `'absent'` —— **不给** `ctx.get('tools')`：量"拿不到门禁必须出声"那一格；
+ *                   · 函数 —— 记录式门禁：`ctx.effect` 里真调 `tools.guard(handler)`，把这个 handler
+ *                     交出来，于是"判定真的按名单走"能在 apply 层验（不是只验纯函数）。
+ * @param entry      被测入口（默认产物那一份）—— guard 那一族要指到**带 guard 的那一份**。
+ * @param config     喂给 `apply()` 的 config（默认 `{ contentDir }`；guard 那一族要连组合的
+ *                   `delegationTools` 一起喂 —— 真挂载时 `apply` 收到的就是那一行的 config）。
  */
-async function harness(contentDir, { member } = {}) {
+async function harness(contentDir, { member, guard, entry, config } = {}) {
   const handlers = new Map()
   const injected = []
   const AGENT_ID = 'probe-agent'
@@ -319,7 +391,12 @@ async function harness(contentDir, { member } = {}) {
       if (name === 'systemPrompt') return {}
       if (name === 'agents') return { get: (want) => (want === AGENT_ID ? agent : undefined) }
       // 假的门禁：不给它 inject.js 就会往 stderr 喊"边界没生效"，那是噪声不是判据。
-      if (name === 'tools') return { guard: () => () => {} }
+      // ⚠️ 2026-10-15（I4c）加两个档（见上面 `@param guard`）—— `'absent'` 与记录式门禁。
+      if (name === 'tools') {
+        if (guard === 'absent') return undefined
+        if (typeof guard === 'function') return { guard: (handler) => { guard(handler); return () => {} } }
+        return { guard: () => () => {} }
+      }
       return undefined
     },
     on(event, handler) {
@@ -330,8 +407,8 @@ async function harness(contentDir, { member } = {}) {
   }
 
   // ⚠️ ESM 按 URL 缓存，所以这里**故意**只 import 一次；状态靠"重新 apply 一遍"重置。
-  const mod = await import(pathToFileURL(PRESET_ENTRY).href)
-  await mod.apply(ctx, { contentDir })
+  const mod = await import(pathToFileURL(entry ?? PRESET_ENTRY).href)
+  await mod.apply(ctx, config ?? { contentDir })
 
   const tick = () => new Promise((resolve) => setImmediate(resolve))
   /**
@@ -2866,6 +2943,195 @@ try {
     //    （带参数 = 不读真实时钟）；而"无参 `new Date()`"才是禁的。
     checkIf(PRESET_ENTRY === join(PRESET_DIR, 'inject.js'), 'H11', 10, '`inject.js` 里没有 `Date.now()` / 无参 `new Date()`（时间与"今天"全从事件自带的时间戳进）',
       clockHits.length === 0 ? '（一次都没有）' : clockHits, '（一次都没有）')
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n═══ GD · 委派后台硬门：名单来自组合、判定按名单（§硬门）═══')
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 这一族钉的是这次升级新加的**命名导出**（`delegationPolicy` / `delegationToolNames` /
+  // `subagentBackgroundVerdict`，裁定 A4 + Q1）。它**真读**两样东西：
+  //   · 目标 `inject.js` —— import 它、**调它的纯函数**（不是抠源码里的字符串）；
+  //   · 它旁边那份 `agent.cordis.yml` —— 名单从组合读，代码里不硬编码。
+  //
+  // 🔴 目标入口怎么选（**每一步都印出来**）：
+  //   ① 活体那一份自己带 guard（装完之后就是这一支）⇒ 量活体；
+  //   ② 否则量**目标**（staging 那一份 —— guard 的实现现在住在那儿）；
+  //   ③ 两处都没有 ⇒ 这一族**逐条记挂起**（未验，不许静默算过）。
+  //
+  // ⚠️ 为什么不满足于"源码里有那几个字符串"：字符串命中证明不了"名单真的从组合来"，
+  //    更证明不了"省略 run_in_background 真的会被拒"。这里两条都真跑。
+  {
+    const LIVE_ENTRY = join(PRESET_DIR, 'inject.js')
+    const STAGED_ENTRY = join(REPO, '.tools', '_staging', 'agenia-upgrade', 'preset', 'inject.js')
+    const GD_IDS = ['GD0', 'GD1', 'GD12', 'GD2', 'GD3', 'GD4', 'GD5', 'GD6', 'GD7', 'GD8', 'GD9', 'GD10', 'GD11']
+    const skipRest = (why) => {
+      for (const id of GD_IDS) skip(id, '§硬门', `${id}：${why}`)
+    }
+    const hasGuard = async (p) => {
+      if (!existsSync(p)) return false
+      try {
+        const m = await import(pathToFileURL(p).href)
+        return typeof m.subagentBackgroundVerdict === 'function'
+      } catch {
+        return false
+      }
+    }
+    // ⚠️ `AGENIA_PROBE_GUARD_ENTRY` 的用途**只有一个**：阳性对照 —— 拿一份**变异副本**跑这一族，
+    //    证明"名单对不上 / 作业行写歪了"这些断言**真的会红**（不是摆设）。
+    //    纪律同上：换了入口 ⇒ 必须在读数里看得见（下面那行会印出来），不许静默。
+    const override = process.env.AGENIA_PROBE_GUARD_ENTRY
+    const guardEntry = typeof override === 'string' && override.length > 0 ? override
+      : (await hasGuard(LIVE_ENTRY)) ? LIVE_ENTRY
+        : (await hasGuard(STAGED_ENTRY)) ? STAGED_ENTRY : null
+    console.log(`目标入口：${guardEntry ?? '（活体与 staging 都没有带 guard 的 inject.js ⇒ 这一族全是未验）'}`
+      + (typeof override === 'string' && override.length > 0 ? '（由 AGENIA_PROBE_GUARD_ENTRY 指定）' : ''))
+    if (guardEntry === null) {
+      skipRest('没有带 guard 的入口（活体还没装、staging 也不在）⇒ 这一轮判不了')
+    } else {
+      const guard = await import(pathToFileURL(guardEntry).href)
+      const guardDir = dirname(guardEntry)
+      const compFile = join(guardDir, 'agent.cordis.yml')
+      const compText = existsSync(compFile) ? readFileSync(compFile, 'utf8') : ''
+      const { enabled, table, modes } = readDelegationConfig(compText)
+      const guardConfig = table === null ? { contentDir: guardDir } : { contentDir: guardDir, delegationTools: table }
+      checkTrue('GD0', '§硬门',
+        '先确认目标：这一份真的导出 guard 那三个名字，而且它旁边有组合（否则下面全是空转）',
+        typeof guard.delegationPolicy === 'function' && typeof guard.delegationToolNames === 'function'
+          && typeof guard.subagentBackgroundVerdict === 'function' && compText !== '',
+        `入口 ${guardEntry} · 组合 ${existsSync(compFile) ? compFile : '**找不到**'}`
+          + ` · 导出 ${['delegationPolicy', 'delegationToolNames', 'subagentBackgroundVerdict']
+            .filter((k) => typeof guard[k] === 'function').length}/3`)
+      if (table === null) {
+        skipRest('目标那份组合里读不到 delegationTools 名单 ⇒ 判不了（装前 / 配置坏了都长这样）')
+      } else {
+        const policy = guard.delegationPolicy(guardConfig)
+        const oneShot = enabled.filter((n) => table[n] === 'one-shot')
+        const cont = enabled.filter((n) => table[n] === 'continuable')
+
+        // GD1：**每个已启用的具名 `dsh-tool-subagent` 实例都必须在名单里**（名单 = 组合自己）。
+        check('GD1', '§硬门',
+          'delegationToolNames(组合 config) == 组合里已启用的具名 dsh-tool-subagent 实例（代码里不硬编码名单）',
+          guard.delegationToolNames(guardConfig), enabled)
+
+        // GD12：名单里的**模式**必须 = 组合里那一行的 `backgroundMode`
+        //       （分叉 ⇒ 硬门按错的模式放行 / 拒绝，而且不报错）。
+        const modeGap = enabled.filter((n) => table[n] !== modes[n])
+          .map((n) => `${n}：名单说 ${table[n]}，那一行写的是 ${modes[n]}`)
+        checkTrue('GD12', '§硬门',
+          '名单里的模式逐条 = 组合里那一行的 backgroundMode（分叉 ⇒ 硬门按错的模式放行 / 拒绝）',
+          modeGap.length === 0,
+          modeGap.length > 0 ? modeGap.join('；') : `${enabled.length} 条逐条一致`)
+
+        // GD2：名单合法 ⇒ 没有 configError，而且名单里每个工具都**暴露着** `run_in_background`
+        //      （唯一会把参数拿掉的是 `enableRunInBackground: false`；那是"必须显式 true"能成立的前提）。
+        checkTrue('GD2', '§硬门',
+          '名单合法 ⇒ configError 为空 · 名单里每个工具都暴露着 run_in_background 参数',
+          policy.configError === null && [...policy.backgroundExposed].sort().join(',') === enabled.join(','),
+          `configError=${JSON.stringify(policy.configError)} · backgroundExposed ${[...policy.backgroundExposed].length}/${enabled.length} 个`)
+
+        // GD3 / GD4 / GD5：`one-shot` 那几条（**从组合读，不写死**）。
+        const omitBad = oneShot.filter((n) => {
+          const v = guard.subagentBackgroundVerdict(n, {}, policy)
+          return v === null || v.code !== 'E_GUARD_JOB_FOREGROUND'
+            || !String(v.message).includes('必须后台运行')
+            || !String(v.message).includes('run_in_background: true')
+        })
+        checkTrue('GD3', '§硬门',
+          `${oneShot.length} 条 one-shot：省略 run_in_background ⇒ 一律拒（E_GUARD_JOB_FOREGROUND + 报文含「必须后台运行」/「run_in_background: true」）`,
+          oneShot.length > 0 && omitBad.length === 0,
+          omitBad.length > 0 ? `没拒干净的：${omitBad.join(', ')}` : `${oneShot.join(', ')} 逐条都对`)
+        const passBad = oneShot.filter((n) => guard.subagentBackgroundVerdict(n, { run_in_background: true }, policy) !== null)
+        checkTrue('GD4', '§硬门',
+          '同一批 one-shot：显式 run_in_background: true ⇒ 放行（**阳性对照** —— 否则"一律拒"也能让 GD3 绿）',
+          oneShot.length > 0 && passBad.length === 0,
+          passBad.length > 0 ? `被误拒的：${passBad.join(', ')}` : `${oneShot.length} 条都放行`)
+        const truthyBad = oneShot.filter((n) => ['x', 1, 0, false, null].some((v) => guard.subagentBackgroundVerdict(n, { run_in_background: v }, policy) === null)
+          || guard.subagentBackgroundVerdict(n, undefined, policy) === null)
+        checkTrue('GD5', '§硬门',
+          'one-shot 的判据是 `=== true`：`\'true\'` / 1 / 0 / false / null / 参数缺失 一律算"会前台等着" ⇒ 全拒',
+          oneShot.length > 0 && truthyBad.length === 0,
+          truthyBad.length > 0 ? `漏拒的：${truthyBad.join(', ')}` : `${oneShot.length} 条 × 6 种写法都被拒`)
+
+        // GD6：`continuable` 那几条 —— 省略 / true 放行，**只有显式 false** 才拒。
+        const contBad = []
+        for (const n of cont) {
+          if (guard.subagentBackgroundVerdict(n, {}, policy) !== null) contBad.push(`${n}：省略应放行`)
+          if (guard.subagentBackgroundVerdict(n, { run_in_background: true }, policy) !== null) contBad.push(`${n}：true 应放行`)
+          const v = guard.subagentBackgroundVerdict(n, { run_in_background: false }, policy)
+          if (v === null || v.code !== 'E_GUARD_SELF_FOREGROUND' || !String(v.message).includes('（省略即后台）')) {
+            contBad.push(`${n}：显式 false 应拒（E_GUARD_SELF_FOREGROUND +「（省略即后台）」），实得 ${JSON.stringify(v)}`)
+          }
+        }
+        checkTrue('GD6', '§硬门',
+          `${cont.length} 条 continuable：省略 / true 放行，**只有显式 false** 才拒（E_GUARD_SELF_FOREGROUND）`,
+          cont.length > 0 && contBad.length === 0,
+          contBad.length > 0 ? contBad.join('；') : `${cont.join(', ')} 三态都对`)
+
+        // GD7：名单之外 —— **一个都不许误伤**（框架自己的 job_output / job_kill / job_list 尤其）。
+        const outsiders = ['job_output', 'job_kill', 'job_list', 'read', 'present', 'send_message', 'edit', 'pwsh', 'subagent_fork']
+        const hurt = outsiders.filter((n) => guard.subagentBackgroundVerdict(n, {}, policy) !== null)
+        checkTrue('GD7', '§硬门',
+          '名单之外一个都不误伤（含框架自己的 job_output / job_kill / job_list —— 配置坏了也要能收作业结果）',
+          hurt.length === 0, hurt.length > 0 ? `被误伤的：${hurt.join(', ')}` : `${outsiders.length} 个都放行`)
+
+        // GD8：配置坏掉的六种形状 ⇒ 一律 `E_GUARD_CONFIG_MISSING`（**不许静默放前台**）。
+        const brokenConfigs = [
+          undefined, null, {}, { delegationTools: {} }, { delegationTools: [] },
+          { delegationTools: 'x' }, { delegationTools: { team_dev: 'foreground' } },
+        ]
+        const notBroken = brokenConfigs
+          .map((c, i) => ({ i, code: guard.delegationPolicy(c).configError }))
+          .filter((r) => r.code !== 'E_GUARD_CONFIG_MISSING')
+        checkTrue('GD8', '§硬门',
+          '配置缺失 / null / 空映射 / 不是映射 / 模式值非法 ⇒ configError = E_GUARD_CONFIG_MISSING',
+          notBroken.length === 0,
+          notBroken.length > 0 ? `这几种没认出来：${notBroken.map((r) => `#${r.i}→${JSON.stringify(r.code)}`).join(', ')}` : `${brokenConfigs.length} 种形状都认出来了`)
+
+        // GD9：错误态的**窄形状**（追加裁定 v1.1 · A13）—— 拦委派名，**放行**收作业结果的那三个。
+        const badPolicy = guard.delegationPolicy(undefined)
+        const mustReject = ['subagent', 'team_test', 'team_design',
+          'job_memory_judge', 'job_memory_review', 'job_conversation_review', 'job_technical_review']
+        const mustAllow = ['job_output', 'job_kill', 'job_list', 'read', 'present', 'send_message', 'edit', 'pwsh']
+        const leaks = mustReject.filter((n) => guard.subagentBackgroundVerdict(n, {}, badPolicy) === null)
+        const kills = mustAllow.filter((n) => guard.subagentBackgroundVerdict(n, {}, badPolicy) !== null)
+        checkTrue('GD9', '§硬门',
+          '配置坏掉时：委派名（subagent / team_* / job_*）一律拒，而 job_output / job_kill / job_list 必须放行（A13）',
+          leaks.length === 0 && kills.length === 0,
+          `${leaks.length > 0 ? `漏拦：${leaks.join(', ')}` : '该拦的都拦了'}`
+            + ` · ${kills.length > 0 ? `误杀：${kills.join(', ')}` : '该放行的都放了'}`)
+
+        // GD10：apply 层 —— **拿不到 `tools.guard` 必须出声**（不许静默失效）。
+        const errMark = stderrSeen.length
+        await harness(guardDir, { guard: 'absent', entry: guardEntry })
+        const silence = stderrSeen.slice(errMark).join(' ｜ ')
+        checkTrue('GD10', '§硬门',
+          '真挂一次：拿不到 tools.guard ⇒ 必须 console.error（报文含「subagent 后台硬门未生效」）',
+          silence.includes('subagent 后台硬门未生效'),
+          silence === '' ? '**一句都没喊** —— 那正是"静默失效"（评审会以为自己只审不改）' : `出声了：${silence.slice(0, 140)}`)
+
+        // GD11：apply 层 —— 装上**记录式**门禁：判定真的按名单走（不是只验纯函数）。
+        const recorder = { handler: null }
+        await harness(guardDir, { guard: (h) => { recorder.handler = h }, entry: guardEntry, config: guardConfig })
+        const callGuard = (name, args) => (typeof recorder.handler === 'function'
+          ? recorder.handler({ name, arguments: args, agent: undefined })
+          : '<门禁没装上>')
+        const applyBad = []
+        if (typeof recorder.handler !== 'function') applyBad.push('门禁没被装上（ctx.effect 里没调 tools.guard）')
+        else {
+          const job = oneShot[0]
+          const refused = callGuard(job, {})
+          if (typeof refused !== 'string' || !refused.includes('必须后台运行')) {
+            applyBad.push(`${job} 省略后台应被拒，实得 ${JSON.stringify(refused)}`)
+          }
+          if (callGuard(job, { run_in_background: true }) !== undefined) applyBad.push(`${job} 显式 true 应放行`)
+          if (callGuard('read', {}) !== undefined) applyBad.push('无关工具 read 应放行')
+        }
+        checkTrue('GD11', '§硬门',
+          '真挂一次：门禁被装上，而且它按名单判（作业省略后台 ⇒ 拒；显式 true / 无关工具 ⇒ 放行）',
+          applyBad.length === 0,
+          applyBad.length > 0 ? applyBad.join('；') : `handler 在 · 名单 ${enabled.length} 个 · 作业 ${oneShot.length} 条`)
+      }
+    }
   }
 
   // ── 自检 · 编号唯一（契约 §6.1）────────────────────────────────────────────

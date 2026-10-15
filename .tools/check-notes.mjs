@@ -22,67 +22,58 @@ const HOME = process.env.USERPROFILE ?? process.env.HOME
 const PROFILES = join(HOME, '.dsh', 'profiles')
 
 /**
- * 出厂预设随 dsh 本体发布 —— **找的是那个目录，不是"某一种安装方式"**。
+ * 出厂 `standard` 的**唯一来源**：桌面客户端那一份固定的 oracle（拍板 I3 / 契约 PH0-5）。
  *
- * 🔴 2026-09-28 换版（DSH 0.1.5 → 0.1.7）：**出厂预设搬家了，这里跟着搬。**
- *   · 旧位置 `…/node_modules/@deepseek-ai/dsh-agent-presets/presets/<id>/agent.cordis.yml`
- *     —— 那个包现在**根本不存在**了（实测 `require.resolve` 报 MODULE_NOT_FOUND）。
- *   · 新位置 `…/node_modules/@deepseek-ai/dsh-web-app/presets/<id>.patch.yml`
- *     —— 出厂四份是**四个补丁文件**，不是四个目录；`standard` 的组合本体内联在
- *        `standard.patch.yml` 里（`config.plugins:` 下面那一串），所以下面照样用
- *        `idLines()` 数行 —— **方言不同，数法相同**。
- *   · **判定形状钉在"标准模式那份在不在"上**，因为整个 composition 家族的比对都是
- *     围着它转的 —— 这正是它值得当判据的理由。
+ * 🔴 2026-10-15（批次 I4c）**换源**。换之前这里去"npm 装出来的 dsh 身边"找出厂预设，三条路
+ *   （`_npx` 缓存 / npm 全局安装 / `npm root -g`）—— 那些是**退役的 web 0.1.7 路径**
+ *   （老板 2026-10-13 拍板：浏览器那条路退役，现行唯一入口是桌面客户端 0.2.0-rc.2）。
+ *   ⇒ 现在读的是桌面客户端里那一份 `standard.patch.yml`，由 staging 的 oracle 目录固定落盘：
+ *     `.tools/_staging/agenia-upgrade/oracle/standard.patch.yml`（+ 同目录的 `provenance.json`）。
  *
- * ⚠️ **为什么原来那条会红，而且红得比看上去严重**：`shippedPresets()` 返回 undefined
- *   ⇒ 下面 `else` 那一整支（standard vs agenia 的集合比对，AGENTS.md 3b 的规矩）
- *   **整段被跳过** —— 它既绿不了也红不了。一条"找不到目录"的红，悄悄吃掉了六条断言。
- *   所以现在那条红会把**找过的每个落点**打出来，而且 `standard.patch.yml` 存在但数出
- *   0 行时另有一条红（防的是"文件还在、方言变了、正则一条都命中不了"那种假绿）。
+ * 🔴 **找不到来源 ⇒ 红，不许静默回落到旧路径。** 判据三条，各一条断言：
+ *   · 文件在（不在 ⇒ 红，**不是**"这一族跳过"）；
+ *   · sha256 与字节数 == 冻结值（版本换了、文件被换过 ⇒ 红）；
+ *   · `provenance.json` 自报的版本与 SHA 与冻结值一致 —— oracle 是**别人放进来的一份快照**，
+ *     它自证没有意义；版本与摘要都要**对上冻结值**，再由 STAT-01 那边独立复算同一份 SHA。
  *
- * ⚠️ **搜索顺序 = 先找 dsh 本体在哪，再从它身边找预设**，不写死任何一种安装方式：
- *   本机 0.1.7 跑的是**全局安装**那份（`C:\Users\DAVID\AppData\Roaming\npm\node_modules`），
- *   而 0.1.5 时代是 `_npx` 缓存（目录名带哈希，会随版本变 —— 写死过，升级一次就找不到）。
- *   两条都留着：`_npx` 是上一版的形状，哪天回去跑还在。
+ * ⚠️ **为什么原来那条红得比看上去严重**：`shippedPresets()` 返回 undefined ⇒ 下面 `else`
+ *   那一整支（standard vs agenia 的集合比对，AGENTS.md 3b 的规矩）**整段被跳过** ——
+ *   它既绿不了也红不了。所以现在缺来源时，那一族判据**一条都不许消失**（见下面 `pending` 那几行）。
+ *
+ * ⚠️ 这一段只讲**来源**。"这台机器上还躺着哪几份 dsh、各是哪一版"那条**读数**另有其人
+ *   （`installedDshDirs()`，只报不红）—— 它列 npm 那两份只是为了读数自带口径，
+ *   **不是** oracle 的来源，别把两者混起来读。
  */
-const shippedDirections = () => [
+const ORACLE_DIR = join(REPO, '.tools', '_staging', 'agenia-upgrade', 'oracle')
+const ORACLE_FILE = join(ORACLE_DIR, 'standard.patch.yml')
+const ORACLE_PROVENANCE = join(ORACLE_DIR, 'provenance.json')
+
+/** 冻结值 —— 与 `tests/agenia-upgrade/support/env.mjs` 的 `FROZEN.oracle` 同源（desktop 0.2.0-rc.2）。 */
+const ORACLE_FROZEN = {
+  version: '0.2.0-rc.2',
+  sha256: '6CD2F197737FC94A45E487D0BB57869461DD6F392D45F6429B576E75D973EDA8',
+  bytes: 7511,
+  /** 全部 `- id:` 行（含它自己那行注册声明）。 */
+  rows: 33,
+}
+
+/** 摘要一律大写比较（provenance 是别人写的文本，大小写不保证）。 */
+const sha256Upper = (p) => createHash('sha256').update(readFileSync(p)).digest('hex').toUpperCase()
+
+/**
+ * **读数**（只报不红）：这台机器上躺着哪几份 dsh、各是哪一版。
+ * 来历见 `AGENTS.local.md` 第七节 —— 客户端那份在 asar 里，这个脚本够不着，所以这里只列
+ * 脚本自己找得到的那几份。⚠️ 它**不是** oracle 的来源（那一族在上面，走 desktop 固定落点）。
+ */
+const installedDshDirs = () => [
   // ① 上一版的形状：npx 缓存（哈希目录名会变，所以枚举）
   ...(existsSync(join(process.env.LOCALAPPDATA ?? '', 'npm-cache', '_npx'))
     ? readdirSync(join(process.env.LOCALAPPDATA ?? '', 'npm-cache', '_npx'))
       .map((h) => join(process.env.LOCALAPPDATA, 'npm-cache', '_npx', h, 'node_modules', '@deepseek-ai', 'dsh'))
     : []),
-  // ② 本机现在的形状：全局安装
+  // ② 全局安装那份（web 档退役之后就只剩它 + 客户端里那份）
   join(process.env.APPDATA ?? '', 'npm', 'node_modules', '@deepseek-ai', 'dsh'),
-  // ③ npm 自己说的全局 root（前面两条都落空时的兜底；跑不动就跳过，不影响判定）
-  (() => {
-    try {
-      return join(execFileSync('npm', ['root', '-g'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(),
-        '@deepseek-ai', 'dsh')
-    } catch { return '' }
-  })(),
 ]
-
-function shippedPresets() {
-  for (const dsh of shippedDirections()) {
-    if (dsh === '' || !existsSync(dsh)) continue
-    for (const candidate of [
-      join(dsh, 'node_modules', '@deepseek-ai', 'dsh-web-app', 'presets'), // 0.1.7 起
-      join(dsh, 'node_modules', '@deepseek-ai', 'dsh-agent-presets', 'presets'), // 0.1.5 的旧位置
-    ]) {
-      if (existsSync(join(candidate, 'standard.patch.yml'))
-        || existsSync(join(candidate, 'standard', 'agent.cordis.yml'))) return candidate
-    }
-  }
-  return undefined
-}
-
-/** 出厂 `standard` 的组合本体：新形状是补丁文件，旧形状是目录里的 agent.cordis.yml。 */
-function standardComposition(dir) {
-  const patch = join(dir, 'standard.patch.yml')
-  if (existsSync(patch)) return patch
-  const legacy = join(dir, 'standard', 'agent.cordis.yml')
-  return existsSync(legacy) ? legacy : undefined
-}
 
 const rows = []
 const add = (family, name, ok, detail) => rows.push({ family, name, ok, detail })
@@ -102,6 +93,85 @@ const read = (p) => readFileSync(p, 'utf8')
 const hanCount = (text) => (text.match(/[\u4e00-\u9fff]/g) ?? []).length
 // yml 里每一行能力行 —— 顶层两格、组内四格，两种缩进都收。
 const idLines = (text) => (text.match(/^\s*- id: .+$/gm) ?? []).map((l) => l.trim().slice(6).trim())
+
+/**
+ * 编制**三组**（B2.5 ② 的分组口径）—— 判据按组写，不按"份数"写。
+ *
+ *   · **固定岗位 4**：说明书与 `team-<岗位>` 行**成对**，工具名 `team_<岗位>`；
+ *   · **外聘 1**：说明书在、**没有** `team-hire` 行（他挂在 `tool-subagent` 那枚标记上）；
+ *   · **一次作业 4**：说明书与 `tool-job-<角色>` 行成对，工具名 `job_<角色>`（`-` 换 `_`）。
+ *
+ * ⚠️ 这三张名单是**编制**（角色名），不是"今天有几个人" —— 所以它对
+ *    装前（6 份说明书 / 0 条作业行）与装完（10 份 / 4 条）**都成立**，
+ *    而"加了岗位只改了一处"照样当场红。
+ *
+ * 🔴 **2026-10-15（执行二 · 批次 I15）· 撤岗**：`retro`（流程与复盘）**不再是一份编制** ——
+ *    老板原话「amara的旧岗就可以撤了，她现在做技术评审吧」+「为什么还在写每日复盘……旧的就不用再做了」。
+ *    事实形状是**关掉不删**：`team/retro.md` 删了、`team-retro` 那一行还在（`disabled: true`）、
+ *    它那枚【组员:retro】也还在 yml 里。⇒ 所以拆成两张表：
+ *      · `FIXED_ROLES`   = **在岗的四个**（说明书 ↔ 行，成对、开着）；
+ *      · `RETIRED_ROLES` = **已撤岗的一个**（**行在、关着；说明书不许再有**）。
+ *    能力行总数因此**一个数都不动**（关掉 ≠ 删掉）：42 行 / 差集 10 项照旧，
+ *    变的只有"关着的行" 4 → 5。
+ */
+const FIXED_ROLES = ['design', 'dev', 'test', 'review']
+const RETIRED_ROLES = ['retro']
+const HIRE_ROLE = 'hire'
+/**
+ * 四条**一次作业**的蓝图（提案 §B2.2 冻结的那三格：行 id / 工具名 / 角色）。
+ * ⚠️ 行 id 与工具名**逐字写出来**（不从角色名推）：它们是要被对账的**目标**，
+ *    推出来的话，"行 id 写歪了"这件事就永远对不上（`tool-job-<角色>` 只是个约定，不是保证）。
+ */
+const JOB_ROWS = [
+  { role: 'memory-judge', rowId: 'tool-job-memory-judge', toolName: 'job_memory_judge' },
+  { role: 'memory-review', rowId: 'tool-job-memory-review', toolName: 'job_memory_review' },
+  { role: 'conversation-review', rowId: 'tool-job-conversation-review', toolName: 'job_conversation_review' },
+  { role: 'technical-review', rowId: 'tool-job-technical-review', toolName: 'job_technical_review' },
+]
+const JOB_ROLES = JOB_ROWS.map((j) => j.role)
+
+/**
+ * 按 `- id:` 把**有效行**（已剔注释）切成块 —— 判"某一行自己的 config 长什么样"用。
+ * 顶层两格、组内四格都收；块的 `lines` 是那一行自己后面跟着的行，不含 `- id:` 那行本身。
+ */
+function rowBlocks(effectiveText) {
+  const out = []
+  let cur = null
+  for (const line of effectiveText.split('\n')) {
+    const hit = /^\s*- id:\s*(\S+)\s*$/.exec(line)
+    if (hit !== null) {
+      cur = { id: hit[1], lines: [] }
+      out.push(cur)
+      continue
+    }
+    if (cur !== null) cur.lines.push(line)
+  }
+  return out
+}
+
+/** 块里某个 `key: value` 字段（取**第一处** —— 行自己的键总在 config 之前）。 */
+function blockField(block, key) {
+  const hit = new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm').exec(block.lines.join('\n'))
+  return hit === null ? undefined : hit[1]
+}
+
+/**
+ * `persona-injector` 那行 config 里 `delegationTools:` 那张表：工具名 → 模式。
+ * 没有这个键 ⇒ `null`（装前就是这一支）；键在但一条都没读到 ⇒ 也返回 `null`（由调用方报）。
+ */
+function delegationToolsOf(block) {
+  const at = block.lines.findIndex((l) => /^\s*delegationTools:\s*$/.test(l))
+  if (at < 0) return null
+  const indent = block.lines[at].length - block.lines[at].trimStart().length
+  const table = new Map()
+  for (const line of block.lines.slice(at + 1)) {
+    if (line.trim() === '') continue
+    if (line.length - line.trimStart().length <= indent) break
+    const hit = /^\s*([A-Za-z0-9_-]+):\s*(\S+)\s*$/.exec(line)
+    if (hit !== null) table.set(hit[1], hit[2])
+  }
+  return table.size === 0 ? null : table
+}
 
 /** 今天 / 昨天，按本机时区算。 */
 const pad = (n) => String(n).padStart(2, '0')
@@ -128,22 +198,58 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     return out.sort()
   }
 
-  const agenia = idLines(read(ageniaFile))
-  const shipped = shippedPresets()
+  const ageniaText = read(ageniaFile)
+  const agenia = idLines(ageniaText)
+  // 查"配置值里有没有"的时候只看**有效行** —— 注释里提一句名字不算（那是给人看的）。
+  const effectiveYml = ageniaText.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')
+  const ymlBlocks = rowBlocks(effectiveYml)
 
-  // 🔴 2026-09-28 换版（0.1.5 → 0.1.7）：**这一族数字全部重测过**（换版后第一次真的跑起来）。
-  //    出厂那边：`standard` **33** 行（旧记录 31 —— 多了 `preset-standard` 那行**自声明**
-  //    与 `tool-plugin-manager` 那行**关着的**外部插件管理工具）。
-  //    ⚠️ `preset-standard` 是 `standard.patch.yml` 的注册行、**不是能力行**，
-  //       所以下面的比对会先把它剔掉（`PRESET_DECL`）—— 不剔的话"出厂多一行"就成了假红。
-  //    我们这边：**38** 行（旧记录 37）—— 换版后补了**一处漏抄**：`workflow-ptc`
-  //    （编排实现；出厂有、我们没有 ⇒ `onlyInStandard` 非空，脚本自己抓到的）。
-  //    ⚠️ 2026-09-22 破例一次：`tool-subagent-fork` 那一行**被关掉**（老板拍板，来历见 yml 里那段注释）
-  //    ⚠️ 2026-09-28 又改一条判据：`disabled` 原来数的是**全文里 `disabled:` 出现的次数**（含注释），
-  //       实测 7 处 —— 而**生效的只有 4 行**。⇒ 换成有效行判据（下面那条），数字 4。
-  //    **"差异恒为六项"那个数一个没动** —— 关掉不等于删掉，补抄也不是加能力。
-  eq('composition', 'agenia 能力行总数', agenia.length, 38)
-  eq('composition', 'team-* 子行数', agenia.filter((r) => r.startsWith('team-')).length, 5)
+  // 那份补丁自己的注册行（`preset-standard`）不是能力行 —— 它是"这份补丁怎么被发现"，
+  // 我们那份的对应物是 `cordis.patch.yml` 里的 `preset-agenia`（在另一个文件里，进不了这个集合）。
+  // 不剔掉它，`onlyInStandard` 会永远非空，而这跟"我们少抄了一行能力"完全是两回事。
+  const PRESET_DECL = /^preset-/
+
+  // ── ① oracle：来源 / 版本 / SHA（找不到 ⇒ 红，**不回落**）────────────────────
+  // 口径与来历写在文件头那一大段里；这里落三条断言：在不在 · SHA/字节 · provenance。
+  const oracleThere = existsSync(ORACLE_FILE)
+  const oracleSha = oracleThere ? sha256Upper(ORACLE_FILE) : '（文件不在）'
+  const oracleBytes = oracleThere ? statSync(ORACLE_FILE).size : null
+  yes('composition', 'desktop oracle 在（0.2.0-rc.2 的固定来源；找不到 ⇒ 红，不回落旧路径）',
+    oracleThere,
+    oracleThere ? ORACLE_FILE : `没有这个文件：${ORACLE_FILE} —— 拍板 I3 要的是"找不到就红"，不是回去 npm 那两份里找`)
+  yes('composition', 'oracle 的 sha256 与字节数 = 冻结值（版本换过 / 文件被换过 ⇒ 红）',
+    oracleThere && oracleSha === ORACLE_FROZEN.sha256 && oracleBytes === ORACLE_FROZEN.bytes,
+    oracleThere
+      ? `${oracleSha} · ${oracleBytes} 字节（冻结 ${ORACLE_FROZEN.sha256.slice(0, 8)}… · ${ORACLE_FROZEN.bytes} 字节 · ${ORACLE_FROZEN.version}）`
+      : '（文件不在）')
+  const provText = oracleThere && existsSync(ORACLE_PROVENANCE) ? read(ORACLE_PROVENANCE) : null
+  yes('composition', 'oracle 的 provenance.json 自报版本 + SHA 与冻结值一致（来源可追溯）',
+    provText !== null && provText.includes(ORACLE_FROZEN.version) && provText.toUpperCase().includes(ORACLE_FROZEN.sha256),
+    provText === null
+      ? `读不到 ${ORACLE_PROVENANCE} —— oracle 必须带来源 / 版本 / SHA 读数`
+      : `版本 ${ORACLE_FROZEN.version} ${provText.includes(ORACLE_FROZEN.version) ? '✓' : '✗'} · `
+        + `SHA ${provText.toUpperCase().includes(ORACLE_FROZEN.sha256) ? '✓' : '✗'}`)
+
+  // ── ② 能力行总数：**按目标自身推导**，不写死 38 / 42 ────────────────────────
+  // 🔴 2026-10-15（I4c）**换判据**：原来写死 `38`（装前读数）—— 装完活体是 42，那条数字
+  //    当场变红，而红的是"事实变了"，不是"哪里坏了"（STAT-03 那 15 项就是这么来的）。
+  //    现在的算式：**出厂能力行 + 组合自己声明的那几类增量**
+  //      = standard + 1（persona-injector）+ 5（五个固定岗位行）+ 它自己有的 `tool-job-*` 行。
+  //    装前 32 + 1 + 5 + 0 = 38 ✅ · 装完 32 + 1 + 5 + 4 = 42 ✅
+  //    谁凭空多抄一行、或者抄丢一行 standard 行 ⇒ 两边对不上，当场红。
+  const jobRowIds = agenia.filter((r) => r.startsWith('tool-job-'))
+  if (!oracleThere) {
+    pending('composition', 'agenia 能力行总数 = 出厂能力行 + 组合声明的增量（不写死 38 / 42）',
+      '**挂起** —— oracle 不在，右边算不出来（上面那条已经红了）')
+  } else {
+    eq('composition', 'agenia 能力行总数 = 出厂能力行 + 组合声明的增量（不写死 38 / 42）',
+      agenia.length,
+      idLines(read(ORACLE_FILE)).filter((r) => !PRESET_DECL.test(r)).length + 1
+        + FIXED_ROLES.length + RETIRED_ROLES.length + jobRowIds.length)
+  }
+  // ⚠️ 期望值含**已撤岗那一行**：`team-retro` 是"关掉不删"，行还在 ⇒ 5 条。
+  eq('composition', 'team-* 子行数（含已撤岗但保留的那一行）',
+    agenia.filter((r) => r.startsWith('team-')).length, FIXED_ROLES.length + RETIRED_ROLES.length)
   eq('composition', 'persona-injector 行数', agenia.filter((r) => r === 'persona-injector').length, 1)
   // 🔴 2026-09-28：这条原来数的是**全文里 `disabled:` 出现的次数**（含注释），
   //    实测 7 处 —— 而**生效的只有 4 行**：`tool-subagent-fork` / `tool-subagent-codex` /
@@ -152,9 +258,11 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    ⇒ 换成**有效行判据**：剔掉注释行再数，而且只认 `disabled: true`。
   //    强得多：谁把某一行从"关着"改成"开着"（或者反过来），这条**当场红**，
   //    而旧的写法在注释里多写一个词就跟着漂（旧笔记里那个"5"就是这么来的）。
-  const effectiveYml = read(ageniaFile).split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')
+  //    ⚠️ 装完这四行**一个都不变**（四条作业行是**开着的**，不算"关着的行"）⇒ 这条对装前装后都成立。
+  // 🔴 2026-10-15（执行二 · I15）：`team-retro` 关掉 ⇒ **4 → 5**。这是"改事实"，不是放宽：
+  //    谁把某一行从关着改成开着（或反过来），这条照样当场红。
   eq('composition', 'agent.cordis.yml 里 disabled: true 的行数（有效行，不含注释）',
-    (effectiveYml.match(/^\s*disabled:\s*true\s*$/gm) ?? []).length, 4)
+    (effectiveYml.match(/^\s*disabled:\s*true\s*$/gm) ?? []).length, 4 + RETIRED_ROLES.length)
 
   // 🔴 2026-09-28 换版加：**workflow 那三行**。
   //    来历：0.1.7 把 `@deepseek-ai/dsh-workflow-worker-thread`（0.1.5 里那一行，带 provider: spawn）
@@ -176,70 +284,171 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     !/name: '@deepseek-ai\/dsh-workflow'/.test(effectiveYml),
     'dsh-workflow 是服务契约本身、由框架装；preset 只声明实现。多写一行 = onlyInAgenia 漂移')
 
-  // 那份补丁自己的注册行（`preset-standard`）不是能力行 —— 它是"这份补丁怎么被发现"，
-  // 我们那份的对应物是 `cordis.patch.yml` 里的 `preset-agenia`（在另一个文件里，进不了这个集合）。
-  // 不剔掉它，`onlyInStandard` 会永远非空，而这跟"我们少抄了一行能力"完全是两回事。
-  const PRESET_DECL = /^preset-/
-
-  if (shipped === undefined) {
-    add('composition', '找得到出厂预设目录', false,
-      '找过这些落点，一个都没有：'
-      + shippedDirections().filter((d) => d !== '').map((d) => join(d, 'node_modules', '@deepseek-ai', 'dsh-web-app', 'presets')).join(' · ')
-      + ' —— 0.1.7 起出厂预设住 @deepseek-ai/dsh-web-app/presets/<id>.patch.yml')
+  // ── ③ onlyInStandard / onlyInAgenia：集合比对（**不写死项数**）────────────────
+  let onlyAge = []
+  if (!oracleThere) {
+    pending('composition', 'onlyInStandard 为空 / onlyInAgenia 的明细与增量类',
+      '**挂起** —— oracle 不在 ⇒ 差集算不出来（上面那条已经红了）。'
+      + '⚠️ 这几条**不许从分母里消失**：2026-09-28 那次就是"找不到来源"的一条红把整支集合比对吃掉了，'
+      + '它既绿不了也红不了 —— 那比红更坏。')
   } else {
-    const stdFile = standardComposition(shipped)
-    if (stdFile === undefined) {
-      add('composition', '找得到出厂 standard 预设', false,
-        `${shipped} 里既没有 standard.patch.yml，也没有 standard/agent.cordis.yml`)
-    } else {
-      const rawStd = idLines(read(stdFile))
-      eq('composition', 'standard 能力行总数（含它自己那行注册声明）', rawStd.length, 33)
-      const std = rawStd.filter((r) => !PRESET_DECL.test(r))
-      // 🔴 2026-09-28 补：**文件在、方言变了** ⇒ 正则可以一条都不命中，
-      //    于是数出 0 行、差集变成"agenia 多出 38 项"，下面每一条都红得莫名其妙。
-      //    这条把病因直接点出来（实测新方言下命中的是 33，剔掉注册行是 32）。
-      yes('composition', '出厂 standard 那份数得出能力行（防"文件在、正则全哑"）',
-        rawStd.length > 0,
-        rawStd.length > 0
-          ? `${rawStd.length} 行 · 剔掉注册行 ${std.length} 行（${stdFile}）`
-          : `${stdFile} 里一条能力行都没数出来 —— 先确认它的方言还是 \`- id:\` 那种，别去改下面的数`)
-      const onlyStd = diff(std, agenia)
-      const onlyAge = diff(agenia, std)
-      yes('composition', 'onlyInStandard 为空', onlyStd.length === 0, onlyStd.join(', ') || '空')
-      eq('composition', 'onlyInAgenia 项数', onlyAge.length, 6)
-      // 这一行是"多出来的每一项都要写下来"的执行点：明细必须正好是这六项。
-      // 名单变过（product → design，2026-09-20），但**项数一直是 6**。
-      const want = ['persona-injector', 'team-design', 'team-dev', 'team-retro', 'team-review', 'team-test']
-      yes('composition', 'onlyInAgenia 明细 = persona-injector + 五个固定岗位行',
-        onlyAge.length === want.length && onlyAge.every((x, i) => x === want[i]),
-        onlyAge.join(', ') || '空（只有 persona 遮蔽行时说明岗位行丢了）')
+    const std = idLines(read(ORACLE_FILE)).filter((r) => !PRESET_DECL.test(r))
+    // 🔴 2026-09-28 补：**文件在、方言变了** ⇒ 正则可以一条都不命中，于是数出 0 行、
+    //    差集变成"agenia 多出 38 项"，下面每一条都红得莫名其妙。这条把病因直接点出来。
+    yes('composition', 'oracle 数得出能力行（防"文件在、正则全哑"）',
+      std.length > 0,
+      std.length > 0
+        ? `剔掉注册行 ${std.length} 行（${ORACLE_FILE}）`
+        : `${ORACLE_FILE} 里一条能力行都没数出来 —— 先确认它的方言还是 \`- id:\` 那种，别去改下面的数`)
+    const onlyStd = diff(std, agenia)
+    onlyAge = diff(agenia, std)
+    yes('composition', 'onlyInStandard 为空', onlyStd.length === 0, onlyStd.join(', ') || '空')
+    // 多出来的每一项都必须写下来（AGENTS.md §3b）—— 但**不写死项数**（装前 6 / 装后 10）。
+    // 期望的增量 = 组合**自己声明**的那几类：persona-injector + 它有的 team-* 行 + 它有的 tool-job-* 行。
+    // 这一对断言把"多抄了"与"抄丢了"分开报：多出来的项不属于那几类 ⇒ 红；声明了却没多出来 ⇒ 红。
+    const declared = ['persona-injector', ...agenia.filter((r) => r.startsWith('team-')), ...jobRowIds].sort()
+    const extraNotDeclared = onlyAge.filter((r) => !declared.includes(r))
+    const declaredMissing = declared.filter((r) => !onlyAge.includes(r))
+    yes('composition', 'onlyInAgenia 里每一项都是"写下来的增量类"（persona-injector / team-* / tool-job-*）',
+      extraNotDeclared.length === 0,
+      extraNotDeclared.length === 0
+        ? `${onlyAge.length} 项：${onlyAge.join(', ')}`
+        : `凭空多出来（既不在 standard 里、也不属于声明的那几类）：${extraNotDeclared.join(', ')}`
+          + ' —— 加能力要改 AGENTS.md §3b，别偷偷加')
+    yes('composition', '组合声明的每一个增量类行都真的多出来（team-* / tool-job-* 一条不少）',
+      declaredMissing.length === 0,
+      declaredMissing.length === 0
+        ? `声明 ${declared.length} 项，都在（实测多出 ${onlyAge.length} 项）`
+        : `声明了却没多出来：${declaredMissing.join(', ')} —— 那一行被抄丢了，或者缩进 / 方言变了`)
 
-      // 🔴 2026-09-28：**权威数字只在 AGENTS.md 一处**。
-      //    换版后我先给 README 也加了这条，跑出来是红的 —— 查下来 README 里
-      //    **根本没有"六项"这句话**（它那节在改写时没了），我钉的是**别处的措辞**。
-      //    ⇒ 按"判据跟着事实走、不跟着文案走"：README 只留它真正说的那句
-      //      （"标准模式有的工具她一样不少"），数字由 AGENTS.md 3b 那一条钉。
-      //    ⚠️ AGENTS.md 写的是「这份预设相对 standard 的差异是六项」——
-      //      谁把六改成七/八，或者加了能力行却不动文档，这条当场红。
-      const agents = join(REPO, 'AGENTS.md')
-      if (existsSync(agents)) {
-        const text = read(agents)
-        yes('composition', 'AGENTS.md 说差异是"六项"（3b 的规矩：多出来的必须写下来）',
-          /差异是六项/.test(text) && !/(差异是八项|差异是七项|这八项)/.test(text),
-          '文书与实测 6 项对不上 —— 改文档，别改这个数')
+    // ── ④ 四条作业行（`tool-job-*`）的结构：硬门全靠这几格 ────────────────────
+    // 判据**按目标自身推导**：每一条 `tool-job-<角色>` 行都必须
+    //   · 工具名 = `job_<角色>`（`-` 换 `_`）· `backgroundMode: one-shot`（默认前台等 = 把组长卡住）
+    //   · `maxDepth: 1`（作业自己不许再招人）· `toolFilter.deny` **恰为** `[workflow, ralph]`
+    //   · 开着 · 不写 `enableRunInBackground`（写了等于把 `run_in_background` 参数拿掉 —— 拍板 I1）
+    // ⚠️ 活体现在**一条都没有**（装前）⇒ 这一条是**空集**；装完 4 条逐条判。
+    //    读数里必须写明"现在是空的" —— 空集不许读成"验过了"（公共记忆 §三）。
+    const jobBlocks = ymlBlocks.filter((b) => b.id.startsWith('tool-job-'))
+    const jobProblems = []
+    for (const b of jobBlocks) {
+      const body = b.lines.join('\n')
+      const blueprint = JOB_ROWS.find((j) => j.rowId === b.id)
+      const role = blueprint === undefined ? b.id.slice('tool-job-'.length) : blueprint.role
+      const toolName = blockField(b, 'toolName')
+      const background = blockField(b, 'backgroundMode')
+      const depth = blockField(b, 'maxDepth')
+      const denyHit = /^\s*deny:\s*\[([^\]]*)\]\s*$/m.exec(body)
+      const deny = denyHit === null ? [] : denyHit[1].split(',').map((s) => s.trim()).filter(Boolean).sort()
+      if (blueprint === undefined) {
+        jobProblems.push(`${b.id}：不在蓝图里（蓝图上的作业行是 ${JOB_ROWS.map((j) => j.rowId).join(' / ')}）`)
+      } else if (toolName !== blueprint.toolName) {
+        jobProblems.push(`${b.id}：toolName 实得 ${JSON.stringify(toolName)}，蓝图写的是 ${blueprint.toolName}`)
       }
-      // 旧口径：只拦 README 又写回八项那一种措辞。它钉的是 README 的散文，留着。
-      // 另加一条：README 那句"只会多不会少"是**对外的全称承诺**，是它唯一会误导人的话。
-      const readme = join(REPO, 'README.md')
-      if (existsSync(readme)) {
-        const text = read(readme)
-        yes('composition', 'README 不再说差异是"八项"',
-          !/(这八项|差异是八行|差异是八项)/.test(text), '文书与实测 6 项对不上')
-        yes('composition', 'README 里那句全称承诺还在（标准模式有的她一样不少）',
-          /标准模式有的工具她一样不少/.test(text),
-          'README 的"只会多不会少"没了 —— 那是这份预设对外唯一的能力承诺')
+      if (!JOB_ROLES.includes(role)) jobProblems.push(`${b.id}：角色 ${role} 不在编制里`)
+      if (background !== 'one-shot') jobProblems.push(`${b.id}：backgroundMode 实得 ${JSON.stringify(background)}，应为 one-shot`)
+      if (String(depth) !== '1') jobProblems.push(`${b.id}：maxDepth 实得 ${JSON.stringify(depth)}，应为 1`)
+      if (deny.join(',') !== 'ralph,workflow') {
+        jobProblems.push(`${b.id}：toolFilter.deny 实得 [${deny.join(', ')}]，应恰为 [workflow, ralph]`)
       }
+      if (/^\s*enableRunInBackground\s*:/m.test(body)) {
+        jobProblems.push(`${b.id}：写了 enableRunInBackground —— 那会把 run_in_background 参数拿掉（拍板 I1）`)
+      }
+      if (/^\s*disabled:\s*true\s*$/m.test(body)) jobProblems.push(`${b.id}：作业行是关着的 —— 那四条都开着`)
     }
+    yes('composition', '四条作业行（tool-job-*）的结构 = one-shot + maxDepth:1 + deny workflow/ralph（装前是空集）',
+      jobProblems.length === 0,
+      jobProblems.length > 0
+        ? jobProblems.join('；')
+        : (jobBlocks.length === 0
+          ? '活体现在**一条作业行都没有**（装前）—— 这一条是空集，装完 4 条逐条判'
+          : `${jobBlocks.length} 条全对：${jobBlocks.map((b) => b.id).join(', ')}`))
+
+    // ── ⑤ 委派名单：**名单 = 组合自己**（裁定 A4）────────────────────────────
+    // `persona-injector` 那行 config 里的 `delegationTools` 是后台硬门**唯一**的名单来源
+    // （代码里不硬编码）。判"每个已启用的具名 `dsh-tool-subagent` 实例都在名单里"：
+    //   · 表在 ⇒ 键集合必须**严格等于**组合里已启用的具名实例的 toolName 集合
+    //     （缺一个 = 那个工具没有硬门；多一个 = 名单里有不存在的工具），而且值 = 那一行的 `backgroundMode`；
+    //   · 表不在（装前就是这一支）⇒ 组合里**不许**有 `job_*` 作业行 —— 那四条的硬门全靠这张表。
+    const subagentRows = ymlBlocks
+      .filter((b) => String(blockField(b, 'name')).replace(/^['"]|['"]$/g, '') === '@deepseek-ai/dsh-tool-subagent')
+      .map((b) => ({
+        block: b,
+        name: blockField(b, 'toolName'),
+        background: blockField(b, 'backgroundMode'),
+        disabled: /^\s*disabled:\s*true\s*$/m.test(b.lines.join('\n')),
+      }))
+    const enabledNamed = subagentRows
+      .filter((r) => !r.disabled && typeof r.name === 'string')
+      .map((r) => r.name)
+      .sort()
+    const injBlock = ymlBlocks.find((b) => b.id === 'persona-injector')
+    const dt = injBlock === undefined ? null : delegationToolsOf(injBlock)
+    const jobToolNames = jobBlocks.map((b) => blockField(b, 'toolName')).filter(Boolean)
+    const dtKeys = dt === null ? [] : [...dt.keys()].sort()
+    const dtModeGap = dt === null ? [] : enabledNamed
+      .filter((n) => dt.has(n) && dt.get(n) !== (subagentRows.find((r) => r.name === n) ?? {}).background)
+      .map((n) => `${n}：名单说 ${dt.get(n)}，那一行写的是 ${(subagentRows.find((r) => r.name === n) ?? {}).background}`)
+    const dtProblem = dt === null
+      ? (jobToolNames.length === 0
+        ? null
+        : `组合里没有 delegationTools，却有 ${jobToolNames.length} 条作业行（${jobToolNames.join(', ')}）——`
+          + '那几条作业的硬门全靠这张表（裁定 A4：它是必填键）')
+      : (dtKeys.join(',') !== enabledNamed.join(',')
+        ? `名单实得 [${dtKeys.join(', ')}]，组合里已启用的具名实例是 [${enabledNamed.join(', ')}]`
+          + ' —— 裁定 A4 第 4 条：多一个少一个都红'
+        : (dtModeGap.length > 0 ? `名单里的模式与那一行的 backgroundMode 分叉：${dtModeGap.join('；')}` : null))
+    yes('composition', '每个已启用的具名 dsh-tool-subagent 实例都在 delegationTools 里（名单 = 组合自己）',
+      dtProblem === null,
+      dtProblem !== null
+        ? dtProblem
+        : (dt === null
+          ? `装前：组合里还没有 delegationTools，也没有作业行（已启用的具名实例 ${enabledNamed.length} 个：${enabledNamed.join(', ')}）`
+          : `名单 ${dtKeys.length} 个 == 已启用的具名实例 ${enabledNamed.length} 个，模式逐条一致`))
+  }
+
+  // ── ⑥ 文书：AGENTS.md 说的项数必须 = 实测的增量项数 ────────────────────────
+  // 🔴 2026-10-15（I4c）**换判据**：原来写死「差异是六项」—— 它只读文书、不读组合，
+  //    于是"文书说的数"和"实测的数"分成两家：装完之后实测 10 项，而这条照样绿（**读不出谎**）。
+  //    ⇒ 改成**拿文书里的数字与实测对账**：今天 6 == 6（绿）；装完把 AGENTS.md 改成十项、
+  //      实测 10 == 10（还是绿）；而"装了没改文书"那一段**当场红**。
+  //    三处都要对上（「差异是六项」「正好是上面这六项」「那六项是刻意加的能力」）。
+  //    🔴 2026-09-28 保留的那半条来历：**权威数字只在 AGENTS.md 一处**（README 里没有这句话，
+  //      当年给它加这条是钉了别处的措辞 ⇒ 后来只留它真正说的那一句全称承诺）。
+  const agents = join(REPO, 'AGENTS.md')
+  if (existsSync(agents)) {
+    const text = read(agents)
+    const CN = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }
+    // ⚠️ 三处**逐句**取，别用"那 + 数字 + 项"那种宽式子 —— AGENTS.md 里还有「`roots` 那一项」
+    //    （2026-09-28 的史记），宽式子会把它读成"差异是一项"（第一次跑就是这么假红的）。
+    const claims = [
+      ...text.matchAll(/差异是([一二三四五六七八九十]+)项/g),
+      ...text.matchAll(/正好是上面这([一二三四五六七八九十]+)项/g),
+      ...text.matchAll(/那([一二三四五六七八九十]+)项是刻意/g),
+    ].map((m) => ({ word: m[1], n: CN[m[1]] }))
+    const bad = claims.filter((c) => c.n !== onlyAge.length)
+    if (!oracleThere) {
+      pending('composition', 'AGENTS.md 说的差异项数 = 组合实测的增量项数（§3b）',
+        '**挂起** —— oracle 不在 ⇒ 实测项数算不出来（上面那条已经红了）')
+    } else {
+      yes('composition', 'AGENTS.md 说的差异项数 = 组合实测的增量项数（§3b：多出来的必须写下来）',
+        claims.length > 0 && bad.length === 0,
+        claims.length === 0
+          ? 'AGENTS.md 里找不到「差异是 N 项」那句话 —— 规矩本身没了'
+          : (bad.length === 0
+            ? `文书 ${claims.map((c) => c.word).join(' / ')} 项 · 实测 ${onlyAge.length} 项`
+            : `文书说 ${bad.map((c) => c.word).join(' / ')} 项，实测 ${onlyAge.length} 项 —— 改文书，别改这个数`))
+    }
+  }
+  // 旧口径：只拦 README 又写回八项那一种措辞。它钉的是 README 的散文，留着。
+  // 另加一条：README 那句"只会多不会少"是**对外的全称承诺**，是它唯一会误导人的话。
+  const readme = join(REPO, 'README.md')
+  if (existsSync(readme)) {
+    const text = read(readme)
+    yes('composition', 'README 不再说差异是"八项"',
+      !/(这八项|差异是八行|差异是八项)/.test(text), '差异的项数以 AGENTS.md §3b 与实测为准')
+    yes('composition', 'README 里那句全称承诺还在（标准模式有的她一样不少）',
+      /标准模式有的工具她一样不少/.test(text),
+      'README 的"只会多不会少"没了 —— 那是这份预设对外唯一的能力承诺')
   }
 }
 
@@ -252,26 +461,110 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const files = readdirSync(teamDir).filter((f) => f.endsWith('.md'))
   const roles = files.map((f) => f.slice(0, -3)).sort()
 
-  eq('preset', 'team/ 下的岗位说明书份数', files.length, 6)
+  // 🔴 2026-10-15（I4c）**换判据（B2.5 ②）**：原来钉的是"team/ 下正好 6 份"—— 那是**份数**，
+  //    装完变 10 份 ⇒ 假红（STAT-03 点名的旧口径之一）。现在按**编制三组**判（组名是角色清单，
+  //    不是人数）：
+  //      · 文件都在编制里（编制外的 .md = 加了岗位没登记）；
+  //      · 五个固定岗位：说明书 ↔ `team-<岗位>` 行**成对**；
+  //      · 四个作业角色：说明书 ↔ `tool-job-<角色>` 行**成对**（**今天这一组是空的**）；
+  //      · 外聘：说明书在、**没有** `team-hire` 行（他挂在 `tool-subagent` 那枚标记上）。
+  //    它对装前 / 装后都成立，而且"加了一半"（只改一处）照样当场红。
+  const staffed = [...FIXED_ROLES, HIRE_ROLE, ...JOB_ROLES]
+  const strayFiles = roles.filter((r) => !staffed.includes(r))
+  yes('preset', 'team/ 下的每一份说明书都在编制里（编制外的 .md = 加了岗位没登记）',
+    strayFiles.length === 0,
+    strayFiles.length === 0
+      ? `${roles.length} 份：${roles.join(', ')}`
+      : `编制外：${strayFiles.join(', ')} —— 加岗位要同时改这张编制表`)
   yes('preset', '目录名合法（[a-z0-9][a-z0-9-]*）', /^[a-z0-9][a-z0-9-]*$/.test('agenia'))
 
-  // 岗位表有两处：team/ 里的 .md 和 yml 里的 team-* 行。两处对不上就是"加了岗位只改了一处"。
-  // 这是这份预设里最容易漂的地方 —— 说明书加了、能力行没加，启动时整队一起挂。
+  // 岗位表有两处：team/ 里的 .md 和 yml 里的 `team-*` 行。两处对不上就是"加了岗位只改了一处"。
+  // 这是这份预设里最容易漂的地方 —— 说明书加了、能力行没加，启动时**整队一起挂**。
   //
-  // ⚠️ 临时外聘不算：他不是固定编制，没有 team-hire 那一行，
-  //    他挂在 tool-subagent 的 persona 标记上（下面单独断言）。
+  // ⚠️ 外聘（`hire`）不算固定编制：他没有 `team-hire` 那一行，挂在 `tool-subagent` 的标记上
+  //    （下面单独断言）。`fixed` 这个名字留给后面那几条读文档的断言用，口径是"team/ 里除外聘之外的人"。
   const fixed = roles.filter((r) => r !== 'hire')
-  const ymlRoles = idLines(yml).filter((r) => r.startsWith('team-')).map((r) => r.slice(5)).sort()
-  yes('preset', 'team/ 的文件与 yml 里的 team-* 行一一对应（外聘除外）',
-    ymlRoles.length === fixed.length && ymlRoles.every((r, i) => r === fixed[i]),
-    fixed.join(', ') + '  ↔  ' + ymlRoles.join(', '))
+  const teamRowRoles = idLines(yml).filter((r) => r.startsWith('team-')).map((r) => r.slice(5)).sort()
+  const fixedMissingRows = FIXED_ROLES.filter((r) => !teamRowRoles.includes(r))
+  const fixedMissingFiles = FIXED_ROLES.filter((r) => !roles.includes(r))
+  // 编制外的行 = **在岗四个 + 已撤岗那个** 以外的一切。
+  const fixedStrayRows = teamRowRoles.filter((r) => !FIXED_ROLES.includes(r) && !RETIRED_ROLES.includes(r))
+  yes('preset', '固定岗位：说明书与 team-<岗位> 行成对（一条不少、一条不多）',
+    fixedMissingRows.length === 0 && fixedMissingFiles.length === 0 && fixedStrayRows.length === 0,
+    `行 [${teamRowRoles.join(', ') || '（无）'}] ↔ 说明书 [${FIXED_ROLES.filter((r) => roles.includes(r)).join(', ') || '（无）'}]`
+      + (fixedMissingRows.length + fixedMissingFiles.length + fixedStrayRows.length > 0
+        ? ` —— 缺行 ${fixedMissingRows.join(', ') || '无'} · 缺说明书 ${fixedMissingFiles.join(', ') || '无'}`
+          + ` · 编制外的行 ${fixedStrayRows.join(', ') || '无'}`
+        : `（另有已撤岗的 ${RETIRED_ROLES.join(', ')}：行保留、关着、说明书已删）`))
+  // 🔴 2026-10-15（执行二 · I15）加：**撤岗三件套必须同时成立** ——
+  //    ① 行还在（关掉不删：能力行一个数都不动）；② 那一行是 `disabled: true`；③ 说明书已经不在。
+  //    少一件就是"半截撤岗"：①缺 ⇒ 能力行数漂了；②缺 ⇒ 那个工具名还在注册、硬门名单里却没有它
+  //    （后台硬门对它静默失效）；③缺 ⇒ 名册里多出一个叫不了的岗位。
+  //    ⚠️ 行的块要从 `rowBlocks()` 里取（组内的行是**缩进**的，按行首 `- id:` 硬切会一条都匹配不到 ——
+  //      第一版就是这么写的，量出来"行还在但没关"，红的其实是量具）。
+  const retiredBlocks = (r) => {
+    const b = rowBlocks(effective).find((x) => x.id === `team-${r}`)
+    return b === undefined ? '' : b.lines.join('\n')
+  }
+  const retiredGap = RETIRED_ROLES.flatMap((r) => {
+    const out = []
+    if (!teamRowRoles.includes(r)) out.push(`${r}（行被删了 —— 关掉不删，行必须还在）`)
+    else if (!/^\s*disabled:\s*true\s*$/m.test(retiredBlocks(r))) out.push(`${r}（行还在但没关 —— 那个工具名会重新注册）`)
+    if (roles.includes(r)) out.push(`${r}（说明书又回来了 —— 撤岗的岗位不许有说明书）`)
+    return out
+  })
+  yes('preset', '已撤岗的岗位：行保留且关着、说明书已删（撤岗三件套）',
+    retiredGap.length === 0,
+    retiredGap.length === 0
+      ? `${RETIRED_ROLES.join(', ')}：行在（disabled: true）· 说明书已删`
+      : retiredGap.join(' · '))
+
+  // 四条一次作业（`tool-job-<角色>`）：**有说明书 ⇒ 必须有行；有行 ⇒ 必须有说明书**。
+  // 今天活体两份都没有（这一组是空的，读数里写明）—— 装完是 4 / 4；只改一处 ⇒ 当场红。
+  const jobRowRoles = idLines(yml).filter((r) => r.startsWith('tool-job-')).map((r) => r.slice(9)).sort()
+  const jobFiles = JOB_ROLES.filter((r) => roles.includes(r)).sort()
+  const jobGap = [
+    ...jobFiles.filter((r) => !jobRowRoles.includes(r)).map((r) => `${r}（有说明书、没行）`),
+    ...jobRowRoles.filter((r) => !jobFiles.includes(r)).map((r) => `${r}（有行、没说明书）`),
+    ...jobRowRoles.filter((r) => !JOB_ROLES.includes(r)).map((r) => `${r}（不在编制里）`),
+  ]
+  yes('preset', '四个作业角色：说明书与 tool-job-<角色> 行成对（只改一处 ⇒ 红；装前是空集）',
+    jobGap.length === 0,
+    jobGap.length > 0
+      ? `单边：${jobGap.join(' · ')}`
+      : `说明书 ${jobFiles.length}/${JOB_ROLES.length}（${jobFiles.join(', ') || '这一组现在是空的'}）`
+        + ` · 行 ${jobRowRoles.length}/${JOB_ROLES.length}`)
+
+  // 外聘：说明书在、**没有** `team-hire` 行 —— 他不是固定编制，挂在 `tool-subagent` 那枚标记上。
+  yes('preset', '外聘：说明书在、而且没有 team-hire 行（他挂在 tool-subagent 那枚标记上）',
+    roles.includes(HIRE_ROLE) && !teamRowRoles.includes(HIRE_ROLE),
+    `hire 说明书${roles.includes(HIRE_ROLE) ? '在' : '缺'} · `
+      + `team-hire 行${teamRowRoles.includes(HIRE_ROLE) ? '**在（不该有）**' : '不在'}`)
+
+  // 作业书（`job-briefs/<角色>.md`）：每条**上岗的**作业角色都要有一份 —— 它不进提示词，
+  // 由派工方连活儿一起交过去；缺了，那个人拿不到自己那份活儿的说明。
+  // 判据挂在"这个角色有没有上岗"上：今天一个都没有 ⇒ 0/4；装完 4/4。
+  const briefDir = join(PRESET, 'job-briefs')
+  const briefs = existsSync(briefDir)
+    ? readdirSync(briefDir).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)).sort()
+    : []
+  const briefGap = jobFiles.filter((r) => !briefs.includes(r))
+  yes('preset', '每个上岗的作业角色都有 job-briefs/<角色>.md 作业书（缺了 ⇒ 他拿不到活儿的说明）',
+    briefGap.length === 0,
+    `作业书 ${briefs.length} 份（${briefs.join(', ') || '目录 / 文件都还没有'}） · 缺 ${briefGap.join(', ') || '无'}`)
+
   // 进度板按**工具名**认人（inject.js 的 TEAM_TOOL）：形状不对，那一列就静默不出现。
   // 2026-09-20 加 —— 以前账本里写死五个工具名，加岗位的人怎么改都记不到账。
+  // 🔴 2026-10-15（I4c）**换判据**：期望那一半原来从 `team/` 目录推（装完是 9 个角色）⇒
+  //    会去要求 `team_memory-review` 这种根本不存在的工具名（作业走 `job_*`）⇒ 假红。
+  //    现在只按**在岗的固定岗位**推 —— 作业那四条的工具名形状归上面那条 job 行结构断言管。
+  //    ⚠️ 2026-10-15（I15）：期望值要**带上已撤岗那一行** —— 它的 `toolName: team_retro` 还在 yml 里
+  //    （关掉不删），不带就会假红。
   const teamTools = [...effective.matchAll(/toolName:\s*(team[_-][a-z0-9-]+)/g)].map((m) => m[1]).sort()
-  const wantTools = fixed.map((r) => `team_${r}`).sort()
-  yes('preset', '每条 team-* 行的 toolName 都是 team_<岗位名>（进度板按它认人）',
-    teamTools.length === wantTools.length && teamTools.every((t, i) => t === wantTools[i]),
-    teamTools.join(', ') + '  ↔  ' + wantTools.join(', '))
+  const wantTools = [...FIXED_ROLES, ...RETIRED_ROLES].map((r) => `team_${r}`).sort()
+  yes('preset', '五条固定行的 toolName 都是 team_<岗位名>（进度板按它认人；作业走 job_*，不走 team_*）',
+    teamTools.join(',') === wantTools.join(','),
+    `${teamTools.join(', ') || '（无）'}  ↔  ${wantTools.join(', ')}`)
   yes('preset', '外聘挂在 tool-subagent 那一行的 persona 标记上', /【组员:hire】/.test(yml))
   // ── 2026-09-24 加：两条路的分工，以及裸 subagent 那个洞 ──────────────────
   // 来历：老板问"team_* 还有必要吗"。查下来——五条行都开着、工具单里也都在，
@@ -295,13 +588,18 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const teamRows = effective.split(/- id: team-/).slice(1)
   const bgContinuable = teamRows.filter((r) => /backgroundMode:\s*continuable/.test(r)).length
   const depthOne = teamRows.filter((r) => /maxDepth:\s*1(\s|$)/m.test(r)).length
-  yes('preset', '五条 team-* 行都是 backgroundMode: continuable（组员默认后台跑）',
-    teamRows.length === 5 && bgContinuable === 5, `${bgContinuable}/${teamRows.length} 行`)
-  yes('preset', '五条 team-* 行都是 maxDepth: 1（组员不许再招人）',
-    teamRows.length === 5 && depthOne === 5, `${depthOne}/${teamRows.length} 行`)
+  // ⚠️ 分母含**已撤岗但保留的那一行**（关掉不删 ⇒ 它的两个键也在）。行数 = 在岗四个 + 撤岗一个。
+  yes('preset', 'team-* 行都是 backgroundMode: continuable（组员默认后台跑）',
+    teamRows.length === FIXED_ROLES.length + RETIRED_ROLES.length && bgContinuable === teamRows.length,
+    `${bgContinuable}/${teamRows.length} 行`)
+  yes('preset', 'team-* 行都是 maxDepth: 1（组员不许再招人）',
+    teamRows.length === FIXED_ROLES.length + RETIRED_ROLES.length && depthOne === teamRows.length,
+    `${depthOne}/${teamRows.length} 行`)
   // 每个固定岗位的能力行都要带自己的标记 —— 少了它，那个人会以为自己是组长。
+  // ⚠️ 2026-10-15（I15）：已撤岗那一行的 persona 标记**仍然在** yml 里（关掉不删），
+  //    所以期望 = team/ 里的 9 份说明书 + 撤岗的那 1 个 = 10 枚。
   const marks = (effective.match(/【组员:[a-z0-9-]+】/g) ?? []).map((m) => m.slice(4, -1)).sort()
-  const wantMarks = [...roles].sort()
+  const wantMarks = [...roles, ...RETIRED_ROLES].sort()
   yes('preset', '每个岗位文件都有对应的【组员:xx】标记',
     marks.length === wantMarks.length && marks.every((m, i) => m === wantMarks[i]),
     marks.join(', ') + '  ↔  ' + wantMarks.join(', '))
@@ -391,8 +689,23 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     unwired.length === 0
       ? `${deliverable.length} 份都有主：${deliverable.join(', ')}`
       : `没人送：${unwired.join(', ')} —— 加进 leaderOrder 或 memberOrder，别让它静默漏掉`)
-  yes('preset', 'officeBound 正好是 review + retro（只留做判断的岗位）',
-    office.join(',') === 'review,retro', office.join(', ') || '（空）')
+  // 🔴 2026-10-15（I4c）**换判据**：原来把 officeBound 写死成装前那两个岗位（review / retro）——
+  //    装完是 4 项 ⇒ 假红（STAT-03 点名的旧口径之一）。改成**两处来源对账**：
+  //    `inject.js` 的 `DEFAULT_OFFICE_BOUND` 是"配置读不到时"用的那份名单 —— 它与 yml 的
+  //    `officeBound` 分叉 = 少受限 / 多受限，而且**不报错**（这正是它值得当判据的理由）。
+  //    今天 2 == 2 ✅ · 装完 4 == 4 ✅；名单**该不该是这几个**另有两条管着：
+  //    下面 `officeBound 里的岗位都真实存在`（角色必须在编制里）+ STAT-03 对 staged 的冻结表。
+  const injectSrcForBound = read(join(PRESET, 'inject.js'))
+  const boundHit = /DEFAULT_OFFICE_BOUND\s*=\s*\[([^\]]*)\]/.exec(injectSrcForBound)
+  const defaultBound = boundHit === null
+    ? null
+    : boundHit[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean).sort()
+  const officeSorted = [...office].sort()
+  yes('preset', 'officeBound（配置）与 inject.js 的 DEFAULT_OFFICE_BOUND（配置读不到时的回落）一致',
+    defaultBound !== null && JSON.stringify(defaultBound) === JSON.stringify(officeSorted),
+    defaultBound === null
+      ? '`inject.js` 里找不到 DEFAULT_OFFICE_BOUND —— 配置读不到时就没有回落名单'
+      : `yml [${officeSorted.join(', ') || '空'}]  ↔  代码 [${defaultBound.join(', ') || '空'}]`)
 
   // ── 口径 1 / 2 / 9 / 13 / 14：情绪模块的内容 + `me-aqua.md`（2026-09-26 加）──────
   // ⚠️ 这几条量的是**内容文件**，判不了"分打得对不对"——那是探针 N/O/Q/D2/E2/V/X/Y/Z 族的事。
@@ -573,8 +886,20 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   yes('injector', '写边界算落点、不匹配字符串', /resolve\(/.test(src) && !/target\.includes\(/.test(src))
   yes('injector', '通用命令行在禁止名单里（bash 与 pwsh 两个都写）',
     /SHELL\s*=\s*\[[^\]]*'bash'[^\]]*'pwsh'/.test(src))
+  // 🔴 2026-10-15（I4c）**换判据（判据跟着语义走，不跟着旧写法走）**：
+  //    原来钉的是活体那一版**内联判定**留下的字面量
+  //    （`role === undefined || !officeBound.has(role)) return undefined`）。
+  //    目标实现把那段抽成了纯函数 `officeBoundVerdict()`（裁定 §B1.5 冻的签名），
+  //    同一句语义写成 `typeof role !== 'string' || !bound.has(role)` ⇒ `return null`。
+  //    ⇒ 两种写法都算过，**唯独不许"认不出角色就拒绝"**（那会把组长自己挡住）。
+  //    ⚠️ 这条只钉静态形状；"真的放行"归 GRD-01 与探针那一族（行为判据）。
+  const passThroughShape =
+    /role === undefined \|\| !officeBound\.has\(role\)\) return undefined/.test(src)
+    || /typeof role !== 'string' \|\| !bound\.has\(role\)\) return null/.test(src)
   yes('injector', '认不出岗位的 agent 一律放行（别把组长自己挡住）',
-    /role === undefined \|\| !officeBound\.has\(role\)\) return undefined/.test(src))
+    passThroughShape,
+    passThroughShape ? '（内联的老形状 / 抽成 officeBoundVerdict 的新形状，两种都算）'
+      : '两种已知形状都不在 —— 当心"认不出就拒绝"把组长自己挡住')
 
   // ── 2026-09-26 改：这条钉的是**被推翻的旧事实** ─────────────────────────────
   // 原文是「尾巴提醒走 `agent.inject`，拿不到时会报错」—— 机制① 走那条路会撞
@@ -703,25 +1028,29 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       ? `${multiline.join('、')} 里有跨行注释 —— 快照那条路不剥注释，会跟着进上下文`
       : `${snapshotDocs.join('、')} 干净`)
 
-  // 🆕 2026-10-01 加：`leader.md` 里必须留着"当场叫流程位补"那一句的授权。
-  //    来历：这条规矩**被静默丢掉过两次**（09-25 落了那一笔，当晚被回滚退掉；09-26 强推 main 时又没带上），
+  // 🆕 2026-10-01 加：`leader.md` 里"看昨天的复盘 ⇒ 当场叫人补"那一句的授权。
+  //    来历：那条规矩**被静默丢掉过两次**（09-25 落了那一笔，当晚被回滚退掉；09-26 强推 main 时又没带上），
   //    两次都没人发现，直到 10-01 复盘逐字读全文才核出来。⇒ **被静默丢掉两次的规矩，该有判据钉着。**
-  //    ⚠️ 同族纪律：别把这条要抠的那两个词原样抄进注释里（memory §三：注释也算进静态判据）。
-  // 🆕 2026-10-01 加：`leader.md` 里必须留着"当场叫流程位补"那一句的授权。
-  //    来历：这条规矩**被静默丢掉过两次**（09-25 落了那一笔，当晚被回滚退掉；09-26 强推 main 时又没带上），
-  //    两次都没人发现，直到 10-01 复盘逐字读全文才核出来。⇒ **被静默丢掉两次的规矩，该有判据钉着。**
-  //    ⚠️ 同族纪律：别把这条要抠的那两个词原样抄进注释里（memory §三：注释也算进静态判据）。
   //
-  // 🔄 2026-10-13 改：原来有两条断言要求开工第一步里"先报一句我跑在哪份预设上"。
+  // 🔄 2026-10-15（执行二 · 批次 I15）**翻了个面**：复盘岗连同**每日复盘**一起撤销了 ——
+  //    `leader.md` 开工第一步里那一条被**整条删掉**（老板：「为什么还在写每日复盘……旧的就不用再做了啊」，
+  //    派工单第 2 条：整条删、后面序号顺延）。
+  //    ⇒ 断言跟着事实走：现在钉的是**那套授权不许自己长回来**（它回来了就红）。
+  //    上面那两句来历留着 —— 它解释的正是"这条以前为什么必须钉住"，而现在钉的是反面。
+  // 🔄 2026-10-13 改（另一条）：原来有两条断言要求开工第一步里"先报一句我跑在哪份预设上"。
   //    那条规矩 **2026-10-04 老板已经删了**（理由：菜单上自己看得见，不需要她报），
   //    `说明.md` 也同步改了口径 —— 两条断言却留着，于是体检长期报两条假红。
   //    ⇒ 断言跟着事实走：撤掉旧规矩，改成**不许它自己长回来**（钉子翻了个面，仍然会翻红）。
   //    旧断言的来历（09-28 / 09-30 两天 9 个会话只有 3 个真跑在 agenia 上）不算白记：
   //    它说明"跑错预设"没有任何机器读数，所以菜单那一下得由老板自己看（README / 说明.md 里写着）。
+  // ✅ 2026-10-15 20:5x 组长改判（老板问「你说的明天变红的事现在能解决吗」之后当场做的）：
+  //    下文那条承重的「今天的复盘在不在」**已经从"红/绿"降级成"挂起"** ——
+  //    因为**被测对象自己没了**（复盘岗撤销 + 活体 `leader.md` 已不要求它）。
+  //    判法与来历写在下面那一段的注释里；`AGENTS.md` §6 与 `now.md` 的"下一批"同批指过去。
   const leaderText = read(join(PRESET, 'leader.md'))
-  yes('injector', 'leader.md 里留着"当场叫流程位补"的授权（自己叫，不请示老板）',
-    /自己叫/.test(leaderText) && /不用问老板/.test(leaderText),
-    '缺了它，复盘会停在"等老板点头"（9-22 → 9-24 连着三天就是这么断的）')
+  yes('injector', 'leader.md 里没有"叫流程位补复盘 / 前日复盘"那套授权（2026-10-15 复盘岗撤销、每日复盘不再做）',
+    !/前日复盘/.test(leaderText) && !/流程位/.test(leaderText),
+    '它回来了 ⇒ 有人把已撤销的复盘岗又写进开工第一步（老板 2026-10-15 定：每日复盘不做了）')
   yes('injector', '开工第一步没有把"自报预设"长回来（2026-10-04 老板删的规矩）',
     !/跑在哪份预设/.test(leaderText) && !/报出当前生效预设/.test(leaderText),
     '老板 2026-10-04 定：菜单上自己看得见，不需要她报一句。要长回来先改这条断言和 说明.md')
@@ -756,7 +1085,7 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   // 抽屉是**懒建**的：那个岗位上过岗才有。所以缺了不红，只报 ——
   // 硬要它一开工就六个齐，等于把"以后加岗位"这件事变成八处要一起改。
   const missing = presetRoles.filter((r) => !roleDirs.includes(r))
-  add('office', '五个固定岗位 + 外聘的抽屉（缺的 = 那个岗位还没上过岗，不算红）',
+  add('office', '固定岗位 + 外聘 + 作业的抽屉（缺的 = 那个岗位还没上过岗，不算红）',
     true, missing.length === 0 ? '全在' : `还没有：${missing.join(', ')}`)
 
   // 反过来才要命：抽屉在、预设里没有这个人 —— 读 .team/ 的人会以为组里还有他。
@@ -768,7 +1097,11 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   // ⚠️ 2026-09-20 收窄：`deliverables` / `tmp` / `tmp-kit` 都从白名单里去掉了 ——
   //    那是上一代的结构（老板拍板"每人一个日期抽屉就够了"，`deliverables/` 已归档）。
   //    现在除归档外，`.team/` 下**只许**出现编制里的岗位。
-  const housework = ['_archive']
+  // 🔴 2026-10-15（执行二 · I15）加 `retro`：复盘岗撤销、`team/retro.md` 删了，
+  //    而 `.team/retro/` 那个目录**照旧存在且不许删** —— 里面是冻结档案（老板：旧的不用再做了，
+  //    但已有的文件一个都不删），外加 `conversation-review` 的产物落点。
+  //    ⇒ 它不是幽灵：没有人会以为组里还有"流程与复盘"这号岗，那个格子只是档案柜。
+  const housework = ['_archive', ...RETIRED_ROLES]
   const ghosts = roleDirs.filter((r) => !known.includes(r) && !housework.includes(r))
   add('office', '.team/ 下有没有预设之外的岗位目录（旧岗位留下的）',
     ghosts.length === 0, ghosts.length === 0 ? '干净' : `${ghosts.join(', ')} —— 改名成现在的岗位，或者归档掉`)
@@ -836,35 +1169,50 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     add('office', `${r} 的 now.md 有多旧（只报不红）`, true, detail)
   }
 
-  // ★ 承重的一条：今天的复盘在不在。
-  // 这一条是"半硬方案"里唯一能**在没人记得的时候自己响**的形态 ——
-  // 所以它必须留在这儿，而且必须为绿。红了不要删它，去叫流程位补。
-  // ⚠️ 文件名是 **`前日复盘.md`** —— 口径（2026-09-23）：抽屉日期 = **写它的那天**，
-  //    里面覆盖的是**前一天**，所以叫"前日"。`retro/2026-09-20`、`retro/2026-09-22`
-  //    那两份老档案还叫旧名（**档案不改名**），这里钉的是新名。
-  //    断言吃旧名的时候，流程位交得再对也是红的 —— **假红比不红更坏**：它会教人学会忽略脚本。
+  // ★ 2026-10-15 20:5x 组长改判：**这一格从"红/绿"降级成"挂起"。**
+  //
+  // 为什么降级（来历照实记，别抹）：
+  // 它曾经是"半硬方案"里唯一能**在没人记得的时候自己响**的形态 —— 那很值钱。
+  // 但它守的那个**被测对象自己没了**：2026-10-15 老板撤掉「流程与复盘」这个岗
+  // （原话：「amara的旧岗就可以撤了，她现在做技术评审吧」），`team-retro` 那一行关了、
+  // `team/retro.md` 删了、活体 `leader.md` 的开工第一步也从三件事收成两件事。
+  // ⇒ **没有任何人再欠这份文件** ⇒ 再判它红，红的是"制度没跟上"，不是"有人偷懒"。
+  //    那种红会把大家教成"忽略脚本" —— 而"假红比不红更坏"正是这一族判据自己的教训。
+  //
+  // 现在的判法（**第三态**：留在分母里、明写、`挂起 ≠ 通过`）：
+  //   · 盘上真有当天的回顾产物 ⇒ **照旧判它的三条形状**（将来"记忆更新"类产物也能套）；
+  //   · 没有 ⇒ **挂起，不红**。
+  //
+  // 🔴 **新锚点还没定**：记忆系统那一半（共享脑）**还没落地**（I16 的后半批）。
+  //    落地那天，这一格换成**"今天的记忆更新在不在"** —— 那时承担每日回顾的是记忆判决/复核。
+  //    ⚠️ 在那之前**别把它删掉**：删了就再也没人想起这里缺一块。
+  //
+  // ⚠️ 文件名口径（2026-09-23）没变：抽屉日期 = **写它的那天**，里面覆盖前一天，所以叫"前日"。
+  //    更早那几份老档案还叫旧名（**档案不改名**）。
+  // ⚠️ `.team/retro/**` 是冻结档案（外加会话评审的落点）—— 不许删。
   const review = join(teamRoot, 'retro', today, '前日复盘.md')
-  yes('office', `今天的复盘在（.team/retro/${today}/前日复盘.md）`, existsSync(review),
-    '开工第一步该由流程位做一份覆盖「上次复盘到现在」的复盘；不在 ⇒ 叫流程位补，'
-    + '一次覆盖整段（别按天补、别按票叫）')
   if (existsSync(review)) {
+    // 只报不红：盘上有它，是"有人自愿写的"，不是欠账。
+    add('office', `今天的回顾产物在（.team/retro/${today}/前日复盘.md）（只报不红）`, true,
+      '复盘岗 2026-10-15 已撤 ⇒ 这一份属于自愿留下，不是欠账')
     const body = read(review)
-    yes('office', '复盘里有「我的把握有多大」那一行', /我的把握有多大/.test(body))
+    yes('office', '回顾里有「我的把握有多大」那一行', /我的把握有多大/.test(body))
     yes('office', '三块齐全（坑 / 哪一关漏的 / 原文 → 新文）',
       /哪一关/.test(body) && /原文/.test(body) && /新文/.test(body))
-    // 🆕 2026-10-01 加：复盘必须带一张「提案台账」（上一份提的逐条给状态与判据）。
+    // 🆕 2026-10-01 加：回顾必须带一张「提案台账」（上一份提的逐条给状态与判据）。
     //    来历：09-25 提 8 处 → 09-26 数出 0.5/8；09-26 又提 8 处 → 10-01 数出 0/8。
     //    "提案的落地状态没有任何量尺"，于是"落了又被退"和"从来没落"长得一模一样。
-    yes('office', '复盘里有「提案台账」那一节（上一份提的逐条有状态）', /提案台账/.test(body),
-      '没有这一节 ⇒ 上一份复盘提的东西落到哪了，谁也答不上来')
+    yes('office', '回顾里有「提案台账」那一节（上一份提的逐条有状态）', /提案台账/.test(body),
+      '没有这一节 ⇒ 上一份提的东西落到哪了，谁也答不上来')
   } else {
-    // 🆕 2026-10-01 加：**第三态「挂起」** —— 复盘不在时，上面那几条**不许从分母里消失**。
-    //    现场：10-01 那份落盘前分母 100、落盘后 102 ⇒ 恰恰在"复盘不在"的那天，
-    //    它们整个不出现，而 `100/100` 读起来像全绿（memory §三 第四形态：分母随被测对象变）。
-    //    ⚠️ **挂起不是通过** —— 这一行的 detail 必须把这个词写出来（修法与口径见 memory §三）。
-    pending('office', '复盘的三条形状断言（把握行 / 三块齐 / 提案台账）',
-      '**挂起** —— 复盘不在，这几条今天不适用。**别把挂起读成通过**：'
-      + '`今天的复盘在` 那条已经红了，去叫流程位补。')
+    // 自 2026-10-01 起用的是**第三态「挂起」**：这一格**不许从分母里消失**
+    //   （现场：10-01 那份落盘前分母 100、落盘后 102 ⇒ 恰恰在"没有"的那天它们整个不出现，
+    //    而 `100/100` 读起来像全绿 —— memory §三 第四形态：分母随被测对象变）。
+    //   ⚠️ **挂起不是通过** —— detail 里必须把这个词写出来。
+    pending('office', `今天有没有一份回顾类产物（.team/retro/${today}/… 或将来的"记忆更新"）`,
+      '**挂起** —— 复盘岗 2026-10-15 已撤、活体 `leader.md` 已不要求它，'
+      + '而新的锚点（记忆系统那半）**还没落地**。**别把挂起读成通过**：'
+      + '这一格今天判不了，不是"今天做完了"。')
   }
   const days = existsSync(join(teamRoot, 'retro'))
     ? readdirSync(join(teamRoot, 'retro'), { withFileTypes: true })
@@ -885,6 +1233,10 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     'INSTALL.md', 'LICENSE', 'README.md',
     'api.txt',
     'presets',
+    // 🆕 2026-10-15 加：Agenia 升级的测试套件正式落点（计划 v5 §B1.1、接口冻结提案 B1.1：
+    //    `tests/agenia-upgrade/`，55 条自动化用例 + support/）。它是仓库内容、进版本库，
+    //    2026-10-14 已交最终红基线（54 RED + 1 GREEN），不是临时文件。
+    'tests',
     // 🆕 2026-10-01 加：老板把桌面客户端装在仓库根（本机安装，不是仓库内容；.gitignore 也挡上了）。
     //    ⚠️ 装机包（*.exe）**不加进白名单** —— 那是可重下的临时文件：**删掉**（或挪进 `.tools/_backup/`）。
     //    白名单不是垃圾桶；一条长期红着的判据 = 教人忽略脚本（memory §三 恒红 ⇒ 空扫描）。
@@ -909,8 +1261,10 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //       目录在但 `package.json` 不在）—— 所以**逐份列出来 + 各自版本**，找不到就照实说。
   //    ⚠️ 只报不红：客户端那一份在 asar 里，这个脚本够不着（要 `.tools/asar-cli/`）——
   //    能自动对账的只有"笔记里的数"与"这条读数"，而笔记是散文，抠字符串有代价（memory §三）。
+  //    🔴 2026-10-15（I4c）：它**不是** oracle 的来源（那一族走 desktop 固定落点，见文件头）——
+  //       这里列 npm 那两份只是"这台机器上还躺着谁"，别拿它当"出厂 standard 在哪"的依据。
   {
-    const seen = shippedDirections().filter((d) => d !== '' && existsSync(d))
+    const seen = installedDshDirs().filter((d) => d !== '' && existsSync(d))
     const rows = seen.map((d) => {
       let v = '（目录在，但没有 package.json —— 旧版残留？）'
       try { v = JSON.parse(read(join(d, 'package.json'))).version } catch { /* 读不到就照实说 */ }

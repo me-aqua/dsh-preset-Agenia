@@ -1,0 +1,242 @@
+/**
+ * 用例注册表 —— **分母来自这张表，不来自"跑出来几个"**（契约 §9.5 第 3 条）。
+ *
+ * 冻结依据：契约 §9.1（55 个自动用例的分组与 ID）+ 提案 §B1.4（测试文件落点表）
+ * + 拍板 I9（"55 个自动用例的注册表以 `support/registry.mjs` 形状为准，由测试岗逐条核对，
+ *   并在红基线里给出分母"）。
+ *
+ * 三个状态词（**不是** skip / 不是通过）：
+ *   · `written`        —— 本批已写的可执行用例（首跑必须 RED）
+ *   · `pending-write`  —— 已登记、尚未落笔（**留在分母里**，红基线里明写"未写"）
+ * 分母口径：一个用例 = 一个可独立报告通过/失败的命名用例；注册时冻结，不随被测对象缺失而缩水。
+ *
+ * ⚠️ 一处需要组长确认的**表内冲突**（没有自创，只是归一，见 RCP-03 的 notes）：
+ *   契约 §10.2 与提案 §B1.4 的同一张表把 `RCP-03` **同时**列在
+ *   `integration/technical-review.test.mjs`（列 REV-03、RCP-03）与 `unit/receipts.test.mjs`
+ *   （列 RCP-01/02/03/04）两行。注册表只能给一个 `file`，本表归一到前者
+ *   （锚点用例需要技术作业的真实产物），并把差异记在这条上。
+ */
+
+/** 本批（红测试批次 A）已写的 14 条：STAT-01..05 · DOC-01 · RT-01..08。 */
+export const BATCH_A = [
+  'STAT-01', 'STAT-02', 'STAT-03', 'STAT-04', 'STAT-05',
+  'DOC-01',
+  'RT-01', 'RT-02', 'RT-03', 'RT-04', 'RT-05', 'RT-06', 'RT-07', 'RT-08',
+]
+
+/** 批次 B 的 6 条（guard 三件 + 静态角色/读取义务/环境扫描）—— 裁定 A4 冻结的 `delegationTools` 是它的接口。 */
+export const BATCH_B = ['GRD-01', 'GRD-02', 'GRD-03', 'REV-02', 'READ-01', 'ENV-02']
+
+/** 批次 C 的 9 条（回执/报告/健康/data-root —— 走 read/report 层与 CLI，不需要真机停机）。 */
+export const BATCH_C = ['RCP-01', 'RCP-02', 'RCP-04', 'MEM-10', 'HLT-01', 'HLT-02', 'DR-01', 'DR-02', 'DR-03']
+
+/**
+ * 批次 D 的 11 条（记忆核心：MEM-01..09 + MEM-11 + MEM-12）。
+ * ⚠️ 派工单写"批次 D（记忆核心 12 条）"并列出 `MEM-01..09 + MEM-11 + MEM-12` = **11 个 ID**；
+ *    差的第 12 条是 **MEM-10**，它已在**批次 C** 写完（记忆组 12 = 11 + MEM-10 已在批 C）。
+ *    本表按**显式 ID 清单**登记（清单比标题里那个数更具体），差异记进 batch-D 基线。
+ */
+export const BATCH_D = ['MEM-01', 'MEM-02', 'MEM-03', 'MEM-04', 'MEM-05', 'MEM-06', 'MEM-07', 'MEM-08', 'MEM-09', 'MEM-11', 'MEM-12']
+
+/** 批次 E 的 9 条（真子进程/故障注入层：事务与锁、作业状态机与通知、runner 自检）。 */
+export const BATCH_E = ['STO-01', 'STO-02', 'STO-03', 'STO-04', 'JOB-01', 'JOB-02', 'JOB-03', 'JOB-04', 'ENV-01']
+
+/** 批次 F 的 6 条（最后一批：会话包 / 技术作业锚点 / 安装回滚发布扫描）。 */
+export const BATCH_F = ['REV-01', 'REV-03', 'RCP-03', 'INS-01', 'INS-02', 'INS-03']
+
+/**
+ * 已落笔的六批 —— **55/55 全写完**（派工单要求：登记表必须正好 55 个 ID，一个不多一个不少）。
+ * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
+ */
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F }
+const BATCH_OF = (id) =>
+  BATCH_A.includes(id) ? 'A'
+    : BATCH_B.includes(id) ? 'B'
+      : BATCH_C.includes(id) ? 'C'
+        : BATCH_D.includes(id) ? 'D'
+          : BATCH_E.includes(id) ? 'E'
+            : BATCH_F.includes(id) ? 'F'
+              : null
+
+const F = {
+  composition: 'static/composition.test.mjs',
+  docs: 'static/docs.test.mjs',
+  roles: 'static/roles.test.mjs',
+  readObligations: 'static/read-obligations.test.mjs',
+  envScan: 'static/env-scan.test.mjs',
+  routeUpdater: 'integration/route-updater.test.mjs',
+  routeUnit: 'unit/route.test.mjs',
+  store: 'integration/store.test.mjs',
+  memoryUnit: 'unit/memory.test.mjs',
+  memoryReport: 'report/memory-report.test.mjs',
+  guard: 'unit/guard.test.mjs',
+  jobs: 'integration/jobs.test.mjs',
+  packet: 'integration/packet.test.mjs',
+  technicalReview: 'integration/technical-review.test.mjs',
+  receipts: 'unit/receipts.test.mjs',
+  health: 'report/health.test.mjs',
+  dataRoot: 'integration/data-root.test.mjs',
+  install: 'integration/install-rollback.test.mjs',
+  env: 'integration/env.test.mjs',
+}
+
+/** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
+const ROWS = [
+  // ── 静态 / 文档（6）──────────────────────────────────────────────────────
+  ['STAT-01', 'static-doc', F.composition, '固定 desktop oracle 重算 + staged 组合多重集对账（onlyInStandard/onlyInAgenia/总行数）', '本批已写'],
+  ['STAT-02', 'static-doc', F.composition, 'staged 组合四行 job 十项 checklist + officeBound 4 + 10 角色/4 作业书 + 生成补丁一致', '本批已写'],
+  ['STAT-03', 'static-doc', F.composition, '派生判据源成组改：team=10/job=4/固定 team_*=5/officeBound=4、oracle 换源、旧板不认 job_*', '本批已写'],
+  ['STAT-04', 'static-doc', F.docs, '文档清单同批口径一致（新计数、后台 guard、回执、分布、旧每日检查退役）', '本批已写'],
+  ['STAT-05', 'static-doc', F.composition, '枚举全部具名委派实例并对齐 guard 名单；插入第 11 条委派行必须让检查变红', '本批已写'],
+  ['DOC-01', 'static-doc', F.docs, '老板阅读版 / now / log 与 v5、当前阶段、GO 状态一致；GO 证据含原话+来源+时间（或 null+note）', '本批已写'],
+
+  // ── 路线（8）─────────────────────────────────────────────────────────────
+  ['RT-01', 'route', F.routeUpdater, '并发两次 updater 写 / 旧 CAS 版本 / 崩溃后遗留锁：独占锁+CAS，绝不覆盖', '本批已写'],
+  ['RT-02', 'route', F.routeUpdater, '成功提交的 audit 字段；篡改 current / 删改 audit 末条 / 直写 / 半写 JSON 一律拒读', '本批已写'],
+  ['RT-03', 'route', F.routeUpdater, '票的完整字段与非法票拒绝；非 updater 写票无效；合法采纳票正例', '本批已写'],
+  ['RT-04', 'route', F.routeUnit, '阶段图：自定义/合法大阶段名、两个 current 拒、任务错阶段拒、不自动推进、五关只在任务上', '本批已写'],
+  ['RT-05', 'route', F.routeUnit, '五关词一律硬拒（并集词表 + 空白/“阶段”后缀变体），写入零副作用；合法阶段名正例', '本批已写'],
+  ['RT-06', 'route', F.routeUnit, 'boss evidence 七场景：缺证据/转述/合法/复用/张冠李戴/下一阶段 gate/exit_criteria', '本批已写'],
+  ['RT-07', 'route', F.routeUnit, '当前任务 0 或 1：null 合法、两个拒、错属拒、不存在拒；无任务时五关显示“不适用”', '本批已写'],
+  ['RT-08', 'route', F.routeUnit, '摘要投影：首行“目标 · 当前大阶段”、任务/五关/票；不把大阶段当五关；与 current 同哈希', '本批已写'],
+
+  // ── 存储 / 锁 / 状态（4）─────────────────────────────────────────────────
+  ['STO-01', 'store', F.store, '判决提交原子性：各阶段故障注入后不得出现半写/`judging && snapshot_available`', '下一批'],
+  ['STO-02', 'store', F.store, '两项目抢同一天记忆更新：只一个 claim，锁事件原子，过期锁不被静默顶掉', '下一批'],
+  ['STO-03', 'store', F.store, '旧 attempt/token/迟到通知/旧候选一律拒；同日最多一个新成功快照', '下一批'],
+  ['STO-04', 'store', F.store, '会话评审与技术评审各自独立 claim 可并行；同场重复 claim 拒；维护案 fence 不混用', '下一批'],
+
+  // ── 记忆（12）────────────────────────────────────────────────────────────
+  ['MEM-01', 'memory', F.memoryUnit, 'raw/freshness/T 映射/全库份额（含空库与新增后重算）', '下一批'],
+  ['MEM-02', 'memory', F.memoryUnit, '类型内低线：n=4/5/6、并列全计入、空类型、单侧低不算双低', '下一批'],
+  ['MEM-03', 'memory', F.memoryUnit, '连续双低 K=3、非双低清零、类型变更重置、读已发布 N 的 streak', '下一批'],
+  ['MEM-04', 'memory', F.memoryUnit, '维护案基于 N、次日判决基于 N：不隔天过期、不拿临时分布追溯、无冷却', '下一批'],
+  ['MEM-05', 'memory', F.memoryUnit, '存活集重算 N+1 份额/低线/streak；不追溯改变本轮斩杀资格', '下一批'],
+  ['MEM-06', 'memory', F.memoryUnit, '容量双硬限 200/60000 边界；无四类硬帽字段；偏科不自动配额', '下一批'],
+  ['MEM-07', 'memory', F.memoryUnit, 'v0 初始化/缺失/损坏；旧 .team 记忆不自动导入；空候选也出报告', '下一批'],
+  ['MEM-08', 'memory', F.memoryUnit, '常识 SHA 三处核对：无确认改动停更、运行中再改拒提交', '下一批'],
+  ['MEM-09', 'memory', F.memoryUnit, '快照字段齐全、原子发布、直写/半写可检测、旧快照只读', '下一批'],
+  ['MEM-10', 'memory', F.memoryReport, '报告 + 每日状态四类分布：汇总严格相等、含 0 类、无硬帽字段、字符按 code point 口径', '批次 C'],
+  ['MEM-11', 'memory', F.memoryUnit, '各岗位提案口与 append-only 导入校验（schema/基准版本/来源/哈希/fence）', '下一批'],
+  ['MEM-12', 'memory', F.memoryUnit, '普通提案不得删/并/退/改类型；斩杀只经复核→次日判决；归档可查', '下一批'],
+
+  // ── 后台 guard（3）───────────────────────────────────────────────────────
+  ['GRD-01', 'guard', F.guard, 'job_* 仅显式 true 放行；team_*/subagent 显式 false 拒；config 错误态一律拒；门禁在 officeBound 提前返回之前', '批次 B'],
+  ['GRD-02', 'guard', F.guard, '合法调用与无关工具一律放行；guard 只按工具名+参数行动', '批次 B'],
+  ['GRD-03', 'guard', F.guard, '拿不到 tools.guard 必须 loud（含“subagent 后台硬门未生效”）且 R1 判 NO-GO', '批次 B'],
+
+  // ── 作业状态机（4）───────────────────────────────────────────────────────
+  ['JOB-01', 'job', F.jobs, '后台完成通知驱动（非轮询）；丢通知时只检测未结、不冒充完成', '下一批'],
+  ['JOB-02', 'job', F.jobs, '失败/父死/未完成/超租约：状态分别为 failed/partial/未结，无自动重跑', '下一批'],
+  ['JOB-03', 'job', F.jobs, '快照可用而复核失败时可启动本地评审，partial 可见，重查点补起缺失场次', '下一批'],
+  ['JOB-04', 'job', F.jobs, 'liveness 事件式更新；update 90 / local 45 的 89/90/91 边界；无 60 分钟旧值', '下一批'],
+
+  // ── 会话包 / 角色 / 技术作业（3）─────────────────────────────────────────
+  ['REV-01', 'review', F.packet, '多帧 zstd 会话包：全部解出、窗口/排除项正确、坏帧不产半包', '下一批'],
+  ['REV-02', 'review', F.roles, '四角色工具面/写边界/CODE 不变；无 shell；越界写一律拒（officeBoundVerdict 单测 + 静态角色矩阵）', '批次 B'],
+  ['REV-03', 'review', F.technicalReview, '技术作业产物：CODE 前后哈希、findings 稳定 id、报告/发现集哈希可独立校验', '下一批'],
+
+  // ── 回执 / 票（4）───────────────────────────────────────────────────────
+  ['RCP-01', 'receipt', F.receipts, '覆盖校验正反矩阵：每条 finding 恰好一个落点、票真实且 acceptance 非空', '批次 C'],
+  ['RCP-02', 'receipt', F.receipts, '未关闭采纳票可见；done 必有验收证据；void 必附理由与重呈现', '批次 C'],
+  ['RCP-03', 'receipt', F.technicalReview, 'health 以作业产物为锚（改报告一字即红），不以回执自报 SHA 为锚', '下一批',
+    '裁定 A3 已确认归一：RCP-03 归 integration/technical-review.test.mjs（依赖技术作业真实产物与锚点），unit/receipts.test.mjs 不再登记该 ID。来历：契约 §10.2 与提案 §B1.4 的同一张表把 RCP-03 同时列在两行'],
+  ['RCP-04', 'receipt', F.receipts, '接手：先查已有产物、只补差、回执版本化不静默覆盖、不得伪造“原组长已处置”（父死窗口 PENDING）', '批次 C'],
+
+  // ── Health / 每日状态（2）───────────────────────────────────────────────
+  ['HLT-01', 'health', F.health, 'health 六场景矩阵：没开工 HOLD、运行中非绿、缺本地双评审红、完整绿', '批次 C'],
+  ['HLT-02', 'health', F.health, '失败/父死不丢原因；staleVerdict 边界按 update 90 / local 45 分列且无 60', '批次 C'],
+
+  // ── data-root 隔离（3）──────────────────────────────────────────────────
+  ['DR-01', 'data-root', F.dataRoot, '命令清单 × 姿势矩阵：省略/空/相对/真根变体/C 盘/UNC/越界/合法根；非法一律非零退出零写入', '批次 C'],
+  ['DR-02', 'data-root', F.dataRoot, '所有可写命令只在测试根落盘；真实根逐字节不变；四作业接缝；临时件全落 E 盘', '批次 C'],
+  ['DR-03', 'data-root', F.dataRoot, '脑根与路线工作区分舱：票进工作区、脑命令不产路线产物、错根被拒', '批次 C'],
+
+  // ── 安装 / 回滚 / 发布扫描（3）──────────────────────────────────────────
+  ['INS-01', 'install', F.install, '只按清单覆盖代码；非空数据逐字节保留；未知文件保留；重装幂等', '下一批'],
+  ['INS-02', 'install', F.install, '回滚只回代码不回数据；脚本零 import 自足；失败保留现场', '下一批'],
+  ['INS-03', 'install', F.install, '发布物无 .runtime/私有数据；备份在 E 盘带哈希清单；脚本无 C 默认临时', '下一批'],
+
+  // ── 环境 / C 盘（2）─────────────────────────────────────────────────────
+  ['ENV-01', 'env', F.env, '非法 TEMP/根/marker 在写任何 SUT 文件前被拒绝；合法环境全落 E 盘', '下一批'],
+  ['ENV-02', 'env', F.envScan, '静态扫描：无 %TEMP% 默认、无 C 盘硬编码、无默认真实根、删除前有 marker 校验、不得 import 生成器（A11）', '批次 B'],
+
+  // ── 读取义务（1）───────────────────────────────────────────────────────
+  ['READ-01', 'read', F.readObligations, '四份作业书 + 组长流程的必读输入清单/版本/哈希核对条款齐备', '批次 B'],
+]
+
+/** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
+export const REGISTRY = ROWS.map(([id, group, file, title, batchNote, notes]) => ({
+  id,
+  group,
+  file,
+  status: BATCH_OF(id) === null ? 'pending-write' : 'written',
+  batch: BATCH_OF(id) ?? 'pending',
+  title,
+  batch_note: batchNote,
+  ...(notes ? { notes } : {}),
+}))
+
+export const TOTAL = REGISTRY.length
+export const CASES_BY_ID = new Map(REGISTRY.map((r) => [r.id, r]))
+
+export function countByStatus() {
+  const out = { written: 0, 'pending-write': 0 }
+  for (const r of REGISTRY) out[r.status] += 1
+  return out
+}
+
+export function idsOf(file) {
+  return REGISTRY.filter((r) => r.file === file).map((r) => r.id)
+}
+
+export function batchA() {
+  return REGISTRY.filter((r) => BATCH_A.includes(r.id))
+}
+
+export function batchB() {
+  return REGISTRY.filter((r) => BATCH_B.includes(r.id))
+}
+
+/** 契约 §9.1 的每组红用例数（分母的第二个口径，两处必须对上）。 */
+export const GROUP_COUNTS = {
+  'static-doc': 6, route: 8, store: 4, memory: 12, guard: 3, job: 4,
+  review: 3, receipt: 4, health: 2, 'data-root': 3, install: 3, env: 2, read: 1,
+}
+
+/**
+ * 注册表自检 —— 每条用例跑之前先过。
+ * 它自己红，说明**表写歪了**（不是被测对象没实现）：那种红必须与 RED-SURFACE 分得开。
+ */
+export function registryProblems() {
+  const problems = []
+  if (TOTAL !== 55) problems.push(`注册表总数 ${TOTAL} ≠ 契约 §9.1 的 55`)
+  if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
+  if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
+  const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
+  if (overlap.length > 0) problems.push(`两批的 ID 有重叠：${overlap.join(', ')}`)
+  // 批 F 之后：**55/55 全写完**，pending-write 必须是 0（派工单的硬要求）
+  const pending = REGISTRY.filter((r) => r.status === 'pending-write').length
+  if (pending !== 0) problems.push(`写完全部批次之后 pending-write 必须为 0，实得 ${pending}：${REGISTRY.filter((r) => r.status === 'pending-write').map((r) => r.id).join(', ')}`)
+  const seen = new Set()
+  for (const r of REGISTRY) {
+    if (seen.has(r.id)) problems.push(`重复 ID：${r.id}`)
+    seen.add(r.id)
+    if (!/^[A-Z]+-\d{2}$/.test(r.id)) problems.push(`ID 形状不合法：${r.id}`)
+    if (!r.group || !r.file) problems.push(`缺 group/file：${r.id}`)
+    if (!['written', 'pending-write'].includes(r.status)) problems.push(`状态词不合法：${r.id}=${r.status}`)
+    const batch = BATCH_OF(r.id)
+    if ((batch !== null) !== (r.status === 'written')) problems.push(`批次清单与 status 不一致：${r.id}`)
+    if (r.batch !== (batch ?? 'pending')) problems.push(`batch 字段与清单不一致：${r.id}`)
+  }
+  const byGroup = {}
+  for (const r of REGISTRY) byGroup[r.group] = (byGroup[r.group] ?? 0) + 1
+  for (const [g, n] of Object.entries(GROUP_COUNTS)) {
+    if (byGroup[g] !== n) problems.push(`组 ${g} 计数 ${byGroup[g] ?? 0} ≠ 契约 §9.1 的 ${n}`)
+  }
+  for (const g of Object.keys(byGroup)) {
+    if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
+  }
+  for (const id of [...BATCH_A, ...BATCH_B]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  return problems
+}
