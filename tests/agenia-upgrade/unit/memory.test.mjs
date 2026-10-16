@@ -1049,11 +1049,16 @@ describe('unit · memory (MEM)', () => {
       // 定形 T-MEM-12 · R2a / R2b / R1 —— 三格都钉 `opJudgePending` 的**排序键**与**去重位置**
       //   定形：`.team/leader/2026-10-16/定形-T-MEM-12.md` §五 W1 / W2 / W3
       //   契约更正：`.team/test/2026-10-16/契约-T-MEM-07.md` §七（R1 那一句）
+      //   R2b 那一格 2026-10-16 二次返修（定形 T-MEM-13 · F-1）：`rowsB` 从"一行缺 `seq`"扩成
+      //   **四行坏 `seq`**（缺键 / `null` / `""` / `true`）—— 理由在那一格自己的块注释里。
       //
-      // 🔴 为什么必须新造夹具（不是"顺手补一格"）：K1 那一格的 `seq` 是 2 / 3 / 1 —— **一位数字**
-      //    ⇒ 字典序 == 数值序 ⇒ 把 `seqKeyOf` 里的 `Number()` 删掉，**那个变异体照样绿**。
+      // 🔴 为什么必须新造夹具（不是"顺手补一格"）：K1 写下去的 `seq` **是 `number` 类型**
+      //    （`seq: seqOf[id]`，其中 `seqOf` 的值就是 2 / 3 / 1 这几个数字，见下面 K1 那一段）
+      //    ⇒ `seqKeyOf` 的第一支 `typeof raw === 'number'` 接住它、**字符串分支根本走不到**
+      //    ⇒ 把 `seqKeyOf` 里的 `Number()` 删掉，**那个变异体照样绿**（T-MEM-12 的 `w1` 变异体实测：K1 那格 want == got）。
+      //    ⚠️ 所以"把 K1 的 `seq` 改成多位数"**依然抓不到** —— 换成 10 / 2 / 3 它还是 `number`，走的还是同一支。
       //    R2a 要让"数值序 / 字典序 / 文件序"三种口径产出**三种不同结果**；
-      //    R2b 要让"没有 `seq` 的那一行"处在**只可能靠排序才落到末尾**的位置（文件行序把它放最前）；
+      //    R2b 要让**四行坏 `seq`** 处在**只可能靠排序才落到末尾**的位置（文件行序把它们夹在有效行中间）；
       //    W3 要让"同一个 id 出现两次、两条 `seq` 与文件序相反" —— 两种去重口径**集合相同、只差顺序**。
       // 🔴 期望值一律**从我手工写下去的 `seq` 算**（另一处来源是导入命令返回的 `imported_id`），
       //    一处都不取"那份池子文件的行序" —— 那是 K1 那条教训。
@@ -1063,16 +1068,27 @@ describe('unit · memory (MEM)', () => {
        * 把一份**手改过的池子**写回某个脑根（契约 §3.3 亲口承认"池子会被手改"这个来历）。
        *
        * @param {object} brain `brainPaths(...)` 那一份（`brain.poolFile`）
-       * @param {Array<[string, (string|number|null)]>} rows **文件行序 = 数组顺序**；每项 `[imported_id, seq]`，
-       *   `seq === null` ⇒ 那一行**根本没有 `seq` 键**（R2b 要的形状）；同一个 id 可以出现两次（W3 要的形状）。
+       * @param {Array<[string, (string|number|boolean|null|symbol)]>} rows **文件行序 = 数组顺序**；每项 `[imported_id, seq]`：
+       *   · `seq === SEQ_ABSENT` ⇒ 那一行**根本没有 `seq` 键**（定形 T-MEM-13 · F-1 的"缺键"那一支）；
+       *   · `seq === null` ⇒ 那一行写着 **`seq: null`**（"不是有限数"那一类：**键在、值认不出**）；
+       *   · 其它值原样写进去（`''` / `true` / 字符串 `'9'` / 数字 2 —— 全是手改池子里真会出现的形状）。
+       *   同一个 id 可以出现两次（W3 要的形状）。
+       * 🔴 `null` 与 `SEQ_ABSENT` **必须分开** —— 但**不是**因为它们是两条代码路径：`seqKeyOf` 对这两样
+       *   落在**同一个** `Number.NaN`（`typeof raw === 'string'` 那一问对缺键与 `null` 都是假，
+       *   `raw.trim()` 那道守卫**根本没被问**；那个函数体里也没有 `raw === undefined` 这个判定）。
+       *   分开的理由是**两种输入形状**：契约 §7.3 点的是两个词（**缺失** / **不是有限数**）。
+       *   混成一个（`null` 也走"删键"）⇒ 夹具里就只剩"缺键"一种形状 ⇒ `null-as-zero` 那种错法
+       *   （`+∞` 只认缺键、`null` 交给 `Number()` ⇒ 0）**再也咬不住** —— 而它正是被 `null` 那一行
+       *   咬红的（那一跑的"实得"第一个就是 `…0003`，即 `seq: null` 那行）。
        * @returns {boolean} 每个 `imported_id` 都在池子里 ⇒ true；否则 false（调用方记"夹具失效"，不许当通过）
        */
+      const SEQ_ABSENT = Symbol('没有 `seq` 键')
       const writeHandEditedPool = (brain, rows) => {
         const byId = new Map(readJsonl(brain.poolFile).rows.map((r) => [r?.imported_id, r]))
         if (!rows.every(([id]) => typeof id === 'string' && byId.has(id))) return false
         const lines = rows.map(([id, seq]) => {
           const row = { ...byId.get(id) }
-          if (seq === null) delete row.seq
+          if (seq === SEQ_ABSENT) delete row.seq
           else row.seq = seq
           return JSON.stringify(row)
         })
@@ -1127,44 +1143,86 @@ describe('unit · memory (MEM)', () => {
         }
       }
 
-      // ── R2b（W2）：**一行没有 `seq`** ⇒ 不丢，且排在所有有效 `seq` **之后** ──
-      //    文件行序刻意把"没有 `seq`"的那一行放在**最前面** ⇒
-      //      · "按文件行序出" ⇒ 它在第一个（位置错）
-      //      · "丢掉认不出 `seq` 的行" ⇒ 它整个不见（一条也不少这一条的翻面
-      //    ⇒ 只有"排在末尾且不丢"能过。
-      const r2b = seedRoot('seq-missing', 'noseq')
+      // ── R2b（W2 / F-1）：**坏 `seq` 的行**不丢，且排在所有有效 `seq` **之后**、彼此保持文件行序 ──
+      //    定形 T-MEM-13 · F-1：契约 §7.3 那一格承诺的是「`seq` **缺失** / **不是有限数**」**一整类**。
+      //    ⚠️ 但两半处境不同：「**缺失**」那半 `T-MEM-12` 已有一格；**一格判据都没有的是「不是有限数」那半**。
+      //    🔴 但**别按分支数数**：`seqKeyOf` 只有一个嵌套三元，**没有 `raw === undefined` 这个判定**
+      //    （实测：那个函数体里 `undefined` 出现 **0** 次）⇒ 真实形状是**四种坏法、两条路**：
+      //      · **缺键 / `null` / `true`** —— `typeof raw === 'string'` 那一问就是假 ⇒ `raw.trim()` 那道守卫
+      //        **根本没被问**；前两支都没进，直接落到**共用的那个 `else`**（`Number.NaN`）⇒ `+∞`（三样**同一条路**）
+      //      · **`""`** —— 字符串那一支进了，但被 `raw.trim() !== ''` 这道**专属守卫**挡下 ⇒ `Number.NaN` ⇒ `+∞`
+      //    ⇒ 所以四行是**四种输入形状**，不是四条分支；`""` 是唯一有专属守卫的那一行。
+      //    ⚠️ `true` 那一行**按分支论不算一条**，但它**有自己的活儿**（不是摆设）：专属变异体
+      //    `boolean-as-number`（`typeof raw === 'boolean' ? Number(raw) : …`，见 `.tools/_scratch/test/tmem13/mutate.mjs`）
+      //    **只被它一只咬住** —— `Number(true) === 1` ⇒ 它从 `+∞` 组搬进有效 `seq` 组、其余五行的键一个不动。
+      //    ⇒ 行留着，理由是"**输入形状覆盖**"，不是"分支覆盖"。
+      //    文件行序刻意把四行坏 `seq` **夹在**有效行中间（第 1 / 3 / 4 / 5 行）⇒
+      //      · "按文件行序出" ⇒ 第一个就是坏行（位置错）
+      //      · "丢掉认不出 `seq` 的行" ⇒ 它们整个不见（"一条不漏"这一条的翻面）
+      //      · "认不出 ⇒ 当最小的" ⇒ 四行一起跑到最前面（位置错，方向相反）
+      //      · "`null` / `""` 当 0"（`Number(null) === 0` · `Number('') === 0`）⇒ 它跑到有效行之前
+      //      · "把并列键的次序交给引擎" ⇒ 四行之间的相对次序会翻
+      //    ⇒ 只有"排末尾 **且** 彼此保持文件行序 **且** 一条不丢"能过。
+      const r2b = seedRoot('seq-missing', 'noseq', 6)
       if (r2b.init.exit_code !== 0 || !r2b.ids.every((id) => typeof id === 'string')) {
-        push('V1-SEQ-MISSING', `「没有 \`seq\` 的行不丢、排末尾」这一格的前置不成立：init=${r2b.init.exit_code} / ids=${JSON.stringify(r2b.ids)}（三次导入退出码 ${r2b.exits.join('/')}）${missingOpNote}`)
+        push('V1-SEQ-MISSING', `「坏 \`seq\` 的行不丢、排末尾」这一格的前置不成立：init=${r2b.init.exit_code} / ids=${JSON.stringify(r2b.ids)}（六次导入退出码 ${r2b.exits.join('/')}）${missingOpNote}`)
       } else {
-        const [idM, idN2, idN1] = r2b.ids // idM = **删掉 `seq` 键**的那一条
-        const rowsB = [[idM, null], [idN2, 2], [idN1, 1]] // 文件行序：无 seq → 2 → 1
-        const wantB = [idN1, idN2, idM]                   // 1 < 2 < 「位置未知」（末尾，保留它自己的文件位置）
+        const [idM, idN2, idZ, idE, idT, idN1] = r2b.ids
+        // idM = **没有 `seq` 键** · idZ = `seq: null` · idE = `seq: ""` · idT = `seq: true`
+        const rowsB = [
+          [idM, SEQ_ABSENT], [idN2, 2], [idZ, null], [idE, ''], [idT, true], [idN1, 1],
+        ] // 文件行序：缺键 → seq 2 → null → "" → true → seq 1
+        const badIds = [idM, idZ, idE, idT]   // 四行坏 `seq`，**按文件行序** —— 期望里末四行必须是这个次序
+        const wantB = [idN1, idN2, ...badIds] // 有效 seq 升序 1 < 2，然后四行"位置未知"按文件行序
         const fileOrderBIds = rowsB.map(([id]) => id)
-        rp.seq_missing = { file_order: fileOrderBIds, no_seq_id: idM, seq: { [idN2]: 2, [idN1]: 1 }, want: wantB }
-        if (!writeHandEditedPool(r2b.brain, rowsB)) {
-          push('V1-SEQ-MISSING', '夹具失效：noseq 根里找不到那三条 `imported_id` ⇒ 这一格判不了（**不是通过**）')
-        } else if (sameList(wantB, fileOrderBIds) || wantB[wantB.length - 1] !== idM) {
-          push('V1-SEQ-MISSING', `夹具失效：这一格要的是"没有 \`seq\` 的那一行必须靠排序才落到末尾"（文件行序 ${JSON.stringify(fileOrderBIds)} / 期望 ${JSON.stringify(wantB)}）⇒ 现在两种口径同解 —— **不是通过**`)
+        rp.seq_missing = {
+          file_order: fileOrderBIds,
+          no_seq_id: idM,
+          not_finite_ids: [idZ, idE, idT],
+          seq: { [idN2]: 2, [idN1]: 1 },
+          want: wantB,
+        }
+        /** 只给报文用：这一行的 `seq` 写成了什么（`(缺键)` 与 `null` 必须能分开） */
+        const seqAsWritten = (row) => (Object.hasOwn(row ?? {}, 'seq') ? JSON.stringify(row.seq) : '(缺键)')
+        const written = writeHandEditedPool(r2b.brain, rowsB)
+        const readBack = readJsonl(r2b.brain.poolFile).rows
+        const rowWritten = (id) => readBack.find((r) => r?.imported_id === id)
+        // 夹具守卫①：写进去的**形状**必须真是那四种坏 `seq`（否则"它认不出"可能是夹具写坏了，不是实现错）
+        const shapesOk = written && readBack.length === 6
+          && rowWritten(idM) !== undefined && !Object.hasOwn(rowWritten(idM), 'seq')
+          && rowWritten(idZ) !== undefined && Object.hasOwn(rowWritten(idZ), 'seq') && rowWritten(idZ).seq === null
+          && rowWritten(idE) !== undefined && rowWritten(idE).seq === ''
+          && rowWritten(idT) !== undefined && rowWritten(idT).seq === true
+          && rowWritten(idN2) !== undefined && rowWritten(idN2).seq === 2
+          && rowWritten(idN1) !== undefined && rowWritten(idN1).seq === 1
+        if (!written) {
+          push('V1-SEQ-MISSING', '夹具失效：noseq 根里找不到那六条 `imported_id` ⇒ 这一格判不了（**不是通过**）')
+        } else if (!shapesOk) {
+          push('V1-SEQ-MISSING', `夹具失效：写回池子的**形状**不是这一格要的四种坏 \`seq\` —— 读回来是 ${JSON.stringify(readBack.map((r) => `${r?.imported_id}@${seqAsWritten(r)}`))}（要的是：缺键一行 + \`null\` / \`""\` / \`true\` 各一行 + 两行有效 2 与 1）⇒ 这一格判不了（**不是通过**）`)
+        } else if (sameList(wantB, fileOrderBIds) || sameList(fileOrderBIds.slice(-badIds.length), badIds)) {
+          push('V1-SEQ-MISSING', `夹具失效：这一格要的是"四行坏 \`seq\` 必须靠排序才落到末尾、且彼此保持文件行序"（文件行序 ${JSON.stringify(fileOrderBIds)} / 期望 ${JSON.stringify(wantB)} / 坏行 ${JSON.stringify(badIds)}）⇒ 现在不排序也对 —— **不是通过**`)
         } else {
           const rowB = pendingRunOn(r2b.brain, 'r2b_missing_seq')
           rp.seq_missing.exit_code = rowB.exit_code
           rp.seq_missing.code = rowB.code
           rp.seq_missing.got = rowB.pending_ids
           if (rowB.exit_code !== 0) {
-            push('V1-SEQ-MISSING', `池子里有一行**没有 \`seq\`** 时 \`judge-pending\` 必须照常成功（契约 §3.5 的错误面里没有这一格），实得 exit=${rowB.exit_code} / ${rowB.code ?? '(无码)'}${missingOpNote}`)
+            push('V1-SEQ-MISSING', `池子里有坏 \`seq\`（缺键 / \`null\` / \`""\` / \`true\`）时 \`judge-pending\` 必须照常成功（契约 §3.5 的错误面里没有这一格），实得 exit=${rowB.exit_code} / ${rowB.code ?? '(无码)'}${missingOpNote}`)
           } else {
             const got = Array.isArray(rowB.pending_ids) ? rowB.pending_ids : null
-            if (rowB.pool_count !== 3) {
-              push('V1-SEQ-MISSING', `夹具：noseq 根必须仍是 **3 条**（没有 \`seq\` 不等于少一行），实得 pool_count=${JSON.stringify(rowB.pool_count)}`)
+            if (rowB.pool_count !== 6) {
+              push('V1-SEQ-MISSING', `夹具：noseq 根必须仍是 **6 条**（坏 \`seq\` 不等于少一行），实得 pool_count=${JSON.stringify(rowB.pool_count)}`)
             }
-            if (got === null || !got.includes(idM)) {
-              push('V1-SEQ-MISSING', `池子里那一行**没有 \`seq\`**（${idM}）⇒ 它**必须还在** \`pending_ids\` 里（这个 op 的职责是"一条不漏"；静默少一条 = 谎报池子内容）—— 实得 ${JSON.stringify(got)}`)
+            const gone = badIds.filter((id) => got === null || !got.includes(id))
+            if (gone.length > 0) {
+              push('V1-SEQ-MISSING', `池子里那四行**坏 \`seq\`**（缺键 ${idM} · \`null\` ${idZ} · \`""\` ${idE} · \`true\` ${idT}）⇒ 它们**必须还在** \`pending_ids\` 里（这个 op 的职责是"一条不漏"；静默少一条 = 谎报池子内容）—— 不见的是 ${JSON.stringify(gone)}，实得 ${JSON.stringify(got)}`)
             }
-            if (got !== null && got.length > 0 && got[got.length - 1] !== idM) {
-              push('V1-SEQ-MISSING', `没有 \`seq\` 的那一行（${idM}）必须排在**所有有效 \`seq\` 之后** = ${JSON.stringify(wantB)}（两行 seq 是 2 / 1），实得 ${JSON.stringify(got)} —— 认不出的行放**末尾**是"位置未知"的自然位置（放开头会让它冒充"最早的一批"）`)
+            const tailOk = got !== null && sameList(got.slice(-badIds.length), badIds)
+            if (got !== null && !tailOk) {
+              push('V1-SEQ-MISSING', `四行坏 \`seq\`（按文件行序 ${JSON.stringify(badIds)}）必须一起排在**所有有效 \`seq\` 之后**、且**彼此保持文件行序** = ${JSON.stringify(wantB)}（两行有效 seq 是 2 / 1），实得 ${JSON.stringify(got)} —— 认不出的行放**末尾**是"位置未知"的自然位置（放开头会让它们冒充"最早的一批"；把并列键的次序交给引擎，它们之间就会翻）`)
             }
-            if (got !== null && !sameList(got, wantB) && got.includes(idM) && got[got.length - 1] === idM) {
-              push('V1-SEQ-MISSING', `\`pending_ids\` 应为 ${JSON.stringify(wantB)}（有效 \`seq\` 升序，没有 \`seq\` 的排末尾），实得 ${JSON.stringify(got)}`)
+            if (got !== null && tailOk && !sameList(got, wantB)) {
+              push('V1-SEQ-MISSING', `\`pending_ids\` 应为 ${JSON.stringify(wantB)}（有效 \`seq\` 升序 1 < 2，四行坏 \`seq\` 排末尾并保持文件行序），实得 ${JSON.stringify(got)}`)
             }
           }
         }
