@@ -202,8 +202,13 @@ export function receiptVersionsOnDisk(teamDir, day) {
 
 // ── 事务（读-改-写全程持锁 · §B3.7）───────────────────────────────────────
 /**
- * 抢那把读-改-写锁：**先在时限内重试**（活着的持有者只是占了几毫秒），
- * 超时或被僵锁挡着就照原样返回（`E_LOCK_HELD` / `E_LOCK_STALE`）—— **不静默抢写**。
+ * 抢那把读-改-写锁：**在时限内重试**（别的进程正占着 / 正写着 / 刚放掉，都只是一瞬间）。
+ *
+ * 重试集合的判据只有一条：`retryable`（由 `lib/atomic.mjs` 给）或 `E_LOCK_HELD`。
+ * 而 `E_LOCK_STALE`（持有者已死或过期）**不重试** —— 那种锁不会自己松开，
+ * 等满预算也还是那个结果；它的处置是显式 `--force-recover`，不是等。
+ *
+ * 预算用满或被僵锁挡着就照原样返回（`E_LOCK_HELD` / `E_LOCK_STALE`）—— **不静默抢写**。
  */
 function acquireDayLock(teamDir, day, spec) {
   const waitMs = Number.isFinite(spec?.waitMs) ? spec.waitMs : DEFAULT_WAIT_MS
@@ -215,7 +220,8 @@ function acquireDayLock(teamDir, day, spec) {
       { at: new Date(), forceRecover: spec?.forceRecover === true, parentAlive },
     )
     if (got.ok) return got
-    if (got.code !== 'E_LOCK_HELD' || Date.now() >= deadline) return got
+    if (got.code !== 'E_LOCK_HELD' && got.retryable !== true) return got
+    if (Date.now() >= deadline) return got
     sleepSync(20)
   }
 }
