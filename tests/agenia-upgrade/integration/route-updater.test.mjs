@@ -10,12 +10,13 @@
  *   · 锁 / CAS / 审计 / 路径校验**一律不许 mock**（契约 §9.5 第 4 条）。
  */
 import { before, describe, test } from 'node:test'
+import { spawn } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { ENV, FROZEN } from '../support/env.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, sha256Equal, sha256File, writeJson } from '../support/evidence.mjs'
 import { canonical, ensureMarkedDir } from '../support/root-guard.mjs'
-import { countJsonlLines, runCliAsync, runRoute, stagingExists } from '../support/sut.mjs'
+import { NODE_BIN, callSpec, childEnv, countJsonlLines, importStaged, requireExport, runCliAsync, runRoute, stagingExists, writeFixture } from '../support/sut.mjs'
 
 before(() => {
   preflight()
@@ -70,6 +71,63 @@ function expect(label, res, problems, { ok = false, anyOf = [], expect = anyOf.l
   }
 }
 
+const SLEEP_BUF = new Int32Array(new SharedArrayBuffer(4))
+
+/**
+ * 起一个**真的** route 子进程，并把它的 `pid` 交出来。
+ *
+ * 🔴 为什么不是 `runCliAsync`：那条路只给结果，**不给 pid**。而 RT-01 ④ 要判的是
+ *    "这把锁是**这个活着的持有者**写的"—— 锁体里的 `pid` 必须能指名道姓地对上，
+ *    否则"活着的持有者"就只能是一句旁白（契约 §9.5 第 4 条：锁不许 mock）。
+ */
+function spawnRoute(caseId, op, payload, { workspace }) {
+  const inFile = writeFixture(caseId, `lockrace-${op}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`, payload)
+  const spec = callSpec('agenia-route.mjs', { op, workspace, inFile, testMode: true })
+  const child = spawn(NODE_BIN, [spec.abs, ...spec.args], {
+    cwd: spec.cwd,
+    env: childEnv(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (d) => { stdout += d.toString('utf8') })
+  child.stderr.on('data', (d) => { stderr += d.toString('utf8') })
+  const done = new Promise((resolve) => {
+    child.on('close', (code) => {
+      let json = null
+      try { json = JSON.parse(stdout.trim().split(/\r?\n/).filter((l) => l.trim() !== '').pop()) } catch { json = null }
+      resolve({ exit_code: code, json, stdout: stdout.slice(0, 800), stderr: stderr.slice(0, 800) })
+    })
+  })
+  return { child, done, pid: child.pid, cmdline: `"${NODE_BIN}" "${spec.abs}" ${spec.args.join(' ')}` }
+}
+
+/**
+ * 忙轮询锁文件：读到**完整锁体**（有数字 `pid` 与字符串 `at`）就当场返回。
+ *
+ * 为什么不睡眠轮询：要判的是"持有者**还在持锁**"那一刻 —— 每次让出 1 毫秒就够。
+ * 读不出内容（0 字节 / 半截 JSON）不算读到：那种锁体证不了是谁写的
+ * （`lib/atomic.mjs` 也把它单列成"读不出内容，等一下再来"那一族）。
+ */
+function waitForLockBody(lockPath, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let polls = 0
+  while (Date.now() < deadline) {
+    polls += 1
+    let text = null
+    try { text = readFileSync(lockPath, 'utf8') } catch { text = null }
+    if (text !== null && text.trim() !== '') {
+      try {
+        const body = JSON.parse(text)
+        if (body && Number.isInteger(body.pid) && typeof body.at === 'string') return { body, polls, at: Date.now() }
+      } catch { /* 还没写全，继续轮询 */ }
+    }
+    Atomics.wait(SLEEP_BUF, 0, 0, 1)
+  }
+  return { body: null, polls, at: Date.now() }
+}
+
 describe('integration · route-updater', () => {
   test('RT-01 并发两次 updater / 旧 CAS 版本 / 崩溃后遗留锁：独占锁+CAS，绝不覆盖', async () => {
     await runCase('RT-01', async (rec) => {
@@ -101,8 +159,13 @@ describe('integration · route-updater', () => {
       for (const [label, r] of [['A', ra], ['B', rb]]) {
         if (r.exit_code !== 0) {
           const code = r.json?.error?.code
-          if (!['E_LOCK_HELD', 'E_LOCK_STALE', 'E_CAS_STALE'].includes(code)) {
-            push('CONCURRENCY', `失败方（${label}）的错误码应是锁冲突/旧版本（E_LOCK_* / E_CAS_STALE），实得 ${code}`)
+          // 🔴 F-40 收窄（2026-10-16）：`E_LOCK_STALE` 从这里**去掉**了。
+          //    这一步里持锁的只可能是"另一个**还活着**的 route 进程"（赢家退出码 0），
+          //    死 pid 的锁在这里走不出来 ⇒ 失败方读到 STALE 只可能是 F-38（领域时钟进了锁的 `at`）。
+          //    ⚠️ 这一格是**机会性**的（并发窗口没撞上就不响，这时失败方是 `E_CAS_STALE`）；
+          //    承重的是 ④ 那条**确定性**的断言，这一条只是顺手把"已经撞上"的样本判死。
+          if (!['E_LOCK_HELD', 'E_CAS_STALE'].includes(code)) {
+            push('CONCURRENCY', `失败方（${label}）的错误码应是"被活人占着 / 旧版本"（E_LOCK_HELD / E_CAS_STALE），实得 ${code} —— 这一步没有死掉的持有者，E_LOCK_STALE 只可能是"活锁被判僵"（见 RT-01 ④）`)
           }
         }
       }
@@ -141,12 +204,150 @@ describe('integration · route-updater', () => {
       const beforeLocked = sha256File(currentPath)
       const locked = runRoute('RT-01', 'task-set', { tasks: [], current_task_id: null, version: current?.version ?? v1 + 1 }, { workspace: ws })
       rec.readings.stale_lock = { exit: locked.exit_code, code: locked.json?.error?.code ?? null }
-      expect('过期锁', locked, problems, { expect: 'E_LOCK_STALE', anyOf: ['E_LOCK_STALE', 'E_LOCK_HELD'] })
+      // 🔴 F-40 收窄（2026-10-16）：原来这里是 `anyOf: ['E_LOCK_STALE', 'E_LOCK_HELD']`
+      //    ⇒ **真僵锁退化成 `E_LOCK_HELD` 也不会红**（评审 F3 点名的两处之一）。
+      //    这一格摆的是"死 pid + 过 ttl 的锁"（pid 999999 起不来、`ttl_ms: 1`，两条都成立），
+      //    只许 `E_LOCK_STALE`：`E_LOCK_HELD` 的含义是"活人占着 / 等一下再来"，用在这里就是把僵锁说成热的。
+      expect('过期锁（死 pid + 过 ttl ⇒ 只许 E_LOCK_STALE）', locked, problems, { expect: 'E_LOCK_STALE' })
       if (sha256File(currentPath) !== beforeLocked) push('LOCK-SILENT-TAKEOVER', '留着过期锁时 current.json 仍被改写 —— 那是"静默抢写"，RT-01 明令禁止')
       // 显式恢复才允许继续
       const forced = runRoute('RT-01', 'task-set', { tasks: [], current_task_id: null, version: current?.version ?? v1 + 1 }, { workspace: ws, extra: ['--force-recover'] })
       rec.readings.force_recover = { exit: forced.exit_code, code: forced.json?.error?.code ?? null }
       expect('--force-recover 显式恢复', forced, problems)
+
+      // ══════════════════════════════════════════════════════════════════════════════
+      // ④ 设着 `AGENIA_NOW_FILE` 时：**活着的持有者**写下的锁，不许被判成 `E_LOCK_STALE`
+      //    （F-38 的红测试 · F-40 验收 ①）
+      //
+      // 【钉的是什么】锁的 `at` 与判定用的"现在"必须是**同一个钟**。设了 `AGENIA_NOW_FILE`
+      //   （测试跑法 `run-full-55.ps1:34` 给每个子进程都设了，值是 `2026-10-14T12:00+08:00`）时，
+      //   route 把**领域时钟**写进锁的 `at`，而 `lib/atomic.mjs` 拿**真实** `Date.now()` 比
+      //   ⇒ 一个活着的持有者写下的锁，在第二个写者眼里"已经过期 55 小时"，当场 `E_LOCK_STALE`。
+      //
+      // 【实测的缺陷现场】`bin/agenia-route.mjs:287`（`at: new Date(at)`，`at` 来自 `:733` 的
+      //   `clockNow()` = 领域时钟）+ `lib/atomic.mjs:217`（`nowMs - Date.parse(existing.at)`，
+      //   `nowMs` = 真实 `Date.now()`）。
+      //
+      // 【观测姿势：不碰实现的任何接缝】route 子进程真跑一次写 op（持锁跑完整个临界区），
+      //   本进程忙轮询它的锁文件，一读到**完整锁体**就立刻用 SUT 自己的 `acquireLock` 判一次 ——
+      //   那就是"第二个 route 写者会看到的那个判定"（同一条路、同一个函数、真实时钟）。
+      //
+      // 【为什么先垫 2000 个任务】`current.json` 越大，route 的临界区越长（读 → CAS → 核链 →
+      //   原子写 → 追加审计）。实测：326 KB 的 `current.json` ⇒ "读到锁体 → 判一次"的窗口
+      //   **17~29 毫秒**，判定本身只花 0~2 毫秒 ⇒ 这条断言不靠运气。
+      //   （同一招 STO-04 ① 用过：`padLocalState` 把状态垫大以拉长读-改-写窗口。）
+      //
+      // 【怎么翻面】把 `:287` 的 `at: new Date(at)` 改成 `at: new Date()`（锁元数据用真实时钟）
+      //   ⇒ 这一格当场绿；改回去 ⇒ 当场红。变异体读数见 `.team/test/2026-10-16/F-38-F-40-断言.md`。
+      // ══════════════════════════════════════════════════════════════════════════════
+      {
+        const LOCKRACE_TASKS = 2000
+        const lockWs = scenarioWorkspace('RT-01', 'livelock')
+        const liveLock = { attempts: [], window: null, configured_now_file: process.env[ENV.NOW_FILE] ?? null }
+        rec.readings.live_lock_race = liveLock
+
+        const lockInit = runRoute('RT-01', 'init', LEGAL_GRAPH, { workspace: lockWs })
+        expect('④ init（设着 AGENIA_NOW_FILE）', lockInit, problems)
+        if (liveLock.configured_now_file === null) {
+          push('NOW-FILE-ABSENT', `这一格的前提是**设了** ${ENV.NOW_FILE}（跑法\`run-full-55.ps1:34\` 会给每个子进程设）：它是空的 ⇒ "领域时钟进了锁"这件事根本不会发生`)
+        }
+        if (lockInit.exit_code === 0) {
+          const padTasks = (firstInProgress) => Array.from({ length: LOCKRACE_TASKS }, (_, i) => ({
+            id: `T${i + 1}`,
+            stage_id: 'plan',
+            title: `垫长临界区的任务 ${i + 1}`,
+            status: firstInProgress && i === 0 ? 'in_progress' : 'open',
+          }))
+          const seeded = runRoute('RT-01', 'task-set', { tasks: padTasks(false), current_task_id: 'T1', version: lockInit.json.version }, { workspace: lockWs })
+          expect(`④ 垫长临界区（先写 ${LOCKRACE_TASKS} 个任务）`, seeded, problems)
+          liveLock.padded_current_bytes = (() => {
+            try { return readFileSync(path.join(lockWs, '.team', 'route', 'current.json')).length } catch { return null }
+          })()
+
+          const atomicMod = await (() => {
+            if (!stagingExists(path.join('lib', 'atomic.mjs'))) {
+              push('SUT-SURFACE-MISSING', 'staged 还没有 lib/atomic.mjs ⇒ 锁判定这一格拿不到（预期的首跑红）')
+              return null
+            }
+            return importStaged(path.join('lib', 'atomic.mjs'))
+          })()
+          if (atomicMod !== null) {
+            requireExport(atomicMod, 'acquireLock', 'lib/atomic.mjs')
+            const liveLockPath = path.join(lockWs, '.team', 'route', '.route.lock')
+            // 最多四次：窗口没打出来（锁已放 / 子进程没起来）就重来 —— **不许把"没测到"当成"通过"**。
+            for (let attempt = 1; attempt <= 4 && liveLock.window === null; attempt += 1) {
+              const readBack = runRoute('RT-01', 'read', {}, { workspace: lockWs })
+              const version = readBack.json?.current?.version
+              if (!Number.isInteger(version)) {
+                push('LOCKRACE-VERSION', `④ 第 ${attempt} 次：读不到当前版本（exit=${readBack.exit_code} / ${readBack.json?.error?.code ?? '(无码)'}）⇒ 这一格判不了`)
+                break
+              }
+              const holder = spawnRoute('RT-01', 'task-set', { tasks: padTasks(true), current_task_id: 'T1', version }, { workspace: lockWs })
+              const observed = waitForLockBody(liveLockPath, 20000)
+              const attemptReading = { attempt, holder_pid: holder.pid, polls: observed.polls, lock_body_seen: observed.body !== null, lock_pid: observed.body?.pid ?? null }
+              liveLock.attempts.push(attemptReading)
+
+              let verdict = null
+              let judgedAt = null
+              if (observed.body !== null && observed.body.pid === holder.pid) {
+                judgedAt = Date.now()
+                verdict = atomicMod.acquireLock(liveLockPath, {}, {})
+                if (verdict.ok === true) {
+                  // 我们抢先拿到了锁（持有者已经放掉了）⇒ 这是"窗口没打出来"，不是被测对象的结论：把这个锁还回去。
+                  atomicMod.releaseLock(liveLockPath, {})
+                }
+              }
+              const holderDone = await holder.done
+
+              if (verdict === null || verdict.ok === true) {
+                attemptReading.outcome = verdict === null ? 'no-lock-body' : 'acquired-after-release'
+                attemptReading.holder_exit = holderDone.exit_code
+                continue // 这一次不算判据：换下一次
+              }
+              const lockAt = observed.body.at
+              const skewMs = Number.isFinite(Date.parse(lockAt)) ? judgedAt - Date.parse(lockAt) : null
+              liveLock.window = {
+                attempt,
+                holder_pid: holder.pid,
+                holder_cmdline: holder.cmdline,
+                lock_pid: observed.body.pid,
+                lock_at: lockAt,
+                lock_at_skew_ms: skewMs,
+                lock_at_skew_hours: skewMs === null ? null : Number((skewMs / 3600_000).toFixed(2)),
+                real_now: new Date(judgedAt).toISOString(),
+                detect_to_judge_ms: judgedAt - observed.at,
+                observed_code: verdict.code,
+                observed_retryable: verdict.retryable ?? null,
+                observed_message: verdict.message,
+                holder_exit: holderDone.exit_code,
+                holder_result_code: holderDone.json?.error?.code ?? null,
+              }
+              attemptReading.outcome = verdict.code
+              attemptReading.holder_exit = holderDone.exit_code
+            }
+
+            if (liveLock.window === null) {
+              // 四次都没在"持有者持锁期间"读到完整锁体 ⇒ **这一格没测到**（HOLD，不是绿）。
+              caseHold(rec, 'LOCKRACE-NO-WINDOW', '四次都没能在持有者持锁期间读到完整锁体 ⇒ "活锁会不会被判僵"这一档判不了（窗口没打出来，不等于通过）')
+            } else {
+              const w = liveLock.window
+              if (w.holder_exit !== 0) {
+                push('LOCKRACE-HOLDER', `④ 持锁的那个子进程自己没跑成（exit=${w.holder_exit} / ${w.holder_result_code ?? '(无码)'}）⇒ "持有者还活着"这个前提就没坐实`)
+              }
+              if (w.observed_code === 'E_LOCK_STALE') {
+                push('LOCK-LIVE-NOT-STALE',
+                  `④ 设了 ${ENV.NOW_FILE}（领域时钟）时，一把**活着的持有者**（route 子进程 pid=${w.holder_pid}，`
+                  + `它这次 op 最后 exit=${w.holder_exit}）写下的锁被判成了僵锁：${w.observed_message}`
+                  + ` —— 锁体里的 \`at\` = ${w.lock_at}，判定时真实时钟 = ${w.real_now}（差 ${w.lock_at_skew_hours} 小时）；`
+                  + `锁是它自己写的（锁体 pid=${w.lock_pid}），它既没死也没过期。`
+                  + '这就是 F-38：route 把**领域时钟**写进锁的 `at`，而 `lib/atomic.mjs` 拿**真实** `Date.now()` 比。')
+              } else if (w.observed_code !== 'E_LOCK_HELD') {
+                push('LOCK-LIVE-NOT-STALE', `④ 活着的持有者持锁时，第二方应当读到 E_LOCK_HELD（"等一下再来"），实得 ${w.observed_code}：${w.observed_message}`)
+              }
+            }
+          }
+        }
+      }
 
       caseFail(problems)
     })

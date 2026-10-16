@@ -13,12 +13,13 @@
  *     不发明"注入开关"那类接口。
  */
 import { before, describe, test } from 'node:test'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { ENV, FROZEN } from '../support/env.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, sha256File, stagingReadings, treeHash, writeJson } from '../support/evidence.mjs'
 import { canonical, ensureMarkedDir } from '../support/root-guard.mjs'
-import { brainPaths, countJsonlLines, runBrain, runCli, runCliAsync, runLocal, stagingExists, writeFixture } from '../support/sut.mjs'
+import { brainPaths, countJsonlLines, importStaged, requireExport, runBrain, runCli, runCliAsync, runLocal, stagingExists, writeFixture } from '../support/sut.mjs'
 
 before(() => {
   preflight()
@@ -318,8 +319,11 @@ describe('integration · store (STO)', () => {
       const afterState = readJson(bp.updateState(DAY))
       rec.readings.stale_lock = { exit_code: locked.exit_code, code: locked.json?.error?.code ?? null }
       if (locked.exit_code === 0) push('STO02-STALE-LOCK', '留着死 pid 的锁时 claim 仍然成功了 —— 过期锁不许被静默顶掉（要显式恢复）')
-      else if (!['E_LOCK_STALE', 'E_LOCK_HELD'].includes(locked.json?.error?.code)) {
-        push('STO02-STALE-LOCK', `过期锁的错误码应为 E_LOCK_STALE（或 E_LOCK_HELD），实得 ${locked.json?.error?.code}`)
+      // 🔴 F-40 收窄（2026-10-16）：原来这里是 `['E_LOCK_STALE', 'E_LOCK_HELD']` 二选一
+      //    ⇒ **真僵锁退化成 `E_LOCK_HELD` 也不会红**（评审 F3 点名的两处之一）。
+      //    这一格摆的是"死 pid + 过 ttl"（pid 999999 起不来、`ttl_ms: 1`），只许 `E_LOCK_STALE`。
+      else if (locked.json?.error?.code !== 'E_LOCK_STALE') {
+        push('STO02-STALE-LOCK', `过期锁的错误码只许 E_LOCK_STALE，实得 ${locked.json?.error?.code}（E_LOCK_HELD 的含义是"活人占着 / 等一下再来"，把僵锁说成热的就没有人会发现持有者已经死了）`)
       }
       if (JSON.stringify(beforeState) !== JSON.stringify(afterState)) push('STO02-STALE-LOCK', '被过期锁挡住的那次 claim 改动了状态 —— 拒绝必须零副作用')
       // 显式恢复
@@ -327,7 +331,108 @@ describe('integration · store (STO)', () => {
       rec.readings.force_recover = { exit_code: forced.exit_code, code: forced.json?.error?.code ?? null }
       if (forced.exit_code !== 0) push('STO02-RECOVER', `--force-recover 显式恢复必须能继续（正例），实得 exit=${forced.exit_code} / ${forced.json?.error?.code ?? '(无码)'}`)
 
-      // ④ 字段落盘：owner / attempt / token / launch intent / job id
+      // ══════════════════════════════════════════════════════════════════════════════
+      // ④ 锁判定矩阵（F-40 断言 A · 钉"死 pid / 过 ttl ⇒ 必须是 `E_LOCK_STALE`"）
+      //
+      // 【为什么落在这儿】注册表 `TOTAL` 是**冻结的 55**（`registryProblems()` 钉着），新 ID 要走契约变更
+      //   ⇒ 本批判据并进 STO-02（它就是"过期锁不被静默顶掉"那一条；同样的归属先例见
+      //   `integration/packet.test.mjs:446` 与 `unit/memory.test.mjs:805`）。分母不动。
+      //
+      // 【被测面】staged 的 `lib/atomic.mjs` —— **真文件、真 `acquireLock`**，锁与文件系统一律不 mock
+      //   （契约 §9.5 第 4 条）。这一族判据 F-36 刚改过（"读不出内容"从 `E_LOCK_STALE` 改成
+      //   `E_LOCK_HELD + retryable`），而 `tests/**` 里 **`retryable` 原本 0 命中** —— 本段补上。
+      //
+      // 【五格】C0 活人占着、没过 ttl ⇒ `E_LOCK_HELD`（**阳性对照**：证明这一族判的是死活，不是恒回 STALE）
+      //        C1 死 pid、没过 ttl ⇒ `E_LOCK_STALE`
+      //        C2 持有者活着、过了 ttl ⇒ `E_LOCK_STALE`
+      //        C3 读不出内容、但**老过**宽限期（mtime 6 秒前）⇒ `E_LOCK_STALE`
+      //        C4 读不出内容、**还在**宽限期内（刚写的 0 字节）⇒ `E_LOCK_HELD` **且 `retryable: true`**
+      //
+      // 【怎么翻面】
+      //   · 把 `judgeLockOnce` 末段（"读得出来 ⇒ E_LOCK_STALE"）改成 `{code:'E_LOCK_HELD', retryable:true}`
+      //     —— 也就是"宽限期也放过它们" ⇒ C1 / C2 当场红；
+      //   · 把 `LOCK_UNREADABLE_GRACE_MS` 改成无穷 / 把 `abandoned` 恒判 false ⇒ C3 当场红；
+      //   · 把"读不出内容"那一格改回 STALE（F-36 之前的形状）⇒ C4 当场红（且 `retryable` 没了）。
+      //   变异体读数见 `.team/test/2026-10-16/F-38-F-40-断言.md`。
+      //
+      // 【零副作用】C1 / C2 判完之后锁文件必须**逐字节不变**（"不静默抢写，要显式 `--force-recover`"）。
+      // ══════════════════════════════════════════════════════════════════════════════
+      {
+        const atomic = await (() => {
+          if (!stagingExists(path.join('lib', 'atomic.mjs'))) {
+            push('SUT-SURFACE-MISSING', 'staged 还没有 lib/atomic.mjs ⇒ 锁判定矩阵拿不到（预期的首跑红）')
+            return null
+          }
+          return importStaged(path.join('lib', 'atomic.mjs'))
+        })()
+        if (atomic !== null) {
+          requireExport(atomic, 'acquireLock', 'lib/atomic.mjs')
+          const matrixDir = path.join(caseBrainRoot('STO-02', 'lockmatrix').root, 'locks') // 与真实落点同形状（<脑根>/locks）
+          mkdirSync(matrixDir, { recursive: true })
+          // 一个**确实死了**的 pid：起一个什么也不做的子进程、等它退出（`spawnSync` 返回时它已经没了）
+          // —— 不押"999999 一定是个死号"这种假设。
+          const reaped = spawnSync(process.execPath, ['-e', ''], { windowsHide: true, timeout: 30000 })
+          const deadPid = (() => {
+            for (const candidate of [reaped.pid, 999999]) {
+              if (!Number.isInteger(candidate) || candidate <= 0) continue
+              try { process.kill(candidate, 0) } catch (err) { if (err?.code === 'ESRCH') return candidate }
+            }
+            return null
+          })()
+          if (deadPid === null) push('LOCK-MATRIX', '找不到一个确实死掉的 pid（连刚回收的子进程 pid 都还"活着"）—— C1 那一格判不了')
+          const nowMs = Date.now()
+          const cells = []
+          const allCells = [
+            { label: 'C0 活人占着、没过 ttl（阳性对照）', code: 'LOCK-MATRIX-CONTRAST', expect: 'E_LOCK_HELD', body: { pid: process.pid, session_id: 'session-live-0000', at: new Date(nowMs).toISOString(), ttl_ms: 60_000 } },
+            { label: 'C1 死 pid、没过 ttl', code: 'LOCK-READABLE-STALE', expect: 'E_LOCK_STALE', body: { pid: deadPid, session_id: 'session-dead-0000', at: new Date(nowMs).toISOString(), ttl_ms: 60_000 } },
+            { label: 'C2 持有者活着、过了 ttl', code: 'LOCK-READABLE-STALE', expect: 'E_LOCK_STALE', body: { pid: process.pid, session_id: 'session-live-0000', at: new Date(nowMs - 120_000).toISOString(), ttl_ms: 60_000 } },
+            // mtime 推到宽限期（`LOCK_UNREADABLE_GRACE_MS = 5000`）之外 —— 这是"陈年坏锁"与"有人正在写"的**唯一**区别
+            { label: 'C3 读不出内容、老过宽限期（mtime 6 秒前）', code: 'LOCK-UNREADABLE-GRACE', expect: 'E_LOCK_STALE', body: '{"pid": 1234, "at": "2026-10-1', mtimeMsAgo: 6000 },
+            { label: 'C4 读不出内容、还在宽限期内（刚建的 0 字节）', code: 'LOCK-UNREADABLE-GRACE', expect: 'E_LOCK_HELD', retryable: true, body: '' },
+          ]
+          // 拿不到"确实死了的 pid"时，C1 这一格**跳过**（上面已经报过；不许拿一个可能活着的 pid 冒名顶替）
+          const plan = deadPid === null ? allCells.filter((c) => !c.label.startsWith('C1')) : allCells
+          for (const spec of plan) {
+            const lockFile = path.join(matrixDir, `matrix-${cells.length + 1}.lock`)
+            writeFileSync(lockFile, typeof spec.body === 'string' ? spec.body : `${JSON.stringify(spec.body)}\n`, 'utf8')
+            if (spec.mtimeMsAgo !== undefined) {
+              const old = new Date(Date.now() - spec.mtimeMsAgo)
+              utimesSync(lockFile, old, old)
+            }
+            const beforeBytes = readFileSync(lockFile)
+            const startedAt = Date.now()
+            const verdict = atomic.acquireLock(lockFile, {}, {})
+            const elapsedMs = Date.now() - startedAt
+            let afterBytes = null
+            try { afterBytes = readFileSync(lockFile) } catch { afterBytes = null }
+            const row = {
+              cell: spec.label,
+              expect: spec.expect,
+              got: verdict.ok === true ? 'ok' : verdict.code,
+              retryable: verdict.retryable ?? null,
+              message: verdict.message ?? '',
+              elapsed_ms: elapsedMs,
+              lock_untouched: afterBytes !== null && Buffer.compare(beforeBytes, afterBytes) === 0,
+            }
+            cells.push(row)
+            if (row.got !== row.expect) {
+              push(spec.code, `${row.cell}：期望 ${row.expect}，实得 ${row.got} —— 报文：${row.message}`)
+            }
+            // C4 的判据是"码 + `retryable`"两样：F-36 修的正是这一格，而 `tests/**` 里 `retryable` 原本 0 命中。
+            if (spec.retryable !== undefined && row.retryable !== spec.retryable) {
+              push(spec.code, `${row.cell}：这一格必须带 \`retryable: ${spec.retryable}\`（"读不出内容"证不了持有者死活 ⇒ 等一下再来），实得 ${JSON.stringify(row.retryable)}`)
+            }
+            // 读得出来的僵锁：判完之后锁文件必须逐字节不变；而且不许"等宽限期"。
+            if (row.expect === 'E_LOCK_STALE' && spec.mtimeMsAgo === undefined) {
+              if (row.lock_untouched !== true) push(spec.code, `${row.cell}：判完之后锁文件被动了（内容变了或文件不见了）—— 僵锁不许静默抢写/静默回收，要显式 --force-recover`)
+              if (elapsedMs >= 2000) push(spec.code, `${row.cell}：读得出来的锁不该"等宽限期"，判定花了 ${elapsedMs} 毫秒`)
+            }
+          }
+          rec.readings.lock_matrix = { dead_pid: deadPid, cells, grace_ms_expected: 5000 }
+        }
+      }
+
+      // ⑤ 字段落盘：owner / attempt / token / launch intent / job id
       const finalState = readJson(bp.updateState(DAY))
       const claimJson = (winners[0] ?? {}).json ?? {}
       rec.readings.claim_fields = { claim: claimJson, state: finalState }
