@@ -82,7 +82,7 @@ const OP_NAMES = Object.freeze([
   'init', 'init-real', 'state-read', 'daily-start', 'claim-update', 'candidates-freeze', 'judge-start',
   'judge-commit', 'review-start', 'proposal-import', 'maintenance-import', 'snapshot-read',
   'snapshot-list', 'entry-count', 'report-read', 'health-read', 'job-mark', 'audit-append',
-  'snapshot-archive', 'cs-confirm', 'session-packet', 'help',
+  'snapshot-archive', 'cs-confirm', 'session-packet', 'judge-pending', 'help',
 ])
 
 /**
@@ -744,6 +744,18 @@ function opJudgeCommit({ root, payload }) {
     detail: { day, generation: state.generation, attempt: state.judge_attempt, base_snapshot: baseVersion, new_snapshot: version, count: snapshot.totals.count, chars: snapshot.totals.chars },
     at,
   })
+  // ⑧ 「已判」索引（T-MEM-07）：**只在这里写** —— 上面那七道拒绝与整段事务都在这一行之前返回，
+  //    所以 `judged.jsonl` 只可能跟着一次**真成功**的提交长行（V8 的判据就是这个次序）。
+  const judgedSpecs = judgedRowSpecsOf({ state, accepted: payload?.accepted, day, snapshot: version, at })
+  if (judgedSpecs.length > 0) {
+    try {
+      PROP.appendJudgedRows(root, judgedSpecs)
+    } catch (err) {
+      // 已发布的快照 / 报告 / 状态**不回滚**（`publishUpdate` 已经落盘）—— 报文必须把这件事说明白，
+      // 否则下一个人会以为"报错了 = 什么都没发生"。
+      throw cliError('E_TXN_IO', `快照 ${version} 已发布、索引未追加（${err?.code ?? 'UNKNOWN'}：${String(err?.message ?? err)}）—— 已发布的事务不回滚`, { path: S.judgedPath(root), snapshot: version })
+    }
+  }
   return {
     new_snapshot: version,
     base_snapshot: baseVersion,
@@ -753,6 +765,111 @@ function opJudgeCommit({ root, payload }) {
     phase: nextState.phase,
     distribution: snapshot.distribution,
     totals: snapshot.totals,
+  }
+}
+
+/**
+ * 一串行里出现过的 `imported_id`，**按行顺序去重**（首次出现的位置留下）。
+ * 池子理论上不该有重复 id，但判据不许假设它没有（契约 §3.3）。
+ */
+function uniqueIdsOf(records) {
+  const seen = new Set()
+  const out = []
+  for (const record of Array.isArray(records) ? records : []) {
+    const id = record?.imported_id
+    if (typeof id !== 'string' || id === '') continue
+    if (seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  return out
+}
+
+/**
+ * 这一轮该往「已判」索引写哪几行（**纯函数**，不写盘；形状见契约 §2.2/§2.3）。
+ *
+ * 行集合 = 本轮冻结清单（`state.frozen_proposal_ids`，按它的顺序）
+ *          + `payload.accepted` 里不在清单里的 id（按 accepted 的顺序排在后面），
+ * 同一个 id 只出一行（首次出现的位置）。`verdict = accepted` ⇔ id ∈ `payload.accepted`。
+ *
+ * 为什么必须补上 `payload.accepted` 那一段：报告的 `accepted_proposal_ids` 直接取自它
+ * （`lib/snapshot.mjs::buildSnapshot`）—— 不补，"索引 = 报告的派生"就不是恒等式（V9）。
+ * 维护案的 `target_id` 是**快照条目 id**（`m-…`），不是池子 id ⇒ 一个都不记（记了会全变孤儿）。
+ */
+function judgedRowSpecsOf({ state, accepted, day, snapshot, at }) {
+  const acceptedIds = new Set(Array.isArray(accepted) ? accepted.filter((id) => typeof id === 'string' && id !== '') : [])
+  const frozen = Array.isArray(state?.frozen_proposal_ids) ? state.frozen_proposal_ids : []
+  const ids = uniqueIdsOf([...frozen, ...(Array.isArray(accepted) ? accepted : [])].map((id) => ({ imported_id: id })))
+  return ids.map((importedId) => ({
+    schema: PROP.JUDGED_SCHEMA,
+    imported_id: importedId,
+    day,
+    verdict: acceptedIds.has(importedId) ? 'accepted' : 'rejected',
+    snapshot,
+    generation: state.generation,
+    attempt: state.judge_attempt,
+    at,
+  }))
+}
+
+/**
+ * `judge-pending`：**机械算「池子 − 已判」**（T-MEM-07）—— "还有哪些候选没判过"一条命令能查。
+ *
+ * 只读（`writes: false`）：不写池子、不写索引、不推状态、**不落审计**。
+ * 语义与出参见契约 §3.3 / §3.4，四个边界是刻意写死的：
+ *   · **顺序 = 池子行的 `seq` 数值升序**（稳定：`seq` 相同就保持文件行序）；同一个 `imported_id`
+ *     只出一次，位置取**首次出现**那一行（去重在排序之后做 ⇒ 就是 `seq` 最小的那一次出现）。
+ *     这一次序**真排**，不拿"文件行序"顶替：池子**只由 `appendProposal` 写**时两者确实同序，
+ *     但**手改过的池子会让它们分叉**（契约 §3.3 亲口认这来历）—— 而"按文件行序出"的判据
+ *     只能从同一份文件的行序推期望值，那种判据**永远红不了 = 自证**。
+ *   · ⚠️ `seq` **可能是字符串**（老数据 / 手改的池子）：比较前一律过 `Number()`，绝不拿字符串比
+ *     （`'10' < '9'` 会为真，那样 10 会排到 9 前面）。
+ *   · ⚠️ **`seq` 缺失、或不是有限数的行不丢**：排在所有有效 `seq` **之后**，彼此保持文件行序。
+ *     两条理由：① 这个 op 的全部职责就是"把还没判过的一条不漏地说出来"，静默少一条等于谎报池子内容；
+ *     ② 契约 §3.5 的错误面里没有"某行 `seq` 坏"这一格（它只管"不是合法 JSON"），
+ *     在这里抛错等于让一个只读查询整体不可用 —— 而缺 `seq` 恰恰是手改最可能留下的形状。
+ *     放**末尾**而不放开头：那是"位置未知"的自然位置，也不会让它们冒充"最早的一批"挤到已知序号之前。
+ *   · **孤儿不静默**：索引里有、池子里没有的 id 进 `orphan_ids`（按索引行顺序去重）+ `orphan_count`，
+ *     照常 exit 0 —— 池子被换过 / 索引来自另一个根 / 有人手改，哪一种都要说出来，不许吞掉；
+ *   · **两个文件都不存在不是错误**（根上还没导入过任何候选）⇒ `pending_ids: []` / `count: 0`；
+ *   · 🔴 **输出里没有任何时钟字段** —— 同一份输入两次跑必须逐字节相同（V1 的稳定口径）。
+ * 坏行一律整体拒（`E_DATA_CORRUPT`），**不跳过坏行再算**。
+ */
+function opJudgePending({ root }) {
+  const pool = PROP.readPool(root)
+  if (!pool.ok) throw cliError(pool.code, pool.message, { path: pool.path })
+  const judged = PROP.readJudged(root)
+  if (!judged.ok) throw cliError(judged.code, judged.message, { path: judged.path })
+
+  // 一行的排序键 = `seq` 的**数值**（`'3'` 与 `3` 同键）；认不出的一律 `+∞`（排在末尾，不丢）。
+  const seqKeyOf = (record) => {
+    const raw = record?.seq
+    const num = typeof raw === 'number'
+      ? raw
+      : (typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : Number.NaN)
+    return Number.isFinite(num) ? num : Number.POSITIVE_INFINITY
+  }
+  // 稳定排序：键相同（含两个都认不出）就按原下标 ⇒ 保持文件行序。写死下标比较，
+  // 不依赖引擎 `sort` 的稳定性（换引擎、换形状都不会悄悄变次序）。
+  const orderedPoolEntries = pool.entries
+    .map((entry, index) => ({ entry, index, key: seqKeyOf(entry) }))
+    .sort((a, b) => (a.key === b.key ? a.index - b.index : a.key < b.key ? -1 : 1))
+    .map((decorated) => decorated.entry)
+  const poolIds = uniqueIdsOf(orderedPoolEntries)
+  const judgedIds = uniqueIdsOf(judged.rows)
+  const judgedSet = new Set(judgedIds)
+  const poolSet = new Set(poolIds)
+  const pendingIds = poolIds.filter((id) => !judgedSet.has(id))
+  const orphanIds = judgedIds.filter((id) => !poolSet.has(id))
+  return {
+    pending_ids: pendingIds,
+    count: pendingIds.length,
+    // `pool_count` / `judged_rows` 是**行数**，`judged_ids` 是**去重后的 id 数** —— 两者不许混着用。
+    pool_count: pool.entries.length,
+    judged_rows: judged.rows.length,
+    judged_ids: judgedIds.length,
+    orphan_ids: orphanIds,
+    orphan_count: orphanIds.length,
   }
 }
 
@@ -1189,6 +1306,7 @@ const OPS = {
   'snapshot-archive': opSnapshotArchive,
   'cs-confirm': opCsConfirm,
   'session-packet': opSessionPacket,
+  'judge-pending': opJudgePending,
 }
 
 function emit(envelope) {

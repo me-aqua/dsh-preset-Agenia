@@ -77,6 +77,26 @@ const readJson = (file) => {
   try { return JSON.parse(readFileSync(file, 'utf8')) } catch { return null }
 }
 
+/**
+ * 一个 JSONL 的"有没有被动过"三件套：**sha256 + 字节数 + 非空行数**（T-MEM-07 · V8）。
+ *
+ * 🔴 只比行数不够：追加一行再改另一行，行数照样对得上。三样一起钉，任一维度动了都翻面；
+ * 文件不存在时三样都 `null` + `exists:false`（"从来没有索引"与"索引被清空"必须分得开）。
+ */
+const fileFactsOf = (file) => {
+  try {
+    const buf = readFileSync(file)
+    return {
+      exists: true,
+      bytes: buf.length,
+      rows: buf.toString('utf8').split(/\r?\n/).filter((l) => l.trim() !== '').length,
+      sha256: sha256File(file),
+    }
+  } catch {
+    return { exists: false, bytes: null, rows: null, sha256: null }
+  }
+}
+
 const CALL = 'claim-update'
 const claimPayload = (over = {}) => ({ day: DAY, owner_project: 'harness', owner_session: 'session-a-0000', ...over })
 
@@ -416,6 +436,128 @@ describe('integration · store (STO)', () => {
       }
       rec.readings.redo_entry_ambiguity = {
         note: '"手动重做"的**调用形状**（我这里用"再 claim 一次 + redo:true"）提案没有逐字冻结 ⇒ 若实现另有正式入口，请回组长冻形状；断言只要求"generation 递增 + 旧 token 被拒"这两件可证的事。',
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // T-MEM-07 · V8「真事务才追加」—— 拒绝 ⇒ `judged.jsonl` 一行都不许多
+      //   定形：`.team/leader/2026-10-16/定形-T-MEM-07.md` · 契约：`.team/test/2026-10-16/契约-T-MEM-07.md` §2.4
+      //   为什么挂在本用例：STO-03 就是"旧 attempt / 旧 token / 迟到 / 旧候选一律拒"那一条（拒绝矩阵的家）。
+      //   🔴 **零追加断言不许空对空**：先造出一份**非空**索引，再逐条拒绝、逐次比三件套
+      //      （sha256 + 字节 + 行数）。空文件对空文件永远相等 —— 那是假绿。
+      // ═══════════════════════════════════════════════════════════════════════
+      const judgedFile = path.join(bp.root, 'proposals', 'judged.jsonl')
+      const redoEvidence = (verbatim, at) => ({
+        kind: 'quote',
+        verbatim,
+        source_session_id: 'session-c0dabefd-13fe-4380-abdf-1cc1e52ea89a',
+        occurred_at: at,
+      })
+      // ① 造非空索引：新一轮（redo）→ 冻 2 条候选 → judge-start → judge-commit（accepted 1 条）
+      const cV8 = runBrain(CALL, claimPayload({
+        owner_session: 'session-a-0000',
+        redo: true,
+        previous_attempt_id: 'attempt-0002',
+        boss_redo_evidence: redoEvidence('（夹具·T-MEM-07）重做一次，给 V8 造一份非空索引', '2026-10-14T13:10:00+08:00'),
+      }), { dataRoot: bp.root })
+      const genV8 = cV8.json?.generation ?? null
+      const attV8 = cV8.json?.attempt ?? null
+      const freezeV8 = genV8 === null ? null : runBrain('candidates-freeze', { generation: genV8, candidate_ids: ['c-0001', 'c-0002'] }, { dataRoot: bp.root })
+      const startV8 = attV8 === null ? null : runBrain('judge-start', { generation: genV8, attempt: attV8, token: 'tok-V8', job_id: 'job-memory-judge-V8' }, { dataRoot: bp.root })
+      const commitV8 = (genV8 === null || attV8 === null) ? null : runBrain('judge-commit', mkCommit({
+        generation: genV8, attempt: attV8, token: 'tok-V8',
+        base_snapshot: okB.json?.new_snapshot ?? 'v1',
+        entries_patch: [], accepted: ['c-0001'],
+      }), { dataRoot: bp.root })
+      const baseV8 = fileFactsOf(judgedFile)
+      rec.readings.v8_baseline = {
+        claim: cV8.exit_code, claim_code: cV8.json?.error?.code ?? null,
+        freeze: freezeV8?.exit_code ?? null, start: startV8?.exit_code ?? null,
+        commit: commitV8?.exit_code ?? null, commit_code: commitV8?.json?.error?.code ?? null,
+        generation: genV8, attempt: attV8, judged: baseV8,
+      }
+      if (!baseV8.exists || baseV8.rows === 0) {
+        push('V8-PRECONDITION', `拒绝矩阵跑之前必须先有一份**非空**的 \`judged.jsonl\`（否则"零追加"是空对空）：实得 ${JSON.stringify(baseV8)}；造索引那一轮 claim=${cV8.exit_code}/${cV8.json?.error?.code ?? '-'} freeze=${freezeV8?.exit_code ?? '-'} start=${startV8?.exit_code ?? '-'} commit=${commitV8?.exit_code ?? '-'}/${commitV8?.json?.error?.code ?? '-'} ⇒ **现在缺的是 opJudgeCommit 在事务成功之后那段追加**（契约 §2.3/§2.4）`)
+      } else {
+        /** 一次拒绝 = 一次 judge-commit + 前后三件套比对（`stage` 只给读数分栏，**不参与判定**）。 */
+        const matrix = {}
+        const runReject = (stage, label, over, want) => {
+          const before = fileFactsOf(judgedFile)
+          const res = runBrain('judge-commit', mkCommit(over), { dataRoot: bp.root })
+          const after = fileFactsOf(judgedFile)
+          matrix[`${stage} · ${label}`] = { want, exit_code: res.exit_code, code: res.json?.error?.code ?? null, before, after }
+          if (res.exit_code === 0) {
+            push('V8-ZERO-APPEND', `「${label}」必须被拒（${want}），实得 exit 0 —— 它成功了，所以这一格连"零追加"都判不了`)
+          } else if (res.json?.error?.code !== want) {
+            push('V8-ZERO-APPEND', `「${label}」的拒绝码应为 ${want}，实得 ${res.json?.error?.code ?? '(无码)'}`)
+          }
+          if (JSON.stringify(before) !== JSON.stringify(after)) {
+            push('V8-ZERO-APPEND', `「${label}」被拒（${res.json?.error?.code ?? 'exit≠0'}）之后 \`judged.jsonl\` 竟然变了：${JSON.stringify(before)} → ${JSON.stringify(after)} —— 拒绝必须**一行都不许追加**（sha256 / 字节数 / 行数三样都要同）`)
+          }
+        }
+        // ② 拒绝矩阵（一）：此刻 phase=awaiting_review_start ⇒ token / generation / attempt / phase 四条
+        const rejectsA = [
+          ['旧 token', { generation: genV8, attempt: attV8, token: 'tok-B' }, 'E_TXN_TOKEN'],
+          ['generation 不对', { generation: genV8 + 1, attempt: attV8, token: 'tok-V8' }, 'E_CAS_STALE'],
+          ['attempt 不对', { generation: genV8, attempt: attV8 + 1, token: 'tok-V8' }, 'E_TXN_TOKEN'],
+          ['phase 不在 judging', { generation: genV8, attempt: attV8, token: 'tok-V8' }, 'E_STATE_PHASE'],
+        ]
+        // 🔴 **次序是这里最要命的东西**（2026-10-16 返修）：`judge-commit` 的拒绝次序是**冻结**的 ——
+        //    token → generation/attempt → phase → 常识 → 快照 CAS ⇒ 前三道闸**只有拿着当前窗口那个 token
+        //    才够得着**。任何"先把窗口换掉、再回头跑前三条"的写法，都会让 generation/phase 那几条撞在
+        //    **第一道 token 闸**上（实测：`E_CAS_STALE` / `E_STATE_PHASE` 被读成 `E_TXN_TOKEN`）——
+        //    那不是被测对象的毛病，是**测试把前提拆了**。⇒ 窗口 1 的四条**跑完**，才许开窗口 2。
+        // ⚠️ 「phase 不在 judging」这一条**只能**在窗口 1 跑：窗口 2 开着的时候 phase 就是 `judging`，
+        //    换哪个 token 都造不出这一格。
+        for (const [label, over, want] of rejectsA) runReject('窗口1', label, over, want)
+        // ③ 拒绝矩阵（二）：再开一个 judging 窗口 ⇒ 常识 / 基准快照 CAS 那两条
+        //    （常识与 CAS 的检查排在 phase 之后，所以必须真的在 judging 里才够得着）
+        const cV8b = runBrain(CALL, claimPayload({
+          owner_session: 'session-a-0000',
+          redo: true,
+          previous_attempt_id: 'attempt-0003',
+          boss_redo_evidence: redoEvidence('（夹具·T-MEM-07）再重做一次，量常识与快照 CAS 那两条', '2026-10-14T13:20:00+08:00'),
+        }), { dataRoot: bp.root })
+        const genV8b = cV8b.json?.generation ?? null
+        const attV8b = cV8b.json?.attempt ?? null
+        const startV8b = attV8b === null ? null : runBrain('judge-start', { generation: genV8b, attempt: attV8b, token: 'tok-V8b', job_id: 'job-memory-judge-V8b' }, { dataRoot: bp.root })
+        const rejectsB = (genV8b === null || attV8b === null) ? [] : [
+          ['常识哈希对不上（未确认）', { generation: genV8b, attempt: attV8b, token: 'tok-V8b', common_sense_sha256: 'e'.repeat(64) }, 'E_CS_UNCONFIRMED'],
+          ['基准快照 CAS 过期', { generation: genV8b, attempt: attV8b, token: 'tok-V8b', base_snapshot: 'v0' }, 'E_CAS_STALE'],
+        ]
+        rec.readings.v8_window2 = {
+          claim: cV8b.exit_code, claim_code: cV8b.json?.error?.code ?? null,
+          start: startV8b?.exit_code ?? null, generation: genV8b, attempt: attV8b,
+        }
+        if (attV8b === null) {
+          push('V8-ZERO-APPEND', `第二个 judging 窗口开不起来（claim=${cV8b.exit_code}/${cV8b.json?.error?.code ?? '-'}）⇒ 常识 / 基准快照 CAS 那两条拒绝**判不了**（它们排在 phase 之后）`)
+        } else if (startV8b?.exit_code !== 0) {
+          push('V8-ZERO-APPEND', `第二个 judging 窗口的 judge-start 必须成功（否则"窗口 2 的当前 token 是 tok-V8b"这个前提不成立，后面两条读到的拒绝码不可信），实得 exit=${startV8b?.exit_code} / ${startV8b?.json?.error?.code ?? '(无码)'}`)
+        } else {
+          for (const [label, over, want] of rejectsB) runReject('窗口2', label, over, want)
+        }
+        rec.readings.v8_rejects = matrix
+        // ④ 阳性对照：同一个 judging 窗口里一次**合法**提交必须追加 ⇒ 证明"拒绝那几条没追加"不是"索引根本写不动"
+        const curList = runBrain('snapshot-list', {}, { dataRoot: bp.root })
+        const curVersion = curList.json?.current ?? null
+        const freezeV8b = (genV8b === null) ? null : runBrain('candidates-freeze', { generation: genV8b, candidate_ids: ['c-0003'] }, { dataRoot: bp.root })
+        const beforePos = fileFactsOf(judgedFile)
+        const posV8 = (attV8b === null || freezeV8b === null) ? null : runBrain('judge-commit', mkCommit({
+          generation: genV8b, attempt: attV8b, token: 'tok-V8b',
+          base_snapshot: curVersion ?? 'v0',
+          entries_patch: [], accepted: [],
+        }), { dataRoot: bp.root })
+        const afterPos = fileFactsOf(judgedFile)
+        rec.readings.v8_positive = {
+          freeze: freezeV8b?.exit_code ?? null,
+          exit_code: posV8?.exit_code ?? null,
+          code: posV8?.json?.error?.code ?? null,
+          before: beforePos, after: afterPos,
+        }
+        if (posV8 === null || posV8.exit_code !== 0) {
+          push('V8-ZERO-APPEND', `阳性对照：同一个 judging 窗口里一次**合法**提交必须成功（否则上面那六条"零追加"可能只是"命令坏了蒙对"），实得 exit=${posV8?.exit_code ?? '(没跑)'} / ${posV8?.json?.error?.code ?? '(无码)'}`)
+        } else if (!afterPos.exists || afterPos.rows !== beforePos.rows + 1) {
+          push('V8-ZERO-APPEND', `阳性对照：合法提交之后索引必须多 1 行（本轮冻了 1 条候选），实得 ${JSON.stringify(beforePos)} → ${JSON.stringify(afterPos)} —— 缺的是 opJudgeCommit 事务成功之后那段追加（拒绝时不许写、成功时必须写）`)
+        }
       }
 
       caseFail(problems)

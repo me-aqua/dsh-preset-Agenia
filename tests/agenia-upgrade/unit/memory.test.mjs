@@ -13,7 +13,7 @@
  */
 import { before, describe, test } from 'node:test'
 import { createHash } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { ENV, FROZEN } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, stagingReadings, writeJson } from '../support/evidence.mjs'
@@ -36,6 +36,86 @@ const writeTextFixture = (file, text) => {
   writeJson(path.join(path.dirname(file), '.keep.json'), { note: 'mkdir 占位' })
   writeFileSync(file, text, 'utf8')
   return file
+}
+
+/**
+ * 一个 JSONL 文件的"有没有被动过"三件套：**sha256 + 字节数 + 非空行数**。
+ *
+ * 🔴 为什么三样都要（T-MEM-07 · V6）：只比 sha256 的话，"没人去读那个文件"和"文件真的没变"
+ * 在读数上长得一模一样 —— 少一个维度就没法把"没变"证伪。三样一起钉，
+ * 任一维度动了都会当场翻面；文件不存在时三样都记 `null` + `exists:false`（不抛）。
+ */
+const fileFacts = (file) => {
+  let buf = null
+  try {
+    buf = readFileSync(file)
+  } catch {
+    return { exists: false, bytes: null, rows: null, sha256: null }
+  }
+  const text = buf.toString('utf8')
+  return {
+    exists: true,
+    bytes: buf.length,
+    rows: text.split(/\r?\n/).filter((l) => l.trim() !== '').length,
+    sha256: createHash('sha256').update(buf).digest('hex'),
+  }
+}
+
+/**
+ * 一个**目录**的"有没有被动过"三件套（V6 · 契约 §3.1 的"不推状态"）。
+ *
+ * 为什么不钉 `state/update/<day>.json` 那一个文件：那是**挑了一天**当靶子 ——
+ * 写到别的 day 里就逃过去了，而 `judge-pending` 连 day 都不收（契约 §3.2）。
+ * ⇒ 钉**整个目录**：名字 + 每个文件的字节数与 sha256 汇总成一个聚合 sha256，多一个文件、少一个文件、
+ * 任何一个字节变了，都会当场翻面。
+ */
+const dirFacts = (dir) => {
+  let names = []
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return { exists: false, entries: 0, bytes: null, sha256: null }
+  }
+  const sorted = [...names].sort()
+  const parts = sorted.map((name) => {
+    const file = path.join(dir, name)
+    let buf = null
+    try {
+      buf = readFileSync(file)
+    } catch {
+      return `${name}:unreadable`
+    }
+    return `${name}:${buf.length}:${createHash('sha256').update(buf).digest('hex')}`
+  })
+  return {
+    exists: true,
+    entries: sorted.length,
+    bytes: parts.join('\n').length,
+    sha256: createHash('sha256').update(parts.join('\n')).digest('hex'),
+  }
+}
+
+/** 读一个 JSONL；坏行**不跳过**（如实报第几行坏），文件不在算"空"（合法态：还没写过）。 */
+const readJsonl = (file) => {
+  let text = null
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch (err) {
+    return { exists: err?.code !== 'ENOENT', rows: [], bad: err?.code === 'ENOENT' ? [] : [{ line: 0, message: String(err?.code ?? err) }] }
+  }
+  const rows = []
+  const bad = []
+  const lines = text.split(/\r?\n/)
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim()
+    if (line === '') continue
+    try {
+      rows.push(JSON.parse(line))
+    } catch (err) {
+      bad.push({ line: i + 1, message: String(err?.message).slice(0, 120) })
+    }
+  }
+  return { exists: true, rows, bad }
 }
 
 const DAY = '2026-10-14'
@@ -713,6 +793,651 @@ describe('unit · memory (MEM)', () => {
       if (res2.exit_code === 0) {
         push('MEM11-TAMPER', '内容改了却用同一个 sha256 导入竟然成功 —— 内容 SHA 必须真的校验（组长不得修改原文）')
       }
+      // ═══════════════════════════════════════════════════════════════════════
+      // T-MEM-07「候选池的『已判』索引」—— V1–V6 + V9
+      //   定形：`.team/leader/2026-10-16/定形-T-MEM-07.md` · 契约：`.team/test/2026-10-16/契约-T-MEM-07.md`
+      //   · 为什么挂在本用例：注册表 `TOTAL === 55` 是**冻结契约**（不许加新用例 ID —— 加了会跑到分母之外），
+      //     所以新判据并进最贴的那一条。先例：会话包 → REV-01 · data-root 判定 → DR-01。
+      //   · 本块用**自己的脑根**（`init` 只许空根，复用上面那个会撞 `E_DATA_EXISTS`）。
+      //   · 本块此刻应当是**红的**：`judge-pending` 这个 op 与 `judged.jsonl` 都还没实现。
+      //     每一条红都点名"现在缺的是哪一样"，**不许 skip**。
+      // ═══════════════════════════════════════════════════════════════════════
+      const jbp = caseBrainRoot('MEM-11', 'judged')
+      const jInit = runBrain('init', {}, { dataRoot: jbp.root })
+      if (jInit.exit_code !== 0) {
+        push('V1-DIFF', `「已判索引」那一路的独立脑根 init 必须成功（V1–V6/V9 的读数全押在它上面），实得 exit=${jInit.exit_code} / ${jInit.json?.error?.code ?? '(无码)'}`)
+        caseFail(problems)
+      }
+      const jCs = jInit.json?.common_sense_sha256 ?? 'a'.repeat(64)
+      const helpRes = runBrain('help', {}, { dataRoot: jbp.root })
+      const helpOps = Array.isArray(helpRes.json?.ops) ? helpRes.json.ops : null
+      const opPresent = helpOps !== null && helpOps.includes('judge-pending')
+      const missingOpNote = opPresent
+        ? ''
+        : '【现在缺的是 `judge-pending` **这个 op 本身**：`--op help` 的 ops 里没有它（`bin/agenia-brain.mjs` 的 OP_NAMES / OPS 分派与 `lib/cli-inventory.mjs` 三处都还没有）】'
+      const rp = (rec.readings.judge_pending = {
+        root: jbp.root,
+        op_present: opPresent,
+        help_exit: helpRes.exit_code,
+        help_ops_count: helpOps === null ? null : helpOps.length,
+        runs: {},
+      })
+
+      const mkEntry = (n, text) => ({
+        id: `m-${String(n).padStart(8, '0')}`,
+        type: 'general',
+        text,
+        raw: 0.5,
+        imp_share: 1,
+        fresh_share: 1,
+        double_low_streak: 0,
+        is_double_low: false,
+        last_evidence_review: '2026-10-14',
+        known_from: 'fixture@T-MEM-07',
+        created_at: '2026-10-14T00:00:00+08:00',
+        type_changed_at: null,
+      })
+      // 导入一条候选（`bp` 是哪一个脑根就导到哪一个 —— K1/K2/K4 各有自己的根，互不串味）。
+      const importCandInto = (bp, n, text, tag = '') => runBrain('proposal-import', {
+        source: `dev/2026-10-14/T-MEM-07-${tag}候选-${n}.json`,
+        sha256: String(n).repeat(64),
+        base_snapshot: 'v0', update_generation: 1, review_attempt: 1,
+        payload: { entry: mkEntry(n, text) },
+      }, { dataRoot: bp.root })
+      const importCand = (n, text) => importCandInto(jbp, n, text)
+      const idsOfPool = () => {
+        const pool = readJsonl(jbp.poolFile)
+        return { pool, ids: pool.rows.map((r) => r?.imported_id) }
+      }
+      /**
+       * 跑一次 `judge-pending` 并把"这一次有没有动盘"记下来（V6 就钉在这里）。
+       * 只读 op 的判据**不是**"它说自己只读"，而是**跑前跑后四样的读数**：
+       * `pool.jsonl` / `judged.jsonl`（sha256 + 字节 + 非空行数）· `audit.jsonl`（同三样）·
+       * `state/update/` 整个目录（名字 + 逐文件 sha256 的聚合）。
+       * 🔴 后两样是 2026-10-16 补的（评审 B2）：契约 §3.1 的 `writes:false` 含"不推状态、不落审计"，
+       *    原来只钉了两个 jsonl ⇒ 顺手写一条 audit / 推一次状态，V6 照样绿。
+       * @param {string} label 这一次的记忆名（读数与红报文里点名它）
+       * @param {object} [opts] `{ bp }` —— 换一个脑根跑（K1/K2/K4 各有自己的根）
+       */
+      const pendingRunOn = (bp, label) => {
+        const facts = () => ({
+          pool: fileFacts(bp.poolFile),
+          judged: fileFacts(bp.judgedFile),
+          audit: fileFacts(bp.auditFile),
+          updateDir: dirFacts(bp.updateDir),
+        })
+        const before = facts()
+        const res = runBrain('judge-pending', {}, { dataRoot: bp.root })
+        const after = facts()
+        const row = {
+          root: bp.root,
+          exit_code: res.exit_code,
+          code: res.json?.error?.code ?? null,
+          count: res.json?.count ?? null,
+          pending_ids: res.json?.pending_ids ?? null,
+          pool_count: res.json?.pool_count ?? null,
+          judged_rows: res.json?.judged_rows ?? null,
+          judged_ids: res.json?.judged_ids ?? null,
+          orphan_ids: res.json?.orphan_ids ?? null,
+          orphan_count: res.json?.orphan_count ?? null,
+          stdout: res.stdout,
+          before,
+          after,
+          pool_moved: JSON.stringify(before.pool) !== JSON.stringify(after.pool),
+          judged_moved: JSON.stringify(before.judged) !== JSON.stringify(after.judged),
+          audit_moved: JSON.stringify(before.audit) !== JSON.stringify(after.audit),
+          state_moved: JSON.stringify(before.updateDir) !== JSON.stringify(after.updateDir),
+        }
+        rp.runs[label] = row
+        if (row.pool_moved) {
+          push('V6-POOL-UNCHANGED', `跑完 judge-pending「${label}」之后 \`pool.jsonl\` 变了：${JSON.stringify(before.pool)} → ${JSON.stringify(after.pool)} —— 只读 op 不许动池子（sha256 / 字节数 / 行数三样都要同）`)
+        }
+        if (row.judged_moved) {
+          push('V6-JUDGED-UNCHANGED', `跑完 judge-pending「${label}」之后 \`judged.jsonl\` 变了：${JSON.stringify(before.judged)} → ${JSON.stringify(after.judged)} —— 只读 op 不许动索引`)
+        }
+        if (row.audit_moved) {
+          push('V6-AUDIT-UNCHANGED', `跑完 judge-pending「${label}」之后 \`audit.jsonl\` 变了：${JSON.stringify(before.audit)} → ${JSON.stringify(after.audit)} —— 契约 §3.1 的 \`writes:false\` 含"不落审计"，只读 op 一条都不许写`)
+        }
+        if (row.state_moved) {
+          push('V6-STATE-UNCHANGED', `跑完 judge-pending「${label}」之后 \`state/update/\` 这个目录变了：${JSON.stringify(before.updateDir)} → ${JSON.stringify(after.updateDir)} —— 契约 §3.1 的 \`writes:false\` 含"不推状态"，只读 op 一个字节都不许推`)
+        }
+        return row
+      }
+      const pendingRun = (label, opts = {}) => pendingRunOn(opts.bp ?? jbp, label)
+
+      // ═══ 契约 §3.3 最后一格：**两个文件都不存在**是合法空态（评审 K5）═══
+      //   病根：原来第一次 `judge-pending` 排在三次导入**之后** ⇒ "根上什么都没有"这个真实开局
+      //   在整个套件里从没被调用过 ⇒ 那一格没有任何能红的断言。
+      //   现在它在 `init` 之后、第一次导入之前跑 —— 此刻 `proposals/` 里一个文件都没有。
+      const r0 = pendingRun('v0_empty')
+      rp.empty_state = { exit_code: r0.exit_code, code: r0.code, pending_ids: r0.pending_ids, count: r0.count, pool_count: r0.pool_count, judged_rows: r0.judged_rows, judged_ids: r0.judged_ids, orphan_count: r0.orphan_count }
+      if (r0.exit_code !== 0) {
+        push('JP-EMPTY', `池子与索引**都不存在**是合法空态（契约 §3.3 最后一格），必须 exit 0，实得 exit=${r0.exit_code} / ${r0.code ?? '(无码)'}${missingOpNote}`)
+      } else {
+        if (!Array.isArray(r0.pending_ids) || r0.pending_ids.length !== 0) {
+          push('JP-EMPTY', `池子与索引都不存在时 \`pending_ids\` 必须是空数组（根上还没导入过任何候选），实得 ${JSON.stringify(r0.pending_ids)}`)
+        }
+        if (r0.count !== 0) push('JP-EMPTY', `空态 \`count\` 必须是 0，实得 ${JSON.stringify(r0.count)}`)
+        if (r0.pool_count !== 0) push('JP-EMPTY', `空态 \`pool_count\` 必须是 0（池子文件不存在 ⇒ 0 行），实得 ${JSON.stringify(r0.pool_count)}`)
+        if (r0.judged_rows !== 0) push('JP-EMPTY', `空态 \`judged_rows\` 必须是 0（索引文件不存在 ⇒ 0 行），实得 ${JSON.stringify(r0.judged_rows)}`)
+        if (r0.judged_ids !== 0) push('JP-EMPTY', `空态 \`judged_ids\` 必须是 0，实得 ${JSON.stringify(r0.judged_ids)}`)
+      }
+
+      // ── 输入：三条候选入池（池子的 seq 顺序 = 导入顺序，V1 的"稳定顺序"就按它）──
+      const imp1 = importCand(1, '（夹具·T-MEM-07）候选一')
+      const imp2 = importCand(2, '（夹具·T-MEM-07）候选二')
+      const imp3 = importCand(3, '（夹具·T-MEM-07）候选三')
+      const pool0 = idsOfPool()
+      const DAY_J = imp1.json?.day ?? null
+      rp.pool_ids = pool0.ids
+      rp.day = DAY_J
+      if (pool0.ids.length !== 3 || pool0.pool.bad.length > 0 || typeof DAY_J !== 'string') {
+        push('V1-DIFF', `池子里必须正好 3 条候选（V1 的输入），实得 ${JSON.stringify(pool0.ids)}；三次导入退出码=${[imp1, imp2, imp3].map((r) => r.exit_code).join('/')} 码=${[imp1, imp2, imp3].map((r) => r.json?.error?.code ?? '-').join('/')} · day=${JSON.stringify(DAY_J)}`)
+        caseFail(problems)
+      }
+      const [cA, cB, cC] = pool0.ids
+
+      // ── V1 差集算得对 + 顺序稳定（此刻 judged 一行都没有 ⇒ 差集 = 池子本身）──
+      const r1 = pendingRun('v1_first')
+      const r2 = pendingRun('v1_second')
+      if (r1.exit_code !== 0) {
+        push('V1-DIFF', `judge-pending 必须能在"池子 3 条 / 索引一行都没有"的根上成功（正例），实得 exit=${r1.exit_code} / ${r1.code ?? '(无码)'}${missingOpNote}`)
+      } else {
+        if (JSON.stringify(r1.pending_ids) !== JSON.stringify(pool0.ids)) {
+          push('V1-DIFF', `pending_ids 必须 = 池子 − 已判 = ${JSON.stringify(pool0.ids)}（按池子 seq 顺序），实得 ${JSON.stringify(r1.pending_ids)}`)
+        }
+        if (r1.count !== (r1.pending_ids ?? []).length) {
+          push('V1-DIFF', `count=${JSON.stringify(r1.count)} 与 pending_ids.length=${(r1.pending_ids ?? []).length} 对不上 —— 两个名字必须担同一个意思`)
+        }
+        if (r1.pool_count !== pool0.ids.length) {
+          push('V1-DIFF', `pool_count=${JSON.stringify(r1.pool_count)} 与池子行数 ${pool0.ids.length} 对不上`)
+        }
+        if (r1.judged_rows !== 0) {
+          push('V1-DIFF', `索引还一行都没写过，judged_rows 应为 0，实得 ${JSON.stringify(r1.judged_rows)}`)
+        }
+      }
+      if (r1.exit_code === 0 && r2.exit_code === 0 && r1.stdout !== r2.stdout) {
+        push('V1-STABLE', `同一份输入跑两次，输出必须**逐字节相同**；实得两次 stdout 不同：${JSON.stringify(r1.stdout).slice(0, 240)} vs ${JSON.stringify(r2.stdout).slice(0, 240)}（⇒ 输出里不许有时钟字段，如 at / now / generated_at）`)
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // V1「顺序 = 池子行的 `seq` 升序」—— K1：**一份「文件行序 ≠ seq 序」的池子**（2026-10-16 返修）
+      //
+      // 🔴 病根（评审报告 K1）：上面那一格的期望值 `pool0.ids` 是**读池子文件的行序**得来的，
+      //    而实现也是按文件行序出 ⇒ 两边取自同一个来源 ⇒ **它不可能红**。
+      //    而且那批 id 是零填充的 `…-0001…0003` ⇒ 字典序 == 数值序 == 文件序，
+      //    "改成字典序就翻红"这句承诺根本不成立。
+      //
+      // ⇒ 这一格的**期望值只从两处来，一处都不是"那份池子文件的行序"**：
+      //    ① 导入命令**返回**的 `imported_id`（另一个来源）；
+      //    ② **我这里手工指定**的 `seq` 值（写下去的就是我定的，不是从文件里读回来的）。
+      // ⇒ 池子是**手改过的**（契约 §3.3 亲口承认这是真实来历之一）：合法 JSON、`imported_id` 都在，
+      //    但**文件行序 ≠ seq 序**。
+      // ═══════════════════════════════════════════════════════════════════════
+      const k1 = caseBrainRoot('MEM-11', 'seq-order')
+      const k1Init = runBrain('init', {}, { dataRoot: k1.root })
+      if (k1Init.exit_code !== 0) {
+        push('V1-SEQ-ORDER', `「顺序按 seq」这一格的独立脑根 init 必须成功，实得 exit=${k1Init.exit_code} / ${k1Init.json?.error?.code ?? '(无码)'}`)
+      } else {
+        const k1Imports = [1, 2, 3].map((n) => importCandInto(k1, n, `（夹具·T-MEM-07·seq）候选${n}`, 'seq-'))
+        const k1Ids = k1Imports.map((r) => r.json?.imported_id ?? null)
+        const k1RowsById = new Map(readJsonl(k1.poolFile).rows.map((r) => [r?.imported_id, r])) // 只用来取"那三行原文"
+        const [idA, idB, idC] = k1Ids
+        const k1Ready = k1Ids.every((id) => typeof id === 'string') && k1Ids.every((id) => k1RowsById.has(id))
+        rp.seq_order = {
+          ids_from_import: k1Ids,
+          imports_exit: k1Imports.map((r) => r.exit_code),
+          note: '期望值取自"导入命令返回的 imported_id" + "我手工写下去的 seq 值" —— 两处都不是池子文件的行序。',
+        }
+        if (!k1Ready) {
+          push('V1-SEQ-ORDER', `前置：三条候选必须导进 seq-order 根，实得 imported_id=${JSON.stringify(k1Ids)}（退出码 ${k1Imports.map((r) => r.exit_code).join('/')}，码 ${k1Imports.map((r) => r.json?.error?.code ?? '-').join('/')}）${missingOpNote}`)
+        } else {
+          // 文件行序固定为 **B、C、A**；`seq` 值由我指定（不读文件里的值）
+          const k1FileOrder = [idB, idC, idA]
+          const writeK1Pool = (seqOf) => writeFileSync(
+            k1.poolFile,
+            `${k1FileOrder.map((id) => JSON.stringify({ ...k1RowsById.get(id), seq: seqOf[id] })).join('\n')}\n`,
+            'utf8',
+          )
+          const bySeq = (seqOf) => [...k1Ids].sort((x, y) => seqOf[x] - seqOf[y])
+
+          // ① 第一版 seq：A→2 · B→3 · C→1 ⇒ 按 seq 升序应是 [C, A, B]（**与文件行序 B,C,A 不同**）
+          const seq1 = { [idA]: 2, [idB]: 3, [idC]: 1 }
+          writeK1Pool(seq1)
+          const want1 = bySeq(seq1)
+          const k1r1 = pendingRun('k1_file_order_ne_seq_order', { bp: k1 })
+          rp.seq_order.run1 = { file_order: k1FileOrder, seq: seq1, want_by_seq: want1, got: k1r1.pending_ids, exit_code: k1r1.exit_code, code: k1r1.code }
+          if (k1r1.exit_code !== 0) {
+            push('V1-SEQ-ORDER', `手改过的池子（合法 JSON、imported_id 都在）上 \`judge-pending\` 必须照常成功，实得 exit=${k1r1.exit_code} / ${k1r1.code ?? '(无码)'}${missingOpNote}`)
+          } else {
+            if (k1r1.pool_count !== 3) {
+              push('V1-SEQ-ORDER', `夹具：手改过的池子必须仍是 3 条，实得 pool_count=${JSON.stringify(k1r1.pool_count)}`)
+            }
+            if (JSON.stringify(k1FileOrder) === JSON.stringify(want1)) {
+              push('V1-SEQ-ORDER', `夹具失效：这一版 seq 赋值让"文件行序"与"seq 序"恰好相同（${JSON.stringify(want1)}）⇒ 这一格又变成自证，必须重排——不是通过`)
+            }
+            if (JSON.stringify(k1r1.pending_ids) !== JSON.stringify(want1)) {
+              push('V1-SEQ-ORDER', `\`pending_ids\` 必须按池子行的 **\`seq\` 数值升序** = ${JSON.stringify(want1)}（seq=${JSON.stringify(seq1)}；文件行序是 ${JSON.stringify(k1FileOrder)}），实得 ${JSON.stringify(k1r1.pending_ids)} —— 现在缺的是"按 \`seq\` 排序"这一半：实现直接按**文件行序**出（池子被手改过时两个答案会分叉，而契约 §3.3 亲口承认池子会被手改）`)
+            }
+          }
+
+          // ② **翻面实测（写在套件里）**：文件行序一个字不动，只把 seq 重新分配（→ A→1 · B→2 · C→3）。
+          //    输出必须跟着 seq 变。若两次输出逐字相同 ⇒ 排序根本没看 seq（这也是一条真判据）。
+          const seq2 = { [idA]: 1, [idB]: 2, [idC]: 3 }
+          writeK1Pool(seq2)
+          const want2 = bySeq(seq2)
+          const k1r2 = pendingRun('k1_same_file_order_other_seq', { bp: k1 })
+          rp.seq_order.run2 = { file_order: k1FileOrder, seq: seq2, want_by_seq: want2, got: k1r2.pending_ids, exit_code: k1r2.exit_code, code: k1r2.code }
+          if (k1r2.exit_code !== 0) {
+            push('V1-SEQ-ORDER', `第二次（同一份文件行序、另一套 seq）\`judge-pending\` 必须成功，实得 exit=${k1r2.exit_code} / ${k1r2.code ?? '(无码)'}${missingOpNote}`)
+          } else if (JSON.stringify(k1r2.pending_ids) !== JSON.stringify(want2)) {
+            push('V1-SEQ-ORDER', `只把 \`seq\` 重新分配之后，\`pending_ids\` 必须跟着变成 ${JSON.stringify(want2)}（seq=${JSON.stringify(seq2)}），实得 ${JSON.stringify(k1r2.pending_ids)}`)
+          }
+          if (k1r1.exit_code === 0 && k1r2.exit_code === 0 && JSON.stringify(k1r1.pending_ids) === JSON.stringify(k1r2.pending_ids)) {
+            push('V1-SEQ-ORDER', `**同一份文件行序**、只把 \`seq\` 重新分配（${JSON.stringify(seq1)} → ${JSON.stringify(seq2)}），两次输出却逐字相同（${JSON.stringify(k1r1.pending_ids)}）⇒ 排序根本没看 \`seq\`：缺的就是"按 \`seq\` 数值升序"这一半`)
+          }
+        }
+      }
+
+      // ── V2 判一条 ⇒ 少一条（索引只在真事务成功之后长出来）──
+      const claim1 = runBrain('claim-update', { day: DAY_J, owner_project: 'harness', owner_session: 'session-tmem07-a' }, { dataRoot: jbp.root })
+      const gen1 = claim1.json?.generation ?? 1
+      const att1 = claim1.json?.attempt ?? 1
+      const freeze1 = runBrain('candidates-freeze', { generation: gen1, candidate_ids: [cA, cB] }, { dataRoot: jbp.root })
+      const start1 = runBrain('judge-start', { generation: gen1, attempt: att1, token: 'tok-j1', job_id: 'job-memory-judge-tmem07-1' }, { dataRoot: jbp.root })
+      const commit1 = runBrain('judge-commit', {
+        generation: gen1, attempt: att1, token: 'tok-j1', base_snapshot: 'v0',
+        entries_patch: [{ kind: 'add', entry: mkEntry(1, '（夹具·T-MEM-07）第 1 轮判决写进去的一条记忆') }],
+        accepted: [cA], maintenance_decisions: [], common_sense_sha256: jCs, report: {},
+      }, { dataRoot: jbp.root })
+      rp.round1 = {
+        claim: claim1.exit_code, freeze: freeze1.exit_code, start: start1.exit_code,
+        commit: commit1.exit_code, commit_code: commit1.json?.error?.code ?? null,
+        new_snapshot: commit1.json?.new_snapshot ?? null,
+        accepted: [cA], frozen: [cA, cB],
+      }
+      const judgedAfter1 = readJsonl(jbp.judgedFile)
+      rp.judged_after_round1 = judgedAfter1
+      if (commit1.exit_code !== 0) {
+        push('V2-SHRINK', `第 1 轮 judge-commit 必须成功（V2 的前置：索引只在**真事务成功之后**才追加），实得 exit=${commit1.exit_code} / ${commit1.json?.error?.code ?? '(无码)'}（claim=${claim1.exit_code} freeze=${freeze1.exit_code} start=${start1.exit_code}）`)
+      } else {
+        const got = judgedAfter1.rows.map((r) => `${r?.imported_id}:${r?.verdict}`)
+        const want = [`${cA}:accepted`, `${cB}:rejected`]
+        if (judgedAfter1.rows.length !== 2) {
+          push('V2-SHRINK', `本轮冻了 2 条候选（${JSON.stringify([cA, cB])}）⇒ \`judged.jsonl\` 必须多 2 行 ${JSON.stringify(want)}，实得 ${judgedAfter1.rows.length} 行 ${JSON.stringify(got)}${missingOpNote}`)
+        } else if (JSON.stringify(got) !== JSON.stringify(want)) {
+          push('V2-SHRINK', `两条候选的判决行应为 ${JSON.stringify(want)}（按冻结顺序；accepted 记 accepted、其余记 rejected），实得 ${JSON.stringify(got)}`)
+        }
+        if (judgedAfter1.bad.length > 0) {
+          push('V2-SHRINK', `\`judged.jsonl\` 有坏行（${JSON.stringify(judgedAfter1.bad)}）—— 索引必须每行都是合法 JSON`)
+        }
+      }
+      const r3 = pendingRun('v2_after_commit1')
+      if (r3.exit_code !== 0) {
+        push('V2-SHRINK', `判完之后再查 pending 必须成功，实得 exit=${r3.exit_code} / ${r3.code ?? '(无码)'}${missingOpNote}`)
+      } else if (JSON.stringify(r3.pending_ids) !== JSON.stringify([cC])) {
+        push('V2-SHRINK', `判掉 ${JSON.stringify([cA, cB])} 之后 pending 应只剩 ${JSON.stringify([cC])}，实得 ${JSON.stringify(r3.pending_ids)}`)
+      }
+
+      /**
+       * V9：**从报告重建**（索引是派生的，不是独立真相）。
+       *
+       * 口径写死：取 `state/update/<day>.json` 的 `(generation, judge_attempt)` = 当前那一轮，
+       * 把 `judged.jsonl` 里同 day + 同 generation + 同 attempt 的行分两组对账：
+       *   · `accepted` 组 必须 **等于** 报告里的 `accepted_proposal_ids`（双向，去重后比）；
+       *   · 全部行       必须 **等于** 该轮冻结清单 ∪ 报告 accepted（双向）。
+       * ⇒ 报告 + 冻结清单 = 索引的全部真相；索引不许自带额外真相。
+       * ⚠️ 同一天 redo 两次时，报告只保留**最后一轮**的 accepted（`reportOf` 是当前快照的投影）
+       *    ⇒ 所以口径按"当前那一轮"取，不是"这一天所有轮次"。
+       *
+       * 🔴 **行形状要钉"值"，不是"字段在"**（评审 K3）：只查 `Object.hasOwn` 的话，
+       *    `schema` / `snapshot` / `at` / `seq` 四个值填什么都绿（`snapshot` 更是完全没人查）。
+       *    四个值的期望来源都**不是**这几行本身：
+       *      · `schema`   = 契约 §2.2 写死的 `1`；
+       *      · `snapshot` = **状态文件**里的 `new_snapshot`（L736 那一格），不是从行里读回来的；
+       *      · `seq`      = 契约 §2.1「从 1 起、跨文件连续」⇒ 整份文件的第 i 行必须是 i；
+       *      · `at`       = 能 `Date.parse` 且带时区（`Z` 或 `±hh:mm`）。
+       *
+       * @param {string} label 这一轮的读数目（红报文里点名它）
+       * @param {object} [opts] `{ bp, day, snapshot }` —— 换一个脑根/一天来查（K2 用）
+       */
+      const checkV9 = (label, opts = {}) => {
+        const target = opts.bp ?? jbp
+        const day = opts.day ?? DAY_J
+        const stateFile = target.updateState(day)
+        const stateText = readSafe(stateFile)
+        if (stateText === null) {
+          push('V9-REBUILD', `「${label}」：\`${stateFile}\` 读不到 ⇒ 重建无从谈起`)
+          return
+        }
+        let st = null
+        try {
+          st = JSON.parse(stateText)
+        } catch (err) {
+          push('V9-REBUILD', `「${label}」：状态文件不是合法 JSON（${String(err?.message).slice(0, 120)}）`)
+          return
+        }
+        const reportRes = runBrain('report-read', {}, { dataRoot: target.root })
+        const judged = readJsonl(target.judgedFile)
+        const rows = judged.rows.filter((r) => r?.day === day && r?.generation === st.generation && r?.attempt === st.judge_attempt)
+        const accepted = rows.filter((r) => r?.verdict === 'accepted').map((r) => r?.imported_id)
+        const all = rows.map((r) => r?.imported_id)
+        const reportAccepted = reportRes.json?.report?.accepted_proposal_ids ?? null
+        // `snapshot` 的期望值 = **状态文件**里的那一格（另一个来源），不是从判决行里读回来的
+        const wantSnapshot = st.new_snapshot ?? null
+        rp[`v9_${label}`] = {
+          generation: st.generation, attempt: st.judge_attempt, frozen: st.frozen_proposal_ids,
+          rows: rows.length, accepted, all, report_accepted: reportAccepted,
+          report_derived: reportRes.json?.derived ?? null,
+          state_new_snapshot: wantSnapshot,
+        }
+        if (typeof opts.snapshot === 'string' && opts.snapshot !== wantSnapshot) {
+          push('V9-ROW-SHAPE', `「${label}」：夹具不一致 —— \`judge-commit\` 返回的 new_snapshot=${opts.snapshot}，而状态文件里的 new_snapshot=${JSON.stringify(wantSnapshot)}（两个来源必须同值）`)
+        }
+        if (rows.length === 0) {
+          push('V9-REBUILD', `「${label}」：\`judged.jsonl\` 里没有第 ${st.generation} 轮 / attempt ${st.judge_attempt} 的任何行 ⇒ 索引根本没落（缺的是 opJudgeCommit 事务成功之后那段追加）${missingOpNote}`)
+        }
+        if (reportRes.exit_code !== 0) {
+          push('V9-REBUILD', `「${label}」：report-read 必须成功（V9 拿报告当基准），实得 exit=${reportRes.exit_code} / ${reportRes.json?.error?.code ?? '(无码)'}`)
+          return
+        }
+        if (!Array.isArray(reportAccepted)) {
+          push('V9-REBUILD', `「${label}」：报告里必须有 accepted_proposal_ids 数组，实得 ${JSON.stringify(reportAccepted)}`)
+          return
+        }
+        if (reportRes.json?.derived === true) {
+          push('V9-DERIVED', `「${label}」：报告是从当前快照现算的（derived=true）—— judge-commit 必须把报告**真的落盘**，否则"从报告重建"没有独立输入`)
+        }
+        const shapeProblems = []
+        for (const row of rows) {
+          for (const key of ['schema', 'imported_id', 'day', 'verdict', 'snapshot', 'generation', 'attempt', 'at', 'seq']) {
+            if (!Object.hasOwn(row ?? {}, key)) shapeProblems.push(`${row?.imported_id ?? '(无 id)'} 缺字段 ${key}`)
+          }
+          if (!['accepted', 'rejected'].includes(row?.verdict)) shapeProblems.push(`${row?.imported_id} 的 verdict=${JSON.stringify(row?.verdict)} 不在 accepted/rejected 里`)
+          // ── 以下是"值"的断言（K3：只查"字段在"是假绿）──
+          if (row?.schema !== 1) shapeProblems.push(`${row?.imported_id} 的 schema=${JSON.stringify(row?.schema)}，契约 §2.2 写死是 1`)
+          if (wantSnapshot === null) {
+            shapeProblems.push(`状态文件里没有 new_snapshot ⇒ "snapshot 该等于这一轮产出的新版本"这一格判不了（这一轮事务没成功？）`)
+          } else if (row?.snapshot !== wantSnapshot) {
+            shapeProblems.push(`${row?.imported_id} 的 snapshot=${JSON.stringify(row?.snapshot)}，必须等于这一轮事务产出的 new_snapshot=${JSON.stringify(wantSnapshot)}`)
+          }
+          if (!Number.isInteger(row?.seq) || row.seq < 1) shapeProblems.push(`${row?.imported_id} 的 seq=${JSON.stringify(row?.seq)}，契约 §2.1 要求 ≥1 的整数`)
+          if (typeof row?.at !== 'string' || !Number.isFinite(Date.parse(row.at)) || !/(Z|[+-]\d{2}:\d{2})$/.test(row.at)) {
+            shapeProblems.push(`${row?.imported_id} 的 at=${JSON.stringify(row?.at)}，必须是能 \`Date.parse\` 且**带时区**（Z 或 ±hh:mm）的 ISO8601`)
+          }
+        }
+        // `seq` 的口径是**跨文件**的：第 i 个非空行的 seq 必须是 i（契约 §2.1「从 1 起、跨文件连续」）
+        for (let i = 0; i < judged.rows.length; i += 1) {
+          if (judged.rows[i]?.seq !== i + 1) {
+            shapeProblems.push(`\`judged.jsonl\` 第 ${i + 1} 个非空行的 seq=${JSON.stringify(judged.rows[i]?.seq)}，契约 §2.1 要求从 1 起跨文件连续（这里应为 ${i + 1}）`)
+            break
+          }
+        }
+        if (shapeProblems.length > 0) {
+          push('V9-ROW-SHAPE', `「${label}」：判决行的形状不合契约 —— ${shapeProblems.slice(0, 6).join('；')}`)
+        }
+        const setOf = (arr) => [...new Set(arr)].sort()
+        const wantAll = setOf([...(st.frozen_proposal_ids ?? []), ...reportAccepted])
+        if (setOf(all).join('\n') !== wantAll.join('\n')) {
+          push('V9-REBUILD', `「${label}」：本轮行集合应 = 冻结清单 ∪ 报告 accepted = ${JSON.stringify(wantAll)}，实得 ${JSON.stringify(setOf(all))}`)
+        }
+        if (setOf(accepted).join('\n') !== setOf(reportAccepted).join('\n')) {
+          push('V9-REBUILD', `「${label}」：accepted 行集合应 **等于** 报告 accepted_proposal_ids = ${JSON.stringify(setOf(reportAccepted))}，实得 ${JSON.stringify(setOf(accepted))} —— 索引是报告的派生，不许自带额外真相`)
+        }
+      }
+      checkV9('round1', { snapshot: commit1.json?.new_snapshot })
+
+      // ── V3 提一条 ⇒ 多一条（反翻面）──
+      const imp4 = importCand(4, '（夹具·T-MEM-07）候选四')
+      const pool1 = idsOfPool()
+      const cD = pool1.ids[3] ?? null
+      rp.pool_ids_after_import4 = pool1.ids
+      const r4 = pendingRun('v3_after_import4')
+      if (imp4.exit_code !== 0 || cD === null) {
+        push('V3-GROW', `第 4 条候选导入必须成功（V3 的前置），实得 exit=${imp4.exit_code} / ${imp4.json?.error?.code ?? '(无码)'}；池子=${JSON.stringify(pool1.ids)}`)
+      } else if (r4.exit_code !== 0) {
+        push('V3-GROW', `池子新提一条之后 judge-pending 必须成功，实得 exit=${r4.exit_code} / ${r4.code ?? '(无码)'}${missingOpNote}`)
+      } else if (JSON.stringify(r4.pending_ids) !== JSON.stringify([cC, cD])) {
+        push('V3-GROW', `池子新提 ${cD} 之后 pending 应为 ${JSON.stringify([cC, cD])}（池子 seq 顺序），实得 ${JSON.stringify(r4.pending_ids)}`)
+      }
+
+      // ── V4 幂等：同一个 (imported_id, day) 再追加一次 ⇒ 集合结果不变 ──
+      //   （a）**真事务**那一侧：第 2 轮把同样两条候选再判一次
+      const claim2 = runBrain('claim-update', {
+        day: DAY_J, owner_project: 'harness', owner_session: 'session-tmem07-a',
+        redo: true, previous_attempt_id: 'attempt-0001',
+        boss_redo_evidence: {
+          kind: 'quote',
+          verbatim: '（夹具·T-MEM-07）重做一次，把上一轮的判决作废',
+          source_session_id: 'session-c0dabefd-13fe-4380-abdf-1cc1e52ea89a',
+          occurred_at: '2026-10-14T13:00:00+08:00',
+        },
+      }, { dataRoot: jbp.root })
+      const gen2 = claim2.json?.generation ?? gen1 + 1
+      const att2 = claim2.json?.attempt ?? att1 + 1
+      const freeze2 = runBrain('candidates-freeze', { generation: gen2, candidate_ids: [cA, cB] }, { dataRoot: jbp.root })
+      const start2 = runBrain('judge-start', { generation: gen2, attempt: att2, token: 'tok-j2', job_id: 'job-memory-judge-tmem07-2' }, { dataRoot: jbp.root })
+      const commit2 = runBrain('judge-commit', {
+        generation: gen2, attempt: att2, token: 'tok-j2',
+        base_snapshot: commit1.json?.new_snapshot ?? 'v1',
+        entries_patch: [], accepted: [], maintenance_decisions: [],
+        common_sense_sha256: jCs, report: {},
+      }, { dataRoot: jbp.root })
+      const judgedAfter2 = readJsonl(jbp.judgedFile)
+      rp.round2 = {
+        claim: claim2.exit_code, claim_code: claim2.json?.error?.code ?? null,
+        freeze: freeze2.exit_code, start: start2.exit_code,
+        commit: commit2.exit_code, commit_code: commit2.json?.error?.code ?? null,
+        generation: gen2, attempt: att2, rows: judgedAfter2.rows.length,
+        rows_detail: judgedAfter2.rows.map((r) => `${r?.imported_id}:${r?.verdict}@g${r?.generation}a${r?.attempt}`),
+      }
+      if (commit2.exit_code !== 0) {
+        push('V4-IDEMPOTENT', `第 2 轮（同一 (imported_id, day) 再判一次）judge-commit 必须成功，实得 exit=${commit2.exit_code} / ${commit2.json?.error?.code ?? '(无码)'}（claim=${claim2.exit_code}(/${claim2.json?.error?.code ?? '-'}) freeze=${freeze2.exit_code} start=${start2.exit_code}）`)
+      } else {
+        const dupRows = judgedAfter2.rows.filter((r) => r?.imported_id === cA || r?.imported_id === cB)
+        const dupKeys = new Set(dupRows.map((r) => `${r?.imported_id}@${r?.day}`))
+        if (dupKeys.size !== 2 || dupRows.length < 4) {
+          push('V4-IDEMPOTENT', `同一个 (imported_id, day) 追加两次 ⇒ \`judged.jsonl\` **允许有重复行**（append-only 不改老行）：应看到 ${cA} 与 ${cB} 各有 2 行、键集合 2 个；实得键=${JSON.stringify([...dupKeys])} 行数=${dupRows.length}`)
+        }
+        if (judgedAfter2.rows.length !== 4) {
+          push('V4-IDEMPOTENT', `两轮各 2 行 ⇒ \`judged.jsonl\` 应有 4 行（重复行是允许的，不是 bug），实得 ${judgedAfter2.rows.length} 行：${JSON.stringify(rp.round2.rows_detail)}`)
+        }
+      }
+      const r5 = pendingRun('v4_after_round2')
+      if (r5.exit_code !== 0) {
+        push('V4-IDEMPOTENT', `第 2 轮之后查 pending 必须成功，实得 exit=${r5.exit_code} / ${r5.code ?? '(无码)'}${missingOpNote}`)
+      } else if (JSON.stringify(r5.pending_ids) !== JSON.stringify([cC, cD])) {
+        push('V4-IDEMPOTENT', `同一个 (imported_id, day) 追加两次之后，pending **不许重复扣**：应仍为 ${JSON.stringify([cC, cD])}，实得 ${JSON.stringify(r5.pending_ids)}`)
+      }
+      checkV9('round2', { snapshot: commit2.json?.new_snapshot })
+      //   （b）**读者**那一侧：文件里再抄一遍老行（append-only 的真实形状）⇒ 集合结果不变
+      const firstJudgedRow = readJsonl(jbp.judgedFile).rows[0]
+      if (firstJudgedRow) {
+        appendFileSync(jbp.judgedFile, `${JSON.stringify(firstJudgedRow)}\n`)
+        const r6 = pendingRun('v4_after_dup_append')
+        if (r6.exit_code !== 0) {
+          push('V4-READER-DEDUPE', `索引里有重复行时 judge-pending 必须照常成功，实得 exit=${r6.exit_code} / ${r6.code ?? '(无码)'}${missingOpNote}`)
+        } else if (JSON.stringify(r6.pending_ids) !== JSON.stringify([cC, cD])) {
+          push('V4-READER-DEDUPE', `索引里出现重复行之后 pending 必须按**集合**算（重复行只扣一次）：应仍为 ${JSON.stringify([cC, cD])}，实得 ${JSON.stringify(r6.pending_ids)}`)
+        }
+        // ── B1（评审 §三 B1）：`judged_rows` / `judged_ids` 只被记录、从没被断言过 ──
+        //   契约 §3.4：`judged_rows` = 非空**行数**（含重复行），`judged_ids` = **去重后**的 id 数，
+        //   且「`judged_rows ≥ judged_ids`，两者不许混着用」。
+        //   期望值**不取 SUT 自己说的数**，而是我们从同一份文件独立数一遍：
+        //   行数 = 非空行数；id 数 = 去重后的 `imported_id` 个数。
+        //   现场：两轮各 2 行 + 刚抄的这 1 行 = 5 行；去重后只有 cA / cB 两个 id。
+        const nowRows = readJsonl(jbp.judgedFile).rows
+        const rowsSeen = nowRows.length
+        const idsSeen = new Set(nowRows.map((r) => r?.imported_id)).size
+        const expectRows = 2 /*round1*/ + 2 /*round2*/ + 1 /*刚抄的那一行*/
+        rp.judged_count_witness = { rows_seen: rowsSeen, ids_seen: idsSeen, expect_rows: expectRows, sut: { judged_rows: r6.judged_rows, judged_ids: r6.judged_ids } }
+        if (rowsSeen !== expectRows || idsSeen >= rowsSeen) {
+          push('V1-COUNT', `夹具失效：这一格要的是"有重复行"的现场（行数 ${expectRows}、去重后更少），实得 rows=${rowsSeen} / ids=${idsSeen} ⇒ \`judged_rows\` 与 \`judged_ids\` 分不开，这一格判不了 —— 不是通过`)
+        } else {
+          if (r6.judged_rows !== rowsSeen) {
+            push('V1-COUNT', `\`judged_rows\` 必须 = 索引的**非空行数**（含重复行）= ${rowsSeen}，实得 ${JSON.stringify(r6.judged_rows)} —— 契约 §3.4：它是行数，不是去重后的 id 数`)
+          }
+          if (r6.judged_ids !== idsSeen) {
+            push('V1-COUNT', `\`judged_ids\` 必须 = **去重后**的 id 数 = ${idsSeen}（实得 ${JSON.stringify(r6.judged_ids)}）—— 契约 §3.4：它与 \`judged_rows\`=${rowsSeen} 不是同一个数，两个名字不许混用`)
+          }
+        }
+      } else {
+        push('V4-READER-DEDUPE', `索引里一行都没有 ⇒ 「重复行不重复扣」这一格判不了（前置没成立：judge-commit 也没写出索引）${missingOpNote}`)
+      }
+
+      // ── V5 孤儿不许被静默吞掉 ──
+      const orphanId = 'proposal-19990101-9999'
+      const judgedNow = readJsonl(jbp.judgedFile)
+      const lastSeq = judgedNow.rows.reduce((m, r) => Math.max(m, Number(r?.seq) || 0), 0)
+      appendFileSync(jbp.judgedFile, `${JSON.stringify({
+        schema: 1,
+        imported_id: orphanId,
+        day: DAY_J,
+        verdict: 'rejected',
+        snapshot: commit1.json?.new_snapshot ?? 'v0',
+        generation: gen1,
+        attempt: att1,
+        at: '2026-10-14T13:05:00+08:00',
+        seq: lastSeq + 1,
+      })}\n`)
+      const r7 = pendingRun('v5_orphan')
+      if (r7.exit_code !== 0) {
+        push('V5-ORPHAN', `索引里有一条池子里没有的 id 时，judge-pending 必须**照常成功**（不崩、不静默），实得 exit=${r7.exit_code} / ${r7.code ?? '(无码)'}${missingOpNote}`)
+      } else {
+        if (!Array.isArray(r7.orphan_ids) || !r7.orphan_ids.includes(orphanId)) {
+          push('V5-ORPHAN', `孤儿 id ${orphanId} 必须出现在 \`orphan_ids\` 里（点名 + 明细，不许静静吞掉），实得 ${JSON.stringify(r7.orphan_ids)}`)
+        }
+        if (r7.orphan_count !== (r7.orphan_ids ?? []).length) {
+          push('V5-ORPHAN', `orphan_count=${JSON.stringify(r7.orphan_count)} 与 orphan_ids.length=${(r7.orphan_ids ?? []).length} 对不上 —— 两个名字必须担同一个意思`)
+        }
+        if (JSON.stringify(r7.pending_ids) !== JSON.stringify([cC, cD])) {
+          push('V5-ORPHAN', `孤儿不许影响 pending 集合：应仍为 ${JSON.stringify([cC, cD])}，实得 ${JSON.stringify(r7.pending_ids)}`)
+        }
+      }
+      rp.final_pending = r7.pending_ids
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // V9 的支点（评审 K2）：**`accepted` 里有、冻结清单里没有的 id 也必须落一行**
+      //
+      // 🔴 病根：上面两个写入点全是 `accepted ⊆ frozen` ⇒ `wantAll = 冻结清单 ∪ 报告 accepted`
+      //    退化成 `冻结清单` ⇒ 把实现里"补上 payload.accepted"那半段删掉，V9 依然全绿。
+      // ⇒ 这一轮刻意 `freeze [X, Y]` 之后提交 `accepted: [Z]`，而 **Z 不在冻结清单里**
+      //    （`opJudgeCommit` 不校验子集：契约 §2.3 第 2 条要的正是"报告 accepted 里不在清单里的 id
+      //      也要出一行" —— 不补它，"索引 = 报告的派生"就不是恒等式）。
+      // ═══════════════════════════════════════════════════════════════════════
+      const k2 = caseBrainRoot('MEM-11', 'spur')
+      const k2Init = runBrain('init', {}, { dataRoot: k2.root })
+      const k2Cs = k2Init.json?.common_sense_sha256 ?? 'a'.repeat(64)
+      const k2Imports = [1, 2, 3].map((n) => importCandInto(k2, n, `（夹具·T-MEM-07·spur）候选${n}`, 'spur-'))
+      const k2Ids = k2Imports.map((r) => r.json?.imported_id ?? null)
+      const k2Day = k2Imports[0].json?.day ?? null
+      if (k2Init.exit_code !== 0 || !k2Ids.every((id) => typeof id === 'string') || typeof k2Day !== 'string') {
+        push('V9-SPUR', `前置：spur 根必须 init 成功并导入 3 条候选，实得 init=${k2Init.exit_code} / ids=${JSON.stringify(k2Ids)} / day=${JSON.stringify(k2Day)}${missingOpNote}`)
+      } else {
+        const [cX, cY, cZ] = k2Ids // 冻 X、Y；**只提交 Z**
+        const k2Claim = runBrain('claim-update', { day: k2Day, owner_project: 'harness', owner_session: 'session-tmem07-spur' }, { dataRoot: k2.root })
+        const k2Gen = k2Claim.json?.generation ?? 1
+        const k2Att = k2Claim.json?.attempt ?? 1
+        const k2Freeze = runBrain('candidates-freeze', { generation: k2Gen, candidate_ids: [cX, cY] }, { dataRoot: k2.root })
+        const k2Start = runBrain('judge-start', { generation: k2Gen, attempt: k2Att, token: 'tok-spur', job_id: 'job-memory-judge-tmem07-spur' }, { dataRoot: k2.root })
+        const k2Commit = runBrain('judge-commit', {
+          generation: k2Gen, attempt: k2Att, token: 'tok-spur', base_snapshot: 'v0',
+          entries_patch: [], accepted: [cZ], maintenance_decisions: [],
+          common_sense_sha256: k2Cs, report: {},
+        }, { dataRoot: k2.root })
+        const k2Rows = readJsonl(k2.judgedFile)
+        const gotSpur = k2Rows.rows.map((r) => `${r?.imported_id}:${r?.verdict}`)
+        rp.spur = {
+          frozen: [cX, cY], accepted: [cZ],
+          claim: k2Claim.exit_code, freeze: k2Freeze.exit_code, start: k2Start.exit_code,
+          commit: k2Commit.exit_code, commit_code: k2Commit.json?.error?.code ?? null,
+          new_snapshot: k2Commit.json?.new_snapshot ?? null,
+          rows: gotSpur,
+        }
+        if (k2Commit.exit_code !== 0) {
+          push('V9-SPUR', `「accepted 里有冻结清单外的 id」那一轮 judge-commit 必须成功（V9 支点的前置），实得 exit=${k2Commit.exit_code} / ${k2Commit.json?.error?.code ?? '(无码)'}（claim=${k2Claim.exit_code} freeze=${k2Freeze.exit_code} start=${k2Start.exit_code}）`)
+        } else {
+          const wantSpur = [`${cX}:rejected`, `${cY}:rejected`, `${cZ}:accepted`]
+          if (JSON.stringify(gotSpur) !== JSON.stringify(wantSpur)) {
+            push('V9-SPUR', `冻结 ${JSON.stringify([cX, cY])} 之后提交 accepted=${JSON.stringify([cZ])}（**${cZ} 不在冻结清单里**）⇒ 索引必须多出 3 行 ${JSON.stringify(wantSpur)}，实得 ${JSON.stringify(gotSpur)} —— 缺的是 \`judgedRowSpecsOf\` 里"补上 \`payload.accepted\` 中不在清单里的 id"那半段（契约 §2.3 第 2 条）`)
+          }
+        }
+        // 支点必须**真的非退化**：报告 accepted ⊄ 冻结清单。否则这一格又退回恒等式（那就是假绿）。
+        const k2Report = runBrain('report-read', {}, { dataRoot: k2.root })
+        const k2ReportAccepted = k2Report.json?.report?.accepted_proposal_ids ?? null
+        rp.spur.report_accepted = k2ReportAccepted
+        if (!Array.isArray(k2ReportAccepted) || !k2ReportAccepted.includes(cZ)) {
+          push('V9-SPUR', `夹具失效：报告 \`accepted_proposal_ids\` 必须含有冻结清单外的 ${cZ}（否则"∪ 报告 accepted"又退化成恒等式），实得报告=${JSON.stringify(k2ReportAccepted)}`)
+        }
+        checkV9('spur', { bp: k2, day: k2Day, snapshot: k2Commit.json?.new_snapshot })
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // 契约 §3.5 的两条负例（评审 K4）—— 这一族在 `tests/**` 里**一条断言都没有**过
+      //
+      // 为什么必须能翻面：`E_DATA_CORRUPT` 护的是"**坏行整体拒，不许跳过坏行再算**"。
+      // 跳过坏行的后果正是本票要治的病 —— 把"少判了一条"读成"本来就没判过"。
+      // ⚠️ 全在**测试根副本**里造（`caseBrainRoot` 落在 `_runs/<RUN_ID>/` 之下），一个字节都不碰活体库。
+      // ═══════════════════════════════════════════════════════════════════════
+
+      // ① `judged.jsonl` 里有一行半截 JSON ⇒ `E_DATA_CORRUPT` / exit 7
+      //    故意先放一行**合法**判决：若实现"跳过坏行再算"，它会 exit 0 并给出 pending=[第二条] ⇒ 这一格才咬得住。
+      const k4a = caseBrainRoot('MEM-11', 'judged-corrupt')
+      const k4aInit = runBrain('init', {}, { dataRoot: k4a.root })
+      const k4aImports = [1, 2].map((n) => importCandInto(k4a, n, `（夹具·T-MEM-07·corrupt）候选${n}`, 'corrupt-'))
+      const k4aIds = k4aImports.map((r) => r.json?.imported_id ?? null)
+      if (k4aInit.exit_code !== 0 || !k4aIds.every((id) => typeof id === 'string')) {
+        push('JP-CORRUPT', `前置：corrupt 根必须 init 成功并导入 2 条候选，实得 init=${k4aInit.exit_code} / ids=${JSON.stringify(k4aIds)}${missingOpNote}`)
+      } else {
+        writeFileSync(k4a.judgedFile, `${JSON.stringify({
+          schema: 1,
+          imported_id: k4aIds[0],
+          day: DAY,
+          verdict: 'accepted',
+          snapshot: 'v1',
+          generation: 1,
+          attempt: 1,
+          at: '2026-10-14T12:00:00+08:00',
+          seq: 1,
+        })}\n{"schema":1,"imported_id":"proposal-20261014-00`, 'utf8')
+        const k4aRun = pendingRunOn(k4a, 'k4_judged_corrupt')
+        rp.err_corrupt = { exit_code: k4aRun.exit_code, code: k4aRun.code, pending_ids: k4aRun.pending_ids, want: { exit_code: 7, code: 'E_DATA_CORRUPT' } }
+        if (k4aRun.exit_code !== 7) {
+          const skipped = k4aRun.exit_code === 0
+            ? `（它 exit 0 且 pending=${JSON.stringify(k4aRun.pending_ids)} ⇒ **跳过了坏行再算**，那正是把"索引少了一条"读成"本来就没判过"）`
+            : ''
+          push('JP-CORRUPT', `\`judged.jsonl\` 里有一行半截 JSON 时 \`judge-pending\` 必须**整体拒**：exit 7 / \`E_DATA_CORRUPT\`（契约 §3.5），实得 exit=${k4aRun.exit_code} / ${k4aRun.code ?? '(无码)'}${skipped}`)
+        } else if (k4aRun.code !== 'E_DATA_CORRUPT') {
+          push('JP-CORRUPT', `坏行的错误码必须是 \`E_DATA_CORRUPT\`（契约 §3.5），实得 ${JSON.stringify(k4aRun.code)}`)
+        }
+      }
+
+      // ② 另一个根把 `proposals/judged.jsonl` **建成目录** ⇒ 读失败（不是 ENOENT）⇒ `E_TXN_IO` / exit 4
+      const k4b = caseBrainRoot('MEM-11', 'judged-dir')
+      const k4bInit = runBrain('init', {}, { dataRoot: k4b.root })
+      if (k4bInit.exit_code !== 0) {
+        push('JP-IO', `前置：judged-dir 根必须 init 成功，实得 exit=${k4bInit.exit_code} / ${k4bInit.json?.error?.code ?? '(无码)'}`)
+      } else {
+        mkdirSync(k4b.judgedFile, { recursive: true }) // ← 那一格现在是**目录**
+        const k4bRun = pendingRunOn(k4b, 'k4_judged_is_dir')
+        rp.err_io = { exit_code: k4bRun.exit_code, code: k4bRun.code, want: { exit_code: 4, code: 'E_TXN_IO' } }
+        const readAsEmpty = k4bRun.exit_code === 0
+          ? '（读不到却 exit 0 ⇒ 把"读失败"读成了"索引是空的"，那会把全部候选都报成没判过）'
+          : ''
+        if (k4bRun.exit_code !== 4 || k4bRun.code !== 'E_TXN_IO') {
+          push('JP-IO', `\`proposals/judged.jsonl\` 那一格是**目录**（读失败、不是 ENOENT）⇒ 必须 exit 4 / \`E_TXN_IO\`（契约 §3.5），实得 exit=${k4bRun.exit_code} / ${k4bRun.code ?? '(无码)'}${readAsEmpty}`)
+        }
+      }
+
+      // ── V6 的**空对空守卫** ──
+      // "池子没被动过"只有在 op **真的跑成功过**之后才有意义：一次都没跑成功 ⇒ 池子当然没动
+      // ⇒ 那是空对空，**不是通过**（与 V8 的 `V8-PRECONDITION` 同一条纪律）。
+      const okPendingRuns = Object.values(rp.runs).filter((r) => r.exit_code === 0).length
+      rp.successful_runs = okPendingRuns
+      if (okPendingRuns === 0) {
+        push('V6-VACUOUS', 'V6 这一格**现在判不了**：`judge-pending` 一次都没跑成功（每一次都 exit≠0）⇒ "跑完池子没被动过"是空对空 —— 没跑过当然没动。**这不是通过。**')
+      }
+
       rec.readings.draft_paths = {
         note: '「有 shell 的岗位用 appending 命令、无 shell 的岗位写自己区草稿后组长导入」= 工具面/流程面（REV-02 已钉无 shell；导入面就是本用例的 proposal-import）。',
       }

@@ -23,14 +23,20 @@
  *        （全新根上首次导入照收：那一刻没有可比的基准）。
  *   ④ **普通提案只许新增与修改**（`add` / `modify` 或缺省）：删 / 并 / 退 / 改类型 / 斩杀**一律 `E_ARG_SCHEMA`**
  *      —— 那几样只能走"复核 → 次日判决"。维护案（`maintenance-import`）不受这条白名单约束。
+ *   ⑤ **「已判」是另一个文件、另一条链**（T-MEM-07）：`proposals/judged.jsonl` 只由 `judge-commit`
+ *      在**事务成功之后**追加，一行 = 一次判决结果（`readJudged` / `appendJudgedRows`）。
+ *      它**不回写池子**：池子照旧只进不出，"判过没有"这个问题由"池子 − 已判"算出来。
  */
 import { mkdirSync, readFileSync } from 'node:fs'
 import { acquireLock, releaseLock, writeFileAtomic } from './atomic.mjs'
-import { sha256Hex, stableStringify, brainError, poolLockPath, poolPath, proposalsDir } from './state.mjs'
+import { sha256Hex, stableStringify, brainError, judgedLockPath, judgedPath, poolLockPath, poolPath, proposalsDir } from './state.mjs'
 import { listVersions } from './snapshot.mjs'
 
 /** 池子行的 schema。 */
 export const POOL_SCHEMA = 1
+
+/** 「已判」索引行的 schema（T-MEM-07；当前恒 `1`）。 */
+export const JUDGED_SCHEMA = 1
 
 /** 普通提案允许的处置（其余一律走复核 → 次日判决）。 */
 export const ORDINARY_ALLOWED_KINDS = Object.freeze(['add', 'modify'])
@@ -72,6 +78,73 @@ export function readPool(root) {
     }
   }
   return { ok: true, code: null, entries, path: file, message: '' }
+}
+
+/**
+ * 读「已判」索引 `<root>/proposals/judged.jsonl`（T-MEM-07）。
+ *
+ * 与 `readPool` 三条同形：文件不存在是**合法空态**（`rows: []`，不是错误）；
+ * 一行坏就整体 `E_DATA_CORRUPT`（**不跳行** —— 跳过等于把"索引少了一条"读成"本来就没判过"）；
+ * 读失败（不是 ENOENT，比如那一格是目录）⇒ `E_TXN_IO`。
+ */
+export function readJudged(root) {
+  const file = judgedPath(root)
+  let text = null
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch (err) {
+    if (err?.code === 'ENOENT') return { ok: true, code: null, rows: [], path: file, message: '' }
+    return { ok: false, code: 'E_TXN_IO', rows: [], path: file, message: `已判索引读不到（${err?.code ?? 'UNKNOWN'}）：${file}` }
+  }
+  const rows = []
+  const lines = text.split(/\r?\n/)
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim()
+    if (line === '') continue
+    try {
+      const record = JSON.parse(line)
+      if (record === null || typeof record !== 'object' || Array.isArray(record)) throw new Error('不是一个对象')
+      rows.push(record)
+    } catch (err) {
+      return { ok: false, code: 'E_DATA_CORRUPT', rows: [], path: file, message: `已判索引第 ${i + 1} 行不是合法 JSON：${String(err?.message).slice(0, 120)}` }
+    }
+  }
+  return { ok: true, code: null, rows, path: file, message: '' }
+}
+
+/**
+ * **append-only 追加 N 行**到「已判」索引（T-MEM-07；持索引自己的锁）。
+ *
+ * `rows` 是**不含 `seq`** 的行（形状见契约 §2.2），`seq` 在这里按"追加前的非空行数 + 1"发号 ——
+ * 与 `appendProposal` 给池子发号同一口径。同一轮的行**一次性写出去**（不会留下半轮索引）。
+ *
+ * 落地形状照 `appendProposal`：已有行原样 + 新行，同目录临时件 + rename 原子写回。
+ * 空数组 ⇒ **什么都不做**（空候选批不许为了"有文件"写一行空的）。
+ */
+export function appendJudgedRows(root, rows = []) {
+  const specs = Array.isArray(rows) ? rows : []
+  const file = judgedPath(root)
+  if (specs.length === 0) return { ok: true, code: null, rows: 0, path: file, start_seq: null, end_seq: null, message: '' }
+  mkdirSync(proposalsDir(root), { recursive: true })
+  const lock = acquireLock(judgedLockPath(root), { purpose: 'judged-index' })
+  if (!lock.ok) throw brainError(lock.code, `已判索引锁拿不到：${lock.message}`)
+  try {
+    const current = readJudged(root)
+    if (!current.ok) throw brainError(current.code, current.message, { path: current.path })
+    const startSeq = current.rows.length + 1
+    const next = specs.map((spec, i) => ({ ...spec, seq: startSeq + i }))
+    const head = current.rows.map((r) => JSON.stringify(r)).join('\n')
+    const tail = next.map((r) => JSON.stringify(r)).join('\n')
+    const text = `${head}${head === '' ? '' : '\n'}${tail}\n`
+    const written = writeFileAtomic(current.path, text)
+    if (!written.ok) throw brainError(written.code, `已判索引追加失败：${written.message}`, { path: current.path })
+    return {
+      ok: true, code: null, rows: next.length, path: current.path,
+      start_seq: startSeq, end_seq: startSeq + next.length - 1, bytes: written.bytes, message: '',
+    }
+  } finally {
+    releaseLock(judgedLockPath(root))
+  }
 }
 
 /** 形状层：`source` / `sha256` / `base_snapshot` / `update_generation` / `review_attempt` / `payload`。 */

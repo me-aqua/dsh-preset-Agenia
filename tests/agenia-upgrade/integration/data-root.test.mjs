@@ -145,6 +145,49 @@ describe('integration · data-root (DR)', () => {
         }
       }
 
+      // ── ①b V7（T-MEM-07）：新 op `judge-pending` 三处必须**同批** ─────────────
+      // 定形 V7 逐字：「`cli-inventory` 与测试侧 `FROZEN.ops` **都**含 `judge-pending`（少一处就是常驻红）」。
+      // 第三处是**实现**（`--op help` 的 `ops`）—— 少它的话，清单与冻结表都在宣布一个不存在的 op，
+      // 那是**最坏的一种绿**：三张表对得上，而命令跑不起来。
+      // 契约：`.team/test/2026-10-16/契约-T-MEM-07.md` §三。
+      const frozenBrainOps = FROZEN.ops['agenia-brain.mjs'] ?? []
+      const frozenRow = frozenBrainOps.find((o) => o.op === 'judge-pending') ?? null
+      const invRow = commands === null ? null : (commands.find((c) => c.cli === 'agenia-brain.mjs' && c.op === 'judge-pending') ?? null)
+      let helpOps = null
+      let helpExit = null
+      if (stagingExists(path.join('bin', 'agenia-brain.mjs'))) {
+        const helpRes = runCli('agenia-brain.mjs', { op: 'help' }, { env: process.env })
+        helpExit = helpRes.exit_code
+        helpOps = Array.isArray(helpRes.json?.ops) ? helpRes.json.ops : null
+      }
+      rec.readings.v7_sites = {
+        frozen_ops: frozenRow !== null,
+        inventory: commands === null ? null : invRow !== null,
+        op_help: helpOps === null ? null : helpOps.includes('judge-pending'),
+        op_help_exit: helpExit,
+        op_help_count: helpOps === null ? null : helpOps.length,
+      }
+      if (frozenRow === null) {
+        push('V7-FROZEN-OPS', '测试侧 `FROZEN.ops`（`support/env.mjs`）里没有 `agenia-brain.mjs#judge-pending` —— 那张表就是"新增 op 必须同批补"的载体，少它就是常驻红')
+      }
+      if (commands !== null && invRow === null) {
+        push('V7-INVENTORY', '生产侧 `lib/cli-inventory.mjs` 的 `COMMANDS` 里没有 `agenia-brain.mjs#judge-pending` —— 清单就是分母；op 不进清单等于假装它不存在')
+      }
+      if (helpOps === null) {
+        push('V7-OP-HELP', `拿不到 \`--op help\` 的 ops 列表（exit=${helpExit}）⇒ 「实现里到底有没有这个 op」判不了`)
+      } else if (!helpOps.includes('judge-pending')) {
+        push('V7-OP-HELP', '`--op help` 的 ops 列表里没有 `judge-pending` ⇒ **这个 op 还没实现**（`bin/agenia-brain.mjs` 的 `OP_NAMES` / `OPS` 分派里都没有它；V1–V6/V8/V9 全部判不了，缺的就是 op 本身）')
+      }
+      if (frozenRow !== null && frozenRow.writes !== false) {
+        push('V7-FLAGS', `冻结表里 \`judge-pending\` 的 \`writes\` 必须是 \`false\`（只读：不改权威状态），实得 ${JSON.stringify(frozenRow.writes)}`)
+      }
+      if (invRow !== null && invRow.writes !== false) {
+        push('V7-FLAGS', `清单里 \`judge-pending\` 的 \`writes\` 必须是 \`false\`（只读），实得 ${JSON.stringify(invRow.writes)}`)
+      }
+      if (invRow !== null && invRow.needsDataRoot !== true) {
+        push('V7-FLAGS', `清单里 \`judge-pending\` 的 \`needsDataRoot\` 必须是 \`true\`（根是共享脑根），实得 ${JSON.stringify(invRow.needsDataRoot)}`)
+      }
+
       // ── ② 纯函数：dataRootVerdict 的判定顺序 + canonical 解析 ───────────
       const pathLib = await loadStagedModule('lib/paths.mjs', ['dataRootVerdict', 'resolveWithin', 'testModeOf', 'realInitVerdict', 'realModeVerdict', 'REAL_BRAIN_ROOT'])
       if (pathLib.surfaceMissing) push('SUT-SURFACE-MISSING', 'staged/lib/paths.mjs 不在 —— 根判定拿不到（预期的首跑红）')

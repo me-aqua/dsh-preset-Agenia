@@ -141,6 +141,10 @@ export const noticesDir = (root) => path.join(root, 'notices')
 export const proposalsDir = (root) => path.join(root, 'proposals')
 export const poolPath = (root) => path.join(root, 'proposals', 'pool.jsonl')
 export const poolLockPath = (root) => path.join(root, 'proposals', '.pool.lock')
+/** 「已判」索引（T-MEM-07）：**与池子同目录**、同样 append-only。一行 = 一次判决结果。 */
+export const judgedPath = (root) => path.join(root, 'proposals', 'judged.jsonl')
+/** 索引自己的锁（与池子的 `.pool.lock` 同一套形状，互不阻塞：两个文件各自读-改-写）。 */
+export const judgedLockPath = (root) => path.join(root, 'proposals', '.judged.lock')
 
 /** `init` 落的那份常识骨架 —— **确定性文本**（同一个哈希每次都一样，CS 三处核对才有意义）。 */
 export const COMMON_SENSE_TEMPLATE = [

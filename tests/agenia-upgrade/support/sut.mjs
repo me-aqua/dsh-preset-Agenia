@@ -369,6 +369,16 @@ export function brainPaths(env = process.env) {
     memoryDir: path.join(root, 'memory'),
     snapshotsDir: path.join(root, 'memory', 'snapshots'),
     reportsDir: path.join(root, 'reports'),
+    // 候选池与「已判」索引（T-MEM-07）：两者**同目录、各自 append-only**。
+    // `judged.jsonl` 是 `judge-commit` 成功之后的副作用；`pool.jsonl` 只由导入命令追加。
+    // ⇒ 「跑一个只读 op 之后池子没被动过」这件事靠这三个落点量（V6 钉 sha256 + 字节 + 行数）。
+    proposalsDir: path.join(root, 'proposals'),
+    poolFile: path.join(root, 'proposals', 'pool.jsonl'),
+    judgedFile: path.join(root, 'proposals', 'judged.jsonl'),
+    // 只读 op 的另外两样"不许动"的东西（V6 · 契约 §3.1：`writes:false` = 不推状态、不落审计）：
+    // `audit.jsonl` 与 `state/update/`（**整个目录**，不挑某一天 —— 挑一天会让"写到别的 day 里"逃过去）。
+    auditFile: path.join(root, 'audit.jsonl'),
+    updateDir: path.join(root, 'state', 'update'),
     memoryReport: (day) => path.join(root, 'reports', 'memory-update', `${day}.json`),
     commonSense: path.join(root, 'common-sense.md'),
     noticesDir: path.join(root, 'notices'),

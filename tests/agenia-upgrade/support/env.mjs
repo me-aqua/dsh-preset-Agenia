@@ -437,6 +437,14 @@ export const FROZEN = {
       //    就被 `E_ROOT_REAL_BRAIN` 拒掉，一个字节都不写。
       //    （它**另外**那套 `resolvePacketWorkspace()` 判的是**落点**，与 `--data-root` 那道闸并存、不互相替代。）
       { op: 'session-packet', writes: true },
+      // `judge-pending`（2026-10-16 加 · T-MEM-07）：机械算「池子 − 已判」= 还没判过的 id 清单，
+      // 顺带点名孤儿。**只读**：不写池子、不写索引、不推状态 ⇒ `writes: false`。
+      // ⚠️ `writes: false` 的后果要认：它**不进** DR-01 那张"非法根 × 写命令"矩阵（那矩阵只跑写命令）。
+      //    安全上不吃亏 —— 它一个字节都不写；它的根判定照样走 `main()` 那条 `resolveRoot()`
+      //    （`--data-root` 那一道**先于** op 分派跑）。
+      // 🔴 **同批**：生产侧 `lib/cli-inventory.mjs` 与 `bin/agenia-brain.mjs`（OP_NAMES / OPS 分派）
+      //    必须同批加，否则 DR-01 的 `CLI-INVENTORY` 与 V7 那两条当场红。
+      { op: 'judge-pending', writes: false },
       { op: 'help', writes: false },
     ],
     'agenia-route.mjs': [
