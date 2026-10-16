@@ -1376,6 +1376,44 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
             + '**补账那一步会把 review 的 done 写回 phase=done**：先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark`'
           : `${prevDay} 的 phase = ${prevPhase}`)
   }
+
+  // ⑤ 挂着的作业不许永远"正在跑"（2026-10-16 加）
+  //    现场：`memory-review-2026-10-16-r1` 的作业记录一整天写着 `state: "running"` / `finished_at: null`，
+  //    而她 10:14 就交活了 —— 差的那 8 小时里，**没有任何东西会觉得不对**。
+  //    钉的是「记录自述还在跑，但已经超过**它自己写的**租约」⇒ 要么它真挂了，要么没人结账。
+  //    ⚠️ 用**真实时钟**判（这一条问的就是"此刻是不是已经太久"）；租约从记录自己的 `lease_minutes` 取，
+  //       代码里不写死数字。
+  //    ⚠️ 阈值就是记录自己的租约 —— 撞红时先判"真挂了"还是"早交活了没结账"，**别直接放宽阈值**。
+  const jobsDir = join(memRoot, 'state', 'jobs')
+  const staleJobs = []
+  if (existsSync(jobsDir)) {
+    const nowMs = Date.now()
+    for (const name of readdirSync(jobsDir)) {
+      if (!name.endsWith('.json') || name.startsWith('intent-')) continue
+      let rec = null
+      try {
+        rec = JSON.parse(readFileSync(join(jobsDir, name), 'utf8').replace(/^\uFEFF/, ''))
+      } catch {
+        continue
+      }
+      if (!rec || rec.state !== 'running') continue
+      const lease = Number.isInteger(rec.lease_minutes) ? rec.lease_minutes : null
+      if (lease === null) continue
+      const stamp = rec.last_liveness_event_at ?? rec.started_at
+      const t = typeof stamp === 'string' ? Date.parse(stamp) : NaN
+      if (!Number.isFinite(t)) {
+        staleJobs.push(`${name}：running 但没有可读的时间戳`)
+        continue
+      }
+      const ageMin = Math.round((nowMs - t) / 60000)
+      if (ageMin > lease) staleJobs.push(`${name}：running 已 ${ageMin} 分钟（租约 ${lease} 分钟）`)
+    }
+  }
+  yes('office', '没有作业自述「还在跑」却已经超过自己的租约（挂着 ≠ 在跑）',
+    staleJobs.length === 0,
+    staleJobs.length > 0
+      ? `${staleJobs.join('；')} —— **先翻会话流的 turn/end 判它是真挂了还是早交活了**，再 agenia-brain --op job-mark 结账`
+      : '所有 running 记录都还在自己的租约内')
   const days = existsSync(join(teamRoot, 'retro'))
     ? readdirSync(join(teamRoot, 'retro'), { withFileTypes: true })
       .filter((e) => e.isDirectory()).map((e) => e.name).sort()
