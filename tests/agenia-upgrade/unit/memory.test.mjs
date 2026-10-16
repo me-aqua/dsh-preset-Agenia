@@ -68,13 +68,19 @@ const fileFacts = (file) => {
  * 写到别的 day 里就逃过去了，而 `judge-pending` 连 day 都不收（契约 §3.2）。
  * ⇒ 钉**整个目录**：名字 + 每个文件的字节数与 sha256 汇总成一个聚合 sha256，多一个文件、少一个文件、
  * 任何一个字节变了，都会当场翻面。
+ *
+ * 🔴 第三样叫 **`parts_len`**，不叫 `bytes`（T-MEM-12 · R3）：它算的是
+ * `parts.join('\n').length` = **那份聚合文本的字符数**，不是真字节数。
+ * 同文件的 `fileFacts.bytes` 才是 `buf.length`（真字节）。同一个名字担两个意思
+ * （`mig-rules-18` 的第一次形态）会让"拿它跟真字节比"的人撞一个假差 ——
+ * 现在只因为前后都是这一个函数算的才没出事，不是它对了。
  */
 const dirFacts = (dir) => {
   let names = []
   try {
     names = readdirSync(dir)
   } catch {
-    return { exists: false, entries: 0, bytes: null, sha256: null }
+    return { exists: false, entries: 0, parts_len: null, sha256: null }
   }
   const sorted = [...names].sort()
   const parts = sorted.map((name) => {
@@ -90,7 +96,7 @@ const dirFacts = (dir) => {
   return {
     exists: true,
     entries: sorted.length,
-    bytes: parts.join('\n').length,
+    parts_len: parts.join('\n').length,
     sha256: createHash('sha256').update(parts.join('\n')).digest('hex'),
   }
 }
@@ -1039,6 +1045,175 @@ describe('unit · memory (MEM)', () => {
         }
       }
 
+      // ═══════════════════════════════════════════════════════════════════════
+      // 定形 T-MEM-12 · R2a / R2b / R1 —— 三格都钉 `opJudgePending` 的**排序键**与**去重位置**
+      //   定形：`.team/leader/2026-10-16/定形-T-MEM-12.md` §五 W1 / W2 / W3
+      //   契约更正：`.team/test/2026-10-16/契约-T-MEM-07.md` §七（R1 那一句）
+      //
+      // 🔴 为什么必须新造夹具（不是"顺手补一格"）：K1 那一格的 `seq` 是 2 / 3 / 1 —— **一位数字**
+      //    ⇒ 字典序 == 数值序 ⇒ 把 `seqKeyOf` 里的 `Number()` 删掉，**那个变异体照样绿**。
+      //    R2a 要让"数值序 / 字典序 / 文件序"三种口径产出**三种不同结果**；
+      //    R2b 要让"没有 `seq` 的那一行"处在**只可能靠排序才落到末尾**的位置（文件行序把它放最前）；
+      //    W3 要让"同一个 id 出现两次、两条 `seq` 与文件序相反" —— 两种去重口径**集合相同、只差顺序**。
+      // 🔴 期望值一律**从我手工写下去的 `seq` 算**（另一处来源是导入命令返回的 `imported_id`），
+      //    一处都不取"那份池子文件的行序" —— 那是 K1 那条教训。
+      // ═══════════════════════════════════════════════════════════════════════
+
+      /**
+       * 把一份**手改过的池子**写回某个脑根（契约 §3.3 亲口承认"池子会被手改"这个来历）。
+       *
+       * @param {object} brain `brainPaths(...)` 那一份（`brain.poolFile`）
+       * @param {Array<[string, (string|number|null)]>} rows **文件行序 = 数组顺序**；每项 `[imported_id, seq]`，
+       *   `seq === null` ⇒ 那一行**根本没有 `seq` 键**（R2b 要的形状）；同一个 id 可以出现两次（W3 要的形状）。
+       * @returns {boolean} 每个 `imported_id` 都在池子里 ⇒ true；否则 false（调用方记"夹具失效"，不许当通过）
+       */
+      const writeHandEditedPool = (brain, rows) => {
+        const byId = new Map(readJsonl(brain.poolFile).rows.map((r) => [r?.imported_id, r]))
+        if (!rows.every(([id]) => typeof id === 'string' && byId.has(id))) return false
+        const lines = rows.map(([id, seq]) => {
+          const row = { ...byId.get(id) }
+          if (seq === null) delete row.seq
+          else row.seq = seq
+          return JSON.stringify(row)
+        })
+        writeFileSync(brain.poolFile, `${lines.join('\n')}\n`, 'utf8')
+        return true
+      }
+      /** 一份**全新**脑根 + N 条候选（`init` 只许空根 ⇒ 三格各用一个独立根，不许复用） */
+      const seedRoot = (name, tag, n = 3) => {
+        const brain = caseBrainRoot('MEM-11', name)
+        const init = runBrain('init', {}, { dataRoot: brain.root })
+        const imports = []
+        for (let i = 1; i <= n; i += 1) imports.push(importCandInto(brain, i, `（夹具·T-MEM-12·${tag}）候选${i}`, `${tag}-`))
+        return { brain, init, imports, ids: imports.map((r) => r.json?.imported_id ?? null), exits: imports.map((r) => r.exit_code) }
+      }
+      const sameList = (x, y) => JSON.stringify(x) === JSON.stringify(y)
+
+      // ── R2a（W1）：`seq` 是**字符串** `"9"` / `"10"` / `"2"` ⇒ 必须按**数值** 2 < 9 < 10 ──
+      //    三种口径在这一份夹具上互不相同：
+      //      数值序 [seq 2, seq 9, seq 10]  ← 实现现在这样（`seqKeyOf` 先过 `Number()`）
+      //      字典序 [seq 10, seq 2, seq 9]  ← 把 `Number()` 删掉就是这个（'10' < '2' < '9'）
+      //      文件序 [seq 9, seq 2, seq 10]  ← 根本没用 `seq` 就是这个
+      //    ⚠️ 老数据 / 手改的池子里 `seq` 真的可能是字符串 —— 这不是造出来的病。
+      const r2a = seedRoot('seq-string', 'strseq')
+      if (r2a.init.exit_code !== 0 || !r2a.ids.every((id) => typeof id === 'string')) {
+        push('V1-SEQ-STRING', `「\`seq\` 是字符串时必须按数值比」这一格的前置不成立：init=${r2a.init.exit_code} / ids=${JSON.stringify(r2a.ids)}（三次导入退出码 ${r2a.exits.join('/')}）${missingOpNote}`)
+      } else {
+        const [idS9, idS2, idS10] = r2a.ids
+        const fileOrderA = [[idS9, '9'], [idS2, '2'], [idS10, '10']] // 文件行序 = 9 → 2 → 10
+        const wantNumeric = [idS2, idS9, idS10]                       // **数值**：2 < 9 < 10
+        const wantLexicographic = [idS10, idS2, idS9]                 // 字符串比：'10' < '2' < '9'
+        const fileOrderAIds = fileOrderA.map(([id]) => id)
+        rp.seq_string = { file_order: fileOrderAIds, seq: Object.fromEntries(fileOrderA), want_numeric: wantNumeric, want_lexicographic: wantLexicographic }
+        if (!writeHandEditedPool(r2a.brain, fileOrderA)) {
+          push('V1-SEQ-STRING', '夹具失效：strseq 根里找不到那三条 `imported_id` ⇒ 这一格判不了（**不是通过**）')
+        } else if (sameList(wantNumeric, wantLexicographic) || sameList(wantNumeric, fileOrderAIds) || sameList(wantLexicographic, fileOrderAIds)) {
+          push('V1-SEQ-STRING', `夹具失效：三种口径没能区分开（数值序 ${JSON.stringify(wantNumeric)} / 字典序 ${JSON.stringify(wantLexicographic)} / 文件序 ${JSON.stringify(fileOrderAIds)}）⇒ 这一格又变成自证 —— **不是通过**`)
+        } else {
+          const rowA = pendingRunOn(r2a.brain, 'r2a_string_seq')
+          rp.seq_string.exit_code = rowA.exit_code
+          rp.seq_string.code = rowA.code
+          rp.seq_string.got = rowA.pending_ids
+          if (rowA.exit_code !== 0) {
+            push('V1-SEQ-STRING', `手改过的池子（合法 JSON、\`imported_id\` 都在、\`seq\` 是字符串）上 \`judge-pending\` 必须照常成功，实得 exit=${rowA.exit_code} / ${rowA.code ?? '(无码)'}${missingOpNote}`)
+          } else {
+            if (rowA.pool_count !== 3) {
+              push('V1-SEQ-STRING', `夹具：strseq 根必须仍是 3 条，实得 pool_count=${JSON.stringify(rowA.pool_count)}`)
+            }
+            if (!sameList(rowA.pending_ids, wantNumeric)) {
+              push('V1-SEQ-STRING', `\`seq\` 是**字符串**时 \`pending_ids\` 必须按 **\`seq\` 的数值**升序 = ${JSON.stringify(wantNumeric)}（写下去的是 ${JSON.stringify(Object.fromEntries(fileOrderA))} ⇒ 2 < 9 < 10），实得 ${JSON.stringify(rowA.pending_ids)} —— 按字符串比会得到 ${JSON.stringify(wantLexicographic)}（'10' < '2' < '9'），按文件行序会得到 ${JSON.stringify(fileOrderAIds)}：三种口径三个答案，只有"先过 \`Number()\` 再比数值"这一种是对的（\`seqKeyOf\`）`)
+            }
+          }
+        }
+      }
+
+      // ── R2b（W2）：**一行没有 `seq`** ⇒ 不丢，且排在所有有效 `seq` **之后** ──
+      //    文件行序刻意把"没有 `seq`"的那一行放在**最前面** ⇒
+      //      · "按文件行序出" ⇒ 它在第一个（位置错）
+      //      · "丢掉认不出 `seq` 的行" ⇒ 它整个不见（一条也不少这一条的翻面
+      //    ⇒ 只有"排在末尾且不丢"能过。
+      const r2b = seedRoot('seq-missing', 'noseq')
+      if (r2b.init.exit_code !== 0 || !r2b.ids.every((id) => typeof id === 'string')) {
+        push('V1-SEQ-MISSING', `「没有 \`seq\` 的行不丢、排末尾」这一格的前置不成立：init=${r2b.init.exit_code} / ids=${JSON.stringify(r2b.ids)}（三次导入退出码 ${r2b.exits.join('/')}）${missingOpNote}`)
+      } else {
+        const [idM, idN2, idN1] = r2b.ids // idM = **删掉 `seq` 键**的那一条
+        const rowsB = [[idM, null], [idN2, 2], [idN1, 1]] // 文件行序：无 seq → 2 → 1
+        const wantB = [idN1, idN2, idM]                   // 1 < 2 < 「位置未知」（末尾，保留它自己的文件位置）
+        const fileOrderBIds = rowsB.map(([id]) => id)
+        rp.seq_missing = { file_order: fileOrderBIds, no_seq_id: idM, seq: { [idN2]: 2, [idN1]: 1 }, want: wantB }
+        if (!writeHandEditedPool(r2b.brain, rowsB)) {
+          push('V1-SEQ-MISSING', '夹具失效：noseq 根里找不到那三条 `imported_id` ⇒ 这一格判不了（**不是通过**）')
+        } else if (sameList(wantB, fileOrderBIds) || wantB[wantB.length - 1] !== idM) {
+          push('V1-SEQ-MISSING', `夹具失效：这一格要的是"没有 \`seq\` 的那一行必须靠排序才落到末尾"（文件行序 ${JSON.stringify(fileOrderBIds)} / 期望 ${JSON.stringify(wantB)}）⇒ 现在两种口径同解 —— **不是通过**`)
+        } else {
+          const rowB = pendingRunOn(r2b.brain, 'r2b_missing_seq')
+          rp.seq_missing.exit_code = rowB.exit_code
+          rp.seq_missing.code = rowB.code
+          rp.seq_missing.got = rowB.pending_ids
+          if (rowB.exit_code !== 0) {
+            push('V1-SEQ-MISSING', `池子里有一行**没有 \`seq\`** 时 \`judge-pending\` 必须照常成功（契约 §3.5 的错误面里没有这一格），实得 exit=${rowB.exit_code} / ${rowB.code ?? '(无码)'}${missingOpNote}`)
+          } else {
+            const got = Array.isArray(rowB.pending_ids) ? rowB.pending_ids : null
+            if (rowB.pool_count !== 3) {
+              push('V1-SEQ-MISSING', `夹具：noseq 根必须仍是 **3 条**（没有 \`seq\` 不等于少一行），实得 pool_count=${JSON.stringify(rowB.pool_count)}`)
+            }
+            if (got === null || !got.includes(idM)) {
+              push('V1-SEQ-MISSING', `池子里那一行**没有 \`seq\`**（${idM}）⇒ 它**必须还在** \`pending_ids\` 里（这个 op 的职责是"一条不漏"；静默少一条 = 谎报池子内容）—— 实得 ${JSON.stringify(got)}`)
+            }
+            if (got !== null && got.length > 0 && got[got.length - 1] !== idM) {
+              push('V1-SEQ-MISSING', `没有 \`seq\` 的那一行（${idM}）必须排在**所有有效 \`seq\` 之后** = ${JSON.stringify(wantB)}（两行 seq 是 2 / 1），实得 ${JSON.stringify(got)} —— 认不出的行放**末尾**是"位置未知"的自然位置（放开头会让它冒充"最早的一批"）`)
+            }
+            if (got !== null && !sameList(got, wantB) && got.includes(idM) && got[got.length - 1] === idM) {
+              push('V1-SEQ-MISSING', `\`pending_ids\` 应为 ${JSON.stringify(wantB)}（有效 \`seq\` 升序，没有 \`seq\` 的排末尾），实得 ${JSON.stringify(got)}`)
+            }
+          }
+        }
+      }
+
+      // ── R1（W3 · 契约 §3.3 的更正）：**同一个 id 出现两次、两条 `seq` 与文件序相反** ──
+      //    ⇒ 位置取 **`seq` 最小**的那一次出现（不是"首次出现那一行"）。
+      //    ⚠️ 这一格的两种口径**集合相同、只差顺序** ⇒ 断言必须落在**顺序**上，落在集合上抓不到。
+      //      ① 现状（契约更正之后）：X(seq 1) 在 Y(seq 5) 之前 ⇒ [X, Y]
+      //      ② 旧契约那半句（首次出现那一行）：X 首次出现在文件第 1 行、那一刻 seq=10 ⇒ [Y, X]
+      const r1d = seedRoot('dup-id', 'dupid', 2)
+      if (r1d.init.exit_code !== 0 || !r1d.ids.every((id) => typeof id === 'string')) {
+        push('V1-DUP-ID-POS', `「同 id 两次出现取 \`seq\` 最小那一次」这一格的前置不成立：init=${r1d.init.exit_code} / ids=${JSON.stringify(r1d.ids)}（两次导入退出码 ${r1d.exits.join('/')}）${missingOpNote}`)
+      } else {
+        const [idX, idY] = r1d.ids
+        const rowsD = [[idX, 10], [idY, 5], [idX, 1]] // 文件行序：X(seq 10) → Y(seq 5) → X(seq 1)
+        const wantSeqMin = [idX, idY]                  // 取 seq 最小那一次 ⇒ X(1) 在 Y(5) 之前
+        const wantFirstAppearance = [idY, idX]         // 取首次出现那一行 ⇒ Y(5) 在 X(10) 之前
+        rp.dup_id = { file_order: rowsD, want_seq_min: wantSeqMin, want_first_appearance: wantFirstAppearance }
+        if (!writeHandEditedPool(r1d.brain, rowsD)) {
+          push('V1-DUP-ID-POS', '夹具失效：dupid 根里找不到那两条 `imported_id` ⇒ 这一格判不了（**不是通过**）')
+        } else if (sameList(wantSeqMin, wantFirstAppearance)) {
+          push('V1-DUP-ID-POS', `夹具失效：两种去重口径给出了同一个顺序（${JSON.stringify(wantSeqMin)}）⇒ 这一格抓不到差别 —— **不是通过**`)
+        } else {
+          const rowD = pendingRunOn(r1d.brain, 'r1_dup_id_seq_min')
+          rp.dup_id.exit_code = rowD.exit_code
+          rp.dup_id.code = rowD.code
+          rp.dup_id.got = rowD.pending_ids
+          rp.dup_id.count = rowD.count
+          if (rowD.exit_code !== 0) {
+            push('V1-DUP-ID-POS', `池子里同一个 id 出现两次时 \`judge-pending\` 必须照常成功（去重、不崩），实得 exit=${rowD.exit_code} / ${rowD.code ?? '(无码)'}${missingOpNote}`)
+          } else {
+            const got = Array.isArray(rowD.pending_ids) ? rowD.pending_ids : null
+            if (rowD.pool_count !== 3) {
+              push('V1-DUP-ID-POS', `夹具：dupid 根必须仍是 3 行（同一个 id 两行 + 另一条一行），实得 pool_count=${JSON.stringify(rowD.pool_count)}`)
+            }
+            if (got !== null && got.length !== 2) {
+              push('V1-DUP-ID-POS', `同一个 id 出现两次只许出**一次**：应恰 2 条，实得 ${JSON.stringify(got)}`)
+            }
+            if (rowD.count !== (got ?? []).length) {
+              push('V1-DUP-ID-POS', `count=${JSON.stringify(rowD.count)} 与 pending_ids.length=${(got ?? []).length} 对不上 —— 两个名字必须担同一个意思`)
+            }
+            if (got !== null && !sameList(got, wantSeqMin)) {
+              push('V1-DUP-ID-POS', `同一个 id 出现两次时，位置取 **\`seq\` 最小**的那一次出现 ⇒ \`pending_ids\` = ${JSON.stringify(wantSeqMin)}（文件行序是 ${JSON.stringify(rowsD.map(([id, s]) => `${id}@${s}`))}），实得 ${JSON.stringify(got)} —— 按"首次出现那一行"去重会给 ${JSON.stringify(wantFirstAppearance)}：两者**集合相同、只差顺序**，所以这一格只钉顺序（契约 §3.3 的更正句 + §七 那条口径）`)
+            }
+          }
+        }
+      }
+
       // ── V2 判一条 ⇒ 少一条（索引只在真事务成功之后长出来）──
       const claim1 = runBrain('claim-update', { day: DAY_J, owner_project: 'harness', owner_session: 'session-tmem07-a' }, { dataRoot: jbp.root })
       const gen1 = claim1.json?.generation ?? 1
@@ -1426,6 +1601,44 @@ describe('unit · memory (MEM)', () => {
           : ''
         if (k4bRun.exit_code !== 4 || k4bRun.code !== 'E_TXN_IO') {
           push('JP-IO', `\`proposals/judged.jsonl\` 那一格是**目录**（读失败、不是 ENOENT）⇒ 必须 exit 4 / \`E_TXN_IO\`（契约 §3.5），实得 exit=${k4bRun.exit_code} / ${k4bRun.code ?? '(无码)'}${readAsEmpty}`)
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // 定形 T-MEM-12 · 残余（W5）：**池子**侧坏行也必须整体拒（契约 §3.5 **第二个**格子）
+      //
+      // 🔴 病根：上面 K4① 只钉了 `judged.jsonl` 那一侧；「池子坏行 ⇒ `E_DATA_CORRUPT`」这一格
+      //    在 `tests/**` 里**一条断言都没有**过（全库 `E_DATA_CORRUPT` 只有快照那 2 处 + 上面 K4① 那 1 处）。
+      //    同一族只补了一半 —— 抓不住"池子读法改成跳过坏行再算"那个变异体。
+      // ⚠️ 照 K4① 的形状：**先放一行合法数据**，再在末尾塞一行半截 JSON。
+      //    为什么非这样不可：池子里若只有坏行，"跳过坏行再算"会给出 `exit 0 / pending []`，
+      //    那种答案与"本来就空"分不开；先有合法行，跳行之后它会给出一个**看起来对**的答案
+      //    （`exit 0` + `pending=[那两条合法的]`）—— 那才是这一格要咬住的东西。
+      // ═══════════════════════════════════════════════════════════════════════
+      const pc = caseBrainRoot('MEM-11', 'pool-corrupt')
+      const pcInit = runBrain('init', {}, { dataRoot: pc.root })
+      const pcImports = [1, 2].map((n) => importCandInto(pc, n, `（夹具·T-MEM-12·poolcorrupt）候选${n}`, 'poolcorrupt-'))
+      const pcIds = pcImports.map((r) => r.json?.imported_id ?? null)
+      if (pcInit.exit_code !== 0 || !pcIds.every((id) => typeof id === 'string')) {
+        push('JP-POOL-CORRUPT', `前置：pool-corrupt 根必须 init 成功并导入 2 条候选，实得 init=${pcInit.exit_code} / ids=${JSON.stringify(pcIds)}（退出码 ${pcImports.map((r) => r.exit_code).join('/')}）${missingOpNote}`)
+      } else {
+        // 追加半截 JSON（**不加换行**：接在最后一条合法行的 LF 之后，成为第 3 行的半截）
+        appendFileSync(pc.poolFile, '{"schema":1,"imported_id":"proposal-20261014-00')
+        const pcRun = pendingRunOn(pc, 'r5_pool_corrupt')
+        rp.err_pool_corrupt = {
+          exit_code: pcRun.exit_code,
+          code: pcRun.code,
+          pending_ids: pcRun.pending_ids,
+          legal_ids: pcIds,
+          want: { exit_code: 7, code: 'E_DATA_CORRUPT' },
+        }
+        if (pcRun.exit_code !== 7) {
+          const skipped = pcRun.exit_code === 0
+            ? `（它 exit 0 且 pending=${JSON.stringify(pcRun.pending_ids)} ⇒ **跳过了坏行再算**：把"池子里少了一条"读成"本来就没有那一条"）`
+            : ''
+          push('JP-POOL-CORRUPT', `\`proposals/pool.jsonl\` 里有一行半截 JSON 时 \`judge-pending\` 必须**整体拒**：exit 7 / \`E_DATA_CORRUPT\`（契约 §3.5 第二个格子），实得 exit=${pcRun.exit_code} / ${pcRun.code ?? '(无码)'}${skipped}`)
+        } else if (pcRun.code !== 'E_DATA_CORRUPT') {
+          push('JP-POOL-CORRUPT', `池子坏行的错误码必须是 \`E_DATA_CORRUPT\`（契约 §3.5），实得 ${JSON.stringify(pcRun.code)}`)
         }
       }
 
