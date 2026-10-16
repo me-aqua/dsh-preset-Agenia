@@ -33,7 +33,7 @@ import {
   plain,
   rowGet,
 } from '../support/composition.mjs'
-import { caseFail, normalizeSha, oracleReadings, preflight, problem, runCase, sha256Equal, stagingReadings } from '../support/evidence.mjs'
+import { caseFail, normalizeSha, oracleReadings, preflight, problem, runCase, sha256Equal, stagedVsLiveDrift, stagingReadings } from '../support/evidence.mjs'
 import { importStaged, loadStagedModule, readStagedText, stagingExists, stagingPath, writeFixtureText } from '../support/sut.mjs'
 
 /** 每例都要先过：根守卫 → 注册表形状 → 解析器阳性对照（活体那两个文件，只读）。 */
@@ -123,6 +123,35 @@ describe('static · composition', () => {
           if (onlyStd.length !== 0) push('ONLY-IN-STANDARD', `onlyInStandard 必须为空（standard 有的必须有），实得 ${JSON.stringify(onlyStd)}`)
           if (onlyAge.length !== FROZEN.staged.onlyInAgenia) push('ONLY-IN-AGENIA', `onlyInAgenia 项数实得 ${onlyAge.length}，冻结期望 ${FROZEN.staged.onlyInAgenia}`)
           if (JSON.stringify(onlyAge) !== JSON.stringify(expectOnly)) push('ONLY-IN-AGENIA', `onlyInAgenia 明细实得 ${JSON.stringify(onlyAge)}，冻结 ${JSON.stringify(expectOnly)}`)
+
+        }
+      }
+
+      // ── ③ 🔴 `T-R1-04` / `T-TEST-03`：**staged 与活体逐字节同值**（两棵树比）──────────────
+      // 【钉什么】测试的靶子（`AGENIA_STAGING_PRESET`）与生产（活体 `presets/agenia`）**必须是同一棵树**
+      //   （差一个字节就算漂移）。跳过 `.runtime/`（数据，不是代码 —— 它本来就不该同步）。
+      //   口径（组长 `T-R1-04` 逐字定）：**必须是"两棵树"比**，不是"活体 vs 冻结期望"（后者是 `calibrate()` 在做的另一件事）。
+      // 【为什么在这儿】2026-10-16 一天里撞到**两次**"活体改了、staged 没跟上"，而当时**没有任何一条断言**
+      //   拿两棵树比 —— 树哈希只被**记下来**（`evidence.mjs` 的 `stagingReadings()` / `settlement`），
+      //   **只记账、不判等**。于是"整批改动不在射程内"而读数看着是绿的（技术评审 F3）。
+      //   技术评审的原话：*"在那之前，任何「v1.8 已验」的说法都是空的。"*
+      // 【怎么翻面】造一个"只改了一棵树"的现场（本票的做法：把 `AGENIA_STAGING_PRESET` 指到一棵**变异体副本**
+      //   —— 判据是**对称**的，任何一边多一个字节都算漂移）⇒ 本条的 `STAGED-LIVE-DRIFT` 当场红。
+      //   阳性对照读数：`.team/test/2026-10-14/_evidence/20261016-test-i18-m-drift/`。
+      {
+        const drift = stagedVsLiveDrift()
+        rec.readings.staged_vs_live = drift
+        if (drift.staged === null) {
+          push('STAGED-LIVE-DRIFT', '`AGENIA_STAGING_PRESET` 没设 ⇒ 两棵树比不了（这一格判不了，不许当绿）')
+        } else if (!drift.same) {
+          const parts = []
+          if (drift.only_staged.length > 0) parts.push(`只在 staged：${drift.only_staged.join(', ')}`)
+          if (drift.only_live.length > 0) parts.push(`只在活体：${drift.only_live.join(', ')}`)
+          if (drift.different.length > 0) parts.push(`同名而内容不同：${drift.different.join(', ')}`)
+          push('STAGED-LIVE-DRIFT',
+            '**staged 与活体不是同一棵树**（测试的靶子 ≠ 生产）⇒ 这一跑的绿**不能**用来给活体背书：'
+            + `${parts.join(' · ')}（staged ${drift.staged_files} 文件 ${drift.staged} · 活体 ${drift.live_files} 文件 ${drift.live}）`
+            + '。修法：把改过的文件同步进 staging（**各人同步自己改的**），别靠人记得。')
         }
       }
 
@@ -130,7 +159,7 @@ describe('static · composition', () => {
     })
   })
 
-  test('STAT-02 staged 四行 job 十项 checklist + officeBound 3 + 角色/作业书 + 生成补丁一致', async () => {
+  test('STAT-02 staged 四行 job 十项 checklist + officeBound 2 + 角色/作业书 + 生成补丁一致', async () => {
     await runCase('STAT-02', async (rec) => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -161,7 +190,7 @@ describe('static · composition', () => {
           if (disabledKind(row) !== 'none') push('JOB-DISABLED', `${job.id}: job 行必须启用（实得 disabled=${disabledKind(row)}）`)
         }
 
-        // ── officeBound 恰为 3 ────────────────────────────────────────────
+        // ── officeBound 恰为 2 ────────────────────────────────────────────
         const injRow = byId.get('persona-injector')
         const office = injRow ? cfg(injRow, 'officeBound') : null
         rec.readings.officeBound = office
@@ -184,6 +213,20 @@ describe('static · composition', () => {
         else {
           if (cfg(bare, 'backgroundMode') !== FROZEN.bareSubagent.backgroundMode) push('SUBAGENT-BGMODE', `裸 subagent 必须 ${FROZEN.bareSubagent.backgroundMode}`)
           if (cfg(bare, 'maxDepth') !== FROZEN.bareSubagent.maxDepth) push('SUBAGENT-MAXDEPTH', `裸 subagent 的 maxDepth 必须 ${FROZEN.bareSubagent.maxDepth}`)
+        }
+        // ── 🔴 `bareSubagentRows` **接活**（票 `T-TEST-06` ③）：它原来是**死常量**（`tests/**` 里零读点）──
+        // 【钉什么】**已启用的行里，`toolName === 'subagent'` 的那一行恰好 1 行**。
+        //   为什么这是个真判据（不是 change-detector）：`subagent` 是**裸外聘**的唯一入口，
+        //   多一行来抢这个名字 ⇒ 派工分不清"外聘"与"某个岗位"（`inject.js` 的 `HIRE_TOOL` 与
+        //   `job_*` 撞名就是同一类事故，见上面那段 `BOARD-LEAK`）。
+        // 【怎么翻面】再插一行 `toolName: 'subagent'` ⇒ 当场红；把那一行删掉 ⇒ 也红（不是 1 了）。
+        {
+          const allRows = [...byId.values()]
+          const namedSubagent = allRows.filter((r) => cfg(r, 'toolName') === 'subagent' && disabledKind(r) !== 'literal-true')
+          rec.readings.bare_subagent_rows = namedSubagent.map((r) => r.id)
+          if (namedSubagent.length !== FROZEN.staged.bareSubagentRows) {
+            push('COUNT-BARE-SUBAGENT', `已启用的行里 toolName='subagent' 的实得 ${namedSubagent.length} 行（${namedSubagent.map((r) => r.id).join(', ') || '无'}），冻结 ${FROZEN.staged.bareSubagentRows} 行 —— 裸外聘的入口必须恰好一个`)
+          }
         }
         for (const rowId of FROZEN.disabledSubagentRowIds) {
           const row = byId.get(rowId)
@@ -329,6 +372,37 @@ describe('static · composition', () => {
         else if (teamFiles.length !== FROZEN.staged.teamFiles) push('COUNT-TEAM', `team 文件实得 ${teamFiles.length}，冻结 ${FROZEN.staged.teamFiles}`)
         if (jobRows.length !== FROZEN.staged.jobRows) push('COUNT-JOB', `job 行实得 ${jobRows.length}，冻结 ${FROZEN.staged.jobRows}`)
         if (fixedRows.length !== FROZEN.staged.fixedTeamToolRows) push('COUNT-TEAM-ROW', `固定 team_* 行实得 ${fixedRows.length}，冻结 ${FROZEN.staged.fixedTeamToolRows}`)
+
+        // ── 🔴 注入的 `.md` 文件：**名单 + 份数**（票 `T-TEST-06` ③ · 两个死常量接活之一）──────
+        // 【口径】数「**配置里声明了哪几份**」（确定性 · 与盘上文件在不在无关）；
+        //   不数「本回合实际注入了哪几份」（环境相关 ⇒ 归探针，票 `T-TEST-07`）。
+        //   `charter` 一个 key 撑 9 个文件 · `roster`/`board`/`memory` 是**算出来的** ⇒ 0 份。
+        // 【两条一起钉才**能翻面**】加一个**算出来的**项 ⇒ 名单与份数**都不动**（绿）；
+        //   加一个**真文件** ⇒ **两样都红**。只钉个数会被"一进一出"骗过去。
+        {
+          const NON_FILE = ['roster', 'board', 'memory']
+          const files = new Set()
+          for (const key of ['leaderOrder', 'memberOrder']) {
+            const list = injRow ? cfg(injRow, key) : null
+            if (!Array.isArray(list)) { push('INJECTED-FILES', `${key} 必须是数组（拿不到就判不了"注入了哪几份"）`); continue }
+            for (const entry of list) {
+              if (entry === 'charter') { for (const role of FROZEN.teamRoles) files.add(`team/${role}.md`); continue }
+              if (NON_FILE.includes(entry)) continue
+              files.add(`${entry}.md`)
+            }
+          }
+          const got = [...files].sort()
+          const want = [...FROZEN.staged.injectedMarkdownFiles].sort()
+          rec.readings.injected_markdown = { files: got, count: got.length, frozen_count: FROZEN.staged.injectedMarkdownClasses }
+          if (got.length !== FROZEN.staged.injectedMarkdownClasses) {
+            push('COUNT-INJECTED-MD', `会被注入的 .md 文件实得 ${got.length} 份，冻结 ${FROZEN.staged.injectedMarkdownClasses} 份 —— 名单：${got.join(', ')}`)
+          }
+          if (JSON.stringify(got) !== JSON.stringify(want)) {
+            const only = got.filter((f) => !want.includes(f))
+            const missing = want.filter((f) => !got.includes(f))
+            push('INJECTED-MD-LIST', `会被注入的 .md **名单**对不上：多出 ${JSON.stringify(only)} · 缺 ${JSON.stringify(missing)}（⚠️ 加一个"算出来的"项**不该**动这份名单；动了就说明它被算成了文件）`)
+          }
+        }
         if (!Array.isArray(office) || office.length !== FROZEN.staged.officeBound) push('COUNT-OFFICE', `officeBound 实得 ${JSON.stringify(office)}，冻结 ${FROZEN.staged.officeBound} 项`)
 
         // disabled 有效行数：注释里那个 `disabled: true` 不许被算进去（AGENTS.md 3b 记过这个坑）

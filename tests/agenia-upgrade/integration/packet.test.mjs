@@ -24,7 +24,7 @@ import zlib from 'node:zlib'
 import { ENV } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, sha256Equal, sha256File, stagingReadings, writeJson } from '../support/evidence.mjs'
 import { canonical, ensureMarkedDir } from '../support/root-guard.mjs'
-import { fixturePath, loadStagedModule, nonCallables, stagingExists } from '../support/sut.mjs'
+import { fixturePath, loadStagedModule, nonCallables, runCli, stagingExists, writeFixture } from '../support/sut.mjs'
 
 before(() => {
   preflight()
@@ -438,6 +438,323 @@ describe('integration · packet (REV-01)', () => {
         }
       } else {
         rec.readings.packet_calls = { skipped: '四个导出不齐，B 半的调用断言没跑（缺面已经在上面点名）' }
+      }
+
+      // ══════════════════════════════════════════════════════════════════════════════
+      // ⑥ v1.8「只打人话」（`sources[].human`）—— 2026-10-16 加 · 六样形状
+      //
+      // 【为什么落在这儿】注册表 `TOTAL` 是**冻结的 55**（`registryProblems()` 钉着），
+      //   新 ID 要走契约变更 ⇒ 本批的判据**并进 REV-01**（它就是"会话包"那一条）。
+      //
+      // 【被测面】`agenia-brain.mjs --op session-packet`（**真子进程**）—— 于是
+      //   `packet.mjs` 的投影与 `agenia-brain.mjs` 的透传/账**两条路一起**被验到。
+      //
+      // 【六样形状】① 三种形状（true / false / 不给）+ 坏形状当场拒；② `false` ≡ 不给（逐字节）；
+      //   ③ 与 `window` 正交（两个一起给，谁也不改写谁）；④ 未闭合 turn ⇒ 不取、账上写明；
+      //   ⑤ 没 text 的 turn ⇒ 记 0 条、不占位；⑥ **一帧多行**（帧 ↔ 行不是一对一）。
+      //
+      // 【怎么翻面】
+      //   · 把 `humanFlagOf` 的"坏形状当场抛"删掉 ⇒ ① 那一格从 `E_ARG_SCHEMA` 变 ok；
+      //   · 把 `filterStream` 里 `human` 那一段整个短路掉 ⇒ ② 仍然绿（它本来就该"没变化"），
+      //     但 ④⑤⑥ 的三份账与"包里有几行"**当场红**；
+      //   · 把裁定 ① （未闭合 turn 不取）删掉 ⇒ ④ 红：包里会多出 seq 114 那一行；
+      //   · 把裁定 ③ （没 text 记 0 条）改成"占位"⇒ ⑤ 红：包里会多出一行空 text。
+      //
+      // ⚠️ 期望值**手算**在下面每一条的注释里（不引用实现岗那份 `cases.json` 的结论）。
+      // ══════════════════════════════════════════════════════════════════════════════
+      {
+        const day = DAY
+        const ws = caseWorkspace('REV-01', 'human')
+        const statusRoot = path.join(ws, '.team')
+        const testDataRoot = process.env[ENV.TEST_DATA_ROOT]
+        const T0 = Date.parse('2026-10-14T12:00:00Z')
+        const iso = (ms) => new Date(ms).toISOString()
+        const line = (o) => `${JSON.stringify(o)}\n`
+        const sess = (seq, time, kind, text, id) => line({
+          type: 'user/message', seq, time,
+          data: { content: [{ type: 'text', text }], source: { kind }, role: 'user', id },
+          surfaceOp: 'append',
+        })
+        const asst = (seq, time, id, content, turn = 1, step = 1) => line({
+          type: 'assistant/message', seq, time,
+          data: {
+            turn, step,
+            message: {
+              role: 'assistant', id,
+              source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-flash-dev0', replayState: { response: { kind: 'deepseek-messages', version: 1 }, blocks: [{ type: 'reasoning', signature: `sig-${seq}` }] } },
+              content,
+            },
+            stream: [{ kind: 'text-delta', text: '（流式增量，D 档不许留）' }],
+            usage: { inputTokens: 11, outputTokens: 22 },
+          },
+          surfaceOp: 'append',
+        })
+
+        // ── 夹具：7 帧 / 16 行（**帧 ↔ 行不是一对一**：f0 三行、f2 三行、f6 四行）────────
+        // 逐行归属（手算）：
+        //   f0 L1 session(无消息→non_message) · L2 turn/start(开 turn1) · L3 step/start
+        //   f1 L4 user(kind=user)                      ⇒ BOSS
+        //   f2 L5 assistant(有 text)                   ⇒ 非最后 assistant
+        //      L6 tool/call                             ⇒ non_message
+        //      L7 tool/result(role=tool)                ⇒ other_message
+        //   f3 L8 assistant(有 text)                   ⇒ turn1 的最后输出（L9 收尾时定）
+        //   f4 L9 turn/end(turn1 completed) · L10 turn/start(开 turn2)
+        //   f5 L11 assistant(**只有 reasoning**)       ⇒ turn2 无 text
+        //      L12 turn/end(turn2 aborted)
+        //   f6 L13 turn/start(开 turn3) · L14 user(kind=user) ⇒ BOSS · L15 user(kind=user) ⇒ BOSS
+        //      （**同一帧里两条都进包**）· L16 user(kind=plugin:agenia) ⇒ 注入
+        //      · L17 assistant(有 text，turn3 **永不闭合**) ⇒ 未闭合 turn 的 assistant
+        const framesText = [
+          line({ type: 'session', agentPreset: 'agenia', createdAt: T0, cwd: 'E:\\Harness', delegationDepth: 0, id: 'session-fixture-v18', isSeeded: false, version: 4 })
+            + line({ type: 'turn/start', seq: 101, time: T0 + 1000, data: { turn: 1 } })
+            + line({ type: 'step/start', seq: 102, time: T0 + 2000, data: { turn: 1, step: 1 } }),
+          sess(103, T0 + 3000, 'user', '老板句甲', 'msg-u-103'),
+          asst(104, T0 + 4000, 'msg-a-104', [{ type: 'reasoning', text: '想一下' }, { type: 'text', text: '中间话（非最后）' }])
+            + line({ type: 'tool/call', seq: 105, time: T0 + 5000, data: { arguments: {}, callId: 'call-105', name: 'read', step: 1, turn: 1 } })
+            + line({ type: 'tool/result', seq: 106, time: T0 + 6000, data: { turn: 1, step: 1, message: { role: 'tool', source: { kind: 'tool', callId: 'call-106' }, toolCallId: 'call-106', content: [{ type: 'text', text: '（工具结果）' }] } }, }),
+          asst(107, T0 + 7000, 'msg-a-107', [{ type: 'reasoning', text: '收尾' }, { type: 'text', text: '第一轮的最后输出' }]),
+          line({ type: 'turn/end', seq: 108, time: T0 + 8000, data: { turn: 1, reason: { kind: 'completed' } } })
+            + line({ type: 'turn/start', seq: 109, time: T0 + 9000, data: { turn: 2 } }),
+          asst(110, T0 + 10000, 'msg-a-110', [{ type: 'reasoning', text: '只有思考链，没有正文' }], 2, 1)
+            + line({ type: 'turn/end', seq: 111, time: T0 + 11000, data: { turn: 2, reason: { kind: 'aborted' } } }),
+          line({ type: 'turn/start', seq: 112, time: T0 + 12000, data: { turn: 3 } })
+            + sess(113, T0 + 13000, 'user', '老板句乙', 'msg-u-113')
+            + sess(114, T0 + 14000, 'user', '老板句丙', 'msg-u-114')
+            + sess(115, T0 + 15000, 'plugin:agenia', '（注入文本）', 'msg-u-115')
+            + asst(116, T0 + 16000, 'msg-a-116', [{ type: 'text', text: '未闭合那一轮的最后一句' }], 3, 1),
+        ]
+        const fxFile = fixturePath('REV-01', 'human-mixed', 'jsonl.zstd')
+        writeFileSync(fxFile, Buffer.concat(framesText.map((t) => zlib.zstdCompressSync(Buffer.from(t, 'utf8')))))
+        const allLines = framesText.map((t) => t.split('\n').filter((x) => x !== '')).flat()
+        // 手算的那份账（**契约 §v1.8 那三行闭合式**的左边逐项）：
+        const WANT = {
+          scanned_lines: 17,
+          boss_lines: 3, last_output_lines: 1, kept_lines: 4,
+          assistant_lines: 4,
+          dropped_non_last_assistant: 1, turns_without_text: 1,
+          injected_lines: 1, unclosed_turns: 1, dropped_unclosed_assistant: 1,
+          other_message_lines: 1, non_message_lines: 8,
+        }
+        rec.readings.human_fixture = { file: fxFile, frames: framesText.length, lines: allLines.length, want: WANT }
+        if (framesText.length !== 7 || allLines.length !== 17) {
+          push('HUMAN-FIXTURE', `夹具形状变了（帧 ${framesText.length} / 行 ${allLines.length}，应为 7 / 17）—— 下面的手算期望值全部作废，先修夹具`)
+        }
+        // 帧 ↔ 行**不是一对一**：这条是 ⑥ 的前提，夹具本身不成立就不许往下判。
+        if (Math.max(...framesText.map((t) => t.split('\n').filter((x) => x !== '').length)) < 2) {
+          push('HUMAN-FIXTURE', '没有"一帧多行"的帧 —— ⑥ 那一格等于没测（验收夹具必须是多行帧）')
+        }
+
+        const payloadFor = (extra) => writeFixture('REV-01', `human-${extra.tag}`, {
+          day,
+          project: 'harness',
+          exclude_session_ids: [],
+          now: iso(T0 + 20000),
+          sources: [{
+            session_id: 'session-fixture-v18',
+            project: 'harness',
+            file: fxFile,
+            last_event_at: iso(T0 + 15000),
+            ...(extra.humanKey === undefined ? {} : { human: extra.humanKey }),
+            ...(extra.window === undefined ? {} : { window: extra.window }),
+          }],
+        })
+        const runPacket = (tag, extra) => {
+          const res = runCli('agenia-brain.mjs', {
+            op: 'session-packet', dataRoot: testDataRoot, workspace: ws, inFile: payloadFor({ tag, ...extra }), testMode: true,
+          }, { env: process.env })
+          return res
+        }
+        const readPacket = (dir) => {
+          const c = path.join(dir, 'content.jsonl')
+          if (!existsSync(c)) return null
+          const raw = readFileSync(c, 'utf8')
+          return { text: raw, bytes: Buffer.byteLength(raw, 'utf8'), lines: raw.split('\n').filter((x) => x !== ''), manifest: (() => { try { return JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8')) } catch { return null } })() }
+        }
+
+        const rTrue = runPacket('true', { humanKey: true })
+        const rFalse = runPacket('false', { humanKey: false })
+        const rNone = runPacket('none', {})
+        const rBad = runPacket('badshape', { humanKey: 'yes' })
+        const rOrthW = runPacket('window-only', { window: { from: iso(T0 + 6000) } })
+        const rOrthBoth = runPacket('window-human', { humanKey: true, window: { from: iso(T0 + 6000) } })
+        rec.readings.human_runs = [rTrue, rFalse, rNone, rBad, rOrthW, rOrthBoth].map((r) => ({
+          exit: r.exit_code, ok: r.json?.ok ?? null, code: r.json?.error?.code ?? null, dir: r.json?.packet_dir ?? null,
+        }))
+
+        // ① 三种形状：真 / false / 不给 —— 三种都必须被接受（不给=false 是"逐字相同"那一条的地基）。
+        for (const [tag, r] of [['true', rTrue], ['false', rFalse], ['不给', rNone]]) {
+          if (r.exit_code !== 0 || r.json?.ok !== true) {
+            push('HUMAN-SHAPE', `human=${tag} 的会话包应当成功，实得 exit=${r.exit_code} code=${r.json?.error?.code ?? '(无码)'}：${r.stdout.trim().slice(0, 200)}`)
+          }
+        }
+        // ①b 坏形状 ⇒ 当场抛 `E_ARG_SCHEMA`（**不许静默当 false**）。
+        if (rBad.exit_code === 0 || rBad.json?.error?.code !== 'E_ARG_SCHEMA') {
+          push('HUMAN-SHAPE', `sources[].human 形状不合法（字符串 'yes'）必须当场 E_ARG_SCHEMA，实得 exit=${rBad.exit_code} code=${rBad.json?.error?.code ?? '(无码)'}`)
+        }
+
+        // ② `false` ≡ 不给：**逐字节相同**（包内容 sha256 + `frames` 四条）。
+        const cFalse = rFalse.json?.packet_dir ? readPacket(rFalse.json.packet_dir) : null
+        const cNone = rNone.json?.packet_dir ? readPacket(rNone.json.packet_dir) : null
+        rec.readings.human_false_vs_none = {
+          false: { sha: rFalse.json?.content_sha256 ?? null, frames: rFalse.json?.frames ?? null, bytes: cFalse?.bytes ?? null },
+          none: { sha: rNone.json?.content_sha256 ?? null, frames: rNone.json?.frames ?? null, bytes: cNone?.bytes ?? null },
+        }
+        if (cFalse === null || cNone === null) {
+          push('HUMAN-FALSE-EQ-NONE', '`human:false` 或"不给"那一跑没落下包 ⇒ 这条逐字节判据判不了')
+        } else {
+          if (cFalse.text !== cNone.text) push('HUMAN-FALSE-EQ-NONE', '`human:false` 与"不给"的 content.jsonl **不是逐字节相同**（v1.8 的硬要求：不给/false ⇒ 与 v1.7 逐字相同）')
+          if (JSON.stringify(rFalse.json?.frames) !== JSON.stringify(rNone.json?.frames)) {
+            push('HUMAN-FALSE-EQ-NONE', `\`human:false\` 与"不给"的 frames 四条不同：${JSON.stringify(rFalse.json?.frames)} vs ${JSON.stringify(rNone.json?.frames)}`)
+          }
+          if (rFalse.json?.human !== null) push('HUMAN-FALSE-EQ-NONE', `\`human:false\` 时返回值里的 human 账应为 null（"没开"不是"筛完一条不剩"），实得 ${JSON.stringify(rFalse.json?.human)?.slice(0, 120)}`)
+          if (rNone.json?.human !== null) push('HUMAN-FALSE-EQ-NONE', `不给 human 时返回值里的 human 账应为 null，实得 ${JSON.stringify(rNone.json?.human)?.slice(0, 120)}`)
+          if (cFalse.lines.length !== allLines.length) {
+            push('HUMAN-FALSE-EQ-NONE', `没开 human 时包里应当是**全部 16 行**，实得 ${cFalse.lines.length} 行`)
+          }
+        }
+
+        // ③ 与 `window` 正交：
+        //    · 只给 window ⇒ 与 v1.7 同形（human 账为 null）；
+        //    · 两个一起给 ⇒ 先裁后筛（账只数**落进窗口**的行），且 `human` 账的 `scanned_lines` = 窗口内行数。
+        const wWin = rOrthW.json?.packet_dir ? readPacket(rOrthW.json.packet_dir) : null
+        const wBoth = rOrthBoth.json?.packet_dir ? readPacket(rOrthBoth.json.packet_dir) : null
+        rec.readings.human_window = {
+          window_only: { exit: rOrthW.exit_code, lines: wWin?.lines.length ?? null, human: rOrthW.json?.human ?? null, cropped: rOrthW.json?.cropped ?? null },
+          both: { exit: rOrthBoth.exit_code, lines: wBoth?.lines.length ?? null, totals: rOrthBoth.json?.human?.totals ?? null },
+        }
+        if (rOrthW.json?.human !== null) push('HUMAN-WINDOW', '只给 window（没给 human）时 human 账必须是 null —— 两条参数正交，别互相点亮')
+        if (rOrthBoth.exit_code !== 0) {
+          push('HUMAN-WINDOW', `window + human 一起给应当成功，实得 exit=${rOrthBoth.exit_code} code=${rOrthBoth.json?.error?.code ?? '(无码)'}`)
+        } else {
+          // 窗口 from = T0+6000 · to = now = T0+20000 ⇒ 落进窗口的是 **L7..L17 共 11 行**。
+          // 逐条手算（按契约那份 `LINE_KIND` 表）：
+          //   L7 tool/result ⇒ other_message(1) · L8 assistant(107,有 text, turn1 在 L9 闭合) ⇒ last_output(1)
+          //   L9 turn/end · L10 turn/start · L12 turn/end · L13 turn/start(t3) ⇒ non_message(4)
+          //   L11 assistant(110,**只有 reasoning**, turn2 在 L12 以 aborted 闭合) ⇒ turns_without_text(1)
+          //   L14/L15 user(kind=user) ⇒ boss(2) · L16 user(kind=plugin:agenia) ⇒ injected(1)
+          //   L17 assistant(116,turn3 在 L13 开、**永不闭合**) ⇒ dropped_unclosed_assistant(1) · unclosed_turns(1)
+          //   L5（非最后 assistant，t=4000）**在窗口外** ⇒ dropped_non_last_assistant(0)
+          //   闭合式：3 + 0 + 1 + 1 + 1 + 1 + 4 = 11 = scanned_lines ✓
+          const t = rOrthBoth.json?.human?.totals ?? {}
+          const wantWin = { scanned_lines: 11, boss_lines: 2, last_output_lines: 1, kept_lines: 3, assistant_lines: 3, injected_lines: 1, unclosed_turns: 1, dropped_unclosed_assistant: 1, other_message_lines: 1, non_message_lines: 4, turns_without_text: 1, dropped_non_last_assistant: 0 }
+          rec.readings.human_window.want = wantWin
+          for (const k of Object.keys(wantWin)) {
+            if (t[k] !== wantWin[k]) push('HUMAN-WINDOW', `window+human 的账 ${k} 手算 ${wantWin[k]}，实得 ${t[k]}`)
+          }
+          if (wBoth !== null && wBoth.lines.length !== wantWin.kept_lines) {
+            push('HUMAN-WINDOW', `window+human 之后包里应是 ${wantWin.kept_lines} 行，实得 ${wBoth.lines.length}`)
+          }
+        }
+
+        // ④⑤⑥ + 投影：拿 `human:true`（不裁）那一份逐条对。
+        if (rTrue.exit_code !== 0 || cFalse === null) {
+          push('HUMAN-LEDGER', '`human:true` 那一跑没成功 ⇒ 账与投影那几条判不了')
+        } else {
+          const dir = rTrue.json.packet_dir
+          const pk = readPacket(dir)
+          const totals = rTrue.json?.human?.totals ?? null
+          rec.readings.human_totals = totals
+          rec.readings.human_projection = rTrue.json?.human?.projection ?? null
+          if (totals === null) {
+            push('HUMAN-LEDGER', '`human:true` 时返回值里必须有 `human.totals` 这把账')
+          } else {
+            for (const k of Object.keys(WANT)) {
+              if (totals[k] !== WANT[k]) push('HUMAN-LEDGER', `账 ${k} 手算 ${WANT[k]}，实得 ${totals[k]}`)
+            }
+            // 契约里那三行**闭合式**（账自己闭合）—— 对不上就是某一格漏了或重了。
+            const close = totals.kept_lines + totals.dropped_non_last_assistant + totals.turns_without_text
+              + totals.dropped_unclosed_assistant + totals.injected_lines + totals.other_message_lines + totals.non_message_lines
+            if (close !== totals.scanned_lines) {
+              push('HUMAN-LEDGER', `账不闭合：kept+dropped+without_text+unclosed+injected+other+non_message = ${close} ≠ scanned_lines ${totals.scanned_lines}`)
+            }
+            if (totals.kept_lines !== totals.boss_lines + totals.last_output_lines) {
+              push('HUMAN-LEDGER', `kept_lines ${totals.kept_lines} ≠ boss_lines ${totals.boss_lines} + last_output_lines ${totals.last_output_lines}`)
+            }
+            if (totals.assistant_lines !== totals.last_output_lines + totals.turns_without_text + totals.dropped_non_last_assistant + totals.dropped_unclosed_assistant) {
+              push('HUMAN-LEDGER', `assistant_lines ${totals.assistant_lines} ≠ 四格之和 ${totals.last_output_lines + totals.turns_without_text + totals.dropped_non_last_assistant + totals.dropped_unclosed_assistant}`)
+            }
+            // ④ 未闭合 turn：**不取**，而且账上要写明（`unclosed_turns` + `dropped_unclosed_assistant`）。
+            if (totals.unclosed_turns !== 1 || totals.dropped_unclosed_assistant !== 1) {
+              push('HUMAN-UNCLOSED', `未闭合 turn 应当 unclosed_turns=1 / dropped_unclosed_assistant=1，实得 ${totals.unclosed_turns} / ${totals.dropped_unclosed_assistant}`)
+            }
+            // ⑤ 没 text 的 turn：**记 0 条、不占位**。
+            if (totals.turns_without_text !== 1) push('HUMAN-NO-TEXT', `turn2 只有 reasoning ⇒ turns_without_text 应为 1，实得 ${totals.turns_without_text}`)
+          }
+
+          if (pk === null) {
+            push('HUMAN-CONTENT', '`human:true` 的包目录里没有 content.jsonl')
+          } else {
+            const seqs = pk.lines.map((l) => { try { return JSON.parse(l).seq } catch { return null } })
+            rec.readings.human_packet_seqs = seqs
+            // 手算：留下的应当是 L4(103 BOSS) · L8(107 最后输出) · L14(113 BOSS) · L15(114 BOSS) —— 顺序即流序。
+            if (JSON.stringify(seqs) !== JSON.stringify([103, 107, 113, 114])) {
+              push('HUMAN-CONTENT', `人话包里的 seq 应为 [103,107,113,114]（老板 3 条 + 最后输出 1 条），实得 ${JSON.stringify(seqs)}`)
+            }
+            // ④ 未闭合 turn 那一行（seq 116）**一个字都不许进包**。
+            if (seqs.includes(116)) push('HUMAN-UNCLOSED', '未闭合 turn 里的 assistant（seq 116）进了包 —— 裁定 ① 是"不取"')
+            // ⑤ 没 text 的那个 turn（seq 110）不许占位。
+            if (seqs.includes(110)) push('HUMAN-NO-TEXT', '没有 text 的 turn 的最后一条 assistant（seq 110）进了包 —— 裁定 ③ 是"记 0 条、不占位"')
+            if (pk.lines.some((l) => /"content":\[\]/.test(l) || /"text":""/.test(l))) {
+              push('HUMAN-NO-TEXT', '包里出现了空 text 的行 —— 那是"占位"，不是"记 0 条"')
+            }
+            // ⑤b 老板的行**原样**进包（唯一不投影的一类）：逐字节等于原流里那一行。
+            const bossLine = allLines.find((l) => JSON.parse(l).seq === 103)
+            if (!pk.lines.includes(bossLine)) push('HUMAN-BOSS-VERBATIM', '老板那一行没有**逐字节原样**进包（老板侧一个字都不许投影）')
+            // 投影：最后输出那一行 = **白名单键序**重建出来的那一行（独立重造，不信实现的自述）。
+            const projWant = JSON.stringify({
+              type: 'assistant/message', seq: 107, time: T0 + 7000,
+              data: {
+                turn: 1, step: 1,
+                message: {
+                  role: 'assistant', id: 'msg-a-107',
+                  source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-flash-dev0' },
+                  content: [{ type: 'text', text: '第一轮的最后输出' }],
+                },
+              },
+            })
+            if (!pk.lines.includes(projWant)) {
+              push('HUMAN-PROJECTION', '最后输出那一行不是按白名单键序投影出来的那一行（独立重造应当逐字节相同）—— 实得：' + JSON.stringify(pk.lines.find((l) => { try { return JSON.parse(l).seq === 107 } catch { return false } }) ?? null))
+            }
+            // 投影**只减不增**：D 档丢掉的那几样一样都不许留。
+            const outLine = pk.lines.find((l) => { try { return JSON.parse(l).seq === 107 } catch { return false } }) ?? ''
+            for (const [needle, why] of [['reasoning', 'content[type=reasoning]'], ['tool-call', 'content[type=tool-call]'], ['"stream"', 'data.stream'], ['"usage"', 'data.usage'], ['replayState', 'message.source.replayState'], ['surfaceOp', '事件顶层的 surfaceOp']]) {
+              if (outLine.includes(needle)) push('HUMAN-PROJECTION', `投影后的行里还留着 ${why}（白名单只留 keeps 那张单子）`)
+            }
+            // ⑥ 一帧多行：**有贡献的帧数**（`frames.count`）不是"行数"，也不是"总帧数"。
+            //    手算：进包的 4 行来自 f1(1 行) / f3(1 行) / f6(2 行) ⇒ count = 3。
+            const fr = rTrue.json?.frames ?? null
+            rec.readings.human_frames = fr
+            if (fr?.count !== 3) {
+              push('HUMAN-MULTILINE-FRAME', `有贡献的帧数应为 3（4 行来自 3 个帧，其中 f6 一帧两行），实得 count=${fr?.count}（总帧数 7 / 行数 4 —— 这两个数都不是答案）`)
+            }
+            const shrunk = framesText.map((t) => zlib.zstdCompressSync(Buffer.from(t, 'utf8')))
+            const wantFrameBytes = shrunk[1].length + shrunk[3].length + shrunk[6].length
+            if (fr?.bytes !== wantFrameBytes) {
+              push('HUMAN-MULTILINE-FRAME', `frames.bytes 应为 f1+f3+f6 三个帧的压缩字节之和 ${wantFrameBytes}，实得 ${fr?.bytes}`)
+            }
+            // `first_frame_chars` = **第一个有贡献的帧里留下来的那些行**的字符数（f1 只有 1 行）。
+            const wantFirst = frozenCharCount(framesText[1])
+            if (fr?.first_frame_chars !== wantFirst) {
+              push('HUMAN-MULTILINE-FRAME', `first_frame_chars 应为第一个有贡献的帧（f1）里留下的那一行的字符数 ${wantFirst}，实得 ${fr?.first_frame_chars}`)
+            }
+            // manifest 那**十个**顶层字段一个不许动。
+            const req = rTrue.json?.manifest_fields ?? null
+            rec.readings.human_manifest_fields = req
+            if (req?.required !== 10 || req?.present !== 10 || (req?.missing ?? []).length !== 0) {
+              push('HUMAN-MANIFEST', `manifest 必填字段必须仍是**十个、齐**，实得 required=${req?.required} present=${req?.present} missing=${JSON.stringify(req?.missing)}`)
+            }
+            if (pk.manifest !== null && Object.hasOwn(pk.manifest, 'human')) {
+              push('HUMAN-MANIFEST', 'manifest 里**不许**多出 human 键（那十个顶层字段是冻结的；账走返回值与 audit）')
+            }
+          }
+          // 投影的**降级声明**必须活着回到调用方（"这是 D 档、字节保证降级了"的唯一书面凭据）。
+          const pj = rTrue.json?.human?.projection ?? null
+          if (pj === null || pj.level !== 'D' || typeof pj.guarantee !== 'string' || typeof pj.downgrade !== 'string') {
+            push('HUMAN-PROJECTION', `返回值里必须有 human.projection（level=D + guarantee + downgrade 两句），实得 ${JSON.stringify(pj)?.slice(0, 200)}`)
+          } else if (!/逐字/.test(pj.guarantee) || !/降级|只对老板/.test(pj.downgrade)) {
+            push('HUMAN-PROJECTION', `projection 的两句话形状变了（guarantee/downgrade 必须说清"逐字"与"降级"）：${JSON.stringify(pj).slice(0, 240)}`)
+          }
+        }
       }
 
       caseFail(problems)

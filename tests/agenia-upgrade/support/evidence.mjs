@@ -337,6 +337,66 @@ export async function runCase(id, fn) {
   return rec
 }
 
+/**
+ * 🔴 `T-R1-04` / `T-TEST-03`（技术评审 F3 / F-29）：**staged 与活体逐字节比** —— 两棵树，不是"活体 vs 冻结期望"。
+ *
+ * 为什么需要它：测试的靶子（`AGENIA_STAGING_PRESET`）与生产（活体 `presets/agenia`）之间是**手工同步**。
+ * 2026-10-16 一天里撞到两次"活体改了、staged 没跟上"（技术评审开工时 · 测试岗开工 10 分钟），
+ * 而当时**没有任何一条断言**拿两棵树比 —— 树哈希**只被记下来**（`stagingReadings()` / `settlement`），
+ * **只记账、不判等**。⇒ 这就是"假绿"的结构原因，本条把它补上。
+ *
+ * 🔴 口径（组长 `T-R1-04` 逐字定）：**必须是"两棵树"比**；**不许做成"放进 55 条里跑绿就算完"**
+ *    —— 它得能在「只改了活体、没改 staged」的那一瞬**当场翻面**（阳性对照见 `_runs` 里那次变异体跑）。
+ *
+ * `SKIP`：`.runtime/` 是**数据**（真实记忆库），不是代码 —— 它**本来就不该**同步进 staging
+ * （活体 61 文件 / staged 48 文件，差的那 13 个全是它）。拿它当"漂移"就是每天都红的假红。
+ *
+ * @returns {{staged:string|null, live:string, staged_files:number, live_files:number,
+ *            only_staged:string[], only_live:string[], different:string[], same:boolean, note:string}}
+ */
+export function stagedVsLiveDrift(env = process.env) {
+  const SKIP = new Set(['.runtime'])
+  const live = canonical(PATHS.finalPreset)
+  const stagedRaw = optionalEnv(ENV.STAGING_PRESET, env)
+  const staged = stagedRaw ? canonical(stagedRaw) : null
+  const walkOf = (root) => {
+    const out = new Map()
+    if (root === null || !existsSync(root)) return out
+    const go = (dir) => {
+      for (const name of readdirSync(dir).sort()) {
+        if (SKIP.has(name)) continue
+        const full = path.join(dir, name)
+        const st = statSync(full)
+        if (st.isDirectory()) go(full)
+        else if (st.isFile()) {
+          out.set(path.relative(root, full).replace(/\\/g, '/'), {
+            bytes: st.size,
+            sha256: createHash('sha256').update(readFileSync(full)).digest('hex'),
+          })
+        }
+      }
+    }
+    go(root)
+    return out
+  }
+  const a = walkOf(staged)
+  const b = walkOf(live)
+  const onlyStaged = [...a.keys()].filter((k) => !b.has(k)).sort()
+  const onlyLive = [...b.keys()].filter((k) => !a.has(k)).sort()
+  const different = [...a.keys()].filter((k) => b.has(k) && (a.get(k).sha256 !== b.get(k).sha256 || a.get(k).bytes !== b.get(k).bytes)).sort()
+  return {
+    staged,
+    live,
+    staged_files: a.size,
+    live_files: b.size,
+    only_staged: onlyStaged,
+    only_live: onlyLive,
+    different,
+    same: staged !== null && onlyStaged.length === 0 && onlyLive.length === 0 && different.length === 0,
+    note: '比的是**两棵树**（跳过 `.runtime/` = 数据，不是代码）；差一个字节就算漂移',
+  }
+}
+
 // ── 开盘预检（PC）──────────────────────────────────────────────────────────
 /**
  * 三条预检（契约 §6.0）：
@@ -369,6 +429,12 @@ export function preflight({ calibrateLive = false } = {}) {
   const st = stagingReadings()
   out.staged_tree_sha256 = st.tree_sha256
   out.staged_tree_files = st.tree_files
+  // **T-R1-04**：`_preflight` 也记"staged vs 活体"的两棵树读数（**只记不判** —— 判在 STAT-01 那条用例上）。
+  // 记在这儿的好处：每一跑（含定向跑）的 `_preflight` 里都留下"那一刻两棵树是什么"，可复现。
+  out.staged_vs_live = (() => {
+    const d = stagedVsLiveDrift()
+    return { same: d.same, staged_files: d.staged_files, live_files: d.live_files, only_staged: d.only_staged, only_live: d.only_live, different: d.different }
+  })()
   out.oracle_sha256 = oracleReadings().actual_sha256
   if (registry.length > 0) {
     throw new RootGuardError('REGISTRY-SHAPE', registry.map((p) => ({ code: 'E_ARG_SCHEMA', detail: p })), {})

@@ -96,8 +96,8 @@ export const FROZEN = {
     /** 活体组合的 `- id:` 行数（能力行口径，含 persona-injector 与五条 team-* 行）—— 装已完成，活体就是 42。 */
     capabilityRows: 42,
     teamToolRows: 5,
-    /** 活体组合 `officeBound` 的名单（三个判断类岗位 —— 复盘岗已撤）。 */
-    officeBound: ['review', 'memory-review', 'conversation-review'],
+    /** 活体组合 `officeBound` 的名单（**两个**判断类岗位 —— 复盘岗已撤 · `memory-review` 2026-10-16 由老板拍板移出）。 */
+    officeBound: ['review', 'conversation-review'],
     /** 活体组合里 `disabled: true` 的**有效**行数（剔掉注释、不算 `!!js` 平台二选一那一对）。 */
     disabledLiteralRows: 5,
     /** 活体组合里**已启用**的具名 `dsh-tool-subagent` 实例数（`team-retro` 关着，不算）。 */
@@ -137,31 +137,62 @@ export const FROZEN = {
     /** 固定 `team-*` **行**数 —— 含关着的 `team-retro`（关掉 ≠ 删掉）。 */
     fixedTeamToolRows: 5,
     bareSubagentRows: 1,
-    /** officeBound 的**条数**（3：review / memory-review / conversation-review）。
-     *  ⚠️ 名单见下面的 `officeBoundRoles` —— 两者别混（混了会 `not iterable`）。 */
-    officeBound: 3,
+    /** officeBound 的**条数**（**2**：review / conversation-review）。
+     *  ⚠️ 名单见下面的 `officeBoundRoles` —— 两者别混（混了会 `not iterable`）。
+     *  🔴 2026-10-16：**3 → 2**。老板当天上午亲口拍「那就给复核加个权限吧」⇒ `memory-review`
+     *     从名单里去掉（她两件保护都没了，只剩纪律）。生产侧 `agent.cordis.yml` 同批改完；
+     *     本条是**测试侧的同一批**（技术评审 F1 那一族：改了生产侧，冻结表要同批跟）。
+     *     来历逐字见 `presets/agenia/agent.cordis.yml` 那段注释；票据 `T-TEST-05`。 */
+    officeBound: 2,
     /**
-     * officeBound 的**名单**（§B2.3 冻结的顺序，逐字）—— 要名单的地方读这里，要条数的地方读上面那个数。
-     * 三个判断类岗位（复盘岗已撤：`team/retro.md` 不存在、`team-retro` 那一行关着）。
-     * 来历：`officeBound: 3` 是**计数**（同族 `capabilityRows: 42` / `teamFiles: 9` 都是计数），
+     * officeBound 的**名单**（冻结的**顺序**，逐字）—— 要名单的地方读这里，要条数的地方读上面那个数。
+     * 两个判断类岗位（复盘岗已撤：`team/retro.md` 不存在、`team-retro` 那一行关着；
+     * `memory-review` 2026-10-16 移出 —— 见上面那条 🔴）。
+     * 来历：`officeBound: 2` 是**计数**（同族 `capabilityRows: 42` / `teamFiles: 9` 都是计数），
      * 而 STAT-02 / REV-02 拿它当名单去 `for...of` ⇒ 实现做对的那一刻当场 `TypeError: not iterable`，
      * 把整条被测面挡在后面（证据：实现岗 `dev/2026-10-14/log.md` §11）。
      */
-    officeBoundRoles: ['review', 'memory-review', 'conversation-review'],
+    officeBoundRoles: ['review', 'conversation-review'],
     onlyInStandard: [],
     onlyInAgenia: 10,
     disabledLiteralRows: 5,
     /** 进提示词的 .md 类数：persona/style/me-aqua/leader/work-guidelines + 9 角色。 */
     injectedMarkdownClasses: 14,
+    /**
+     * 🔴 **「会被注入的 `.md` 文件」的名单**（相对内容根，按路径去重）—— 与上面那个**计数**成对。
+     *
+     * 2026-10-16（票 `T-TEST-06` ③）：这一对原来**只有计数、而且那个计数是死常量**（`tests/**` 里零读点）。
+     * 接活的口径（组长点名要写清，二选一）：
+     *   ⇒ **数「配置里声明了哪几份」**（确定性 · 与盘上文件在不在无关），
+     *      **不数「本回合实际注入了哪几份」**（那个环境相关：`inject.js` 读盘、**缺文件不回退** ⇒
+     *      拿它当断言就是"红的是环境不是代码"）。"实际注入"那一半归**探针**（票 `T-TEST-07`）。
+     *
+     * 🔴 **这个数（14）不是 order 里的 key 数** —— `charter` **一个 key 撑 9 个文件**
+     *    （`team/<role>.md` ×9）· `roster`/`board`/`memory` 是**算出来的** ⇒ **0 份** ·
+     *    `leader`/`work-guidelines`/`persona`/`me-aqua`/`style` 各 1 份 ⇒ **`5 + 9 = 14` 只有按文件算才对**。
+     *    （⚠️ 按 key 数接活会把加一个"算出来的"项也算进去 ⇒ **假变化**。怀疑「15 → 14」那次的口径混乱正是这一类。）
+     *
+     * 🔴 **两条一起钉**（名单 + 份数）才**能翻面**：
+     *    · 加一个**算出来的**项（如 2026-10-16 的 `memory`）⇒ **名单与份数都不动** ⇒ 绿；
+     *    · 加一个**真文件**进 order ⇒ **名单与份数都红**。
+     *    ⚠️ 只钉个数会被"一进一出"骗过去（`officeBound` 那次的教训：同数不同集合）。
+     */
+    injectedMarkdownFiles: [
+      'leader.md', 'work-guidelines.md', 'persona.md', 'me-aqua.md', 'style.md',
+      'team/design.md', 'team/dev.md', 'team/test.md', 'team/review.md', 'team/hire.md',
+      'team/memory-judge.md', 'team/memory-review.md', 'team/conversation-review.md', 'team/technical-review.md',
+    ],
     /** 组合里**已启用**的具名 `dsh-tool-subagent` 实例数：四条固定岗位 + 裸 `subagent` + 四条 job。
      *  `team-retro` 那一行关着 ⇒ 它不注册 `team_retro` 这个工具名，也不进这个数。 */
     enabledNamedDelegations: 9,
   },
 
-  /** 四条 job 行（提案 §B2.2 / §B2.4）。 */
+  /** 四条 job 行（提案 §B2.2 / §B2.4）。
+   *  ⚠️ `officeBound` 这一栏**目前没有任何断言读它**（只作台账）—— 2026-10-16 同批把
+   *  `memory-review` 由 `true` 改成 `false`（老板拍板：给复核加权限）。 */
   jobs: [
     { id: 'tool-job-memory-judge', toolName: 'job_memory_judge', role: 'memory-judge', officeBound: false },
-    { id: 'tool-job-memory-review', toolName: 'job_memory_review', role: 'memory-review', officeBound: true },
+    { id: 'tool-job-memory-review', toolName: 'job_memory_review', role: 'memory-review', officeBound: false },
     { id: 'tool-job-conversation-review', toolName: 'job_conversation_review', role: 'conversation-review', officeBound: true },
     { id: 'tool-job-technical-review', toolName: 'job_technical_review', role: 'technical-review', officeBound: false },
   ],
@@ -397,7 +428,16 @@ export const FROZEN = {
       { op: 'entry-count', writes: false }, { op: 'report-read', writes: false },
       { op: 'health-read', writes: false }, { op: 'job-mark', writes: true },
       { op: 'audit-append', writes: true }, { op: 'snapshot-archive', writes: true },
-      { op: 'cs-confirm', writes: true }, { op: 'help', writes: false },
+      { op: 'cs-confirm', writes: true },
+      // 会话包（2026-10-15 加 · v1.7 裁剪 / v1.8 人话）—— **生产侧 21:17 就进了活体清单，测试侧一直漏着**
+      // ⇒ DR-01 的 `CLI-INVENTORY` 常驻红一条（2026-10-16 技术评审 F1，P1）。它 `writes: true`
+      // （落 `<工作区>/.team/retro/<day>/conversation-packet/`，并往脑侧记一条审计）⇒ 按规矩**同批进这张表**。
+      // ⚠️ 于是它也进了 DR-01 那张"非法根 × 写命令"矩阵 —— **安全**：它的根判定照样走 `main()` 第 1226 行
+      //    那条 `resolveRoot()`（`--data-root` 那一道**先于** op 分派跑），真实根姿势在 op 跑起来之前
+      //    就被 `E_ROOT_REAL_BRAIN` 拒掉，一个字节都不写。
+      //    （它**另外**那套 `resolvePacketWorkspace()` 判的是**落点**，与 `--data-root` 那道闸并存、不互相替代。）
+      { op: 'session-packet', writes: true },
+      { op: 'help', writes: false },
     ],
     'agenia-route.mjs': [
       { op: 'init', writes: true }, { op: 'stage-graph-set', writes: true },

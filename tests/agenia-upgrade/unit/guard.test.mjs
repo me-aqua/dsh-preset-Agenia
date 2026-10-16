@@ -13,7 +13,7 @@
 import { before, describe, test } from 'node:test'
 import { FROZEN, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, stagingReadings } from '../support/evidence.mjs'
-import { importStaged, readStagedText, stagingExists } from '../support/sut.mjs'
+import { fixturePath, importStaged, readStagedText, stagingExists } from '../support/sut.mjs'
 import { parseComposition, plain } from '../support/composition.mjs'
 
 before(() => {
@@ -431,6 +431,140 @@ describe('unit · guard', () => {
       }
       rec.readings.fail_open_residual = {
         note: '物理残余：门禁没装上时，委派仍然起得来，只是会 console.error。测试只证明"出声了"，**不许**把它说成结构性拦截（契约 §11.4 第 4 条）。',
+      }
+
+      // ── ⑤ 🔴 配置自检（`selfCheck`）的**四格夹具**（票 `T-TEST-06` ②）────────────────────
+      // 【为什么钉它、而**不**钉一张 key 名字白名单】组长那条族级判据：
+      //   **「这个东西明天会不会变？会 ⇒ 别拿它的值当判据 —— 钉它的形状，或者把它算出来。」**
+      //   一份写死 key 名的白名单 ⇒ **每加一项都会常驻红** ⇒ 那正是"**红的是判据、不是被测对象**"。
+      //   而 `inject.js::selfCheck` 守的是三条**真属性**：**合法性**（哪几类 key 不该出现在哪张表）
+      //   + **可解析性**（"声明了但没注入"）+ **受众边界**（组长专属的不许进 `memberOrder`）。
+      // 【判据只有一条】**加一个"合法的"注入项会不会红？**
+      //   会红 ⇒ **白名单**（禁）；不会红、而**越界**会红 ⇒ **黑名单/边界**（对）。
+      //   ⚠️ 两者在"越界"那一格**行为完全相同** ⇒ **只测越界分不出来** —— 第 ② 格就是为这个加的。
+      // 【四格，缺一格就分不出"白名单"与"边界"】
+      //   ① 正例：当前两份 order ⇒ **零问题**；
+      //   ② 🆕 **合法新增**：两张表各加一个**假装的合法项**（夹具里造一份真 `.md`）⇒ **仍然零问题**；
+      //   ③ **越界**：`me-aqua` 塞进 `memberOrder` ⇒ **必须出声**（那正是 2026-10-16 补的那道边界）；
+      //   ④ **不生效 / 解析不开**：`charter` 进 `leaderOrder` · `roster` 进 `memberOrder` · 不存在的 key ⇒ **各自出声**。
+      // 【怎么翻面】把 `NON_FILE_KEYS` 里的 `memory` 拿掉 ⇒ 第 ① 格会变成"找不到 memory.md"的**假问题**（红）；
+      //   把第 ③ 格那道边界拆掉 ⇒ 第 ③ 格红（第 ② 格照旧绿）；把自检整个短路 ⇒ 第 ③④ 格红（第 ①② 格**假绿**）。
+      if (config !== null && config !== undefined) {
+        // 🔴 **先排空**：`selfCheck()` 是 fire-and-forget（`apply()` 不 await 它）⇒
+        //    本用例**前面那三次 `applyFn`**（拿不到 guard / 有 guard / config 缺键）的自检
+        //    可能还在飞 —— 它们的那一声会落进**下面任何一个**捕获窗，把读数搅乱
+        //    （实测：不排空时"正例"那格抓到 2 行、下一格 0 行，**逐格行数在抖**）。
+        await new Promise((resolve) => setTimeout(resolve, 400))
+        /**
+         * 自检那一声的**针**。⚠️ 这是**报文措辞**，本来属于"会变的东西"——
+         * 所以下面**自带完整性对照**：④c 那一格必须**同时**满足
+         *   ① 抓到的行里含我喂进去的那个 key 名（`no-such-doc`，**措辞无关**）
+         *   ② 抓到的行命中了这根针
+         * ⇒ 措辞哪天变了，②会不成立 ⇒ 当场红「**针过期了**」，**不会**静默变成"每格都静默"的假绿。
+         * （同族先例：`FROZEN.guardMessageNeedles.missingGuard` —— 那道也是措辞针，用法一样。）
+         */
+        const NEEDLE = '配置里有'
+        const pathMod = await import('node:path')
+        const fsMod = await import('node:fs')
+        const fxRoot = pathMod.default.join(pathMod.default.dirname(fixturePath('GRD-03', 'selfcheck-content', 'md')), 'selfcheck-content')
+        const fxTeam = pathMod.default.join(fxRoot, 'team')
+        fsMod.mkdirSync(fxTeam, { recursive: true })
+        const write = (rel, text) => fsMod.writeFileSync(pathMod.default.join(fxRoot, rel), `${text}\n`, 'utf8')
+        const realLeader = Array.isArray(config.leaderOrder) ? config.leaderOrder : []
+        const realMember = Array.isArray(config.memberOrder) ? config.memberOrder : []
+        const boundRoles = Array.isArray(config.officeBound) ? config.officeBound : []
+        // 夹具内容根：**当前两份 order 需要的那些 .md** + `team/<受限角色>.md` + 一份"假装的合法新项"。
+        for (const key of new Set([...realLeader, ...realMember])) {
+          if (key === 'charter' || ['roster', 'board', 'memory'].includes(key)) continue
+          write(`${key}.md`, `（夹具）${key}`)
+        }
+        for (const role of boundRoles) write(`team/${role}.md`, `（夹具）team/${role}`)
+        write('fresh-notes.md', '（夹具）一个"合法的"新注入项 —— 它**存在**，所以加它不该红')
+        const base = { ...config, contentDir: fxRoot }
+        /**
+         * 跑一次真 `apply()`，把**自检那一声**抓回来（按针筛选 —— 别的噪声一律不进读数）。
+         * ⚠️ `selfCheck()` 是 **fire-and-forget**（`apply()` 不 await 它）⇒ 抓错误必须**多等一拍**，
+         *    否则它那声会在 capture 关掉之后才响 —— 那样**每一格都是"静默"**（假绿）。
+         * 🔴 **逐格判据一律做差**（"这一格比正例多出来的行"），**不钉具体措辞**：
+         *    同一次 ctx/config 产生的**恒定噪声**在差里自动抵消。
+         */
+        const runOnce = async (over) => {
+          const r = await withCapturedErrors(async () => {
+            await applyFn(fakeCtx({ tools: { guard: () => ({ dispose() {} }) }, baseUrl }), { ...base, ...over })
+            await new Promise((resolve) => setTimeout(resolve, 200))
+          })
+          return { lines: r.captured.filter((l) => l.includes(NEEDLE)).slice(), threw: r.threw ? String(r.threw.message).slice(0, 200) : null }
+        }
+        const cells = {}
+        const runCell = async (label, over) => {
+          const out = await runOnce(over)
+          cells[label] = { lines: out.lines.map((l) => l.slice(0, 200)), threw: out.threw }
+          return out
+        }
+        const base0 = await runCell('① 正例：当前两份 order（夹具内容根）', {})
+        const added = (out) => out.lines.filter((l) => !base0.lines.includes(l))
+
+        // 🔴 **① 正例必须干净**（2026-10-16 补：这一腿是变异体 `m-nonfile-memory-off` **活下来**之后加的）。
+        //    为什么非有不可：下面 ②③④ 全是**跟 ① 做差**。如果某个错误**对所有格一视同仁**
+        //    （最典型：把"算出来的"项当成"内容根下的一个 .md" ⇒ 每格都多出"找不到 X.md"），
+        //    那它在差里**被自动抵消** ⇒ ②③④ 全绿 ⇒ **变异体存活**（实测过，就是这个形状）。
+        //    夹具内容根里**恰好**是"当前两份 order 需要的那些 .md" ⇒ 正例报任何问题都**不是噪声**：
+        //    要么是 `selfCheck` 的**假问题**，要么是夹具缺东西 —— 两种都该红。
+        if (base0.lines.length > 0) {
+          push('SELFCHECK-FALSE-PROBLEM',
+            '① **正例**（当前两份 order · 夹具内容根里那些 .md 都在）竟然报了问题 —— '
+            + '要么是 `selfCheck` 的**假问题**（典型：把"算出来的"项当成"内容根下的一个 .md"，'
+            + '如 `memory` 不在 `NON_FILE_KEYS` 里 ⇒ 每格都喊"找不到 memory.md"），要么是夹具缺东西。'
+            + `报文：${base0.lines.join(' / ').slice(0, 400)}`)
+        }
+
+        // ② **合法新增**（**承重那一格**）：两张表各加一个文件真的存在的新项 ⇒ **不许比正例多出任何一行**。
+        //    白名单在这一格会红，边界不会 —— 这就是"白名单 vs 黑名单"唯一能被测出来的那一格。
+        const cell2 = await runCell('② 合法新增：两张表各加 fresh-notes（文件在）', { leaderOrder: [...realLeader, 'fresh-notes'], memberOrder: [...realMember, 'fresh-notes'] })
+        if (added(cell2).length > 0) {
+          push('SELFCHECK-OVERREACH',
+            `② **合法新增**（往两张 order 各加一个**文件真的存在**的项）竟然出声了 —— 这就是"**白名单冒充安全边界**"的形状：`
+            + `加一个合法的项也红 ⇒ 每加一项都会常驻红。多出来的行：${added(cell2).join(' / ').slice(0, 300)}`)
+        }
+        // ③ **越界**：组长专属那份进 memberOrder ⇒ **必须比正例多出声**，而且点到那个 key 名。
+        const cell3 = await runCell('③ 越界：me-aqua 进 memberOrder', { memberOrder: [...realMember, 'me-aqua'] })
+        const add3 = added(cell3)
+        if (add3.length === 0) {
+          push('SELFCHECK-BOUNDARY-SILENT', '③ 把 `me-aqua`（**只给组长**的那份）塞进 `memberOrder` **一声没响** —— 组员会静默拿到「老板这个人」')
+        } else if (!add3.join(' ').includes('me-aqua')) {
+          push('SELFCHECK-BOUNDARY-WORDING', `③ 出声了但报文里没点到 \`me-aqua\`（认不出是哪一项）：${add3.join(' / ').slice(0, 300)}`)
+        }
+        // ④ 三格"不生效 / 解析不开"：各自必须多出声，且点到那个 key 名。
+        let anyLoud = add3.length > 0
+        for (const [label, over, key] of [
+          ['④a 不生效：charter 进 leaderOrder', { leaderOrder: [...realLeader, 'charter'] }, 'charter'],
+          ['④b 不生效：roster 进 memberOrder', { memberOrder: [...realMember, 'roster'] }, 'roster'],
+          ['④c 解析不开：一个不存在的 key', { leaderOrder: [...realLeader, 'no-such-doc'] }, 'no-such-doc'],
+        ]) {
+          const out = await runCell(label, over)
+          const add = added(out)
+          if (add.length > 0) anyLoud = true
+          if (add.length === 0) push('SELFCHECK-SILENT', `${label} **必须出声**却没有（自检没跑？判据被拆了？）`)
+          else if (!add.join(' ').includes(key)) push('SELFCHECK-WORDING', `${label} 出声了但报文里没点到「${key}」：${add.join(' / ').slice(0, 300)}`)
+          // 🔴 **针的完整性对照**（就放在 ④c 这一格上）：它必须**同时**命中针与那个 key 名。
+          //    只命中 key 名而没命中针 ⇒ **针过期了**（措辞变了）⇒ 必须红，否则 ①② 的"静默"是假绿。
+          if (label.startsWith('④c')) {
+            const raw = (await runOnce(over)).lines
+            const hasKeyName = raw.join(' ').includes(key)
+            if (hasKeyName && add.length === 0) {
+              push('SELFCHECK-NEEDLE-STALE', `④c 抓到了含「${key}」的行，但**没有一行命中针「${NEEDLE}」** ⇒ 这根**措辞针过期了**（staged/inject.js 的自检报文改了）。针一过期，①② 的"静默"就会变成**假绿** —— 请同批更新这根针。`)
+            }
+          }
+        }
+        // 🔴 **活性对照**：四格里至少有一格"比正例多出声" ⇒ 自检确实在这条路上跑着。
+        //    否则 ①②的"静默"是**假绿**（自检压根没跑时，它们也是静默的）。
+        //    ⚠️ 另：夹具内容根**故意不造** `memory.md` —— 它是"算出来的"，`selfCheck` 不该去找它；
+        //       哪天它开始报"找不到 memory.md"，第 ① 格会多出行 ⇒ 同样在这里被逮住。
+        if (!anyLoud) {
+          push('SELFCHECK-NOT-RUNNING', '四格都拿不到"比正例多出来的行" ⇒ 自检这条路**没在跑**（此时 ①② 的"静默"是假绿，不是通过）')
+        }
+        rec.readings.selfcheck_cells = cells
+        rec.readings.selfcheck_any_loud = anyLoud
       }
 
       caseFail(problems)

@@ -6,7 +6,9 @@
  *
  * 它做五件事，一件一段，互相独立。哪一段不想要，整段删掉就行。
  *
- *   ① 注入正文 —— 读 .md，按 agent.cordis.yml 里写的顺序拼好，交给提示词服务
+ *   ① 注入正文 —— 读 .md，按 agent.cordis.yml 里写的顺序拼好，交给提示词服务。
+ *      名单里那个 `memory` key **不读 .md** —— 它直接读**共享记忆库**（`<内容根>/.runtime/`：
+ *      常识 + 当前快照里的长期记忆）。口径、受众、失败策略全在下面 `── 共享记忆库 ──` 那一段。
  *   ② 分清对象 —— 组长和组员收到的内容不一样，不能混
  *   ③ 岗位边界 —— "只审不改"的岗位，在系统层面就写不了源码
  *   ④ 进度提醒 —— 叫过开发却没叫测试，下一轮提醒组长一句
@@ -40,10 +42,18 @@ export const name = 'agenia'
 /** 没有提示词服务，就没有什么可注入的。 */
 export const inject = ['systemPrompt']
 
-/** 组长默认收到哪些、按什么顺序。⚠️ `agent.cordis.yml` 的 `leaderOrder` 是事实来源，这一份只是兜底。 */
+/**
+ * 组长默认收到哪些、按什么顺序。⚠️ `agent.cordis.yml` 的 `leaderOrder` 是事实来源，这一份只是兜底。
+ *
+ * ⚠️ **`memory`（共享记忆）刻意不在这份兜底里，两边都不在**（2026-10-16）：
+ * 它是**活体组合里声明的那一项** —— 真挂载时 `apply()` 收到的 `leaderOrder` / `memberOrder`
+ * 里就有它，走的是事实来源那一条路。兜底这一份只在"配置里根本没写名单"时用，
+ * 而那种情况下没有任何理由去猜库里有没有东西 ⇒ 读不到就只会在每个空夹具上白喊一声。
+ * （同一条理由也解释了为什么 `style` 一直不在这份兜底里。）
+ */
 const DEFAULT_LEADER_ORDER = ['leader', 'work-guidelines', 'roster', 'board', 'persona', 'me-aqua']
 
-/** 组员默认收到哪些。 */
+/** 组员默认收到哪些。⚠️ `memory` 为什么不在里面：见上面那一段。 */
 const DEFAULT_MEMBER_ORDER = ['work-guidelines', 'charter']
 
 /**
@@ -165,6 +175,91 @@ const BOARD_LABELS = { design: '设计', dev: '开发', test: '测试', review: 
 /** 板子上固定岗位的排列次序（设计 → 实现 → 测试 → 评审 → 复盘）；名单外的岗位排在后面，按名字排。 */
 const BOARD_ORDER = ['design', 'dev', 'test', 'review', 'retro']
 
+/**
+ * ── 共享记忆库 ──────────────────────────────────────────────────────────────
+ * `agent.cordis.yml` 的 `leaderOrder` / `memberOrder` 里那个 `memory` key 读的就是它。
+ *
+ * 🔴 **一份来源：直接读库**（`<内容根>/.runtime/`，也就是脑根）。**不经过"先导出一份再注入"** ——
+ *    那样迟早分叉，而且分叉之后没人知道哪份对。
+ *
+ * 形状（与 `lib/state.mjs` / `lib/snapshot.mjs` 那两份**同一套**口径）：
+ *   · 常识：`<脑根>/common-sense.md`（老板直写、Agenia 只读，只有几条）
+ *   · 长期记忆：指针 `<脑根>/memory/snapshots/current` 里写着版本号 ⇒ `<脑根>/memory/snapshots/<vN>.json`
+ *
+ * 三样是**刻意在这里重写一遍的**（而不是 `import './lib/snapshot.mjs'`）：
+ * 路径两条、指针文件名、版本号形状、四类次序。理由是**这份文件的失败代价不一样** ——
+ * 它一挂，"人格注入 0 字符"（AGENTS.md §3d 那个形状），而 `lib/` 那二十来份是脑 CLI 的地盘。
+ * 为了省这三个常量把注入器的**可加载性**绑在整条脑库上，不划算。
+ * ⚠️ 代价要认：库那边换了布局，这里**读不到就出声降级** —— 是明着失败，不是静默失效。
+ *    换布局时，改这里的三行常量（`RUNTIME_DIR` / `MEMORY_SNAPSHOTS_REL` / `MEMORY_VERSION_RE`）。
+ *
+ * 受众（**口径由组长 2026-10-16 拍，不是这里定的**）：
+ *   · **常识** —— 组长与组员**都拿**（只有几条，它是底层规矩）
+ *   · **长期记忆 · 组长** —— `boss` / `machine` / `project` 三类**全条**；
+ *     `general` **只给"一行一条的索引"**（81 条 ≈ 2.2 万字符全注入 ≈ 2 万 token，太贵）
+ *   · **长期记忆 · 组员** —— **只有 `general` 的索引**（组员干完就走；但老板要求对他们也有用）
+ *
+ * 🔴 **文本必须稳定**：同一份库 ⇒ 同一份文本，**一个字都不许跟时间走**。
+ *    ① 是**快照** —— 文本一变就重发一条，缓存全废（AGENTS.md §3e ①）。
+ *    所以这里只取"库自己写下来的东西"（条目正文 + id + 版本号 + 那条路径），
+ *    **`generated_at` 之类每轮都变的字段一律不拼进去**。排序也只用库自己的顺序，
+ *    不另立一套（另立一套 = 第二个来源）。
+ *
+ * 🔴 **失败策略：读不到 / 解析失败 ⇒ `console.error` 出声 + 降级**
+ *    （能注常识就只注常识，两样都不行就整段不注）——
+ *    跟 `tools.guard` 那条同一个规矩：**不许静默失效**（悄悄失效比明着失败更糟）。
+ *    出声走 `warnOnce`：同一个问题每个会话只喊一次，别把日志刷满。
+ */
+const RUNTIME_DIR = '.runtime'
+/** 快照住在 `<脑根>/memory/snapshots/`（`lib/state.mjs` 的 `snapshotsDir`）。 */
+const MEMORY_SNAPSHOTS_REL = ['memory', 'snapshots']
+/** 指针文件名：内容就是一个版本号（`lib/snapshot.mjs` 的 `CURRENT_POINTER`）。 */
+const MEMORY_POINTER_FILE = 'current'
+/** 版本号形状（`lib/state.mjs` 的 `isSnapshotVersion` 同形）。 */
+const MEMORY_VERSION_RE = /^v\d+$/
+/** 常识那一份的文件名（`lib/state.mjs` 的 `commonSensePath`）。 */
+const COMMON_SENSE_FILE = 'common-sense.md'
+/** 注入清单里那个 key 的名字。两种名单里**同名**（`gather` 内部按受众分流）。 */
+const MEMORY_KEY = 'memory'
+/**
+ * 四类（`lib/memory.mjs` 的 `TYPE_IDS`，**次序与中文名照抄**）。
+ * ⚠️ 次序是给人看的：注入文本里那几节的先后就按这个来。
+ */
+const MEMORY_TYPES = [
+  ['general', '底层通用'],
+  ['boss', '关于老板'],
+  ['machine', '关于本机'],
+  ['project', '关于某个项目'],
+]
+/** 组长拿**全条**的那三类（其余 `general` 两拨人都只拿索引）。 */
+const MEMORY_FULL_TYPES = ['boss', 'machine', 'project']
+/** 索引那一行里标题最多留几个字符 —— 一行一条，太长就不叫索引了。 */
+const MEMORY_TITLE_MAX = 56
+
+/**
+ * **只给组长的那几份**：落进 `memberOrder` 就是错的（每一项写明"它是什么"）。
+ *
+ * 那四份管的是**「她是谁 / 老板是谁 / 怎么带队 / 怎么说话」** —— 与组员干的活无关
+ * （`roster` / `board` 同族：名册与进度板也只给组长，它们是**算出来的**）。
+ *
+ * 🔴 **这是黑名单，不是白名单**（2026-10-16 组长拍 · 测试岗给的一句话判据）：
+ *    **「加一个合法的注入项，会不会红？」** 会红 ⇒ 白名单，**禁**；不会红、而**越界**会红 ⇒ 黑名单，**对**。
+ *    ⇒ 所以**不许**写成"`memberOrder` 只许有这几个 key"：那个形状的后果是
+ *      **每加一个合法项就常驻红**，红的是判据不是被测对象（今天那条族级判据治的正是它）。
+ *    ⇒ 这里只钉"**这几份不许进 `memberOrder`**"：新 key 只要解析得开（有 .md，或者是算出来的）
+ *      就照常通过；要不要给组员，是**加它的那一次**该有意识决定的事。
+ * ⚠️ 两者在"越界"那一格**行为完全相同**，区别**只在"合法新增"那一格** ——
+ *    所以只测越界是分不出这两种形状的（定向判据里有那一格，见 `memory-inject-check.mjs` 的 G 族）。
+ */
+const LEADER_ONLY_KEYS = [
+  ['persona', '那是"她是谁"（组长的身份）'],
+  ['me-aqua', '那是"老板这个人"（称呼 / 作息 / 脾气 / 习惯 / 知识边界）'],
+  ['leader', '那是队伍设定和她怎么带队'],
+  ['style', '那是"她怎么说话"（语言风格那一份）'],
+  ['roster', '名册和进度板只给组长'],
+  ['board', '名册和进度板只给组长'],
+]
+
 /** 这个 preset 自己的文件夹 —— 也就是 .md 默认存放的地方。 */
 function presetDir(ctx) {
   const base = ctx === null || ctx === undefined ? undefined : ctx.baseUrl
@@ -228,8 +323,197 @@ async function rosterText(contentDir, names) {
   ].join('\n')
 }
 
+// ── 共享记忆库的读面 ────────────────────────────────────────────────────────
+// 口径（受众、稳定性、失败策略）全在上面的 `── 共享记忆库 ──` 那一段，这里只管怎么读。
+
+/** 读盘上的一份库文件：读不到就把原因交回来（**不在这里吞掉** —— 出声是调用方的事）。 */
+async function readLibraryFile(file) {
+  try {
+    return { ok: true, text: await readFile(file, 'utf8'), error: '' }
+  } catch (error) {
+    return { ok: false, text: '', error: String(error?.message ?? error) }
+  }
+}
+
+/**
+ * 索引里那个"标题"：取正文里**第一条洗干净之后不为空的**行，压成一行、截断。
+ *
+ * 为什么从正文推：快照 entry 的字段表里**没有 title**（`lib/snapshot.mjs` §B3.6 那张表），
+ * 索引只能从正文推 —— 那它就必须是**纯函数**：同一份库 ⇒ 同一份文本（快照机制的要求）。
+ * 剥的是行首的引用 / 标题 / 列表 / 表格记号与加重记号 —— 那是排版，不是内容。
+ */
+function memoryTitle(text) {
+  for (const line of String(text ?? '').split('\n')) {
+    const plain = line
+      .replace(/^[\s>#*+\-|]+/, '')
+      .replace(/[*`]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      // 行尾那几个记号是"话没说完"，不是内容 —— 留着读起来像被截断（截断的会自己带 `…`）。
+      .replace(/[；;：:]+$/, '')
+      .trim()
+    if (plain.length === 0) continue
+    return plain.length > MEMORY_TITLE_MAX ? `${plain.slice(0, MEMORY_TITLE_MAX)}…` : plain
+  }
+  return '（正文里没有可读的标题）'
+}
+
+/** 四类的中文呈现名。**名单外的类型原样显示类型名** —— 看得见就不算静默。 */
+function memoryLabel(type) {
+  const hit = MEMORY_TYPES.find(([id]) => id === type)
+  return hit === undefined ? type : hit[1]
+}
+
+/**
+ * 读**当前**那一版快照：指针 → 版本号 → 那份 JSON。
+ * **缺**与**坏**分开报（与 `lib/snapshot.mjs::readSnapshot` 同一套口径：坏文件绝不读成空库）。
+ *
+ * @returns `{ version, file, entries }`；读不到 ⇒ `undefined`（**已经出过声了**）。
+ */
+async function currentSnapshotOf(root, say) {
+  const dir = join(root, ...MEMORY_SNAPSHOTS_REL)
+  const pointerFile = join(dir, MEMORY_POINTER_FILE)
+  const pointer = await readLibraryFile(pointerFile)
+  if (!pointer.ok) {
+    say('memory-pointer', `[agenia] 读不到共享记忆的 current 指针（${pointerFile}）：${pointer.error}`
+      + ' —— 长期记忆这一节不注入（常识照旧）。')
+    return undefined
+  }
+  const version = pointer.text.trim()
+  if (!MEMORY_VERSION_RE.test(version)) {
+    say('memory-pointer-shape', '[agenia] 共享记忆的 current 指针内容不是版本号（v<n>）：'
+      + `${JSON.stringify(version.slice(0, 40))}（${pointerFile}）—— 长期记忆这一节不注入。`)
+    return undefined
+  }
+  const file = join(dir, `${version}.json`)
+  const read = await readLibraryFile(file)
+  if (!read.ok) {
+    say('memory-snapshot-read', `[agenia] 读不到共享记忆快照 ${version}（${file}）：${read.error}`
+      + ' —— 长期记忆这一节不注入。')
+    return undefined
+  }
+  let snapshot
+  try {
+    snapshot = JSON.parse(read.text)
+  } catch (error) {
+    say('memory-snapshot-parse',
+      `[agenia] 共享记忆快照 ${version} 解析不了（${file}）：${String(error?.message ?? error)}`
+      + ' —— 长期记忆这一节不注入。')
+    return undefined
+  }
+  if (snapshot === null || typeof snapshot !== 'object' || !Array.isArray(snapshot.entries)) {
+    say('memory-snapshot-shape', `[agenia] 共享记忆快照 ${version} 里 entries 不是数组（${file}）`
+      + ' —— 长期记忆这一节不注入。')
+    return undefined
+  }
+  // 一条不合法**不许悄悄跳过**：跳过它，同时把话说出来（几条、哪几条）。
+  const entries = []
+  const bad = []
+  for (const entry of snapshot.entries) {
+    const usable = entry !== null && typeof entry === 'object'
+      && typeof entry.id === 'string' && entry.id.length > 0
+      && typeof entry.type === 'string' && entry.type.length > 0
+      && typeof entry.text === 'string'
+    if (usable) entries.push(entry)
+    else bad.push(typeof entry?.id === 'string' && entry.id.length > 0 ? entry.id : '(没有 id)')
+  }
+  if (bad.length > 0) {
+    say('memory-entries-bad', `[agenia] 共享记忆快照 ${version} 里有 ${bad.length} 条条目不合法`
+      + `（id / type / text 缺一不可）：${bad.slice(0, 5).join('、')}${bad.length > 5 ? ' 等' : ''}`
+      + ` —— 跳过了它们，其余照注（${file}）。`)
+  }
+  if (entries.length === 0) {
+    say('memory-empty', `[agenia] 共享记忆快照 ${version} 里一条都读不出来（${file}）`
+      + ' —— 长期记忆这一节不注入。')
+    return undefined
+  }
+  return { version, file, entries }
+}
+
+/**
+ * 长期记忆那几节正文。**按受众分流**（组长 = 三类全条 + 索引；组员 = 只有索引）。
+ *
+ * ⚠️ 条数、类型名全从**真的注进去的那些条目**里数出来，**不读快照自带的 `distribution`** ——
+ *    那个数与"这一份里到底有什么"是两件事：万一跳过了坏条目，读它就会写出一个假数。
+ */
+function memorySections(version, file, entries, role) {
+  const ofType = (type) => entries.filter((entry) => entry.type === type)
+  const inventory = MEMORY_TYPES.map(([type]) => `${type} ${ofType(type).length}`).join(' · ')
+  const isLeader = role === undefined
+  const out = []
+
+  if (isLeader) {
+    const full = entries.filter((entry) => MEMORY_FULL_TYPES.includes(entry.type))
+    out.push([
+      `## 共享记忆 · 长期记忆（全条 ${full.length} 条）`,
+      '',
+      `下面是**全文**，逐条照抄、一个字没改。库在 \`${file}\``
+        + `（快照 \`${version}\`，全部 ${entries.length} 条：${inventory}）。`,
+    ].join('\n'))
+    // ⚠️ 这里只走**全条那三类**（`MEMORY_FULL_TYPES`）—— `general` 一节都不在这儿注，
+    //    它的正文由下面那个索引代替（少写一个字，56 条正文就混进上下文了）。
+    for (const type of MEMORY_FULL_TYPES) {
+      const group = ofType(type)
+      if (group.length === 0) continue
+      out.push(`### ${memoryLabel(type)} · ${type} · ${group.length} 条`)
+      for (const entry of group) {
+        out.push(`**${entry.id} —— ${memoryTitle(entry.text)}**\n\n${entry.text}`)
+      }
+    }
+  }
+
+  const index = ofType('general')
+  if (index.length > 0) {
+    out.push([
+      `## 共享记忆 · 索引（${memoryLabel('general')} · general · ${index.length} 条 · id + 标题）`,
+      '',
+      `这一节**只有索引**（一行一条）。要哪一条的全文，读 \`${file}\`（快照 \`${version}\`）里同 id 那一条。`,
+      isLeader
+        ? `另外三类（${MEMORY_FULL_TYPES.join(' / ')} 共 ${entries.length - index.length} 条）已经全条在上面了。`
+        : `另外三类（${MEMORY_FULL_TYPES.join(' / ')} 共 ${entries.length - index.length} 条）是留给组长的，这一份里没有。`,
+      '',
+      ...index.map((entry) => `- \`${entry.id}\` · ${memoryTitle(entry.text)}`),
+    ].join('\n'))
+  }
+  return out
+}
+
+/**
+ * 共享记忆那一整段正文（`memory` 那个 key 的产物）。
+ *
+ * 🔴 一段都没读成 ⇒ `undefined`（调用方据此**整段不注入**）——
+ *    但绝不静默：上面每条失败路径都已经出过声，这里不抛错、也不编一段空的顶上。
+ *
+ * @param role 岗位名；`undefined` = 组长。
+ * @param warn `warnOnce(key, message)`；没给就退回 `console.error`（**出声不许省**）。
+ */
+async function sharedMemoryText(contentDir, role, warn) {
+  const say = typeof warn === 'function' ? warn : (key, message) => console.error(message)
+  const root = join(contentDir, RUNTIME_DIR)
+  const blocks = []
+
+  const senseFile = join(root, COMMON_SENSE_FILE)
+  const sense = await readLibraryFile(senseFile)
+  if (!sense.ok) {
+    say('memory-common-sense', `[agenia] 读不到共享记忆的常识（${senseFile}）：${sense.error}`
+      + ' —— 常识这一节不注入（长期记忆照旧）。')
+  } else if (sense.text.trim().length === 0) {
+    say('memory-common-sense-empty',
+      `[agenia] 共享记忆的常识是空文件（${senseFile}）—— 常识这一节不注入（长期记忆照旧）。`)
+  } else {
+    blocks.push(`## 共享记忆 · 常识\n\n${sense.text.trim()}`)
+  }
+
+  const snapshot = await currentSnapshotOf(root, say)
+  if (snapshot !== undefined) {
+    blocks.push(...memorySections(snapshot.version, snapshot.file, snapshot.entries, role))
+  }
+
+  return blocks.length === 0 ? undefined : blocks.join('\n\n')
+}
+
 /** 按 order 里写的顺序，把该给这一拨人的内容一份份读出来。 */
-async function gather(order, { contentDir, role, board }) {
+async function gather(order, { contentDir, role, board, warn }) {
   const out = []
   for (const key of order) {
     if (key === 'roster') {
@@ -246,6 +530,11 @@ async function gather(order, { contentDir, role, board }) {
     }
     if (key === 'board') {
       if (board !== undefined) out.push({ name: 'agenia:board', text: board })
+      continue
+    }
+    if (key === MEMORY_KEY) {
+      const text = await sharedMemoryText(contentDir, role, warn)
+      if (text !== undefined) out.push({ name: 'agenia:memory', text })
       continue
     }
     const text = await readText(join(contentDir, `${key}.md`))
@@ -806,8 +1095,15 @@ export async function apply(ctx, config = {}) {
   // ⚠️ 新加的 config 键必须**同批**进这张白名单，否则每次挂载都会误报"不认识的配置键"
   //    （2026-10-15 批次 I2 加 `delegationTools` 时就是这么加进来的）。
   const KNOWN_CONFIG = ['leaderOrder', 'memberOrder', 'officeBound', 'contentDir', DELEGATION_TOOLS_KEY]
-  /** 这三个 key 是算出来的，不是文件。 */
-  const COMPUTED_KEYS = ['roster', 'board', 'charter']
+  /**
+   * 这几个 key **不是"内容根这一层的一个 .md"**，所以下面那条"文件在不在"的检查要跳过它们：
+   *   · `roster` / `board` —— 算出来的正文；
+   *   · `charter` —— 组员那一份在 `team/` 下；
+   *   · `memory` —— 从**共享记忆库**读的（`.runtime/`，见上面 `── 共享记忆库 ──` 那一段）。
+   *     ⚠️ 它读不到时**由注入那一步出声**（`sharedMemoryText`），
+   *     不在这里报"找不到 memory.md"——那是个假问题，会把真问题淹掉。
+   */
+  const NON_FILE_KEYS = ['roster', 'board', 'charter', MEMORY_KEY]
 
   async function selfCheck() {
     const problems = []
@@ -821,11 +1117,25 @@ export async function apply(ctx, config = {}) {
     const roles = await roleNames(contentDir)
     for (const [key, order] of [['leaderOrder', leaderOrder], ['memberOrder', memberOrder]]) {
       for (const entry of order) {
-        if (COMPUTED_KEYS.includes(entry)) {
+        // 组员那一侧：**只给组长的那几项**落进来 ⇒ 出声（`LEADER_ONLY_KEYS`）。
+        // 🔴 这一条钉的是**安全边界**，不是"名单变没变"：`memberOrder` 管的是
+        //    「组员能拿到什么输入」，往里面加一项本来就该**有意识地**决定组员该不该拿。
+        //    改之前**只有 `roster`/`board` 挡着**：`me-aqua.md` 那份文件是存在的 ⇒
+        //    下面"文件在不在"那条检查照样过 ⇒ **组员会静默拿到"老板这个人"**
+        //    （称呼 / 作息 / 脾气 / 习惯 / 知识边界全在里面）。2026-10-16 测试岗读代码报的正是这一格。
+        // ⚠️ **别把它改成"memberOrder 只许有这几个 key"那种名字白名单** ——
+        //    那个形状的后果是"每加一项就常驻红"，红的是判据不是被测对象（今天那条族级判据治的就是它）。
+        //    按类判：新 key 只要解析得开（有 .md 或算得出来）就照常通过。
+        if (key === 'memberOrder') {
+          const banned = LEADER_ONLY_KEYS.find(([name]) => name === entry)
+          if (banned !== undefined) {
+            problems.push(`memberOrder 里的「${entry}」不该给组员 —— ${banned[1]}，组员不该拿到它。`)
+            continue
+          }
+        }
+        if (NON_FILE_KEYS.includes(entry)) {
           if (entry === 'charter' && key === 'leaderOrder') {
             problems.push('leaderOrder 里的「charter」不生效 —— charter 是组员自己那份说明书，组长没有。')
-          } else if (key === 'memberOrder' && (entry === 'roster' || entry === 'board')) {
-            problems.push(`memberOrder 里的「${entry}」不生效 —— 名册和进度板只给组长。`)
           }
           continue
         }
@@ -1567,6 +1877,8 @@ export async function apply(ctx, config = {}) {
       contentDir,
       role,
       board: role === undefined ? boardOf(agentId) : undefined,
+      // 共享记忆库读不到时那几声（`memory` 那个 key）—— 同一个问题每个会话只喊一次。
+      warn: warnOnce,
     })
 
     if (entries.length === 0) return result

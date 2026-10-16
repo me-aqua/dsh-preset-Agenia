@@ -651,8 +651,14 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const member = orderOf('memberOrder')
   const office = orderOf('officeBound')
 
-  yes('preset', 'leaderOrder 是 leader → work-guidelines → roster → board → persona → me-aqua → style',
-    leader.join(',') === 'leader,work-guidelines,roster,board,persona,me-aqua,style', leader.join(' → '))
+  // 🔴 2026-10-16 加 `memory`（老板当天拍：「**确保真的对你自己和组员都有用了，都能读到**」）——
+  //    **在它之前，共享记忆库的内容谁都读不到**（`inject.js` 里搜 `.runtime` 零命中 ⇒
+  //    常识与长期记忆躺在盘上，组长和组员一个字节都拿不到）。它排在 `work-guidelines` 之后：
+  //    先给"怎么干活"，再给"队伍知道什么"。
+  //    ⚠️ `memory` 与 `roster` / `board` 同族：**算出来的**（inject.js 现读库 + 按受众分），**不是文件** ——
+  //    所以下面口径 9 那张"目录里每一份 `.md`"的清单里没有它，**这是对的，不是漏了**。
+  yes('preset', 'leaderOrder 是 leader → work-guidelines → memory → roster → board → persona → me-aqua → style',
+    leader.join(',') === 'leader,work-guidelines,memory,roster,board,persona,me-aqua,style', leader.join(' → '))
   // persona（她是谁）与 style（她怎么说话）排最后：越靠后离请求末尾越近，权重越高。
   // ⚠️ style **同时**是 inject.js 第 ⑤ 件事读的那个文件 —— 快照这条路和尾巴那条路读同一个文件，
   //    所以永远不会分叉（2026-09-24 老板定：不再分"开头注入的"和"每 n 步注入的"两份）。
@@ -662,8 +668,8 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   yes('preset', 'leaderOrder 里 style 排最后、me-aqua 紧随其后（口径 13）',
     leader[leader.length - 1] === 'style' && leader[leader.length - 2] === 'me-aqua',
     leader.slice(-2).join(' → '))
-  yes('preset', 'memberOrder 是 work-guidelines → charter（组员不读 leader / persona）',
-    member.join(',') === 'work-guidelines,charter', member.join(' → '))
+  yes('preset', 'memberOrder 是 work-guidelines → memory → charter（组员不读 leader / persona）',
+    member.join(',') === 'work-guidelines,memory,charter', member.join(' → '))
 
   // ── 口径 9：**每一份要送的 `.md` 都得有人送**（2026-09-26 返修加）─────────────
   // 形状：把 `leaderOrder` / `memberOrder` 里那些 key 摊开，逐个 `.md` 对过去。

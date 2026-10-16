@@ -13,7 +13,7 @@ import { before, describe, test } from 'node:test'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { FROZEN, PATHS } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase, sha256Text, sha256File, stagingReadings, oracleReadings } from '../support/evidence.mjs'
+import { caseFail, caseHold, preflight, problem, runCase, sha256Text, sha256File, stagingReadings, oracleReadings } from '../support/evidence.mjs'
 import { readStagedText, stagingExists } from '../support/sut.mjs'
 
 before(() => {
@@ -98,13 +98,44 @@ const DOC_SPECS = [
   {
     rel: '.team/leader/now.md',
     root: 'repo',
-    must: [
-      ['大阶段', 'now 要写清目标 → 大阶段 → 任务 → 五关的位置'],
-      ['五关', 'now 要写清五关挂在任务下'],
-    ],
+    // 🔴 2026-10-16（票 `T-TEST-04` · 技术评审 F6）：这一页**每天开工重写** ⇒ 断言**不许钉它今天写了什么**。
+    //    原来钉的是「大阶段」「五关」两个**词** —— 那与"今天她写没写这两个字"等价，红绿**不由代码决定**。
+    //    ⚠️ 路线层级那套词**没有丢**：`leader.md` / `work-guidelines.md` 两份**冻结**文档上照样钉着
+    //      （见上面两条 spec）—— 从活页上撤掉，不是从判据里撤掉。
+    //    ⇒ 改成钉**形态**：第一行必须是 `# now（YYYY-MM-DD · 一句话）` 那个固定形状
+    //      （队伍规矩：`now.md` 的第一行永远是**它被写下的那一天**）。她随便重写照旧绿；
+    //      把形状写坏（没有标题行 / 没有日期 / 日期不成形）才红。
+    must: [],
     mustNot: [],
+    form: 'now-first-line',
   },
 ]
+
+/**
+ * `now.md` 的**形态**判据（`T-TEST-04`）—— **只看形状，不看内容**。
+ *
+ * 队伍规矩（`work-guidelines.md` / `AGENTS.md`）：`now.md` 的**第一行永远是它被写下的那一天**，
+ * 格式固定：`# now（YYYY-MM-DD · 一句话说清手头这件事）`。
+ * 这条判据与"今天她写了什么"**无关**：日期是哪一天不管、那"一句话"是什么不管；
+ * 变的只有形状（有没有那一行、日期成不成 `YYYY-MM-DD`、括号与分隔符在不在）。
+ *
+ * @returns {Array<{code:string,message:string}>} 空数组 = 形态合格
+ */
+function nowFormProblems(text) {
+  const out = []
+  const first = String(text ?? '').split(/\r?\n/).find((l) => l.trim() !== '') ?? ''
+  const m = /^#\s*now\s*[（(]\s*(\d{4}-\d{2}-\d{2})\s*[·・]\s*(.+?)\s*[）)]\s*$/.exec(first.trim())
+  if (m === null) {
+    out.push({
+      code: 'DOC-FORM-NOW-HEAD',
+      message: `now.md 第一行不是 \`# now（YYYY-MM-DD · 一句话）\` 那个固定形状（队伍规矩：第一行永远是它被写下的那一天）。实得：${JSON.stringify(first.trim().slice(0, 120))}`,
+    })
+    return out
+  }
+  const day = Date.parse(`${m[1]}T00:00:00Z`)
+  if (Number.isNaN(day)) out.push({ code: 'DOC-FORM-NOW-DATE', message: `now.md 第一行那个日期不是合法日期：${m[1]}` })
+  return out
+}
 
 function readDoc(spec, problems) {
   if (spec.root === 'staged') {
@@ -150,6 +181,30 @@ describe('static · docs', () => {
           hits,
           misses,
           stale,
+        }
+        // ── 形态判据（`T-TEST-04`）：**不钉内容**，只钉形状 ──────────────────────
+        // 🔴 判据自己也要有阳性对照：`nowFormProblems()` 先在一段**形状坏掉的样例**上跑，
+        //    必须报出问题 —— 否则"形态判据"可能是个永远绿的摆设。
+        if (spec.form === 'now-first-line') {
+          // 【怎么翻面】两条对照，**都在用例内部**（活体那一页是组长的文件，测试岗没有它的写权限）：
+          //   ① **内容无关**：同一形状、**完全不同的内容**（另一个日期、另一句话、另一段正文）⇒ 必须 0 问题。
+          //   ② **形状坏掉**：没有 `# now（日期 · 一句话）` 首行 ⇒ 必须报 `DOC-FORM-NOW-HEAD`。
+          const formProbe = nowFormProblems('# 今天的事\n\n- 手头：……\n')
+          const formSameShapeOtherContent = nowFormProblems('# now（2019-01-01 · 一句完全不同的话，跟今天毫无关系）\n\n- 随便什么正文\n- 另一个大阶段：脑暴\n')
+          rec.readings.now_form_control = {
+            same_shape_other_content_problems: formSameShapeOtherContent.map((p) => p.code),
+            broken_sample_problems: formProbe.map((p) => p.code),
+            note: '① 同形状换内容必须 0 问题（内容无关）② 没有 `# now（日期 · 一句话）` 首行必须报 DOC-FORM-NOW-HEAD',
+          }
+          if (formSameShapeOtherContent.length !== 0) {
+            push('DOC-FORM-CONTROL', `形态判据自控失败：**同形状、换内容**的样例（另一个日期、另一句话）竟然被判出问题 ${JSON.stringify(formSameShapeOtherContent.map((p) => p.code))} —— 那说明这条判据还在钉内容`)
+          }
+          if (formProbe.length === 0) {
+            push('DOC-FORM-CONTROL', '形态判据自控失败：一段**没有** `# now（YYYY-MM-DD · …）` 首行的样例竟然被判成合格 —— 这条判据抓不到它本来要抓的东西')
+          }
+          const formProblems = nowFormProblems(text)
+          rec.readings.docs[spec.rel].form = { kind: spec.form, problems: formProblems.map((p) => p.code) }
+          for (const p of formProblems) push(p.code, p.message)
         }
       }
 
@@ -262,7 +317,16 @@ describe('static · docs', () => {
         rec.readings.leader_now_stage_lines = claims.map((c) => `${c.line}: [${c.via}] claimed=${c.claimed} ← ${c.text}`)
         const noStage = claims.filter((c) => c.claimed === null)
         const distinct = [...new Set(claims.map((c) => c.claimed).filter(Boolean))]
-        if (claims.length === 0) push('STAGE-MISSING', 'leader/now.md 里没有任何一行声明当前阶段')
+        if (claims.length === 0) {
+          // 🔴 `T-TEST-04`（技术评审 F6）：**"这一页今天没写阶段"不是代码缺陷** —— 它是"她今天写了什么"。
+          //    这条原来推的是 `STAGE-MISSING`（红），于是 DOC-01 的红绿由"开工第一步写了哪几个字"决定
+          //    （实测：2026-10-16 那一跑就因为它红）。⇒ 改成第三态 **HOLD**（明写、**不算绿**）。
+          //    ⚠️ 收紧的那两条（自称矛盾 / 认不出唯一大阶段）**照旧红** —— 那是这一页**自己跟自己打架**，
+          //    与它今天写的是哪个阶段无关，属于形态/一致性，不是内容。
+          caseHold(rec, 'STAGE-ABSENT',
+            'leader/now.md 今天一行阶段声明都没有 —— 这一格**判不了**（"她今天写了什么"不是代码缺陷）。'
+            + '**不是绿**；要判阶段，看下面那两条（自相矛盾 / 认不出唯一大阶段）或者路线状态 `route/current.json`。')
+        }
         for (const c of noStage) {
           push(c.via === 'no-stage' ? 'STAGE-MISSING' : 'STAGE-AMBIGUOUS', `leader/now.md 第 ${c.line} 行声明了当前阶段但认不出唯一的大阶段（${c.via}）：${c.text}`)
         }

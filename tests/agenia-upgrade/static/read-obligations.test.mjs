@@ -85,7 +85,15 @@ describe('static · read-obligations (READ-01)', () => {
         }
       }
 
-      // ── 组员只拿指定输入：memberOrder 只许是 work-guidelines + charter ──
+      // ── 组员只拿指定输入：memberOrder 只许是 work-guidelines + memory + charter ──
+      // 🔴 2026-10-16（票 `T-TEST-06` ①）：`memory` 进名单（共享记忆：**常识给两边**、长期记忆全条只给组长）。
+      // 🔴 **这条白名单要留着**（它不是 change-detector —— 别按"每加一项就红"去删它）：
+      //    它守的是**生产侧没守的那半** —— `inject.js::selfCheck` 只挡 `roster`/`board` 进 `memberOrder`，
+      //    **不挡 `persona`/`me-aqua`/`leader`/`style`**（那四份的 `.md` 存在 ⇒ 一声不响 ⇒
+      //    **组员会拿到「老板这个人」**）。⇒ "组员能拿到什么输入"是**安全边界**：
+      //    加一项本来就该**有意识地**决定组员该不该拿。
+      //    判据（一句话）：**加一个"合法的"注入项会不会红？** 会红 ⇒ 白名单（禁）；
+      //    不会红、而越界会红 ⇒ 黑名单（对）。⇒ 本条属前者：它管的就是"**只许这几个**"。
       if (stagingExists('agent.cordis.yml')) {
         const { parseComposition, cfg } = await import('../support/composition.mjs')
         const rows = parseComposition(readStagedText('agent.cordis.yml'), 'staged').rows
@@ -94,10 +102,15 @@ describe('static · read-obligations (READ-01)', () => {
         rec.readings.memberOrder = memberOrder
         if (!Array.isArray(memberOrder)) push('MEMBER-ORDER', `memberOrder 必须是数组，实得 ${JSON.stringify(memberOrder)}`)
         else {
-          const extra = memberOrder.filter((k) => !['work-guidelines', 'charter'].includes(k))
-          if (extra.length > 0) push('MEMBER-ORDER', `组员只拿指定输入（work-guidelines + charter），多出来的：${extra.join(', ')}`)
+          const extra = memberOrder.filter((k) => !['work-guidelines', 'memory', 'charter'].includes(k))
+          if (extra.length > 0) push('MEMBER-ORDER', `组员只拿指定输入（work-guidelines + memory + charter），多出来的：${extra.join(', ')}`)
           for (const key of ['roster', 'board']) {
             if (memberOrder.includes(key)) push('MEMBER-ORDER', `memberOrder 里不许有 ${key}（那是只给组长的）`)
+          }
+          // 组长专属那四份**也不许**上 memberOrder —— 生产侧 `selfCheck` 挡不住它们（见上面那段 🔴），
+          // 所以这一格是**独立的一条线**：不依赖"生产侧那条黑名单写对了没有"。
+          for (const key of ['persona', 'me-aqua', 'leader', 'style']) {
+            if (memberOrder.includes(key)) push('MEMBER-ORDER', `memberOrder 里不许有 ${key}（那是**只给组长**的：她是谁 / 老板是谁 / 怎么带队 / 怎么说话 —— 上给组员等于把组长的身份与老板的画像发下去）`)
           }
         }
       }

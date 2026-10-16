@@ -37,7 +37,7 @@
 import { before, describe, test } from 'node:test'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { ENV, FROZEN, PATHS } from '../support/env.mjs'
+import { ENV, FROZEN, PATHS, requireEnv } from '../support/env.mjs'
 import {
   caseFail,
   caseHold,
@@ -72,9 +72,15 @@ function scenarioWorkspace(id, name) {
   })
 }
 
-/** 非法根的姿势表（§2.4 第 3 条 + §B1.7 第 4 条：大小写/尾斜杠/`..`/junction 都要先 canonical 再判）。 */
-function badRootPostures() {
-  const real = PATHS.realBrainRoot
+/**
+ * 非法根姿势表（§2.4 第 3 条 + §B1.7 第 4 条：大小写/尾斜杠/`..`/junction 都要先 canonical 再判）。
+ * 🔴 `realRoot` **由调用方给**，必须是**被测代码自己算出来的那个真实脑根**（`T-TEST-02` 的口径：
+ *    靶子不许由用例注入）。以前这里写死 `PATHS.realBrainRoot`（活体那个）⇒ 被测树在 staging 时
+ *    那些"真实脑根"格**判的不是同一个对象**，而且它们当时之所以安全，只因为"与 `--test-mode` 互斥"
+ *    —— 那是"碰巧对"。换成 SUT 自己的根之后，拒它们的是**真实根那道闸本身**（不是 test-mode 那条）。
+ */
+function badRootPostures(realRoot) {
+  const real = realRoot
   const reg = PATHS.stagedPreset
   const outside = path.join(PATHS.repo, '.tools', '_scratch', 'agenia-dr-outside')
   return [
@@ -98,6 +104,14 @@ describe('integration · data-root (DR)', () => {
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
       rec.readings.staging = stagingReadings()
       // 真实库的**内容级**读数（树哈希 + audit 行数 + v0 哈希）—— 只读，见 support/evidence.mjs。
+      // 🔴 **这一个根是"写保护见证"，不是"靶子"**（2026-10-16 分清，技术评审 F2 / 票 `T-TEST-02`）：
+      //    · **见证**：它是**活体**那个真库（`E:\Harness\presets\agenia\.runtime`），跑前跑后逐字比
+      //      ⇒ 判"有没有人把它写坏"。它**永远**是活体那个，不跟着被测树走。
+      //    · **靶子**：根判定那几组要喂进去的根，必须是**被测代码自己算出来的**那个
+      //      （`<staging>/.runtime`，从 staged `lib/paths.mjs` 的 `REAL_BRAIN_ROOT` 读）
+      //      —— 口径由组长拍死：**不许由用例注入**。让用例把活体那个根喂进去，
+      //      等于**把答案告诉被测者**；那样就算绿了，也证明不了"它在自己的位置上算得对"。
+      //    ⇒ 两者**不是同一个对象**，别再合并成一个常量。
       const realRoot = PATHS.realBrainRoot
       const realBefore = realRootContent(realRoot)
 
@@ -132,21 +146,49 @@ describe('integration · data-root (DR)', () => {
       }
 
       // ── ② 纯函数：dataRootVerdict 的判定顺序 + canonical 解析 ───────────
-      const pathLib = await loadStagedModule('lib/paths.mjs', ['dataRootVerdict', 'resolveWithin', 'testModeOf', 'realInitVerdict', 'realModeVerdict'])
+      const pathLib = await loadStagedModule('lib/paths.mjs', ['dataRootVerdict', 'resolveWithin', 'testModeOf', 'realInitVerdict', 'realModeVerdict', 'REAL_BRAIN_ROOT'])
       if (pathLib.surfaceMissing) push('SUT-SURFACE-MISSING', 'staged/lib/paths.mjs 不在 —— 根判定拿不到（预期的首跑红）')
       for (const n of pathLib.missing) push('SUT-SURFACE-MISSING', `staged/lib/paths.mjs 没有导出 ${n}`)
+
+      // ── 🎯 靶子（`T-TEST-02` / 技术评审 F2）：**被测代码自己算出来的那个真实脑根** ──────────
+      // 口径（组长拍死）：**不许由用例注入**。所以这里只**读** SUT 的常量，不往它里面喂任何根。
+      // 形状（F4 的不变量，2026-10-15 技术评审）：脑根 = `<预设目录>/.runtime`，预设目录由**本文件自己的位置**推
+      // ⇒ 被测树在 staging ⇒ 靶子就是 `<staging>/.runtime`。这一条本身就是判据：它哪天不再跟着预设走
+      //   （比如又改回写死的本机绝对路径），下面的断言会当场红 —— 那正是 F4 要挡的 fail-open。
+      const sutRealBrain = pathLib.mod?.REAL_BRAIN_ROOT ?? null
+      rec.readings.sut_real_brain = sutRealBrain
+      rec.readings.sut_real_brain_expected = path.join(canonical(requireEnv(ENV.STAGING_PRESET)), '.runtime')
+      if (typeof sutRealBrain !== 'string' || sutRealBrain === '') {
+        push('SUT-REAL-ROOT', 'staged/lib/paths.mjs 没有导出 REAL_BRAIN_ROOT —— 靶子算不出来（F4 那条不变量也没了）')
+      } else if (canonical(sutRealBrain) !== canonical(path.join(canonical(requireEnv(ENV.STAGING_PRESET)), '.runtime'))) {
+        push('SUT-REAL-ROOT', `真实脑根必须**跟着预设目录走**（F4 的不变量）：实得 ${sutRealBrain}，应为 <AGENIA_STAGING_PRESET>/.runtime = ${path.join(canonical(requireEnv(ENV.STAGING_PRESET)), '.runtime')}`)
+      }
+      // 见证侧：活体那个根**依然**必须是活体那个（不许跟着被测树漂 —— 它是"有没有被写坏"的锚）。
+      const witnessExpected = path.join(PATHS.finalPreset, '.runtime')
+      if (canonical(realRoot) !== canonical(witnessExpected)) {
+        push('SUT-REAL-ROOT', `写保护见证必须是**活体**那个根（${witnessExpected}），实得 ${realRoot}`)
+      }
+      // 🔴 两条语义不许混：靶子 ≠ 见证。相等的唯一情形是"预设就装在活体位置上"（装好之后）——
+      //    在 staging 里跑时它们**必须**不同；相同 ⇒ 说明靶子又漂回活体了（F2 复发）。
+      rec.readings.target_vs_witness = { target: sutRealBrain, witness: realRoot, same: canonical(sutRealBrain ?? '') === canonical(realRoot) }
+
       if (pathLib.mod?.dataRootVerdict) {
         const v = pathLib.mod.dataRootVerdict
-        const opts = { testMode: true, markerExists: true, realRoots: [REAL_BRAIN_ROOT, REAL_ROUTE_ROOT], driveOf }
+        // 🔴 **不注入 `realRoots`**：让它用**自己那一份**（`REAL_ROOTS`，由模块位置 + cwd 算出来）。
+        //    用例往里喂一张"拒绝名单"，等于把答案告诉被测者 —— 拍板口径明令禁止。
+        const opts = { testMode: true, markerExists: true, driveOf }
+        const markerless = path.join(canonical(requireEnv(ENV.RUN_ROOT)), 'agenia-dr-markless')
         const cases = [
           ['缺失', undefined, 'E_ROOT_MISSING', { ...opts, markerExists: false }],
           ['空串', '', 'E_ROOT_MISSING', { ...opts, markerExists: false }],
           ['相对', 'brain-root', 'E_ROOT_RELATIVE', { ...opts, markerExists: false }],
           ['UNC', '\\\\server\\share', 'E_ROOT_UNC', { ...opts, markerExists: false }],
           ['C 盘（非法姿势）', 'C:\\Temp\\agenia', 'E_ROOT_C_DRIVE', { ...opts, markerExists: false }],
-          ['真实脑根', REAL_BRAIN_ROOT, 'E_ROOT_REAL_BRAIN', opts],
-          ['真实脑根（`.team/review/../../` 绕）', `${REAL_BRAIN_ROOT}\\..\\.runtime`, 'E_ROOT_REAL_BRAIN', opts],
-          ['测试模式无 marker', PATHS.stagedPreset, 'E_ROOT_NO_MARKER', { ...opts, markerExists: false }],
+          ['真实脑根（**靶子** = SUT 自己算的那个）', sutRealBrain, 'E_ROOT_REAL_BRAIN', opts],
+          ['真实脑根（`.team/review/../../` 绕）', `${sutRealBrain}\\..\\.runtime`, 'E_ROOT_REAL_BRAIN', opts],
+          // ⚠️ 落点换到运行根之下：`PATHS.stagedPreset` **包住** 靶子（`<staging>/.runtime` 就在它里面）
+          //    ⇒ 拿它当"无 marker"那一格会先撞 `E_ROOT_REAL_BRAIN`（判定顺序：REAL_BRAIN 在 NO_MARKER 之前）。
+          ['测试模式无 marker', markerless, 'E_ROOT_NO_MARKER', { ...opts, markerExists: false }],
           ['合法测试根', `${PATHS.repo}\\.team\\test\\2026-10-14\\_runs\\20261014-red-x`, null, opts],
         ]
         const got = {}
@@ -162,7 +204,7 @@ describe('integration · data-root (DR)', () => {
         }
         rec.readings.root_verdict = got
         // 顺序冻结：同一输入必须每次同一个码（不许"有时报这个有时报那个"）
-        const twice = [v(REAL_BRAIN_ROOT, opts)?.code, v(REAL_BRAIN_ROOT, opts)?.code]
+        const twice = [v(sutRealBrain, opts)?.code, v(sutRealBrain, opts)?.code]
         if (twice[0] !== twice[1]) push('ROOT-VERDICT-ORDER', `同一输入两次得到不同码：${JSON.stringify(twice)}（判定顺序必须冻结）`)
       }
       if (pathLib.mod?.resolveWithin) {
@@ -209,17 +251,17 @@ describe('integration · data-root (DR)', () => {
           ['UNC', '\\\\server\\share', 'E_ROOT_UNC', { exists: false, testMode: false }],
           ['C 盘（非法姿势）', 'C:\\Temp\\agenia', 'E_ROOT_C_DRIVE', { exists: false, testMode: false }],
           // 🔴 互斥闸：带测试模式 ⇒ 一律 E_ARG_SCHEMA（**不是** E_ROOT_REAL_BRAIN —— 那是日常 op 的码）
-          ['真实根 + 测试模式', realRoot, 'E_ARG_SCHEMA', { exists: false, testMode: true }],
-          ['真实根 + 测试模式（根已存在也还是先报互斥）', realRoot, 'E_ARG_SCHEMA', { exists: true, testMode: true }],
+          ['真实根 + 测试模式', sutRealBrain, 'E_ARG_SCHEMA', { exists: false, testMode: true }],
+          ['真实根 + 测试模式（根已存在也还是先报互斥）', sutRealBrain, 'E_ARG_SCHEMA', { exists: true, testMode: true }],
           // 一次性保护 —— **注入** `exists:true` 来钉，绝不许拿盘上那个真根去撞
-          ['真实根（已经在盘上 ⇒ 一次性保护）', realRoot, 'E_DATA_EXISTS', { exists: true, testMode: false }],
+          ['真实根（已经在盘上 ⇒ 一次性保护）', sutRealBrain, 'E_DATA_EXISTS', { exists: true, testMode: false }],
           // 专名闸：**是相等，不是"落在里面"**
-          ['真实根的子路径', `${realRoot}\\sub`, 'E_ROOT_OUTSIDE', { exists: false, testMode: false }],
-          ['真实根的父目录', `${PATHS.finalPreset}`, 'E_ROOT_OUTSIDE', { exists: false, testMode: false }],
+          ['真实根的子路径', `${sutRealBrain}\\sub`, 'E_ROOT_OUTSIDE', { exists: false, testMode: false }],
+          ['真实根的父目录', path.dirname(sutRealBrain), 'E_ROOT_OUTSIDE', { exists: false, testMode: false }],
           // ★ 正例：**只做纯函数**。真开库那一下永远不许在测试里跑（真库已经在盘上了）。
           //    ⚠️ 这里注入 `exists:false` 钉的是**判定逻辑**，不是盘上事实 —— 盘上事实是 exists:true
           //    （读数见 DR-01 ④ 的 `real_brain`）。
-          ['真实根 + 还不存在（正例）', realRoot, null, { exists: false, testMode: false }],
+          ['真实根 + 还不存在（正例）', sutRealBrain, null, { exists: false, testMode: false }],
         ]
         const got = {}
         for (const [label, raw, wantCode, o] of cases) {
@@ -234,7 +276,7 @@ describe('integration · data-root (DR)', () => {
         }
         rec.readings.init_real_verdict = got
         // 次序冻结：同一输入两次同一个码
-        const twice = [v(realRoot, { exists: true, testMode: true })?.code, v(realRoot, { exists: true, testMode: true })?.code]
+        const twice = [v(sutRealBrain, { exists: true, testMode: true })?.code, v(sutRealBrain, { exists: true, testMode: true })?.code]
         if (twice[0] !== twice[1]) push('INIT-REAL-VERDICT-ORDER', `realInitVerdict 同一输入两次得到不同码：${JSON.stringify(twice)}（判定次序必须冻结）`)
       }
       if (pathLib.mod?.realModeVerdict) {
@@ -246,14 +288,14 @@ describe('integration · data-root (DR)', () => {
           ['UNC', '\\\\server\\share', 'E_ROOT_UNC', { realMode: true }],
           ['C 盘（非法姿势）', 'C:\\Temp\\agenia', 'E_ROOT_C_DRIVE', { realMode: true }],
           // **命门**：与测试模式互斥（"给开关 + 真实根 + --test-mode" 就是撞这一条）
-          ['真实根 + 开关 + 测试模式', realRoot, 'E_ARG_SCHEMA', { realMode: true, testMode: true }],
+          ['真实根 + 开关 + 测试模式', sutRealBrain, 'E_ARG_SCHEMA', { realMode: true, testMode: true }],
           // 老行为不许退化：没给开关 ⇒ 真实根照旧无条件拒
-          ['真实根 + 没给开关', realRoot, 'E_ROOT_REAL_BRAIN', { realMode: false }],
+          ['真实根 + 没给开关', sutRealBrain, 'E_ROOT_REAL_BRAIN', { realMode: false }],
           // 专名闸：**是相等，不是"落在里面"**
           ['非真实根 + 开关', nonReal, 'E_ROOT_OUTSIDE', { realMode: true }],
-          ['真实根的子路径 + 开关', `${realRoot}\\sub`, 'E_ROOT_OUTSIDE', { realMode: true }],
+          ['真实根的子路径 + 开关', `${sutRealBrain}\\sub`, 'E_ROOT_OUTSIDE', { realMode: true }],
           // ★ 正例（纯函数）：开关真的能把那道门打开
-          ['真实根 + 开关（正例）', realRoot, null, { realMode: true }],
+          ['真实根 + 开关（正例）', sutRealBrain, null, { realMode: true }],
         ]
         const got = {}
         for (const [label, raw, wantCode, o] of cases) {
@@ -267,6 +309,127 @@ describe('integration · data-root (DR)', () => {
           }
         }
         rec.readings.real_mode_verdict = got
+      }
+
+      // ── ②c 工作区那一档的 `containingRule`（2026-10-16 组长批 · 承重函数）────────
+      // 【钉什么】`dataRootVerdict` 多了一个**可选**键 `containingRule`（默认 `true` = 照旧判"包住真实根"）。
+      //   只有**工作区**那一档传 `false`（三份 CLI 的 `resolveWorkspace`）；`--data-root` / `--status-root`
+      //   **照旧**用默认值。三条判据：
+      //     ① **默认值不许变** —— 同一个根，不传 `containingRule` 与传 `false` ⇒ **结论相反**（这就是翻面）；
+      //     ② **老防线一条都不许退化** —— C 盘 / 相对 / UNC / 缺 / marker / 越界 / `⊆` 那半条，
+      //        逐格跑**两遍**（不传 vs `false`），两遍结论必须**逐字相同**；
+      //     ③ **三份 `resolveWorkspace`**（brain / local / route）都要覆盖，外加 `--status-root` 那条路。
+      // 【怎么翻面】
+      //   · 把三处 `containingRule: false` 删掉 ⇒ 下面 `WSV-ACCEPT` 那三格从"放行"变回 `E_ROOT_REAL_BRAIN`；
+      //   · 把默认值改成 `false` ⇒ ② 每一格的"不传"那一遍当场变结论（`WSV-DEFAULT`）；
+      //   · 让 `--status-root` 也传 `false` ⇒ `WSV-STATUS-ROOT` 那两格红。
+      // ⚠️ 靶子**按被测树自己算**（`pathLib.mod.REAL_BRAIN_ROOT`）—— 不许拿活体那个绝对路径当靶子：
+      //    被测代码从 staging 载入 ⇒ 它算出来的真实脑根是 `<staging>/.runtime`（2026-10-16 技术评审 F2）。
+      if (pathLib.mod?.dataRootVerdict) {
+        const sutRealBrain = pathLib.mod.REAL_BRAIN_ROOT ?? null
+        rec.readings.wsv_sut_real_brain = sutRealBrain
+        if (typeof sutRealBrain !== 'string' || sutRealBrain === '') {
+          push('WSV-SURFACE', 'staged/lib/paths.mjs 没有导出 REAL_BRAIN_ROOT —— 工作区那档的靶子算不出来')
+        } else {
+          const wsRealRoots = [sutRealBrain, path.join(PATHS.repo, '.team', 'route')]
+          const containerRoot = PATHS.repo // E:\Harness ⊇ <staging>/.runtime，也 ⊇ E:\Harness\.team\route
+          const outsideRoot = path.join(PATHS.repo, '.tools', '_scratch', 'agenia-wsv-outside')
+          const markerlessRoot = path.join(PATHS.repo, '.tools', '_scratch', 'agenia-wsv-marker')
+          const runRoot = canonical(process.env[ENV.RUN_ROOT])
+          /** 同一个根跑两遍：**不传** `containingRule` 与传 `false`。 */
+          const pair = (label, raw, o = {}) => {
+            const base = { testMode: false, markerExists: false, driveOf, realRoots: wsRealRoots, ...o }
+            let d = null
+            let f = null
+            try { d = pathLib.mod.dataRootVerdict(raw, base) } catch (err) { d = { ok: null, code: `THREW:${String(err.message).slice(0, 80)}` } }
+            try { f = pathLib.mod.dataRootVerdict(raw, { ...base, containingRule: false }) } catch (err) { f = { ok: null, code: `THREW:${String(err.message).slice(0, 80)}` } }
+            return { label, default: { ok: d?.ok ?? null, code: d?.code ?? null }, false: { ok: f?.ok ?? null, code: f?.code ?? null } }
+          }
+
+          // ① 翻面那一格：容器根（包住两个真实根）。
+          const flip = pair('工作区容器根（E:\\Harness ⊇ 两个真实根）', containerRoot)
+          rec.readings.wsv_flip = flip
+          if (!(flip.default.ok === false && flip.default.code === 'E_ROOT_REAL_BRAIN')) {
+            push('WSV-DEFAULT', `${flip.label} **不传** containingRule 应为 E_ROOT_REAL_BRAIN（默认照旧判"包住"），实得 ok=${flip.default.ok} code=${flip.default.code}`)
+          }
+          if (flip.false.ok !== true) {
+            push('WSV-FLIP', `${flip.label} 传 containingRule:false 应当放行（工作区那一档的正题），实得 ok=${flip.false.ok} code=${flip.false.code}`)
+          }
+          if (!(flip.default.ok !== flip.false.ok)) {
+            push('WSV-FLIP', `${flip.label} 传/不传 containingRule 得到**同一个**结论（ok=${flip.default.ok}）—— 那这条判据翻不了面，等于没测`)
+          }
+
+          // ② 老防线：逐格两遍，结论必须逐字相同（`containingRule` 只该关掉"包住"那半条）。
+          const legacy = [
+            ['C 盘', 'C:\\Windows\\Temp\\agenia-wsv', 'E_ROOT_C_DRIVE'],
+            ['相对路径', 'brain-root', 'E_ROOT_RELATIVE'],
+            ['UNC', '\\\\127.0.0.1\\share\\agenia-wsv', 'E_ROOT_UNC'],
+            ['缺（undefined）', undefined, 'E_ROOT_MISSING'],
+            ['空串', '', 'E_ROOT_MISSING'],
+            ['落在真实根里（⊆ 那半条，关不掉）', path.join(sutRealBrain, 'memory'), 'E_ROOT_REAL_BRAIN'],
+            ['测试模式无 marker', markerlessRoot, 'E_ROOT_NO_MARKER'],
+            ['越界', outsideRoot, 'E_ROOT_OUTSIDE'],
+          ]
+          const legacyRows = []
+          for (const [label, raw, want] of legacy) {
+            const o = label === '测试模式无 marker'
+              ? { testMode: true, markerExists: false }
+              : label === '越界'
+                ? { testMode: true, markerExists: true, mustBeUnder: runRoot }
+                : {}
+            const r = pair(label, raw, o)
+            legacyRows.push({ ...r, want })
+            for (const side of ['default', 'false']) {
+              if (r[side].ok !== false || r[side].code !== want) {
+                push('WSV-LEGACY', `${label}（${side === 'default' ? '不传' : 'containingRule:false'}）应为 ${want}，实得 ok=${r[side].ok} code=${r[side].code}`)
+              }
+            }
+            if (r.default.code !== r.false.code || r.default.ok !== r.false.ok) {
+              push('WSV-LEGACY', `${label} 在"不传"与"传 false"两种姿势下结论不同（${r.default.code} vs ${r.false.code}）—— 老防线退化了`)
+            }
+          }
+          rec.readings.wsv_legacy = legacyRows
+
+          // ③ 三份 `resolveWorkspace`（真子进程）+ `--status-root` 那条**不在改动范围内**的路。
+          //    🔴 全部用**只读 op**（health-read / health / read），一个字节都不写工作区。
+          //    🔴 「放行」那几格必须**剥掉 `AGENIA_TEST_RUN_ROOT`**：测试模式下 `mustBeUnder = 运行根`，
+          //       容器根 `E:\Harness` 会先撞 `E_ROOT_OUTSIDE`，那样读到的就不是"工作区那一档"的结论了。
+          const emptyPayload = writeFixture('DR-01', 'wsv-empty', {})
+          const testDataRoot = process.env[ENV.TEST_DATA_ROOT]
+          const cliCells = [
+            ['brain · --workspace <容器根>（放行）', 'agenia-brain.mjs', { op: 'health-read', dataRoot: testDataRoot, workspace: containerRoot, inFile: emptyPayload }, true, null],
+            ['local · --workspace <容器根>（放行）', 'agenia-local.mjs', { op: 'health', workspace: containerRoot, inFile: emptyPayload }, true, null],
+            ['route · --workspace <容器根>（放行）', 'agenia-route.mjs', { op: 'read', workspace: containerRoot, inFile: emptyPayload }, true, null],
+            ['brain · --workspace <真实根\\memory>（⊆ 照旧拒）', 'agenia-brain.mjs', { op: 'health-read', dataRoot: testDataRoot, workspace: path.join(sutRealBrain, 'memory'), inFile: emptyPayload }, true, 'E_ROOT_REAL_BRAIN'],
+            ['local · --workspace <真实根\\memory>（⊆ 照旧拒）', 'agenia-local.mjs', { op: 'health', workspace: path.join(sutRealBrain, 'memory'), inFile: emptyPayload }, true, 'E_ROOT_REAL_BRAIN'],
+            ['route · --workspace <真实根\\memory>（⊆ 照旧拒）', 'agenia-route.mjs', { op: 'read', workspace: path.join(sutRealBrain, 'memory'), inFile: emptyPayload }, true, 'E_ROOT_REAL_BRAIN'],
+            ['brain · --data-root <真实根>（不给 --real-mode ⇒ 照旧拒）', 'agenia-brain.mjs', { op: 'health-read', dataRoot: sutRealBrain, inFile: emptyPayload }, true, 'E_ROOT_REAL_BRAIN'],
+            ['local · --status-root <包住路线根的那层>（默认值不许被顺手改掉）', 'agenia-local.mjs', { op: 'health', workspace: containerRoot, statusRoot: path.join(PATHS.repo, '.team'), inFile: emptyPayload }, true, 'E_ROOT_REAL_BRAIN'],
+            ['route · --status-root <包住路线根的那层>（默认值不许被顺手改掉）', 'agenia-route.mjs', { op: 'read', workspace: containerRoot, statusRoot: path.join(PATHS.repo, '.team'), inFile: emptyPayload }, true, 'E_ROOT_REAL_BRAIN'],
+          ]
+          const cliRows = []
+          for (const [label, cli, opts, strip, want] of cliCells) {
+            if (!stagingExists(path.join('bin', cli))) { cliRows.push({ label, surfaceMissing: true }); continue }
+            let res = null
+            try {
+              res = runCli(cli, opts, { env: process.env, ...(strip ? { stripEnv: [ENV.RUN_ROOT] } : {}) })
+            } catch (err) {
+              cliRows.push({ label, threw: String(err.message).slice(0, 120) })
+              push('WSV-CLI-THREW', `${label}：跑不起来 —— ${String(err.message).slice(0, 160)}`)
+              continue
+            }
+            const code = res.json?.error?.code ?? null
+            cliRows.push({ label, exit_code: res.exit_code, code })
+            if (want === null) {
+              if (code === 'E_ROOT_REAL_BRAIN') {
+                push('WSV-ACCEPT', `${label} 仍然被 E_ROOT_REAL_BRAIN 拒了（工作区那一档的 containingRule 没生效）：${res.stdout.trim().slice(0, 200)}`)
+              }
+            } else if (code !== want) {
+              push('WSV-CODE', `${label} 应为 ${want}，实得 ${code ?? '(无码)'} / exit=${res.exit_code}：${res.stdout.trim().slice(0, 200)}`)
+            }
+          }
+          rec.readings.wsv_cli = cliRows
+        }
       }
 
       // ── ③ 逐命令 × 逐姿势（真子进程）────────────────────────────────────
@@ -290,7 +453,7 @@ describe('integration · data-root (DR)', () => {
       }
       const postureResults = {}
       for (const cmd of writeCommands) {
-        for (const { label, spec } of badRootPostures()) {
+        for (const { label, spec } of badRootPostures(sutRealBrain)) {
           const payloadFile = writeFixture('DR-01', `${cmd.op}-${label.replace(/[^\w]/g, '')}`.slice(0, 40), {})
           const extra = spec.mode === 'value' ? ['--data-root', spec.value] : []
           let res = null
@@ -354,13 +517,13 @@ describe('integration · data-root (DR)', () => {
         'UNC': 'E_ROOT_UNC',
       }
       const initRealCases = []
-      for (const { label, spec } of badRootPostures()) {
+      for (const { label, spec } of badRootPostures(sutRealBrain)) {
         const touchesReal = /^真实/.test(label)
         const want = touchesReal ? 'E_ARG_SCHEMA' : (initRealShapeCodes[label] ?? null)
         if (want === null) continue // 「运行根之外」在下面单独跑（要剥测试模式才看得到专名闸）
         initRealCases.push({ label, extra: spec.mode === 'value' ? ['--data-root', spec.value] : [], want, strip: false, touchesReal })
       }
-      const outsidePosture = badRootPostures().find(({ label }) => label === '运行根之外')
+      const outsidePosture = badRootPostures(sutRealBrain).find(({ label }) => label === '运行根之外')
       // 专名闸要**不带测试模式**才看得到（带测试模式时先撞互斥闸，永远只看到 E_ARG_SCHEMA）。
       // 剥 `AGENIA_TEST_RUN_ROOT` 是安全的：根判定跑在 op 分派**之前**，被拒的那一次不写盘；
       // 而且这一格的根是运行根之外的 `_scratch` 子目录，**不是**真实根。
@@ -454,13 +617,13 @@ describe('integration · data-root (DR)', () => {
       //        （这一只正是派工单点名的"光落一条审计就把真库写了"那条 op）。
       for (const op of ['init', 'audit-append']) {
         const label = `不给开关 · 真实根 · ${op}`
-        expectReject(label, runRealMode(label, { op, testMode: true, extra: ['--data-root', realRoot] }, false), 'E_ROOT_REAL_BRAIN')
+        expectReject(label, runRealMode(label, { op, testMode: true, extra: ['--data-root', sutRealBrain] }, false), 'E_ROOT_REAL_BRAIN')
       }
 
       // ② 给开关 + 真实根 + `--test-mode` ⇒ `E_ARG_SCHEMA`（**命门**：互斥闸）
       {
         const label = '给了开关 · 真实根 · --test-mode'
-        expectReject(label, runRealMode(label, { op: 'entry-count', testMode: true, extra: ['--data-root', realRoot, '--real-mode'] }, false), 'E_ARG_SCHEMA')
+        expectReject(label, runRealMode(label, { op: 'entry-count', testMode: true, extra: ['--data-root', sutRealBrain, '--real-mode'] }, false), 'E_ARG_SCHEMA')
       }
 
       // ③ 给开关 + **非**真实根 ⇒ `E_ROOT_OUTSIDE`（专名闸：只认那一个根）
@@ -474,17 +637,29 @@ describe('integration · data-root (DR)', () => {
       // ★ 正例（只读 op）：开关真能把门打开。
       //   没有这一条，上面那三条"被拒"就可能是"命令坏了蒙对"（§9.5 第 1 条：正例必须存在）。
       //   `entry-count` 是**只读**的 ⇒ 真实库一个字节都不会变（死命令允许的正是这一类）。
+      //   🔴 `T-TEST-02`：靶子 = **SUT 自己那个**真实根，而它在**开发副本（staging）里不存在**
+      //      （staging 不是装好的库）⇒ 这一格**判不了**：不是绿、也不是红，是 **HOLD**（第三态，明写）。
+      //      「开关真能把门打开」那半由**纯函数正例**（`REAL-MODE-VERDICT` 的「真实根 + 开关（正例）」）覆盖；
+      //      这里要补的是**端到端**那一格，它需要盘上真有一个装好的库 —— 换到装好的位置上它自己会绿。
+      //      🔴 **不许**为了让它绿而在 staging 里造一个假 `.runtime`（那会把后续每一跑都污染）。
       {
         const label = '给了开关 · 真实根 · 只读 op（正例）'
-        const res = runRealMode(label, { op: 'entry-count', testMode: false, extra: ['--data-root', realRoot, '--real-mode'] }, true)
-        if (res !== null) {
-          if (res.exit_code !== 0) {
-            push('REAL-MODE-POSITIVE', `${label} 必须成功（开关真能把门打开），实得 exit=${res.exit_code} / ${res.json?.error?.code ?? '(无码)'}：${res.stdout.trim().slice(0, 240)}`)
-          } else if (res.json?.ok !== true) {
-            push('REAL-MODE-POSITIVE', `${label} 的 stdout 信封必须 ok=true，实得 ${JSON.stringify(res.json)?.slice(0, 240)}`)
-          } else {
-            realModeResults[label].count = res.json.count ?? null
-            realModeResults[label].snapshot = res.json.snapshot ?? null
+        if (!existsSync(sutRealBrain)) {
+          caseHold(rec, 'REAL-MODE-POSITIVE-VACUOUS',
+            `SUT 自己那个真实根 ${sutRealBrain} **不在盘上** ⇒ 端到端正例判不了（staging 是开发副本、不是装好的库）。`
+            + '**这一格不是绿**；开关那半由纯函数正例覆盖。')
+          realModeResults[label] = { held: `SUT 真实根不在盘上：${sutRealBrain}` }
+        } else {
+          const res = runRealMode(label, { op: 'entry-count', testMode: false, extra: ['--data-root', sutRealBrain, '--real-mode'] }, true)
+          if (res !== null) {
+            if (res.exit_code !== 0) {
+              push('REAL-MODE-POSITIVE', `${label} 必须成功（开关真能把门打开），实得 exit=${res.exit_code} / ${res.json?.error?.code ?? '(无码)'}：${res.stdout.trim().slice(0, 240)}`)
+            } else if (res.json?.ok !== true) {
+              push('REAL-MODE-POSITIVE', `${label} 的 stdout 信封必须 ok=true，实得 ${JSON.stringify(res.json)?.slice(0, 240)}`)
+            } else {
+              realModeResults[label].count = res.json.count ?? null
+              realModeResults[label].snapshot = res.json.snapshot ?? null
+            }
           }
         }
       }

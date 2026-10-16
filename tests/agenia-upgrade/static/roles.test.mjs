@@ -29,7 +29,7 @@ before(() => {
 /** 四类一次性作业的角色（= 四条 job 行）。 */
 const JOB_ROLES = FROZEN.jobs.map((j) => j.role)
 /** 受限写边界的两个新角色（B2.3）。 */
-const NEW_OFFICE_ROLES = ['memory-review', 'conversation-review']
+const NEW_OFFICE_ROLES = ['conversation-review']
 /** 评审类（B2.4：首行标"一次性作业"）。 */
 const REVIEW_ROLES = ['memory-review', 'conversation-review', 'technical-review']
 
@@ -77,7 +77,10 @@ describe('static · roles (REV-02)', () => {
         for (const role of NEW_OFFICE_ROLES) {
           if (!Array.isArray(office) || !office.includes(role)) push('OFFICE-BOUND', `${role} 必须在 officeBound 里（B2.3：它只能写 .team/ 且没有命令行）`)
         }
-        for (const role of ['memory-judge', 'technical-review']) {
+        // 🔴 `memory-review` 2026-10-16 起也在"不许"这一列：老板上午亲口拍「那就给复核加个权限吧」
+        //    ⇒ 她**不许**再出现在 officeBound 里。这条与 `NEW_OFFICE_ROLES` 那半合起来，
+        //    把"名单里该有谁"钉成**成员级**判据（只数条数的话，同样 2 项的一进一出会漏过去）。
+        for (const role of ['memory-judge', 'technical-review', 'memory-review']) {
           if (Array.isArray(office) && office.includes(role)) push('OFFICE-BOUND', `${role} **不许**在 officeBound 里（B2.3：判决要写共享脑、技术评审要跑测试 ⇒ 需要 shell/全工具）`)
         }
         // 四条 job 行的 persona 标记与 toolName
@@ -169,7 +172,10 @@ describe('static · roles (REV-02)', () => {
         }
       }
       // ③-2 不在名单里的角色 / 认不出角色 ⇒ 放行（这道边界用来挡几个岗位，绝不能把组长挡住）
-      for (const role of ['memory-judge', 'technical-review', 'dev', undefined, null, 'not-a-role']) {
+      // 🔴 `memory-review` 2026-10-16 起**也在这一列** —— 老板亲口拍「那就给复核加个权限吧」
+      //    ⇒ 她**必须**被放行（shell 与越界写都放行）。这条是把那条拍板变成常驻判据：
+      //    哪天有人把她塞回 officeBound，这里当场红。
+      for (const role of ['memory-judge', 'technical-review', 'memory-review', 'dev', undefined, null, 'not-a-role']) {
         for (const toolName of ['bash', 'pwsh', 'write']) {
           const r = v(role, toolName, { file_path: path.join(PATHS.repo, 'x.txt') })
           matrix[`${String(role)}/${toolName}`] = { kind: r.kind, code: r.code }
@@ -195,10 +201,19 @@ describe('static · roles (REV-02)', () => {
           push('OFFICE-WRITE-CODE', `写越界的拒绝码应为 ${FROZEN.officeBoundCodes.write}，实得 ${r.code}`)
         }
       }
-      // `edit` 也受同一条边界（它是另一半写入通道）—— 拿一个**在编**的受限角色（`memory-review`）
-      const editOut = v('memory-review', 'edit', { file_path: path.join(ws, 'AGENTS.md') })
-      matrix['edit/项目根'] = { kind: editOut.kind, code: editOut.code }
-      if (editOut.kind !== 'reject') push('OFFICE-WRITE', `受限角色 edit 项目文件应当被拒，实得 ${editOut.kind}/${editOut.code}`)
+      // `edit` 也受同一条边界（它是另一半写入通道）—— 受限角色**从冻结名单里取**。
+      // 🔴 2026-10-16：这里原来写死了 `memory-review`（注释说"拿一个**在编**的受限角色"），
+      //    而老板当天把 `memory-review` 移出了 officeBound ⇒ 写死的那个名字当场变成**假红**
+      //    （它测到的是"名单外的角色被放行"，不是这条边界）。⇒ 改成从 `officeBoundRoles` 取，
+      //    名单怎么变都不用再改这里；取不到就报出来（不许静默跳过这条判据）。
+      const boundRoleForEdit = FROZEN.staged.officeBoundRoles[0]
+      if (typeof boundRoleForEdit !== 'string' || boundRoleForEdit === '') {
+        push('OFFICE-WRITE', 'FROZEN.staged.officeBoundRoles 空 —— `edit` 那条判据没有可用的在编受限角色')
+      } else {
+        const editOut = v(boundRoleForEdit, 'edit', { file_path: path.join(ws, 'AGENTS.md') })
+        matrix['edit/项目根'] = { kind: editOut.kind, code: editOut.code, role: boundRoleForEdit }
+        if (editOut.kind !== 'reject') push('OFFICE-WRITE', `受限角色 ${boundRoleForEdit} edit 项目文件应当被拒，实得 ${editOut.kind}/${editOut.code}`)
+      }
       // ③-4 只读/无关工具不受影响
       for (const toolName of ['read', 'present', 'todo_write', 'job_output', 'skill']) {
         const r = v('review', toolName, { file_path: path.join(ws, 'AGENTS.md') })
