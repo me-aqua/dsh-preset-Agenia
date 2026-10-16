@@ -13,7 +13,7 @@
  *     不发明"注入开关"那类接口。
  */
 import { before, describe, test } from 'node:test'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { ENV, FROZEN } from '../support/env.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, sha256File, stagingReadings, treeHash, writeJson } from '../support/evidence.mjs'
@@ -35,10 +35,18 @@ const runCliSoft = (cli, opts) => {
 
 const DAY = '2026-10-14'
 
-/** 每例一个带 marker 的空脑根（D-B3：`init` 只在空根成功）。 */
+/**
+ * 每例一个带 marker 的**空**脑根（D-B3：`init` 只在空根成功）。
+ *
+ * 🔴 "空"要由这一格自己保证：同一个 RUN_ID 连跑第二次时，上一跑 `init` 过的那一棵还在，
+ * 本跑的 `init` 会直接 `E_DATA_EXISTS`（→ STO01/02/03-INIT 三条假红）。⇒ 开跑前清掉这一棵
+ * （只清这一格自己那一个目录，marker 随后由 `ensureMarkedDir` 重建）。
+ */
 function caseBrainRoot(id, name) {
   const runRoot = canonical(process.env[ENV.RUN_ROOT])
-  const root = ensureMarkedDir(path.join(runRoot, `brain-${id.toLowerCase()}-${name}`), {
+  const dir = path.join(runRoot, `brain-${id.toLowerCase()}-${name}`)
+  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+  const root = ensureMarkedDir(dir, {
     runRoot,
     runId: path.basename(runRoot),
     kind: 'agenia-test-brain-root',
@@ -54,6 +62,21 @@ function caseWorkspace(id, name) {
     runId: path.basename(runRoot),
     kind: 'agenia-test-workspace',
   })
+}
+
+/**
+ * 同 `caseWorkspace`，但**先把它自己那块本地状态清干净**。
+ *
+ * 为什么要有这一条：同一个 RUN_ID 连跑第二次时，上一跑留在 `<ws>\.team\state\local\` 里的
+ * 状态会让下一跑的前置直接 `E_CLAIM_HELD`（"这一场已经 claim 过了"）—— 那不是被测对象坏了，
+ * 是这一格没把自己的现场建干净。⇒ 每跑一次都从零开始（只清这一格自己的那一个子目录，
+ * 工作区 marker 与 `.team` 其余部分一律不动）。
+ */
+function freshWorkspace(id, name) {
+  const ws = caseWorkspace(id, name)
+  const localDir = path.join(ws, '.team', 'state', 'local')
+  if (existsSync(localDir)) rmSync(localDir, { recursive: true, force: true })
+  return ws
 }
 
 const requireBrain = (problems, why) => {
@@ -95,6 +118,28 @@ const fileFactsOf = (file) => {
   } catch {
     return { exists: false, bytes: null, rows: null, sha256: null }
   }
+}
+
+/**
+ * 把这一天的本地状态**垫大**（STO-04 ① 的夹具；为什么要垫见那个用例里那段注释）。
+ *
+ * 只做一件事：往状态级的 `imported_proposal_ids` 里堆历史 id。挑这个键的理由有两条 ——
+ * ① 它是 `emptyLocalState()` 自己产出的；② 每次写回都是 `{...state}` 展开，**一定**被保留。
+ * ⇒ 垫进去的字节会跟着每一次读-改-写一起被读、被写，于是那次读-改-写被拉长。
+ *
+ * 🔴 垫的**不是**被测对象该有的样子，是**夹具**：形状仍由被测对象自己校验
+ *    （垫坏了它会当场 `E_DATA_CORRUPT`，不会静默读过去）。
+ */
+const padLocalState = (state, targetBytes = 4 * 1024 * 1024) => {
+  const out = JSON.parse(JSON.stringify(state))
+  let n = 80000
+  for (let round = 0; round < 8; round += 1) {
+    out.imported_proposal_ids = Array.from({ length: n }, (_, i) => `p-20250930-${String(i).padStart(8, '0')}`)
+    const bytes = Buffer.byteLength(`${JSON.stringify(out, null, 2)}\n`, 'utf8')
+    if (bytes >= targetBytes) return { state: out, entries: n, bytes, target: targetBytes }
+    n = Math.max(n + 1, Math.ceil(n * (targetBytes / bytes)))
+  }
+  return { state: out, entries: n, bytes: null, target: targetBytes }
 }
 
 const CALL = 'claim-update'
@@ -569,23 +614,91 @@ describe('integration · store (STO)', () => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
       rec.readings.staging = stagingReadings()
-      const ws = caseWorkspace('STO-04', 'fields')
+      // 🔴 两格两个工作区（"一格的几个输入各用各的根"）：
+      //   · `wsParallel` 只跑 ①（并行两场 claim）；
+      //   · `wsFields`   跑 ②~⑤ —— 这四格全都要求"这一天的两场 claim 已经成立"。
+      // 以前五格共用一格、②~⑤ 借 ① 留下的现场 ⇒ ① 一失败，② 就报出**假红**
+      // （"同一场重复 claim 竟然成功"），而真相是那一场 claim 根本没成立、压根谈不上"重复"。
+      const wsParallel = freshWorkspace('STO-04', 'parallel')
+      const wsFields = freshWorkspace('STO-04', 'fields')
       if (!requireLocal(problems, '本地 claim')) caseFail(problems)
-      const call = (op, payload, extra = []) => runLocal('STO-04', op, payload, { workspace: ws, extra })
+      const call = (op, payload, extra = []) => runLocal('STO-04', op, payload, { workspace: wsFields, extra })
       const base = { project: 'harness', day: DAY, snapshot: 'v7', attempt: 1 }
 
-      // ① 两场各自独立 claim，可并行
+      // ── ① 两场各自独立 claim，可并行 ───────────────────────────────────
+      // 现场造两步：
+      //   (a) 先用第三场（`memory-review`）claim 一次，把这一天的本地状态文件建出来；
+      //   (b) 把这份状态垫到 ~4MB（见 `padLocalState`）。
+      // 🔴 (b) 只解决一件事：**让"两场同时抢同一把锁"是确定的争用**（不是靠两个进程恰好同一微秒到达）。
+      //    会话/技术两场 claim 共用同一把 day 锁（`lib/local-state.mjs` 的 `localLockPath`），
+      //    不垫时那次读-改-写只有几百微秒；垫大之后持锁几十毫秒 ⇒ 后到的那一个**一定**落在前一个的
+      //    临界区里（读数 `parallel_timing_ms` 里总有一场慢 35–60ms，就是它在等）。
+      // ⚠️ **它不减偶发**（2026-10-16 实测：不垫 0.42% = 1200 跑红 5 · 垫大 0.33% = 300 跑红 1，
+      //    统计上分不开）。原因：会踩中的窗口是"后到者的 open 落在先到者**放锁前那几微秒**"，
+      //    与持锁多长无关；持锁变长只是把"一次冒险"换成"几次 20ms 间隔的重试冒险"。
+      //    ⇒ 那条红是**被测对象的缺陷现形**（`E_LOCK_STALE` + 报文里点着 `E_DATA_MISSING`），不是本用例的毛病；
+      //      真要让它是 0，只能修 `lib/atomic.mjs` 那两处（已报组长）。**5 次全绿不等于零概率。**
+      // ⚠️ 垫的只是一段合法历史，**断言一条都没动、也没放宽**。
+      const warm = runLocal('STO-04', 'local-claim', { ...base, field: 'memory-review', job_id: 'job-memory-review-1' }, { workspace: wsParallel })
+      const statePath = path.join(wsParallel, '.team', 'state', 'local', `${DAY}.json`)
+      const stateBefore = existsSync(statePath) ? readJson(statePath) : null
+      if (warm.exit_code !== 0 || stateBefore === null) {
+        push('STO04-SETUP', `① 的现场（这一天的本地状态文件）建不出来：warm claim exit=${warm.exit_code} / ${warm.json?.error?.code ?? '(无码)'}；状态文件${existsSync(statePath) ? '读不动' : '不在'}`)
+        caseFail(problems)
+      }
+      const padded = padLocalState(stateBefore)
+      writeFileSync(statePath, `${JSON.stringify(padded.state, null, 2)}\n`, 'utf8')
+      const padBytes = readFileSync(statePath).length
+      rec.readings.parallel_fixture = {
+        warm_exit: warm.exit_code, pad_target_bytes: padded.target, pad_bytes: padBytes, pad_entries: padded.entries,
+        note: '垫大只为一件事：让两场 claim 的读-改-写真的重叠（几十毫秒级），好让"同时抢同一把锁"是确定的争用。',
+      }
+      // 夹具守卫量在**跑之前**：跑完之后的状态是被测对象造的，拿它当守卫就是自证。
+      if (padBytes < padded.target) {
+        push('STO04-SETUP', `① 的夹具没生效：垫过之后的状态只有 ${padBytes} 字节（要 ≥ ${padded.target}）—— 那样两场 claim 会退化成"几百微秒的巧合争用"，本格的确定性就没了`)
+        caseFail(problems)
+      }
+
       const [rc, rt] = await Promise.all([
-        runCliAsync('agenia-local.mjs', { op: 'local-claim', workspace: ws, inFile: writeFixture('STO-04', 'claim-conversation', { ...base, field: 'conversation', job_id: 'job-conversation-review-1' }), testMode: true }, { env: process.env }),
-        runCliAsync('agenia-local.mjs', { op: 'local-claim', workspace: ws, inFile: writeFixture('STO-04', 'claim-technical', { ...base, field: 'technical', job_id: 'job-technical-review-1' }), testMode: true }, { env: process.env }),
+        runCliAsync('agenia-local.mjs', { op: 'local-claim', workspace: wsParallel, inFile: writeFixture('STO-04', 'claim-conversation', { ...base, field: 'conversation', job_id: 'job-conversation-review-1' }), testMode: true }, { env: process.env }),
+        runCliAsync('agenia-local.mjs', { op: 'local-claim', workspace: wsParallel, inFile: writeFixture('STO-04', 'claim-technical', { ...base, field: 'technical', job_id: 'job-technical-review-1' }), testMode: true }, { env: process.env }),
       ])
       rec.readings.parallel_claims = [
         { field: 'conversation', exit_code: rc.exit_code, code: rc.json?.error?.code ?? null },
         { field: 'technical', exit_code: rt.exit_code, code: rt.json?.error?.code ?? null },
       ]
+      // 这一对 ms 是"争用真的发生了"的读数；`stderr` 是红了之后**唯一**能看出锁的哪一步出问题的东西
+      // （`E_LOCK_STALE` 的报文里点着 `E_DATA_MISSING` / `E_DATA_CORRUPT`，用例只记 code 就会把它丢掉）。
+      rec.readings.parallel_timing_ms = [rc.ms ?? null, rt.ms ?? null]
+      rec.readings.parallel_stderr = [String(rc.stderr ?? '').trim().slice(0, 400), String(rt.stderr ?? '').trim().slice(0, 400)]
       if (rc.exit_code !== 0 || rt.exit_code !== 0) {
-        push('STO04-PARALLEL', `会话评审与技术评审必须能**各自独立** claim（两把锁），实得 exit=${rc.exit_code}/${rt.exit_code}（${rc.json?.error?.code ?? '-'} / ${rt.json?.error?.code ?? '-'}）`)
+        // 报文里带上**输了的那一场自己的 stderr**：`E_LOCK_STALE` 到底是"锁内容坏了（E_DATA_CORRUPT，
+        // 别人正建着）"还是"锁内容坏了（E_DATA_MISSING，别人刚放掉）"，只有那句 stderr 说得清。
+        // 只记 code 的话，这条红读起来就跟"随便什么并发问题"一模一样（F-35 就是这么被误判成"测试不稳"的）。
+        const why = [rc, rt]
+          .map((r, k) => (r.exit_code === 0 ? null : `${['会话', '技术'][k]}：${String(r.stderr ?? '').trim() || '(无 stderr)'}`))
+          .filter(Boolean)
+          .join(' ｜ ')
+        push('STO04-PARALLEL', `会话评审与技术评审必须能**各自独立** claim（两把锁），实得 exit=${rc.exit_code}/${rt.exit_code}（${rc.json?.error?.code ?? '-'} / ${rt.json?.error?.code ?? '-'}）—— ${why}`)
       }
+
+      // ── ②~⑤ 的前置：**这一格自己**把两场 claim 各顺序做一次 ──────────────
+      // （前置自己建，红了就红在 STO04-SETUP 这**一条**上，不会再生出四条假报文。）
+      const seqC = call('local-claim', { ...base, field: 'conversation', job_id: 'job-conversation-review-1' })
+      const seqT = call('local-claim', { ...base, field: 'technical', job_id: 'job-technical-review-1' })
+      rec.readings.fields_setup = [
+        { field: 'conversation', exit_code: seqC.exit_code, code: seqC.json?.error?.code ?? null },
+        { field: 'technical', exit_code: seqT.exit_code, code: seqT.json?.error?.code ?? null },
+      ]
+      if (seqC.exit_code !== 0 || seqT.exit_code !== 0) {
+        push('STO04-SETUP', `②~⑤ 的前置没成立（会话/技术两场各顺序 claim 一次都必须成功）：conversation exit=${seqC.exit_code} / ${seqC.json?.error?.code ?? '(无码)'}；technical exit=${seqT.exit_code} / ${seqT.json?.error?.code ?? '(无码)'}`)
+        rec.readings.fields_steps = {
+          skipped: ['STO04-DUP', 'STO04-MIXED', 'STO04-ISOLATION', 'STO04-OLD-NOTICE'],
+          note: '前置没成立 ⇒ 这四格一条都不判。判了只会产出假报文（例如"重复 claim 竟然成功"，而真相是那一场 claim 根本没成立）。',
+        }
+        caseFail(problems)
+      }
+
       // ② 同一场重复 claim ⇒ E_CLAIM_HELD
       const dup = call('local-claim', { ...base, field: 'conversation', job_id: 'job-conversation-review-1', attempt: 2 })
       rec.readings.duplicate_claim = { exit_code: dup.exit_code, code: dup.json?.error?.code ?? null }
@@ -613,7 +726,7 @@ describe('integration · store (STO)', () => {
       if (requireNotify(problems, '旧 attempt 通知')) {
         const late = runCliSoft('bg-notify.mjs', {
           op: 'deliver', dataRoot: process.env[ENV.TEST_DATA_ROOT],
-          extra: ['--status-root', path.join(ws, '.team'), '--job', 'conversation-review', '--job-id', 'job-conversation-review-OLD', '--state', 'done', '--result-file', writeFixture('STO-04', 'old-result', { ok: true })],
+          extra: ['--status-root', path.join(wsFields, '.team'), '--job', 'conversation-review', '--job-id', 'job-conversation-review-OLD', '--state', 'done', '--result-file', writeFixture('STO-04', 'old-result', { ok: true })],
         })
         rec.readings.old_attempt_notice = { exit_code: late.exit_code, code: late.json?.error?.code ?? null }
         const state2 = call('local-read', base)
