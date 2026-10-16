@@ -1288,10 +1288,35 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     //   （现场：10-01 那份落盘前分母 100、落盘后 102 ⇒ 恰恰在"没有"的那天它们整个不出现，
     //    而 `100/100` 读起来像全绿 —— memory §三 第四形态：分母随被测对象变）。
     //   ⚠️ **挂起不是通过** —— detail 里必须把这个词写出来。
-    pending('office', `今天有没有一份回顾类产物（.team/retro/${today}/… 或将来的"记忆更新"）`,
-      '**挂起** —— 复盘岗 2026-10-15 已撤、活体 `leader.md` 已不要求它，'
-      + '而新的锚点（记忆系统那半）**还没落地**。**别把挂起读成通过**：'
-      + '这一格今天判不了，不是"今天做完了"。')
+    //
+    // 🔴 2026-10-16（F-33）：**这一支不再挂起** —— 它下面换成真判据了（见紧跟着的那一段）。
+    //   原来这里写的是「而新的锚点（记忆系统那半）还没落地」—— 那句话**当天就过期了**
+    //   （记忆更新报告 2026-10-16 10:06 真产出了），而判据还在照念 ⇒ 天天 1 挂起，
+    //   挂的理由却在陈述一件**已经成立的事**。**"理由过期了、判据还在照念"是"长得像判据"的另一种形态。**
+    add('office', `今天的回顾产物在（.team/retro/${today}/前日复盘.md）（只报不红）`, true,
+      '复盘岗 2026-10-15 已撤 ⇒ 这一份属于自愿留下，不是欠账')
+  }
+
+  // 🆕 2026-10-16 · F-33 处置：**换锚点，不删断言**。
+  //   新锚点 = 共享记忆库的每日报告 `presets/agenia/.runtime/reports/memory-update/<今天>.json`，
+  //   和 `leader.md`「每天开工第一步」第 2 条**同一条判据**（先查记忆更新做了没有）。
+  //   🔴 **这一格是真判据**：交不出报告 = 真欠账（记忆更新是"首抢"的活，没人抢 ⇒ 整个记忆周期停摆）。
+  //   ⚠️ **两条边界，都是为了不出假红**：
+  //     ① **数据根整个不在**（换台机器 / 还没建库）⇒ **挂起**（判不了），不是红；
+  //     ② 数据根在、今天没报告 ⇒ **红**（有库没做 = 真欠账）。
+  const memRoot = join(PRESET, '.runtime')
+  const memReport = join(memRoot, 'reports', 'memory-update', `${today}.json`)
+  if (!existsSync(memRoot)) {
+    pending('office', `今天的记忆更新报告（reports/memory-update/${today}.json）`,
+      `**挂起** —— 共享记忆库的根（presets/agenia/.runtime）在这台机器上**还不存在** ⇒ 这一轮判不了。`)
+  } else {
+    const memOk = existsSync(memReport)
+    yes('office', `今天的记忆更新报告在（reports/memory-update/${today}.json）`,
+      memOk,
+      memOk
+        ? '记忆更新是"首抢"的活 —— 报告在 = 今天有人抢到了，记忆周期没停摆'
+        : '**缺** —— 库在、但今天没人做记忆更新 ⇒ 记忆周期停摆（没有候选冻结、没有快照发布、没有报告）。'
+          + '**开工第一步第 2 条就是去抢它**（`--op claim-update`），不是等它自己出现')
   }
   const days = existsSync(join(teamRoot, 'retro'))
     ? readdirSync(join(teamRoot, 'retro'), { withFileTypes: true })
