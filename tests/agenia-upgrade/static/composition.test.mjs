@@ -159,7 +159,7 @@ describe('static · composition', () => {
     })
   })
 
-  test('STAT-02 staged 四行 job 十项 checklist + officeBound 2 + 角色/作业书 + 生成补丁一致', async () => {
+  test('STAT-02 staged 四行 job 十项 checklist + officeBound 1（只剩 review）+ 角色/作业书 + 生成补丁一致', async () => {
     await runCase('STAT-02', async (rec) => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -190,7 +190,7 @@ describe('static · composition', () => {
           if (disabledKind(row) !== 'none') push('JOB-DISABLED', `${job.id}: job 行必须启用（实得 disabled=${disabledKind(row)}）`)
         }
 
-        // ── officeBound 恰为 2 ────────────────────────────────────────────
+        // ── officeBound 恰为 1（只剩 review；2026-10-16 两批移出见 env.mjs 那条 🔴）──
         const injRow = byId.get('persona-injector')
         const office = injRow ? cfg(injRow, 'officeBound') : null
         rec.readings.officeBound = office

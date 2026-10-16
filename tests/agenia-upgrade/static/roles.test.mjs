@@ -2,7 +2,9 @@
  * REV-02 —— 四角色工具面 / 写边界（静态角色矩阵 + `officeBoundVerdict` 单测）。
  *
  * 冻结依据：契约 §6.7 REV-02 + 提案 §B1.5（`officeBoundVerdict` 签名与返回）+ §B2.2/§B2.3（四行 job、
- * officeBound 恰 4 个）+ §B2.4（四份角色说明书；评审类首行标"一次性作业"）+ 拍板 I6/I7。
+ * `officeBound` —— 契约原文写"恰 4 个"，2026-10-16 两批移出之后**只剩 1 个：`review`**；
+ * 为什么移、代价是什么见 `CHARTER_NEEDLES` 前面那段 🔴）+ §B2.4（四份角色说明书；评审类首行标"一次性作业"）
+ * + 拍板 I6/I7。
  *
  * 两条口径写死在这里，免得被读成更强的证明：
  *   · **无 shell 的判定**在自动层只有两条腿：① `officeBoundVerdict` 对 `bash`/`pwsh` 都拒（单测）
@@ -28,22 +30,54 @@ before(() => {
 
 /** 四类一次性作业的角色（= 四条 job 行）。 */
 const JOB_ROLES = FROZEN.jobs.map((j) => j.role)
-/** 受限写边界的两个新角色（B2.3）。 */
-const NEW_OFFICE_ROLES = ['conversation-review']
+/**
+ * 🔴 2026-10-16：原来这里有一个 `const NEW_OFFICE_ROLES = ['conversation-review']`，**整条删掉**。
+ *
+ * 为什么删、而不是留个空数组：空数组 `for...of` 什么都不做 ⇒ **它绿着，却什么也没查**，
+ * 正是这一票要治的形状（"静默失效的检查，和通过的检查长得一模一样"）。
+ *
+ * 它原来钉的是"这个角色必须在 `officeBound` 里"（B2.3）。而老板 2026-10-16 一天里把两个都移出了：
+ * 上午 `memory-review`（原话「那就给复核加个权限吧」）· 下午 `conversation-review`
+ * （原话「你自己改就行，需要给什么命令行权限的就给」）—— 前者要算容量水位、后者要核三样 SHA256，
+ * 而那道门禁**同时把命令行也拿掉了** ⇒ 那个"核"是空话，判据退化成"信别人给的数"。
+ * ⇒ **四条 job 角色现在一个都不在名单里**，手抄的"必须在内"名单没有成员可装。
+ *
+ * 正反两半现在**从冻结表推**，不再手抄角色名（手抄名单正是"一进一出、条数不变"那类漏检的源头）：
+ *   · 正向：`FROZEN.staged.officeBoundRoles` 里每个角色都必须在 yml 的 `officeBound` 里；
+ *   · 反向：`FROZEN.jobs` 那四个 job 角色**一个都不许**在 `officeBound` 里。
+ */
 /** 评审类（B2.4：首行标"一次性作业"）。 */
 const REVIEW_ROLES = ['memory-review', 'conversation-review', 'technical-review']
 
-/** 角色说明书要命的主题针（针都来自契约 REV-02 逐条点名的义务）。 */
+/**
+ * 角色说明书要命的主题针（针都来自契约 REV-02 逐条点名的义务）。
+ *
+ * 🔴 2026-10-16：`memory-review` / `conversation-review` 第一根针**翻面**了。
+ *   旧针是 `[['无命令行', '没有命令行'], '…必须拿不到 shell']` —— 它**两头都绿**：
+ *   改前绿（说明书真写着"没有命令行"），**改后也绿**（新说明书里那句"诚实口径"仍然引用着
+ *   "officeBound 曾经只保证**没有命令行** + 写只落 .team/"）。
+ *   ⇒ 旧针不是"过期"，是**根本分不出新旧**（实测见 `.team/test/2026-10-16/_evidence/needle-flip-check.mjs` 的读数）。
+ *
+ *   新针钉两件**说明书必须说出口**的事，且两根针在旧版说明书上**都必红**：
+ *     ① `你有命令行` —— 她现在被告知自己有 shell（旧文写的是"你**没**有命令行"，
+ *        "你没" ≠ "你有"，所以这个串在旧版里**不可能**命中；也不可以用裸 `命令行` 或 `bash`：
+ *        旧文那句"`bash` / `pwsh` 都拿不到"里两个词都在 ⇒ 又成了假绿）。
+ *     ② `是纪律，不是门禁` —— 代价明说：门禁没了，写边界只剩纪律（老板要求写清"两件保护都没了"）。
+ *   翻面办法（都量过，见上面那份读数）：① 把 `你有命令行` 改回 `你没有命令行` ⇒ 针红；
+ *   ② 删掉"从今天起，下面这几条是纪律，不是门禁"那一行 ⇒ 针红。
+ */
 const CHARTER_NEEDLES = {
   'memory-review': [
-    [['无命令行', '没有命令行'], '记忆复核必须拿不到 shell（它只写本组抽屉）'],
+    [['你有命令行'], '记忆复核**现在有命令行**（她要在自动层算容量水位，手算算不准 —— 2026-10-16 老板把它移出了 officeBound）'],
+    [['是纪律，不是门禁'], '写边界只剩**纪律**：门禁没了，说明书必须把这句代价说出来（2026-10-16 移出 officeBound 的代价）'],
     [['.team'], '写只能落 .team/'],
     [['路线'], '评审角色不能写路线'],
     [['长期记忆'], '复核不能直接改长期记忆'],
     [['组长', '导入'], '旧 attempt 候选交组长导入'],
   ],
   'conversation-review': [
-    [['无命令行', '没有命令行'], '会话评审必须拿不到 shell'],
+    [['你有命令行'], '会话评审**现在有命令行**（她的作业书要求必核三样 SHA256，算不出哈希那份"核"就是空话 —— 2026-10-16 老板把它移出了 officeBound）'],
+    [['是纪律，不是门禁'], '写边界只剩**纪律**：门禁没了，说明书必须把这句代价说出来（2026-10-16 移出 officeBound 的代价）'],
     [['.team'], '写只能落 .team/'],
     [['路线'], '评审角色不能写路线'],
   ],
@@ -74,14 +108,30 @@ describe('static · roles (REV-02)', () => {
         office = inj ? cfg(inj, 'officeBound') : null
         rec.readings.officeBound = office
         if (!Array.isArray(office) || office.length !== FROZEN.staged.officeBound) push('OFFICE-BOUND', `officeBound 必须恰为 ${FROZEN.staged.officeBound} 项，实得 ${JSON.stringify(office)}`)
-        for (const role of NEW_OFFICE_ROLES) {
-          if (!Array.isArray(office) || !office.includes(role)) push('OFFICE-BOUND', `${role} 必须在 officeBound 里（B2.3：它只能写 .team/ 且没有命令行）`)
+        // ── 正向：冻结名单里的受限角色都必须在 yml 的 officeBound 里 ────────────
+        // 名单本身逐字对在 STAT-02；这里防的是"yml 少一个"（少一个 ⇒ 那个岗位静默地不再受限）。
+        for (const role of FROZEN.staged.officeBoundRoles) {
+          if (!Array.isArray(office) || !office.includes(role)) push('OFFICE-BOUND', `${role} 必须在 officeBound 里（冻结名单 officeBoundRoles=${JSON.stringify(FROZEN.staged.officeBoundRoles)}）`)
         }
-        // 🔴 `memory-review` 2026-10-16 起也在"不许"这一列：老板上午亲口拍「那就给复核加个权限吧」
-        //    ⇒ 她**不许**再出现在 officeBound 里。这条与 `NEW_OFFICE_ROLES` 那半合起来，
-        //    把"名单里该有谁"钉成**成员级**判据（只数条数的话，同样 2 项的一进一出会漏过去）。
-        for (const role of ['memory-judge', 'technical-review', 'memory-review']) {
-          if (Array.isArray(office) && office.includes(role)) push('OFFICE-BOUND', `${role} **不许**在 officeBound 里（B2.3：判决要写共享脑、技术评审要跑测试 ⇒ 需要 shell/全工具）`)
+        // ── 反向：四个 job 角色**一个都不许**在 officeBound 里 ──────────────────
+        // 🔴 2026-10-16 一天里移出两个，理由同一个：门禁一次拿掉两样（命令行 + 写面），而它们只要那"一样"才算得出来。
+        //    · 上午 `memory-review`（原话「那就给复核加个权限吧」）—— 要算容量水位；
+        //    · 下午 `conversation-review`（原话「你自己改就行，需要给什么命令行权限的就给」）—— 要核三样 SHA256。
+        // 成员级判据（只数条数的话，"同样 1 项的一进一出"会漏过去 —— 见 `mig-rules-18`）。
+        for (const role of JOB_ROLES) {
+          if (Array.isArray(office) && office.includes(role)) {
+            push('OFFICE-BOUND', `${role} **不许**在 officeBound 里（2026-10-16 老板拍板：这四类一次性作业都要 shell —— 复核算容量水位、会话评审核三样 SHA256、技术评审跑测试、判决要写共享脑）`)
+          }
+        }
+        // ── 台账 ↔ 名单 自洽：`FROZEN.jobs[].officeBound` 原来是**死常量**（`env.mjs` 自己写着"没有任何断言读它"）──
+        // 【钉什么】每条 job 行台账写的 `officeBound`，必须与它在 `FROZEN.staged.officeBoundRoles` 里在不在**一致**。
+        // 【为什么】两张冻结表分叉 = 这一票反复撞的形状（改了生产侧/一张表，另一张没跟）。
+        // 【怎么翻面】把 `tool-job-conversation-review` 那条台账改回 `true`（名单不动）⇒ 当场红。
+        for (const job of FROZEN.jobs) {
+          const inFrozenList = FROZEN.staged.officeBoundRoles.includes(job.role)
+          if (job.officeBound !== inFrozenList) {
+            push('OFFICE-BOUND', `冻结表自相矛盾：${job.id}.officeBound=${job.officeBound}，而 officeBoundRoles=${JSON.stringify(FROZEN.staged.officeBoundRoles)} ${inFrozenList ? '含' : '不含'} ${job.role}`)
+          }
         }
         // 四条 job 行的 persona 标记与 toolName
         for (const job of FROZEN.jobs) {
@@ -172,10 +222,12 @@ describe('static · roles (REV-02)', () => {
         }
       }
       // ③-2 不在名单里的角色 / 认不出角色 ⇒ 放行（这道边界用来挡几个岗位，绝不能把组长挡住）
-      // 🔴 `memory-review` 2026-10-16 起**也在这一列** —— 老板亲口拍「那就给复核加个权限吧」
-      //    ⇒ 她**必须**被放行（shell 与越界写都放行）。这条是把那条拍板变成常驻判据：
-      //    哪天有人把她塞回 officeBound，这里当场红。
-      for (const role of ['memory-judge', 'technical-review', 'memory-review', 'dev', undefined, null, 'not-a-role']) {
+      // 🔴 2026-10-16 两批：`memory-review`（上午，「那就给复核加个权限吧」）与
+      //    `conversation-review`（下午，「你自己改就行，需要给什么命令行权限的就给」）都移出了名单
+      //    ⇒ 四类一次性作业**全部**必须被放行（shell 与越界写都放行）。这条是把那两次拍板变成常驻判据：
+      //    哪天有人把其中任何一个塞回 officeBound，这里当场红。
+      //    ⚠️ 名单**从 `FROZEN.jobs` 推**，不手抄（手抄就会重演"移出一个、漏改一处 ⇒ 假红或假绿"）。
+      for (const role of [...JOB_ROLES, 'dev', undefined, null, 'not-a-role']) {
         for (const toolName of ['bash', 'pwsh', 'write']) {
           const r = v(role, toolName, { file_path: path.join(PATHS.repo, 'x.txt') })
           matrix[`${String(role)}/${toolName}`] = { kind: r.kind, code: r.code }
@@ -232,7 +284,7 @@ describe('static · roles (REV-02)', () => {
       }
       rec.readings.matrix = matrix
       rec.readings.no_shell_caveat = {
-        note: '自动层只能证"门禁对 bash/pwsh 都拒 + 受限角色都在 officeBound 名单里"；真实"工具单里没有 shell"只能 R1-02 验（契约 REV-02 明文）。',
+        note: '自动层只能证"门禁对 bash/pwsh 都拒 + 冻结名单里的受限角色（2026-10-16 起只剩 review）都在 officeBound 名单里"；真实"工具单里没有 shell"只能 R1-02 验（契约 REV-02 明文）。',
       }
 
       caseFail(problems)

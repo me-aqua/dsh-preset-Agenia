@@ -96,8 +96,9 @@ export const FROZEN = {
     /** 活体组合的 `- id:` 行数（能力行口径，含 persona-injector 与五条 team-* 行）—— 装已完成，活体就是 42。 */
     capabilityRows: 42,
     teamToolRows: 5,
-    /** 活体组合 `officeBound` 的名单（**两个**判断类岗位 —— 复盘岗已撤 · `memory-review` 2026-10-16 由老板拍板移出）。 */
-    officeBound: ['review', 'conversation-review'],
+    /** 活体组合 `officeBound` 的名单（**一个**判断类岗位：`review` —— 复盘岗已撤 · `memory-review` / `conversation-review`
+     *  2026-10-16 先后由老板拍板移出；来历见下面 `FROZEN.staged.officeBound` 那条 🔴）。 */
+    officeBound: ['review'],
     /** 活体组合里 `disabled: true` 的**有效**行数（剔掉注释、不算 `!!js` 平台二选一那一对）。 */
     disabledLiteralRows: 5,
     /** 活体组合里**已启用**的具名 `dsh-tool-subagent` 实例数（`team-retro` 关着，不算）。 */
@@ -137,22 +138,29 @@ export const FROZEN = {
     /** 固定 `team-*` **行**数 —— 含关着的 `team-retro`（关掉 ≠ 删掉）。 */
     fixedTeamToolRows: 5,
     bareSubagentRows: 1,
-    /** officeBound 的**条数**（**2**：review / conversation-review）。
+    /** officeBound 的**条数**（**1**：review）。
      *  ⚠️ 名单见下面的 `officeBoundRoles` —— 两者别混（混了会 `not iterable`）。
-     *  🔴 2026-10-16：**3 → 2**。老板当天上午亲口拍「那就给复核加个权限吧」⇒ `memory-review`
-     *     从名单里去掉（她两件保护都没了，只剩纪律）。生产侧 `agent.cordis.yml` 同批改完；
-     *     本条是**测试侧的同一批**（技术评审 F1 那一族：改了生产侧，冻结表要同批跟）。
-     *     来历逐字见 `presets/agenia/agent.cordis.yml` 那段注释；票据 `T-TEST-05`。 */
-    officeBound: 2,
+     *  🔴 2026-10-16：**2 → 1**。老板原话「你自己改就行，需要给什么命令行权限的就给」⇒ `conversation-review`
+     *     从名单里去掉。**为什么**：它的作业书要求它**必核三样 SHA256**，而受限名单同时把命令行拿掉了
+     *     ⇒ 它算不出哈希，"核"是空话（`E:\财布` 一次真现场只能由组长代算 ⇒ 判据退化成"信别人给的数"）。
+     *     **代价照旧明说**：它**两件保护都没了**（不限写 `.team/`、不再"没有命令行"），只剩纪律
+     *     （作业书里那段"只写 `retro/<日期>/` 是**纪律不是门禁**"）。
+     *     ⚠️ **这是同一个病的第二次**：当天上午 `memory-review` 已因同一件事（要算容量水位）被移出，
+     *     老板原话「那就给复核加个权限吧」⇒ 本条**不是**新口径，是同一条口径的第二次应用。
+     *     生产侧 `presets/agenia/agent.cordis.yml`（`officeBound: - review`）与 `inject.js`
+     *     （`DEFAULT_OFFICE_BOUND = ['review']`）同批改完；本条是**测试侧的同一批**
+     *     （技术评审 F1 那一族：改了生产侧，冻结表要同批跟）。 */
+    officeBound: 1,
     /**
-     * officeBound 的**名单**（冻结的**顺序**，逐字）—— 要名单的地方读这里，要条数的地方读上面那个数。
-     * 两个判断类岗位（复盘岗已撤：`team/retro.md` 不存在、`team-retro` 那一行关着；
-     * `memory-review` 2026-10-16 移出 —— 见上面那条 🔴）。
-     * 来历：`officeBound: 2` 是**计数**（同族 `capabilityRows: 42` / `teamFiles: 9` 都是计数），
+     * officeBound 的**名单**（冻结的**顺序**，逐字 —— 现在只有 `review`）。
+     * 两件保护（无命令行 / 写只落 `.team/`）**只剩 `review` 一个岗位有**：复盘岗已撤
+     * （`team/retro.md` 不存在、`team-retro` 那一行关着）；`memory-review` 2026-10-16 上午移出 ·
+     * `conversation-review` 2026-10-16 同日下午移出（为什么与代价见上面那条 🔴）。
+     * 来历：`officeBound: 1` 是**计数**（同族 `capabilityRows: 42` / `teamFiles: 9` 都是计数），
      * 而 STAT-02 / REV-02 拿它当名单去 `for...of` ⇒ 实现做对的那一刻当场 `TypeError: not iterable`，
      * 把整条被测面挡在后面（证据：实现岗 `dev/2026-10-14/log.md` §11）。
      */
-    officeBoundRoles: ['review', 'conversation-review'],
+    officeBoundRoles: ['review'],
     onlyInStandard: [],
     onlyInAgenia: 10,
     disabledLiteralRows: 5,
@@ -188,12 +196,13 @@ export const FROZEN = {
   },
 
   /** 四条 job 行（提案 §B2.2 / §B2.4）。
-   *  ⚠️ `officeBound` 这一栏**目前没有任何断言读它**（只作台账）—— 2026-10-16 同批把
-   *  `memory-review` 由 `true` 改成 `false`（老板拍板：给复核加权限）。 */
+   *  ⚠️ `officeBound` 这一栏**现在有断言读它**（REV-02 的"台账 ↔ 名单自洽"）：每条 job 的台账
+   *  必须与它在 `FROZEN.staged.officeBoundRoles` 里在不在一致 —— 两张冻结表分叉当场红。
+   *  ⇒ 现在四条 job 行**一个都不在** `officeBound` 里，台账与 `FROZEN.staged.officeBoundRoles` 一致。 */
   jobs: [
     { id: 'tool-job-memory-judge', toolName: 'job_memory_judge', role: 'memory-judge', officeBound: false },
     { id: 'tool-job-memory-review', toolName: 'job_memory_review', role: 'memory-review', officeBound: false },
-    { id: 'tool-job-conversation-review', toolName: 'job_conversation_review', role: 'conversation-review', officeBound: true },
+    { id: 'tool-job-conversation-review', toolName: 'job_conversation_review', role: 'conversation-review', officeBound: false },
     { id: 'tool-job-technical-review', toolName: 'job_technical_review', role: 'technical-review', officeBound: false },
   ],
   /** 四条 job 行的 toolFilter.deny（**恰为这两个，一个都不多**）。 */
