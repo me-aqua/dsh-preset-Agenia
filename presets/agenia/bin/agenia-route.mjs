@@ -120,7 +120,7 @@ function readPayload(args) {
  * `--status-root` 指 `.team` 那一层，它的 marker 允许长在**父目录**（工作区）上：
  * 那一层本来就是"这份工作区属于某次测试运行"的凭据。
  */
-function resolveRoot(args, { label, raw, markerInParent = false }) {
+function resolveRoot(args, { label, raw, markerInParent = false, containingRule }) {
   const testMode = args.testMode === true || testModeOf({}, process.env)
   const runRoot = typeof process.env.AGENIA_TEST_RUN_ROOT === 'string' && process.env.AGENIA_TEST_RUN_ROOT.trim() !== ''
     ? process.env.AGENIA_TEST_RUN_ROOT
@@ -132,7 +132,8 @@ function resolveRoot(args, { label, raw, markerInParent = false }) {
     }
     markerExists = probe(raw) || (markerInParent && probe(path.dirname(path.resolve(raw))))
   }
-  const verdict = dataRootVerdict(raw, { testMode, markerExists, mustBeUnder: testMode ? runRoot : null })
+  // `containingRule` 不喂 ⇒ 默认 `true`（照旧判"包住"）；**只有工作区那一档传 `false`** —— 见 `resolveWorkspace`。
+  const verdict = dataRootVerdict(raw, { testMode, markerExists, mustBeUnder: testMode ? runRoot : null, containingRule })
   if (!verdict.ok) throw cliError(verdict.code, `${label}：${verdict.message}`)
   return verdict.root
 }
@@ -142,7 +143,8 @@ function resolveWorkspace(args, payload) {
   if (raw === null || raw === undefined || String(raw).trim() === '') {
     throw cliError('E_ARG_SCHEMA', '缺 --workspace（路线只写它下面；这里**没有** env 兜底，每次都要显式给）')
   }
-  return resolveRoot(args, { label: '--workspace', raw })
+  // 🔴 工作区不判"包住真实根"（恒自拒）—— 来历见 `lib/paths.mjs` 判定处那段注释。2026-10-16 加。
+  return resolveRoot(args, { label: '--workspace', raw, containingRule: false })
 }
 
 function routePaths(workspace, statusRoot) {

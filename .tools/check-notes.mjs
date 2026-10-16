@@ -1118,7 +1118,13 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    而 `.team/retro/` 那个目录**照旧存在且不许删** —— 里面是冻结档案（老板：旧的不用再做了，
   //    但已有的文件一个都不删），外加 `conversation-review` 的产物落点。
   //    ⇒ 它不是幽灵：没有人会以为组里还有"流程与复盘"这号岗，那个格子只是档案柜。
-  const housework = ['_archive', ...RETIRED_ROLES]
+  // 🔴 2026-10-16 加 `brain`：`health-read` 那条 op 把健康度写到
+  //    `<ws>/.team/brain/<day>/health.json` —— 那是**引擎自己的落点，不是岗位**。
+  //    它也不是幽灵：没有人会以为组里有个叫「brain」的岗。
+  //    ⚠️ 它是**修好 `--workspace` 那条判定之后才冒出来的**（在那之前 `health-read`
+  //    在 `E:\Harness` 上恒拒 `E_ROOT_REAL_BRAIN` ⇒ 这个目录从来没被建出来过）
+  //    —— 也就是说：这条白名单的缺口，是"修好一处"当场带出来的第二处。
+  const housework = ['_archive', 'brain', ...RETIRED_ROLES]
   const ghosts = roleDirs.filter((r) => !known.includes(r) && !housework.includes(r))
   add('office', '.team/ 下有没有预设之外的岗位目录（旧岗位留下的）',
     ghosts.length === 0, ghosts.length === 0 ? '干净' : `${ghosts.join(', ')} —— 改名成现在的岗位，或者归档掉`)

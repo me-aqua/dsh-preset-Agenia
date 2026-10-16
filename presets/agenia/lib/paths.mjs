@@ -144,6 +144,8 @@ function isUnder(child, parent) {
  * @param {boolean} [options.testMode]     测试模式（判定 NO_MARKER 只看它）
  * @param {boolean} [options.markerExists] 盘上有没有 `.agenia-test-root`（由调用方探）
  * @param {string[]} [options.realRoots]   真实根名单（默认脑根 + 路线根）
+ * @param {boolean} [options.containingRule] 「包住真实根」那半条判不判（默认 `true` = 照旧判）。
+ *   🔴 只有**工作区**那一档会传 `false` —— 来历见下面判定处那段注释。
  * @param {(p:string)=>string|null} [options.driveOf] 盘符函数（默认本文件那份）
  * @param {string|null} [options.mustBeUnder] 越界判据（给了才可能出 `E_ROOT_OUTSIDE`）
  * @returns {{ok:true,code:null,root:string,message:string}|{ok:false,code:string,message:string}}
@@ -155,6 +157,7 @@ export function dataRootVerdict(rawRoot, options = {}) {
     realRoots = REAL_ROOTS,
     driveOf = driveOfPath,
     mustBeUnder = null,
+    containingRule = true,
   } = options ?? {}
 
   if (rawRoot === undefined || rawRoot === null || String(rawRoot).trim() === '') {
@@ -171,11 +174,19 @@ export function dataRootVerdict(rawRoot, options = {}) {
   if (driveOf(root) === 'C:') {
     return { ok: false, code: 'E_ROOT_C_DRIVE', message: `根路径不许在 C 盘：${root}` }
   }
+  // 🔴 下面这两条**不是一回事，别一起拆**：
+  //   · `root ⊆ real`（**落在**真实根里）—— **无条件拒**。有意义的防线：根不许就是库本身、或库的子目录。
+  //   · `root ⊇ real`（**包住**真实根）—— 默认也拒，但 `containingRule: false` 关得掉。
+  //     为什么**工作区**那一档必须关掉它：工作区**一定包住它自己的** `<ws>/.team/route`，
+  //     拿"包住"去判它 ⇒ **恒自拒**（本函数与 `agenia-brain.mjs` 的注释都早写着这句话，只是没人去修）。
+  //     而库固定住在**预设目录**底下（`<预设目录>/.runtime`）⇒ 拿开发仓库当工作区时（`E:\Harness`），
+  //     `daily-start` / `health-read` 恒拒 `E_ROOT_REAL_BRAIN`（2026-10-16 现场撞到 · 艾芙琳报的）。
+  //   ⚠️ `--data-root` 那一档**照旧**用默认值（`true`）—— 那道反面对照不许退化。
   for (const real of realRoots ?? []) {
     if (isUnder(root, real)) {
       return { ok: false, code: 'E_ROOT_REAL_BRAIN', message: `根路径落在真实根里：${root} ⊆ ${canonicalPath(real)}` }
     }
-    if (isUnder(real, root)) {
+    if (containingRule && isUnder(real, root)) {
       return { ok: false, code: 'E_ROOT_REAL_BRAIN', message: `根路径包住了真实根：${root} ⊇ ${canonicalPath(real)}` }
     }
   }

@@ -49,6 +49,9 @@
  *        `<工作区>/.team/retro/<day>/conversation-packet/` · 落完之后**再校验一遍**并把读数带出来；
  *      · 🔴 **源流目录一律只读**（真实运行 = `~\.dsh\sessions\…`）：临时件落点照那个模块头部
  *        冻死的规则走，**本文件不另选一格**、也不越过它去碰源流目录。
+ *      · 🔴 **v1.8（2026-10-16）：`sources[].human` 原文透传**（"只打人话"）——
+ *        判形状 / 投影 / 全部账都在 `lib/packet.mjs`；本文件只把 `human` 那把账
+ *        （含**"保证降级"那句话**）记进 audit 与返回值。**manifest 那十个顶层字段一个都不动。**
  *
  * 🔴 **两个真实根怎么来的（2026-10-15 修 P1 · 技术评审 F4）**：`lib/paths.mjs` 里一条绝对路径都不写 ——
  *    脑根从"预设自己住在哪"推出来，路线根从**工作区**推出来。而工作区只有这条 CLI 手里有
@@ -184,12 +187,13 @@ function hasTestMarker(raw) {
  *    `<ws>/.team/route`，拿"包住真实根"那条去判它自己，恒等于自拒。
  * ⚠️ `session-packet` 连**工作区那一档**也不走这里 —— 它走 `resolvePacketWorkspace()`（判落点）。
  */
-function resolveRoot(args, { label = '--data-root', raw = args.dataRoot, realRoots } = {}) {
+function resolveRoot(args, { label = '--data-root', raw = args.dataRoot, realRoots, containingRule } = {}) {
   const testMode = testModeOfArgs(args)
   const verdict = dataRootVerdict(raw, {
     testMode,
     markerExists: hasTestMarker(raw),
     realRoots, // ← `undefined` ⇒ 默认表（缺省工作区那一档），判定语义一个字不动
+    containingRule, // ← 同上：`undefined` ⇒ 默认 `true`（照旧判"包住"）；只有工作区那一档传 `false`
     mustBeUnder: testMode ? runRootOfEnv() : null,
   })
   if (!verdict.ok) throw cliError(verdict.code, `${label}：${verdict.message}`)
@@ -293,7 +297,10 @@ function resolveWorkspace(args, payload) {
   if (raw === null || raw === undefined || String(raw).trim() === '') {
     throw cliError('E_ARG_SCHEMA', '缺 workspace（payload.workspace 或 --workspace 二选一）')
   }
-  return resolveRoot(args, { label: '--workspace', raw }).root
+  // 🔴 `containingRule: false` —— **工作区这一档不判"包住真实根"**：工作区一定包住它自己的
+  //    `<ws>/.team/route`，拿那条判它 ⇒ **恒自拒**（本文件 L186 那句注释早写着）。
+  //    "落在真实根里"照旧拒（那一条有意义）。2026-10-16 加 —— 来历见 `lib/paths.mjs` 判定处那段注释。
+  return resolveRoot(args, { label: '--workspace', raw, containingRule: false }).root
 }
 
 const requireString = (value, what) => {
@@ -1007,7 +1014,8 @@ function opHealthRead({ root, args, payload }) {
  * ```
  * { day: "YYYY-MM-DD",                                  // 必填。抽屉日期 = 落点日期
  *   sources: [{session_id, project, file, last_event_at,   // 必填数组（v1.6 ②：空源也要显式给 []）
- *              window?}],                                 // v1.7：可选的**单源裁剪窗口**
+ *              window?,                                   // v1.7：可选的**单源裁剪窗口**
+ *              human?}],                                  // v1.8：可选的**人话过滤**（true / false）
  *   project?: "…",              // 缺省 = 工作区目录名（`sources[].project` 拿它比 ⇒ 别的项目一律排除）
  *   now?: "ISO8601",            // 窗口**上界**；缺省 = 本机时钟（lib/clock.mjs）
  *   status_root?: "绝对路径",    // 路线在哪（`<它>/route/current.json`）；缺省 = `<工作区>/.team`
@@ -1020,6 +1028,19 @@ function opHealthRead({ root, args, payload }) {
  *    ⇒ 一句话：**"换一个窗口"仍然是"换 `now` + 推进路线"**（`from` 的来路没变，v1.6 ①）；
  *    而 `sources[].window` 是调用方对**单条流**再加一道下界/上界，用来把"跨天的长流"切成一天。
  *    不给这个键 ⇒ 与 v1.6 逐字相同（向后兼容的判据在 `lib/packet.mjs` 文件头）。
+ * 🔴 **v1.8（2026-10-16）：`sources[].human: true` = 这条源"只打人话"** —— 只留两类行：
+ *    **老板的行**（`source.kind === 'user'`，**原样进包、一个字都不投影**）+
+ *    **每个 turn 的最后一条 `assistant`**（**投影到 D 档**）。与 `window` **正交**（可以同时给）。
+ *    不给 / 给 `false` ⇒ 与 v1.7 **逐字相同**。
+ *    🔴🔴 **这是"保证的降级"**：v1.5~v1.7 那句"**包里的字节 = 流里的原样字节**"，
+ *    在开了 `human` 的源上**不成立了** —— 降成两条：**① 每行的 `text` 段逐字等于原流里那一行的
+ *    `text` 段**；**② 每行带 `seq` + `time` ⇒ 可回查**。语出组长 2026-10-15 的裁定
+ *    （`.team/dev/2026-10-15/log.md` §32.7），**逐条写在 `lib/packet.mjs` 文件头 v1.8 那一节**。
+ *    ⇒ 报告里说"包里有 16.8 M 字符"与"包里有 20 万字节"**不是同一件事**：人话包里，
+ *    组长的行是投影，**引用包里的字节之前先知道这一条**。
+ *    三条边界（照拍，不许重新想）：**未闭合 turn 不取**（账上写明）· **组长的行投影到 D 档** ·
+ *    **没 text 的 turn 记 0 条、不占位**。账走返回值的 `human`（逐源 + 合计 + `projection`）。
+ *    ⚠️ 操作纪律：**造包要在"会话空着"的时候**（别在对话进行中造包 —— 那会撞上"未闭合 turn"）。
  * ⚠️ 窗口的 `from` **不由本 op 决定**（v1.6 ①：取 `route/current.json` 里最近一次 review **完成事件**）。
  *    ⇒ "换一个窗口"= 换 `now` **加**让组长先推进路线；想凭一个参数改写 `from` 是做不到的，也不该做到。
  *
@@ -1057,6 +1078,9 @@ function opSessionPacket({ root, args, payload }) {
   //   本文件**原文透传**（一个键都不删、不改名）：判形状、求交、逐行裁全在 `lib/packet.mjs` 里，
   //   这里只把引擎回来的那把账（`cropped`）记进 audit 与返回值 —— 因为那十个 manifest 字段不许动，
   //   盘上要能查到"这份包被裁过、裁掉了多少"。
+  //   v1.8（2026-10-16）：`sources` 每项再多一个**可选**的 `human: true`（只打人话）—— 同样**原文透传**，
+  //   同样只把账（`human`）带走。⚠️ 那把账里带着 **`projection`（含"保证降级"那句话）**：
+  //   `manifest` 十个字段不许动 ⇒ **"这是投影版"这句话的落点就是 audit 与返回值**，别把它裁掉。
   const built = buildSessionPacket({
     project,
     outDir,
@@ -1097,6 +1121,16 @@ function opSessionPacket({ root, args, payload }) {
         untimed_lines: item.untimed_lines,
         frames: item.frames,
       })),
+      // v1.8：人话过滤的账（逐源 + 合计 + `projection`）。**一条都没开 ⇒ `null`**。
+      // 🔴 `projection` 里那句"保证降级"必须原样带着：它是这份包"字节不再等于原流字节"的唯一书面凭据
+      //   （manifest 十个字段不许动 ⇒ 它只能住在这儿）。
+      human: built.human === null || built.human === undefined
+        ? null
+        : {
+            projection: built.human.projection,
+            sources: built.human.sources,
+            totals: built.human.totals,
+          },
     },
     at,
   })
@@ -1111,6 +1145,10 @@ function opSessionPacket({ root, args, payload }) {
     // v1.7：裁剪的账（每源生效窗口 / 留了几条 / 丢了几条 / 几行没有时间戳 / 有贡献的帧数）。
     // 没给裁剪窗口时恒为 `[]` —— 旧调用方看到的东西一个字段都没变。
     cropped: built.cropped ?? [],
+    // v1.8：人话过滤的账（`{projection, sources[], totals}`；`projection` 带**降级声明**）。
+    // 一条源都没开 `human` ⇒ `null`。（`cropped` 给的是空数组、这里给的是 `null`：
+    // "没裁"与"没筛"是两件事，用两种空值区分开 —— 免得把"没开"读成"筛完一条不剩"。）
+    human: built.human ?? null,
     window: manifest.window ?? null,
     source_ids: manifest.source_ids ?? [],
     // 「manifest 必填字段齐不齐」这里给的是**字段表本身**的读数（表里有几个、缺哪几个），不另立一份名单。

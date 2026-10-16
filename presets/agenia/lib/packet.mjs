@@ -63,6 +63,71 @@
  *          **字符口径**（§B3.4）—— 全部原样，一行没动；
  *       ⑤ 裁剪的账（每源留了几条 / 丢了几条 / 几行没有时间戳 / 生效窗口）**不进 manifest**
  *          （那十个字段不能动），走 `buildSessionPacket` 的返回值 `cropped` 与本 op 的 audit —— 盘上有据可查。
+ *   · 追加裁定 v1.8（2026-10-16，**本文件第二次内容口径改动**）：`sources` 每项多一个**可选**的
+ *     `human: true`（下称**人话过滤**；名字与形状是这一批定的）。它与 v1.7 的 `window` **正交** ——
+ *     两个可以同时给，谁也不改写谁：
+ *       · **给了 `true`** ⇒ 这条源**只留两类行**进包，其余一行不留：
+ *         ① **老板的行**（`source.kind === 'user'`）—— **原样进包，一个字都不投影**；
+ *         ② **每个 turn 的最后一条 `assistant`** —— **投影到 D 档**（见下）。
+ *         判据落在**行**上（跟 v1.7 同一个粒度）；turn 这一层在**整条流**上判（见 `filterStream`）。
+ *       · **没给 / 给了 `false`** ⇒ **与 v1.7 逐字相同**（判据见下面那张翻面表）。
+ *       · 🔴🔴 **D 档 = 保证的降级，不是措辞变化**（组长 2026-10-15 逐字拍的，
+ *         `.team/dev/2026-10-15/log.md` §32.7）：
+ *
+ *         | | 这份包对"字节"的保证 |
+ *         | --- | --- |
+ *         | v1.5 ~ v1.7 | **包里的字节 = 流里的原样字节**（留下的行逐字节原样） |
+ *         | **v1.8 起 · 开了 `human` 的源** | 降成两条：**① 每行的 `text` 段逐字等于原流里那一行的 `text` 段**（解析之后 code point 序列相同）；**② 每行带 `seq` + `time` ⇒ 可回查**（拿 `seq` 回原流里找那一行） |
+ *
+ *         ⇒ 一句话：**开了 `human` 之后，"包里的字节 = 流里的字节"这句话不再成立。**
+ *         组长的行是**投影**（只减不增 —— 留下的每个字都是原字，但原行里别的字段没进包）。
+ *         **引用这份包的字节之前，先知道这一条。**
+ *         ✅ 唯一**没降级**的地方：**老板那几行原样进包**（他的一言是最该保真的部分；
+ *         他的消息里带 `image` 段 —— 投影会把图丢掉 ⇒ 所以这一侧一个字都不投影）。
+ *       · **D 档到底留什么**（**白名单**：列出留什么，而不是"删掉哪几个字段"—— 删法哪天多一个
+ *         字段就漏一个）。键序**也是契约的一部分**（同一输入 ⇒ 逐字节可复现，判据装置按它独立重造）：
+ *
+ *         ```
+ *         {type, seq, time, data:{turn, step, message:{role, id,
+ *          source:{kind, provider, model}, content:[{type:"text", text}]}}}
+ *         ```
+ *
+ *         丢掉的是（逐条点名）：`content` 里的 `reasoning` 段 · `content` 里的 `tool-call` 段 ·
+ *         `data.stream` · `data.usage` · `message.source.replayState` · 事件顶层的 `surfaceOp`。
+ *         ⚠️ 其中 `surfaceOp` 是"白名单式投影"顺手去掉的 —— 它**不在**"留什么"那张单子里，
+ *         所以它不进包（这一条写在这里，免得下一个人以为它是漏掉的）。
+ *       · 三条边界（**逐字照拍，不许自己重新想**）：
+ *         ① **未闭合 turn**（造包那一刻她正回着话）⇒ **(a) 不取**，`human` 账上写明。
+ *            (b) 会取到"准备调工具前那一句"—— 那正是要排除的东西；(c) 是死锁（这条会话永远在跑）。
+ *         ② 组长的行 ⇒ **D 档**（见上）。
+ *         ③ **没 text 的 turn**（`aborted` / `error`）⇒ **记 0 条、不占位**。
+ *            占位是伪造："他说话了、但内容是空"。
+ *            ⚠️ 本文件的口径：**没有 `text` 段**、**或** `text` 段拼起来是空串，两种都算"没 text"
+ *            （后者进包就是一行空话）。实测那三条真实流：只有前一种（0 条空串）。
+ *       · 顺带一条**操作纪律**（组长 2026-10-15 拍）：**造包要在"会话空着"的时候**
+ *         （开工第一步就是那个时刻）。**别在对话进行中造包** —— 那会撞上①。
+ *       · 账：`human`（**在 `cropped` 旁边**）—— 逐源 + 合计；口径 = 对**裁剪之后剩下的那批行**数
+ *         （**先裁后筛**：`cropped.kept_events` 说"窗口留了几条"，`human` 说"筛完留了几条"，
+ *         两把账各说各的、不许互相借数）。`manifest` 那**十个**顶层字段**一个都不动**。
+ *
+ *         ```
+ *         scanned_lines = kept_lines + dropped_non_last_assistant + turns_without_text
+ *                       + dropped_unclosed_assistant + injected_lines + other_message_lines + non_message_lines
+ *         kept_lines    = boss_lines + last_output_lines
+ *         assistant_lines = last_output_lines + turns_without_text + dropped_non_last_assistant
+ *                         + dropped_unclosed_assistant
+ *         ```
+ *
+ *         ⇒ 这三行是**账自己闭合**的判据（哪天它对不上，就是某一格漏了或重了）。
+ *     ⚠️ **v1.8 明确"没动"的**（照 v1.7 那条的写法逐条点名）：① manifest 的十个顶层字段；
+ *       ② `validateSessionPacket` 的五项校验与判定顺序；③ 三类排除（枚举 / 顺序 / 语义）；
+ *       ④ 坏帧不留半包 · 原子落盘 · 先分类后解压 · 临时件落点 · 五个稳定码 · 字符口径；
+ *       ⑤ **不给 `human` 时一个字节都不许变**（判据：拿 v1.7 那三个用例重造，`content_sha256`
+ *       与 `frames` 四条逐字相同 —— 见 `.team/dev/2026-10-16/log.md`）。
+ *     ⚠️ **已知缺口（写给下一个读的人）**：人话过滤之后包里**只有**上面那两类行 ⇒
+ *       **会话头那一行（`type:"session"`）不进包**，而它是"这条流从哪开始"的唯一标记。
+ *       三条流的行是**按 `sources` 顺序首尾相接**的 ⇒ 段与段的界线要靠每行的 `time` 与
+ *       `human.sources[].kept_lines` 去对。**这是 v1.8 的已知缺口**，怎么处置归组长（不在这批里）。
  *   · 提案 §B3.4：字符口径 = 去 BOM + `\r\n`/`\r`→`\n` + Unicode code point，不 trim、不做 NFC。
  *     ⚠️ 这个口径**只有一份实现**（B1.5 冻在 `lib/memory.mjs` 的 `charCountOf`），这里 import 它 ——
  *     不在本文件里再写第二份，否则同一份文本会在两个地方数出两个数。
@@ -378,6 +443,51 @@ function eventMsOf(obj) {
   return null
 }
 
+// ── 消息体的形状（v1.8 人话过滤要认"这是谁说的"）──────────────────────────────
+
+/**
+ * 取一条事件的**消息体**。v4 会话流里两种装法**都存在**（实测三条真实流）：
+ *   · `assistant/message` / `tool/result` / `system/message` ⇒ 装在 `data.message` 里；
+ *   · `user/message` ⇒ v4 把它**直接摊在 `data` 上**（`data` 自己就有 `role`）。
+ * ⇒ 两条路都要认；都不是 ⇒ `null`（这一行没有"谁说的"这回事，比如 `turn/start`）。
+ * ⚠️ 认"老板的话"看 `message.source.kind`，**不看 `role`** —— `tool/result` 的 `role` 也可以是
+ *   `'user'` 一族（实测：`role==='user'` 的行里有 97 行是机制塞的注入文本）。
+ */
+function messageOf(obj) {
+  const data = obj?.data
+  if (data === null || typeof data !== 'object') return null
+  const inner = data.message
+  if (inner !== null && typeof inner === 'object' && inner.role !== undefined) return inner
+  if (data.role !== undefined) return data
+  return null
+}
+
+/** 消息里的**正文段**（`type:"text"`，按原序）。内容不是数组/是字符串都按这一条收敛到一种形状。 */
+function textPartsOf(content) {
+  if (typeof content === 'string') return [{ type: 'text', text: content }]
+  if (!Array.isArray(content)) return []
+  return content.filter((part) => part?.type === 'text')
+}
+
+/**
+ * 一条消息的正文（`text` 段拼起来）。**空串算"没有"** —— 见文件头 v1.8 裁定 ③
+ * （进包就是一行"他说话了、但内容是空"的占位）。
+ */
+function humanTextOf(msg) {
+  const parts = textPartsOf(msg?.content)
+  if (parts.length === 0) return null
+  const text = parts.map((part) => part.text ?? '').join('')
+  return text === '' ? null : text
+}
+
+/** `source.human`（v1.8）的形状：`true` / `false` / 缺省。别的形状 ⇒ 当场抛（不静默当 false）。 */
+function humanFlagOf(source) {
+  const raw = source?.human
+  if (raw === undefined || raw === null || raw === false) return false
+  if (raw === true) return true
+  throw packetError('E_ARG_SCHEMA', `source.human 只能是 true / false（v1.8），实得 ${JSON.stringify(raw)}`)
+}
+
 /**
  * 把一条源的**生效裁剪窗口**算出来（v1.7）。
  *
@@ -428,22 +538,111 @@ function cropWindowOf(source, packetWin) {
   }
 }
 
+// ── 行级过滤：窗口裁（v1.7）+ 人话筛（v1.8）────────────────────────────────────
+
 /**
- * 按生效窗口裁一条**已经解出来**的流（v1.7）：逐行判时间戳，留下来的行**逐字节原样**拼回去。
+ * 一行归到哪一类（v1.8 的人话过滤用）。
+ * ⚠️ 只有 `BOSS` 与 `LAST_OUTPUT` 两种会进包（"只留两类行"）；其余全是**丢**，
+ *    各自记进 `human` 账里对应的那一格 —— 账必须能自己闭合（见文件头那三行算式）。
+ * ⚠️ 静态判据读整份源码：下面这张表的**取值**才是判据，注释里的名字只是给人看的。
+ */
+const LINE_KIND = Object.freeze({
+  OTHER_LINE: 0, // 不带消息体的行（turn/start · tool/call · 会话头 · 送达回执 …）
+  BOSS: 1, // 老板的话 —— 原样进包
+  LAST_OUTPUT: 2, // 每个 turn 的最后一条 assistant（闭合 · 有 text）—— 投影到 D 档
+  ASSISTANT_NON_LAST: 3, // 同一个 turn 里非最后的那几条（"准备调工具前那一句"）
+  TURN_WITHOUT_TEXT: 4, // 闭合 turn 的最后一条 assistant 没有 text ⇒ 记 0 条、不占位
+  ASSISTANT_OPEN_TURN: 5, // 未闭合 turn 里的 assistant ⇒ 一律不取（裁定 ①）
+  INJECTED: 6, // `role` 是 user 一族但不是老板（语气尾巴 / 快照 / 作业书 … 机制塞进来的）
+  OTHER_MESSAGE: 7, // 其它带消息体的行（role=tool 的工具结果 · role=system 的提示词 …）
+})
+
+/** `human` 账里要逐项求和的格（顺序即账面顺序；`samples` 不参与求和）。 */
+const HUMAN_COUNT_KEYS = Object.freeze([
+  'scanned_lines', 'kept_lines', 'boss_lines', 'boss_bytes', 'last_output_lines', 'last_output_bytes',
+  'assistant_lines', 'dropped_non_last_assistant', 'turns_without_text', 'injected_lines',
+  'unclosed_turns', 'dropped_unclosed_assistant', 'other_message_lines', 'non_message_lines',
+])
+
+/**
+ * D 档的说明牌 —— **跟着账一起回去**。
+ * 🔴 `manifest` 那十个顶层字段不许动 ⇒ **"这是投影、保证降级了"这句话挂在账上**
+ *    （`human` 进返回值与本 op 的 audit：命令的 stdout 与盘上的审计链里都看得见）。
+ */
+const HUMAN_PROJECTION = Object.freeze({
+  level: 'D',
+  keeps: Object.freeze([
+    'type', 'seq', 'time', 'data.turn', 'data.step', 'data.message.role', 'data.message.id',
+    'data.message.source.kind', 'data.message.source.provider', 'data.message.source.model',
+    'data.message.content[type=text].text',
+  ]),
+  drops: Object.freeze([
+    'data.message.content[type=reasoning]', 'data.message.content[type=tool-call]',
+    'data.stream', 'data.usage', 'data.message.source.replayState', 'surfaceOp',
+  ]),
+  guarantee: '每行的 text 段逐字等于原流里那一行的 text 段；每行带 seq + time ⇒ 可回查',
+  downgrade: 'v1.8 起「包里的字节 = 流里的原样字节」只对老板那几行成立；组长的行是投影（只减不增）',
+})
+
+/** 逐源账求和（`human.totals`）：只加数字格。 */
+function humanTotalsOf(reports) {
+  const totals = {}
+  for (const key of HUMAN_COUNT_KEYS) totals[key] = reports.reduce((sum, item) => sum + (item?.[key] ?? 0), 0)
+  return totals
+}
+
+/**
+ * 把一条 assistant 行**投影**成 D 档（v1.8）。
  *
- * 🔴 **不自己解压、不自己算帧边界**（纪律 ①）：这里只用工具报出来的每帧"实解 N B"做前缀和，
+ * 🔴 **白名单**：只搬 `HUMAN_PROJECTION.keeps` 那张单子上的键，其余一概不留 ——
+ *    "列出留什么"比"删掉哪几个字段"稳：哪天原行多一个字段，删法会漏、白名单不会。
+ * 🔴 **键序是契约的一部分**：
+ *    `{type, seq, time, data:{turn, step, message:{role, id, source:{kind, provider, model}, content}}}`
+ *    —— 同一份输入必须逐字节复现（独立判据装置就是按这个键序重造的）。
+ * ⚠️ 原行没有的键**不凭空补**（只减不增）；`content` 里只留 `text` 段、每段只留 `type` + `text`。
+ */
+function projectHumanEvent(obj) {
+  const msg = messageOf(obj) ?? {}
+  const rawSource = msg.source !== null && typeof msg.source === 'object' ? msg.source : {}
+  const source = {}
+  if (rawSource.kind !== undefined) source.kind = rawSource.kind
+  if (rawSource.provider !== undefined) source.provider = rawSource.provider
+  if (rawSource.model !== undefined) source.model = rawSource.model
+  const message = {}
+  if (msg.role !== undefined) message.role = msg.role
+  if (msg.id !== undefined) message.id = msg.id
+  if (Object.keys(source).length > 0) message.source = source
+  message.content = textPartsOf(msg.content).map((part) => ({ type: 'text', text: part.text ?? '' }))
+  const data = {}
+  if (obj?.data?.turn !== undefined) data.turn = obj.data.turn
+  if (obj?.data?.step !== undefined) data.step = obj.data.step
+  data.message = message
+  return { type: obj?.type, seq: obj?.seq, time: obj?.time, data }
+}
+
+/**
+ * 按生效窗口裁一条**已经解出来**的流（v1.7），需要的话再按"人话"筛一遍（v1.8）—— 一行一行过。
+ *
+ * 🔴 **不自己解压、不自己算帧边界**（纪律 ①）：只用工具报出来的每帧"实解 N B"做前缀和，
  *    把拼接文本切回"一帧一段"，帧内再按 LF 切行。切不齐（前缀和 ≠ 文本字节数）就当场抛
  *    —— 宁可红，不许按错位的边界裁。
  *
+ * 🔴 **turn 这一层在"整条流"上判，不在裁剪之后的那几行上判**（v1.8 的要点）：
+ *    `turn/start` / `turn/end` 可能落在窗口外（一个 turn 从窗口前开、在窗口里收尾）
+ *    ⇒ 只拿裁剪剩下的行去认 turn，会把"闭合的 turn"误判成未闭合，白丢一条"最后输出"。
+ *    ⇒ 判"最后一条"与"闭没闭合"看**整条流**；`human` 那把账只数**落进窗口**的那些行。
+ *
  * 读数口径（写进文件头那张表）：`count` = 有贡献的帧数 · `bytes` = 这些帧的压缩字节 ·
- * `first_frame_chars` = 第一个有贡献的帧里留下来的字符数。
+ * `first_frame_chars` = 第一个有贡献的帧里**留下来的**那些行的字符数（投影过的行按投影后的字算）。
  *
  * @param {{buf:Buffer, frames:Array<{bytes:number,outBytes:number}>}} detail `readStreamDetail()` 的返回值
- * @param {{fromMs:number|null, toMs:number, from:string|null, to:string}} win 生效窗口
- * @returns {{text:string, count:number, bytes:number, first_frame_chars:number,
- *            kept_events:number, dropped_events:number, untimed_lines:number, untimed_samples:Array<object>}}
+ * @param {{fromMs:number|null, toMs:number, from:string|null, to:string}|null} win 生效窗口；`null` = 只筛不裁
+ * @param {boolean} human 要不要套人话筛（v1.8；`false` ⇒ 与 v1.7 逐字相同）
+ * @returns {{text:string, count:number, bytes:number, first_frame_chars:number, kept_events:number,
+ *            dropped_events:number, untimed_lines:number, untimed_samples:Array<object>,
+ *            kept_lines:number, human:object|null}}
  */
-function cropStream(detail, win) {
+function filterStream(detail, win, human) {
   const buf = detail.buf
   const frames = detail.frames
   const frameStart = new Array(frames.length)
@@ -456,6 +655,131 @@ function cropStream(detail, win) {
     throw packetError(PACKET_CODES.FRAMES, `逐帧"实解"合计 ${cursor} B 与解出来的文本 ${buf.length} B 对不上 —— 帧边界切不开，不许硬裁（v1.7）`)
   }
 
+  // ── 第一遍：切行 · 取时间戳 · （开人话时）判 turn 归属与"最后一条" ────────────────
+  const starts = []
+  const ends = []
+  const times = []
+  const lineFrames = []
+  const kinds = human ? [] : null
+  const turnOfLine = human ? [] : null
+  const turns = []
+  let openTurn = -1
+  let framePtr = 0
+  let scanStart = 0
+  while (scanStart < buf.length) {
+    const nl = buf.indexOf(0x0a, scanStart)
+    const lineEnd = nl === -1 ? buf.length : nl + 1
+    // 这一行落在第几帧：帧按顺序解、行起点单调 ⇒ 一个指针往后推就够（O(行数)）
+    while (framePtr + 1 < frames.length && scanStart >= frameStart[framePtr + 1]) framePtr += 1
+    const index = starts.length
+    starts.push(scanStart)
+    ends.push(lineEnd)
+    lineFrames.push(framePtr)
+    const lineText = buf.subarray(scanStart, lineEnd).toString('utf8')
+    let obj = null
+    try {
+      obj = JSON.parse(lineText)
+    } catch {
+      obj = null
+    }
+    times.push(eventMsOf(obj))
+    if (human) {
+      // turn 归属的约定与 v1.7 的量具一致：`turn/start` 那一行**也算这个 turn 的**，
+      // `turn/end` 那一行同样算在它闭合的那个 turn 里。
+      const type = obj?.type ?? ''
+      if (type === 'turn/start') {
+        openTurn = turns.length
+        turns.push({ turn: obj?.data?.turn ?? null, closed: false, reason: null, lastAssistant: -1, lastAssistantSeq: null, lastHasText: false, lastSeq: obj?.seq ?? null })
+      } else if (openTurn >= 0) {
+        turns[openTurn].lastSeq = obj?.seq ?? turns[openTurn].lastSeq
+      }
+      turnOfLine.push(openTurn)
+      let kind = LINE_KIND.OTHER_LINE
+      const msg = messageOf(obj)
+      if (msg !== null) {
+        if (msg?.source?.kind === 'user') {
+          kind = LINE_KIND.BOSS // 老板的话：唯一**不投影**的一类
+        } else if (msg.role === 'assistant') {
+          kind = LINE_KIND.ASSISTANT_NON_LAST // 先按"非最后"记；这个 turn 收尾时再决定最后那条
+          if (openTurn >= 0) {
+            turns[openTurn].lastAssistant = index
+            turns[openTurn].lastAssistantSeq = obj?.seq ?? null
+            turns[openTurn].lastHasText = humanTextOf(msg) !== null
+          }
+        } else if (msg.role === 'user') {
+          kind = LINE_KIND.INJECTED
+        } else {
+          kind = LINE_KIND.OTHER_MESSAGE
+        }
+      }
+      kinds.push(kind)
+      if (type === 'turn/end' && openTurn >= 0) {
+        const t = turns[openTurn]
+        t.closed = true
+        t.reason = obj?.data?.reason?.kind ?? null
+        if (t.lastAssistant >= 0) {
+          // 裁定 ③：没有 text（含空串）⇒ 记 0 条、不占位；有 text ⇒ 这就是那条"最后输出"。
+          kinds[t.lastAssistant] = t.lastHasText === true ? LINE_KIND.LAST_OUTPUT : LINE_KIND.TURN_WITHOUT_TEXT
+        }
+        openTurn = -1
+      }
+    }
+    scanStart = lineEnd
+  }
+
+  const ledger = human
+    ? {
+        scanned_lines: 0,
+        kept_lines: 0,
+        boss_lines: 0,
+        boss_bytes: 0,
+        last_output_lines: 0,
+        last_output_bytes: 0,
+        assistant_lines: 0,
+        dropped_non_last_assistant: 0,
+        turns_without_text: 0,
+        injected_lines: 0,
+        unclosed_turns: 0,
+        dropped_unclosed_assistant: 0,
+        other_message_lines: 0,
+        non_message_lines: 0,
+        samples: { unclosed: [], without_text: [] },
+      }
+    : null
+  const insideAt = (i) => {
+    const ms = times[i]
+    if (ms === null) return false
+    if (win === null) return true
+    return (win.fromMs === null || ms >= win.fromMs) && ms <= win.toMs
+  }
+  if (human) {
+    // 裁定 ①：**没闭合**的 turn 一条都不取 —— 统一在这里改，免得"哪一条才是最后"分两处判。
+    for (let i = 0; i < kinds.length; i += 1) {
+      if (kinds[i] !== LINE_KIND.ASSISTANT_NON_LAST) continue
+      const ti = turnOfLine[i]
+      if (ti >= 0 && turns[ti].closed !== true) kinds[i] = LINE_KIND.ASSISTANT_OPEN_TURN
+    }
+    // 未闭合的 turn：只要它在窗口里**还有行**就记一笔 —— 哪怕一条 assistant 都还没来
+    // （那正是"她正回着话"的形状）。账上写明，别让它静默消失。
+    const openTurns = new Map()
+    for (let i = 0; i < starts.length; i += 1) {
+      const ti = turnOfLine[i]
+      if (ti < 0 || turns[ti].closed === true || !insideAt(i)) continue
+      const acc = openTurns.get(ti) ?? { lines: 0, assistant_lines: 0 }
+      acc.lines += 1
+      if (kinds[i] === LINE_KIND.ASSISTANT_OPEN_TURN) acc.assistant_lines += 1
+      openTurns.set(ti, acc)
+    }
+    ledger.unclosed_turns = openTurns.size
+    ledger.samples.unclosed = [...openTurns.entries()].slice(0, 5).map(([ti, acc]) => ({
+      turn: turns[ti].turn,
+      lines_in_window: acc.lines,
+      assistant_lines_in_window: acc.assistant_lines,
+      last_seq: turns[ti].lastSeq,
+    }))
+  }
+
+  // ── 第二遍：定去留（先判窗口、再判人话）─────────────────────────────────────
   const keptChunks = []
   const untimedSamples = []
   let keptEvents = 0
@@ -464,41 +788,71 @@ function cropStream(detail, win) {
   let firstKeptFrame = -1
   let firstFrameCharsTotal = 0
   const framesKept = new Set()
-  let framePtr = 0
-  let lineStart = 0
-  while (lineStart < buf.length) {
-    const nl = buf.indexOf(0x0a, lineStart)
-    const lineEnd = nl === -1 ? buf.length : nl + 1
-    // 这一行落在第几帧：帧按顺序解、行起点单调 ⇒ 一个指针往后推就够（O(行数)）
-    while (framePtr + 1 < frames.length && lineStart >= frameStart[framePtr + 1]) framePtr += 1
-    const lineText = buf.subarray(lineStart, lineEnd).toString('utf8')
-    let obj = null
-    try {
-      obj = JSON.parse(lineText)
-    } catch {
-      obj = null
-    }
-    const ms = eventMsOf(obj)
-    const inside = ms !== null && (win.fromMs === null || ms >= win.fromMs) && ms <= win.toMs
-    if (!inside) {
+  for (let i = 0; i < starts.length; i += 1) {
+    if (!insideAt(i)) {
       droppedEvents += 1
-      if (ms === null) {
+      if (times[i] === null) {
         untimedLines += 1
-        if (untimedSamples.length < 3) untimedSamples.push({ frame: framePtr, head: lineText.slice(0, 80) })
+        if (untimedSamples.length < 3) {
+          untimedSamples.push({ frame: lineFrames[i], head: buf.subarray(starts[i], ends[i]).toString('utf8').slice(0, 80) })
+        }
       }
-      lineStart = lineEnd
       continue
     }
     keptEvents += 1
-    keptChunks.push(buf.subarray(lineStart, lineEnd))
-    framesKept.add(framePtr)
-    if (firstKeptFrame === -1) firstKeptFrame = framePtr
-    if (framePtr === firstKeptFrame) firstFrameCharsTotal += charCountOf(lineText)
-    lineStart = lineEnd
+    if (human) ledger.scanned_lines += 1
+    let chunk = buf.subarray(starts[i], ends[i])
+    if (human) {
+      const kind = kinds[i]
+      let keep = true
+      if (kind === LINE_KIND.BOSS) {
+        // 老板那一侧**一个字都不投影**（他的消息里有 image 段 —— 投影会把图丢掉）
+        ledger.boss_lines += 1
+        ledger.boss_bytes += chunk.length
+      } else if (kind === LINE_KIND.LAST_OUTPUT) {
+        const obj = JSON.parse(chunk.toString('utf8'))
+        chunk = Buffer.from(`${JSON.stringify(projectHumanEvent(obj))}\n`, 'utf8')
+        ledger.last_output_lines += 1
+        ledger.last_output_bytes += chunk.length
+        ledger.assistant_lines += 1
+      } else {
+        keep = false
+        if (kind === LINE_KIND.ASSISTANT_NON_LAST) {
+          ledger.assistant_lines += 1
+          ledger.dropped_non_last_assistant += 1
+        } else if (kind === LINE_KIND.TURN_WITHOUT_TEXT) {
+          ledger.assistant_lines += 1
+          ledger.turns_without_text += 1
+          const ti = turnOfLine[i]
+          if (ledger.samples.without_text.length < 5) {
+            ledger.samples.without_text.push({
+              turn: ti >= 0 ? turns[ti].turn : null,
+              reason: ti >= 0 ? turns[ti].reason : null,
+              seq: ti >= 0 ? turns[ti].lastAssistantSeq : null,
+            })
+          }
+        } else if (kind === LINE_KIND.ASSISTANT_OPEN_TURN) {
+          ledger.assistant_lines += 1
+          ledger.dropped_unclosed_assistant += 1
+        } else if (kind === LINE_KIND.INJECTED) {
+          ledger.injected_lines += 1
+        } else if (kind === LINE_KIND.OTHER_MESSAGE) {
+          ledger.other_message_lines += 1
+        } else {
+          ledger.non_message_lines += 1
+        }
+      }
+      if (!keep) continue
+    }
+    keptChunks.push(chunk)
+    framesKept.add(lineFrames[i])
+    if (firstKeptFrame === -1) firstKeptFrame = lineFrames[i]
+    if (lineFrames[i] === firstKeptFrame) firstFrameCharsTotal += charCountOf(chunk.toString('utf8'))
   }
 
   let bytesOfKeptFrames = 0
   for (const index of framesKept) bytesOfKeptFrames += frames[index].bytes
+  if (human) ledger.kept_lines = keptChunks.length
   return {
     text: Buffer.concat(keptChunks).toString('utf8'),
     count: framesKept.size,
@@ -508,6 +862,8 @@ function cropStream(detail, win) {
     dropped_events: droppedEvents,
     untimed_lines: untimedLines,
     untimed_samples: untimedSamples,
+    kept_lines: keptChunks.length,
+    human: ledger,
   }
 }
 
@@ -553,6 +909,11 @@ export function packetWindow(options = {}) {
  * v1.7 只**多问一句**"这条源要不要裁"，并且把"该源最后一个事件都在裁剪窗口之前"并进
  * **已有那一格** `outside_window`（不新造理由、不改顺序）—— 因为它同样是"整条落空"，
  * 同样在**解压之前**判出来 ⇒ "先分类、后解压"这条纪律一格都没松。
+ *
+ * v1.8 再**多问一句**"这条源要不要筛人话"（`source.human`）：它只改**留下哪些行**，
+ * 不改排除、不改窗口、不改解压那一层 —— 所以放在这里只做**形状校验**，判定仍走上面那三道。
+ * ⚠️ `human` 的形状校验放在**排除之前**（跟 `window` 放在排除之后不同）：形状不合是**调用方的
+ *    bug**，不该因为"这条源恰好被排除"就把它静默放过。
  */
 function classifySource(source, { project, excludeIds, window }) {
   const sid = String(source?.session_id ?? '')
@@ -561,6 +922,7 @@ function classifySource(source, { project, excludeIds, window }) {
   if (sid === '' || proj === '' || file === '') {
     throw packetError('E_ARG_SCHEMA', `sources 每项必填 session_id / project / file（v1.6 ②）：${JSON.stringify(source)}`)
   }
+  const human = humanFlagOf(source)
   if (proj !== project) return { excluded: { session_id: sid, reason: 'other_project' } }
   if (excludeIds.has(sid)) return { excluded: { session_id: sid, reason: 'self_review' } }
   const at = msOf(source?.last_event_at)
@@ -585,6 +947,7 @@ function classifySource(source, { project, excludeIds, window }) {
       file,
       last_event_at: String(source.last_event_at),
       crop, // `null` = 这条源不裁（v1.7）；否则 = 生效窗口
+      human, // v1.8：这条源要不要套人话筛（`false` ⇒ 与 v1.7 逐字相同）
     },
   }
 }
@@ -630,13 +993,17 @@ function removeTempDir(dir, parent) {
  *
  * @param {{project:string, outDir:string, statusRoot:string, now?:string|Date,
  *          sources:Array<{session_id:string,project:string,file:string,last_event_at:string,
- *                          window?:{from?:string|null, to?:string}}>,
+ *                          window?:{from?:string|null, to?:string}, human?:boolean}>,
  *          excludeSessionIds?:string[]}} options
  *   ⚠️ `sources[].window` 是 v1.7 的**可选裁剪窗口**（见文件头）；不给 ⇒ 行为与 v1.6 逐字相同。
+ *   ⚠️ `sources[].human` 是 v1.8 的**可选人话过滤**（见文件头）；不给 / `false` ⇒ 行为与 v1.7 逐字相同。
+ *      两个键**正交**：可以只给一个、也可以都给。
  * @returns {{ok:true, packet_id:string, dir:string, manifest_path:string,
  *            content_sha256:string, frames:object, excluded:Array<{session_id:string,reason:string}>,
- *            cropped:Array<object>}}
+ *            cropped:Array<object>, human:object|null}}
  *   `cropped` = 裁剪的账（每源：生效窗口 / 留了几条 / 丢了几条 / 没有时间戳的几行 / 有贡献的帧数）。
+ *   `human` = 人话过滤的账（v1.8）：`{projection, sources[], totals}` —— `projection` 里带着
+ *   **"保证降级"那句话**（manifest 十个字段不许动 ⇒ 降级声明挂在账上）；**一条源都没开 ⇒ `null`**。
  */
 export function buildSessionPacket(options = {}) {
   const { project, outDir, statusRoot, now, sources, excludeSessionIds } = options ?? {}
@@ -674,18 +1041,23 @@ export function buildSessionPacket(options = {}) {
     mkdirSync(base, { recursive: true }) // 父是文件 ⇒ 这里就抛（一个包目录都不会留）
 
     // ② 只解 included（每条源：全帧拼接文本 + 帧读数）—— 临时件只落 `framesParent` 那一格
-    //    v1.7：带裁剪窗口的源走 `cropStream()`（同一次解压，只是把窗口外的行留下不拼）；
-    //    **没带的源走的老路一个字没动** ⇒ 旧包的字节读数不受影响。
+    //    v1.7：带裁剪窗口的源走**逐行裁**（同一次解压，只是把窗口外的行留下不拼）；
+    //    v1.8：`human` 开的源在同一次逐行过滤里**多筛一道**（窗口 → 人话，次序钉死）；
+    //    **两个键都没给的源走的老路一个字没动** ⇒ 旧包的字节读数不受影响。
     const tool = findZstdTool()
     const pieces = []
     const sourceIds = []
     const croppedReport = []
+    const humanReport = []
     let frameCount = 0
     let streamBytes = 0
     let firstFrameCharsTotal = 0
     for (const source of included) {
       const detail = readStreamDetail(source.file, tool, framesParent)
-      if (source.crop === null || source.crop === undefined) {
+      const human = source.human === true
+      const cropped = source.crop === null || source.crop === undefined ? null : source.crop
+      if (cropped === null && !human) {
+        // v1.7 原路（不裁不筛）：一个字节都不碰
         pieces.push(detail.text)
         sourceIds.push(source.session_id)
         frameCount += detail.count
@@ -693,24 +1065,29 @@ export function buildSessionPacket(options = {}) {
         firstFrameCharsTotal += detail.first_frame_chars
         continue
       }
-      const cropped = cropStream(detail, source.crop)
-      croppedReport.push({
-        session_id: source.session_id,
-        window: { from: source.crop.from, to: source.crop.to },
-        kept_events: cropped.kept_events,
-        dropped_events: cropped.dropped_events,
-        untimed_lines: cropped.untimed_lines,
-        untimed_samples: cropped.untimed_samples,
-        frames: cropped.count,
-        bytes: cropped.bytes,
-      })
-      // 一条事件都没留下 ⇒ 这条源对包没有任何贡献：**不写进 `source_ids`**（写了就是谎报"它在包里"）
-      if (cropped.kept_events === 0) continue
-      pieces.push(cropped.text)
+      const filtered = filterStream(detail, cropped === null ? null : cropped, human)
+      if (cropped !== null) {
+        croppedReport.push({
+          session_id: source.session_id,
+          window: { from: cropped.from, to: cropped.to },
+          kept_events: filtered.kept_events,
+          dropped_events: filtered.dropped_events,
+          untimed_lines: filtered.untimed_lines,
+          untimed_samples: filtered.untimed_samples,
+          frames: filtered.count,
+          bytes: filtered.bytes,
+        })
+      }
+      // 人话那把账**先记**（哪怕这条源最后一条都没留下 —— 账要能解释"为什么它没进包"）
+      if (human) humanReport.push({ session_id: source.session_id, ...filtered.human })
+      // 一条事件都没留下（窗口裁）或一条人话都没有（v1.8 筛完）⇒ 这条源对包没有任何贡献：
+      // **不写进 `source_ids`**（写了就是谎报"它在包里"）。`kept_lines` 对这一条负全责。
+      if (filtered.kept_lines === 0) continue
+      pieces.push(filtered.text)
       sourceIds.push(source.session_id)
-      frameCount += cropped.count
-      streamBytes += cropped.bytes
-      firstFrameCharsTotal += cropped.first_frame_chars
+      frameCount += filtered.count
+      streamBytes += filtered.bytes
+      firstFrameCharsTotal += filtered.first_frame_chars
     }
 
     const contentText = pieces.join('')
@@ -759,6 +1136,14 @@ export function buildSessionPacket(options = {}) {
       // v1.7：裁剪的账**不进 manifest**（那十个顶层字段不能动）⇒ 从这里回去，由调用方记账。
       // 没给任何裁剪窗口时它恒为空数组（旧调用方拿到的东西一个字段都没变，只是多了一把空账）。
       cropped: croppedReport,
+      // v1.8：人话过滤的账，**在 `cropped` 旁边**。`projection` 里带着"保证降级"那句话 ——
+      // manifest 十个字段不许动，所以降级声明只能挂在这里，由调用方带进 stdout 与 audit。
+      // 一条源都没开 `human` ⇒ `null`（旧调用方只多看到这一个键，值是 null）。
+      human: humanReport.length === 0 ? null : {
+        projection: HUMAN_PROJECTION,
+        sources: humanReport,
+        totals: humanTotalsOf(humanReport),
+      },
     }
   } catch (err) {
     if (err?.code !== undefined && String(err.code).startsWith('E_')) throw err

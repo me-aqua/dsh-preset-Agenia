@@ -52,10 +52,16 @@ const DEFAULT_MEMBER_ORDER = ['work-guidelines', 'charter']
  * （配置没给 `officeBound` 时走这一份兜底；两份分叉 = 两套边界）。静态用例钉着这一条。
  * 2026-10-15（执行一 · 批次 I2）：加进两个评审类作业 `memory-review` / `conversation-review`。
  * 🔴 2026-10-15（执行二 · 批次 I15）：`retro` 去掉 —— 复盘岗撤销、`team/retro.md` 删除、
- *    `team-retro` 行已关。名单现在是**恰好 3 项**，与 yml 的 `officeBound` 逐项一致。
+ *    `team-retro` 行已关。
+ * 🔴 2026-10-16（老板拍板 · 原话「那就给复核加个权限吧」）：**`memory-review` 去掉** ——
+ *    记忆复核要按 `capacityVerdict()` 的口径算**容量水位**（"提案全过之后 < 上限的 90%"），
+ *    而这道门禁**同时拿掉了命令行** ⇒ 它只能手算、算不准（今天 10-16 现场撞到的正是这个）。
+ *    名单现在是**恰好 2 项**，与 yml 的 `officeBound` 逐项一致。
+ *    ⚠️ **代价明说**：去掉之后她**两件保护都没了** —— 既不限"写只落 `.team/`"、也不再"没有命令行"，
+ *    只剩纪律。作业书里那句"你不写记忆、不写快照、不写状态"从此是**嘱咐，不是门禁**。
  *    `memory-judge` 与 `technical-review` 仍不在里面（它们要写共享脑 / 跑测试）。
  */
-const DEFAULT_OFFICE_BOUND = ['review', 'memory-review', 'conversation-review']
+const DEFAULT_OFFICE_BOUND = ['review', 'conversation-review']
 
 /**
  * 「语言风格」那一份 —— ⑤ 尾巴提醒读它。
