@@ -1342,6 +1342,40 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
         : '**缺** —— 库在、但今天没人做记忆更新 ⇒ 记忆周期停摆（没有候选冻结、没有快照发布、没有报告）。'
           + '**开工第一步第 2 条就是去抢它**（`--op claim-update`），不是等它自己出现')
   }
+
+  // ④ 昨天那一轮记忆更新走完了没有（2026-10-16 加）
+  //    现场：复核作业 10:14 就 `done`、报告 25 KB 落盘，而 `state/update/<日>.json` **一整天**
+  //    停在 `phase: "reviewing"` / `finished_at: null` —— "作业交活"从来没有被传播到 update state。
+  //    钉的是**昨天**：本脚本在开工第一步跑，那一刻"昨天走完没有"才有答案
+  //    （判"今天"= 结构上永远不可能绿，那就是天天必红）。
+  //    ⚠️ **只抓 `reviewing`**：那是"复核**已经开跑**却没结果"，必是断头；
+  //       `awaiting_review_start` 是"还没开跑"，不在这条的判据里（别把它也吞进来）。
+  if (existsSync(memRoot)) {
+    const prevDay = (() => {
+      const t = new Date(`${today}T00:00:00Z`)
+      t.setUTCDate(t.getUTCDate() - 1)
+      return t.toISOString().slice(0, 10)
+    })()
+    const prevUpdate = join(memRoot, 'state', 'update', `${prevDay}.json`)
+    let prevPhase = null
+    const hasPrev = existsSync(prevUpdate)
+    if (hasPrev) {
+      try {
+        prevPhase = JSON.parse(readFileSync(prevUpdate, 'utf8').replace(/^\uFEFF/, '')).phase ?? null
+      } catch {
+        prevPhase = '（读不出来）'
+      }
+    }
+    const stuck = prevPhase === 'reviewing'
+    yes('office', `昨天（${prevDay}）那一轮记忆更新走完了（phase 不许停在 reviewing）`,
+      !stuck,
+      !hasPrev
+        ? `${prevDay} 没有 update 状态 —— 那天没跑记忆更新（这一条不判）`
+        : stuck
+          ? `${prevDay} 的 phase 还停在 reviewing / finished_at 空 —— 复核开跑了却没有收口。`
+            + '**补账那一步会把 review 的 done 写回 phase=done**：先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark`'
+          : `${prevDay} 的 phase = ${prevPhase}`)
+  }
   const days = existsSync(join(teamRoot, 'retro'))
     ? readdirSync(join(teamRoot, 'retro'), { withFileTypes: true })
       .filter((e) => e.isDirectory()).map((e) => e.name).sort()

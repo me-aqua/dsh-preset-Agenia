@@ -1044,6 +1044,17 @@ function opJobMark({ root, payload }) {
         next.phase = 'unclaimed' // 判决跑完了但还没提交：回到"这一天还没定"，提交那一步才推 phase
       }
     }
+    // 复核交活 ⇒ 这一轮走完：`reviewing` 是它唯一能被收口的地方（`done` 没有别的写入点）。
+    if (job.role === 'memory-review' && generation === state.generation && attempt === state.review_attempt) {
+      if (stateWanted === 'failed') {
+        next.phase = 'failed'
+        next.failure_reason = nextJob.failure_reason
+        next.finished_at = at
+      } else if (state.phase === 'reviewing') {
+        next.phase = 'done'
+        next.finished_at = at
+      }
+    }
     if (next.phase === 'judging' && next.snapshot_available === true) next.snapshot_available = false
     S.writeUpdateState(root, day, next)
   }
