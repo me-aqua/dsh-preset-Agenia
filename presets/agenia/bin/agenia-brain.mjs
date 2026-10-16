@@ -630,8 +630,10 @@ function opJudgeStart({ root, payload }) {
  * `judge-commit`：判决落库 —— 一并发布快照、写报告、推状态（**一个事务**，见 `SNAP.publishUpdate`）。
  *
  * 拒绝次序是**刻意**的（STO-03 钉的就是第一条）：
- *   token → generation/attempt → phase → 常识三处核对 → 基准快照（CAS）→ 维护案资格 → 容量/op 形状 → 落盘。
- * 前六条一条都不许写盘。
+ *   token → generation/attempt → phase → 常识三处核对 → 基准快照（CAS）→ 维护案资格 → 容量/op 形状
+ *   → 「已判」索引的 id 清单 → 落盘。
+ * 前八条一条都不许写盘 —— **包括最后那条**（T-MEM-10）：它在 ⑦ 发布**之前**跑完，所以"拒"永远不会
+ * 留下"快照已发布、索引没追加"（那是 ⑧ 的 `E_TXN_IO`，且**已发布的事务不回滚**）。
  */
 function opJudgeCommit({ root, payload }) {
   const at = S.nowIso()
@@ -738,15 +740,23 @@ function opJudgeCommit({ root, payload }) {
     last_liveness_event_at: at,
     failure_reason: null,
   }
+  // ⑦ 发布**之前**（就在下面 `publishUpdate` 上面一行）：「已判」索引该写哪几行（T-MEM-07 §2.3 的行集合）
+  //    —— **纯计算，但它的拒绝就在这里发生**。
+  //    `judgedRowSpecsOf` 读两处 id 清单：`state.frozen_proposal_ids`（盘上状态）与 `payload.accepted`
+  //    （调用方入参），任何一项不是非空字符串 ⇒ 整体拒（盘上的坏 `E_DATA_CORRUPT` / 入参坏 `E_ARG_SCHEMA`）。
+  //    🔴 **顺序就是判据**：事务一发布就不回滚（见 ⑧ 的 `E_TXN_IO`），在发布之后才拒，
+  //    留下的正是"快照已发布、索引没追加"那半截状态。
+  //    本函数是纯的（不写盘）⇒ 提前到这里没有副作用，拒绝时三个落点一个字节都不会动。
+  const judgedSpecs = judgedRowSpecsOf({ state, accepted: payload?.accepted, day, snapshot: version, at })
+
   const published = SNAP.publishUpdate(root, { snapshot, report, day, nextState })
   S.appendAudit(root, {
     kind: 'judge-commit',
     detail: { day, generation: state.generation, attempt: state.judge_attempt, base_snapshot: baseVersion, new_snapshot: version, count: snapshot.totals.count, chars: snapshot.totals.chars },
     at,
   })
-  // ⑧ 「已判」索引（T-MEM-07）：**只在这里写** —— 上面那七道拒绝与整段事务都在这一行之前返回，
-  //    所以 `judged.jsonl` 只可能跟着一次**真成功**的提交长行（V8 的判据就是这个次序）。
-  const judgedSpecs = judgedRowSpecsOf({ state, accepted: payload?.accepted, day, snapshot: version, at })
+  // ⑧ 「已判」索引（T-MEM-07）：**只在这里写** —— 上面每一道拒绝、以及那一步索引行的计算（⑦ 之前）
+  //    都在这一行之前跑完，所以 `judged.jsonl` 只可能跟着一次**真成功**的提交长行（V8 的判据就是这个次序）。
   if (judgedSpecs.length > 0) {
     try {
       PROP.appendJudgedRows(root, judgedSpecs)
@@ -768,16 +778,47 @@ function opJudgeCommit({ root, payload }) {
   }
 }
 
+/** 一条记录的短预览（报文里点名用；截到 120 字，免得一整行 payload 冲进报错）。 */
+function recordPreviewOf(record) {
+  let text
+  try {
+    text = JSON.stringify(record)
+  } catch {
+    text = undefined
+  }
+  if (typeof text !== 'string') text = String(record)
+  return text.length > 120 ? `${text.slice(0, 120)}…` : text
+}
+
 /**
- * 一串行里出现过的 `imported_id`，**按行顺序去重**（首次出现的位置留下）。
+ * 一串记录里出现过的 `imported_id`，**按记录顺序去重**（首次出现的位置留下）。
  * 池子理论上不该有重复 id，但判据不许假设它没有（契约 §3.3）。
+ *
+ * 🔴 **读不出 `imported_id` 的记录一律整体拒，绝不静默丢弃**（T-MEM-10 · 契约 §8.3）。
+ * "读不出" = 缺 `imported_id` / 不是 `string` / 空串。以前这一层对它是 `continue` ——
+ * 不报错、不计数、不留痕，于是"少了一条候选"与"本来就没有那一条"长得**一模一样**，
+ * 而那条候选永远判不到、也查不出来。所以"拒"的责任放在**这个共用函数里**：
+ * 靠三处调用方各自记得查，漏一处就静默如故，而且**看不出漏了**（契约 §8.2）。
+ *
+ * 码与措辞由调用方给的 `reject` 决定 —— 同一件事在三个调用点上是三种错：
+ * 池子 / 已判索引 / 冻结清单（**盘上读回来的**数据或状态）⇒ `E_DATA_CORRUPT`（exit 7）；
+ * `payload.accepted`（**调用方这一次传进来的**入参）⇒ `E_ARG_SCHEMA`（exit 2）。
+ * 把入参错误报成"盘上数据坏了"，会让下一个人去翻一个没坏的文件。
+ *
+ * @param {Array} records 记录数组（每项应当带 `imported_id`）
+ * @param {{reject?: (index: number, record: any) => Error}} [guard] 不给则用通用 `E_DATA_CORRUPT`
+ * @returns {string[]} 去重后的 id（首次出现的位置保留）
  */
-function uniqueIdsOf(records) {
+function uniqueIdsOf(records, guard = {}) {
+  const list = Array.isArray(records) ? records : []
+  const reject = typeof guard.reject === 'function'
+    ? guard.reject
+    : (index, record) => cliError('E_DATA_CORRUPT', `第 ${index + 1} 条记录读不出 imported_id（这一条：${recordPreviewOf(record)}）—— 整体拒，不许静默跳过`)
   const seen = new Set()
   const out = []
-  for (const record of Array.isArray(records) ? records : []) {
-    const id = record?.imported_id
-    if (typeof id !== 'string' || id === '') continue
+  for (let index = 0; index < list.length; index += 1) {
+    const id = list[index]?.imported_id
+    if (typeof id !== 'string' || id === '') throw reject(index, list[index])
     if (seen.has(id)) continue
     seen.add(id)
     out.push(id)
@@ -795,11 +836,39 @@ function uniqueIdsOf(records) {
  * 为什么必须补上 `payload.accepted` 那一段：报告的 `accepted_proposal_ids` 直接取自它
  * （`lib/snapshot.mjs::buildSnapshot`）—— 不补，"索引 = 报告的派生"就不是恒等式（V9）。
  * 维护案的 `target_id` 是**快照条目 id**（`m-…`），不是池子 id ⇒ 一个都不记（记了会全变孤儿）。
+ *
+ * 🔴 **两个输入各有一项不成 id 就整体拒**（T-MEM-10 · 契约 §8.3 第 3/4 行），而且**码不一样**：
+ * 冻结清单是**盘上的状态**（`state/update/<day>.json`）⇒ `E_DATA_CORRUPT`（7）；
+ * `payload.accepted` 是**调用方这一次传进来的入参** ⇒ `E_ARG_SCHEMA`（2）。
+ * 两半合成一条记录流之前，每条记录自己带着"我是哪一半的第几项" —— 不靠下标推：
+ * 合并次序改一次，下标推法就会悄悄指错人（而报文点错人比不点还坏）。
+ *
+ * ⚠️ **本函数必须在 ⑦ 发布之前调用**（`opJudgeCommit` 里它就在 `publishUpdate` 上面一行）：
+ * 已发布的事务不回滚，拒绝晚一步就变成"快照已发布、索引没追加"。
  */
 function judgedRowSpecsOf({ state, accepted, day, snapshot, at }) {
-  const acceptedIds = new Set(Array.isArray(accepted) ? accepted.filter((id) => typeof id === 'string' && id !== '') : [])
-  const frozen = Array.isArray(state?.frozen_proposal_ids) ? state.frozen_proposal_ids : []
-  const ids = uniqueIdsOf([...frozen, ...(Array.isArray(accepted) ? accepted : [])].map((id) => ({ imported_id: id })))
+  // 两条输入的码写在同一张表里：一处能看全"哪一半该报什么"，不会有人以为它们该统一。
+  const halves = [
+    {
+      name: `state.frozen_proposal_ids（state/update/${day}.json）`,
+      code: 'E_DATA_CORRUPT',
+      ids: Array.isArray(state?.frozen_proposal_ids) ? state.frozen_proposal_ids : [],
+    },
+    {
+      name: 'payload.accepted',
+      code: 'E_ARG_SCHEMA',
+      ids: Array.isArray(accepted) ? accepted : [],
+    },
+  ]
+  const rows = halves.flatMap((half) => half.ids.map((id, index) => ({ imported_id: id, half, index })))
+  const ids = uniqueIdsOf(rows, {
+    reject: (position, record) => cliError(
+      record.half.code,
+      `${record.half.name} 第 ${record.index + 1} 项不是非空字符串（实得 ${recordPreviewOf(record.imported_id)}）`
+      + ' —— 整体拒：那一项是一条候选的 id，丢掉它就等于那条候选永远没被判过，而没有任何读数会说出这件事',
+    ),
+  })
+  const acceptedIds = new Set(halves[1].ids)
   return ids.map((importedId) => ({
     schema: PROP.JUDGED_SCHEMA,
     imported_id: importedId,
@@ -833,7 +902,8 @@ function judgedRowSpecsOf({ state, accepted, day, snapshot, at }) {
  *     照常 exit 0 —— 池子被换过 / 索引来自另一个根 / 有人手改，哪一种都要说出来，不许吞掉；
  *   · **两个文件都不存在不是错误**（根上还没导入过任何候选）⇒ `pending_ids: []` / `count: 0`；
  *   · 🔴 **输出里没有任何时钟字段** —— 同一份输入两次跑必须逐字节相同（V1 的稳定口径）。
- * 坏行一律整体拒（`E_DATA_CORRUPT`），**不跳过坏行再算**。
+ * 坏行一律整体拒（`E_DATA_CORRUPT`），**不跳过坏行再算**；读得出 JSON、但**读不出 `imported_id`**
+ * 的记录同样整体拒（T-MEM-10）—— 跳过一个 id 等于替一个还活着的候选宣布"没这回事"。
  */
 function opJudgePending({ root }) {
   const pool = PROP.readPool(root)
@@ -855,8 +925,28 @@ function opJudgePending({ root }) {
     .map((entry, index) => ({ entry, index, key: seqKeyOf(entry) }))
     .sort((a, b) => (a.key === b.key ? a.index - b.index : a.key < b.key ? -1 : 1))
     .map((decorated) => decorated.entry)
-  const poolIds = uniqueIdsOf(orderedPoolEntries)
-  const judgedIds = uniqueIdsOf(judged.rows)
+  // 🔴 两个文件里**任何一条记录读不出 `imported_id` ⇒ 整体拒**（T-MEM-10 · 契约 §8.3 第 1/2 行），
+  //    而且都在**算差集之前**：差集里的"少了一条"必须与"本来就没有那一条"长得不一样。
+  //    两个都是**盘上读回来的文件** ⇒ 同一族码 `E_DATA_CORRUPT`（exit 7），与 `readPool` / `readJudged`
+  //    遇到坏 JSON 行时那个口径一致（那两条口径本票一个字都没动，见契约 §8.3 第 4 条）。
+  //    ⚠️ 报文点的是"哪一条记录"，**不冒充文件行号**：空行在读文件那一层就被丢掉了，而池子这一处
+  //    传进来的是**按 `seq` 排过序**的那份数组（位置与文件行序可以不同）—— 所以给的是"排序后的第几条"
+  //    加这条记录本身的预览（`seq` / 内容都在里面）。要真文件行号得改 `readPool` / `readJudged`，
+  //    那是另一票的事（契约 §8.3 第 4 条：这一票不动它们）。
+  const poolIds = uniqueIdsOf(orderedPoolEntries, {
+    reject: (index, record) => cliError(
+      'E_DATA_CORRUPT',
+      `候选池（${pool.path}）按 seq 排序后的第 ${index + 1} 条记录读不出 imported_id（这一条：${recordPreviewOf(record)}）`
+      + ' —— 整体拒：静默跳过它，"池子里还有一条判不了的候选"与"本来就没有那一条"就分不开了',
+    ),
+  })
+  const judgedIds = uniqueIdsOf(judged.rows, {
+    reject: (index, record) => cliError(
+      'E_DATA_CORRUPT',
+      `已判索引（${judged.path}）第 ${index + 1} 条非空记录读不出 imported_id（这一条：${recordPreviewOf(record)}）`
+      + ' —— 整体拒：静默跳过它，"索引少了一条"与"本来就没判过"就分不开了',
+    ),
+  })
   const judgedSet = new Set(judgedIds)
   const poolSet = new Set(poolIds)
   const pendingIds = poolIds.filter((id) => !judgedSet.has(id))

@@ -1700,6 +1700,362 @@ describe('unit · memory (MEM)', () => {
         }
       }
 
+      // ═══════════════════════════════════════════════════════════════════════
+      // 定形 T-MEM-10 · W1 / W2 / W3 / W4 —— 没有 id 的候选不许被**静默丢掉**
+      //   定形：`.team/leader/2026-10-16/定形-T-MEM-10.md` §五（W1–W5）
+      //   契约：`.team/test/2026-10-16/契约-T-MEM-07.md` §八（T-MEM-10 追加的那一节）
+      //
+      // 🔴 病根：`uniqueIdsOf`（`bin/agenia-brain.mjs`）里那一行
+      //    `if (typeof id !== 'string' || id === '') continue` —— 不报错、不计数、不留痕。
+      //    三处调用方共用它：`judgedRowSpecsOf`（冻结清单 ∪ accepted）· `poolIds`（池子）·
+      //    `judgedIds`（索引）⇒ "少了一条" 与 "本来就没有那一条" 在这三条路上**长得一模一样**。
+      //
+      // 🔴 W4（三格互不遮蔽）—— 是**造夹具时就设计好的**，不是事后声明：
+      //    ① **一格一个独立脑根**（三个根互不相同）⇒ 一处拒了，另两处的夹具照旧造得出来；
+      //    ② 每格"造 → 跑 → 记"整段**只用 push 记问题，绝不 caseFail / return**；
+      //    ③ **一格只污染一处**：W1 只动池子、W3 只动索引、W2 只动状态里那一格
+      //       （⇒ 红的原因分得开，不是"两处一起坏、谁也说不清是谁的锅"）；
+      //    ④ 每格自带**阳性对照**（同一份夹具只把那一处改对 ⇒ 必须绿）：证明"红"来自那一处，
+      //       不是"实现一律拒"或者"夹具本来就坏"。
+      //    ⇒ 定形 W4 的判据：W1 红的时候，W2 / W3 单独看也各自红 —— 只修一处，另两格照旧红。
+      // ═══════════════════════════════════════════════════════════════════════
+      const noId = (rp.no_id = {
+        note: 'W1–W4：没有 `imported_id` 的记录必须让整个 op 拒（契约 §八 · 甲形状）。三格各自一个独立脑根、各自带阳性对照。',
+        cells: {},
+        roots: {},
+      })
+      /**
+       * 手改 `state/update/<day>.json` 的 `frozen_proposal_ids`（**只动那一格**，其余字段原样）。
+       *
+       * 为什么必须手改：`candidates-freeze` 自己会拒空串（`candidate_ids 必须是非空字符串数组`），
+       * 所以"冻结清单里有一个空串"这个现场**只可能来自手改 / 外部写入**（契约 §3.3 亲口承认状态会被手改）。
+       * @returns {object|null} 改完读回来的状态（`null` = 状态文件读不到 / 不是合法 JSON ⇒ 这一格判不了）
+       */
+      const patchFrozenIds = (brain, day, ids) => {
+        const file = brain.updateState(day)
+        const raw = readSafe(file)
+        if (raw === null) return null
+        let st = null
+        try {
+          st = JSON.parse(raw)
+        } catch {
+          return null
+        }
+        st.frozen_proposal_ids = [...ids]
+        writeFileSync(file, `${JSON.stringify(st, null, 2)}\n`, 'utf8')
+        try {
+          return JSON.parse(readSafe(file) ?? 'null')
+        } catch {
+          return null
+        }
+      }
+      /**
+       * 造一个"已经走到 judging、只差那一次提交"的脑根（W2 要的现场：池子与索引都合法，
+       * **唯一被污染的是状态里的冻结清单**）。
+       * @param {string} name 独立脑根名（W4：一格一个根）
+       * @param {string} token 这一轮的 judge token
+       * @returns {object|null} 前置不成立 ⇒ null（调用方记"判不了"，**不许当通过**）
+       */
+      const commitFixture = (name, token) => {
+        const brain = caseBrainRoot('MEM-11', name)
+        const init = runBrain('init', {}, { dataRoot: brain.root })
+        const imports = [1, 2].map((n) => importCandInto(brain, n, `（夹具·T-MEM-10·${name}）候选${n}`, `tmem10-${name}-`))
+        const ids = imports.map((r) => r.json?.imported_id ?? null)
+        const day = imports[0]?.json?.day ?? null
+        if (init.exit_code !== 0 || !ids.every((id) => typeof id === 'string') || typeof day !== 'string') {
+          push('W2-FROZEN-NOID', `前置「${name}」：独立脑根 init + 导入 2 条候选必须成功，实得 init=${init.exit_code} / ids=${JSON.stringify(ids)} / day=${JSON.stringify(day)}（导入退出码 ${imports.map((r) => r.exit_code).join('/')}）${missingOpNote}`)
+          return null
+        }
+        const claim = runBrain('claim-update', { day, owner_project: 'harness', owner_session: `session-tmem10-${name}` }, { dataRoot: brain.root })
+        const freeze = runBrain('candidates-freeze', { generation: claim.json?.generation ?? 1, candidate_ids: ids }, { dataRoot: brain.root })
+        const start = runBrain('judge-start', {
+          generation: claim.json?.generation ?? 1, attempt: claim.json?.attempt ?? 1, token,
+          job_id: `job-memory-judge-tmem10-${name}`,
+        }, { dataRoot: brain.root })
+        if (claim.exit_code !== 0 || freeze.exit_code !== 0 || start.exit_code !== 0) {
+          push('W2-FROZEN-NOID', `前置「${name}」：claim-update / candidates-freeze / judge-start 必须都成功（W2 要的是"已在 judging、只差提交"的现场），实得 claim=${claim.exit_code}(${claim.json?.error?.code ?? '-'}) freeze=${freeze.exit_code}(${freeze.json?.error?.code ?? '-'}) start=${start.exit_code}(${start.json?.error?.code ?? '-'})`)
+          return null
+        }
+        return {
+          brain, day, ids, token,
+          generation: claim.json?.generation ?? 1,
+          attempt: claim.json?.attempt ?? 1,
+          commonSense: init.json?.common_sense_sha256 ?? 'a'.repeat(64),
+        }
+      }
+      /** 一次 judge-commit 的落点三件套（"拒的时候一个字节都不许写"就钉在这儿）。 */
+      const commitFacts = (brain, day) => ({
+        snapshots: dirFacts(brain.snapshotsDir),
+        judged: fileFacts(brain.judgedFile),
+        state: fileFacts(brain.updateState(day)),
+      })
+      const sameFacts = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+
+      // ── W1（定形 §五 第一格）：池子里有一行**读不出 `imported_id`** ⇒ 不许静默 ──
+      //   夹具：两条**真导入**的合法候选 + 中间夹一行 `{"schema":1}`（合法 JSON 对象，就是没有 `imported_id`）。
+      //   现状（病）：`uniqueIdsOf` 跳过那一行 ⇒ exit 0、pending = 那两条合法的、pool_count 照旧 3
+      //   —— **看起来完全对**。这正是要咬住的东西：答案对，而"池子里有一条我读不出 id"没人知道。
+      const w1b = caseBrainRoot('MEM-11', 'noid-pool')
+      const w1bInit = runBrain('init', {}, { dataRoot: w1b.root })
+      const w1bImports = [1, 2].map((n) => importCandInto(w1b, n, `（夹具·T-MEM-10·noid-pool）候选${n}`, 'tmem10-noidpool-'))
+      const w1bIds = w1bImports.map((r) => r.json?.imported_id ?? null)
+      const w1bRows = readJsonl(w1b.poolFile).rows
+      if (w1bInit.exit_code !== 0 || !w1bIds.every((id) => typeof id === 'string') || w1bRows.length !== 2) {
+        push('W1-POOL-NOID', `前置「noid-pool」：独立脑根 init + 导入 2 条候选必须成功，实得 init=${w1bInit.exit_code} / ids=${JSON.stringify(w1bIds)} / 池行数=${w1bRows.length}（导入退出码 ${w1bImports.map((r) => r.exit_code).join('/')}）${missingOpNote}`)
+      } else {
+        /** 写一份池子：`withBad` ⇒ 两条合法行中间夹一行没有 `imported_id` 的合法 JSON。 */
+        const writeNoIdPool = (withBad) => {
+          const lines = [JSON.stringify(w1bRows[0])]
+          if (withBad) lines.push(JSON.stringify({ schema: 1 })) // ← 合法 JSON 对象，**没有 imported_id**
+          lines.push(JSON.stringify(w1bRows[1]))
+          writeFileSync(w1b.poolFile, `${lines.join('\n')}\n`, 'utf8')
+        }
+        writeNoIdPool(true)
+        // 🔴 W4 第 ③ 条的量法：**造完夹具、还没跑 op 之前**量 —— 跑完再量，"索引在不在"就取决于被测行为了
+        //   （病着的时候 judge-commit 一写，索引文件当然在，于是守卫本身会假红）。
+        const w1Pre = { judged_exists: fileFacts(w1b.judgedFile).exists, pool_bad_rows: readJsonl(w1b.poolFile).rows.filter((r) => typeof r?.imported_id !== 'string' || r.imported_id === '').length }
+        const w1Bad = pendingRunOn(w1b, 'w1_pool_row_without_id')
+        writeNoIdPool(false) // ← 翻面的另一半：**只删掉那一行**，两条合法行一个字节不动
+        const w1Ok = pendingRunOn(w1b, 'w1_pool_row_without_id_cleaned')
+        noId.cells.W1 = {
+          root: w1b.root,
+          fixture: '池子 = 合法行 + {"schema":1}（没有 imported_id） + 合法行',
+          legal_ids: w1bIds,
+          pre: w1Pre,
+          bad: { exit_code: w1Bad.exit_code, code: w1Bad.code, pending_ids: w1Bad.pending_ids, pool_count: w1Bad.pool_count },
+          cleaned: { exit_code: w1Ok.exit_code, code: w1Ok.code, pending_ids: w1Ok.pending_ids, pool_count: w1Ok.pool_count },
+        }
+        noId.roots.W1 = w1b.root
+        if (w1Bad.exit_code !== 7 || w1Bad.code !== 'E_DATA_CORRUPT') {
+          const looksRight = w1Bad.exit_code === 0
+            ? `（它 exit 0 且 pending=${JSON.stringify(w1Bad.pending_ids)}、pool_count=${JSON.stringify(w1Bad.pool_count)} ⇒ **那一行被静默跳过了**：读数看起来是对的，"池子里有一条我读不出 id"与"本来就没有那一条"在这里分不开）`
+            : ''
+          push('W1-POOL-NOID', `池子里有一行**读不出 imported_id**（合法 JSON：{"schema":1}）时 judge-pending 必须**整体拒**：exit 7 / E_DATA_CORRUPT（定形 T-MEM-10 §五 W1 · 契约 §八 表格第 1 行），实得 exit=${w1Bad.exit_code} / ${w1Bad.code ?? '(无码)'}${looksRight}`)
+        }
+        if (w1Ok.exit_code !== 0) {
+          push('W1-POOL-NOID', `阳性对照：把池子里那一行删掉之后（同样的两条合法行、同一个根）judge-pending 必须照常成功 —— 否则"该拒的拒了"可能只是"这个 op 坏了"，实得 exit=${w1Ok.exit_code} / ${w1Ok.code ?? '(无码)'}`)
+        } else if (!sameList(w1Ok.pending_ids, w1bIds)) {
+          push('W1-POOL-NOID', `阳性对照：清掉那一行之后 pending_ids 必须 = ${JSON.stringify(w1bIds)}（按池子 seq 序），实得 ${JSON.stringify(w1Ok.pending_ids)}`)
+        }
+      }
+
+      // ── W2（第二格）：`state.frozen_proposal_ids` 里有一个**空串** ⇒ 不许静默 ──
+      //   这一格盯的是 `judgedRowSpecsOf` 那一处调用（冻结清单 ∪ payload.accepted）。
+      //   🔴 同一个调用有**两个输入**，两个都要（只查一半，另一半照旧静默消失）：
+      //     · 输入 A = 状态里的冻结清单（手改出来的空串）⇒ 数据损坏族 `E_DATA_CORRUPT` / exit 7；
+      //     · 输入 B = `payload.accepted` 里的空串（判决方自己传坏的）⇒ 入参 schema 族 `E_ARG_SCHEMA` / exit 2。
+      //   两半都在**发布之前**拒（定形 §三 第 2 条 + 契约 §2.4：事务成功之后才发现，就成了"快照已发布、索引没跟上"）。
+      const w2Bad = commitFixture('noid-frozen', 'tok-tmem10-w2-bad')
+      if (w2Bad === null) {
+        // 前置已经把 W2 红记下了 —— 这里只记读数，不再重复 push。
+        noId.cells.W2 = { root: null, note: '前置不成立（见 W2-FROZEN-NOID 那条）' }
+      } else {
+        noId.roots.W2 = w2Bad.brain.root
+        // W4 第 ③ 条的量法：**提交之前**的现场（W2 只污染状态里那一格 ⇒ 池子全合法、索引还没长出来）
+        const w2Pre = { pool_bad_rows: readJsonl(w2Bad.brain.poolFile).rows.filter((r) => typeof r?.imported_id !== 'string' || r.imported_id === '').length, judged_exists: fileFacts(w2Bad.brain.judgedFile).exists }
+        const patchedA = patchFrozenIds(w2Bad.brain, w2Bad.day, [w2Bad.ids[0], ''])
+        const factsBeforeA = commitFacts(w2Bad.brain, w2Bad.day)
+        let commitA = null
+        if (patchedA === null) {
+          push('W2-FROZEN-NOID', `夹具失效：状态文件 state/update/${w2Bad.day}.json 读不到或不是合法 JSON ⇒ "冻结清单里有一个空串"这个现场造不出来（**不是通过**）`)
+        } else {
+          commitA = runBrain('judge-commit', {
+            generation: w2Bad.generation, attempt: w2Bad.attempt, token: w2Bad.token, base_snapshot: 'v0',
+            entries_patch: [], accepted: [w2Bad.ids[0]], maintenance_decisions: [],
+            common_sense_sha256: w2Bad.commonSense, report: {},
+          }, { dataRoot: w2Bad.brain.root })
+        }
+        const factsAfterA = commitFacts(w2Bad.brain, w2Bad.day)
+        noId.cells.W2 = {
+          root: w2Bad.brain.root,
+          fixture: `state.frozen_proposal_ids = ${JSON.stringify([w2Bad.ids[0], ''])}（手改；candidates-freeze 自己会拒空串）`,
+          pre: w2Pre,
+          frozen_after_patch: patchedA === null ? null : patchedA.frozen_proposal_ids,
+          commit_exit: commitA === null ? null : commitA.exit_code,
+          commit_code: commitA === null ? null : commitA.json?.error?.code ?? null,
+          published_snapshot: !sameFacts(factsBeforeA.snapshots, factsAfterA.snapshots),
+          judged_grew: !sameFacts(factsBeforeA.judged, factsAfterA.judged),
+          state_moved: !sameFacts(factsBeforeA.state, factsAfterA.state),
+        }
+        if (commitA !== null) {
+          if (commitA.exit_code !== 7 || (commitA.json?.error?.code ?? null) !== 'E_DATA_CORRUPT') {
+            const looksRight = commitA.exit_code === 0
+              ? `（它 exit 0 ⇒ **空串被静默丢掉了**：冻结清单里两条、索引里只长出一条，而"少判了一条"在读数上没有任何痕迹）`
+              : ''
+            push('W2-FROZEN-NOID', `冻结清单里有一个空串 id（state.frozen_proposal_ids = ${JSON.stringify([w2Bad.ids[0], ''])}）时 judge-commit 必须**整体拒**：exit 7 / E_DATA_CORRUPT（定形 T-MEM-10 §五 W2 · 契约 §八 表格第 3 行），实得 exit=${commitA.exit_code} / ${commitA.json?.error?.code ?? '(无码)'}${looksRight}`)
+          } else if (!sameFacts(factsBeforeA.snapshots, factsAfterA.snapshots) || !sameFacts(factsBeforeA.judged, factsAfterA.judged)) {
+            push('W2-FROZEN-NOID', `它确实拒了（exit ${commitA.exit_code} / ${commitA.json?.error?.code ?? '(无码)'}），但**拒绝发生在事务之后**：快照目录变了=${!sameFacts(factsBeforeA.snapshots, factsAfterA.snapshots)} / 索引变了=${!sameFacts(factsBeforeA.judged, factsAfterA.judged)}（跑前 ${JSON.stringify(factsBeforeA.snapshots)} → 跑后 ${JSON.stringify(factsAfterA.snapshots)}）—— 契约 §2.4 / §八：这一拒必须在**发布之前**，否则就是"快照已发布、索引没跟上"（已发布的事务不回滚）`)
+          }
+        }
+        // 输入 B（同一处调用的另一半）**自己一个根**：`payload.accepted` 里有一个空串 —— 判决方自己传坏的。
+        //   🔴 为什么不接着用 `noid-frozen` 那个根跑：前半那一跑在**病着的实现**上会 exit 0 并把快照发布掉，
+        //      于是那个根不再是"等着提交"的现场 ⇒ 这半永远走不到 —— 那正是 W4 不许的形状
+        //      （"一处拒了 / 一处成功了、另两处就跑不到那个断言"）。**每半一个根**是唯一稳的造法。
+      }
+      const w2Acc = commitFixture('noid-accepted', 'tok-tmem10-w2-acc')
+      if (w2Acc === null) {
+        noId.cells.W2_accepted = { root: null, note: '前置不成立（见 W2-FROZEN-NOID 那条）' }
+      } else {
+        const preAcc = {
+          pool_bad_rows: readJsonl(w2Acc.brain.poolFile).rows.filter((r) => typeof r?.imported_id !== 'string' || r.imported_id === '').length,
+          judged_exists: fileFacts(w2Acc.brain.judgedFile).exists,
+        }
+        const factsBeforeB = commitFacts(w2Acc.brain, w2Acc.day)
+        const commitB = runBrain('judge-commit', {
+          generation: w2Acc.generation, attempt: w2Acc.attempt, token: w2Acc.token, base_snapshot: 'v0',
+          entries_patch: [], accepted: [w2Acc.ids[0], ''], maintenance_decisions: [],
+          common_sense_sha256: w2Acc.commonSense, report: {},
+        }, { dataRoot: w2Acc.brain.root })
+        const factsAfterB = commitFacts(w2Acc.brain, w2Acc.day)
+        noId.cells.W2_accepted = {
+          root: w2Acc.brain.root,
+          fixture: `payload.accepted = ${JSON.stringify([w2Acc.ids[0], ''])}（冻结清单两个都合法：${JSON.stringify(w2Acc.ids)}）`,
+          pre: preAcc,
+          exit_code: commitB.exit_code,
+          code: commitB.json?.error?.code ?? null,
+          published_snapshot: !sameFacts(factsBeforeB.snapshots, factsAfterB.snapshots),
+          judged_grew: !sameFacts(factsBeforeB.judged, factsAfterB.judged),
+        }
+        noId.roots.W2_accepted = w2Acc.brain.root
+        if (commitB.exit_code !== 2 || (commitB.json?.error?.code ?? null) !== 'E_ARG_SCHEMA') {
+          const looksRight = commitB.exit_code === 0
+            ? `（它 exit 0 ⇒ **accepted 里那个空串被静默丢掉了**：判决方说"我接受了两条"，索引里只有一条，而 V9 那条恒等式（索引 = 报告的派生）从此对不上）`
+            : ''
+          push('W2-ACCEPTED-NOID', `payload.accepted 里有一个空串（${JSON.stringify([w2Acc.ids[0], ''])}，冻结清单两个都合法）时 judge-commit 必须拒：exit 2 / E_ARG_SCHEMA（契约 §八 表格第 4 行 —— 它是**入参**不成形状，不是盘上数据坏了），实得 exit=${commitB.exit_code} / ${commitB.json?.error?.code ?? '(无码)'}${looksRight}`)
+        } else if (!sameFacts(factsBeforeB.snapshots, factsAfterB.snapshots) || !sameFacts(factsBeforeB.judged, factsAfterB.judged)) {
+          push('W2-ACCEPTED-NOID', `它确实拒了，但**拒绝发生在事务之后**：快照目录变了=${!sameFacts(factsBeforeB.snapshots, factsAfterB.snapshots)} / 索引变了=${!sameFacts(factsBeforeB.judged, factsAfterB.judged)} —— 契约 §2.4 / §八：这一拒必须在**发布之前**`)
+        }
+      }
+      // W2 的阳性对照：另一个独立根，**冻结清单两个都合法** ⇒ 同一条提交必须成功且索引长两行。
+      const w2Ok = commitFixture('noid-frozen-ok', 'tok-tmem10-w2-ok')
+      if (w2Ok === null) {
+        noId.cells.W2_ok = { root: null, note: '前置不成立（见 W2-FROZEN-NOID 那条）' }
+      } else {
+        const commitOk = runBrain('judge-commit', {
+          generation: w2Ok.generation, attempt: w2Ok.attempt, token: w2Ok.token, base_snapshot: 'v0',
+          entries_patch: [], accepted: [w2Ok.ids[0]], maintenance_decisions: [],
+          common_sense_sha256: w2Ok.commonSense, report: {},
+        }, { dataRoot: w2Ok.brain.root })
+        const rowsOk = readJsonl(w2Ok.brain.judgedFile).rows.map((r) => `${r?.imported_id}:${r?.verdict}`)
+        noId.cells.W2_ok = {
+          root: w2Ok.brain.root,
+          fixture: `同一个根形状、只把冻结清单换成两个合法 id ${JSON.stringify(w2Ok.ids)}`,
+          exit_code: commitOk.exit_code,
+          code: commitOk.json?.error?.code ?? null,
+          rows: rowsOk,
+        }
+        noId.roots.W2_ok = w2Ok.brain.root
+        if (commitOk.exit_code !== 0) {
+          push('W2-FROZEN-NOID', `阳性对照：冻结清单两个都合法时同一条 judge-commit 必须成功 —— 否则"该拒的拒了"可能只是"提交根本走不通"，实得 exit=${commitOk.exit_code} / ${commitOk.json?.error?.code ?? '(无码)'}`)
+        } else if (!sameList(rowsOk, [`${w2Ok.ids[0]}:accepted`, `${w2Ok.ids[1]}:rejected`])) {
+          push('W2-FROZEN-NOID', `阳性对照：索引必须长出两行 ${JSON.stringify([`${w2Ok.ids[0]}:accepted`, `${w2Ok.ids[1]}:rejected`])}（冻结顺序、accepted 记 accepted），实得 ${JSON.stringify(rowsOk)}`)
+        }
+      }
+
+      // ── W3（第三格）：已判索引里有一行**读不出 `imported_id`** ⇒ 不许静默 ──
+      //   夹具：一条合法判决行（真形状，照契约 §2.2 手写 = 与 K4① 同一条先例）+ 一行 `{"schema":1}`。
+      //   现状（病）：跳过那一行 ⇒ exit 0、pending = 池子里剩下那一条 —— **又是"看起来对"**。
+      const w3b = caseBrainRoot('MEM-11', 'noid-judged')
+      const w3bInit = runBrain('init', {}, { dataRoot: w3b.root })
+      const w3bImports = [1, 2].map((n) => importCandInto(w3b, n, `（夹具·T-MEM-10·noid-judged）候选${n}`, 'tmem10-noidjudged-'))
+      const w3bIds = w3bImports.map((r) => r.json?.imported_id ?? null)
+      const w3bDay = w3bImports[0]?.json?.day ?? DAY
+      if (w3bInit.exit_code !== 0 || !w3bIds.every((id) => typeof id === 'string')) {
+        push('W3-JUDGED-NOID', `前置「noid-judged」：独立脑根 init + 导入 2 条候选必须成功，实得 init=${w3bInit.exit_code} / ids=${JSON.stringify(w3bIds)}（导入退出码 ${w3bImports.map((r) => r.exit_code).join('/')}）${missingOpNote}`)
+      } else {
+        /** 写一份索引：`withBad` ⇒ 一条合法判决行 + 一行没有 `imported_id` 的合法 JSON。 */
+        const writeNoIdJudged = (withBad) => {
+          const lines = [JSON.stringify({
+            schema: 1,
+            imported_id: w3bIds[0],
+            day: w3bDay,
+            verdict: 'accepted',
+            snapshot: 'v0',
+            generation: 1,
+            attempt: 1,
+            at: '2026-10-14T13:05:00+08:00',
+            seq: 1,
+          })]
+          if (withBad) lines.push(JSON.stringify({ schema: 1 })) // ← 合法 JSON 对象，**没有 imported_id**
+          writeFileSync(w3b.judgedFile, `${lines.join('\n')}\n`, 'utf8')
+        }
+        writeNoIdJudged(true)
+        // W4 第 ③ 条的量法：**跑之前**的现场（W3 只污染索引 ⇒ 它的池子必须一条坏行都没有）
+        const w3Pre = { pool_bad_rows: readJsonl(w3b.poolFile).rows.filter((r) => typeof r?.imported_id !== 'string' || r.imported_id === '').length }
+        const w3Bad = pendingRunOn(w3b, 'w3_judged_row_without_id')
+        writeNoIdJudged(false) // ← 翻面的另一半：只删掉那一行
+        const w3Ok = pendingRunOn(w3b, 'w3_judged_row_without_id_cleaned')
+        noId.cells.W3 = {
+          root: w3b.root,
+          fixture: '索引 = 一条合法判决行 + {"schema":1}（没有 imported_id）；池子两条全合法',
+          pool_ids: w3bIds,
+          pre: w3Pre,
+          bad: { exit_code: w3Bad.exit_code, code: w3Bad.code, pending_ids: w3Bad.pending_ids, judged_rows: w3Bad.judged_rows, judged_ids: w3Bad.judged_ids },
+          cleaned: { exit_code: w3Ok.exit_code, code: w3Ok.code, pending_ids: w3Ok.pending_ids, judged_rows: w3Ok.judged_rows, judged_ids: w3Ok.judged_ids },
+        }
+        noId.roots.W3 = w3b.root
+        if (w3Bad.exit_code !== 7 || w3Bad.code !== 'E_DATA_CORRUPT') {
+          const looksRight = w3Bad.exit_code === 0
+            ? `（它 exit 0 且 pending=${JSON.stringify(w3Bad.pending_ids)}、judged_rows=${JSON.stringify(w3Bad.judged_rows)}、judged_ids=${JSON.stringify(w3Bad.judged_ids)} ⇒ **那一行被静默跳过了**：行数与 id 数之差就是它，而"少判了一条"没人说出来）`
+            : ''
+          push('W3-JUDGED-NOID', `已判索引里有一行**读不出 imported_id**（合法 JSON：{"schema":1}）时 judge-pending 必须**整体拒**：exit 7 / E_DATA_CORRUPT（定形 T-MEM-10 §五 W3 · 契约 §八 表格第 2 行），实得 exit=${w3Bad.exit_code} / ${w3Bad.code ?? '(无码)'}${looksRight}`)
+        }
+        if (w3Ok.exit_code !== 0) {
+          push('W3-JUDGED-NOID', `阳性对照：把索引里那一行删掉之后 judge-pending 必须照常成功 —— 否则"该拒的拒了"可能只是"索引读不了"，实得 exit=${w3Ok.exit_code} / ${w3Ok.code ?? '(无码)'}`)
+        } else if (!sameList(w3Ok.pending_ids, [w3bIds[1]])) {
+          push('W3-JUDGED-NOID', `阳性对照：索引里只剩那条合法判决（${w3bIds[0]}）时 pending 必须 = ${JSON.stringify([w3bIds[1]])}，实得 ${JSON.stringify(w3Ok.pending_ids)}`)
+        }
+      }
+
+      // ── W4（第四格）：三格互不遮蔽 ──
+      //   分三条判，每一条都能单独红：
+      //   ① 三个脑根**互不相同**（共用根 ⇒ 一处拒了另一处的夹具就被污染）；
+      //   ② 三格**都真的跑过**（每格都有非 null 的 exit_code —— 一格没跑就不叫"独立红"）；
+      //   ③ **一格只污染一处**（W1 只动池子 / W3 只动索引 / W2 只动状态里那一格）——
+      //      否则"两处一起坏"时分不出是哪一处的判据在响，W4 就退化成一句声明。
+      //      ⚠️ 这一条只能量**跑之前**的现场：跑完再量，"索引在不在"就取决于被测行为了
+      //      （病着的时候 judge-commit 一写，索引文件当然在 ⇒ 守卫自己假红 —— 我第一版就是这么错的）。
+      {
+        const cellRoots = [noId.roots.W1, noId.roots.W2, noId.roots.W3].map((r) => (typeof r === 'string' ? r.toLowerCase() : null))
+        const distinctRoots = cellRoots.filter((r) => r !== null)
+        if (new Set(distinctRoots).size !== 3) {
+          push('W4-INDEPENDENT', `W4：三格必须各用**一个独立的脑根**（共用根 ⇒ 一处拒了、另一处的夹具就被污染；那样"互不遮蔽"只是一句声明），实得 ${JSON.stringify([noId.roots.W1 ?? null, noId.roots.W2 ?? null, noId.roots.W3 ?? null])}（去重后 ${new Set(distinctRoots).size} 个）`)
+        }
+        const attempted = [
+          noId.cells.W1?.bad?.exit_code,
+          noId.cells.W2?.commit_exit,
+          noId.cells.W3?.bad?.exit_code,
+        ].map((v) => (typeof v === 'number' ? v : null))
+        if (attempted.some((v) => v === null)) {
+          push('W4-INDEPENDENT', `W4：三格的 op 必须**各自跑到**（一格没跑到就不叫"独立红"，那正是"一处拒了、另两处走不到"的形状），实得三格的退出码 ${JSON.stringify(attempted)}（null = 没跑到）`)
+        }
+        const onePollution = {
+          w1_judged_exists: noId.cells.W1?.pre?.judged_exists ?? 'n/a',
+          w1_pool_bad_rows: noId.cells.W1?.pre?.pool_bad_rows ?? 'n/a',
+          w3_pool_bad_rows: noId.cells.W3?.pre?.pool_bad_rows ?? 'n/a',
+          w2_pool_bad_rows: noId.cells.W2?.pre?.pool_bad_rows ?? 'n/a',
+          w2_judged_exists: noId.cells.W2?.pre?.judged_exists ?? 'n/a',
+          w2acc_pool_bad_rows: noId.cells.W2_accepted?.pre?.pool_bad_rows ?? 'n/a',
+          w2acc_judged_exists: noId.cells.W2_accepted?.pre?.judged_exists ?? 'n/a',
+        }
+        noId.cells.W4 = {
+          roots_distinct: new Set(distinctRoots).size,
+          attempted,
+          one_pollution_each: onePollution,
+        }
+        // W1 那一格的池子里就该有 **1** 条坏行（我放的那一条）；其余各格的池子里必须是 0 条。
+        const pollutionOk = onePollution.w1_pool_bad_rows === 1
+          && onePollution.w1_judged_exists === false
+          && onePollution.w3_pool_bad_rows === 0
+          && onePollution.w2_pool_bad_rows === 0
+          && onePollution.w2_judged_exists === false
+          && onePollution.w2acc_pool_bad_rows === 0
+          && onePollution.w2acc_judged_exists === false
+        if (!pollutionOk) {
+          push('W4-INDEPENDENT', `W4：一格只许污染一处 —— 期待 W1 的根里"池子坏行 1 条 + 索引不存在"、W3 与 W2（含 accepted 那半）的根里"池子坏行 0 条"、两个提交根的索引都还不存在；实得 ${JSON.stringify(onePollution)}（两处一起坏时，"红"分不出是谁的锅；也说明我这一格的夹具没造对 —— 这一格判不了，不是通过）`)
+        }
+      }
+
       // ── V6 的**空对空守卫** ──
       // "池子没被动过"只有在 op **真的跑成功过**之后才有意义：一次都没跑成功 ⇒ 池子当然没动
       // ⇒ 那是空对空，**不是通过**（与 V8 的 `V8-PRECONDITION` 同一条纪律）。
