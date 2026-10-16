@@ -1145,27 +1145,37 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   }
 
   // 🆕 2026-10-13：公共记忆的量尺（老板当天追责超限后加）。
-  //   · 已有规矩（work-guidelines / team/retro）：必读卷上限 3000 汉字；三卷 = 必读卷 + 规矩卷 + 资料卷。
+  //   · 当时的口径：必读卷上限 3000 汉字；三卷 = 必读卷 + 规矩卷 + 资料卷。
   //   · 失效现场：2026-10-13 量到 `.team/memory.md` = 3625 字，两副卷文件不存在，
   //     而旧脚本只量了岗位私人本 → "有上限、没读数"，跨了 12 天没人被机器叫住。
-  //   · 口径：hanCount 只数汉字；副卷不限字数，但必须是独立文件、必读卷要指得到。
-  //   · 三条都具翻面能力：超限 / 副卷丢 / 主卷丢指针，会当场红。
-  const publicMemory = join(teamRoot, 'memory.md')
-  if (!existsSync(publicMemory)) {
-    pending('office', '公共必读卷的量尺（上限 3000）', '.team/memory.md 不在 —— 这一轮判不了')
-  } else {
-    const pubN = hanCount(read(publicMemory))
-    const rulesVolume = join(teamRoot, 'memory-规矩卷.md')
-    const dataVolume = join(teamRoot, 'memory-资料卷.md')
-    const pubText = read(publicMemory)
-    yes('office', '公共必读卷（.team/memory.md）在上限内', pubN <= 3000, `${pubN} 字（上限 3000）`)
-    yes('office', '公共记忆两副卷都在（规矩卷 + 资料卷）',
-      existsSync(rulesVolume) && existsSync(dataVolume),
-      `规矩卷${existsSync(rulesVolume) ? '在' : '缺'} · 资料卷${existsSync(dataVolume) ? '在' : '缺'}`)
-    yes('office', '公共必读卷指得到两副卷',
-      pubText.includes('memory-规矩卷') && pubText.includes('memory-资料卷'),
-      '主卷不指路 = 两副卷写了也没人知道去哪查')
-  }
+  //
+  // 🔴 2026-10-16 **整族换锚**（I16 第 ⑤ 步）：三卷**已经不在了** ——
+  //   共享记忆库 2026-10-16 11:11 重启后进了上下文（装配里 `agenia:memory` 在岗），
+  //   三卷作为"上岗第 1 步必读"的职能被注入取代 ⇒ 归档到 `.team/_archive/memory-旧本子-20261016/`。
+  //   ⇒ **原来那三条（必读卷 ≤3000 / 两副卷都在 / 必读卷指得到两副卷）判的是一个已经退役的结构**，
+  //     留着它们只会常驻 HOLD。**不是删断言，是把锚换到新事实上。**
+  //   ⇒ 新锚仍然**能翻面**：谁把三卷拷回 `.team/` 根下（= 复活旧结构），或者档案被删，
+  //     当场红。⚠️ 只判"在不在"，**不判内容**（内容那一半由 ⑥ 的逐句对账 + 冻结时的 SHA256 负责）。
+  const frozenDir = join(teamRoot, '_archive', 'memory-旧本子-20261016')
+  const FROZEN = ['memory.md', 'memory-规矩卷.md', 'memory-资料卷.md']
+  const inArchive = FROZEN.filter((f) => existsSync(join(frozenDir, f)))
+  const backAtRoot = FROZEN.filter((f) => existsSync(join(teamRoot, f)))
+  yes('office', '旧记忆三卷已冻结（档案三份都在 · 活体一份都不在）',
+    inArchive.length === FROZEN.length && backAtRoot.length === 0,
+    `档案 ${inArchive.length}/3 在 · 活体还剩 ${backAtRoot.length} 份${backAtRoot.length ? `（${backAtRoot.join(' · ')}）` : ''} —— ` +
+    '三卷 2026-10-16 已由注入的共享记忆取代；拷回 .team/ 根下 = 复活旧结构，会红')
+
+  // 🔴 2026-10-16 加：**已撤岗位的私人本子**也要有判据盯着。
+  //   为什么单开一条：`retro` 那本归档之后，上面那个 `for (roleDirs)` 的上限循环会**少跑一行**
+  //   （`find` 找不到文件就 `continue`）⇒ 分母自己从 114 掉到 113，**而且没有任何一行说"它去哪了"**。
+  //   那正是"分母随被测对象变 ⇒ 直接从输出里消失"那一族（本文件 §三 记的第四形态）。
+  //   ⇒ 补这一条：既保住分母，也保住"谁把它放回来会红"。
+  const retiredBook = join(frozenDir, 'retro-memory.md')
+  const retroLive = join(teamRoot, 'retro', 'memory.md')
+  yes('office', '已撤岗位（retro）的私人记忆本也冻结了（档案在 · 活体不在）',
+    existsSync(retiredBook) && !existsSync(retroLive),
+    `档案${existsSync(retiredBook) ? '在' : '缺'} · 活体${existsSync(retroLive) ? '**又出现了**' : '不在'} —— ` +
+    '复盘岗 2026-10-15 已撤，这本没有人读；放回来 = 让人以为还有个复盘岗')
 
   // ★ now.md 的时效（2026-09-22 加，**只报不红**）。
   // 来历：`now.md` 的规矩是"每天开工整个重写"，但**没有任何东西量过它到底多久没动**——
