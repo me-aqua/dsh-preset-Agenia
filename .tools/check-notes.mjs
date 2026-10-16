@@ -859,6 +859,32 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     treeMiss.length > 0 ? treeMiss.join('；')
       : trees.length === 0 ? '一份目录树都没了 —— 组长没有可照抄的结构'
         : `${trees.map(([f]) => f).join('、')}（${fixed.join('、')} 全在）`)
+
+  // ③ `officeBound` 名单 ⇄ 每份岗位说明书的「有没有命令行」（2026-10-16 加）
+  //    来历：同一天两处"说反了" —— `team/conversation-review.md` 与 `team/memory-review.md`
+  //    都还写着「你没有命令行」，而名单里早已把它们移了出去。上面那几条针**只扫 5 份文档、
+  //    不扫 `team/`**，所以一路绿过去（`roles.test.mjs` 那条针也靠过期说明书喂饱）。
+  //    钉的是**具体岗位**：某个 role 在不在 officeBound，与它说明书里那句"你有/没有命令行"。
+  //    ⚠️ 没有"工具面"那一段的说明书不校验 —— 那是"没有说法"，不是"说法错了"。
+  const teamRoleDocs = existsSync(join(PRESET, 'team'))
+    ? readdirSync(join(PRESET, 'team')).filter((f) => f.endsWith('.md'))
+      .map((f) => [f.slice(0, -3), read(join(PRESET, 'team', f))])
+    : []
+  const shellMismatch = []
+  for (const [role, text] of teamRoleDocs) {
+    const bound = office.includes(role)
+    if (bound && /你有(命令行|shell)/.test(text)) {
+      shellMismatch.push(`team/${role}.md 在 officeBound 里，说明书却说"你有命令行"`)
+    }
+    if (!bound && /你没有(命令行|shell)/.test(text)) {
+      shellMismatch.push(`team/${role}.md 不在 officeBound 里，说明书却说"你没有命令行"`)
+    }
+  }
+  yes('preset', 'officeBound 名单和每份岗位说明书的「有没有命令行」对得上',
+    shellMismatch.length === 0,
+    shellMismatch.length > 0
+      ? shellMismatch.join('；')
+      : `officeBound = ${office.join('、') || '（空）'}；${teamRoleDocs.length} 份 team/*.md 一致`)
 }
 
 // ── 3 · 注入器：交付出去的那份还敢改吗 ─────────────────────────────────────
