@@ -281,10 +281,19 @@ function appendUsedKey(paths, key, at) {
 /**
  * 持锁跑一段读-改-写。**先抢锁再读**：锁外先读会让并发的两个写者都读到同一版，
  * 然后各写一遍（"写者不唯一"）—— 与 `bin/agenia-brain.mjs` 的 `claim-update` 同一条道理。
+ *
+ * 🔴 锁的 `at` 是**真实此刻**，不是领域时钟。两个钟量的是两件事：
+ * - `lib/atomic.mjs` 的 `judgeLockOnce` 拿真实 `Date.now()` 减锁里的 `at` 判"过期没有"
+ *   （`clockNow()` 的领域钟由 `AGENIA_NOW_FILE` 注入，可以和真实钟差几十小时）⇒
+ *   锁里只要写领域钟，一个**活着的**持有者写下的锁在别的进程眼里就"早已过期"（`E_LOCK_STALE`）。
+ * - 领域钟是**数据**的日期（审计 `at` / `updated_at` / `closed_at` / 票号），那些由调用方用，不进锁。
+ * 同一件事 `lib/local-state.mjs` 的 `acquireDayLock` 也是这么写的（`at: new Date()`）。
+ *
+ * ⇒ 这个函数**不接领域时钟**（第三个参数只带 `op` 与 `sessionId`）：让它在作用域里根本拿不到
+ * 那个值，比在函数体里少写一处更难写回错。
  */
-function withLock(paths, args, { op, at, sessionId }, fn) {
-  // `lib/atomic.mjs` 的锁元数据要的是 `Date`（它自己 `toISOString()`），这里把已经格式化好的时刻转回去。
-  const acquired = acquireLock(paths.lock, { session_id: sessionId, purpose: `route:${op}` }, { forceRecover: args.forceRecover === true, at: new Date(at) })
+function withLock(paths, args, { op, sessionId }, fn) {
+  const acquired = acquireLock(paths.lock, { session_id: sessionId, purpose: `route:${op}` }, { forceRecover: args.forceRecover === true, at: new Date() })
   if (!acquired.ok) throw cliError(acquired.code, acquired.message, { path: paths.lock })
   try {
     return fn()
@@ -733,7 +742,7 @@ function main(argv) {
     const at = R.isoWithOffset(clockNow())
     const sessionId = typeof payload?.session_id === 'string' && payload.session_id.trim() !== '' ? payload.session_id : null
     const ctx = { paths, payload, at, args, sessionId, op }
-    const out = READ_OPS.has(op) ? OPS[op](ctx) : withLock(paths, args, { op, at, sessionId }, () => OPS[op](ctx))
+    const out = READ_OPS.has(op) ? OPS[op](ctx) : withLock(paths, args, { op, sessionId }, () => OPS[op](ctx))
     emit({ ok: true, op, workspace, route_dir: paths.routeDir, ...out })
     return 0
   } catch (err) {
