@@ -129,23 +129,36 @@ export function parseTestCalls(text) {
   /**
    * `test` 前面必须是**语句边界**：行首，或 `;` `{` `}` `(` `)` `,` `=` `>`，或关键字 `await`。
    * ⇒ `/re/.test(line)`（前面是 `.`）不算；字符串里那句 `… 对应的 test()：…`（前面是汉字）也不算。
+   * 🔴 判"不算"只有一种情况是静默的：**成员调用**（`obj.test(` / `/re/.test(`，前面是 `.`）——
+   *    它在语言层面就不可能是 `node:test` 的注册。**其余一切认不出的形状都进 `unparsed`**（不许当成 0）。
    * ⚠️ 任何**漏认**的形状都由入口那一层兜住：`node --test` 自报的 `tests N` 必须等于结算条数。
    */
-  const isStatementBoundary = (idx) => {
+  const prevNonSpace = (idx) => {
     let k = idx - 1
     while (k >= 0 && (text[k] === ' ' || text[k] === '\t')) k -= 1
-    if (k < 0) return true
-    if (';{}(),=>\n\r'.includes(text[k])) return true
+    return k < 0 ? '' : text[k]
+  }
+  const isStatementBoundary = (idx) => {
+    const c = prevNonSpace(idx)
+    if (c === '') return true
+    if (';{}(),=>\n\r'.includes(c)) return true
+    let k = idx - 1
+    while (k >= 0 && (text[k] === ' ' || text[k] === '\t')) k -= 1
     return text.slice(Math.max(0, k - 4), k + 1) === 'await'
   }
-  const re = /(^|[\s;{}()=,])test\s*\(/g
+  const re = /\btest\s*\(/g
   let m
   while ((m = re.exec(text)) !== null) {
+    const start = m.index
     const at = m.index + m[0].length
-    const start = m.index + m[1].length
     const line = lineOf(start)
-    if (!isStatementBoundary(start)) continue
+    if (prevNonSpace(start) === '.') continue // 成员调用（`.test(`）—— 语言层面就不是用例注册
     if (isCommentLine(lines[line - 1] ?? '')) continue
+    if (!isStatementBoundary(start)) {
+      // 认不出的形状：**报出来**（会跑的 test() 不许从分母里静默消失）。
+      unparsed.push({ line, snippet: lines[line - 1].trim().slice(0, 120) })
+      continue
+    }
     let i = at
     while (i < text.length && /\s/.test(text[i])) i += 1
     if (!QUOTE.has(text[i])) {

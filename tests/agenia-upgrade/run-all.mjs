@@ -30,7 +30,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { entryVerdict } from './support/verdict.mjs'
+import { entryVerdict, judgementLines } from './support/verdict.mjs'
 import { runSelfCheck } from './support/self-check.mjs'
 import { DISCOVERY } from './support/registry.mjs'
 
@@ -113,7 +113,13 @@ const before = phase('before')
 const testRun = run(['--test', '--test-concurrency=1', '--test-reporter=spec', GLOB], path.join(RUN_ROOT, 'stdout.txt'), path.join(RUN_ROOT, 'stderr.txt'))
 const after = phase('after')
 const settleRun = run([EVIDENCE, '--settle'], path.join(RUN_ROOT, 'tmp', 'settle.txt'), path.join(RUN_ROOT, 'tmp', 'settle.err.txt'))
-writeFileSync(path.join(RUN_ROOT, 'exit-code.txt'), `node --test exit=${testRun.code} (glob=${GLOB})\nreal-roots before=${before.code} after=${after.code} · settle exit=${settleRun.code}\n`, 'utf8')
+writeFileSync(
+  path.join(RUN_ROOT, 'subprocess-exit-codes.txt'),
+  '# 这个文件装的是**子进程**的退出码（node --test / support/evidence.mjs），不是入口自己的。\n'
+  + '# 入口自己的判词与退出码在 judgement.txt。\n'
+  + `node --test exit=${testRun.code} (glob=${GLOB})\nreal-roots before=${before.code} after=${after.code} · settle exit=${settleRun.code}\n`,
+  'utf8',
+)
 
 // ── ⑥ 读回结算 + 一行收口 ────────────────────────────────────────────────
 /** `…<_runs>/<RUN_ID>` ⇒ `…<_evidence>/<RUN_ID>`（与 `support/evidence.mjs` 的 `evidenceRoot()` 同口径）。 */
@@ -126,8 +132,10 @@ try {
   s = null
 }
 if (s === null) {
-  console.error(`F57-NO-SETTLEMENT: 结算报告没生成（${settlementFile}）—— 这一跑不算结算`)
+  const bad = `F57-NO-SETTLEMENT: 结算报告没生成（${settlementFile}）—— 这一跑不算结算`
+  console.error(bad)
   if (settleRun.stderr.trim() !== '') console.error(settleRun.stderr.trim().split('\n').slice(0, 8).join('\n'))
+  writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${bad}\nexit=1\n`, 'utf8')
   process.exit(1)
 }
 
@@ -192,8 +200,15 @@ const line = [
   `· settle exit ${settleRun.code}`,
 ].join(' ')
 console.log(line)
-// 收窄的一跑只代表它自己：明写"不是全量证据"，别让人从"跑绿了"读出"全量绿"；这种跑**不给 OK**。
-if (!verdict.fullScope) console.log(`F57-SCOPE 这一跑只覆盖 ${settled}/${denominator} 条（--glob 声明的范围 = ${scopeCases ?? '?'}）—— 不是全量证据，不给 OK，也不能当验收读数`)
+/**
+ * 判词（`F57-SCOPE` / `F57-FAIL …` / `F57-OK`）由 `judgementLines()` 一处产生，并且**默认落盘**
+ * 到运行根的 `judgement.txt` —— 不靠 `--json` 才留得下。
+ * 理由："我看到的"和"下一个人打开运行根看到的"必须是同一份东西；入口自己那一行判断
+ * 从前只活在控制台里，运行根里只剩子进程的退出码 ⇒ 那一格等于没证据。
+ */
+const judgement = judgementLines(verdict, { settled, denominator, scopeCases })
+for (const l of judgement) console.log(l)
+writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[line, ...judgement, `exit=${verdict.exitCode}`].join('\n')}\n`, 'utf8')
 
 if (JSON_OUT !== null) {
   writeFileSync(path.resolve(JSON_OUT), `${JSON.stringify({
@@ -203,13 +218,9 @@ if (JSON_OUT !== null) {
     node_exit: testRun.code, node_tests: nodeTests, node_fail: nodeFail, settle_exit: settleRun.code,
     reporter_check_ok: s.reporter_check_ok,
     exit_code: verdict.exitCode, ok: verdict.ok, full_scope: verdict.fullScope,
-    problems: verdict.failures, line,
+    problems: verdict.failures, line, judgement,
   }, null, 2)}\n`, 'utf8')
 }
 
-if (verdict.failures.length > 0) {
-  for (const p of verdict.failures) console.error(`F57-FAIL ${p}`)
-}
-// 🔴 只有"分母 = 跑到 = 全绿 = 无 HOLD"才允许出现 OK；判不了、只跑了一部分，都不许有这个词。
-if (verdict.ok) console.log('F57-OK 分母只有一个数，且它与 node --test 的退出码说同一件事')
+// 判词已经打在上面（`F57-FAIL` 那几行），不再往 stderr 复制一份 —— 控制台与 judgement.txt 同一份文字。
 process.exit(verdict.exitCode)

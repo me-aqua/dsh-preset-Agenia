@@ -661,7 +661,7 @@ test('PFL-09 冻结契约同步：冻结 ID 一条不少 · 体检指名 · 增�
     if (frozen.length !== FROZEN_COUNT) push('FROZEN-COUNT', `冻结清单 ${frozen.length} 条 ≠ ${FROZEN_COUNT}（历史冻结一条不许少）`)
     if (dupIds.length > 0) push('FROZEN-DUP', `冻结清单里有重复 ID：${dupIds.join(', ')}`)
     if (missingReg.length > 0) push('FROZEN-MISSING', `冻结 ID 从登记表里消失了：${missingReg.join(', ')}`)
-    if (missingDisk.length > 0) push('FROZEN-OFF-DISK', `冻结 ID 在盘上找不到对应的 test()：${missingDisk.join(', ')}`)
+    if (missingDisk.length > 0) push('FROZEN-OFF-DISK', `冻结 ID 在盘上找不到对应的用例：${missingDisk.join(', ')}`)
 
     // ②–④ 要读 `.tools/check-notes.mjs`（组长的格子，**不随 tests 树走**）：
     //     这棵树里没有它 ⇒ 判不了，记 HOLD 并写明理由（不许拿树外那一份冒充本树的读数）。
