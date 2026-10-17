@@ -1213,7 +1213,9 @@ function opHealthRead({ root, args, payload }) {
   mkdirSync(path.dirname(healthFile), { recursive: true })
   const written = writeJsonAtomic(healthFile, health)
   if (!written.ok) throw cliError(written.code, `health.json 写入失败：${written.message}`, { path: healthFile })
-  return { health, health_path: healthFile, workspace: ws, day, input_shape: Object.keys(input) }
+  // `progress` 出在**信封顶端**（与 `health` 平级）：`health.json` 的字段表 B3.6 冻结、`buildHealthCard`
+  // 只取 `status` / `reasons` ⇒ 「今天到哪一步了」只能从这一层原样带出来，一个数都不重算。
+  return { progress: verdict.progress, health, health_path: healthFile, workspace: ws, day, input_shape: Object.keys(input) }
 }
 
 // ── op：冻结会话包（`lib/packet.mjs` 的**入口**，不是第二份引擎）─────────────────────

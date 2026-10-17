@@ -33,6 +33,9 @@ export const HEALTH_REASON_CODES = Object.freeze({
   NO_UPDATE_TODAY: 'E_NO_UPDATE_TODAY',
   LOCAL_FAILED: 'E_LOCAL_FAILED',
   LOCAL_STALE: 'E_LOCAL_STALE',
+  /** 三场**一个都没登记**（今天还没开工）—— 它和 `LOCAL_INCOMPLETE` 是两档，读的人要分得开。 */
+  LOCAL_NOT_STARTED: 'E_LOCAL_NOT_STARTED',
+  /** 开了工但**没跑齐**（`done > 0`）。 */
   LOCAL_INCOMPLETE: 'E_LOCAL_INCOMPLETE',
   RECEIPT_MISSING: 'E_RECEIPT_MISSING',
   RECEIPT_ANCHOR: 'E_RECEIPT_ANCHOR',
@@ -56,11 +59,22 @@ const isFilledString = (v) => typeof v === 'string' && v.trim() !== ''
  *   `local` · `receipt` · `daily` · `route` · `reads`（7 份各自的 `{ok,code,path}`）。
  *   缺的键按"这一份还没读到"处理（`null`），**不许**因此抛错 —— 卡读不出来比卡判错更糟。
  *   加性可选键：`open_adopted_tickets`（未关闭的采纳票，B3.3）· `anchor_problems`（锚点核对结果）。
- * @returns {{status:'GREEN'|'RED'|'RUNNING'|'HOLD', reasons:Array<{code:string,detail:string,source_path:string|null}>}}
+ * @returns {{status:'GREEN'|'RED'|'RUNNING'|'HOLD', reasons:Array<{code:string,detail:string,source_path:string|null}>,
+ *            progress:{done:number,total:number,receipt:boolean}}}
+ *   `progress` = 「今天到哪一步了」：`done` = 三节点里 `state === 'done'` 的个数（与判定链同一个数组）·
+ *   `total` = `NODE_KEYS.length` · `receipt` = 回执**内容读到了没有**。**四个 status 都带** ——
+ *   `HOLD`（还没开工）那一档最需要 `0/3`。它只报进度，不解释红因（`status` / `reasons` 的读法不变）。
  */
 export function healthVerdict(input = {}) {
   const reasons = []
   const push = (code, detail, sourcePath) => reasons.push({ code, detail, source_path: sourcePath ?? null })
+
+  // 「到哪一步了」这三个数**只算一处**：
+  //   · `receipt` 与 GREEN 门槛是同一个判据（回执内容读到没有，不是路径在不在）⇒ 先算一次，三处共用；
+  //   · `done` 不在这里数 —— 各支直接拿判定链里那个 `done` 数组，免得出现第二份计数；
+  //   · `total` 取 NODE_KEYS.length，不写死字面量。
+  const hasReceipt = input?.receipt !== null && input?.receipt !== undefined
+  const progressOf = (doneList) => ({ done: doneList.length, total: NODE_KEYS.length, receipt: hasReceipt })
 
   const leases = { update: LEASES.update, local: LEASES.local, ...(isObject(input?.leases) ? input.leases : {}) }
   const nowIso = isFilledString(input?.now) ? input.now : clockNow().toISOString()
@@ -69,14 +83,16 @@ export function healthVerdict(input = {}) {
   const nodes = local === null ? [] : NODE_KEYS.map((key) => [key, isObject(local[key]) ? local[key] : null])
 
   // ① 没开工 ⇒ HOLD；开过工但状态缺 ⇒ RED（v1.12 的头两条）
+  //    这一支还没算出 `done` 数组（`nodes` 是空的）⇒ `done` 就是 0，用空数组过 `progressOf`。
   if (local === null) {
     if (input?.daily !== null && input?.daily !== undefined) {
       push(HEALTH_REASON_CODES.DATA_MISSING, '今天开过工（每日状态在），但本地状态还没有 —— 本地双评审没启动', localReadPath)
-      return { status: 'RED', reasons }
+      return { status: 'RED', reasons, progress: progressOf([]) }
     }
     return {
       status: 'HOLD',
       reasons: [{ code: HEALTH_REASON_CODES.NO_UPDATE_TODAY, detail: '今天还没有开工痕迹（既无本地状态也无每日状态）', source_path: localReadPath }],
+      progress: progressOf([]),
     }
   }
 
@@ -96,7 +112,7 @@ export function healthVerdict(input = {}) {
   }
 
   // ③ 技术评审：缺回执 ≠ 完成（v1.12 的第五条）
-  if (input?.receipt === null || input?.receipt === undefined) {
+  if (!hasReceipt) {
     const technicalDone = nodes.some(([name, n]) => name === 'technical' && n?.state === 'done')
     if (technicalDone) {
       push(HEALTH_REASON_CODES.RECEIPT_MISSING, '技术评审跑完了但没有回执 ⇒ 技术复盘未完成（缺回执不是"完成"）', input?.reads?.receipt?.path ?? null)
@@ -122,11 +138,18 @@ export function healthVerdict(input = {}) {
   }
 
   // ⑤ 状态判定（次序即 v1.12 的规则次序）：红压过一切；有新鲜的在跑 ⇒ RUNNING（≠ GREEN）
-  if (failed.length > 0 || expiredRunning.length > 0 || reasons.length > 0) return { status: 'RED', reasons }
-  if (running.length > 0) return { status: 'RUNNING', reasons: [] }
-  if (done.length === NODE_KEYS.length && input?.receipt !== null && input?.receipt !== undefined) return { status: 'GREEN', reasons: [] }
-  push(HEALTH_REASON_CODES.LOCAL_INCOMPLETE, `三场没跑齐（done=${done.length}/${NODE_KEYS.length}）`, localReadPath)
-  return { status: 'RED', reasons }
+  if (failed.length > 0 || expiredRunning.length > 0 || reasons.length > 0) return { status: 'RED', reasons, progress: progressOf(done) }
+  if (running.length > 0) return { status: 'RUNNING', reasons: [], progress: progressOf(done) }
+  if (done.length === NODE_KEYS.length && hasReceipt) return { status: 'GREEN', reasons: [], progress: progressOf(done) }
+  // 走到这里 = 没有别的红因、也没有在跑的作业，只是三场没跑齐。两档给两个码：
+  //   `done === 0` ⇒ 三场一个都没登记（今天还没开工）；`done > 0` ⇒ 开了工但没跑齐。
+  //   共用 `E_LOCAL_INCOMPLETE` 的时候这两种处境只有 `done=x/3` 的字面差别，读的人分不开。
+  if (done.length === 0) {
+    push(HEALTH_REASON_CODES.LOCAL_NOT_STARTED, `今天还没开工（三场一个都没登记，done=0/${NODE_KEYS.length}）`, localReadPath)
+  } else {
+    push(HEALTH_REASON_CODES.LOCAL_INCOMPLETE, `三场没跑齐（done=${done.length}/${NODE_KEYS.length}）`, localReadPath)
+  }
+  return { status: 'RED', reasons, progress: progressOf(done) }
 }
 
 /**

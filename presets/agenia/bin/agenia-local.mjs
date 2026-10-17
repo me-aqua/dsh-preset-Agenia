@@ -428,7 +428,10 @@ function opHealth(ctx) {
   const card = H.buildHealthCard({ input, verdict, extra: { open_adopted_tickets: openTickets, health_path: healthFile } })
   const written = writeJsonAtomic(healthFile, card)
   if (!written.ok) throw cliError(written.code, `health.json 写入失败：${written.message}`, { path: healthFile })
+  // `progress` 出在**信封顶端**（与 `health` 平级）：`health.json` 的字段表 B3.6 冻结、`buildHealthCard`
+  // 只取 `status` / `reasons` ⇒ 「今天到哪一步了」只能从这一层原样带出来，一个数都不重算。
   return {
+    progress: verdict.progress,
     health: card,
     health_path: healthFile,
     workspace,
