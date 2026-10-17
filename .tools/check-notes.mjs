@@ -1146,7 +1146,13 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    ⚠️ 它是**修好 `--workspace` 那条判定之后才冒出来的**（在那之前 `health-read`
   //    在 `E:\Harness` 上恒拒 `E_ROOT_REAL_BRAIN` ⇒ 这个目录从来没被建出来过）
   //    —— 也就是说：这条白名单的缺口，是"修好一处"当场带出来的第二处。
-  const housework = ['_archive', 'brain', ...RETIRED_ROLES]
+  // 🔴 2026-10-17 加 `state`：**引擎自己的落点**，位置 `<ws>/.team/state/{daily,local}/<day>.json`
+  //    （`daily-start` 写开工痕迹、`local-claim` / `local-mark` 写本地双评审状态）。
+  //    与 `brain` 同类：没有人会以为组里有个叫「state」的岗。
+  //    ⚠️ 和 `brain` 那次一模一样，它也是**被"补上一处缺口"当场带出来的**：
+  //    在这天之前 `local-*` 一次都没跑过（`audit.jsonl` 里 `local-*` 零条）⇒ `.team/state/local/`
+  //    从来没被建出来过 ⇒ `state` 这一格一直是绿的。补登记跑通之后，它当场红了。
+  const housework = ['_archive', 'brain', 'state', ...RETIRED_ROLES]
   const ghosts = roleDirs.filter((r) => !known.includes(r) && !housework.includes(r))
   add('office', '.team/ 下有没有预设之外的岗位目录（旧岗位留下的）',
     ghosts.length === 0, ghosts.length === 0 ? '干净' : `${ghosts.join(', ')} —— 改名成现在的岗位，或者归档掉`)

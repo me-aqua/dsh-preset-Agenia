@@ -190,14 +190,20 @@ def main():
     w["A2"].font = NOTE; w["A2"].alignment = WRAP
     w.append(()); w.append(("#", "级别", "发现（一句话）", "处置", "票号 / 落点", "下一步")); head(w, 6)
     n = 0
+    fmap = (jload(os.path.join(out_dir, "findings-map.json"), {}) or {}).get("map", {})
     for name, d in findings:
         tag = "第一场" if name == "技术评审.findings.json" else ("第二场" if name.startswith("技术评审.2") else name)
+        per = fmap.get(name, {})
         for f in (d.get("findings") or []):
             n += 1
             fid = f.get("id", "?")
+            landing = per.get(fid)
             w.append((tag + " · " + str(fid), f.get("severity", "?"), f.get("title", ""),
-                      "采纳" if fid in ticket_ids else "见落点",
-                      fid if fid in ticket_ids else "（组长回执里写清）", f.get("next_step", "")))
+                      "采纳" if landing else "🔴 未登记落点",
+                      landing or "（组长还没写 findings-map.json —— 不许猜）",
+                      f.get("next_step", "")))
+        if per.get("_ticket"):
+            w.append(("", "", "▲ " + tag + "：" + per["_ticket"], "", "", ""))
     if n == 0:
         w.append(("—", "—", "今天没有 findings（或作业没交）", "—", "—", "—"))
     widths(w, [("A", 8), ("B", 8), ("C", 62), ("D", 16), ("E", 26), ("F", 40)])
