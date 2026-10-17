@@ -68,8 +68,9 @@ const ROLE_TEXTS = [
   'team/design.md', 'team/dev.md', 'team/test.md', 'team/review.md', 'team/retro.md', 'team/hire.md',
   'team/memory-judge.md', 'team/memory-review.md', 'team/conversation-review.md', 'team/technical-review.md',
 ]
-/** 组长侧那五份（`leaderOrder` 里的 .md 键）。 */
-const LEADER_TEXTS = ['leader.md', 'work-guidelines.md', 'persona.md', 'me-aqua.md', 'style.md']
+/** 组长侧那几份（`leaderOrder` 里的 .md 键）—— ⚠️ 不含 `me-aqua.md`：它 2026-10-17 已归档出预设
+ *  （关于老板的事实改由共享记忆 `boss` 类承载）。 */
+const LEADER_TEXTS = ['leader.md', 'work-guidelines.md', 'persona.md', 'style.md']
 
 /**
  * 冻结行数表（口径：剥 BOM 后数 `\n`；CRLF 算一个换行）。
@@ -80,7 +81,6 @@ const FROZEN_LINES = Object.freeze({
   'leader.md': 107,
   'work-guidelines.md': 344,
   'persona.md': 19,
-  'me-aqua.md': 159,
   'style.md': 99,
   'team/design.md': 11,
   'team/dev.md': 11,

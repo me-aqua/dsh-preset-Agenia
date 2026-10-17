@@ -406,38 +406,22 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
           : `名单 ${dtKeys.length} 个 == 已启用的具名实例 ${enabledNamed.length} 个，模式逐条一致`))
   }
 
-  // ── ⑥ 文书：AGENTS.md 说的项数必须 = 实测的增量项数 ────────────────────────
-  // 🔴 2026-10-15（I4c）**换判据**：原来写死「差异是六项」—— 它只读文书、不读组合，
-  //    于是"文书说的数"和"实测的数"分成两家：装完之后实测 10 项，而这条照样绿（**读不出谎**）。
-  //    ⇒ 改成**拿文书里的数字与实测对账**：今天 6 == 6（绿）；装完把 AGENTS.md 改成十项、
-  //      实测 10 == 10（还是绿）；而"装了没改文书"那一段**当场红**。
-  //    三处都要对上（「差异是六项」「正好是上面这六项」「那六项是刻意加的能力」）。
-  //    🔴 2026-09-28 保留的那半条来历：**权威数字只在 AGENTS.md 一处**（README 里没有这句话，
-  //      当年给它加这条是钉了别处的措辞 ⇒ 后来只留它真正说的那一句全称承诺）。
-  const agents = join(REPO, 'AGENTS.md')
-  if (existsSync(agents)) {
-    const text = read(agents)
-    const CN = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }
-    // ⚠️ 三处**逐句**取，别用"那 + 数字 + 项"那种宽式子 —— AGENTS.md 里还有「`roots` 那一项」
-    //    （2026-09-28 的史记），宽式子会把它读成"差异是一项"（第一次跑就是这么假红的）。
-    const claims = [
-      ...text.matchAll(/差异是([一二三四五六七八九十]+)项/g),
-      ...text.matchAll(/正好是上面这([一二三四五六七八九十]+)项/g),
-      ...text.matchAll(/那([一二三四五六七八九十]+)项是刻意/g),
-    ].map((m) => ({ word: m[1], n: CN[m[1]] }))
-    const bad = claims.filter((c) => c.n !== onlyAge.length)
-    if (!oracleThere) {
-      pending('composition', 'AGENTS.md 说的差异项数 = 组合实测的增量项数（§3b）',
-        '**挂起** —— oracle 不在 ⇒ 实测项数算不出来（上面那条已经红了）')
-    } else {
-      yes('composition', 'AGENTS.md 说的差异项数 = 组合实测的增量项数（§3b：多出来的必须写下来）',
-        claims.length > 0 && bad.length === 0,
-        claims.length === 0
-          ? 'AGENTS.md 里找不到「差异是 N 项」那句话 —— 规矩本身没了'
-          : (bad.length === 0
-            ? `文书 ${claims.map((c) => c.word).join(' / ')} 项 · 实测 ${onlyAge.length} 项`
-            : `文书说 ${bad.map((c) => c.word).join(' / ')} 项，实测 ${onlyAge.length} 项 —— 改文书，别改这个数`))
-    }
+  // ── ⑥ 能力契约：实测的增量项数必须 = 契约常量 ──────────────────────────────
+  // 🔴 2026-10-17（老板要求清空 `AGENTS.md`、知识一律走记忆）**换锚点**：
+  //    权威数字原来只在 `AGENTS.md` §3b 一处；那份清空之后，数字**钉在这里** ——
+  //    本脚本是**唯一还在读组合**的那个，契约钉在它自己的常量上，比钉在散文里更难撒谎。
+  //    来历与全文：记忆条目 `capability-rows-set-vs-standard` · 归档 `.team/_archive/AGENTS.md-20261017/`。
+  //    规则照旧：**多出来的每一项都必须写下来** —— 现在"写下来" = 改这个常量（+ 同批改记忆条目）。
+  const EXPECTED_ONLY_AGENIA = 10
+  if (!oracleThere) {
+    pending('composition', '组合实测的增量项数 = 能力契约（本脚本常量）',
+      '**挂起** —— oracle 不在 ⇒ 实测项数算不出来（上面那条已经红了）')
+  } else {
+    yes('composition', `组合实测的增量项数 = 能力契约（${EXPECTED_ONLY_AGENIA} 项：多出来的必须写下来）`,
+      onlyAge.length === EXPECTED_ONLY_AGENIA,
+      onlyAge.length === EXPECTED_ONLY_AGENIA
+        ? `实测 ${onlyAge.length} 项 = 契约`
+        : `实测 ${onlyAge.length} 项 ≠ 契约 ${EXPECTED_ONLY_AGENIA} 项 —— 加/减能力行要同批改这个常量 + 记忆条目`)
   }
   // 旧口径：只拦 README 又写回八项那一种措辞。它钉的是 README 的散文，留着。
   // 另加一条：README 那句"只会多不会少"是**对外的全称承诺**，是它唯一会误导人的话。
@@ -445,7 +429,7 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   if (existsSync(readme)) {
     const text = read(readme)
     yes('composition', 'README 不再说差异是"八项"',
-      !/(这八项|差异是八行|差异是八项)/.test(text), '差异的项数以 AGENTS.md §3b 与实测为准')
+      !/(这八项|差异是八行|差异是八项)/.test(text), '差异的项数以能力契约（本脚本常量）与实测为准')
     yes('composition', 'README 里那句全称承诺还在（标准模式有的她一样不少）',
       /标准模式有的工具她一样不少/.test(text),
       'README 的"只会多不会少"没了 —— 那是这份预设对外唯一的能力承诺')
@@ -657,16 +641,16 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    先给"怎么干活"，再给"队伍知道什么"。
   //    ⚠️ `memory` 与 `roster` / `board` 同族：**算出来的**（inject.js 现读库 + 按受众分），**不是文件** ——
   //    所以下面口径 9 那张"目录里每一份 `.md`"的清单里没有它，**这是对的，不是漏了**。
-  yes('preset', 'leaderOrder 是 leader → work-guidelines → memory → roster → board → persona → me-aqua → style',
-    leader.join(',') === 'leader,work-guidelines,memory,roster,board,persona,me-aqua,style', leader.join(' → '))
+  yes('preset', 'leaderOrder 是 leader → work-guidelines → memory → roster → board → persona → style',
+    leader.join(',') === 'leader,work-guidelines,memory,roster,board,persona,style', leader.join(' → '))
   // persona（她是谁）与 style（她怎么说话）排最后：越靠后离请求末尾越近，权重越高。
   // ⚠️ style **同时**是 inject.js 第 ⑤ 件事读的那个文件 —— 快照这条路和尾巴那条路读同一个文件，
   //    所以永远不会分叉（2026-09-24 老板定：不再分"开头注入的"和"每 n 步注入的"两份）。
   // ⚠️ **2026-09-26 改**：`me-aqua.md`（关于老板的那份）加在 `persona` 之后、`style` 之前
   //    —— 组长 2026-09-25 拍的（`方案清单-回滚后.md` §三.2）。这条断言跟着事实改，
   //    不是删：它仍然钉着"style 排最后"和"me-aqua 就在它前面"。
-  yes('preset', 'leaderOrder 里 style 排最后、me-aqua 紧随其后（口径 13）',
-    leader[leader.length - 1] === 'style' && leader[leader.length - 2] === 'me-aqua',
+  yes('preset', 'leaderOrder 里 style 排最后（口径 13：语气压在最后）',
+    leader[leader.length - 1] === 'style',
     leader.slice(-2).join(' → '))
   yes('preset', 'memberOrder 是 work-guidelines → memory → charter（组员不读 leader / persona）',
     member.join(',') === 'work-guidelines,memory,charter', member.join(' → '))
@@ -769,12 +753,12 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    ⚠️ 探针 `I15` 钉的是同一件事的**产物那半边**（真贴出去的那一行）。
   {
     // ⚠️ 路径都从 `REPO` 拼（**不看 cwd**）：从别的目录跑这个脚本时，相对路径会静默读到"没有"。
-    const staleDocs = [join(REPO, 'AGENTS.md'), join(PRESET, '说明.md'), join(PRESET, 'me-aqua.md')]
+    const staleDocs = [join(REPO, 'AGENTS.md'), join(PRESET, '说明.md'), join(REPO, '.team', '_archive', 'me-aqua.md-20261017', 'me-aqua.md')]
     const dirty = staleDocs
       .map((p) => [p, existsSync(p) ? read(p) : undefined])
       .filter(([, t]) => t === undefined || /疲劳|亲近/.test(t))
       .map(([p, t]) => (t === undefined ? `${p}（读不到）` : `${p} 里 ${(t.match(/疲劳|亲近/g) ?? []).length} 处`))
-    yes('preset', '改名彻底：`AGENTS.md` · `说明.md` · `me-aqua.md` 里旧维度名 `疲劳` / `亲近` 一个字都不剩（口径 6）',
+    yes('preset', '改名彻底：`AGENTS.md` · `说明.md` · 归档的 `me-aqua.md` 里旧维度名 `疲劳` / `亲近` 一个字都不剩（口径 6）',
       dirty.length === 0,
       dirty.length === 0 ? '三份都干净' : `还写着旧名字：${dirty.join(' · ')}`)
   }
@@ -791,10 +775,15 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     /分数是调语气用的/.test(moodText ?? ''),
     '这句话是"分数只用来调语气"那条口径的唯一落点；删了它，下一个读的人会以为分数是绩效')
 
-  const mePath = join(PRESET, 'me-aqua.md')
-  const meText = existsSync(mePath) ? read(mePath) : undefined
-  yes('preset', '`me-aqua.md` 在（口径 13）', meText !== undefined,
-    meText === undefined ? '文件不存在' : `${meText.length} 字符`)
+  // 🔴 **2026-10-17（老板：`me-aqua` 归档、不要留在 presets 里）**：这份文件**不在**预设目录里了 ——
+  //    关于老板的事实改由**共享记忆的 `boss` 类**承载（`memory` 那一段，全条注入）。
+  //    ⇒ 原来那两条"它在不在 / 它有没有进 leaderOrder"翻面成：**不在** + **归档副本还在**。
+  const meArcPath = join(REPO, '.team', '_archive', 'me-aqua.md-20261017', 'me-aqua.md')
+  const meText = existsSync(meArcPath) ? read(meArcPath) : undefined
+  yes('preset', '`me-aqua.md` 不在预设目录里（关于老板的事实走共享记忆 `boss` 类）',
+    !existsSync(join(PRESET, 'me-aqua.md')), '还在 presets 里 ⇒ 它又会回到注入层，与记忆那条路分叉')
+  yes('preset', '`me-aqua.md` 的归档副本在（全文没丢）', meText !== undefined,
+    meText === undefined ? '归档副本不存在' : `${meText.length} 字符`)
   // 🔴 **2026-09-26 晚 · 换判据，不换文案**（评审条件 ⑤，测试位）。
   //    原来是「`me-aqua.md` 的「下班：HH:MM」**机器读得出来**」—— 它测的东西**已经死了**：
   //    唤起被砍 ⇒ `ME_FILE` / `minutesToOffWork` / 「距下班」那条信号整个删掉，
@@ -808,9 +797,10 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     !/ME_FILE|minutesToOffWork|距下班/.test(injectSrc),
     ['ME_FILE', 'minutesToOffWork', '距下班'].filter((w) => injectSrc.includes(w)).join('、')
       || '（干净：一个都没有）')
-  yes('preset', '`me-aqua.md` 真的进了 `leaderOrder`（口径 13）', leader.includes('me-aqua'),
-    '写了没接上 = 它一辈子不进提示词（假绿比红更坏）')
-  yes('preset', '`me-aqua.md` 里没有「他会突然消失」那一节（组长 09-26 点名删）',
+  yes('preset', '`me-aqua` 不在 `leaderOrder` 里（老板 10-17：关于老板的事实走共享记忆）',
+    !leader.includes('me-aqua'),
+    '又写回注入清单 ⇒ 与共享记忆 `boss` 类两份来源，迟早分叉')
+  yes('preset', '归档的 `me-aqua.md` 里没有「他会突然消失」那一节（组长 09-26 点名删）',
     !/突然消失/.test(meText ?? ''),
     '留着它 ⇒ 老板长时间不说话会被她解释成"正常"，而不是张嘴问一句')
 
@@ -1045,7 +1035,7 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //       换成"（1）先按 `<!--([\s\S]*?)-->` 逐条取出注释、（2）再看**体内**有没有换行"，
   //       八格对照（单行×2 / 真跨行×3 / CRLF×2 / 无注释 / 未闭合）全对 —— 见 `.team/leader/2026-10-01/log.md`。
   //       ⚠️ **别改回成一行正则**：修它时先跑那八格，两种坏法（假红 / 假绿）各栽过一次。
-  const snapshotDocs = ['persona.md', 'leader.md', 'work-guidelines.md', 'me-aqua.md', 'style.md']
+  const snapshotDocs = ['persona.md', 'leader.md', 'work-guidelines.md', 'style.md']
   const multilineIn = (text) => {
     for (const m of text.matchAll(/<!--([\s\S]*?)-->/g)) if (/\r?\n/.test(m[1])) return true
     return false

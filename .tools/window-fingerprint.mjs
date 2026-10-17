@@ -31,7 +31,6 @@ const FILES = [
   'presets/agenia/style.md',
   'presets/agenia/mood.md',
   'presets/agenia/persona.md',
-  'presets/agenia/me-aqua.md',
   'presets/agenia/leader.md',
   'presets/agenia/work-guidelines.md',
   'presets/agenia/说明.md',
