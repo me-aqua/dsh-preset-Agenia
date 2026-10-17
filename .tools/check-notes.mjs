@@ -1432,15 +1432,23 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
           ? `${prevDay} 的 phase 还停在 reviewing / finished_at 空 —— 复核开跑了却没有收口。`
             + '**补账那一步会把 review 的 done 写回 phase=done**：先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark`'
           : prevPhase === 'failed'
-            ? `${prevDay} 的 phase = failed —— **复核失败了，这一轮没走完**。`
-              + '先看复核作业为什么失败（`state/jobs/` 里那一份的 `error` / `finished_at`），**别直接 `job-mark --state done`**：'
-              + '失败要先处置（重跑一次复核），处置完再结账'
+            ? `${prevDay} 的 phase = failed —— **这一轮没走完**（失败可能出在判决，也可能出在复核）。`
+              + '先翻 `state/jobs/` 里那几份记录的 `failure_reason` 与 `finished_at`，认清是哪一环失败的，'
+              + '**别直接 `job-mark --state done`**：失败要先处置（重跑那一环），处置完再结账'
             : (prevPhase === 'awaiting_review_start' && undelivered.length > 0)
               ? `${prevDay} 的 phase 停在 awaiting_review_start，**而复核作业已经在盘上、还没交活**：`
                 + undelivered.map((j) => `${j.job_id}（state=${j.state ?? '?'} / finished_at=${j.finished_at ?? '空'}）`).join('、')
                 + ' —— 这一种以前没有任何机器会喊。先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark` 把 phase 写回 done'
               : `${prevDay} 的 phase = ${prevPhase}`
-                + (prevReviewJobs.length > 0 ? ` · 复核作业 ${prevReviewJobs.length} 份都已交活` : ' · 还没有复核作业记录（正常态）'))
+                // 🔴 「都已交活」必须由 `undelivered` 派生，不许另算（2026-10-17 重审 A）：
+                //    另算会造出"判绿 + 说 2 份都已交活"，而其中一份其实是 failed（05 那一段只看 running，看不出来）。
+                + (prevReviewJobs.length === 0
+                    ? ' · 还没有复核作业记录（正常态）'
+                    : undelivered.length === 0
+                      ? ` · 复核作业 ${prevReviewJobs.length} 份都已交活`
+                      : ` · 🔴 有 ${undelivered.length} 份**没交活**：`
+                        + undelivered.map((j) => `${j.job_id}（state=${j.state ?? '?'}）`).join('、')
+                        + ` —— 而 phase 已经写成 ${prevPhase}，**这两件事对不上**（查是谁把它结掉的）`))
   }
 
   // ⑤ 挂着的作业不许永远"正在跑"（2026-10-16 加）
