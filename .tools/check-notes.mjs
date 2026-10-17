@@ -1419,20 +1419,28 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     })()
     // 起了、但**没交活**（没 done 或没有 finished_at）—— 这一族是断头
     const undelivered = prevReviewJobs.filter((j) => j.state !== 'done' || !j.finished_at)
-    const stuck = prevPhase === 'reviewing' || (prevPhase === 'awaiting_review_start' && undelivered.length > 0)
-    yes('office', `昨天（${prevDay}）那一轮记忆更新走完了（复核起了就必须交活；phase 不许停在 reviewing / awaiting_review_start）`,
+    // 🔴 `failed` 一律算断头（2026-10-17 评审 R-1）：复核**失败**就是没走完，不需要再看有没有残留记录。
+    //    `reviewing` 同理（开跑却没结果）。`awaiting_review_start` 要看作业记录 —— 它有"还没开跑"的正常态。
+    const stuck = prevPhase === 'reviewing'
+      || prevPhase === 'failed'
+      || (prevPhase === 'awaiting_review_start' && undelivered.length > 0)
+    yes('office', `昨天（${prevDay}）那一轮记忆更新走完了（复核起了就必须交活；phase 不许停在 reviewing / failed / awaiting_review_start）`,
       !stuck,
       !hasPrev
         ? `${prevDay} 没有 update 状态 —— 那天没跑记忆更新（这一条不判）`
         : prevPhase === 'reviewing'
           ? `${prevDay} 的 phase 还停在 reviewing / finished_at 空 —— 复核开跑了却没有收口。`
             + '**补账那一步会把 review 的 done 写回 phase=done**：先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark`'
-          : undelivered.length > 0
-            ? `${prevDay} 的 phase 停在 awaiting_review_start，**而复核作业已经在盘上、还没交活**：`
-              + undelivered.map((j) => `${j.job_id}（state=${j.state ?? '?'} / finished_at=${j.finished_at ?? '空'}）`).join('、')
-              + ' —— 这一种以前没有任何机器会喊。先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark` 把 phase 写回 done'
-            : `${prevDay} 的 phase = ${prevPhase}`
-              + (prevReviewJobs.length > 0 ? ` · 复核作业 ${prevReviewJobs.length} 份都已交活` : ' · 还没有复核作业记录（正常态）'))
+          : prevPhase === 'failed'
+            ? `${prevDay} 的 phase = failed —— **复核失败了，这一轮没走完**。`
+              + '先看复核作业为什么失败（`state/jobs/` 里那一份的 `error` / `finished_at`），**别直接 `job-mark --state done`**：'
+              + '失败要先处置（重跑一次复核），处置完再结账'
+            : (prevPhase === 'awaiting_review_start' && undelivered.length > 0)
+              ? `${prevDay} 的 phase 停在 awaiting_review_start，**而复核作业已经在盘上、还没交活**：`
+                + undelivered.map((j) => `${j.job_id}（state=${j.state ?? '?'} / finished_at=${j.finished_at ?? '空'}）`).join('、')
+                + ' —— 这一种以前没有任何机器会喊。先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark` 把 phase 写回 done'
+              : `${prevDay} 的 phase = ${prevPhase}`
+                + (prevReviewJobs.length > 0 ? ` · 复核作业 ${prevReviewJobs.length} 份都已交活` : ' · 还没有复核作业记录（正常态）'))
   }
 
   // ⑤ 挂着的作业不许永远"正在跑"（2026-10-16 加）
