@@ -131,6 +131,22 @@ const JOB_ROWS = [
 const JOB_ROLES = JOB_ROWS.map((j) => j.role)
 
 /**
+ * 每条作业行 `toolFilter.deny` 的**期望集**（与下面切块那处 `.sort()` 同口径：排序后拼串比）。
+ *
+ * 基线：四条作业行都**必须** deny 掉 `workflow` / `ralph`（作业不该能再编排、也不该能自迭代）。
+ * 额外：**判决岗还必须 deny `proposal_file`** —— 老板 2026-10-17 定：「判决应该不能提候选」。
+ *   ⇒ 它判的是别人提的案子，自己再提一个就成了既当运动员又当裁判。
+ *
+ * ⚠️ 为什么做成"按行推导"而不是写死一句 `=== 'ralph,workflow'`：
+ *   `mig-test-whitelist-vs-blacklist-01` —— **加一个合法的项，它会不会红？**
+ *   写死那两串时，判决岗加上 `proposal_file`（合法且有据）**也会红** ⇒ 那是一条 change-detector，不是安全边界。
+ *   现在这一条同时钉住两件事：**该有的必须有**（少了红）、**不该有的不许有**（多了红）。
+ */
+const JOB_DENY_BASE = ['ralph', 'workflow']
+const JOB_DENY_EXTRA = Object.freeze({ 'tool-job-memory-judge': ['proposal_file'] })
+const expectedJobDeny = (rowId) => [...JOB_DENY_BASE, ...(JOB_DENY_EXTRA[rowId] ?? [])].sort().join(',')
+
+/**
  * 按 `- id:` 把**有效行**（已剔注释）切成块 —— 判"某一行自己的 config 长什么样"用。
  * 顶层两格、组内四格都收；块的 `lines` 是那一行自己后面跟着的行，不含 `- id:` 那行本身。
  */
@@ -324,7 +340,8 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     // ── ④ 四条作业行（`tool-job-*`）的结构：硬门全靠这几格 ────────────────────
     // 判据**按目标自身推导**：每一条 `tool-job-<角色>` 行都必须
     //   · 工具名 = `job_<角色>`（`-` 换 `_`）· `backgroundMode: one-shot`（默认前台等 = 把组长卡住）
-    //   · `maxDepth: 1`（作业自己不许再招人）· `toolFilter.deny` **恰为** `[workflow, ralph]`
+    //   · `maxDepth: 1`（作业自己不许再招人）· `toolFilter.deny` = **基线那两条 + 这一行自己的额外项**
+    //     （基线 `[workflow, ralph]`；目前只有判决岗多一个 `proposal_file` —— 老板 2026-10-17 定，见 `JOB_DENY_EXTRA`）
     //   · 开着 · 不写 `enableRunInBackground`（写了等于把 `run_in_background` 参数拿掉 —— 拍板 I1）
     // ⚠️ 活体现在**一条都没有**（装前）⇒ 这一条是**空集**；装完 4 条逐条判。
     //    读数里必须写明"现在是空的" —— 空集不许读成"验过了"（公共记忆 §三）。
@@ -347,15 +364,15 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       if (!JOB_ROLES.includes(role)) jobProblems.push(`${b.id}：角色 ${role} 不在编制里`)
       if (background !== 'one-shot') jobProblems.push(`${b.id}：backgroundMode 实得 ${JSON.stringify(background)}，应为 one-shot`)
       if (String(depth) !== '1') jobProblems.push(`${b.id}：maxDepth 实得 ${JSON.stringify(depth)}，应为 1`)
-      if (deny.join(',') !== 'ralph,workflow') {
-        jobProblems.push(`${b.id}：toolFilter.deny 实得 [${deny.join(', ')}]，应恰为 [workflow, ralph]`)
+      if (deny.join(',') !== expectedJobDeny(b.id)) {
+        jobProblems.push(`${b.id}：toolFilter.deny 实得 [${deny.join(', ')}]，应恰为 [${expectedJobDeny(b.id).split(',').reverse().join(', ')}]`)
       }
       if (/^\s*enableRunInBackground\s*:/m.test(body)) {
         jobProblems.push(`${b.id}：写了 enableRunInBackground —— 那会把 run_in_background 参数拿掉（拍板 I1）`)
       }
       if (/^\s*disabled:\s*true\s*$/m.test(body)) jobProblems.push(`${b.id}：作业行是关着的 —— 那四条都开着`)
     }
-    yes('composition', '四条作业行（tool-job-*）的结构 = one-shot + maxDepth:1 + deny workflow/ralph（装前是空集）',
+    yes('composition', '四条作业行（tool-job-*）的结构 = one-shot + maxDepth:1 + deny（基线 workflow/ralph；判决岗另加 proposal_file）（装前是空集）',
       jobProblems.length === 0,
       jobProblems.length > 0
         ? jobProblems.join('；')

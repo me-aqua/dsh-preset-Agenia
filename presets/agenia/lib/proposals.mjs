@@ -235,6 +235,185 @@ export function poolSize(root) {
 }
 
 /**
+ * **池子行 / 条目的发号口径**：`<kind>-<YYYYMMDD>-<seq:04>`（`seq` 从 1 数）。
+ * 只有这一处拼它 —— `appendProposal` 与 `appendProposalDeduped` 必须是同一套号。
+ */
+function poolIdOf(kind, day, seq) {
+  return `${kind}-${String(day).replace(/-/g, '')}-${String(seq).padStart(4, '0')}`
+}
+
+/**
+ * **一条池子记录**（只有这一处拼它）。
+ *
+ * 为什么单独拎出来：`--op proposal-import` 写出来的行与 `proposal_file` 工具写出来的行
+ * 必须**逐字同形**（`readPool` / `opJudgePending` / `priorImportVerdict` / 判决那一侧
+ * 都按这些名字读）。两处各拼一遍 = 第二个来源，迟早分叉。
+ */
+function poolRecordOf(spec) {
+  const {
+    kind, importedId, at, seq, source, sha256, contentSha256,
+    baseSnapshot, updateGeneration, reviewAttempt, payload,
+  } = spec
+  return {
+    schema: POOL_SCHEMA,
+    kind,
+    imported_id: importedId,
+    imported_at: at,
+    seq,
+    source,
+    sha256: String(sha256).toLowerCase(),
+    content_sha256: contentSha256,
+    base_snapshot: baseSnapshot,
+    update_generation: updateGeneration,
+    review_attempt: reviewAttempt,
+    payload,
+  }
+}
+
+/** 追加后的整份池子文本：**已有行原样** + 新的一行（最后一行也带 `\n`）。 */
+function poolTextWith(pool, record) {
+  const head = pool.entries.map((e) => JSON.stringify(e)).join('\n')
+  return `${head}${head === '' ? '' : '\n'}${JSON.stringify(record)}\n`
+}
+
+/**
+ * 判重：池子里有没有「**同一句 `source` 且同一段正文**」的那一行。
+ *
+ * 判重键是 `(source, sha256(text))` —— **不是** `priorImportVerdict` 那一支。
+ * 那一支是**草稿完整性**规则（同一个 source 第二次导入、声明哈希不同 ⇒ `E_ARG_HASH`），
+ * 与"同一个出处换了内容再来 ⇒ 必须收"正好相反。两条规则各有各的用处，别互相顶替。
+ *
+ * 同内容、不同出处 ⇒ **不算重复**（出处不同就是两条不同的引用事实）。
+ *
+ * @param {Array} poolEntries `readPool` 的 `entries`
+ * @param {{source: string, sha256: string}} key
+ * @returns {object|null} 命中的那一行（原样返回，报文要它的 `imported_id` / `seq`）
+ */
+export function duplicateProposalOf(poolEntries, { source, sha256 } = {}) {
+  const want = String(sha256 ?? '').toLowerCase()
+  return (Array.isArray(poolEntries) ? poolEntries : [])
+    .find((e) => e?.source === source && String(e?.sha256).toLowerCase() === want) ?? null
+}
+
+/**
+ * 池子锁的**有界等待**：每 `retryMs` 重抢一次，累计不超过 `waitMs`。
+ *
+ * 为什么要在这里等（`acquireLock` 自己不替调用方等）：活人占着锁该怎么等，是**调用方**的事
+ * （`lib/atomic.mjs` 那一段注释写着；`acquireDayLock` 有预算循环、route / brain 立刻拒）。
+ * 改 `acquireLock` 去替所有人等，会改掉那两处的时序。
+ *
+ * `E_LOCK_STALE` **不等** —— 持有者已经死了/过期了，再等也不会自己变好；那是要人点头才回收的一格。
+ *
+ * 为什么 `await` 而不是同步睡：这个函数在**工具调用里**跑，同步阻塞最多 2 秒会把整个
+ * 事件循环（别的会话、别的工具）一起顶住。
+ */
+async function acquirePoolLock(root, { waitMs = 2000, retryMs = 50 } = {}) {
+  const deadline = Date.now() + waitMs
+  for (;;) {
+    const lock = acquireLock(poolLockPath(root), { purpose: 'proposal-pool' })
+    if (lock.ok) return lock
+    if (lock.code === 'E_LOCK_STALE') return lock
+    if (Date.now() >= deadline) return lock
+    await new Promise((resolve) => { setTimeout(resolve, retryMs) })
+  }
+}
+
+/**
+ * **读池 → 判重 → 发号 → 原子追加，全在**一次** `acquireLock` 里**（一个动作 = 一条候选）。
+ *
+ * 为什么不"先自己拿锁、再调 `appendProposal`"：`appendProposal` 自己会拿同一把锁，
+ * `openSync(...,'wx')` 不可重入 ⇒ 自己撞自己（第二次直接 `E_LOCK_HELD`）。
+ * 为什么不"先无锁读池判重、再追加"：两次调用之间有一个窗口，两个并发调用都能通过判重，
+ * 于是池子里长出两条同源候选 —— 这个函数存在就是为了关掉那个窗口。
+ *
+ * 落地形状与 `appendProposal` 完全一致（同一套发号、同一份记录拼装、同一条原子写路径）：
+ * 已有行原样 + 新的一行，同目录临时件 + rename 写回。**不走追加写**（追加写在崩溃时会留半行，
+ * 而半行让整份池子 `E_DATA_CORRUPT`）。
+ *
+ * 错误一律**返回**（不抛）：调用方要把 `E_PROPOSAL_DUPLICATE` 与"写不进去"分开报，
+ * 而两者都不是"程序坏了"。
+ *
+ * @param {string} root 脑根
+ * @param {object} spec `{kind?, source, sha256, day, at, payloadOf|payload, baseSnapshot?, updateGeneration?, reviewAttempt?}`
+ *   · `payloadOf({seq, imported_id, entry_id})` —— 入池的 `payload`（编号要在锁里才定得下来，所以收函数）
+ * @param {{waitMs?: number, retryMs?: number}} [options] 锁等待预算
+ * @returns {Promise<object>} 成功 `{ok:true, imported_id, entry_id, imported_at, path, seq, content_sha256, …}`
+ *   · 重复 `{ok:false, code:'E_PROPOSAL_DUPLICATE', message, existing}`
+ *   · 写不进去 `{ok:false, code: <底层码>, message}`（`E_LOCK_HELD` / `E_LOCK_STALE` / `E_TXN_IO` / `E_DATA_CORRUPT`）
+ */
+export async function appendProposalDeduped(root, spec = {}, options = {}) {
+  const {
+    kind = 'proposal', source, sha256, payload: givenPayload, payloadOf,
+    day, at, baseSnapshot = null, updateGeneration = null, reviewAttempt = null,
+  } = spec
+  // 🔴 这里**不** `mkdirSync`（原来那一行在锁外：权限不足 / 路径是个文件时抛的是裸 `EACCES`/`EEXIST`，
+  //    报文不以码开头，`proposalFileRun` 那边接不住 —— 评审 R8）。
+  //    两处建目录都在库里面，而且都**返回**码、不抛：
+  //      · 锁目录 —— `acquireLock` 自己建，建不出来返回 `E_TXN_IO`；
+  //      · 池子目录 —— `writeFileAtomic` 自己建，建不出来返回 `E_TXN_IO`。
+  //    ⇒ 这一层于是没有任何"锁外的裸 fs 调用"；两种失败都变成返回码，工具那边折成 `E_PROPOSAL_IO`。
+  const lock = await acquirePoolLock(root, options)
+  if (!lock.ok) {
+    return { ok: false, code: lock.code, message: `候选池锁拿不到：${lock.message}`, info: lock.info ?? null }
+  }
+  try {
+    const pool = readPool(root)
+    if (!pool.ok) return { ok: false, code: pool.code, message: pool.message, path: pool.path }
+    const prior = duplicateProposalOf(pool.entries, { source, sha256 })
+    if (prior !== null) {
+      return {
+        ok: false,
+        code: 'E_PROPOSAL_DUPLICATE',
+        message: `候选池里已经有「同一句出处 + 同一段正文」的那一行：${prior.imported_id}（第 ${prior.seq} 行）`,
+        existing: prior,
+        path: pool.path,
+      }
+    }
+    const seq = pool.entries.length + 1
+    const importedId = poolIdOf(kind, day, seq)
+    // `entry.id` 与 `imported_id` 是**同一个号**，只换前缀（`proposal` → `cand`）。
+    const entryId = poolIdOf('cand', day, seq)
+    const payload = typeof payloadOf === 'function'
+      ? payloadOf({ seq, imported_id: importedId, entry_id: entryId })
+      : givenPayload
+    const record = poolRecordOf({
+      kind,
+      importedId,
+      at,
+      seq,
+      source,
+      sha256,
+      contentSha256: contentShaOf(payload),
+      baseSnapshot,
+      updateGeneration,
+      reviewAttempt,
+      payload,
+    })
+    const written = writeFileAtomic(pool.path, poolTextWith(pool, record))
+    if (!written.ok) {
+      return { ok: false, code: written.code, message: `候选池追加失败：${written.message}`, path: pool.path }
+    }
+    return {
+      ok: true,
+      code: null,
+      imported_id: importedId,
+      entry_id: entryId,
+      imported_at: at,
+      path: pool.path,
+      seq,
+      content_sha256: record.content_sha256,
+      sha256: record.sha256,
+      source,
+      kind,
+      payload,
+      bytes: written.bytes,
+    }
+  } finally {
+    releaseLock(poolLockPath(root))
+  }
+}
+
+/**
  * **append-only 追加一行**（持池子锁）。
  *
  * 追加的落地形状：把"已有行原样 + 新的一行"原子写回（同目录临时件 + rename）。
@@ -256,24 +435,12 @@ export function appendProposal(root, spec = {}) {
     const pool = readPool(root)
     if (!pool.ok) throw brainError(pool.code, pool.message, { path: pool.path })
     const seq = pool.entries.length + 1
-    const importedId = `${kind}-${String(day).replace(/-/g, '')}-${String(seq).padStart(4, '0')}`
-    const record = {
-      schema: POOL_SCHEMA,
-      kind,
-      imported_id: importedId,
-      imported_at: at,
-      seq,
-      source,
-      sha256: String(sha256).toLowerCase(),
-      content_sha256: contentSha256,
-      base_snapshot: baseSnapshot,
-      update_generation: updateGeneration,
-      review_attempt: reviewAttempt,
-      payload,
-    }
-    const head = pool.entries.map((e) => JSON.stringify(e)).join('\n')
-    const text = `${head}${head === '' ? '' : '\n'}${JSON.stringify(record)}\n`
-    const written = writeFileAtomic(pool.path, text)
+    const importedId = poolIdOf(kind, day, seq)
+    const record = poolRecordOf({
+      kind, importedId, at, seq, source, sha256, contentSha256,
+      baseSnapshot, updateGeneration, reviewAttempt, payload,
+    })
+    const written = writeFileAtomic(pool.path, poolTextWith(pool, record))
     if (!written.ok) throw brainError(written.code, `候选池追加失败：${written.message}`, { path: pool.path })
     return { ok: true, code: null, imported_id: importedId, imported_at: at, path: pool.path, seq, bytes: written.bytes }
   } finally {

@@ -435,7 +435,8 @@
               #   * `provider: spawn` · `maxDepth: 1`（作业不许再招人）
               #   * `backgroundMode: one-shot` —— 一次性作业**默认前台**，所以门禁要求调用方
               #     显式传 `run_in_background: true`（省略就等着，会把组长卡住）
-              #   * `toolFilter.deny: [workflow, ralph]` —— **恰为这两个**；不许在这里写 `pwsh`/`bash`
+              #   * `toolFilter.deny` 的**基线是 `[workflow, ralph]`**；判决岗那一行多一个 `proposal_file`
+              #     （谁多写、为什么，见本段末尾那条）。不许在这里写 `pwsh`/`bash`
               #     （平台二选一，写错那个会让整行启动失败）
               #   * **绝不写 `enableRunInBackground`**：它是 config 键，写了等于把 `run_in_background`
               #     参数从工具里拿掉，"必须显式 true"那条门禁就永远无法满足
@@ -444,8 +445,13 @@
               #   * `toolName` 的形状是 `job_<角色下划线形式>`；它**不是** `team_*`，所以
               #     `TEAM_TOOL` 不认它 ⇒ 作业**不进旧进度板**的五关计数（这是有意的，不是漏的）
               #
-              # ⚠️ 四行都**开着**（没有 `disabled`）；`toolFilter` 只写 deny 这两个名字，
-              #    不要把被关掉的行里的工具名（例如 `subagent_fork`）写进来。
+              # ⚠️ 四行都**开着**（没有 `disabled`）。
+              #    `toolFilter.deny` 的**基线**是 `workflow` + `ralph` 这两个名字；**判决岗那一行多一个**
+              #    `proposal_file` —— 老板 2026-10-17 定的：「判决应该不能提候选，其他这几个应该都可以自己提候选」。
+              #    ⇒ **只有** `tool-job-memory-judge` 这一行能多写它；其余三行多写 = 那个岗位提不了候选，而那不是它的活。
+              #    ⚠️ 被关掉的行里的工具名（例如 `subagent_fork`）**哪里都不许写**：关掉的行不注册那个名字，
+              #    写一个继承不到的名字会让整行启动失败（四条作业一起挂）。
+              #    📌 体检那条判据已经按行推导（`.tools/check-notes.mjs` 的 `expectedJobDeny`），所以这里的话与它同形。
               - id: tool-job-memory-judge
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
@@ -454,8 +460,14 @@
                   backgroundMode: one-shot
                   maxDepth: 1
                   persona: '【组员:memory-judge】你是一次性后台作业：记忆判决。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
+                  # 🔴 `proposal_file` 只出现在**这一行**的 deny 里（2026-10-17 · F-53）。
+                  #    老板的话：「判决应该不能提候选，其他这几个应该都可以自己提候选」。
+                  #    落法是**结构性**的 —— 它的工具集里根本没有这个工具（不是"调用被拒"）；
+                  #    所以这里不写、工具里也不写任何"认出判决岗再拒绝"的身份判定。
+                  #    ⚠️ 其余三行作业与四个岗位行**都不许** deny 它；`review` 尤其需要它
+                  #    （它没有命令行，不给就只能写草稿求人代转）。
                   toolFilter:
-                    deny: [workflow, ralph]
+                    deny: [workflow, ralph, proposal_file]
 
               - id: tool-job-memory-review
                 name: '@deepseek-ai/dsh-tool-subagent'

@@ -15,7 +15,7 @@
  *    于是"包坏了"和"程序有 bug"在报文里长得一模一样。
  *
  * 域：ARG|ROOT|PATH|LOCK|CAS|TXN|STATE|DATA|CAP|STREAK|CS|JOB|CLAIM|FENCE|COVERAGE|RECEIPT|
- *     TICKET|EVIDENCE|STAGE|TASK|ROUTE|GUARD|INSTALL|MANIFEST|PACKET|SCAN|INTERNAL
+ *     TICKET|EVIDENCE|STAGE|TASK|ROUTE|GUARD|INSTALL|MANIFEST|PACKET|SCAN|PROPOSAL|INTERNAL
  *
  * 两条纪律：
  *   ① 码名与退出码**不许**在两处各写一份 —— CLI 取 `CODES[code].exit`，测试读 `FROZEN.exitCodes`，
@@ -142,4 +142,17 @@ export const CODES = Object.freeze({
   E_GUARD_OFFICE_SHELL: { exit: 5, zh: '受限岗位没有 shell' },
   E_GUARD_OFFICE_WRITE: { exit: 5, zh: '受限岗位只能写 .team/ 下的东西' },
   E_GUARD_CONFIG_MISSING: { exit: 5, zh: 'delegationTools 配置缺失/非法 ⇒ 委派一律拒绝（宁可拦错，不许静默放前台）' },
+
+  // ── 提候选那个动作（`proposal_file` 工具）的四个码 ─────────────────────────
+  // ⚠️ 与上面那五个 guard 码同族：**不是 CLI 退出码** —— 它们由工具抛出（`error.code` + 报文以码开头），
+  //    给 exit 只是为了让 `CODES[code].exit` 有一个确定值。
+  // 🔴 为什么必须进这张表：CLI 的 catch **只认表里有的码**，别的全折成 `E_INTERNAL`
+  //    ⇒ "候选被拒"会跟"程序有 bug"在报文里长得一模一样。工具本身不走 CLI，
+  //    但池子那一行之后的处置（判决 / 复核 / 报告）会走。
+  // 四格的分工（形状与内容重复**必须分开报**）：入参不成形状 / 声明哈希与内容不符 /
+  //    同一出处同一段正文已提过 / 池子锁拿不到或原子写失败。
+  E_PROPOSAL_SHAPE: { exit: 2, zh: '提候选的入参不成形状（text / source 缺或空、kind 越界、sha256 不是 64 hex、多给了不认识的字段）' },
+  E_PROPOSAL_HASH_MISMATCH: { exit: 5, zh: '提候选时声明的 sha256 与 sha256(text) 不符（那一行的声明哈希从此是假话）' },
+  E_PROPOSAL_DUPLICATE: { exit: 5, zh: '同一句出处 + 同一段正文已经提过（判重键 = (source, sha256(text))）' },
+  E_PROPOSAL_IO: { exit: 4, zh: '候选池写不进去（锁争用到超时 / 原子写失败），报文带底层码' },
 })

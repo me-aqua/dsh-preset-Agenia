@@ -39,8 +39,10 @@ import { fileURLToPath } from 'node:url'
 /** 插件名，只出现在排查信息里。 */
 export const name = 'agenia'
 
-/** 没有提示词服务，就没有什么可注入的。 */
-export const inject = ['systemPrompt']
+/** 没有提示词服务，就没有什么可注入的。
+ *  `tools` 只为一件事：注册提候选那个工具（`proposal_file`）—— 它拿不到时**不抛、出声降级**
+ *  （见 ③b 那段），人格注入照旧。 */
+export const inject = ['systemPrompt', 'tools']
 
 /**
  * 组长默认收到哪些、按什么顺序。⚠️ `agent.cordis.yml` 的 `leaderOrder` 是事实来源，这一份只是兜底。
@@ -1058,6 +1060,126 @@ function moodConstants(markdown) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// 提候选那个工具（`proposal_file`）—— 一次调用 = 一条候选 + 一句出处。
+//
+// 为什么它住在注入器里：这个预设**自己注册工具**，不加 cordis 行（`tool-proposal-file` 那一行
+// 不存在）。加行的代价是体检 `composition` 那一族要同批动两处（增量类白名单 + 常量），
+// 而那两处是 `.tools/**` —— 组员动不了；而不加行，`apply()` 里 `register` 就够。
+//
+// 判决岗（`memory-judge`）提不了候选这件事**不在这个文件里**：它在 `agent.cordis.yml`
+// 那一行的 `toolFilter.deny` 里（结构性：它的工具集里根本没有这个工具，不是"调用被拒"）。
+// 🔴 这个文件里**不许**按"调用者是谁"做判断 —— 那是新发明一条身份判定。
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 工具名。
+ * ⚠️ 与 `tools/proposal-file.mjs` 的 `PROPOSAL_FILE_TOOL_NAME` 是**同一个字**；这里只能写字面量，
+ * 因为注册发生在 `apply()` 里，而那个模块**不许**在顶层 import（理由见下面 `proposalFileToolModule`）。
+ */
+const PROPOSAL_FILE_TOOL = 'proposal_file'
+
+/**
+ * 工具的实现模块：**按需**加载（`await import`，不是顶层 import）。
+ *
+ * 🔴 为什么：这份注入器一挂就是"人格注入 0 字符"（AGENTS.md §3d 那个形状）。那个模块依赖
+ * `lib/` 那二十来份脑库；把它挂到顶层等于让**多一条工具**有机会拖垮每轮的人格注入。
+ * ⇒ 真正 import 的时机是"这个工具**被执行**的那一下"；加载失败只让这一次调用失败，注入照旧。
+ * （路径用 `new URL(..., import.meta.url)`：按这份文件自己算，不按调起进程的工作目录算。）
+ */
+let proposalFileModule = null
+async function proposalFileToolModule() {
+  if (proposalFileModule === null) {
+    proposalFileModule = await import(new URL('./tools/proposal-file.mjs', import.meta.url).href)
+  }
+  return proposalFileModule
+}
+
+/**
+ * `proposal_file` 的工具定义（`ctx.tools.register()` 吃的就是 `ToolDefinition`）。
+ *
+ * ⚠️ **为什么手写这个对象、不调 `defineTool`**：`defineTool` 住在 `@deepseek-ai/dsh-tools` 包里，
+ * 而这份预设的装法是"拷一个文件夹"（`presets/agenia/` 下没有 node_modules）—— 顶层 import 它
+ * 会在加载那一刻 `ERR_MODULE_NOT_FOUND`，那正好是上面说的"人格注入 0 字符"。
+ * `register()` 真正消费的是**裸 JSON Schema**（`parameters` 与 `output.schema`），
+ * 所以这里直接给 JSON Schema —— 形状就是 `defineTool` 编译出来的那一份。
+ *
+ * 🔴 `parameters.additionalProperties: true` 是刻意的：多给的字段要由**工具自己**拒
+ *    （`E_PROPOSAL_SHAPE` 得点名那个键）。在框架那一层挡掉的话，报错就变成框架的话，
+ *    而契约 §2.2 要的是"报文点名出问题的字段"。
+ *
+ * 🔴 `required` 也刻意不写：缺 `text` / 缺 `source` 要走工具的四个码（`E_PROPOSAL_SHAPE`），
+ *    不是框架自己的参数校验。
+ *
+ * @param {string} brainRoot 脑根（`<内容根>/.runtime`）—— 候选池住在它下面
+ *
+ * 为什么导出：不导出就只能隔着整条 `apply()` 验它，而"`output.schema` 能不能被
+ * `ctx.tools.register()` 吃下 / `execute` 端到端真的写出一行"这类事隔着装配验不了
+ * （跟本文件那几个"必须导出的纯函数"同一条理由：退化成"读代码觉得对"）。
+ * ⚠️ 真挂载（预设挂得起来、那一行没起不来）仍然只有 A7 能回答 —— 这一条不替代它。
+ */
+export function proposalFileDefinition(brainRoot) {
+  return {
+    name: PROPOSAL_FILE_TOOL,
+    description:
+      '提一条候选到共享候选池：一次调用 = 一条候选正文 + 一句出处。'
+      + '正文与出处逐字入池（工具不改写一个字符；出处不许空，也不会替你补）。'
+      + '同一个出处 + 同一段正文提第二次会被拒（E_PROPOSAL_DUPLICATE）；换了正文可以再提。'
+      + '落盘是原子的（不需要命令行）。判决岗没有这个工具 —— 它只判别人提的。',
+    parameters: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        text: { type: 'string', description: '候选正文（必填；strip 后不许为空；逐字入池，不 trim、不归一换行）' },
+        source: { type: 'string', description: '这一句候选的出处（必填；strip 后不许为空；逐字入池）' },
+        // ⚠️ **这里不写 `enum`**（与 `PROPOSAL_FILE_KINDS` 那份清单的关系说清楚）：
+        //    四类"收不收"的**判据只有一处** —— `tools/proposal-file.mjs` 的 `PROPOSAL_FILE_KINDS`，
+        //    而它本身是 `lib/memory.mjs` 的 `TYPE_IDS` 派生出来的（不是第五份字面量）。
+        //    在这儿再写一份 `enum`，等于让框架的 schema 层成为**第二个执行者**：越界的报错就不再是
+        //    `E_PROPOSAL_SHAPE` 点名 `kind` 了（而契约 §2.2 要的正是那个）。
+        //    ⇒ 这一格只放**给模型看的散文**；写错了由工具按 `E_PROPOSAL_SHAPE` 拒并点名 `kind`。
+        kind: {
+          type: 'string',
+          description: '哪一类：general（底层通用）/ boss（关于老板）/ machine（关于本机）/ project（关于某个项目）；缺省 general',
+        },
+        sha256: { type: 'string', description: '可选：声明哈希 = sha256(text, UTF-8)。给了就必须与工具算出来的那个相等（对账用）' },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          ok: { type: 'boolean' },
+          proposal_id: { type: 'string', description: '候选 id = 池子那一行的 imported_id' },
+          entry_id: { type: 'string', description: '记忆条目 id（与 proposal_id 同一个号）' },
+          pool_path: { type: 'string', description: '落到哪个文件' },
+          seq: { type: 'integer', description: '池子里第几行（从 1 数）' },
+          content_sha256: { type: 'string', description: '内容哈希 = sha256(stableStringify(payload))' },
+          sha256: { type: 'string', description: '声明哈希 = sha256(text)' },
+          source: { type: 'string' },
+          kind: { type: 'string' },
+          imported_at: { type: 'string' },
+        },
+      },
+      // 回给模型的这句话里有一条**必须说清的口径之差**（评审 R4 量出来的，不是读代码猜的）：
+      // 本工具允许"同源换文"再提（契约 A3），而命令行 `--op proposal-import` 那条路会拒 ——
+      // 换文 ⇒ `E_ARG_HASH`（"已经用另一个哈希导入过"）；**同文**也要把这里回的 `entry_id`
+      // 与正文一字不差照抄进它的 payload 才收（否则"声明与内容对不上"）。两条路的这项口径已开票 F-58。
+      render: (_args, value) => [{
+        type: 'text',
+        text: `已追加候选 ${String(value?.proposal_id)}（池子第 ${String(value?.seq)} 行 · ${String(value?.kind)}）→ ${String(value?.pool_path)}\n`
+          + '⚠️ 这条 source 之后**走不了命令行导入**（`--op proposal-import` 会回 E_ARG_HASH）：'
+          + '换了正文一定拒；同文也要把这次的 entry_id 与正文一字不差照抄进它的 payload 才收 —— 两条路口径已开票 F-58。',
+      }],
+    },
+    async execute(args) {
+      const mod = await proposalFileToolModule()
+      return mod.proposalFileRun(args, { root: brainRoot })
+    },
+  }
+}
+
 /**
  * @param ctx - 这个 preset 的作用域。
  * @param config - agent.cordis.yml 里那一行的 config 段。
@@ -1313,6 +1435,35 @@ export async function apply(ctx, config = {}) {
       `[agenia] 这个框架版本没有 tools.guard —— 岗位写权限边界没有生效（现在 `
         + `${[...officeBound].join('、')} 这几个岗位可以写任何地方、也能跑命令行），`
         + 'subagent 后台硬门未生效（四条一次性作业省略 run_in_background 会在前台等着，把组长卡住）。',
+    )
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // ③b 注册**动作类**工具：提候选（`proposal_file`）。
+  //   与 ③ 用同一个 `tools` 服务，但这不是门禁 —— 它给的是一个动作：
+  //   "一次调用 = 一条候选 + 一句出处"，落盘由 `lib/proposals.mjs` 在**一把锁**里做完。
+  //   🔴 失败策略同 ③：拿不到 / 注册失败都**出声**，绝不让一条工具把整份注入拖下水
+  //      （这份文件一挂就是"人格注入 0 字符"）。
+  // ─────────────────────────────────────────────────────────────
+  if (tools !== undefined && typeof tools.register === 'function') {
+    ctx.effect(
+      () => {
+        try {
+          return tools.register(proposalFileDefinition(join(contentDir, RUNTIME_DIR)))
+        } catch (err) {
+          console.error(
+            `[agenia] 工具 ${PROPOSAL_FILE_TOOL} 注册失败（${String(err?.message ?? err)}）—— `
+              + '这条工具没有；人格注入照旧。组员没有命令行，提候选就只能写草稿求人代转。',
+          )
+          return undefined
+        }
+      },
+      'agenia：proposal_file（提候选）',
+    )
+  } else {
+    console.error(
+      `[agenia] 拿不到 tools.register —— 提候选那个工具（${PROPOSAL_FILE_TOOL}）没有注册上；`
+        + '组员没有命令行，提候选就只能写草稿求人代转。',
     )
   }
 
