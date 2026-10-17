@@ -15,6 +15,9 @@ import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
+// 🔴 F-56 的判据本体住在 lib/ 里（**不 import 测试岗那一份**：它住在 `.team/`，那份目录不进 git，
+//    发出去之后就不存在了）。⚠️ 抄本与参照实现的**口径必须同批改**。
+import { analyzeTree as analyzeF56Forwards, describeReading as describeF56Reading } from './lib/f56-forward.mjs'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const PRESET = join(REPO, 'presets', 'agenia')
@@ -451,6 +454,19 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       /标准模式有的工具她一样不少/.test(text),
       'README 的"只会多不会少"没了 —— 那是这份预设对外唯一的能力承诺')
   }
+}
+
+// 🔴 F-56（2026-10-17）：**每个 `healthVerdict(…)` 调用点都要配对一次 `progress` 转发**；
+//    **每个出口都要自带 `progress`**。判据本体在 `lib/f56-forward.mjs`（口径与测试岗的参照实现同源）。
+//    ⚠️ **不是"出口数 == 转发点数"** —— 那两个数本来就不该相等（实测出口 6 / 转发 2），
+//       按那个口径算，"加一个转了发的新入口"会让它红 ⇒ 那是 change-detector。
+{
+  const f56 = analyzeF56Forwards(REPO)
+  yes('composition', 'F-56 · health 的每个调用点都配了 progress 转发，且每个出口都自带 progress',
+    f56.ok,
+    f56.ok
+      ? describeF56Reading(f56)
+      : f56.problems.map((p) => p.detail).join('；'))
 }
 
 // ── 2 · 预设自身的形状 ─────────────────────────────────────────────────────
