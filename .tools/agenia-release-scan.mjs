@@ -93,7 +93,7 @@ const FROZEN_LINES = Object.freeze({
   'team/review.md': 69,
   'team/hire.md': 18,
   'team/memory-judge.md': 53,
-  'team/memory-review.md': 65,
+  'team/memory-review.md': 67,
   'team/conversation-review.md': 66,
   'team/technical-review.md': 44,
 })
