@@ -363,7 +363,8 @@ describe('integration · data-root (DR)', () => {
       //        逐格跑**两遍**（不传 vs `false`），两遍结论必须**逐字相同**；
       //     ③ **三份 `resolveWorkspace`**（brain / local / route）都要覆盖，外加 `--status-root` 那条路。
       // 【怎么翻面】
-      //   · 把三处 `containingRule: false` 删掉 ⇒ 下面 `WSV-ACCEPT` 那三格从"放行"变回 `E_ROOT_REAL_BRAIN`；
+      //   · 把 `containingRule: false` 删掉 ⇒ 下面 `WSV-ACCEPT` 那两格（local / route）从"放行"变回 `E_ROOT_REAL_BRAIN`；
+      //     （`agenia-brain` 那一格 2026-10-17 撤了，理由写在 ③ 开头：它那两个调 `resolveWorkspace` 的 op **都写**。）
       //   · 把默认值改成 `false` ⇒ ② 每一格的"不传"那一遍当场变结论（`WSV-DEFAULT`）；
       //   · 让 `--status-root` 也传 `false` ⇒ `WSV-STATUS-ROOT` 那两格红。
       // ⚠️ 靶子**按被测树自己算**（`pathLib.mod.REAL_BRAIN_ROOT`）—— 不许拿活体那个绝对路径当靶子：
@@ -433,15 +434,28 @@ describe('integration · data-root (DR)', () => {
           }
           rec.readings.wsv_legacy = legacyRows
 
-          // ③ 三份 `resolveWorkspace`（真子进程）+ `--status-root` 那条**不在改动范围内**的路。
-          //    🔴 全部用**只读 op**（health-read / health / read），一个字节都不写工作区。
+          // ③ `resolveWorkspace` 那一档的 CLI 接线（真子进程）+ `--status-root` 那条**不在改动范围内**的路。
+          //    🔴 **这一组里的 op 必须一个字节都不写**：它们喂的是活体容器根（`E:\Harness`）。
+          //       `health-read` / `health` / `daily-start` 名字看着像只读，实际各落一张派生卡
+          //       （`<ws>\.team\brain\<day>\health.json` / `<ws>\.team\state\daily\<day>.json`）——
+          //       喂活体容器根跑它们 = 每跑一次全量套件就把活体工作区改写一次（F-48 就是这么来的：
+          //       那张混血卡 `now_file` 指测试运行根、`paths.*` 指活体）。
+          //    🔴 `agenia-brain` **没有 CLI 格**（2026-10-17 撤）：它 22 个 op 里只有 `daily-start`（:453）与
+          //       `health-read`（:1155）调 `resolveWorkspace`，**两个都写**，落点又都按 `<ws>\.team` 硬拼
+          //       （`--status-root` 救不了它们）⇒ 给它一格就等于让它写活体，没有零写入的替身可换。
+          //       它那条 `containingRule: false` 仍由上面的纯函数翻面（`WSV-FLIP` / `pair()`）钉住；
+          //       丢掉的是"brain 的 CLI 接线"这一层覆盖 —— 记在这里，不装作还在。
           //    🔴 「放行」那几格必须**剥掉 `AGENIA_TEST_RUN_ROOT`**：测试模式下 `mustBeUnder = 运行根`，
           //       容器根 `E:\Harness` 会先撞 `E_ROOT_OUTSIDE`，那样读到的就不是"工作区那一档"的结论了。
           const emptyPayload = writeFixture('DR-01', 'wsv-empty', {})
           const testDataRoot = process.env[ENV.TEST_DATA_ROOT]
           const cliCells = [
-            ['brain · --workspace <容器根>（放行）', 'agenia-brain.mjs', { op: 'health-read', dataRoot: testDataRoot, workspace: containerRoot, inFile: emptyPayload }, true, null],
-            ['local · --workspace <容器根>（放行）', 'agenia-local.mjs', { op: 'health', workspace: containerRoot, inFile: emptyPayload }, true, null],
+            // `local-read` 是零写入的读面（只读 `<teamDir>\state\local\<day>.json`），而它在 `main()` 里
+            // 走的是与 `health` **同一个** `resolveWorkspace`（`agenia-local.mjs:472`，op 分派之前）⇒
+            // 接线覆盖不丢、写入没有了。读数里的 `code` 会是 `E_ARG_SCHEMA`（这份空 payload 没有 `day`）——
+            // 那不是"根被拒"：根判定跑在 op 分派之前，能走到 `E_ARG_SCHEMA` 就说明容器根被**放行**了；
+            // 真被拒的话这里读到的是 `E_ROOT_REAL_BRAIN`，也就是下面 `WSV-ACCEPT` 判的那一格。
+            ['local · --workspace <容器根>（放行，op 为零写入的 local-read）', 'agenia-local.mjs', { op: 'local-read', workspace: containerRoot, inFile: emptyPayload }, true, null],
             ['route · --workspace <容器根>（放行）', 'agenia-route.mjs', { op: 'read', workspace: containerRoot, inFile: emptyPayload }, true, null],
             ['brain · --workspace <真实根\\memory>（⊆ 照旧拒）', 'agenia-brain.mjs', { op: 'health-read', dataRoot: testDataRoot, workspace: path.join(sutRealBrain, 'memory'), inFile: emptyPayload }, true, 'E_ROOT_REAL_BRAIN'],
             ['local · --workspace <真实根\\memory>（⊆ 照旧拒）', 'agenia-local.mjs', { op: 'health', workspace: path.join(sutRealBrain, 'memory'), inFile: emptyPayload }, true, 'E_ROOT_REAL_BRAIN'],
