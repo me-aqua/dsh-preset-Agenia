@@ -63,9 +63,10 @@ const PROTECTED_SEGMENTS = ['.runtime', '.team']
 
 const CODES = Object.freeze({ E_USAGE: 2, E_ARG_SCHEMA: 2, E_ROOT_MISSING: 3, E_ROOT_RELATIVE: 3, E_ROOT_UNC: 3, E_ROOT_C_DRIVE: 3, E_PATH_ESCAPE: 3, E_MANIFEST_MISMATCH: 5, E_INTERNAL: 8 })
 
-/** 十份岗位说明书（顺序照契约 §B2.3 的角色表）。 */
+/** 九份岗位说明书（顺序照契约 §B2.3 的角色表）。`team/retro.md` 不在里面：
+ *  复盘岗 2026-10-15 已撤、那份说明书已删 —— 列着它，每一轮扫描都会报一条假的"文件不存在"。 */
 const ROLE_TEXTS = [
-  'team/design.md', 'team/dev.md', 'team/test.md', 'team/review.md', 'team/retro.md', 'team/hire.md',
+  'team/design.md', 'team/dev.md', 'team/test.md', 'team/review.md', 'team/hire.md',
   'team/memory-judge.md', 'team/memory-review.md', 'team/conversation-review.md', 'team/technical-review.md',
 ]
 /** 组长侧那几份（`leaderOrder` 里的 .md 键）—— ⚠️ 不含 `me-aqua.md`：它 2026-10-17 已归档出预设
@@ -74,24 +75,27 @@ const LEADER_TEXTS = ['leader.md', 'work-guidelines.md', 'persona.md', 'style.md
 
 /**
  * 冻结行数表（口径：剥 BOM 后数 `\n`；CRLF 算一个换行）。
- * 量于 2026-10-15，对象 = `.tools/_staging/agenia-upgrade/preset/`（staged 侧）。
- * 改了注入文本 ⇒ `<node> .tools/agenia-release-scan.mjs --op frozen-lines` 打新表贴回来。
+ * 🔴 **基准树 = `presets/agenia`（发布出去的那一棵）**，量于 2026-10-17。
+ *    · 为什么不是 `.tools/_staging/agenia-upgrade/preset/`：那是一份**升级演练副本**，
+ *      它跟着演练走、不跟着发布走 —— 2026-10-17 实测它里面还是 208 行的旧 `leader.md`，
+ *      而发布出去的是 98 行。拿它当尺子 ⇒ 每改一次正文就报一堆"行数不符"，而真正被改的那个文件反而是"对"的。
+ *    · 这张表要保的是「**注入正文被人偷偷改了，得发现**」—— 那就只能钉在**发出去的那一份**上。
+ * 改了注入文本 ⇒ `<node> .tools/agenia-release-scan.mjs --op frozen-lines --release <根>` 打新表贴回来。
  */
 const FROZEN_LINES = Object.freeze({
-  'leader.md': 107,
-  'work-guidelines.md': 344,
+  'leader.md': 98,
+  'work-guidelines.md': 123,
   'persona.md': 19,
   'style.md': 99,
   'team/design.md': 11,
   'team/dev.md': 11,
   'team/test.md': 13,
   'team/review.md': 69,
-  'team/retro.md': 97,
-  'team/hire.md': 17,
-  'team/memory-judge.md': 45,
-  'team/memory-review.md': 42,
-  'team/conversation-review.md': 42,
-  'team/technical-review.md': 38,
+  'team/hire.md': 18,
+  'team/memory-judge.md': 53,
+  'team/memory-review.md': 65,
+  'team/conversation-review.md': 66,
+  'team/technical-review.md': 44,
 })
 
 /** 两处绝对路径的**目标**（与 `FROZEN.patchTargets` 同值）：补丁指的是**装好之后**那个位置。 */
