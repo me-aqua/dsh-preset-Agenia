@@ -45,7 +45,11 @@ export const CRITERION = Object.freeze({
  * · 它**只**用来登记「调了 `healthVerdict` 但确实没法/不必转发 `progress`」的**入口文件**；
  * · 加一个**转发了的**新入口 ⇒ 判据仍然绿，**不用动这里**；
  * · 每项必须形如 `{ path: 'presets/agenia/bin/xxx.mjs', reason: '<非空的人话>' }`：
- *   没有 reason ⇒ `F56-WHITELIST-NO-REASON`；登记了但那个文件根本没调 `healthVerdict` ⇒ `F56-WHITELIST-STALE`；
+ *   没有 reason ⇒ `F56-WHITELIST-NO-REASON`；
+ *   三种腐烂**各一个码**：盘上没有 ⇒ `F56-WHITELIST-NO-FILE` ·
+ *   文件在但**一个 `healthVerdict` 都没调** ⇒ `F56-WHITELIST-NO-CALLS` ·
+ *   文件在但**不在被扫的 `bin/*.mjs` 里**（空登记）⇒ `F56-WHITELIST-UNSCANNED`；
+ *   🔴 **一条登记只推一条**（N-4）：文件根本不在时，检查① 已经报过 `NO-FILE`，检查② **直接跳过**；
  * · 每次跑都会把「白名单生效了几项」打出来 —— 它变长，读的人第一眼就看得见。
  */
 export const NO_FORWARD_NEEDED = Object.freeze([])
@@ -383,7 +387,7 @@ export function analyzeTree(root, options = {}) {
       problems.push({ code: 'F56-WHITELIST-NO-REASON', path: w.path, detail: `白名单登记了 ${w.path} 却没写 reason —— 空理由的白名单就是"静默放行"` })
     }
     if (!existsSync(path.join(root, w.path))) {
-      problems.push({ code: 'F56-WHITELIST-STALE', path: w.path, detail: `白名单登记了 ${w.path}，但盘上没这个文件 —— 白名单烂了` })
+      problems.push({ code: 'F56-WHITELIST-NO-FILE', path: w.path, detail: `白名单登记了 ${w.path}，但盘上没这个文件 —— 白名单烂了` })
     }
   }
 
@@ -413,16 +417,20 @@ export function analyzeTree(root, options = {}) {
     // 🔴 登记了一个**不在被扫的 `bin/*.mjs` 里**的路径（文件在、但扫不到）⇒ 红。
     //    没有这一格，白名单项就可能是"空登记"：它屏蔽不了任何东西，读者却以为这里签过字。
     if (!hit) {
+      // ⚠️ 文件根本不在盘上时，**检查① 已经报过 `NO-FILE`** ⇒ 这里**直接跳过**（N-4：一条登记只推一条）。
+      //    🔴 **不能写成 `if (!hit && existsSync(...))`** —— 那样 `continue` 被条件挡住，会掉进下面
+      //       的 `hit.callSites` ⇒ TypeError。测试岗第一版就这么写的，被它自己的探针 fail-closed 拦下。
+      if (!existsSync(path.join(root, w.path))) continue
       problems.push({
-        code: 'F56-WHITELIST-STALE',
+        code: 'F56-WHITELIST-UNSCANNED',
         path: w.path,
-        detail: `白名单登记了 ${w.path}，但它**不在被扫的 ${CRITERION.binRel}/*.mjs 里** —— 这条登记屏蔽不了任何东西（空登记）`,
+        detail: `白名单登记了 ${w.path}，但它**不在被扫的 ${CRITERION.binRel}/*.mjs 里**（文件在、扫不到）—— 这条登记屏蔽不了任何东西（空登记）`,
       })
       continue
     }
     if (hit.callSites.length === 0) {
       problems.push({
-        code: 'F56-WHITELIST-STALE',
+        code: 'F56-WHITELIST-NO-CALLS',
         path: w.path,
         detail: `白名单登记了 ${w.path}，但那个文件**一个 ${CRITERION.fnName}(…) 都没调** —— 白名单是"签字的例外"，不是"永久免检"`,
       })
