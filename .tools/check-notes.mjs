@@ -458,12 +458,12 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
 
 // 🔴 F-56（2026-10-17）：**每个 `healthVerdict(…)` 调用点都要配对一次 `progress` 转发**；
 //    **每个出口都要自带 `progress`**。判据本体在 `lib/f56-forward.mjs`
-//    （🔴 **已与测试岗的参照实现分叉**，见 F-61 —— 跑那份 cases 证明的不是这一份）。
+//    （🔴 **参照实现已删、只 import 这一份**（F-61）—— 树里**只有一处**实现）。
 //    ⚠️ **不是"出口数 == 转发点数"** —— 那两个数本来就不该相等（实测出口 6 / 转发 2），
 //       按那个口径算，"加一个转了发的新入口"会让它红 ⇒ 那是 change-detector。
 {
   const f56 = analyzeF56Forwards(REPO)
-  yes('composition', 'F-56 · health 的每个调用点都配了 progress 转发，且每个出口都自带 progress',
+  yes('F-56 入口转发', 'F-56 · health 的每个调用点都配了 progress 转发，且每个出口都自带 progress',
     f56.ok,
     f56.ok
       ? describeF56Reading(f56) + (f56.notes.length > 0 ? ` · ⚠️ ${f56.notes.join('；')}` : '')
