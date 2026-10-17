@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { canonical, guardVerdict, assertRunGuard, RootGuardError } from './root-guard.mjs'
 import { ENV, FROZEN, PATHS, optionalEnv } from './env.mjs'
 import { calibrate } from './composition.mjs'
-import { CASES_BY_ID, TOTAL, countByStatus, REGISTRY, registryProblems } from './registry.mjs'
+import { CASES_BY_ID, TOTAL, countByStatus, REGISTRY, registryProblems, DISCOVERY } from './registry.mjs'
 
 export const EVIDENCE_PARENT = 'E:\\Harness\\.team\\test'
 
@@ -541,6 +541,21 @@ export function settle() {
   const writtenFiles = [...new Set(REGISTRY.filter((r) => r.status === 'written').map((r) => r.file))].sort()
   const notRunFiles = writtenFiles.filter((f) => !filesInRun.includes(f))
   const notRun = cases.filter((c) => c.status === 'written' && !c.settled).map((c) => c.id)
+  /**
+   * ── 发现 ↔ 登记 ↔ 证据（F-57）────────────────────────────────────────
+   * 结算过去只按 `REGISTRY` 枚举证据目录 ⇒ 一个**没登记**的用例目录被整个忽略
+   * （实测：里面写着 RED 也看不见，`--settle` 还 exit 0）。
+   * 现在两个方向都算：登记表里的（`registryProblems()`）与证据根里多出来的（孤儿证据）。
+   */
+  const evidenceDirs = existsSync(root)
+    ? readdirSync(root).filter((n) => !n.startsWith('_') && statSync(path.join(root, n)).isDirectory())
+    : []
+  const orphanEvidence = evidenceDirs.filter((id) => !REGISTRY.some((r) => r.id === id))
+  const discoveryProblems = [
+    ...DISCOVERY.problems.map((p) => p.message),
+    ...registryProblems(),
+    ...orphanEvidence.map((id) => `证据根里有、登记表里没有的用例目录：${id} —— 结算会整个忽略它（EVID-ORPHAN）`),
+  ]
   const before = readPhase('before')
   const after = readPhase('after')
   /**
@@ -560,6 +575,20 @@ export function settle() {
     evidence_root: root,
     generated_at: new Date().toISOString(),
     registry: { total: TOTAL, written: counts.written, pendingWrite: counts['pending-write'] },
+    /**
+     * 分母是从哪来的（F-57）：`cases` 是盘上发现的条数 = `registry.total`；
+     * `problems` 把"登记 ≠ 盘上"与"孤儿证据"合在一起，`reporter_check_ok` 也认它。
+     */
+    discovery: {
+      root: DISCOVERY.root,
+      matcher: DISCOVERY.matcher,
+      files: DISCOVERY.files.length,
+      cases: DISCOVERY.cases.length,
+      anonymous: DISCOVERY.anonymous.length,
+      duplicates: DISCOVERY.duplicates.length,
+      orphan_evidence: orphanEvidence,
+      problems: discoveryProblems,
+    },
     run_scope: { files_in_run: filesInRun, written_files: writtenFiles, not_run_files: notRunFiles, not_run_cases: notRun },
     settled: { total: cases.filter((c) => c.settled).length, red, green, holds: holdCases.length, hold_cases: holds, missing, unexpected, partial_files: partialFiles },
     /** 语言级错误（红在脚手架 ⇒ 先查测试自己）：单独一栏，别和"被测对象的红"混着读。 */
@@ -571,9 +600,11 @@ export function settle() {
      *   ③ 🔴 **`HOLD` 不许被当 pass**（v1.14）：所以它**不进** `green`、也不进 `red`，单独一栏；
      *      这一条在这里只保证"三态互斥且计数守恒"（`red + green + holds === settled`），
      *      谁要把 HOLD 读成"过了"，得先推翻这个守恒式。
+     *   ④ 🔴 **登记必须等于盘上**（F-57）：`discoveryProblems` 必须为空 ——
+     *      包括"没登记的用例跑了 / 登记的用例不见了 / 证据根里有孤儿目录"。
      * `missing` 是"全部已写用例里这次没跑的"—— 分批跑时它非空是**正常的**，明写在 `not_run_cases` 里。
      */
-    reporter_check_ok: partialFiles.length === 0 && unexpected.length === 0 && red + green + holdCases.length === cases.filter((c) => c.settled).length,
+    reporter_check_ok: partialFiles.length === 0 && unexpected.length === 0 && red + green + holdCases.length === cases.filter((c) => c.settled).length && discoveryProblems.length === 0,
     full_coverage: missing.length === 0,
     /** 安全不变量：真实脑 / 真实路线前后必须一字不变（契约 §2.4 第 5 条）。 */
     real_roots: { before, after, diff, security_violation: diff === null ? null : diff.length > 0 },
@@ -611,6 +642,9 @@ export function settleMarkdown(s) {
   lines.push('')
   lines.push(`- 生成时间：${s.generated_at}`)
   lines.push(`- 注册表分母：**${s.registry.total}**（已写 **${s.registry.written}** · pending-write **${s.registry.pendingWrite}**）`)
+  // 分母是从哪来的（F-57）：盘上发现的条数 + 登记↔盘上的差异数（差异不为 0 时逐条点名）。
+  const discoveryDiffs = s.discovery?.problems ?? []
+  lines.push(`- 发现 ↔ 登记：盘上 **${s.discovery?.cases ?? '?'}** 条 / ${s.discovery?.files ?? '?'} 个文件 · 差异 **${discoveryDiffs.length}**${discoveryDiffs.length > 0 ? `：${discoveryDiffs.slice(0, 5).join('；')}` : ''}`)
   lines.push(`- 本次结算：${s.settled.total} 条 → RED **${s.settled.red}** / GREEN **${s.settled.green}** / **HOLD ${s.settled.holds ?? 0}**`)
   if ((s.settled.holds ?? 0) > 0) {
     lines.push(`- 🔴 **HOLD（第三态，v1.14）** —— 前置未成立、**且这一档本来就不适用** ⇒ **判不了**。**它不是绿**：${s.settled.hold_cases.map((h) => `${h.id}（${h.reasons.map((r) => `${r.code}: ${r.why}`).join('；')}）`).join(' · ')}`)
@@ -660,5 +694,7 @@ if (process.argv[1] && canonical(process.argv[1]) === canonical(fileURLToPath(im
     writeJson(path.join(evidenceRoot(), 'settlement.json'), s)
     writeText(path.join(evidenceRoot(), 'settlement.md'), settleMarkdown(s))
     console.log(`settlement: ${s.settled.red} RED / ${s.settled.green} GREEN / 分母 ${s.registry.total} / reporter_check_ok=${s.reporter_check_ok} / real_roots_diff=${s.real_roots.diff === null ? 'n/a' : s.real_roots.diff.length}`)
+    // 🔴 结算自己说"不通过" ⇒ 退出码必须非零（2）。恒 exit 0 会让"分母 + 全绿"那两句话谁都不负责（F-43 / F-57）。
+    process.exitCode = s.reporter_check_ok ? 0 : 2
   }
 }

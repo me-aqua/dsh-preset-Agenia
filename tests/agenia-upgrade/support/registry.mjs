@@ -1,14 +1,20 @@
 /**
- * 用例注册表 —— **分母来自这张表，不来自"跑出来几个"**（契约 §9.5 第 3 条）。
+ * 用例注册表 —— **登记面**。分母不在这里：分母是 `discover.mjs` 从盘上数出来的那个数。
  *
  * 冻结依据：契约 §9.1（55 个自动用例的分组与 ID）+ 提案 §B1.4（测试文件落点表）
  * + 拍板 I9（"55 个自动用例的注册表以 `support/registry.mjs` 形状为准，由测试岗逐条核对，
  *   并在红基线里给出分母"）。
  *
+ * 两个来源，一个分母（F-57）：
+ *   · **发现**（`DISCOVERY`）—— 盘上 `test('<ID> …')` 的条数，这就是 `TOTAL`；
+ *   · **登记**（`REGISTRY`）—— 这张表。它只负责"这条用例该在哪个文件、属于哪一批"。
+ *   ！两边对不上由 `registryProblems()` 报红（四个方向都报、点名文件与 ID），**不让分母自己漂**。
+ *   历史冻结的 55 条以 `FROZEN_IDS` 这份**显式清单**存在 —— 一条都不许少，但它不再是一个计数常数。
+ *
  * 三个状态词（**不是** skip / 不是通过）：
  *   · `written`        —— 本批已写的可执行用例（首跑必须 RED）
  *   · `pending-write`  —— 已登记、尚未落笔（**留在分母里**，红基线里明写"未写"）
- * 分母口径：一个用例 = 一个可独立报告通过/失败的命名用例；注册时冻结，不随被测对象缺失而缩水。
+ * 分母口径：一个用例 = 盘上一个以 ID 开头的 `test()`；它由发现器数，不随被测对象缺失而缩水。
  *
  * ⚠️ 一处需要组长确认的**表内冲突**（没有自创，只是归一，见 RCP-03 的 notes）：
  *   契约 §10.2 与提案 §B1.4 的同一张表把 `RCP-03` **同时**列在
@@ -16,6 +22,7 @@
  *   （列 RCP-01/02/03/04）两行。注册表只能给一个 `file`，本表归一到前者
  *   （锚点用例需要技术作业的真实产物），并把差异记在这条上。
  */
+import { discoverCases, consistency } from './discover.mjs'
 
 /** 本批（红测试批次 A）已写的 14 条：STAT-01..05 · DOC-01 · RT-01..08。 */
 export const BATCH_A = [
@@ -45,10 +52,16 @@ export const BATCH_E = ['STO-01', 'STO-02', 'STO-03', 'STO-04', 'JOB-01', 'JOB-0
 export const BATCH_F = ['REV-01', 'REV-03', 'RCP-03', 'INS-01', 'INS-02', 'INS-03']
 
 /**
- * 已落笔的六批 —— **55/55 全写完**（派工单要求：登记表必须正好 55 个 ID，一个不多一个不少）。
+ * 批次 G 的 11 条 —— `proposal_file` 那套用例（F-53 写在 `.team/` 里的真身，F-57 搬进项目）。
+ * 它们此前不进 git、也不进分母；搬进来之后走 `node:test` + `runCase`，与其余 55 条同形。
+ */
+export const BATCH_G = ['PFL-01', 'PFL-02', 'PFL-03', 'PFL-04', 'PFL-05', 'PFL-06', 'PFL-07', 'PFL-08', 'PFL-09', 'PFL-10', 'PFL-11']
+
+/**
+ * 已落笔的七批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条。
  * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -56,7 +69,8 @@ const BATCH_OF = (id) =>
         : BATCH_D.includes(id) ? 'D'
           : BATCH_E.includes(id) ? 'E'
             : BATCH_F.includes(id) ? 'F'
-              : null
+              : BATCH_G.includes(id) ? 'G'
+                : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -78,6 +92,7 @@ const F = {
   dataRoot: 'integration/data-root.test.mjs',
   install: 'integration/install-rollback.test.mjs',
   env: 'integration/env.test.mjs',
+  proposalFile: 'integration/proposal-file.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -163,6 +178,19 @@ const ROWS = [
 
   // ── 读取义务（1）───────────────────────────────────────────────────────
   ['READ-01', 'read', F.readObligations, '四份作业书 + 组长流程的必读输入清单/版本/哈希核对条款齐备', '批次 B'],
+
+  // ── 候选池工具（11）：F-53 写在 `.team/` 里的真身，F-57 搬进项目────────────
+  ['PFL-01', 'proposal-file', F.proposalFile, '安全：跑前跑后真实候选池一个字节不变', '批次 G'],
+  ['PFL-02', 'proposal-file', F.proposalFile, '一次调用 = 一条候选 + 一句出处（正向 + 反向零写入）', '批次 G'],
+  ['PFL-03', 'proposal-file', F.proposalFile, '形状拒绝五格：text/source/kind/sha256/多余键 各自点名', '批次 G'],
+  ['PFL-04', 'proposal-file', F.proposalFile, '判重键 = (source, sha256)：同源同文拒 · 同源换文收 · 换出处收', '批次 G'],
+  ['PFL-05', 'proposal-file', F.proposalFile, '报文能指名：来源重了 / 内容哈希不符是两个码，各自点名', '批次 G'],
+  ['PFL-06', 'proposal-file', F.proposalFile, '判决岗看不见它：那一行 deny 里有 proposal_file（阳性对照先过）', '批次 G'],
+  ['PFL-07', 'proposal-file', F.proposalFile, '除判决岗外都看得见（含 review）；且它真的注册上了', '批次 G'],
+  ['PFL-08', 'proposal-file', F.proposalFile, '不依赖 shell · 不拆 review 写边界 · inject 顶层不 import 脑库', '批次 G'],
+  ['PFL-09', 'proposal-file', F.proposalFile, '冻结契约同步：冻结 ID 一条不少 · 体检指名 · 增量常量对账', '批次 G'],
+  ['PFL-10', 'proposal-file', F.proposalFile, '落点：判重与追加在同一把锁里（持锁时不写 · 两进程只进一条）', '批次 G'],
+  ['PFL-11', 'proposal-file', F.proposalFile, '不许按人拒绝：主路不吃身份也照样能提', '批次 G'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -177,7 +205,21 @@ export const REGISTRY = ROWS.map(([id, group, file, title, batchNote, notes]) =>
   ...(notes ? { notes } : {}),
 }))
 
-export const TOTAL = REGISTRY.length
+/**
+ * 历史冻结的 55 条（批次 A–F）—— **显式清单**，不是计数常数。
+ * 判据因此从"总数 === 55"变成"**这 55 条一条不少**"：可以加新 ID（三处同批），
+ * 但不许让任何一条悄悄离开登记表。
+ */
+export const FROZEN_IDS = [
+  ...BATCH_A, ...BATCH_B, ...BATCH_C, ...BATCH_D, ...BATCH_E, ...BATCH_F,
+]
+
+/**
+ * 分母：**盘上事实**（`discover.mjs` 数源码里的 `test('<ID> …')`，不数表）。
+ * 表只做对账 —— 两边对不上由 `registryProblems()` 报红，而不是让分母跟着表漂。
+ */
+export const DISCOVERY = discoverCases()
+export const TOTAL = DISCOVERY.ids.length
 export const CASES_BY_ID = new Map(REGISTRY.map((r) => [r.id, r]))
 
 export function countByStatus() {
@@ -202,22 +244,33 @@ export function batchB() {
 export const GROUP_COUNTS = {
   'static-doc': 6, route: 8, store: 4, memory: 12, guard: 3, job: 4,
   review: 3, receipt: 4, health: 2, 'data-root': 3, install: 3, env: 2, read: 1,
+  'proposal-file': 11,
 }
 
 /**
  * 注册表自检 —— 每条用例跑之前先过。
  * 它自己红，说明**表写歪了**（不是被测对象没实现）：那种红必须与 RED-SURFACE 分得开。
+ *
+ * 分母不在这里判"等不等于某个数"：分母由 `TOTAL`（= 盘上条数）给，本函数判的是
+ * **登记与盘上对不对得上**（`consistency()`）+ **发现器自己有没有问题**（`DISCOVERY.problems`）。
+ * 冻结的 55 条以 `FROZEN_IDS`（显式清单）的形式守：任何一条离开登记表都是 `DISC-FROZEN`。
  */
 export function registryProblems() {
   const problems = []
-  if (TOTAL !== 55) problems.push(`注册表总数 ${TOTAL} ≠ 契约 §9.1 的 55`)
+  // 发现 ↔ 登记：四个方向 + 冻结清单（每一条都点名文件与 ID）。
+  for (const p of consistency({ registry: REGISTRY, discovery: DISCOVERY, frozenIds: FROZEN_IDS }).problems) problems.push(p.message)
+  // 发现器自己报的问题（没有 ID 的 test() / 重复 ID）。
+  for (const p of DISCOVERY.problems) problems.push(p.message)
+  // 冻结清单必须正好盖住"批次 G 之外的全部登记行"（多一条或少一条都是清单与表分家）。
+  const nonG = REGISTRY.filter((r) => !BATCH_G.includes(r.id)).length
+  if (FROZEN_IDS.length !== nonG) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G 之外的 ${nonG} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
   if (overlap.length > 0) problems.push(`两批的 ID 有重叠：${overlap.join(', ')}`)
-  // 批 F 之后：**55/55 全写完**，pending-write 必须是 0（派工单的硬要求）
+  // 全部批次都写完：`pending-write` 必须是 0（派工单的硬要求）
   const pending = REGISTRY.filter((r) => r.status === 'pending-write').length
-  if (pending !== 0) problems.push(`写完全部批次之后 pending-write 必须为 0，实得 ${pending}：${REGISTRY.filter((r) => r.status === 'pending-write').map((r) => r.id).join(', ')}`)
+  if (pending !== 0) problems.push(`全部批次写完之后 pending-write 必须为 0，实得 ${pending}：${REGISTRY.filter((r) => r.status === 'pending-write').map((r) => r.id).join(', ')}`)
   const seen = new Set()
   for (const r of REGISTRY) {
     if (seen.has(r.id)) problems.push(`重复 ID：${r.id}`)
@@ -237,6 +290,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...BATCH_A, ...BATCH_B]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
