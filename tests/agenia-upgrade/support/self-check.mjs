@@ -15,22 +15,37 @@
 import { entryVerdict, judgementLines } from './verdict.mjs'
 import { parseTestCalls } from './discover.mjs'
 
-/** 「这一跑算不算数」的九个格（输入 → 期望退出码 / 是否算干净通过）。 */
+/**
+ * 「这一跑算不算数」的**十个**格（输入 → 期望退出码 / 是否算干净通过 / 红因有几条）。
+ *
+ * ⚠️ 每一格都要能**单独承重**：`failHas` 只证明"那条红在里面"，`failCount` 才证明"红因**只有**它"。
+ *    没有 `failCount` 的格，遇到"别的判据先红、把这一格遮住"就测不出半修形态（M-2 就是这么漏的）。
+ */
 export const VERDICT_TABLE = [
   {
     name: '全量全绿 ⇒ 0 且算干净通过',
     input: { denominator: 66, scopeCases: 66, scopeDeclared: false, settled: 66, red: 0, green: 66, hold: 0, consistent: true, diffCount: 0, nodeExit: 0, nodeTests: 66, nodeFail: 0, settleExit: 0 },
-    want: { exitCode: 0, ok: true },
+    want: { exitCode: 0, ok: true, failCount: 0 },
   },
   {
     name: '有 HOLD ⇒ 不是绿（exit 2）',
     input: { denominator: 66, scopeCases: 66, scopeDeclared: false, settled: 66, red: 0, green: 64, hold: 2, consistent: true, diffCount: 0, nodeExit: 0, nodeTests: 66, nodeFail: 0, settleExit: 0 },
-    want: { exitCode: 2, ok: false, failHas: 'HOLD' },
+    want: { exitCode: 2, ok: false, failHas: 'HOLD', failCount: 1 },
   },
   {
     name: '半跑（没声明范围，跑到 11/共 66）⇒ exit 1',
     input: { denominator: 66, scopeCases: null, scopeDeclared: false, settled: 11, red: 0, green: 11, hold: 0, consistent: true, diffCount: 0, nodeExit: 0, nodeTests: 11, nodeFail: 0, settleExit: 0 },
-    want: { exitCode: 1, ok: false, failHas: '11' },
+    want: { exitCode: 1, ok: false, failHas: '11', failCount: 1 },
+  },
+  {
+    /**
+     * 🔴 **`nodeTests` 数不出来，而这一跑其余一切正常** —— 红因**只能**是"数不出来"。
+     * 为什么要这一格：别的格里 `nodeTests: null` 都伴随 `settled === 0`，那条红先炸，
+     * "把 null 当没事"这句半修就被遮住了（测试岗实测：改回去之后同一输入仍 `exit 0 / ok=true`）。
+     */
+    name: '数不出来（跑到 66 条但 node --test 没报 tests）⇒ exit 1，且红因只有这一条',
+    input: { denominator: 66, scopeCases: 66, scopeDeclared: false, settled: 66, red: 0, green: 66, hold: 0, consistent: true, diffCount: 0, nodeExit: 0, nodeTests: null, nodeFail: null, settleExit: 0 },
+    want: { exitCode: 1, ok: false, failHas: '数不出来', failCount: 1 },
   },
   {
     name: '声明范围跑满且全绿 ⇒ exit 0，但**不是**全量证据（不许打 OK）',
@@ -40,12 +55,12 @@ export const VERDICT_TABLE = [
   {
     name: '声明范围没跑满（声明 11 / 跑到 10）⇒ exit 1',
     input: { denominator: 66, scopeCases: 11, scopeDeclared: true, settled: 10, red: 0, green: 10, hold: 0, consistent: true, diffCount: 0, nodeExit: 0, nodeTests: 10, nodeFail: 0, settleExit: 0 },
-    want: { exitCode: 1, ok: false, failHas: '10' },
+    want: { exitCode: 1, ok: false, failHas: '10', failCount: 1 },
   },
   {
     name: '有红 ⇒ exit 1',
     input: { denominator: 66, scopeCases: 66, scopeDeclared: false, settled: 66, red: 2, green: 64, hold: 0, consistent: true, diffCount: 0, nodeExit: 1, nodeTests: 66, nodeFail: 2, settleExit: 0 },
-    want: { exitCode: 1, ok: false, failHas: 'RED' },
+    want: { exitCode: 1, ok: false, failHas: 'RED', failCount: 1 },
   },
   {
     name: '空跑（0 条）⇒ exit 1 且明写"0 用例不算结算"',
@@ -55,12 +70,12 @@ export const VERDICT_TABLE = [
   {
     name: 'node 报 67 条、结算 66 条（发现器漏认一条）⇒ exit 1',
     input: { denominator: 66, scopeCases: 66, scopeDeclared: false, settled: 66, red: 0, green: 66, hold: 0, consistent: true, diffCount: 0, nodeExit: 0, nodeTests: 67, nodeFail: 0, settleExit: 0 },
-    want: { exitCode: 1, ok: false, failHas: '67' },
+    want: { exitCode: 1, ok: false, failHas: '67', failCount: 1 },
   },
   {
     name: '登记 ≠ 盘上 ⇒ exit 1',
     input: { denominator: 67, scopeCases: 67, scopeDeclared: false, settled: 67, red: 0, green: 67, hold: 0, consistent: false, diffCount: 1, nodeExit: 0, nodeTests: 67, nodeFail: 0, settleExit: 2 },
-    want: { exitCode: 1, ok: false, failHas: '登记' },
+    want: { exitCode: 1, ok: false, failHas: '登记', failCount: 2 },
   },
 ]
 
@@ -114,6 +129,10 @@ export function runSelfCheck() {
     if (got.ok !== row.want.ok) failures.push(`verdict「${row.name}」：ok=${got.ok} ≠ ${row.want.ok}（OK 只许在"分母=跑到=全绿=无 HOLD"时出现）`)
     if (row.want.failHas !== undefined && !got.failures.some((f) => f.includes(row.want.failHas))) {
       failures.push(`verdict「${row.name}」：没有任何一条失败信息提到 ${JSON.stringify(row.want.failHas)}（实得 ${JSON.stringify(got.failures)}）`)
+    }
+    // `failCount`：红因**只有**这么几条 —— 没有它，"别的判据先红"会把这一格的半修遮住。
+    if (row.want.failCount !== undefined && got.failures.length !== row.want.failCount) {
+      failures.push(`verdict「${row.name}」：红因 ${got.failures.length} 条 ≠ ${row.want.failCount}（实得 ${JSON.stringify(got.failures)}）`)
     }
   }
   for (const row of JUDGEMENT_TABLE) {
