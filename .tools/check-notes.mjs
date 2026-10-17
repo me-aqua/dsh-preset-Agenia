@@ -1378,8 +1378,13 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    停在 `phase: "reviewing"` / `finished_at: null` —— "作业交活"从来没有被传播到 update state。
   //    钉的是**昨天**：本脚本在开工第一步跑，那一刻"昨天走完没有"才有答案
   //    （判"今天"= 结构上永远不可能绿，那就是天天必红）。
-  //    ⚠️ **只抓 `reviewing`**：那是"复核**已经开跑**却没结果"，必是断头；
-  //       `awaiting_review_start` 是"还没开跑"，不在这条的判据里（别把它也吞进来）。
+  //    🔴 F-49（2026-10-17）：`awaiting_review_start` **有两种长相**，靠 `phase` 一个字段分不开 ——
+  //       ① 还没开跑（`state/jobs/` 里没有这一轮的复核作业记录）⇒ 当天上午的**正常态**，一个字节都不判；
+  //       ② 起了、没交活（**作业记录在盘上**、`state≠done` 或 `finished_at` 空）⇒ **断头**，
+  //          而 2026-10-17 之前这一种**没有任何机器会喊**（技术评审第二场 F5 / 第一场 F6）。
+  //    ⇒ 判别信号是 **`phase` + 作业记录**两件事，不是 `phase` 一个字段。
+  //    ⚠️ 仍然**只判昨天**（判今天 = 结构上永远不可能绿 = 天天必红，见上面那段理由）；
+  //    ⚠️ 没有作业记录时 `awaiting_review_start` 不许判红（否则就是"天天必红的装饰"）。
   if (existsSync(memRoot)) {
     const prevDay = (() => {
       const t = new Date(`${today}T00:00:00Z`)
@@ -1396,15 +1401,38 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
         prevPhase = '（读不出来）'
       }
     }
-    const stuck = prevPhase === 'reviewing'
-    yes('office', `昨天（${prevDay}）那一轮记忆更新走完了（phase 不许停在 reviewing）`,
+    // 昨天那一轮的**复核作业记录**（`state/jobs/<job_id>.json`，形状见下面第 ⑤ 段已经在读的目录）
+    const jobsDirOf = join(memRoot, 'state', 'jobs')
+    const prevReviewJobs = (() => {
+      if (!existsSync(jobsDirOf)) return []
+      const out = []
+      for (const name of readdirSync(jobsDirOf)) {
+        if (!name.endsWith('.json') || name.startsWith('intent-')) continue
+        let rec = null
+        try { rec = JSON.parse(readFileSync(join(jobsDirOf, name), 'utf8').replace(/^\uFEFF/, '')) } catch { continue }
+        if (!rec || rec.role !== 'memory-review') continue
+        // 「昨天那一轮」怎么认：job_id 里带日期 **或** started_at 就是那一天（两种都认，别只认一种）
+        if (!String(rec.job_id ?? '').includes(prevDay) && !String(rec.started_at ?? '').startsWith(prevDay)) continue
+        out.push({ job_id: String(rec.job_id ?? name), state: rec.state ?? null, finished_at: rec.finished_at ?? null })
+      }
+      return out
+    })()
+    // 起了、但**没交活**（没 done 或没有 finished_at）—— 这一族是断头
+    const undelivered = prevReviewJobs.filter((j) => j.state !== 'done' || !j.finished_at)
+    const stuck = prevPhase === 'reviewing' || (prevPhase === 'awaiting_review_start' && undelivered.length > 0)
+    yes('office', `昨天（${prevDay}）那一轮记忆更新走完了（复核起了就必须交活；phase 不许停在 reviewing / awaiting_review_start）`,
       !stuck,
       !hasPrev
         ? `${prevDay} 没有 update 状态 —— 那天没跑记忆更新（这一条不判）`
-        : stuck
+        : prevPhase === 'reviewing'
           ? `${prevDay} 的 phase 还停在 reviewing / finished_at 空 —— 复核开跑了却没有收口。`
             + '**补账那一步会把 review 的 done 写回 phase=done**：先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark`'
-          : `${prevDay} 的 phase = ${prevPhase}`)
+          : undelivered.length > 0
+            ? `${prevDay} 的 phase 停在 awaiting_review_start，**而复核作业已经在盘上、还没交活**：`
+              + undelivered.map((j) => `${j.job_id}（state=${j.state ?? '?'} / finished_at=${j.finished_at ?? '空'}）`).join('、')
+              + ' —— 这一种以前没有任何机器会喊。先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark` 把 phase 写回 done'
+            : `${prevDay} 的 phase = ${prevPhase}`
+              + (prevReviewJobs.length > 0 ? ` · 复核作业 ${prevReviewJobs.length} 份都已交活` : ' · 还没有复核作业记录（正常态）'))
   }
 
   // ⑤ 挂着的作业不许永远"正在跑"（2026-10-16 加）
