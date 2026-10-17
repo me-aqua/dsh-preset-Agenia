@@ -28,8 +28,10 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 
-WS = r"E:\Harness"
-DR = os.path.join(WS, "presets", "agenia", ".runtime")
+# 必须由 --workspace 给。不许写死：写死会让"我这个工作区"和"别人的工作区"变成同一个字符串，
+# 于是另一个会话跑同一个脚本时，卡就落进了别人的抽屉（2026-10-17 实测发生过一次）。
+WS = None
+DR = None
 
 HDR = Font(bold=True, color="FFFFFF"); HDR_FILL = PatternFill("solid", fgColor="4472C4")
 TITLE = Font(bold=True, size=13); NOTE = Font(italic=True, color="808080")
@@ -67,10 +69,19 @@ def sheet(ws, title, sub, cols, rows, ws_widths, freeze="A5"):
     widths(ws, ws_widths); ws.freeze_panes = freeze; ws.auto_filter.ref = ws.dimensions
 
 def main():
+    global WS, DR
     ap = argparse.ArgumentParser()
     ap.add_argument("--day", required=True)
+    ap.add_argument("--workspace", required=True,
+                    help="工作区根（必填·不许猜：写死会让别的会话把卡落进你的抽屉）")
     a = ap.parse_args(); day = a.day
+    WS = os.path.abspath(a.workspace)
+    DR = os.path.join(WS, "presets", "agenia", ".runtime")
     out_dir = os.path.join(WS, ".team", "leader", day)
+    print("workspace:", WS)
+    print("cards  -> ", out_dir)
+    if not os.path.isdir(os.path.join(WS, ".team")):
+        sys.exit("E_NO_TEAM: %s 下没有 .team/ —— 工作区给错了？" % WS)
     os.makedirs(out_dir, exist_ok=True)
 
     # ── 读数据 ────────────────────────────────────────────────────────
