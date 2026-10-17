@@ -1442,9 +1442,10 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
         : prevPhase === 'reviewing'
           ? `${prevDay} 的 phase 还停在 reviewing / finished_at 空 —— 复核开跑了却没有收口。`
             + '**补账那一步会把 review 的 done 写回 phase=done**：先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark`'
-          : prevPhase === 'failed'
+                          : prevPhase === 'failed'
             ? `${prevDay} 的 phase = failed —— **这一轮没走完**（失败可能出在判决，也可能出在复核）。`
-              + '先翻 `state/jobs/` 里那几份记录的 `failure_reason` 与 `finished_at`，认清是哪一环失败的，'
+              + '先看 `state/update/` 里那一份自己的 `failure_reason`（**它一定在**：状态是后写的）；'
+              + '再看 `state/jobs/` 里有没有对应的作业记录可对（**那一份可能根本不存在** —— 失败可能发生在派作业之前）。'
               + '**别直接 `job-mark --state done`**：失败要先处置（重跑那一环），处置完再结账'
             : (prevPhase === 'awaiting_review_start' && undelivered.length > 0)
               ? `${prevDay} 的 phase 停在 awaiting_review_start，**而复核作业已经在盘上、还没交活**：`
@@ -1466,7 +1467,17 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
                           const failedOnes = undelivered.filter((j) => !older.includes(j) && j.state === 'failed')
                           const broken = undelivered.filter((j) => !older.includes(j) && !failedOnes.includes(j))
                           const bits = []
-                          if (older.length > 0) bits.push(`${older.length} 份是**被重派取代的旧尝试**（attempt 小于 review_attempt=${prevReviewAttempt}）—— 正常，不用管`)
+                          if (older.length > 0) {
+                            // 🔴 「旧尝试」这三段在**现实形状里永远落在这一支**（2026-10-17 A11 实测）：
+                            //    `phase='done'` 的写入点被 `attempt === review_attempt` 卡着 ⇒ 残留必然是旧尝试。
+                            //    所以"报过失败"那一支轮不到 ⇒ 必须在这一句里把它**补出来**，否则 S10 那种盘
+                            //    （残留是 failed）读起来像是"没什么事"。补法不是另起一句"处置是重跑"——
+                            //    那一环**已经重跑过了**（phase=done），说重跑会把人推去做一件已完成的事。
+                            const failedOld = older.filter((j) => j.state === 'failed')
+                            bits.push(`${older.length} 份是**被重派取代的旧尝试**（attempt 小于 review_attempt=${prevReviewAttempt}`
+                              + (failedOld.length > 0 ? `，**其中 ${failedOld.length} 份报过失败**：${failedOld.map((j) => j.job_id).join('、')}` : '')
+                              + '）—— 正常，不用管')
+                          }
                           if (failedOnes.length > 0) bits.push(`${failedOnes.length} 份**报过失败**（${failedOnes.map((j) => j.job_id).join('、')}）—— 处置是重跑那一环，不是改状态`)
                           if (broken.length > 0) bits.push(`⚠️ ${broken.length} 份**真没交活**（${broken.map((j) => `${j.job_id}（state=${j.state ?? '?'} / finished_at=${j.finished_at ?? '空'}）`).join('、')}）`)
                           return ` · 另有 ${undelivered.length} 份不是 done：${bits.join('；')}`
