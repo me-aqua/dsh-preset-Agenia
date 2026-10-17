@@ -1,10 +1,15 @@
 /**
  * F-56 判据本体 —— **「每个调用点必须配对一次转发」+「每个出口必须自带 progress」**。
  *
- * 📌 **口径同源**：本文件是从 `.team/test/2026-10-17/F-56/f56-forward-count.cases.mjs`
+ * 📌 **来历**：本文件是从 `.team/test/2026-10-17/F-56/f56-forward-count.cases.mjs`
  *   （测试岗的参照实现，条款见 `F-56-契约.md`）**抄**过来的纯函数部分。
  *   🔴 **不 import 它**，因为它住在 `.team/` 里 —— 那份目录**不进 git**，发出去之后不存在。
- *   ⚠️ **改口径要两边同批改**（抄本与参照实现的语义必须一致，否则"用哪份算"就成了新问题）。
+ *
+ * 🔴 **已分叉（2026-10-17 · R-F56-01 / 02 / 04）**：本文件后来改了**三处语义**
+ *   （按名字计数配对 / 白名单腐烂补"bin 之外的空登记" / notes 收进结果），
+ *   而**参照实现仍停在旧口径** ⇒ **跑那份 cases 证明的不是这一份**：
+ *   同一棵树，它可能给出**相反答案**（见 **F-61**）。
+ *   ⚠️ 所以这里**不再承诺"两边同批改"** —— 承诺的是「**分叉了要说清分叉**」。
  *
  * 为什么不用简单正则（第 2 关用读数证的，不是推断）：
  *   · 单行 `/return \{ status:/` 只数到 **5** —— 漏掉多行的 `HOLD` 出口；
@@ -28,7 +33,7 @@ import path from 'node:path'
 /** 判定住在哪儿（出口就在这个函数里）。 */
 export const CRITERION = Object.freeze({
   id: 'f56-forwards-bound',
-  version: 1,
+  version: 2,
   libRel: 'presets/agenia/lib/health.mjs',
   binRel: 'presets/agenia/bin',
   fnName: 'healthVerdict',
@@ -405,7 +410,17 @@ export function analyzeTree(root, options = {}) {
   for (const w of whitelist) {
     if (!w || typeof w.path !== 'string') continue
     const hit = binReports.find((r) => r.relPath === w.path)
-    if (hit && hit.callSites.length === 0) {
+    // 🔴 登记了一个**不在被扫的 `bin/*.mjs` 里**的路径（文件在、但扫不到）⇒ 红。
+    //    没有这一格，白名单项就可能是"空登记"：它屏蔽不了任何东西，读者却以为这里签过字。
+    if (!hit) {
+      problems.push({
+        code: 'F56-WHITELIST-STALE',
+        path: w.path,
+        detail: `白名单登记了 ${w.path}，但它**不在被扫的 ${CRITERION.binRel}/*.mjs 里** —— 这条登记屏蔽不了任何东西（空登记）`,
+      })
+      continue
+    }
+    if (hit.callSites.length === 0) {
       problems.push({
         code: 'F56-WHITELIST-STALE',
         path: w.path,

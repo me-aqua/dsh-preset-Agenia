@@ -457,7 +457,8 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
 }
 
 // 🔴 F-56（2026-10-17）：**每个 `healthVerdict(…)` 调用点都要配对一次 `progress` 转发**；
-//    **每个出口都要自带 `progress`**。判据本体在 `lib/f56-forward.mjs`（口径与测试岗的参照实现同源）。
+//    **每个出口都要自带 `progress`**。判据本体在 `lib/f56-forward.mjs`
+//    （🔴 **已与测试岗的参照实现分叉**，见 F-61 —— 跑那份 cases 证明的不是这一份）。
 //    ⚠️ **不是"出口数 == 转发点数"** —— 那两个数本来就不该相等（实测出口 6 / 转发 2），
 //       按那个口径算，"加一个转了发的新入口"会让它红 ⇒ 那是 change-detector。
 {
