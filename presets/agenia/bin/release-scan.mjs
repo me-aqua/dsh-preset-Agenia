@@ -9,11 +9,19 @@
  *      ⚠️ 比较时**剔掉数据目录**（`.runtime` / `.team` 那些段）—— 它们是活体上本来就有的东西，
  *         不是"多出来的代码"。
  *   ② **没有任何文件落 C 盘**
- *      `SCAN-C-DRIVE`（**代码文件**里出现 C 盘字面量：`.mjs/.js/.cjs/.ts/.yml/.json/.ps1/.sh/.cmd/.bat`）·
+ *      `SCAN-C-DRIVE`（**代码文件**里出现 C 盘字面量：`.mjs/.js/.cjs/.ts/.yml/.ps1/.sh/.cmd/.bat`）·
  *      `SCAN-TEMP-DEFAULT`（代码用了进程默认临时目录 —— 那默认在 C 盘）·
  *      `SCAN-LANDING-C`（**本次扫描自己的落点**：`--backup` 等解析到 C 盘）。
  *      ⚠️ **散文（`.md`）里的 C 盘字面量不算 finding** —— 历史记载（"全组往 `C:\dsh_*` 塞了 39.6 GB"）
  *         和落点风险是两件事。它们照记在 `info.c_drive_prose` 里，给人看。
+ *      ⚠️ **数据（`.json`）里的 C 盘字面量同样不算 finding，也不进 `info.c_drive_prose`** ——
+ *         `.json` 是数据面（`DATA_EXT`），不是代码面：数据正文里的盘符是记载，不是"代码写死了 C 盘"。
+ *         🔴 但 `.json` **照旧进 ③** 凭据扫描（`checkNoSecrets` 的闸门里带着 `DATA_EXT`）——
+ *         凭据形状与"这文件算不算代码"是两件事，漏了它凭据扫描的覆盖面会静默缩水。
+ *      ⚠️ **扫描器自己（预设根里的 `bin/release-scan.mjs`）按相对路径从 ② 里排除** ——
+ *         它的源码里就写着 `TEMP_PATTERNS` 那些字面量（判据的声明），扫到自己必然命中。
+ *         staged / live 两份副本一起盖住；被排除的副本逐条记在 `readings.self_excluded`。
+ *         别处、别的路径的同族写法照旧报（A5）。
  *   ③ **无密钥 / 凭据字样泄漏**
  *      `SCAN-SECRET`（高信号凭据形状：`sk-…` / `AKIA…` / `ghp_…` / `xox…` / `-----BEGIN … PRIVATE KEY-----`
  *      / `api_key|apikey|password|secret|Bearer` 后面跟着长字面量）·
@@ -60,6 +68,19 @@ const REPO = path.resolve(path.dirname(SELF), '..')
 const CLI_NAME = 'release-scan.mjs'
 const OP_NAMES = ['scan', 'frozen-lines', 'help']
 const PROTECTED_SEGMENTS = ['.runtime', '.team']
+/**
+ * ② 的钥匙：扫描器自己**在预设根里的相对路径**（现量 `bin/release-scan.mjs`）。
+ *
+ * 为什么按相对路径、不按"这是不是正在跑的那一份"：staged 树与 live 树里各有一份**同字节、
+ * 不同绝对路径**的副本（`--repo <仓库根>` 两条都扫）。realpath / inode 比起的那一份会被跳过，
+ * 另一份照旧红 ⇒ ② 只解决一半。相对路径对两棵树一视同仁，两份一起盖住。
+ *
+ * 排除它的理由：扫描器自己的源码里就写着 `TEMP_PATTERNS` 那些字面量（判据的声明），
+ * 扫到自己必然命中 —— 那是"判据声明了自己"，不是"代码真的用了默认临时目录"。
+ * 代价（认得下）：任何树里**同 rel 路径**的文件一起被放过；别处、别的路径的同族写法照旧报。
+ * 被排除的副本不藏着：逐条记进 ② 的 `readings.self_excluded`。
+ */
+const SELF_REL = path.relative(path.resolve(path.dirname(SELF), '..'), SELF).replace(/\\/g, '/')
 
 const CODES = Object.freeze({ E_USAGE: 2, E_ARG_SCHEMA: 2, E_ROOT_MISSING: 3, E_ROOT_RELATIVE: 3, E_ROOT_UNC: 3, E_ROOT_C_DRIVE: 3, E_PATH_ESCAPE: 3, E_MANIFEST_MISMATCH: 5, E_INTERNAL: 8 })
 
@@ -95,7 +116,14 @@ const FROZEN_LINES = Object.freeze({
 })
 
 /** 两处绝对路径的**目标**（与 `FROZEN.patchTargets` 同值）：补丁指的是**装好之后**那个位置。 */
-const CODE_EXT = /\.(mjs|cjs|js|mts|cts|ts|yml|yaml|json|ps1|sh|cmd|bat)$/i
+const CODE_EXT = /\.(mjs|cjs|js|mts|cts|ts|yml|yaml|ps1|sh|cmd|bat)$/i
+/**
+ * 数据面。`.json` 是**数据**，不是代码：② 的"C 盘字面量 / 默认临时目录"两条都不判它
+ * （数据文件正文里出现 `C:\…` 是记载，不是"代码里写死了 C 盘"）。
+ * 🔴 但 ③ 的凭据扫描**必须**继续覆盖它 —— 那道闸门见 `checkNoSecrets`：
+ *    凭据形状与"这个文件算不算代码"是两件事，漏了它凭据扫描的覆盖面会静默缩水。
+ */
+const DATA_EXT = /\.json$/i
 const PROSE_EXT = /\.(md|markdown|txt)$/i
 
 function cliError(code, message) {
@@ -235,10 +263,12 @@ const TEMP_PATTERNS = [/\btmpdir\s*\(/, /\bmkdtemp\w*\s*\(/, /process\.env\.TEMP
 function checkNoCDrive(roots, backupPath) {
   const findings = []
   const prose = []
+  const selfExcluded = []
   let scanned = 0
   for (const { label, root } of roots) {
     if (!existsSync(root)) continue
     for (const f of walkFiles(root)) {
+      if (f.rel === SELF_REL) { selfExcluded.push(`${label}:${f.rel}`); continue }
       const ext = path.extname(f.rel)
       const isCode = CODE_EXT.test(f.rel)
       const isProse = PROSE_EXT.test(f.rel)
@@ -269,7 +299,17 @@ function checkNoCDrive(roots, backupPath) {
   for (const row of landing) {
     if (row.drive === 'C') findings.push({ code: 'SCAN-LANDING-C', message: `${row.what} 落在 C 盘：${row.path}`, where: row.what })
   }
-  return { findings, readings: { files_scanned: scanned, landing, info_c_drive_prose: prose, prose_note: '散文（.md/.txt）里的 C 盘字面量**不算 finding** —— 历史记载与落点风险是两件事' } }
+  return {
+    findings,
+    readings: {
+      files_scanned: scanned,
+      self_excluded: selfExcluded,
+      self_excluded_note: `扫描器自己在预设根里的相对路径 \`${SELF_REL}\` 从 ② 里排除（staged / live 两份副本一起盖住）—— 它自己的源码里就写着判据的字面量`,
+      landing,
+      info_c_drive_prose: prose,
+      prose_note: '散文（.md/.txt）里的 C 盘字面量**不算 finding** —— 历史记载与落点风险是两件事；数据（.json）里的盘符连散文都不算，② 不判它（③ 照旧扫它的凭据形状）',
+    },
+  }
 }
 
 // ── ③ 无密钥 / 凭据字样 ───────────────────────────────────────────────────
@@ -296,7 +336,10 @@ function checkNoSecrets(roots) {
         findings.push({ code: 'SCAN-SECRET-FILE', message: `发布树里出现凭据文件（${label}:${f.rel}）—— AGENTS.md §5：它绝对不能进版本库，更不许进预设`, where: `${label}:${f.rel}` })
         continue
       }
-      if (!CODE_EXT.test(f.rel) && !PROSE_EXT.test(f.rel)) continue
+      // ③ 的入口闸门：代码 + **数据** + 散文。`.json` 不算代码（② 不判它），但凭据形状
+      // 与"这文件算不算代码"无关 —— 少了 `DATA_EXT` 这一项，`.json` 会整个跳过 ③，
+      // 凭据扫描的覆盖面静默缩水（没有红、也没有读数，最坏的那一种）。
+      if (!CODE_EXT.test(f.rel) && !DATA_EXT.test(f.rel) && !PROSE_EXT.test(f.rel)) continue
       scanned += 1
       const raw = readFileSync(path.join(root, f.rel), 'utf8')
       const text = CODE_EXT.test(f.rel) ? stripComments(raw, path.extname(f.rel)) : raw
@@ -310,7 +353,15 @@ function checkNoSecrets(roots) {
       })
     }
   }
-  return { findings, readings: { files_scanned: scanned, patterns: SECRET_PATTERNS.length, credential_filenames: CREDENTIAL_FILENAMES } }
+  return {
+    findings,
+    readings: {
+      files_scanned: scanned,
+      scan_surface: '代码面 + 数据面（.json）+ 散文。`.json` 在 ② 里不算代码，在 ③ 里**一定**被扫',
+      patterns: SECRET_PATTERNS.length,
+      credential_filenames: CREDENTIAL_FILENAMES,
+    },
+  }
 }
 
 // ── ④ 补丁 ↔ 组合（结构对账；**不加载生成器**）────────────────────────────
