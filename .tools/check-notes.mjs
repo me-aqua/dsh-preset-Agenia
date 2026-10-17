@@ -1393,10 +1393,16 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     })()
     const prevUpdate = join(memRoot, 'state', 'update', `${prevDay}.json`)
     let prevPhase = null
+    // 🔴 还要读 `review_attempt`（2026-10-17 三审 S-1）：它是"写到第几次复核"的计数，
+    //    作业记录里的 `attempt` 与它一比，就能分出**被重派取代的旧尝试**和**真的没交活**。
+    //    在这之前这一段只取 `.phase` —— 于是那两种东西在 detail 里被说成同一件事。
+    let prevReviewAttempt = null
     const hasPrev = existsSync(prevUpdate)
     if (hasPrev) {
       try {
-        prevPhase = JSON.parse(readFileSync(prevUpdate, 'utf8').replace(/^\uFEFF/, '')).phase ?? null
+        const st = JSON.parse(readFileSync(prevUpdate, 'utf8').replace(/^\uFEFF/, ''))
+        prevPhase = st.phase ?? null
+        prevReviewAttempt = Number.isInteger(st.review_attempt) ? st.review_attempt : null
       } catch {
         prevPhase = '（读不出来）'
       }
@@ -1413,7 +1419,12 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
         if (!rec || rec.role !== 'memory-review') continue
         // 「昨天那一轮」怎么认：job_id 里带日期 **或** started_at 就是那一天（两种都认，别只认一种）
         if (!String(rec.job_id ?? '').includes(prevDay) && !String(rec.started_at ?? '').startsWith(prevDay)) continue
-        out.push({ job_id: String(rec.job_id ?? name), state: rec.state ?? null, finished_at: rec.finished_at ?? null })
+        out.push({
+          job_id: String(rec.job_id ?? name),
+          state: rec.state ?? null,
+          finished_at: rec.finished_at ?? null,
+          attempt: Number.isInteger(rec.attempt) ? rec.attempt : null,
+        })
       }
       return out
     })()
@@ -1440,15 +1451,26 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
                 + undelivered.map((j) => `${j.job_id}（state=${j.state ?? '?'} / finished_at=${j.finished_at ?? '空'}）`).join('、')
                 + ' —— 这一种以前没有任何机器会喊。先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark` 把 phase 写回 done'
               : `${prevDay} 的 phase = ${prevPhase}`
-                // 🔴 「都已交活」必须由 `undelivered` 派生，不许另算（2026-10-17 重审 A）：
-                //    另算会造出"判绿 + 说 2 份都已交活"，而其中一份其实是 failed（05 那一段只看 running，看不出来）。
+                // 🔴 「都已交活」必须由 `undelivered` 派生，不许另算（2026-10-17 重审 A）。
+                // 🔴 而剩下那几份**也不许一句话全打成"没交活"**（2026-10-17 三审 S-1）：
+                //    `state !== 'done'` 装了三种东西 —— ① 被重派取代的**旧尝试**（attempt 小）
+                //    ② 报过失败的尝试 ③ 真断头（running 且没有 finished_at）。
+                //    第一轮那句"这两件事对不上（查是谁把它结掉的）"给 ① 定了罪，而 ① 是正常补救路：
+                //    `phase='done'` 的写入点被 `attempt === review_attempt` 卡着 ⇒ 写 done 的那份**必不在** remaining 里。
                 + (prevReviewJobs.length === 0
                     ? ' · 还没有复核作业记录（正常态）'
                     : undelivered.length === 0
                       ? ` · 复核作业 ${prevReviewJobs.length} 份都已交活`
-                      : ` · 🔴 有 ${undelivered.length} 份**没交活**：`
-                        + undelivered.map((j) => `${j.job_id}（state=${j.state ?? '?'}）`).join('、')
-                        + ` —— 而 phase 已经写成 ${prevPhase}，**这两件事对不上**（查是谁把它结掉的）`))
+                      : (() => {
+                          const older = undelivered.filter((j) => prevReviewAttempt !== null && j.attempt !== null && j.attempt < prevReviewAttempt)
+                          const failedOnes = undelivered.filter((j) => !older.includes(j) && j.state === 'failed')
+                          const broken = undelivered.filter((j) => !older.includes(j) && !failedOnes.includes(j))
+                          const bits = []
+                          if (older.length > 0) bits.push(`${older.length} 份是**被重派取代的旧尝试**（attempt 小于 review_attempt=${prevReviewAttempt}）—— 正常，不用管`)
+                          if (failedOnes.length > 0) bits.push(`${failedOnes.length} 份**报过失败**（${failedOnes.map((j) => j.job_id).join('、')}）—— 处置是重跑那一环，不是改状态`)
+                          if (broken.length > 0) bits.push(`⚠️ ${broken.length} 份**真没交活**（${broken.map((j) => `${j.job_id}（state=${j.state ?? '?'} / finished_at=${j.finished_at ?? '空'}）`).join('、')}）`)
+                          return ` · 另有 ${undelivered.length} 份不是 done：${bits.join('；')}`
+                        })()))
   }
 
   // ⑤ 挂着的作业不许永远"正在跑"（2026-10-16 加）
