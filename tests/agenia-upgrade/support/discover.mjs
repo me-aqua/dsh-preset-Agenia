@@ -12,7 +12,10 @@
  *     （`.team/` 里那份同名证据因此天然不被捡起）。
  *   · 文件：`*.test.mjs`，在每棵根下**递归**（与 `node --test "tests/agenia-upgrade/**\/*.test.mjs"`
  *     的覆盖面同形 —— 跑到的和数到的不许分家）。
- *   · 用例：源码里 `test('<ID> …')` 这一形状的调用，`<ID>` 必须匹配 `^[A-Z]+-\d{2}$`。
+ *   · 用例：源码里 `test(...)` 这个**调用**，`<ID>` 必须匹配 `^[A-Z]+-\d{2}$`。
+ *     标题可以在同一行、也可以在下一行（`test(\n  '<ID> …'`）—— 两种 `node --test` 都会跑。
+ *     认不出标题的 `test(...)`（例如标题是算出来的）⇒ `DISC-UNPARSED`，**不许当成 0**。
+ *     `.test(` 是正则方法，不是用例注册（判据：`test` 前面那个字符是不是语句边界）。
  *   · 注释行（`//` / `*` / `/*` 开头）不算 —— 与本项目其余静态判据同口径。
  *
  * 🔴 本模块**不 import 注册表**：发现与登记是两个事实，谁先读谁就造出"唯一来源"的假象。
@@ -37,7 +40,6 @@ export function testsRoot() {
 }
 
 const isCommentLine = (line) => /^\s*(\/\/|\*|\/\*)/.test(line)
-const TEST_CALL = /^\s*test\(\s*(['"`])(.*?)\1/
 
 /** 递归列出 `dir` 下的 `*.test.mjs`（相对 `root` 的 posix 路径，按名字排序 ⇒ 读数可复现）。 */
 function listCaseFiles(root, dirName) {
@@ -88,6 +90,91 @@ function listAllTestFiles(root) {
 }
 
 /**
+ * 从一份源码里认 `test(...)` 调用 —— **两种形状都认**，认不出就**报**（不许当成 0）。
+ *
+ * 认哪两种：
+ *   · `test('<ID> …', () => {})`                       —— 标题与 `test(` 同一行
+ *   · `test(\n  '<ID> …',\n  () => {}\n)`              —— 标题在下一行（`node --test` 照样跑它）
+ *
+ * 不认 `.test(`：`/re/.test(line)` 是正则方法，不是用例注册。判据是"`test` 前面那个字符"——
+ * 只有语句边界（行首 / 空白 / `;{}(),=`）才算调用；前面是 `.` 的一律不算。
+ *
+ * 🔴 认不出标题（`test(someVar, …)` 那种算出来的标题）⇒ 记进 `unparsed`，由调用方报 `DISC-UNPARSED`。
+ *    为什么：这种 `test()` 会跑、但发现器数不出来 ⇒ 分母少一条而没人喊，正是要治的病。
+ *
+ * @param {string} text
+ * @returns {{
+ *   calls: Array<{line: number, title: string}>,
+ *   unparsed: Array<{line: number, snippet: string}>,
+ * }}
+ */
+export function parseTestCalls(text) {
+  const calls = []
+  const unparsed = []
+  const lines = text.split(/\r?\n/)
+  // 行首偏移表（把"字符位置"换算成行号；不靠 `slice(0, i).split()` 那种 O(n²)）。
+  const lineStarts = [0]
+  for (const l of lines) lineStarts.push(lineStarts[lineStarts.length - 1] + l.length + 1)
+  const lineOf = (idx) => {
+    let lo = 0
+    let hi = lineStarts.length - 1
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (lineStarts[mid] <= idx) lo = mid
+      else hi = mid - 1
+    }
+    return lo + 1
+  }
+  const QUOTE = new Set(["'", '"', '`'])
+  /**
+   * `test` 前面必须是**语句边界**：行首，或 `;` `{` `}` `(` `)` `,` `=` `>`，或关键字 `await`。
+   * ⇒ `/re/.test(line)`（前面是 `.`）不算；字符串里那句 `… 对应的 test()：…`（前面是汉字）也不算。
+   * ⚠️ 任何**漏认**的形状都由入口那一层兜住：`node --test` 自报的 `tests N` 必须等于结算条数。
+   */
+  const isStatementBoundary = (idx) => {
+    let k = idx - 1
+    while (k >= 0 && (text[k] === ' ' || text[k] === '\t')) k -= 1
+    if (k < 0) return true
+    if (';{}(),=>\n\r'.includes(text[k])) return true
+    return text.slice(Math.max(0, k - 4), k + 1) === 'await'
+  }
+  const re = /(^|[\s;{}()=,])test\s*\(/g
+  let m
+  while ((m = re.exec(text)) !== null) {
+    const at = m.index + m[0].length
+    const start = m.index + m[1].length
+    const line = lineOf(start)
+    if (!isStatementBoundary(start)) continue
+    if (isCommentLine(lines[line - 1] ?? '')) continue
+    let i = at
+    while (i < text.length && /\s/.test(text[i])) i += 1
+    if (!QUOTE.has(text[i])) {
+      unparsed.push({ line, snippet: lines[line - 1].trim().slice(0, 120) })
+      continue
+    }
+    const q = text[i]
+    let title = ''
+    let j = i + 1
+    let closed = false
+    while (j < text.length) {
+      const c = text[j]
+      if (c === '\\') { title += text[j + 1] ?? ''; j += 2; continue }
+      if (c === q) { closed = true; j += 1; break }
+      if (c === '\n') break
+      title += c
+      j += 1
+    }
+    if (!closed) {
+      unparsed.push({ line, snippet: lines[line - 1].trim().slice(0, 120) })
+      continue
+    }
+    calls.push({ line, title: title.trim() })
+    re.lastIndex = j
+  }
+  return { calls, unparsed }
+}
+
+/**
  * 扫一遍盘上，得到分母。
  *
  * @param {{root?: string}} [options]  root 缺省 = 本文件所在的那棵树（`testsRoot()`）
@@ -97,6 +184,7 @@ function listAllTestFiles(root) {
  *   cases: Array<{id: string, file: string, line: number}>,
  *   ids: string[],
  *   anonymous: Array<{file: string, line: number, title: string}>,
+ *   unparsed: Array<{file: string, line: number, snippet: string}>,
  *   duplicates: Array<{id: string, where: string[]}>,
  *   outOfRoot: string[],
  *   problems: Array<{code: string, message: string, detail?: object}>,
@@ -106,24 +194,23 @@ export function discoverCases({ root = testsRoot() } = {}) {
   const files = []
   const cases = []
   const anonymous = []
+  const unparsed = []
   for (const dirName of CASE_ROOTS) {
     for (const rel of listCaseFiles(root, dirName)) {
       const full = path.join(root, rel)
       const inFile = []
-      readFileSync(full, 'utf8').split(/\r?\n/).forEach((line, i) => {
-        if (isCommentLine(line)) return
-        const m = TEST_CALL.exec(line)
-        if (m === null) return
-        const title = m[2].trim()
-        const id = title.split(/\s+/)[0]
+      const parsed = parseTestCalls(readFileSync(full, 'utf8'))
+      for (const call of parsed.calls) {
+        const id = call.title.split(/\s+/)[0]
         if (ID_SHAPE.test(id)) {
-          cases.push({ id, file: rel, line: i + 1 })
+          cases.push({ id, file: rel, line: call.line })
           inFile.push(id)
         } else {
           // 它会跑，但拿不到 ID ⇒ 不进分母。这种"分母之外的真用例"必须出声（DISC-ANON）。
-          anonymous.push({ file: rel, line: i + 1, title: title.slice(0, 80) })
+          anonymous.push({ file: rel, line: call.line, title: call.title.slice(0, 80) })
         }
-      })
+      }
+      for (const u of parsed.unparsed) unparsed.push({ file: rel, line: u.line, snippet: u.snippet })
       files.push({ rel, cases: inFile })
     }
   }
@@ -146,6 +233,14 @@ export function discoverCases({ root = testsRoot() } = {}) {
       detail: a,
     })
   }
+  // 认不出标题的 test(...)：它会跑，但发现器**数不出来** ⇒ 不许当成 0（那条用例会从分母里消失）。
+  for (const u of unparsed) {
+    problems.push({
+      code: 'DISC-UNPARSED',
+      message: `${u.file}:${u.line} 的 test(...) 认不出标题 —— 它会跑，但发现器数不出来（**不许当成 0**）：${u.snippet}`,
+      detail: u,
+    })
+  }
   // 计入口径之外的文件：跑法的 glob 是 `**`，所以它会跑；不进分母就必须被点名（否则又是一处"跑得到、进不了分母"）。
   const counted = new Set(files.map((f) => f.rel))
   const outOfRoot = listAllTestFiles(root).filter((rel) => !counted.has(rel))
@@ -165,6 +260,7 @@ export function discoverCases({ root = testsRoot() } = {}) {
     cases,
     ids,
     anonymous,
+    unparsed,
     duplicates,
     outOfRoot,
     problems,

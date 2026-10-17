@@ -334,9 +334,10 @@ describe('integration · store (STO)', () => {
       // ══════════════════════════════════════════════════════════════════════════════
       // ④ 锁判定矩阵（F-40 断言 A · 钉"死 pid / 过 ttl ⇒ 必须是 `E_LOCK_STALE`"）
       //
-      // 【为什么落在这儿】注册表 `TOTAL` 是**冻结的 55**（`registryProblems()` 钉着），新 ID 要走契约变更
+      // 【为什么落在这儿】分母是**盘上**的 `test('<ID> …')` 条数（`support/discover.mjs` 数），
+      //   历史冻结的 55 条以 `FROZEN_IDS` 清单存在、一条不许少；加新 ID 要"盘上 + 登记 + 一处同批"
       //   ⇒ 本批判据并进 STO-02（它就是"过期锁不被静默顶掉"那一条；同样的归属先例见
-      //   `integration/packet.test.mjs:446` 与 `unit/memory.test.mjs:805`）。分母不动。
+      //   `integration/packet.test.mjs:446` 与 `unit/memory.test.mjs:805`）。
       //
       // 【被测面】staged 的 `lib/atomic.mjs` —— **真文件、真 `acquireLock`**，锁与文件系统一律不 mock
       //   （契约 §9.5 第 4 条）。这一族判据 F-36 刚改过（"读不出内容"从 `E_LOCK_STALE` 改成
