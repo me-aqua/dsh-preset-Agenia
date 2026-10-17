@@ -1444,7 +1444,7 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
             + '**补账那一步会把 review 的 done 写回 phase=done**：先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark`'
                           : prevPhase === 'failed'
             ? `${prevDay} 的 phase = failed —— **这一轮没走完**（失败可能出在判决，也可能出在复核）。`
-              + '先看 `state/update/` 里那一份自己的 `failure_reason`（**它一定在**：状态是后写的）；'
+              + '先看 `state/update/` 里那一份的 `failure_reason` **键**（它一定在：状态是后写的；**值可能是 null**）；'
               + '再看 `state/jobs/` 里有没有对应的作业记录可对（**那一份可能根本不存在** —— 失败可能发生在派作业之前）。'
               + '**别直接 `job-mark --state done`**：失败要先处置（重跑那一环），处置完再结账'
             : (prevPhase === 'awaiting_review_start' && undelivered.length > 0)
@@ -1478,7 +1478,15 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
                               + (failedOld.length > 0 ? `，**其中 ${failedOld.length} 份报过失败**：${failedOld.map((j) => j.job_id).join('、')}` : '')
                               + '）—— 正常，不用管')
                           }
-                          if (failedOnes.length > 0) bits.push(`${failedOnes.length} 份**报过失败**（${failedOnes.map((j) => j.job_id).join('、')}）—— 处置是重跑那一环，不是改状态`)
+                          if (failedOnes.length > 0) {
+                            // 🔴 2026-10-17 五审 R-2：这一支也能在 `phase=done` 的行上出现
+                            //    （`review_attempt` 读不到时 `older` 恒空 ⇒ 所有 failed 都落这儿）。
+                            //    所以「处置是重跑那一环」**不能无条件播报** —— 在 done 的行上那一环已经重跑过了。
+                            bits.push(`${failedOnes.length} 份**报过失败**（${failedOnes.map((j) => j.job_id).join('、')}）`
+                              + (prevPhase === 'done'
+                                ? '—— 这一轮已经重跑并收口了，不用再重跑；翻一下它的 `failure_reason` 认原因就行'
+                                : '—— 处置是重跑那一环，不是改状态'))
+                          }
                           if (broken.length > 0) bits.push(`⚠️ ${broken.length} 份**真没交活**（${broken.map((j) => `${j.job_id}（state=${j.state ?? '?'} / finished_at=${j.finished_at ?? '空'}）`).join('、')}）`)
                           return ` · 另有 ${undelivered.length} 份不是 done：${bits.join('；')}`
                         })()))
