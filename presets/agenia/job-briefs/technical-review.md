@@ -12,6 +12,9 @@
 | 技术评审报告 | `<WS>\.team\retro\<日期>\技术评审.md` | 人读：结论 + 每条发现的展开 |
 | findings 机读清单 | `<WS>\.team\retro\<日期>\技术评审.findings.json` | **作业产物 = 锚点**：回执/健康都读它 |
 | 提案草稿 | `<WS>\.team\retro\<日期>\proposals\*.json` | 机读：交组长导入 |
+> 🔴 **抽屉共用时带前缀**（2026-10-17 加）：同一天有**两票**（第二场 / 会话评审）落在同一个 `proposals/` 里，
+> **引擎没有互斥** ⇒ **文件名带上自己的前缀**（技术评审用 `p*`，会话评审用 `C-*`）。
+> 判据：**两票同时跑的时候，谁都不许假定"这个目录只有我"**。
 
 **同一天跑第二场**：文件名加后缀 `.2`（`技术评审.2.md` / `技术评审.2.findings.json`）；
 真实路径由本地状态的 `technical.report_path` 承载 —— **别让下游靠文件名猜。**
@@ -22,7 +25,7 @@
 |---|---|---|
 | `schema` | integer | `1` |
 | `day` | `YYYY-MM-DD` | 报告日 |
-| `report_path` | string（相对工作区、正斜杠） | 例 `retro/2026-10-14/技术评审.md` |
+| `report_path` | string（相对工作区、正斜杠） | 例 **`.team/retro/2026-10-14/技术评审.md`** —— 🔴 **必须带 `.team/` 那一层**（2026-10-17 实测：登记门 `artifactAnchorVerdict` 收带 `.team/` 的、拒不带的（`E_DATA_MISSING`）；而复核门对不带的那一种**静默 0 条**） |
 | `report_sha256` | 64 hex | **报告正文的 SHA256**（你自己算，不靠回执自报） |
 | `generated_at` | ISO8601（带偏移） | |
 | `code_fingerprint` | object | `{ before_sha256, after_sha256, equal: true }` —— `equal` 不是 true ⇒ 本次作废 |

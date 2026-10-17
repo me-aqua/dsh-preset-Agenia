@@ -138,7 +138,16 @@
 <node> presets/agenia/bin/agenia-brain.mjs --op health-read --data-root <DR> --real-mode --workspace <WS>
 ```
 
-看它回的 `state` / `report` / `snapshot` 三格 —— **`reports/memory-update/<今天>.json` 不在，就是今天没人做。**
+看它回的 **`health.report_day`** 是不是**今天** —— 再加一条硬的：**直接看文件在不在**
+（`<DR>\reports\memory-update\<今天>.json`）。**两个读数都要**：一个说"它读到了哪一天的报告"，一个说"那份文件在盘上"。
+
+> 🔴 **别拿 `health.status` / `health.reasons` 当判据**（2026-10-17 现量）：
+> 它们判的是**"开工痕迹"**（`.team/state/local/<day>.json` + daily state），**不是记忆报告**。
+> 实测那天：`phase=done`、报告在盘上、`report_day=2026-10-17` —— 而它照样回
+> `status: HOLD` + `reasons[0].code = E_NO_UPDATE_TODAY`（"今天还没有开工痕迹"）。
+> **照 status 读 ⇒ 会把"今天做完了"读成"今天没人做"。**
+> 📌 同一次实测：那条命令的**顶层键只有 7 个**（`ok` / `op` / `health` / `health_path` / `workspace` / `day` / `input_shape`）——
+> **没有 `state` / `report` / `snapshot` 三格**，那三样在 `health.paths` 里（是**路径**，不是读数）。
 
 > 🔴 **"报告在" 不等于 "已经做过了"（2026-10-16 现场，`E:\财布`）。**
 >
@@ -168,13 +177,36 @@
 
 ⇒ 拿到 `{generation, attempt, token}` ⇒ **把这三样连同作业书一起交给 `job_memory_judge`**（后台）。
 
+> 🔴 **记忆更新是整条链，不是一次判决**：`claim-update` → **判决（`job_memory_judge`）** →
+> **记忆复核（`job_memory_review`）** → **`job-mark` 收口**。
+> 复核那一格起法：先 `--op review-start`（建作业记录、`phase → reviewing`），再派 `job_memory_review`
+> （作业书 `job-briefs/memory-review.md`），**她交活之后由你 `job-mark`（`state: done`）**。
+> 🔴 **少了复核，这一轮永远停在 `awaiting_review_start`、到不了 `done`** ——
+> **而体检不抓它**（判据只抓 `reviewing`，故意不抓"还没开跑"，免得天天必红）⇒
+> **这是一处会静默漏掉的收口**。
+> ⇒ **判据**：`state/update/<day>.json` 的 `phase` 最终必须是 **`done`**（不是 `awaiting_review_start`）。
+> 📌 来历：2026-10-17 组长差点只派两份每日评审就收工 —— 是查 `review-start` 的归属时才发现
+> 「复核跑完才轮到收口」这一格（`team/memory-review.md` L13：**记忆判决跑完之后才轮到你**）。
+
 > 🔴 **为什么它排在每日评审前面**：**记忆更新是"首抢"的活 —— 没人抢，整个记忆周期就停摆**
 > （没有候选冻结、没有快照发布、没有报告）；而每日评审只是"评昨天的活"。**前者断了，后面全白做。**
-> ⚠️ **它排在前面 ≠ 它更急** —— 它是**先决条件**。而作业是后台跑的，你**不用等它**，接着走第三步。
+> ⚠️ **它排在前面 ≠ 它更急** —— 它是**先决条件**。作业是后台跑的，**"把作业派出去"这一步不用等它**。
+> 🔴 **但第三步要等。** 两份每日评审的输入里都点着**共享状态**（`state/update/<今天>.json`），
+> 而**会话评审的作业书是硬门**（`job-briefs/conversation-review.md` §二 第 4 行，原文）：
+> **「`snapshot_available === true` 才动」** —— 而 `claim-update` 那一刻它就变成 `false`，
+> **要到 `judge-commit` 发布新快照才回到 `true`**。
+> ⇒ **判据（照这个次序走）**：派完判决作业 ⇒ 去干**第四步（体检）** ⇒
+> **等 `state/update/<今天>.json` 里 `snapshot_available` 真的变成 `true`**（= 收到判决作业的完成通知）⇒ **才派两份评审**。
+> 🔴 **不许照"不用等它"的字面抢跑**：派早了，会话评审照它自己的作业书**当场停** ——
+> 那一轮白烧，而它报回来的那句"状态不允许我动"读起来像**平台坏了**，不像**我抢跑**。
+> 来历：2026-10-17 老板当场问出来的 —— 「**review不是应该等judge回来再派么**」。**他是对的，错的是这句话。**
 
 **三、把两份「每日评审」派出去**（各一份 · **后台**）：
 `job_technical_review`（阿玛拉 · **看代码**）+ `job_conversation_review`（绫 · **看人怎么干的**）。
 产物落 `.team/retro/<今天>/`。
+🔴 **派之前先看一眼**：`state/update/<今天>.json` 的 `snapshot_available` 必须是 **`true`**
+（= 判决作业已经 `judge-commit`）。**不是 ⇒ 先别派**，去干第四步、等判决作业的完成通知
+（理由见上面第二步那条：会话评审的作业书写着「`snapshot_available === true` 才动」，派早了它当场停）。
 ⚠️ 两份的**作业书**（`job-briefs/technical-review.md` / `job-briefs/conversation-review.md`）**不自动注入** ——
 **连活儿一起交过去**。
 > 🔴 **为什么钉死"每天"**：老板 2026-10-15 拍的口径，原话（逐字）：
