@@ -308,11 +308,25 @@ function analyzeBinFile(root, relPath, whitelist) {
   out.forwards = forwards
 
   const wl = whitelist.find((w) => w && w.path === relPath)
-  const bindings = new Set(calls.filter((c) => c.kind === 'bound').map((c) => c.binding))
+  // 🔴 **按名字计数配对，不是按"名字集合"**（2026-10-17 评审 R-F56-01）：
+  //    同一文件里两个 `const verdict = healthVerdict(…)` + 一处 `progress: verdict.progress`，
+  //    拿 Set 去重会算成 **1 个绑定** ⇒ 漏判。而那正是「加了入口没转发」最可能的半修形状
+  //    （两个入口的绑定名都叫 `verdict`；不同函数作用域里同名是合法 JS）。
+  const boundCount = new Map()
+  for (const c of calls) {
+    if (c.kind !== 'bound') continue
+    boundCount.set(c.binding, (boundCount.get(c.binding) ?? 0) + 1)
+  }
+  const fwdCount = new Map()
+  for (const f of forwards) fwdCount.set(f.from, (fwdCount.get(f.from) ?? 0) + 1)
   const wholeForwarded = calls.filter((c) => c.kind === 'returned-whole').length
   const unprovable = calls.filter((c) => c.kind === 'unprovable')
-  const matchedBindings = new Set(forwards.filter((f) => bindings.has(f.from)).map((f) => f.from))
-  const unpaired = Math.max(0, bindings.size - matchedBindings.size) + unprovable.length
+  const matchedBindings = new Set([...boundCount.keys()].filter((n) => fwdCount.has(n)))
+  let unpaired = unprovable.length
+  for (const [name, need] of boundCount) {
+    const have = fwdCount.get(name) ?? 0
+    if (have < need) unpaired += need - have
+  }
 
   for (const c of unprovable) {
     out.problems.push({
@@ -323,7 +337,7 @@ function analyzeBinFile(root, relPath, whitelist) {
     })
   }
   for (const f of forwards) {
-    if (bindings.has(f.from)) continue
+    if (boundCount.has(f.from)) continue
     out.problems.push({
       code: 'F56-FORWARD-ORPHAN',
       path: relPath,
@@ -370,6 +384,9 @@ export function analyzeTree(root, options = {}) {
 
   const lib = analyzeLib(root)
   problems.push(...lib.problems)
+  // 🔴 `lib.notes` 必须在这里收进来（2026-10-17 评审 R-F56-04）：
+  //    否则"出声、不静默"这句承诺在发出去的路径上不成立 —— 谁都不会打印它。
+  notes.push(...(lib.notes ?? []))
 
   const files = binFiles(root)
   const binReports = []
@@ -381,6 +398,20 @@ export function analyzeTree(root, options = {}) {
     problems.push(...r.problems)
     binReports.push(r)
     if (r.whitelisted) notes.push(`白名单生效：${relPath}`)
+  }
+
+  // 🔴 白名单腐烂（2026-10-17 评审 R-F56-02）：登记了，但那个文件**根本没调** healthVerdict ⇒ 红。
+  //    否则它会从"签字的例外"退化成"永久免检" —— 那个文件以后真加了一个不转发的调用点，会被直接跳过。
+  for (const w of whitelist) {
+    if (!w || typeof w.path !== 'string') continue
+    const hit = binReports.find((r) => r.relPath === w.path)
+    if (hit && hit.callSites.length === 0) {
+      problems.push({
+        code: 'F56-WHITELIST-STALE',
+        path: w.path,
+        detail: `白名单登记了 ${w.path}，但那个文件**一个 ${CRITERION.fnName}(…) 都没调** —— 白名单是"签字的例外"，不是"永久免检"`,
+      })
+    }
   }
 
   const callSites = binReports.reduce((n, r) => n + r.callSites.length, 0)

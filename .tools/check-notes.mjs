@@ -465,7 +465,7 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   yes('composition', 'F-56 · health 的每个调用点都配了 progress 转发，且每个出口都自带 progress',
     f56.ok,
     f56.ok
-      ? describeF56Reading(f56)
+      ? describeF56Reading(f56) + (f56.notes.length > 0 ? ` · ⚠️ ${f56.notes.join('；')}` : '')
       : f56.problems.map((p) => p.detail).join('；'))
 }
 
