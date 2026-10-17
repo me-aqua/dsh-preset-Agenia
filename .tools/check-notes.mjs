@@ -1396,13 +1396,21 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     // 🔴 还要读 `review_attempt`（2026-10-17 三审 S-1）：它是"写到第几次复核"的计数，
     //    作业记录里的 `attempt` 与它一比，就能分出**被重派取代的旧尝试**和**真的没交活**。
     //    在这之前这一段只取 `.phase` —— 于是那两种东西在 detail 里被说成同一件事。
+    // 🔴 还要读 `finished_at`（2026-10-17 F-70 #4）：`reviewing` 那一支的 detail 说"finished_at 空"，
+    //    而那个字段**从来没人读过** —— 那是一句没人量过的话。而且它会说错：
+    //    `judge-commit` 只清 `failure_reason`、**不清 `finished_at`**，`review-start` 也不清，
+    //    `judge-start` 又允许从 `failed` 起 ⇒ 重跑那一轮之后，`phase=reviewing` 而
+    //    `finished_at` 还是**上一轮失败那一刻**。所以：读它，并把它印出来（空的印空、有值的印那个值）。
     let prevReviewAttempt = null
+    let prevFinishedAt = null
     const hasPrev = existsSync(prevUpdate)
     if (hasPrev) {
       try {
         const st = JSON.parse(readFileSync(prevUpdate, 'utf8').replace(/^\uFEFF/, ''))
         prevPhase = st.phase ?? null
         prevReviewAttempt = Number.isInteger(st.review_attempt) ? st.review_attempt : null
+        // 缺键 / null 才算"空"；有值就照盘上印（字符串带引号），不替磁盘润色
+        prevFinishedAt = st.finished_at === null || st.finished_at === undefined ? null : JSON.stringify(st.finished_at)
       } catch {
         prevPhase = '（读不出来）'
       }
@@ -1440,12 +1448,13 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       !hasPrev
         ? `${prevDay} 没有 update 状态 —— 那天没跑记忆更新（这一条不判）`
         : prevPhase === 'reviewing'
-          ? `${prevDay} 的 phase 还停在 reviewing / finished_at 空 —— 复核开跑了却没有收口。`
+          ? `${prevDay} 的 phase 还停在 reviewing / finished_at = ${prevFinishedAt ?? '空'} —— 复核开跑了却没有收口。`
             + '**补账那一步会把 review 的 done 写回 phase=done**：先确认作业真的交活了（翻会话流的 `turn/end`），再 `job-mark`'
                           : prevPhase === 'failed'
             ? `${prevDay} 的 phase = failed —— **这一轮没走完**（失败可能出在判决，也可能出在复核）。`
               + '先看 `state/update/` 里那一份的 `failure_reason` **键**（它一定在：状态是后写的；**值可能是 null**）；'
-              + '再看 `state/jobs/` 里有没有对应的作业记录可对（**那一份可能根本不存在** —— 失败可能发生在派作业之前）。'
+              + '再看 `state/jobs/` 里有没有对应的作业记录可对（**那一份可能根本不存在** —— 失败可能发生在派作业之前；'
+              + '**这时 update 那一份的 `failure_reason` 就是唯一证据**）。'
               + '**别直接 `job-mark --state done`**：失败要先处置（重跑那一环），处置完再结账'
             : (prevPhase === 'awaiting_review_start' && undelivered.length > 0)
               ? `${prevDay} 的 phase 停在 awaiting_review_start，**而复核作业已经在盘上、还没交活**：`
