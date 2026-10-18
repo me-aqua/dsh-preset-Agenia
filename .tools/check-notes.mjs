@@ -708,6 +708,24 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     ...readdirSync(join(PRESET, 'team')).filter((f) => f.endsWith('.md')).map((f) => `team/${f.slice(0, -3)}`),
   ]
   const sentKeys = new Set([...leader, ...member])
+  // 🔴 2026-10-18（F-77 R-09 / F-86）：预设里不许有任何一行带 `complete: true`。
+  //    框架 `dsh-system-prompt/lib/index.js:356-359` 收下它之后会把 sections **整段替换成那一段** ——
+  //    我们插的 `agenia:opening` 整段丢掉，**而且不出声**（`SHP-01/02` 照样绿，只有生产会话会红）。
+  //    今天守它的只有 `agent.cordis.yml:31-32` 那句注释。
+  //    ⚠️ 这一条是**预防**（管我们自己的 yml）；它挡不住"未来 DSH 版本自带一个 complete 段" ——
+  //    那是 F-85（框架层那把刀）的事。**别拿这条去销 F-85。**
+  let presetYml = ''
+  try { presetYml = readFileSync(join(PRESET, 'agent.cordis.yml'), 'utf8') } catch { presetYml = '' }
+  const completeLines = presetYml
+    .split('\n')
+    .map((line, i) => [i + 1, line])
+    .filter(([, line]) => /^\s*complete:\s*true\s*(#.*)?$/.test(line))
+  yes('preset', '预设里没有任何一行带 complete: true（它会把注入的 sections 整段替换掉、且不出声）',
+    completeLines.length === 0,
+    completeLines.length === 0
+      ? 'agent.cordis.yml 里 complete: true 出现 0 次'
+      : `出现 ${completeLines.length} 处：${completeLines.map(([n]) => 'L' + n).join(', ')} —— 删掉它，否则四步整段丢掉`)
+
   // 🔴 2026-10-18（F-76）：名册那 17 行从「扫 team/ 派生」变成了 leader.md 里的一行字面量
   //    ⇒ 上面那条 `charter` 兜底会把所有 team/*.md 一起放过，**加一个岗位谁也不会红**。
   //    这条守卫钉的就是那个：team/ 下每份 .md 的**文件名**都必须在 leader.md 里被点到。
