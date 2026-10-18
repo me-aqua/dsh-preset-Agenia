@@ -708,6 +708,21 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     ...readdirSync(join(PRESET, 'team')).filter((f) => f.endsWith('.md')).map((f) => `team/${f.slice(0, -3)}`),
   ]
   const sentKeys = new Set([...leader, ...member])
+  // 🔴 2026-10-18（F-76）：名册那 17 行从「扫 team/ 派生」变成了 leader.md 里的一行字面量
+  //    ⇒ 上面那条 `charter` 兜底会把所有 team/*.md 一起放过，**加一个岗位谁也不会红**。
+  //    这条守卫钉的就是那个：team/ 下每份 .md 的**文件名**都必须在 leader.md 里被点到。
+  let teamFilesNow = []
+  try { teamFilesNow = readdirSync(join(PRESET, 'team')).filter((f) => f.endsWith('.md')) } catch { teamFilesNow = [] }
+  let leaderMd = ''
+  try { leaderMd = readFileSync(join(PRESET, 'leader.md'), 'utf8') } catch { leaderMd = '' }
+  //    判"点到"的口径：文件名**被反引号包住**（`` `hire` ``）。裸词太宽松——
+  //    `leader.md` 别处也写着 "team/" 之类，`includes()` 会把它们一起算成"点到了"（实测：变异不翻红）。
+  const unlisted = teamFilesNow.map((f) => f.slice(0, -3)).filter((stem) => !leaderMd.includes('`' + stem + '`'))
+  yes('preset', 'team/ 下每份 .md 的文件名都在 leader.md 里点到（名册等价物不许漏人）',
+    unlisted.length === 0,
+    unlisted.length === 0
+      ? `${teamFilesNow.length} 个岗位都点到了：${teamFilesNow.join(', ')}`
+      : `leader.md 里没提到：${unlisted.join(', ')} —— 加岗位时同步改 leader.md 那一行`)
   const unwired = deliverable.filter((key) =>
     !(sentKeys.has(key) || (key.startsWith('team/') && sentKeys.has('charter'))))
   yes('preset', '每一份要送的 `.md` 都在 leaderOrder / memberOrder 名单里（口径 9）',

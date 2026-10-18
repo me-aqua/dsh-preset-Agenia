@@ -53,7 +53,7 @@ export const inject = ['systemPrompt', 'tools']
  * 而那种情况下没有任何理由去猜库里有没有东西 ⇒ 读不到就只会在每个空夹具上白喊一声。
  * （同一条理由也解释了为什么 `style` 一直不在这份兜底里。）
  */
-const DEFAULT_LEADER_ORDER = ['leader', 'work-guidelines', 'roster', 'board', 'persona', 'me-aqua']
+const DEFAULT_LEADER_ORDER = ['leader', 'work-guidelines', 'memory', 'board', 'leader', 'work-guidelines', 'persona']
 
 /** 组员默认收到哪些。⚠️ `memory` 为什么不在里面：见上面那一段。 */
 const DEFAULT_MEMBER_ORDER = ['work-guidelines', 'charter']
