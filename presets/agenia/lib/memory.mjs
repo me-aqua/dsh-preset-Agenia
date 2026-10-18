@@ -20,8 +20,11 @@
  *   ④ **"现在"只从 `lib/clock.mjs` 进**：全库归一里的"当前日"决定新鲜度。
  *      `sharesOf(entries)` 是冻结签名，缺省走时钟接缝（`AGENIA_NOW_FILE` 优先）；
  *      需要确定性时可用**可选第二参** `{today:'YYYY-MM-DD'}` 覆盖（不影响 1 参调用形状）。
- *   ⑤ **容量只有两个硬限**（200 条 且 60000 字符），**四类不设硬帽** ——
- *      返回值里没有、也不许出现任何逐类上限字段（§B3.4）。分布只是维护信号，进不了容量签名。
+ *   ⑤ **容量是读数，不是闸**（F-71，老板 2026-10-18）：`capacityVerdict` 只判 **op 形状**；
+ *      `count > 200` / `chars > 60000` **不拒绝任何东西**，只多给 `overCap` / `overBy` / `capRef` 三个读数。
+ *      「该不该收」是判决的事，「全过之后会不会落回上限内」是复核每天一次**预测**的事 ——
+ *      上限的实际结果**没人管**。**四类不设硬帽**：返回值里没有、也不许出现任何逐类上限字段（§B3.4）。
+ *      分布只是维护信号，进不了容量签名。
  */
 import { now } from './clock.mjs'
 
@@ -39,7 +42,9 @@ const TYPE_NAMES = Object.freeze({
   project: '【关于某个项目】',
 })
 
-/** 长期记忆的两个硬限（§B3.4 / §4 汇总）：**恰好等于允许**。 */
+/** 长期记忆的两个上限（§B3.4 / §4 汇总）：**恰好等于允许**。
+ *  ⚠️ 它们是**读数与预测的参考值**，不是闸（F-71）—— `capacityVerdict` 拿它们算 `overCap` / `overBy` / `capRef`，
+ *  超了**照样放行**。 */
 const CAP_COUNT = 200
 const CAP_CHARS = 60_000
 
@@ -323,12 +328,18 @@ function applyOp(list, op) {
  *
  * - `ops` 省略 / `[]` ⇒ 只看当前集合，`deltaCount`/`deltaChars` 必须为 0；
  * - 纯函数：在**副本**上按顺序应用，不改入参、不写盘；
- * - 任一 op 非法 ⇒ `{ok:false, rejectCode:'E_OP_INVALID'}`，**不产生部分结果**；
- * - 合法 ⇒ 按最终存活集给 `count`/`chars`/`deltaCount`/`deltaChars`/`distribution`；
- * - 双硬限 200 **且** 60000（恰好等于允许）⇒ 越界给 `E_CAP_COUNT` / `E_CAP_CHARS`；
- *   **没有**任何逐类硬帽字段。
+ * - 任一 op 非法 ⇒ `{ok:false, rejectCode:'E_OP_INVALID', reason}`，**不产生部分结果**；
+ * - 合法 ⇒ `ok:true`、`rejectCode:null`，并给最终存活集的
+ *   `count`/`chars`/`deltaCount`/`deltaChars`/`distribution` + 三个容量读数 `overCap`/`overBy`/`capRef`。
  *
- * ⚠️ 即使在容量越界被拒时，`count`/`chars` 也照给出（"最终存活集是多少"本来就是调用方要的读数）。
+ * 🔴 **它不是闸**（F-71，老板 2026-10-18 拍板）：超了照给 `ok:true`。
+ *    「该不该收」不归这里判；「维护案全过之后会不会落回上限内」是**复核**每天一次预测的事；
+ *    上限的实际结果**没人管**。
+ *    `E_CAP_COUNT` / `E_CAP_CHARS` 两个**错误码定义仍在码表里**（历史调用方认得出），
+ *    但**这条路径不再发出它们** —— `rejectCode` 只可能是 `null` 或 `'E_OP_INVALID'`。
+ *
+ * **四类不设硬帽**：返回值里没有任何逐类上限字段（§B3.4）；
+ * `overCap`/`overBy`/`capRef` 是**总量读数**，不是逐类帽。
  *
  * @param {Array<object>} entries 当前集合
  * @param {Array<object>} [ops] 见 C-2 的六形状
@@ -363,18 +374,23 @@ export function capacityVerdict(entries, ops) {
   const deltaCount = count - baseCount
   const deltaChars = chars - baseChars
 
-  let rejectCode = null
-  if (count > CAP_COUNT) rejectCode = 'E_CAP_COUNT'
-  else if (chars > CAP_CHARS) rejectCode = 'E_CAP_CHARS'
+  // 容量读数（不是闸）：超了照给 —— 判「该不该收」不是这里的事（F-71，老板 2026-10-18）。
+  // `capRef` 是这两个常量的**一份权威引用**，复核拿它做预测，不必自己抄 200 / 60000。
+  const capRef = { count: CAP_COUNT, chars: CAP_CHARS }
+  const overBy = { count: Math.max(0, count - CAP_COUNT), chars: Math.max(0, chars - CAP_CHARS) }
+  const overCap = overBy.count > 0 || overBy.chars > 0
 
   return {
-    ok: rejectCode === null,
-    rejectCode,
-    reason: rejectCode === null ? null : `${count} 条 / ${chars} 字符（硬限 ${CAP_COUNT} 条 且 ${CAP_CHARS} 字符）`,
+    ok: true,
+    rejectCode: null,
+    reason: null,
     count,
     chars,
     deltaCount,
     deltaChars,
     distribution,
+    overCap,
+    overBy,
+    capRef,
   }
 }

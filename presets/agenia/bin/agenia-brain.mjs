@@ -696,7 +696,11 @@ function opJudgeCommit({ root, payload }) {
     }
   }
 
-  // ⑥ 容量与 op 形状：权威是 `capacityVerdict`（本模块只在它放行之后才落地）
+  // ⑥ op 形状：权威是 `capacityVerdict`（本模块只在它放行之后才落地）。
+  //    容量**不是**闸（F-71，老板 2026-10-18）：它给的 `overCap` / `overBy` 只是读数，
+  //    判决不许为它让路 —— 超限照写；上限那件事归**复核**每天做一次预测。
+  //    ⇒ 下面那个 `!verdict.ok` 只可能是 `E_OP_INVALID`（码表里 `E_CAP_*` 两个码保留给历史调用方，
+  //    这条路径不再发出；映射表留着，op 形状被拒时仍是它自己那个码）。
   const ops = payload?.entries_patch === undefined || payload?.entries_patch === null ? [] : payload.entries_patch
   if (!Array.isArray(ops)) throw cliError('E_ARG_SCHEMA', 'entries_patch 必须是数组')
   const verdict = capacityVerdict(base.snapshot.entries ?? [], ops)

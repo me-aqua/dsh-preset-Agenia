@@ -38,7 +38,7 @@ const JOB_ROLES = FROZEN.jobs.map((j) => j.role)
  *
  * 它原来钉的是"这个角色必须在 `officeBound` 里"（B2.3）。而老板 2026-10-16 一天里把两个都移出了：
  * 上午 `memory-review`（原话「那就给复核加个权限吧」）· 下午 `conversation-review`
- * （原话「你自己改就行，需要给什么命令行权限的就给」）—— 前者要算容量水位、后者要核三样 SHA256，
+ * （原话「你自己改就行，需要给什么命令行权限的就给」）—— 前者要做容量预测、后者要核三样 SHA256，
  * 而那道门禁**同时把命令行也拿掉了** ⇒ 那个"核"是空话，判据退化成"信别人给的数"。
  * ⇒ **四条 job 角色现在一个都不在名单里**，手抄的"必须在内"名单没有成员可装。
  *
@@ -68,7 +68,7 @@ const REVIEW_ROLES = ['memory-review', 'conversation-review', 'technical-review'
  */
 const CHARTER_NEEDLES = {
   'memory-review': [
-    [['你有命令行'], '记忆复核**现在有命令行**（她要在自动层算容量水位，手算算不准 —— 2026-10-16 老板把它移出了 officeBound）'],
+    [['你有命令行'], '记忆复核**现在有命令行**（她要在自动层做容量预测，手算算不准 —— 2026-10-16 老板把它移出了 officeBound）'],
     [['是纪律，不是门禁'], '写边界只剩**纪律**：门禁没了，说明书必须把这句代价说出来（2026-10-16 移出 officeBound 的代价）'],
     [['.team'], '写只能落 .team/'],
     [['路线'], '评审角色不能写路线'],
@@ -115,12 +115,12 @@ describe('static · roles (REV-02)', () => {
         }
         // ── 反向：四个 job 角色**一个都不许**在 officeBound 里 ──────────────────
         // 🔴 2026-10-16 一天里移出两个，理由同一个：门禁一次拿掉两样（命令行 + 写面），而它们只要那"一样"才算得出来。
-        //    · 上午 `memory-review`（原话「那就给复核加个权限吧」）—— 要算容量水位；
+        //    · 上午 `memory-review`（原话「那就给复核加个权限吧」）—— 要做容量预测；
         //    · 下午 `conversation-review`（原话「你自己改就行，需要给什么命令行权限的就给」）—— 要核三样 SHA256。
         // 成员级判据（只数条数的话，"同样 1 项的一进一出"会漏过去 —— 见 `mig-rules-18`）。
         for (const role of JOB_ROLES) {
           if (Array.isArray(office) && office.includes(role)) {
-            push('OFFICE-BOUND', `${role} **不许**在 officeBound 里（2026-10-16 老板拍板：这四类一次性作业都要 shell —— 复核算容量水位、会话评审核三样 SHA256、技术评审跑测试、判决要写共享脑）`)
+            push('OFFICE-BOUND', `${role} **不许**在 officeBound 里（2026-10-16 老板拍板：这四类一次性作业都要 shell —— 复核做容量预测、会话评审核三样 SHA256、技术评审跑测试、判决要写共享脑）`)
           }
         }
         // ── 台账 ↔ 名单 自洽：`FROZEN.jobs[].officeBound` 原来是**死常量**（`env.mjs` 自己写着"没有任何断言读它"）──

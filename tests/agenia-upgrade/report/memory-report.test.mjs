@@ -131,24 +131,37 @@ describe('report · memory-report (MEM-10)', () => {
       rec.readings.cap_keys_in_distribution = capKeysInDist
       if (capKeysInDist.length > 0) push('TYPE-CAP', `分布里出现了逐类上限字段：${capKeysInDist.join(', ')}（B3.4：四类**不设**硬帽）`)
 
-      // ③ capacityVerdict：双硬限 200 / 60000（恰好允许、越界拒绝）；返回值里没有逐类字段
+      // ③ capacityVerdict：容量是**读数**、不是闸（F-71，老板 2026-10-18）——
+      //    恰好到帽与越界**都** `ok:true` / `rejectCode:null`；越界只多给 `overCap` / `overBy` / `capRef` 三个读数。
       const mk = (n, charsPer = 1) => Array.from({ length: n }, (_, i) => entry(i + 1, 'general', 'x'.repeat(charsPer)))
       const capCases = [
-        ['恰好 200 条', mk(200), null],
-        ['201 条', mk(201), 'E_CAP_COUNT'],
-        ['恰好 60000 字符', [entry(1, 'general', 'x'.repeat(60000))], null],
-        ['60001 字符', [entry(1, 'general', 'x'.repeat(60001))], 'E_CAP_CHARS'],
-        ['空库', [], null],
+        ['恰好 200 条', mk(200), false, { count: 0, chars: 0 }],
+        ['201 条', mk(201), true, { count: 1, chars: 0 }],
+        ['恰好 60000 字符', [entry(1, 'general', 'x'.repeat(60000))], false, { count: 0, chars: 0 }],
+        ['60001 字符', [entry(1, 'general', 'x'.repeat(60001))], true, { count: 0, chars: 1 }],
+        ['空库', [], false, { count: 0, chars: 0 }],
       ]
       const capResults = {}
-      for (const [label, ents, wantCode] of capCases) {
+      for (const [label, ents, wantOverCap, wantOverBy] of capCases) {
         let out = null
         try { out = capacityVerdict(ents, []) } catch (err) { push('CAPACITY', `capacityVerdict 抛错（${label}）：${String(err.message).slice(0, 160)}`); continue }
-        capResults[label] = { ok: out?.ok ?? null, code: out?.rejectCode ?? null, count: out?.count ?? null, chars: out?.chars ?? null }
-        if (wantCode === null) {
-          if (out?.ok !== true) push('CAPACITY', `${label} 必须通过（恰好到帽允许），实得 ok=${out?.ok} rejectCode=${out?.rejectCode}`)
-        } else if (out?.ok !== false || out?.rejectCode !== wantCode) {
-          push('CAPACITY', `${label} 必须被拒并给 ${wantCode}，实得 ok=${out?.ok} rejectCode=${out?.rejectCode}`)
+        capResults[label] = {
+          ok: out?.ok ?? null,
+          code: out?.rejectCode ?? null,
+          count: out?.count ?? null,
+          chars: out?.chars ?? null,
+          overCap: out?.overCap ?? null,
+          overBy: out?.overBy ?? null,
+          capRef: out?.capRef ?? null,
+        }
+        if (out?.ok !== true) push('CAPACITY', `${label} 必须通过（容量不是闸 —— 超限照写），实得 ok=${out?.ok} rejectCode=${out?.rejectCode}`)
+        if (out?.rejectCode !== null) push('CAPACITY', `${label}：容量这条路径不许再给 rejectCode，实得 ${JSON.stringify(out?.rejectCode)}`)
+        if (out?.overCap !== wantOverCap) push('CAPACITY-READING', `${label}：overCap 应为 ${wantOverCap}，实得 ${JSON.stringify(out?.overCap)}`)
+        if (out?.overBy?.count !== wantOverBy.count || out?.overBy?.chars !== wantOverBy.chars) {
+          push('CAPACITY-READING', `${label}：overBy 应为 ${JSON.stringify(wantOverBy)}，实得 ${JSON.stringify(out?.overBy)}`)
+        }
+        if (out?.capRef?.count !== FROZEN.caps.count || out?.capRef?.chars !== FROZEN.caps.chars) {
+          push('CAPACITY-READING', `${label}：capRef 应为 ${JSON.stringify(FROZEN.caps)}，实得 ${JSON.stringify(out?.capRef)}`)
         }
         if (Array.isArray(ents) && out && out.count !== ents.length) push('CAPACITY', `${label}：count 实得 ${out?.count}，应为 ${ents.length}`)
         if (out && 'deltaCount' in out && out.deltaCount !== 0) push('CAPACITY', `${label}：ops 为空时 deltaCount 应为 0，实得 ${out.deltaCount}`)
@@ -183,8 +196,18 @@ describe('report · memory-report (MEM-10)', () => {
             const sch = rDist.reduce((a, d) => a + (d.chars ?? 0), 0)
             if (sc !== rTotals.count) push('REPORT-SUM', `sum(distribution.count)=${sc} ≠ totals.count=${rTotals.count}（严格相等）`)
             if (sch !== rTotals.chars) push('REPORT-SUM', `sum(distribution.chars)=${sch} ≠ totals.chars=${rTotals.chars}（严格相等）`)
-            if ((rTotals.count ?? 0) > FROZEN.caps.count) push('REPORT-CAP', `报告里的总条数超过硬帽 ${FROZEN.caps.count}`)
-            if ((rTotals.chars ?? 0) > FROZEN.caps.chars) push('REPORT-CAP', `报告里的总字符超过硬帽 ${FROZEN.caps.chars}`)
+            // 🔴 容量是**读数**，不是不变量（F-71，老板 2026-10-18：「没人管实际上是否满足上限」）。
+            //    报告 schema 本来就不带容量字段，`totals` 只是存活集的投影 ⇒ 这里只把越界量记进 readings，**不判红**。
+            //    判红会造出一条"库真到 201 条那天日报自己红"的不变量 —— 那正是老板刚取消的那一条。
+            const reportOverBy = {
+              count: Math.max(0, (rTotals.count ?? 0) - FROZEN.caps.count),
+              chars: Math.max(0, (rTotals.chars ?? 0) - FROZEN.caps.chars),
+            }
+            rec.readings.report_over_cap = {
+              capRef: FROZEN.caps,
+              overBy: reportOverBy,
+              overCap: reportOverBy.count > 0 || reportOverBy.chars > 0,
+            }
           }
           if (rMetric.unit !== FROZEN.charMetric.unit) push('REPORT-METRIC', `char_metric.unit 应为 ${FROZEN.charMetric.unit}，实得 ${JSON.stringify(rMetric.unit)}`)
           if (rMetric.scope !== FROZEN.charMetric.scope) push('REPORT-METRIC', `char_metric.scope 应为 ${FROZEN.charMetric.scope}，实得 ${JSON.stringify(rMetric.scope)}`)

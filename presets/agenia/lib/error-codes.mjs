@@ -104,6 +104,8 @@ export const CODES = Object.freeze({
   ...PACKET_EXIT,
   E_CS_UNCONFIRMED: { exit: 5, zh: '常识改了却没有老板确认' },
   E_CS_CHANGED: { exit: 5, zh: '判决运行中常识又变了 ⇒ 拒提交' },
+  // ⚠️ 这两个容量码：**判决那条路径已经不再发出它们**（F-71，老板 2026-10-18 —— 容量是读数，不是闸）。
+  //    定义**留着**，给历史调用方认（旧日志 / 旧回执 / 旧的 `E_CAP_*` 判断仍然认得出这两个键）。
   E_CAP_COUNT: { exit: 5, zh: '长期记忆条数超过硬限 200' },
   E_CAP_CHARS: { exit: 5, zh: '长期记忆字符数超过硬限 60000' },
   E_STREAK_NOT_ELIGIBLE: { exit: 5, zh: '斩杀目标不在 N 的资格集合里（连续双低 K=3 才够格）' },

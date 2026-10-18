@@ -145,7 +145,7 @@ export const FROZEN = {
      *     ⇒ 它算不出哈希，"核"是空话（`E:\财布` 一次真现场只能由组长代算 ⇒ 判据退化成"信别人给的数"）。
      *     **代价照旧明说**：它**两件保护都没了**（不限写 `.team/`、不再"没有命令行"），只剩纪律
      *     （作业书里那段"只写 `retro/<日期>/` 是**纪律不是门禁**"）。
-     *     ⚠️ **这是同一个病的第二次**：当天上午 `memory-review` 已因同一件事（要算容量水位）被移出，
+     *     ⚠️ **这是同一个病的第二次**：当天上午 `memory-review` 已因同一件事（要做容量预测）被移出，
      *     老板原话「那就给复核加个权限吧」⇒ 本条**不是**新口径，是同一条口径的第二次应用。
      *     生产侧 `presets/agenia/agent.cordis.yml`（`officeBound: - review`）与 `inject.js`
      *     （`DEFAULT_OFFICE_BOUND = ['review']`）同批改完；本条是**测试侧的同一批**
@@ -264,7 +264,7 @@ export const FROZEN = {
    * 规则：省略/`[]` ⇒ 只看当前集合（delta 必须为 0）；纯函数（不改入参、不写盘）；
    * 任一 op 非法 ⇒ 立即 `{ok:false, rejectCode:'E_OP_INVALID'}` 且**不产生部分结果**；
    * 合法 ⇒ 按最终存活集给 count/chars/deltaCount/deltaChars/distribution；
-   * 双硬限 200 且 60000（恰好等于允许），**无四类硬帽**。
+   * 容量是**读数**不是闸（F-71）：越界只多给 overCap/overBy/capRef，`ok` 仍为 true、`rejectCode` 仍为 null；**无四类硬帽**。
    */
   capacityOps: {
     kinds: ['add', 'modify', 'retire', 'cull', 'merge', 'retag'],

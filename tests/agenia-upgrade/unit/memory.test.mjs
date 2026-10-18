@@ -518,7 +518,7 @@ describe('unit · memory (MEM)', () => {
     })
   })
 
-  test('MEM-06 边界容量 199/200/201 · 60000/60001 · 偏科不拒；非法 op 不产生部分结果', async () => {
+  test('MEM-06 容量读数 199/200/201 · 60000/60001 · 偏科不拒；非法 op 不产生部分结果', async () => {
     await runCase('MEM-06', async (rec) => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -527,22 +527,44 @@ describe('unit · memory (MEM)', () => {
       if (mod === null) caseFail(problems)
 
       const one = (text = 'x') => entry(999, 'general', text)
+      /**
+       * 容量是**读数**、不是闸（F-71，老板 2026-10-18：判决这一步超限是很正常的，上限的责任归复核每天一次预测）。
+       * ⇒ 每一格 `ok` 都必须是 `true`、`rejectCode` 都必须是 `null`；越界那两格**只多给读数**：
+       *   `overCap: true` + `overBy` 的分量。期望值是**手写**的（不从实现反推）。
+       */
       const cases = [
-        ['199 + 1 条 ⇒ 200（恰好允许）', mkEntries(199), [addOp(one())], true, null],
-        ['200 + 1 条 ⇒ 201（越界）', mkEntries(200), [addOp(one())], false, 'E_CAP_COUNT'],
-        ['恰好 60000 字符', [entry(1, 'general', 'x'.repeat(59999))], [addOp(entry(2, 'general', 'x'))], true, null],
-        ['60001 字符（越界）', [entry(1, 'general', 'x'.repeat(60000))], [addOp(entry(2, 'general', 'x'))], false, 'E_CAP_CHARS'],
-        ['省略 ops ⇒ 只看当前集合（delta 0）', mkEntries(3), undefined, true, null],
-        ['空 ops ⇒ 同上', mkEntries(3), [], true, null],
+        ['199 + 1 条 ⇒ 200（恰好，不越界）', mkEntries(199), [addOp(one())], false, { count: 0, chars: 0 }],
+        ['200 + 1 条 ⇒ 201（越界，照收）', mkEntries(200), [addOp(one())], true, { count: 1, chars: 0 }],
+        ['恰好 60000 字符（不越界）', [entry(1, 'general', 'x'.repeat(59999))], [addOp(entry(2, 'general', 'x'))], false, { count: 0, chars: 0 }],
+        ['60001 字符（越界，照收）', [entry(1, 'general', 'x'.repeat(60000))], [addOp(entry(2, 'general', 'x'))], true, { count: 0, chars: 1 }],
+        ['省略 ops ⇒ 只看当前集合（delta 0）', mkEntries(3), undefined, false, { count: 0, chars: 0 }],
+        ['空 ops ⇒ 同上', mkEntries(3), [], false, { count: 0, chars: 0 }],
       ]
       const results = {}
-      for (const [label, ents, ops, wantOk, wantCode] of cases) {
+      for (const [label, ents, ops, wantOverCap, wantOverBy] of cases) {
         const r = call(mod.capacityVerdict, ops === undefined ? [ents] : [ents, ops], problems, `capacityVerdict(${label})`)
-        results[label] = { ok: r.value?.ok ?? null, rejectCode: r.value?.rejectCode ?? null, count: r.value?.count ?? null, chars: r.value?.chars ?? null, deltaCount: r.value?.deltaCount ?? null }
+        results[label] = {
+          ok: r.value?.ok ?? null,
+          rejectCode: r.value?.rejectCode ?? null,
+          count: r.value?.count ?? null,
+          chars: r.value?.chars ?? null,
+          deltaCount: r.value?.deltaCount ?? null,
+          overCap: r.value?.overCap ?? null,
+          overBy: r.value?.overBy ?? null,
+          capRef: r.value?.capRef ?? null,
+        }
         if (r.value === null) continue
-        if (r.value.ok !== wantOk) push('CAPACITY', `${label}：ok 应为 ${wantOk}，实得 ${r.value.ok}（rejectCode=${r.value.rejectCode}）`)
-        if (wantCode !== null && r.value.rejectCode !== wantCode) push('CAPACITY', `${label}：rejectCode 应为 ${wantCode}，实得 ${r.value.rejectCode}`)
-        if (wantOk && (ops === undefined || ops.length === 0)) {
+        if (r.value.ok !== true) push('CAPACITY', `${label}：容量不是闸 —— ok 必须 true，实得 ${r.value.ok}（rejectCode=${r.value.rejectCode}）`)
+        if (r.value.rejectCode !== null) push('CAPACITY', `${label}：容量这条路径不许再给 rejectCode（判决不再因容量被拒），实得 ${JSON.stringify(r.value.rejectCode)}`)
+        if (r.value.overCap !== wantOverCap) push('CAPACITY-READING', `${label}：overCap 应为 ${wantOverCap}，实得 ${JSON.stringify(r.value.overCap)}`)
+        if (r.value.overBy?.count !== wantOverBy.count || r.value.overBy?.chars !== wantOverBy.chars) {
+          push('CAPACITY-READING', `${label}：overBy 应为 ${JSON.stringify(wantOverBy)}，实得 ${JSON.stringify(r.value.overBy)}`)
+        }
+        // `capRef` 是这两个上限常量的**唯一一份权威引用** —— 复核拿它做预测，别让调用方自己抄数。
+        if (r.value.capRef?.count !== FROZEN.caps.count || r.value.capRef?.chars !== FROZEN.caps.chars) {
+          push('CAPACITY-READING', `${label}：capRef 应为 ${JSON.stringify(FROZEN.caps)}，实得 ${JSON.stringify(r.value.capRef)}`)
+        }
+        if (ops === undefined || ops.length === 0) {
           if (r.value.deltaCount !== 0) push('CAPACITY', `${label}：C-2 规则 1 —— deltaCount 必须为 0，实得 ${r.value.deltaCount}`)
         }
       }
