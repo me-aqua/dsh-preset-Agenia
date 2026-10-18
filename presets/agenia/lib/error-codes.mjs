@@ -157,4 +157,5 @@ export const CODES = Object.freeze({
   E_PROPOSAL_HASH_MISMATCH: { exit: 5, zh: '提候选时声明的 sha256 与 sha256(text) 不符（那一行的声明哈希从此是假话）' },
   E_PROPOSAL_DUPLICATE: { exit: 5, zh: '同一句出处 + 同一段正文已经提过（判重键 = (source, sha256(text))）' },
   E_PROPOSAL_IO: { exit: 4, zh: '候选池写不进去（锁争用到超时 / 原子写失败），报文带底层码' },
+  E_PROPOSAL_TOO_LONG: { exit: 2, zh: '提候选时正文超过每条 400 字的上限（2026-10-18 老板：「以后提案阶段超过400字的不准提」）—— 把来历挪进 log.md' },
 })

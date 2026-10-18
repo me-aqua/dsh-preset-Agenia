@@ -36,13 +36,28 @@ import { dayOf, nowIso, sha256Hex } from '../lib/state.mjs'
 /** 注册给模型的名字（下划线 —— 与 `team_test` / `subagent_fork` 同一套；契约 §1.1）。 */
 export const PROPOSAL_FILE_TOOL_NAME = 'proposal_file'
 
-/** 四个稳定码（键名冻结：`SHAPE` / `HASH` / `DUP` / `IO`；均已在 `lib/error-codes.mjs` 的表里）。 */
+/** 五个稳定码（键名冻结：`SHAPE` / `HASH` / `DUP` / `IO` / `TOO_LONG`；均已在 `lib/error-codes.mjs` 的表里）。 */
 export const PROPOSAL_FILE_CODES = Object.freeze({
   SHAPE: 'E_PROPOSAL_SHAPE',
   HASH: 'E_PROPOSAL_HASH_MISMATCH',
   DUP: 'E_PROPOSAL_DUPLICATE',
   IO: 'E_PROPOSAL_IO',
+  // 🔴 2026-10-18 老板：「以后提案阶段超过400字的不准提」⇒ 入口硬闸。
+  //    它和 `SHAPE` 分开，是因为「太长了」不是「格式错」—— 报文要让提的人一眼知道该干什么。
+  TOO_LONG: 'E_PROPOSAL_TOO_LONG',
 })
+
+/** 每条候选正文的上限（字符）。口径**必须**和 `lib/memory.mjs` 的 `charCountOf` 一致，
+ *  否则「卡上 400、工具里 380」就会变成第二个「两个判据算不同的数」。 */
+export const PROPOSAL_MAX_CHARS = 400
+
+/** 与 `lib/memory.mjs::charCountOf` 同口径：去开头 BOM、`\r\n`/`\r` 归一成 `\n`、数 Unicode code point。 */
+function charCountOfText(t) {
+  let s = String(t ?? '')
+  if (s.charCodeAt(0) === 0xfeff) s = s.slice(1)
+  s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  return [...s].length
+}
 
 /**
  * `kind` 只许这四类 —— **值从真源取，不抄第五份**。
@@ -101,6 +116,17 @@ export function proposalFileVerdict({ args, poolEntries } = {}) {
       ok: false,
       code: PROPOSAL_FILE_CODES.SHAPE,
       message: `${PROPOSAL_FILE_CODES.SHAPE}: text 必填（非空字符串；strip 之后不许为空）—— 一条候选必须有正文`,
+    }
+  }
+  // ①b 🔴 400 字入口闸（老板 2026-10-18：「以后提案阶段超过400字的不准提」）。
+  //     只卡**入口**，不卡存量：已入库的长条目靠复核提维护案慢慢重写，不靠拒收（F-72）。
+  const nchars = charCountOfText(a.text)
+  if (nchars > PROPOSAL_MAX_CHARS) {
+    return {
+      ok: false,
+      code: PROPOSAL_FILE_CODES.TOO_LONG,
+      message: `${PROPOSAL_FILE_CODES.TOO_LONG}: 正文 ${nchars} 字，超过每条 ${PROPOSAL_MAX_CHARS} 字的上限 —— `
+        + `请把「事实 + 判据」留下，把来历 / 推导 / 现场读数挪进当天的 log.md（F-72）`,
     }
   }
   // ② source：必填、非空。**不许静默补空**（不补 "(unknown)"、不拿正文顶上）：出处是这条候选的凭据。
