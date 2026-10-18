@@ -352,8 +352,8 @@ export const FROZEN = {
     'memory-judge', 'memory-review', 'conversation-review', 'technical-review',
   ],
 
-  /** 记忆核心常量（提案 §4）。 */
-  caps: { count: 200, chars: 60000 },
+  /** 记忆核心常量（提案 §4）。⚠️ 2026-10-18 老板拍：字符参考线 60000 → 80000。 */
+  caps: { count: 200, chars: 80000 },
   halfLifeDays: { general: 365, boss: 365, machine: 180, project: 90 },
   typeIds: ['general', 'boss', 'machine', 'project'],
   streakK: 3,

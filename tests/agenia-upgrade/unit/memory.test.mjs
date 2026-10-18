@@ -535,8 +535,8 @@ describe('unit · memory (MEM)', () => {
       const cases = [
         ['199 + 1 条 ⇒ 200（恰好，不越界）', mkEntries(199), [addOp(one())], false, { count: 0, chars: 0 }],
         ['200 + 1 条 ⇒ 201（越界，照收）', mkEntries(200), [addOp(one())], true, { count: 1, chars: 0 }],
-        ['恰好 60000 字符（不越界）', [entry(1, 'general', 'x'.repeat(59999))], [addOp(entry(2, 'general', 'x'))], false, { count: 0, chars: 0 }],
-        ['60001 字符（越界，照收）', [entry(1, 'general', 'x'.repeat(60000))], [addOp(entry(2, 'general', 'x'))], true, { count: 0, chars: 1 }],
+        ['恰好 80000 字符（不越界）', [entry(1, 'general', 'x'.repeat(79999))], [addOp(entry(2, 'general', 'x'))], false, { count: 0, chars: 0 }],
+        ['80001 字符（越界，照收）', [entry(1, 'general', 'x'.repeat(80000))], [addOp(entry(2, 'general', 'x'))], true, { count: 0, chars: 1 }],
         ['省略 ops ⇒ 只看当前集合（delta 0）', mkEntries(3), undefined, false, { count: 0, chars: 0 }],
         ['空 ops ⇒ 同上', mkEntries(3), [], false, { count: 0, chars: 0 }],
       ]

@@ -137,8 +137,8 @@ describe('report · memory-report (MEM-10)', () => {
       const capCases = [
         ['恰好 200 条', mk(200), false, { count: 0, chars: 0 }],
         ['201 条', mk(201), true, { count: 1, chars: 0 }],
-        ['恰好 60000 字符', [entry(1, 'general', 'x'.repeat(60000))], false, { count: 0, chars: 0 }],
-        ['60001 字符', [entry(1, 'general', 'x'.repeat(60001))], true, { count: 0, chars: 1 }],
+        ['恰好 80000 字符', [entry(1, 'general', 'x'.repeat(80000))], false, { count: 0, chars: 0 }],
+        ['80001 字符', [entry(1, 'general', 'x'.repeat(80001))], true, { count: 0, chars: 1 }],
         ['空库', [], false, { count: 0, chars: 0 }],
       ]
       const capResults = {}
