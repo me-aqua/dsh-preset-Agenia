@@ -1,5 +1,6 @@
 /**
- * 每一轮对话开始之前，把这个文件夹里的 .md 读出来，贴到这次请求的最末尾。
+ * 每一轮对话开始之前，把这个文件夹里的 .md 读出来，贴到这次请求上：
+ * 组长那份「每天开工第一步」贴**最前面**（`sections` → `system/message`，第 0 条），其余进快照那条（`contexts`）。
  *
  * 为什么需要它：模型不会真的"记住"人格。对话一长，最前面那段就被淹掉了。
  * 所以办法不是让它记住，而是每次重新告诉它一遍。
@@ -25,6 +26,8 @@
  *
  * 顺序、谁受限、内容放在哪 —— 全部写在 agent.cordis.yml 里，不在这个文件里。
  * 想改顺序、加岗位、去掉限制，都去改那个文件，不用碰这里。
+ * ⚠️ 只有一处例外：「每天开工第一步」那一段**不在快照里**，它在 `system-prompt/assemble` 里被插到
+ *   `sections` 的第 0 位（理由见 `OPENING_HEADING` 那段注释）—— 位置由这个文件决定，不由名单决定。
  *
  * 改这个文件之后必须重启 harness 才会生效。
  * （.md 不用重启，存盘就生效。）
@@ -115,6 +118,22 @@ const TAIL_MARK = /<!--\s*尾巴到此为止\s*-->/
  * 进快照就是每步重发一次、缓存全废）。常数住在那儿 ⇒ 改它不用重启（口径 13）。
  */
 const MOOD_FILE = 'mood.md'
+
+/**
+ * 「每天开工第一步」那一节 —— 它在内容根 `leader.md` 里的 H2，**逐字**。
+ *
+ * 这一节**不进快照**（`contexts` 那条 `user/message`），而是每次装配时从 `.md` 里现切下来、
+ * 当成 `sections` 的**第一段**交出去 —— 框架把它拼进 `system/message`（派生历史的第 0 条）。
+ * 两条通路的位置差得很远：`contexts` 整条排在第 N 条（前面压着审批策略 / 老板那句话 / 风格 /
+ * AGENTS.md），"注入的第一项"不等于"请求的开头"，而这四步值钱的地方就是开头。
+ *
+ * 🔴 这一行是**形状**（`mig-rules-05`）：这段正文只有它一个取名手柄，改一个字 = 这段静默不注入。
+ * 🔴 正文一个字都不许搬进这个文件：它只能住在内容根的 `.md` 里，这里只有尺子和段名。
+ */
+const OPENING_FILE = 'leader.md'
+const OPENING_HEADING = '## 每天开工第一步（顺序固定，四件事）'
+/** 它在 `sections` 里的名字（排查信息里认它）。 */
+const OPENING_SECTION = 'agenia:opening'
 
 /**
  * 情绪板的三个维度（键 + 中文），**次序就是贴出去那一行的次序**（契约 §二 钉死）。
@@ -295,6 +314,27 @@ async function readText(path) {
   } catch {
     return undefined
   }
+}
+
+/**
+ * 从一段内容正文里切出「每天开工第一步」那一节（H2 到下一个 H2 之前，去掉尾空白）。
+ * 切不出来 ⇒ `undefined` —— 调用方据此**整段不搬**，不编一段空的顶上。
+ */
+function openingBlockOf(text) {
+  const body = typeof text === 'string' ? text : ''
+  const at = body.indexOf(OPENING_HEADING)
+  if (at < 0) return undefined
+  const rest = body.slice(at)
+  const nextAt = rest.indexOf('\n## ', OPENING_HEADING.length)
+  const block = (nextAt < 0 ? rest : rest.slice(0, nextAt)).replace(/\s+$/, '')
+  return block.length === 0 ? undefined : block
+}
+
+/** 把那一节从正文里摘掉（是"挪"不是"加"）—— 摘完把留下的三连空行塌成两行。 */
+function withoutOpeningBlock(text) {
+  const block = openingBlockOf(text)
+  if (block === undefined || typeof text !== 'string') return text
+  return text.replace(block, '').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '')
 }
 
 /** team/ 下面每个 .md 就是一个岗位，文件名去掉后缀就是岗位名。 */
@@ -2019,6 +2059,20 @@ export async function apply(ctx, config = {}) {
 
   // ─────────────────────────────────────────────────────────────
   // ① + ② 注入正文，并按标记分辨这次该给哪一拨人。
+  //
+  // 交出去的是**两串**，落进请求的**两条**消息（框架 `dsh-system-prompt/lib/index.js`）：
+  //   · `contexts` → `joinContextSections()`（`:132-136`）→ 一条 `user/message`（快照那条，排在第 N 位）；
+  //   · `sections` → `renderPrompt()`（`:113-115`）→ `system/message`，**派生历史第 0 条**。
+  // ⇒ 组长那一份「每天开工第一步」走 `sections`（数组第 0 位）：它要出现在请求的**开头**，
+  //   而 `contexts` 那条整条就排在第 N 条，前面压着审批策略 / 老板那句话 / 风格 / AGENTS.md。
+  //   同一段**只留一份**：切给了 `sections` 就从 `contexts` 里摘掉（挪，不是加）。
+  //
+  // 🔴 位置为什么在这个钩子里改、不在 `apply()` 里 `systemPrompt.section()` 注册一段：
+  //    `assemble()` **先**求值段正文（`:339-347`）、**后**发这个 waterfall（`:355`）⇒
+  //    注册式的 `text()` 拿不到"本次装配判出来的岗位"，子会话第一次装配会把组长这四步发给组员。
+  //    钩子里 `role` 是当场算的，不会错位。
+  // 🔴 位置为什么不靠改 `leaderOrder`：那张名单管的是"快照里放哪几节、按什么次序"，
+  //    而这一段离请求开头近不近，跟快照内部次序无关 —— 两条通路不在一条队列里。
   // ─────────────────────────────────────────────────────────────
   ctx.on('system-prompt/assemble', async (assembly, context, next) => {
     const result = await next()
@@ -2041,11 +2095,42 @@ export async function apply(ctx, config = {}) {
 
     if (entries.length === 0) return result
 
+    // 「每天开工第一步」只给组长：组员不读 `leader.md`，那四步是队伍设定，不是它的活。
+    // 正文用 `gather` 刚读过的那一份，不另读一次盘 —— 读一次、用一次，两串不会分叉。
+    const leaderText = role === undefined
+      ? entries.map((entry) => entry?.text).find((text) => openingBlockOf(text) !== undefined)
+      : undefined
+    const opening = openingBlockOf(leaderText)
+    if (role === undefined && opening === undefined) {
+      warnOnce('opening', `[agenia] 内容根的 ${OPENING_FILE} 里找不到「${OPENING_HEADING}」那一节 ——`
+        + ' 开工四步这次不注入（其余照旧）。')
+    }
+
     // 自己上一轮留下的先清掉，免得叠起来。
     const kept = (Array.isArray(result.contexts) ? result.contexts : []).filter(
       (entry) => typeof entry?.name !== 'string' || !entry.name.startsWith('agenia:'),
     )
-    return { ...result, contexts: [...kept, ...entries] }
+    // 切给了 `sections` 的那一段从快照里摘掉 —— 整条 payload 里它只该有一份。
+    const contexts = entries.map((entry) => {
+      const text = typeof entry?.text === 'string' ? entry.text : ''
+      return opening === undefined || !text.includes(opening)
+        ? entry
+        : { ...entry, text: withoutOpeningBlock(text) }
+    })
+    const keptContexts = [...kept, ...contexts]
+    if (opening === undefined) return { ...result, contexts: keptContexts }
+
+    // 🔴 位置就是这一行：**`sections` 的数组第 0 位**（waterfall 的返回值就是权威值，`:355-356`）。
+    // `interpolate: false`：这段正文是从 `.md` 抄来的散文，将来里面出现 `{{` 时框架会当成变量去求值，
+    // 未知变量**直接抛**（`:167-170`）—— 整条请求跟着挂。散文不插值。
+    return {
+      ...result,
+      sections: [
+        { name: OPENING_SECTION, text: opening, interpolate: false },
+        ...(Array.isArray(result.sections) ? result.sections : []),
+      ],
+      contexts: keptContexts,
+    }
   })
 
   // ─────────────────────────────────────────────────────────────
