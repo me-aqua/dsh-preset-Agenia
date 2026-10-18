@@ -90,6 +90,19 @@ def main():
     snap_name = rep.get("snapshot") or st.get("new_snapshot") or "?"
     snap = jload(os.path.join(DR, "memory", "snapshots", snap_name + ".json"), {}) or {}
     by_id = {e.get("id"): e for e in snap.get("entries", [])}
+    # 🔴 退休 / 斩杀 的条目**已经不在新快照里** ⇒ 原文要去上一版（base_snapshot）找。
+    #    （2026-10-18 老板："你这个记忆报告里 retire 的取不到也太抽象了"）
+    prev_name = rep.get("base_snapshot") or st.get("base_snapshot") or None
+    prev = jload(os.path.join(DR, "memory", "snapshots", str(prev_name) + ".json"), {}) or {} if prev_name else {}
+    by_id_prev = {e.get("id"): e for e in prev.get("entries", [])}
+
+    def find_entry(eid):
+        """先在新快照找，找不到去上一版找。返回 (entry, 来源说明)。"""
+        if eid in by_id:
+            return by_id[eid], ""
+        if eid in by_id_prev:
+            return by_id_prev[eid], "（已从新快照移除 ⇒ 原文取自 %s）" % prev_name
+        return {}, "（两版都没有这个 id）"
     judged = jlines(os.path.join(DR, "proposals", "judged.jsonl"))
     pool   = jlines(os.path.join(DR, "proposals", "pool.jsonl"))
     arch   = jload(os.path.join(DR, "proposals", "archive", "MANIFEST.json"), {}) or {}
@@ -153,19 +166,21 @@ def main():
     if decisions:
         for d in decisions:
             tid = d.get("target_id") or d.get("target_entry_id")
-            e = by_id.get(tid, {})
+            e, src = find_entry(tid)
             rows2.append((d.get("action", d.get("kind", "?")), tid, e.get("type", "?"),
-                          "%s 字符" % len(e.get("text", "")) if e else "（不在快照里）", e.get("text", "（取不到）")))
+                          ("%s 字符" % len(e.get("text") or "")) if e else "（两版都没有）",
+                          (e.get("text") or "（取不到）") + src))
     for p in maint_pool:
         pl = p.get("payload") or {}
         md = pl.get("maintenance_decision") or {}
         act = pl.get("maintenance") or md.get("action") or "?"
         tid = pl.get("target_entry_id") or md.get("target_id") or "?"
         for t in [tid] + list(pl.get("source_entry_ids") or md.get("source_ids") or []):
-            e = by_id.get(t, {})
+            e, src = find_entry(t)
             rows2.append((("草稿 · " + str(act)) if t == tid else ("草稿 · 并入的源 · " + str(act)),
-                          t, e.get("type", "?"), "%s 字符" % len(e.get("text", "")) if e else "（不在快照里）",
-                          e.get("text", "（取不到）")))
+                          t, e.get("type", "?"),
+                          ("%s 字符" % len(e.get("text") or "")) if e else "（两版都没有）",
+                          (e.get("text") or "（取不到）") + src))
     sheet(ws2, "处置与原文全文 · " + day,
           "老板 2026-10-16：「**我得目视判断一下……还有挽回的机会**」⇒ 吸收 / 退休 / 斩杀类**必须附原文全文**。"
           "本页 = 今天生效的处置 + 池子里待判的维护案（草稿，明天判决才批）。"
