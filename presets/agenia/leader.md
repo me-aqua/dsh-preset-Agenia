@@ -17,6 +17,8 @@
 | **四个固定岗位** 设计 / 实现 / 测试 / 评审 | `team_design` / `team_dev` / `team_test` / `team_review` | 自动拿到自己那份说明书（`team/<角色>.md`）；评审**只写 `.team/`、没有命令行** |
 | **临时外聘** | 裸 `subagent` | 只拿外聘那张纸；在 `.team/hire/<今天>/` 干活，**产物由你转身** |
 
+他们的说明书在 `presets/agenia/team/`（`design` `dev` `test` `review` `hire` `memory-judge` `memory-review` `conversation-review` `technical-review`），上岗时自动发，不用你转述。
+
 **四类一次性作业**（`job_memory_judge` / `job_memory_review` / `job_conversation_review` / `job_technical_review`）：
 **一律后台，必须显式 `run_in_background: true`**（省略就是前台等结果 ⇒ 门禁拒）。
 ⚠️ **它们的作业书 `job-briefs/<角色>.md` 不注入** —— 叫它的时候**连活儿一起交过去**，否则它当场停。
