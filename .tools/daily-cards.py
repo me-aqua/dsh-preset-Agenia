@@ -128,8 +128,11 @@ def main():
         ("相位", "phase=%s · snapshot_available=%s" % (st.get("phase", "?"), st.get("snapshot_available", "?"))),
         ("快照", "%s → %s" % (rep.get("base_snapshot", "?"), snap_name)),
         ("长期记忆", "%s 条 / %s 字符" % (totals.get("count", "?"), totals.get("chars", "?"))),
-        ("硬限", "200 条 且 60,000 字符"),
-        ("占硬限", "条数 %.1f%% · 字符 %.1f%%" % (100.0 * totals.get("count", 0) / 200, 100.0 * totals.get("chars", 0) / 60000)),
+        ("容量（只作读数）", "参考线 200 条 / 60,000 字符 —— 🔴 2026-10-18 起**不是闸**，超了照写"),
+        ("现量 vs 参考线", "%s 条 / %s 字符%s" % (
+            totals.get("count", "?"), totals.get("chars", "?"),
+            "" if not isinstance(totals.get("chars"), int) else (
+                "（超 %d 字符）" % (totals["chars"] - 60000) if totals["chars"] > 60000 else "（在参考线内）"))),
         ("本批裁定", "冻结 %d 条 ⇒ 接受 %d · 拒绝 %d" % (len(frozen), len(acc), len(rej))),
         ("🔴 斩杀 / 退休 / 吸收（今天生效）", "%d 条%s" % (len(decisions), "" if decisions else " —— **今天没有生效的处置**（下列 6 条是草稿，明天判决才批）")),
         ("常识哈希", rep.get("common_sense_sha256", "?")[:12] + "…"),
@@ -175,8 +178,8 @@ def main():
         ("池子（未判）", "%d 条（%d 普通提案 + %d 维护案）" % (len(pool), len(prop_pool), len(maint_pool))),
         ("清池归档", ("判过 %s 条 ⇒ archive/%s（无损：拼回去逐字节相同）" % (arch.get("archived", {}).get("lines", "?"), arch.get("archived", {}).get("file", "?"))) if arch else "（没有归档记录）"),
         ("上一轮归档时刻", arch.get("day", "—")),
-        ("硬限 / 90% 线", "200 条 / 60,000 字符 · 90% 线 = 180 / 54,000"),
-        ("现量距 90% 线", "%d 条 / %d 字符" % (180 - totals.get("count", 0), 54000 - totals.get("chars", 0))),
+        ("容量（只作读数）", "参考线 200 条 / 60,000 字符 —— 2026-10-18 起不是闸；🔴 **实际到没到上限没人管**"),
+        ("超参考线多少", "%d 条 / %d 字符" % (max(0, totals.get("count", 0) - 200), max(0, totals.get("chars", 0) - 60000))),
         ("票（账本里 ⬜ 的）", "%d 张：%s" % (len(tickets), " · ".join(sorted(ticket_ids)) if ticket_ids else "无")),
     ]
     sheet(ws3, "复核 · 池子 · 水位 · " + day, "复核报告与池子账 —— 全部现量（.runtime/proposals 与 state）",
