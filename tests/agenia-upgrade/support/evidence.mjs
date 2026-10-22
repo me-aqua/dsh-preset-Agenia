@@ -352,12 +352,17 @@ export async function runCase(id, fn) {
  * `SKIP`：`.runtime/` 是**数据**（真实记忆库），不是代码 —— 它**本来就不该**同步进 staging
  * （活体 61 文件 / staged 48 文件，差的那 13 个全是它）。拿它当"漂移"就是每天都红的假红。
  *
+ * `liveRoot`：活体那一棵树（缺省 = `PATHS.finalPreset`）。它存在是为了**夹具** ——
+ *   两棵树都得能指到一根临时根上，否则"两侧都读得到、但都是 0 份文件"那一格造不出来（`F-141`）。
+ *
+ * @param {object} [env]  `AGENIA_STAGING_PRESET` 从哪儿读（缺省 `process.env`）
+ * @param {{liveRoot?: string}} [options]
  * @returns {{staged:string|null, live:string, staged_files:number, live_files:number,
  *            only_staged:string[], only_live:string[], different:string[], same:boolean, note:string}}
  */
-export function stagedVsLiveDrift(env = process.env) {
+export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPreset } = {}) {
   const SKIP = new Set(['.runtime'])
-  const live = canonical(PATHS.finalPreset)
+  const live = canonical(liveRoot)
   const stagedRaw = optionalEnv(ENV.STAGING_PRESET, env)
   const staged = stagedRaw ? canonical(stagedRaw) : null
   const walkOf = (root) => {
@@ -385,6 +390,14 @@ export function stagedVsLiveDrift(env = process.env) {
   const onlyStaged = [...a.keys()].filter((k) => !b.has(k)).sort()
   const onlyLive = [...b.keys()].filter((k) => !a.has(k)).sort()
   const different = [...a.keys()].filter((k) => b.has(k) && (a.get(k).sha256 !== b.get(k).sha256 || a.get(k).bytes !== b.get(k).bytes)).sort()
+  /**
+   * 🔴 `same` 必须**先有样本**再谈"相同"（`F-141`）：三张差集为空只说明"没发现差异"，
+   * 不说明"比过东西" —— 两棵树都读得到、各 0 份文件时差集全空，只看差集就会判"相同"
+   * （那是替两棵空树背书，"测试的靶子 = 生产"那一格会因此变绿）。
+   * 所以：任一侧 0 份 ⇒ `same: false`；两侧都非空且差集全空 ⇒ `same: true`；
+   * `staged === null`（`AGENIA_STAGING_PRESET` 没设）也是 false —— 判不了不是相同。
+   */
+  const haveSamples = a.size > 0 && b.size > 0
   return {
     staged,
     live,
@@ -393,8 +406,9 @@ export function stagedVsLiveDrift(env = process.env) {
     only_staged: onlyStaged,
     only_live: onlyLive,
     different,
-    same: staged !== null && onlyStaged.length === 0 && onlyLive.length === 0 && different.length === 0,
-    note: '比的是**两棵树**（跳过 `.runtime/` = 数据，不是代码）；差一个字节就算漂移',
+    same: staged !== null && haveSamples && onlyStaged.length === 0 && onlyLive.length === 0 && different.length === 0,
+    note: '比的是**两棵树**（跳过 `.runtime/` = 数据，不是代码）；差一个字节就算漂移；'
+      + '**两侧都得有样本**（任一侧 0 份文件 ⇒ `same: false` —— 零样本不是"相同"）',
   }
 }
 

@@ -40,6 +40,7 @@ import {
 } from '../support/composition.mjs'
 import { caseFail, normalizeSha, oracleReadings, preflight, problem, runCase, sha256Equal, stagedVsLiveDrift, stagingReadings } from '../support/evidence.mjs'
 import { importStaged, loadStagedModule, readStagedText, stagingExists, stagingPath, writeFixtureText } from '../support/sut.mjs'
+import { countFiles, fixtureDir, writeUnder } from '../support/verify-recompute.mjs'
 
 /** 每例都要先过：根守卫 → 注册表形状 → 解析器阳性对照（活体那两个文件，只读）。 */
 before(() => {
@@ -56,6 +57,56 @@ function requireStaged(rel, problems) {
   if (stagingExists(rel)) return true
   problems.push(problem('SUT-SURFACE-MISSING', `staged 还没有 ${rel}（落点 ${stagingPath(rel)}）—— 实现关尚未落 staging，这是预期的红`))
   return false
+}
+
+/**
+ * `stagedVsLiveDrift()` 的读数 → 这一格（`STAGED-LIVE-DRIFT`）的红因，**至多一条**。
+ *
+ * 三种"空"必须**各自不同**（否则读的人不知道该去补哪一边）：
+ *   · `staged === null` —— `AGENIA_STAGING_PRESET` 没设 ⇒ 两棵树比不了（这一格判不了）；
+ *   · 两侧各 0 份文件   —— **零样本**：三张差集空着的意思是"什么都没比"，不是"相同"；
+ *   · 只有一侧 0 份     —— 走差集分支：`只在 staged` / `只在活体` / `同名而内容不同` 逐份点名。
+ *
+ * 🔴 零样本那一格的红因必须**自己说出"零样本"**：只说"对不上"会把读的人引去同步两棵树，
+ *    而真正缺的是样本（`same` 那边同样不含零样本 —— `evidence.mjs::stagedVsLiveDrift`）。
+ */
+function stagedLiveDriftProblems(drift) {
+  if (drift.staged === null) {
+    return [problem('STAGED-LIVE-DRIFT', '`AGENIA_STAGING_PRESET` 没设 ⇒ 两棵树比不了（这一格判不了，不许当绿）')]
+  }
+  if (drift.staged_files === 0 && drift.live_files === 0) {
+    return [problem('STAGED-LIVE-DRIFT',
+      '**零样本**（STAGED-LIVE-ZERO-SAMPLE）：两棵树都读得到，但一份普通文件都没枚举到'
+      + `（staged 0 文件 ${drift.staged} · 活体 0 文件 ${drift.live}）`
+      + ' ⇒ 三张差集空着的意思是"什么都没比"，不是"相同"：这一跑的绿**不能**用来给活体背书。'
+      + '修法：确认 `AGENIA_STAGING_PRESET` 指到一棵真有文件的树，且活体预设没被清空。')]
+  }
+  if (!drift.same) {
+    const parts = []
+    if (drift.only_staged.length > 0) parts.push(`只在 staged：${drift.only_staged.join(', ')}`)
+    if (drift.only_live.length > 0) parts.push(`只在活体：${drift.only_live.join(', ')}`)
+    if (drift.different.length > 0) parts.push(`同名而内容不同：${drift.different.join(', ')}`)
+    return [problem('STAGED-LIVE-DRIFT',
+      '**staged 与活体不是同一棵树**（测试的靶子 ≠ 生产）⇒ 这一跑的绿**不能**用来给活体背书：'
+      + `${parts.join(' · ')}（staged ${drift.staged_files} 文件 ${drift.staged} · 活体 ${drift.live_files} 文件 ${drift.live}）`
+      + '。修法：把改过的文件同步进 staging（**各人同步自己改的**），别靠人记得。')]
+  }
+  return []
+}
+
+/** 探针形状的摘要（落进 `readings`：红基线要能读到"这一跑量的是哪几种空"）。 */
+function driftShape(drift, driftProblems) {
+  return {
+    same: drift.same,
+    staged: drift.staged,
+    live: drift.live,
+    staged_files: drift.staged_files,
+    live_files: drift.live_files,
+    only_staged: drift.only_staged.length,
+    only_live: drift.only_live.length,
+    different: drift.different.length,
+    problems: driftProblems,
+  }
 }
 
 describe('static · composition', () => {
@@ -146,17 +197,98 @@ describe('static · composition', () => {
       {
         const drift = stagedVsLiveDrift()
         rec.readings.staged_vs_live = drift
-        if (drift.staged === null) {
-          push('STAGED-LIVE-DRIFT', '`AGENIA_STAGING_PRESET` 没设 ⇒ 两棵树比不了（这一格判不了，不许当绿）')
-        } else if (!drift.same) {
-          const parts = []
-          if (drift.only_staged.length > 0) parts.push(`只在 staged：${drift.only_staged.join(', ')}`)
-          if (drift.only_live.length > 0) parts.push(`只在活体：${drift.only_live.join(', ')}`)
-          if (drift.different.length > 0) parts.push(`同名而内容不同：${drift.different.join(', ')}`)
-          push('STAGED-LIVE-DRIFT',
-            '**staged 与活体不是同一棵树**（测试的靶子 ≠ 生产）⇒ 这一跑的绿**不能**用来给活体背书：'
-            + `${parts.join(' · ')}（staged ${drift.staged_files} 文件 ${drift.staged} · 活体 ${drift.live_files} 文件 ${drift.live}）`
-            + '。修法：把改过的文件同步进 staging（**各人同步自己改的**），别靠人记得。')
+        for (const p of stagedLiveDriftProblems(drift)) problems.push(p)
+      }
+
+      // ── ③' 🔴 两棵树"都读得到、但都是 0 份文件" ⇒ 这一格必须红（`F-141`）──────────────
+      // 【钉什么】`stagedVsLiveDrift()` 的三张差集为空**不等于**两棵树相同 —— 还要**有样本**。
+      //   零样本时差集全空、`staged` 非 null ⇒ 只看差集就是绿，而这一格守的正是
+      //   "测试的靶子 = 生产"（`F-57-TARGET` 那一侧同一件事也会红，这是第二个读者）。
+      // 【怎么翻面】两棵树各指一根**空目录**（都读得到、都是 0 份）⇒ `same` 必须 false、
+      //   红因必须自己说出"零样本"。相邻两格一起钉住："只一侧空"仍走差集分支，"没设"仍报判不了
+      //   —— 三种空的红因**两两不同**，否则读的人不知道该去补哪一边。
+      // 🔴 夹具自证：先量"这两根目录里的普通文件数 = 0 / 活体那棵真树 > 0"，再谈红因。
+      //   （否则这一格的红可能来自夹具里恰好有几份文件，而不是"零样本"。）
+      {
+        const zeroStaged = fixtureDir('STAT-01', 'drift-zero-sample-staged')
+        const zeroLive = fixtureDir('STAT-01', 'drift-zero-sample-live')
+        const zeroFiles = [countFiles(zeroStaged), countFiles(zeroLive)]
+        const zero = stagedVsLiveDrift({ ...process.env, AGENIA_STAGING_PRESET: zeroStaged }, { liveRoot: zeroLive })
+        const zeroProblems = stagedLiveDriftProblems(zero)
+        rec.readings.staged_live_drift_fixtures = { zero_sample: { fixture_files: zeroFiles, ...driftShape(zero, zeroProblems) } }
+        if (zeroFiles[0] !== 0 || zeroFiles[1] !== 0) {
+          push('STAGED-LIVE-ZERO-FIXTURE-NOT-EMPTY', `零样本夹具本该两棵树各 0 份普通文件，实测 ${JSON.stringify(zeroFiles)} —— 这一格的红就不是"零样本"那条了`)
+        } else {
+          if (zero.staged === null) push('STAGED-LIVE-ZERO-FIXTURE-NOT-EMPTY', '零样本夹具的 `AGENIA_STAGING_PRESET` 没被读到（`staged === null`）—— 这一格测不到零样本')
+          if (zero.same !== false) {
+            push('STAGED-LIVE-ZERO-SAMPLE-GREEN', `🔴 零样本（staged 0 份 · 活体 0 份）⇒ \`drift.same\` 必须是 false（差集全空 ≠ 相同），实得 same=${zero.same} —— 这一格守的是"测试的靶子 = 生产"，它绿了就等于替两棵空树背书`)
+          }
+          if (zeroProblems.length !== 1 || zeroProblems[0].code !== 'STAGED-LIVE-DRIFT') {
+            push('STAGED-LIVE-ZERO-SAMPLE-UNNAMED', `零样本 ⇒ 红因必须恰有一条 \`STAGED-LIVE-DRIFT\`，实得 ${JSON.stringify(zeroProblems.map((p) => p.code))}`)
+          } else if (!zeroProblems[0].message.includes('零样本') || !zeroProblems[0].message.includes('STAGED-LIVE-ZERO-SAMPLE')) {
+            push('STAGED-LIVE-ZERO-SAMPLE-UNNAMED', `零样本的红因必须**点名"零样本"**（含 \`STAGED-LIVE-ZERO-SAMPLE\` 可指认串），实得 ${JSON.stringify(zeroProblems[0].message).slice(0, 400)} —— 只说"对不上"会把人引去同步两棵树，而真正缺的是样本`)
+          }
+        }
+
+        // 相邻 ①：只一侧空（staged 是空目录 / 活体那棵真树）⇒ 仍走**差集分支**
+        const oneSideStaged = fixtureDir('STAT-01', 'drift-one-side-staged')
+        const oneSideFiles = countFiles(oneSideStaged)
+        const oneSide = stagedVsLiveDrift({ ...process.env, AGENIA_STAGING_PRESET: oneSideStaged })
+        const oneSideProblems = stagedLiveDriftProblems(oneSide)
+        rec.readings.staged_live_drift_fixtures.one_side_empty = { staged_fixture_files: oneSideFiles, ...driftShape(oneSide, oneSideProblems) }
+        if (oneSideFiles !== 0 || oneSide.live_files === 0) {
+          push('STAGED-LIVE-ONE-SIDE-FIXTURE', `单侧空夹具本该"staged 0 份 · 活体 > 0 份"，实测 staged ${oneSideFiles} / 活体 ${oneSide.live_files} —— 这一格测不到"只一侧空"`)
+        } else {
+          if (oneSide.staged === null) push('STAGED-LIVE-ONE-SIDE-FIXTURE', '单侧空夹具的 `AGENIA_STAGING_PRESET` 没被读到')
+          if (oneSide.same !== false) push('STAGED-LIVE-ONE-SIDE-GREEN', `单侧空（staged 0 份 · 活体 ${oneSide.live_files} 份）⇒ same 必须 false，实得 ${oneSide.same}`)
+          if (oneSide.only_live.length !== oneSide.live_files) {
+            push('STAGED-LIVE-ONE-SIDE-CODE', `单侧空 ⇒ 每一份活体文件都该落在 \`only_live\` 里（实得 ${oneSide.only_live.length} / ${oneSide.live_files}）`)
+          }
+          if (oneSideProblems.length !== 1 || !oneSideProblems[0].message.includes('只在活体')) {
+            push('STAGED-LIVE-ONE-SIDE-CODE', `单侧空必须仍走**差集分支**（红因点名"只在活体"），实得 ${JSON.stringify(oneSideProblems.map((p) => p.message)).slice(0, 400)}`)
+          }
+          if (oneSideProblems.some((p) => String(p.message).includes('零样本'))) {
+            push('STAGED-LIVE-ONE-SIDE-HIJACKED', '单侧空被"零样本"那条顶掉了 —— 两条红因必须分得开（双侧空 = 什么都没比；单侧空 = 那一侧的文件量不到），混成一条，读的人就不知道该去补哪一边')
+          }
+        }
+
+        // 相邻 ②：`AGENIA_STAGING_PRESET` 没设 ⇒ 仍报原来那句"判不了"，红因不变
+        const unset = stagedVsLiveDrift({})
+        const unsetProblems = stagedLiveDriftProblems(unset)
+        rec.readings.staged_live_drift_fixtures.unset = driftShape(unset, unsetProblems)
+        if (unset.staged !== null) push('STAGED-LIVE-UNSET-FIXTURE', `"没设"那一格的 env 里不该有 \`AGENIA_STAGING_PRESET\`，实得 staged=${JSON.stringify(unset.staged)}`)
+        if (unsetProblems.length !== 1 || !unsetProblems[0].message.includes('没设') || !unsetProblems[0].message.includes('判不了')) {
+          push('STAGED-LIVE-UNSET-CODE', `"没设"必须仍报原来那句（含「没设」「判不了」），实得 ${JSON.stringify(unsetProblems.map((p) => p.message)).slice(0, 400)}`)
+        }
+        if (unsetProblems.some((p) => String(p.message).includes('零样本'))) {
+          push('STAGED-LIVE-UNSET-HIJACKED', '"没设"被"零样本"那条顶掉了 —— 判不了与零样本是两件事（前者要看环境变量，后者要看盘上有没有文件）')
+        }
+
+        // 三种空的红因**两两不同**（直接断言，不靠上面几条加起来推）
+        {
+          const texts = {
+            零样本: zeroProblems[0]?.message ?? '',
+            单侧空: oneSideProblems[0]?.message ?? '',
+            没设: unsetProblems[0]?.message ?? '',
+          }
+          rec.readings.staged_live_drift_fixtures.red_texts = texts
+          if (new Set(Object.values(texts)).size !== 3) {
+            push('STAGED-LIVE-EMPTY-INDISTINCT', `三种空（零样本 / 单侧空 / 没设）的红因必须两两不同，实得 ${JSON.stringify(texts).slice(0, 600)}`)
+          }
+        }
+
+        // 阳性对照：两棵树各 1 份、逐字节相同 ⇒ 必须 same:true 且零红因（`same` 不许被改成"永远 false"）
+        {
+          const sameStaged = fixtureDir('STAT-01', 'drift-identical-staged')
+          const sameLive = fixtureDir('STAT-01', 'drift-identical-live')
+          writeUnder(sameStaged, 'inject.js', '// identical fixture\n')
+          writeUnder(sameLive, 'inject.js', '// identical fixture\n')
+          const identical = stagedVsLiveDrift({ ...process.env, AGENIA_STAGING_PRESET: sameStaged }, { liveRoot: sameLive })
+          const identicalProblems = stagedLiveDriftProblems(identical)
+          rec.readings.staged_live_drift_fixtures.identical = driftShape(identical, identicalProblems)
+          if (identical.same !== true || identicalProblems.length > 0) {
+            push('STAGED-LIVE-NEVER-SAME', `两棵树各 1 份、逐字节相同 ⇒ 必须 same:true 且零红因，实得 same=${identical.same} / 红因 ${JSON.stringify(identicalProblems.map((p) => p.code))} —— 这一格红了说明"要求有样本"那条把判据改成了"永远不 same"`)
+          }
         }
       }
 
