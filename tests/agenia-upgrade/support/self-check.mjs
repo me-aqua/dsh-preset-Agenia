@@ -7,12 +7,12 @@
  *    所以这几格落成**入口的启动自检**：哪一条判据被改回去，入口当场 `F57-FAIL 自检` 并 exit 3
  *    —— 连"跑一次"都不许发生。它比"某条用例红"更硬，而且不动分母。
  *
- * 表里每一行都是**手写期望**（不从实现反推），输入是冻结的合成读数。四张表共 **30 格**：
+ * 表里每一行都是**手写期望**（不从实现反推），输入是冻结的合成读数。四张表共 **31 格**：
  *   · `VERDICT_TABLE`（10）：这一跑的读数是真是假、该给哪个退出码、算不算"干净通过"；
  *   · `JUDGEMENT_TABLE`（3）：入口会打出**哪些字** —— 收窄那一跑里**一个 OK 都不许有**；
  *   · `SHAPE_TABLE`（7）：发现器认得出哪种 `test(...)` 形状；认不出的必须**报**（不许当成 0）；
- *   · `TARGET_TABLE`（10）：靶子过期判据（F-105）—— 差距没声明要红、声明过期也要红、
- *     声明逐字对上才绿。**每一格都单独承重**：绿的那两格防"永远红"，红的那八格防"永远绿"。
+ *   · `TARGET_TABLE`（11）：靶子过期判据（F-105）—— 差距没声明要红、声明过期也要红、
+ *     声明逐字对上才绿。**每一格都单独承重**：绿的那两格防"永远红"，红的那九格防"永远绿"。
  *
  * 🔴 **两对格必然同红**（读到时别当重复删掉）。一句一箭头：
  *   · `V-01` ←同一条事实→ `J-01`（全量全绿）；`V-05` ←同一条事实→ `J-02`（收窄全绿）。
@@ -200,6 +200,11 @@ function synthMeasured(stagedText, baselineText = SYN_BASELINE, file = 'inject.j
   }
 }
 
+/** 零样本的合成量测：两棵树都枚举不出普通文件（`F-128`）—— `files` 空就是那一格的输入。 */
+function synthMeasuredEmpty() {
+  return { stagedRoot: '<synth-staged>', baselineRoot: '<synth-baseline>', files: [] }
+}
+
 /** 声明的一行：默认**逐字对上** `stagedText` / `baselineText` 的实测事实，再按 `over` 覆写。 */
 function synthDeclaration(stagedText = SYN_OLD, baselineText = SYN_BASELINE, over = {}, markers = undefined) {
   const missing = (markers ?? ['commonSenseOf', 'timeLineOf', 'lastBoardPosted', 'proposalFileEnabled', 'boardChanged'])
@@ -292,13 +297,26 @@ export const TARGET_TABLE = [
     },
     want: { ok: false, codes: ['TARGET-MARKER-OVERCLAIM'], problemsHave: ['boardChanged'] },
   },
+  {
+    /**
+     * 🔴 `F-128`：**零样本**这一格必须有第二个读者。
+     * `VRF-04` 的 D5 是第一个（真夹具 + 真 `measureTarget`），这一格是第二个（合成读数直调 `targetVerdict`）——
+     * 两条走同一份判定体，但不是同一个读者：删掉 D5 这一格还在，把实现改回去这一格也会红。
+     * `lineHas` 是**肯定式**的：它要求入口那一行**自己**说「🔴 零样本」。旧写法
+     * （`F57-TARGET 判据没盯任何文件（…）—— 这一行不算证据`）不含它 ⇒ 退回旧写法这里当场红。
+     * `codes` 恰好一条也承重：`TARGET_CODES` 那个名字表原来没有任何读者（加码 / 删码都不红）。
+     */
+    id: 'T-11', name: '零样本（两棵树都枚举不出普通文件）+ 没有声明 ⇒ 红，且入口那一行自己说"零样本"',
+    input: { measured: synthMeasuredEmpty(), declaration: NO_DECLARATION },
+    want: { ok: false, codes: ['TARGET-ZERO-SAMPLE'], lineHas: '🔴 零样本', problemsHave: ['零样本'] },
+  },
 ]
 
 /**
- * **这 30 格的身份证**（冻结）。`runSelfCheck()` 收尾时按这张清单对账。
+ * **这 31 格的身份证**（冻结）。`runSelfCheck()` 收尾时按这张清单对账。
  *
- * 🔴 为什么按 **id** 而不是按**数目**：`checked === 30` 只防"删"，防不住"删两格加两格"——
- *    两次改完数目照样是 30。换成"这 30 条 id **一条不少**"以后，**删一格 / 换一格**都会红
+ * 🔴 为什么按 **id** 而不是按**数目**：`checked === 31` 只防"删"，防不住"删两格加两格"——
+ *    两次改完数目照样是 31。换成"这 31 条 id **一条不少**"以后，**删一格 / 换一格**都会红
  *    （`cand-20261017-0072`）。**挪到别的表** id 不变，由下面 `TABLE_OF_ID_PREFIX` 那一条抓。
  * ⚠️ 加一格**新 id** 不红（新增格是合法改动；要改这张冻结清单是另一件要批的事）。
  */
@@ -306,7 +324,7 @@ export const FROZEN_CELL_IDS = [
   'V-01', 'V-02', 'V-03', 'V-04', 'V-05', 'V-06', 'V-07', 'V-08', 'V-09', 'V-10',
   'J-01', 'J-02', 'J-03',
   'S-01', 'S-02', 'S-03', 'S-04', 'S-05', 'S-06', 'S-07',
-  'T-01', 'T-02', 'T-03', 'T-04', 'T-05', 'T-06', 'T-07', 'T-08', 'T-09', 'T-10',
+  'T-01', 'T-02', 'T-03', 'T-04', 'T-05', 'T-06', 'T-07', 'T-08', 'T-09', 'T-10', 'T-11',
 ]
 
 /**
@@ -349,6 +367,7 @@ export const FROZEN_CELL_KEYS = {
   'T-08': ['codes', 'ok', 'problemsHave'],
   'T-09': ['codes', 'ok', 'problemsHave'],
   'T-10': ['codes', 'ok', 'problemsHave'],
+  'T-11': ['codes', 'lineHas', 'ok', 'problemsHave'],
 }
 
 /** id 的第一个字母就是它该在的表（挪表 ⇒ 红；这一条 `ran` 里已经记了 `table`）。 */
@@ -430,7 +449,7 @@ export function runSelfCheck() {
     }
   }
   /**
-   * ── 结构：**那 30 格的 id 一条不许少** ───────────────────────────────────────
+   * ── 结构：**那 31 格的 id 一条不许少** ───────────────────────────────────────
    * 前面四轮只证明"表里的格跑出来符合期望"；这一轮回答的是**"表自己少了格"**：
    *   · 一格被删掉（哪怕只删一格）⇒ 红 ⇒ 入口 `exit 3`，连跑都不许跑；
    *   · **整张表一圈都不跑**（表里 id 一个不少、跑的是空数组）⇒ 同样红 —— 这一段读的是 `ran`（实际跑过的格），
@@ -453,7 +472,7 @@ export function runSelfCheck() {
    *     要保护一格，就把 id 同时登记进 `FROZEN_CELL_IDS` 和 `FROZEN_CELL_KEYS`（两张表的键由下面那条对账）。
    *   · 两张冻结表**自己**对不上 ⇒ 红，且两个方向分开报（少一行 = 那一格的断言面没人守；
    *     多一行 = 那一格的 id 没在冻结清单里 —— 「幽灵登记」与「只删了 id」两种形态，见下面）。
-   * ⚠️ `checked` 只是读数（跑了几格），判据是这段。别拿 `checked === 30` 当守卫。
+   * ⚠️ `checked` 只是读数（跑了几格），判据是这段。别拿 `checked === 31` 当守卫。
    */
   const rows = ran
   const ids = rows.map((x) => x.id)
@@ -496,7 +515,7 @@ export function runSelfCheck() {
     failures.push(`结构：登记表多登记了 ${ghostIds.length} 格（幽灵登记）：${ghostIds.join(' / ')} —— FROZEN_CELL_KEYS 里有、FROZEN_CELL_IDS 里没有，而套件里**跑不出这一格** ⇒ 它永远不会被检查：看着像有保护、其实没有。修法：删掉这行登记（或把这一格补回套件并登记进 FROZEN_CELL_IDS）`)
   }
   if (ranButUnlisted.length > 0) {
-    failures.push(`结构：登记表多登记了 ${ranButUnlisted.length} 格（只删了 id）：${ranButUnlisted.join(' / ')} —— 这一格**在套件里跑着**、可选面也还在被 FROZEN_CELL_KEYS 守着，但 FROZEN_CELL_IDS 里没有它的 id ⇒ 它的**存在**只被间接守着：只要 FROZEN_CELL_KEYS 那行还在，删格 / 改名会掉进形态①，而形态① 的修法是「删掉这行登记」—— 照着做，这一格就连痕迹一起没了；真正 0 红的是两行一起删（那时 checked 从 30 变 29，没有任何判据在看这个数）。修法：把 id 加回 FROZEN_CELL_IDS（删这行登记会把这一格的可选面一起丢掉）`)
+    failures.push(`结构：登记表多登记了 ${ranButUnlisted.length} 格（只删了 id）：${ranButUnlisted.join(' / ')} —— 这一格**在套件里跑着**、可选面也还在被 FROZEN_CELL_KEYS 守着，但 FROZEN_CELL_IDS 里没有它的 id ⇒ 它的**存在**只被间接守着：只要 FROZEN_CELL_KEYS 那行还在，删格 / 改名会掉进形态①，而形态① 的修法是「删掉这行登记」—— 照着做，这一格就连痕迹一起没了；真正 0 红的是两行一起删（那时 checked 从 31 变 30，没有任何判据在看这个数）。修法：把 id 加回 FROZEN_CELL_IDS（删这行登记会把这一格的可选面一起丢掉）`)
   }
   // 挪表：id 不变，只有 `ran` 里那个 `table` 变了 —— 单靠 id 清单抓不住（第 4 关评审 `N-6`）。
   const moved = rows.filter((x) => typeof x.id === 'string' && TABLE_OF_ID_PREFIX[x.id[0]] !== undefined && TABLE_OF_ID_PREFIX[x.id[0]] !== x.table)

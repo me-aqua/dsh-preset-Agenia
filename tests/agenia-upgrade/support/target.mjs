@@ -11,6 +11,8 @@
  *   · 靶子与现役**逐字节相同** ⇒ 绿（这是目标态）；
  *   · 不一致 ⇒ 必须有一条声明，写明 **哪一份文件 · 落后多少字节 · 缺哪几样（逐字）· 谁批的 · 为什么**；
  *   · 声明与实测**任何一格对不上**（多报、少报、把相等写成落后、编一个不存在功能名）⇒ 红。
+ *   · **两棵树都枚举不出普通文件（零样本）⇒ 红**（`F-128`）：逐文件对账是个循环，样本空 ⇒
+ *     它一圈都不跑 ⇒ "没东西可判"和"都判过了"同形。零样本是**判据自己没成立**，不是"靶子落后"。
  * 两个方向都会被这条判据抓住 ⇒ 它能翻面（"永远红"和"永远绿"都不是判据）。
  *
  * 🔴 判据覆盖不到的两件事（写在明处，别指望它）：
@@ -30,6 +32,7 @@ import { FROZEN, PATHS } from './env.mjs'
 
 /** 判据自己的问题码（每个码一句话，测试与入口共用同一份）。 */
 export const TARGET_CODES = [
+  'TARGET-ZERO-SAMPLE',
   'TARGET-SURFACE-MISSING',
   'TARGET-LAG-UNDECLARED',
   'TARGET-LAG-STALE-DECLARATION',
@@ -264,7 +267,19 @@ export function targetVerdict({
     }
   }
 
-  // ── ③ 逐文件对账：差一点都要点名 ────────────────────────────────────────
+  // ── ③ 零样本：一份普通文件都没枚举到 ⇒ 判据自己没成立，先红 ──────────────
+  // 下面 ④ 那个 `for` 一圈不跑的结果是 `problems` 空 ⇒ `ok=true` / `state='equal'`：
+  // "没东西可判"与"都判过了"于是长得一模一样（`F-128`）。这一格必须在**对账之前**落一条红因 ——
+  // 对账能说的只有"哪一份文件差多少"，它说不出"我一份都没看见"。
+  // `state` 仍归到 `stale`（= 这一跑不许当绿）；零样本与"靶子落后"的区分靠 `code` 与入口那一行，
+  // 不新增第四个 `state`（那是 `{ok,state,line,actuals,problems}` 这个契约的形状改动，不在这张票上）。
+  if (actuals.length === 0) {
+    const staged = measured?.stagedRoot ?? '<未给>'
+    const baseline = measured?.baselineRoot ?? '<未给>'
+    push('TARGET-ZERO-SAMPLE', `判据没盯任何文件（零样本）：两棵树都枚举不出普通文件（靶子 ${staged} · 现役 ${baseline}）—— 逐文件对账一圈都没跑，所以"逐字节相同"这句话在这里没有过样本`)
+  }
+
+  // ── ④ 逐文件对账：差一点都要点名 ────────────────────────────────────────
   for (const a of actuals) {
     const e = byFile.get(a.file)
     if (a.state === 'missing_in_target' || a.state === 'missing_in_baseline') {
@@ -311,9 +326,16 @@ export function targetVerdict({
 /**
  * 入口那一行（`F57-TARGET`）—— 绿的时候也要说清打的是哪棵树、差多少。
  * 逐树枚举之后**相同的那一堆只报一句汇总**（48 份逐字节相同），**差的逐份点名**（差在哪是这一行的用处）。
+ *
+ * 零样本（`F-128`）是这一行唯一**不能**按 `state` 说话的地方：`actuals` 空 ⇒ 一行对账都没做，
+ * 报 "靶子=现役" 就是把"我没看见"写成"我看见它们一样"。这一行必须跟着判据一起红。
  */
 function describeLine(state, actuals, dpath, measured = null) {
-  if (actuals.length === 0) return 'F57-TARGET 判据没盯任何文件（两棵树都枚举不出普通文件）—— 这一行不算证据'
+  if (actuals.length === 0) {
+    const staged = measured?.stagedRoot ?? '<未给>'
+    const baseline = measured?.baselineRoot ?? '<未给>'
+    return `F57-TARGET 🔴 零样本：判据没盯任何文件（两棵树都枚举不出普通文件 —— 靶子 ${staged} · 现役 ${baseline}）—— 这一跑判红（TARGET-ZERO-SAMPLE），不是"逐字节相同"`
+  }
   const diffs = actuals.filter((a) => a.state !== 'equal')
   const data = Array.isArray(measured?.data_segments) && measured.data_segments.length > 0
     ? `（任一段 ${measured.data_segments.join(' / ')} 是数据，不参与）`
