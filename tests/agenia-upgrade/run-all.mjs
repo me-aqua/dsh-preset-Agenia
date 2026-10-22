@@ -6,8 +6,11 @@
  * 旧跑法里 `node --test` 的退出码与 `settle` 的"分母 55"是**两条互不知情的读数**，
  * 中间没有任何东西要求它们说同一件事。
  *
- * 一次做七件事：
+ * 一次做七件事（⓪ 自检 / ⓪' 报身份并落盘 = 入口在套件之前的两步，不计在这七件里）：
  *   ⓪ **自检**（`support/self-check.mjs` 的冻结表：判据被改回去 ⇒ 拒跑 exit 3）
+ *   ⓪' **报自己是哪一份**：入口与它 import 的 `support/self-check.mjs` 的路径 / 字节 / sha256 由**跑着的
+ *      这份代码自己**算，连同自检读数（`ok` / `checked` / `failures`）一起落盘（`entry-identity.txt` ·
+ *      `self-check.json` · `judgement.txt` · `--json`）—— 自检不过的那一跑也落，"跑的是哪一份"不许退回自报
  *   ① 建运行根（三层 marker，与冻结跑法一致）→ ② 真实根 before 哈希 → ③ `node --test <glob>`
  *   → ④ 真实根 after 哈希 → ⑤ `--settle` → ⑥ **打一行**，并用**一个**退出码收口
  *   → ⓻ **靶子对数**（`support/target.mjs`：这一跑打的 staged 树与现役 `presets/agenia` 的差
@@ -22,19 +25,25 @@
  *   node tests/agenia-upgrade/run-all.mjs --run-root=… --glob="tests/agenia-upgrade/static/read-obligations.test.mjs"
  *   （不给 `--run-root` ⇒ 拒跑 exit 3 —— 证据落点不靠默认值猜）
  *
- * 控制台先出这两行（顺序钉死），再出那一条携带分母的行：
+ * 控制台先出这两行（顺序钉死），再出两条尺子行，再出那一条携带分母的行：
  *   [平台] 0.2.1-rc.2（@deepseek-ai/dsh-desktop + @deepseek-ai/dsh 同版）· asar 取自 环境变量 VIPSHOME
  *   F57-TARGET 靶子=现役 · inject.js 逐字节相同（129771 B · sha256 eb524ab7…）
+ *   [尺子] 覆盖：E:\Harness\tests\agenia-upgrade 那棵树（开跑 / 收口各量一次它自己的指纹）—— **不覆盖**"执行的是哪一份入口"
+ *   [尺子·入口] run-all.mjs <绝对路径> · <字节> B · sha256 <HEX> · self-check.mjs <绝对路径> · <字节> B · sha256 <HEX>
  *   F57-SETTLE 分母 66 · 盘上发现 66 · 跑到 20 文件/66 条 · RED 0 / GREEN 64 / HOLD 2 · 登记=盘上 ✓ · node --test exit 0（tests 66 · fail 0） · settle exit 0
  *
- * 🔴 头两行回答的是**两件不同的事**，别混着读：
+ * 🔴 这几行回答的是**四件不同的事**，别混着读：
  *   · `[平台]` = 这一跑跑在**哪个平台版本**上（`resources/app.asar` 里的版本号，`F-106`）——
  *     **读数**：不参与判词、不改退出码；判不了会印 `[平台] 🔴 判不了`（不是"不印"）。
  *   · `F57-TARGET` = 这一跑打的是**哪棵树**（被测的 preset 树 vs 现役）。
- *   （"跑的是哪版**测试代码**"是第三件，由 `[尺子]` 那一行 + 结算里的 `test_tree.same` 回答 ——
- *     `[尺子]` 只进控制台，不进 `judgement.txt`。）
+ *   · `[尺子]` = **测试树**（`PATHS.testRoot` 那一棵）开跑与收口是否同一棵 —— 它**只**覆盖那棵树，
+ *     不覆盖"执行的是哪一份入口代码"；这一行写的就是它的覆盖边界。
+ *   · `[尺子·入口]` = **跑着的这份代码自己**报的路径 / 字节 / sha256（入口 + 它 import 的
+ *     `support/self-check.mjs`）。"哪一份在跑"只有这一行说了算；入口不在 `[尺子]` 那棵树里时，
+ *     紧跟一行 🔴 明写这一跑的 `[尺子]` 读数不是关于跑着的这份代码的。
  *
- * `judgement.txt` 里逐行是：`[平台]` → `F57-TARGET` → `F57-SETTLE` → 判词 → `exit=`。
+ * `judgement.txt` 里逐行是：`[平台]` → `F57-TARGET` → `[尺子] 覆盖` → `[尺子·入口]` → `F57-SETTLE` → 判词 → `exit=`。
+ * （`[尺子]` 的**同树判定**那两句只进控制台 —— 它们的输入是收口才有的 settlement；覆盖范围与入口身份两行落盘。）
  *
  * 🔴 **`F57-OK` 只在"分母 = 跑到 = 全绿 = 无 HOLD"时出现**。其余情况一个 OK 都不许有：
  *   · `HOLD > 0` ⇒ `exit 2`（判不了不是绿）
@@ -44,7 +53,8 @@
  * 退出码：`0` 全绿且这一跑算数 · `1` 有红 / 不一致 / 空跑 / 半跑 / 两套读数打架 · `2` 有 HOLD · `3` 用法或环境不成立（拒跑）
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { entryVerdict, judgementLines } from './support/verdict.mjs'
@@ -52,6 +62,7 @@ import { runSelfCheck } from './support/self-check.mjs'
 import { targetReport } from './support/target.mjs'
 import { platformReading, platformLine } from './support/platform.mjs'
 import { DISCOVERY } from './support/registry.mjs'
+import { PATHS } from './support/env.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ARGV = process.argv.slice(2)
@@ -66,12 +77,9 @@ const GLOB = GLOB_GIVEN ?? 'tests/agenia-upgrade/**/*.test.mjs'
 const JSON_OUT = arg('json')
 
 // ── ⓪ 自检：判据被改回去 ⇒ 连跑都不许跑（exit 3）──────────────────────────
+// 先**跑**自检、把读数留在手里；判词与 exit 挪到「入口身份 + 读数落盘」之后（下面 ⓪' 那一段）——
+// 自检不过的那一跑也必须有落点，否则"跑的是哪一份 `self-check.mjs`"又成了自报。
 const selfCheck = runSelfCheck()
-if (!selfCheck.ok) {
-  console.error(`F57-FAIL 自检：入口自己的判据表不符（${selfCheck.failures.length} 处，共 ${selfCheck.checked} 格）—— 这一跑不算数`)
-  for (const f of selfCheck.failures) console.error(`  · ${f}`)
-  process.exit(3)
-}
 
 if (RUN_ROOT_RAW === null) {
   console.error('F57-USAGE: 必须给 --run-root=<绝对路径>（证据落点不猜；它要落在 …\\_runs\\<RUN_ID>\\ 之下）')
@@ -81,6 +89,73 @@ const RUN_ROOT = path.resolve(RUN_ROOT_RAW)
 const RUN_ID = path.basename(RUN_ROOT)
 if (!existsSync(REPO)) {
   console.error(`F57-USAGE: --repo 指到的地方不存在：${REPO}`)
+  process.exit(3)
+}
+
+// ── 🔴 这一跑执行的是**哪一份入口代码** ────────────────────────────────────
+/**
+ * `[尺子]` 量的是 `PATHS.testRoot` **那棵树**（`support/env.mjs` 里硬编码），它回答的是
+ * "开跑那一刻的测试树与收口那一刻是不是同一棵"；**它不回答**"执行的是哪一份 `run-all.mjs`、
+ * 它 import 的又是哪一份 `support/self-check.mjs`"。拿副本跑时这两件事会分叉 ——
+ * 读数记 A 树、跑的是 B 树，标签就是这么贴错的。
+ * ⇒ 让**跑着的这份代码自己**报自己的路径 / 字节 / sha256，同批落盘（`entry-identity.txt` ·
+ *   `self-check.json` · `judgement.txt`）：标签从此只能由跑着的这份代码写，不能手贴。
+ *   `entry` 所在目录 ≠ `PATHS.testRoot` ⇒ 印 🔴：那一跑的 `[尺子]` 读数**不是**关于跑着的这份代码的，
+ *   "跑的就是 `sources` 里那版"这句在那一跑不成立。
+ */
+const sha256Of = (file) => createHash('sha256').update(readFileSync(file)).digest('hex').toUpperCase()
+const ENTRY_FILE = fileURLToPath(import.meta.url)
+const SELF_CHECK_FILE = fileURLToPath(new URL('./support/self-check.mjs', import.meta.url))
+const IDENTITY = {
+  entry: { file: ENTRY_FILE, bytes: statSync(ENTRY_FILE).size, sha256: sha256Of(ENTRY_FILE) },
+  self_check: { file: SELF_CHECK_FILE, bytes: statSync(SELF_CHECK_FILE).size, sha256: sha256Of(SELF_CHECK_FILE) },
+  entry_tree: path.dirname(ENTRY_FILE),
+  ruler_tree: PATHS.testRoot,
+  entry_in_ruler_tree: path.resolve(path.dirname(ENTRY_FILE)).toLowerCase() === path.resolve(PATHS.testRoot).toLowerCase(),
+}
+const IDENTITY_LINE = `[尺子·入口] run-all.mjs ${IDENTITY.entry.file} · ${IDENTITY.entry.bytes} B · sha256 ${IDENTITY.entry.sha256}`
+  + ` · self-check.mjs ${IDENTITY.self_check.file} · ${IDENTITY.self_check.bytes} B · sha256 ${IDENTITY.self_check.sha256}`
+const RULER_SCOPE_LINE = `[尺子] 覆盖：${PATHS.testRoot} 那棵树（开跑 / 收口各量一次它自己的指纹）—— **不覆盖**"执行的是哪一份入口"；那一格由下一行 [尺子·入口] 回答`
+const MISMATCH_LINE = IDENTITY.entry_in_ruler_tree
+  ? null
+  : `[尺子·入口] 🔴 入口不在 [尺子] 覆盖的那棵树里：入口树 = ${IDENTITY.entry_tree} ≠ ${PATHS.testRoot} ⇒ 这一跑的 [尺子] 读数**不是**关于跑着的这份代码的（两句都要读，别拿 [尺子] 给这一跑贴标签）`
+const IDENTITY_TEXT = `${IDENTITY_LINE}\n${MISMATCH_LINE === null ? '' : `${MISMATCH_LINE}\n`}`
+const writeJsonFile = (file, obj) => {
+  mkdirSync(path.dirname(file), { recursive: true })
+  writeFileSync(file, `${JSON.stringify(obj, null, 2)}\n`, 'utf8')
+  return file
+}
+/**
+ * 🔴 这一跑的 `runSelfCheck()` **读数落盘** —— `ok / checked / failures` 与入口身份写在**同一份**
+ * `self-check.json` 里。只在 log 里自报的 `ok=true · checked=31` 不算读数。
+ * 落点：`<运行根的上一级>/<RUN_ID>.self-check.json`（判词只在 `<…>.self-check-FAIL.txt`）。
+ * 过了自检之后同一份内容也写进运行根。
+ */
+const SELF_CHECK_READING = {
+  run_id: RUN_ID,
+  ok: selfCheck.ok,
+  checked: selfCheck.checked,
+  failures: selfCheck.failures,
+  ...IDENTITY,
+  measured_at: new Date().toISOString(),
+}
+const sidecar = (suffix) => path.join(path.dirname(RUN_ROOT), `${RUN_ID}.${suffix}`)
+mkdirSync(path.dirname(RUN_ROOT), { recursive: true })
+writeJsonFile(sidecar('self-check.json'), SELF_CHECK_READING)
+writeFileSync(sidecar('entry-identity.txt'), IDENTITY_TEXT, 'utf8')
+
+// ── ⓪' 自检不过 ⇒ 判词落盘 + 拒跑（exit 3；运行根不建）──────────────────────
+if (!selfCheck.ok) {
+  writeFileSync(
+    sidecar('self-check-FAIL.txt'),
+    `${IDENTITY_TEXT}F57-FAIL 自检：入口自己的判据表不符（${selfCheck.failures.length} 处，共 ${selfCheck.checked} 格）—— 这一跑不算数\n`
+    + `${selfCheck.failures.map((f) => `  · ${f}`).join('\n')}\nexit=3\n`,
+    'utf8',
+  )
+  console.error(`F57-FAIL 自检：入口自己的判据表不符（${selfCheck.failures.length} 处，共 ${selfCheck.checked} 格）—— 这一跑不算数`)
+  for (const f of selfCheck.failures) console.error(`  · ${f}`)
+  console.error(IDENTITY_LINE)
+  if (MISMATCH_LINE !== null) console.error(MISMATCH_LINE)
   process.exit(3)
 }
 
@@ -97,6 +172,9 @@ const platform = platformReading()
 const PLATFORM_LINE = platformLine(platform)
 console.log(PLATFORM_LINE)
 console.log(target.line)
+console.log(RULER_SCOPE_LINE)
+console.log(IDENTITY_LINE)
+if (MISMATCH_LINE !== null) console.log(MISMATCH_LINE)
 
 // ── ① 运行根：目录 + 三层 marker + 注入式时钟（与冻结跑法同形）──────────────
 const dirs = ['tmp', 'state', 'brain-root', 'workspace', 'fixtures']
@@ -130,6 +208,9 @@ const ENV = {
   AGENIA_ORACLE_SHA256: '6CD2F197737FC94A45E487D0BB57869461DD6F392D45F6429B576E75D973EDA8',
 }
 mkdirSync(path.join(RUN_ROOT, 'dsh-home'), { recursive: true })
+// 入口身份与自检读数进运行根（与 `<上一级>/<RUN_ID>.*` 那两份同一次测量、同一份内容）
+writeJsonFile(path.join(RUN_ROOT, 'self-check.json'), SELF_CHECK_READING)
+writeFileSync(path.join(RUN_ROOT, 'entry-identity.txt'), IDENTITY_TEXT, 'utf8')
 
 /** 跑一个子进程；stdout/stderr 一律落盘（红的时候要能读全文）。 */
 const run = (argv, outFile, errFile) => {
@@ -168,7 +249,7 @@ if (s === null) {
   const bad = `F57-NO-SETTLEMENT: 结算报告没生成（${settlementFile}）—— 这一跑不算结算`
   console.error(bad)
   if (settleRun.stderr.trim() !== '') console.error(settleRun.stderr.trim().split('\n').slice(0, 8).join('\n'))
-  writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${PLATFORM_LINE}\n${target.line}\n${bad}\nexit=1\n`, 'utf8')
+  writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[PLATFORM_LINE, target.line, RULER_SCOPE_LINE, IDENTITY_LINE, bad, 'exit=1'].join('\n')}\n`, 'utf8')
   process.exit(1)
 }
 
@@ -257,7 +338,7 @@ console.log(line)
  */
 const judgement = judgementLines(verdict, { settled, denominator, scopeCases })
 for (const l of judgement) console.log(l)
-writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[PLATFORM_LINE, target.line, line, ...judgement, `exit=${verdict.exitCode}`].join('\n')}\n`, 'utf8')
+writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[PLATFORM_LINE, target.line, RULER_SCOPE_LINE, IDENTITY_LINE, line, ...judgement, `exit=${verdict.exitCode}`].join('\n')}\n`, 'utf8')
 
 if (JSON_OUT !== null) {
   writeFileSync(path.resolve(JSON_OUT), `${JSON.stringify({
@@ -272,6 +353,9 @@ if (JSON_OUT !== null) {
       declaration: target.declaration.path, declaration_present: target.declaration.present,
       actuals: target.actuals, problems: target.problems,
     },
+    /** 🔴 这一跑执行的是**哪一份入口代码**（同批落在 `entry-identity.txt` / `self-check.json` / 本文件）。 */
+    entry: IDENTITY,
+    self_check: SELF_CHECK_READING,
     /** 🔴 `F-106`：这一跑的平台版本（读数；判不了也照样出这一节，`ok:false` + `problems`）。 */
     platform: {
       ok: platform.ok, line: PLATFORM_LINE, asar: platform.asar, source: platform.source,

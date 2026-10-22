@@ -438,7 +438,21 @@ export function runSelfCheck() {
    *   · 一格没有 id / 两个格共用一个 id ⇒ 红（"缺了哪一格"会说不清）；
    *   · 一格**少了一个冻结的断言面**（`failCount` / `problemsHave` …）⇒ 红（"改小"也能发生在面上）；
    *   · 一格挪到别的表 ⇒ 红（id 不变，看 `ran` 里记的 `table`）；
-   *   · 新加一格（新 id）⇒ **不红**（新增是合法改动；给它加断言面要登记进 `FROZEN_CELL_KEYS`，否则那一条红）。
+   *   · 新加一格（新 id）⇒ **不红**（新增是合法改动）。🔴 代价要写全：**它「可选的」断言面不受保护** ——
+   *     `FROZEN_CELL_KEYS` 里没有它，下面那个面循环就 `continue` 掉了 ⇒ **删掉它的一个可选面
+   *     （`problemsHave` / `lineHas` / `state` / `failCount`），不会有任何一条红**。
+   *     ⚠️ 不受保护的**只有可选的**那几样：每格自己那一圈仍在**无条件地**读 `ok` / `exitCode` /
+   *     `cases` / `anonymous` / `unparsed` / `*Lines`（上面那四个格循环），删掉照样红。
+   *     🔴 `codes` **不在这张单子里**：`:421` 是 `const wantCodes = [...row.want.codes].sort()` —— 一格漏了
+   *     `codes` 就**抛 `TypeError`**（不是"红"），而这一抛发生在 `run-all.mjs:82` 的
+   *     `const selfCheck = runSelfCheck()`，**早于**入口身份与自检读数落盘（同文件 `:144` 起）⇒
+   *     那一跑 `exit 1` 带栈，四处身份落盘
+   *     （sidecar 两份 / 运行根两份 / `judgement.txt` / `--json`）一处都不会出现，"跑的是哪一份"又退回自报。
+   *     ⚠️ 触发面正是被祝福的那条合法路径：按上面"新加一格（新 id）⇒ 不红"加一格 `TARGET` 类的新格
+   *     而漏了 `codes`，就走到这里。
+   *     要保护一格，就把 id 同时登记进 `FROZEN_CELL_IDS` 和 `FROZEN_CELL_KEYS`（两张表的键由下面那条对账）。
+   *   · 两张冻结表**自己**对不上 ⇒ 红，且两个方向分开报（少一行 = 那一格的断言面没人守；
+   *     多一行 = 那一格的 id 没在冻结清单里 —— 「幽灵登记」与「只删了 id」两种形态，见下面）。
    * ⚠️ `checked` 只是读数（跑了几格），判据是这段。别拿 `checked === 30` 当守卫。
    */
   const rows = ran
@@ -455,6 +469,35 @@ export function runSelfCheck() {
   if (missing.length > 0) {
     failures.push(`结构：冻结清单里的格从表里消失了 ${missing.length} 格：${missing.join(' / ')} —— 这 ${FROZEN_CELL_IDS.length} 条 id 一条不许少`)
   }
+  // 🔴 **登记表本身也得有人守**（`F-138`）：上面那条只查"表里的格少了没"，而下面那个断言面循环遇到
+  //    `FROZEN_CELL_KEYS[x.id] === undefined` 直接 `continue` ⇒ 从登记表里删掉一行，那一格的断言面
+  //    **当场失守、0 红**（套件全绿、`exit 0`）。所以两张冻结表必须**双向相等**。
+  //    两个方向是两件事，分开报，别合成一句"对不上"：少的那一向是"没人守"，多的那一向是"假保护"。
+  const keyIds = Object.keys(FROZEN_CELL_KEYS)
+  const noFace = FROZEN_CELL_IDS.filter((id) => !keyIds.includes(id))
+  if (noFace.length > 0) {
+    failures.push(`结构：登记表少登记了 ${noFace.length} 格：${noFace.join(' / ')} —— FROZEN_CELL_IDS 里有、FROZEN_CELL_KEYS 里没有 ⇒ 它的断言面**没人守**：删掉它的一个可选面（problemsHave / lineHas / state / failCount）不会有任何一条红；必检的那几样（ok / exitCode / cases / anonymous / unparsed / *Lines）仍由那一格自己的循环无条件比；codes 不在其列（缺了它抛 TypeError，不是红）`)
+  }
+  /**
+   * 「多登记」那一向有**两种形态**，红因分开说 —— 形态由 `ran` 判（`ids` 里有没有这个 id），**不猜**：
+   *   ① **幽灵登记**：`FROZEN_CELL_KEYS` 里有一行，而套件里**跑不出这一格** ⇒ 它永远不会被检查
+   *      —— 看着像有保护、其实没有。
+   *   ② **只删了 id**：格还在套件里跑着，可选面也还在被 `FROZEN_CELL_KEYS` 守着，但 `FROZEN_CELL_IDS`
+   *      里没有它的 id ⇒ 丢的是「这一格**存在**」这条**直接**保护：删格 / 改名要到形态① 才报，而形态①
+   *      给的修法是「删掉这行登记」—— 照着做，这一格就连痕迹一起没了；全句只在下面那条红因里，这里留指针
+   *      （同一件事写两遍，改一处就得动两处）。
+   * 两种形态的修法**相反**：① 删掉这行登记（或把格补回套件再登记）· ② 把 id 加回 `FROZEN_CELL_IDS`
+   * （② 若照 ① 的修法去删登记行，会把这一格剩下的面也一起丢掉）。
+   */
+  const unlisted = keyIds.filter((id) => !FROZEN_CELL_IDS.includes(id))
+  const ghostIds = unlisted.filter((id) => !ids.includes(id))
+  const ranButUnlisted = unlisted.filter((id) => ids.includes(id))
+  if (ghostIds.length > 0) {
+    failures.push(`结构：登记表多登记了 ${ghostIds.length} 格（幽灵登记）：${ghostIds.join(' / ')} —— FROZEN_CELL_KEYS 里有、FROZEN_CELL_IDS 里没有，而套件里**跑不出这一格** ⇒ 它永远不会被检查：看着像有保护、其实没有。修法：删掉这行登记（或把这一格补回套件并登记进 FROZEN_CELL_IDS）`)
+  }
+  if (ranButUnlisted.length > 0) {
+    failures.push(`结构：登记表多登记了 ${ranButUnlisted.length} 格（只删了 id）：${ranButUnlisted.join(' / ')} —— 这一格**在套件里跑着**、可选面也还在被 FROZEN_CELL_KEYS 守着，但 FROZEN_CELL_IDS 里没有它的 id ⇒ 它的**存在**只被间接守着：只要 FROZEN_CELL_KEYS 那行还在，删格 / 改名会掉进形态①，而形态① 的修法是「删掉这行登记」—— 照着做，这一格就连痕迹一起没了；真正 0 红的是两行一起删（那时 checked 从 30 变 29，没有任何判据在看这个数）。修法：把 id 加回 FROZEN_CELL_IDS（删这行登记会把这一格的可选面一起丢掉）`)
+  }
   // 挪表：id 不变，只有 `ran` 里那个 `table` 变了 —— 单靠 id 清单抓不住（第 4 关评审 `N-6`）。
   const moved = rows.filter((x) => typeof x.id === 'string' && TABLE_OF_ID_PREFIX[x.id[0]] !== undefined && TABLE_OF_ID_PREFIX[x.id[0]] !== x.table)
   if (moved.length > 0) {
@@ -466,7 +509,10 @@ export function runSelfCheck() {
    */
   for (const x of rows) {
     const frozen = FROZEN_CELL_KEYS[x.id]
-    if (frozen === undefined) continue // 新加的格（没登记）⇒ 不红：与 id 那条同一条政策
+    // 到这里 `frozen === undefined` 只剩一种情况：**新加的格**（两张冻结表都没登记）⇒ 不红，新增是合法改动。
+    // （只从 `FROZEN_CELL_KEYS` 删了一行的那种，上面的 `noFace` 已经红掉了。）
+    // ⚠️ 代价是它**可选的**断言面不受保护 —— 要保护就登记进 `FROZEN_CELL_IDS` + `FROZEN_CELL_KEYS`（上面那条双向相等在对账）。
+    if (frozen === undefined) continue
     const has = Object.keys(x.want ?? {}).sort()
     const lost = frozen.filter((k) => !has.includes(k))
     const extra = has.filter((k) => !frozen.includes(k))
