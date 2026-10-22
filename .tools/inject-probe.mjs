@@ -215,6 +215,10 @@ const CRITERION = {
   '§F-126': '机制②（老板开口之后、我第一次开口之前）那条尾巴**同样**带 `## 共享记忆 · 常识` 与时间行：'
     + '0 个工具结果 / 少于 `every` / `every: 0` 三种现场都要带；机制① 到点那一刀与段序不许退化'
     + '（`style → 常识 → 时间 → 板子 → 情绪`）',
+  // 🆕 2026-10-22：`F-126` 返修（老板拍板：**一条尾巴就是完整的包**）——
+  //    第三个触发点（只有板子变了）那一刀也带常识与时间行。它是**另一根轴**，不并进 `§F-126`。
+  '§F-126b': '第三个触发点（**只有板子变了**：他一句话没说 + 工具结果不到 `every`）那条尾巴'
+    + '**同样**同时带常识与时间行，段序仍是 `style → 常识 → 时间 → 板子 → 情绪`',
 }
 
 /** `[A1 · 口径1]` / `[J6 · §形状]` */
@@ -640,6 +644,19 @@ async function harness(contentDir, { member, guard, entry, config } = {}) {
     // ⚠️ `data.message.isError === true` 的结果**也算一次**（口径点 1）—— 原样把它交给实现，
     //    断言 A6 钉着"实现不看 isError"。
     toolResult: (data, time) => fire('tool/result', data, time),
+    /**
+     * 一个**团队工具**的结果 —— 走**插件事** `tools/result`，不是会话事件。
+     * 🔴 板子的账本（`inject.js` 的 `ctx.on('tools/result')`）**只听这个口**：
+     *    `session/event` 的 `tool/result` 只喂 ① 的计数，喂不出"板子变了"。
+     *    ⇒ `G13` 要造那一格必须从这里喂（`toolStep()` 喂不到）。
+     * @param name 工具名（`team_dev` / `team_test` …）—— 实现按 `TEAM_TOOL` 认岗位。
+     */
+    teamResult: async (name) => {
+      for (const handler of handlers.get('tools/result') ?? []) {
+        await handler({ name, arguments: {}, agent }, undefined)
+      }
+      await settle()
+    },
     // 老板那句话**只进收件箱**：它变成 `user/message` 是后面 `stepBegin()` 里落笔那一下的事。
     boss: (t) => queue({ kind: 'user' }, '老板的话', t),
     /** 带正文的老板消息（口径 7/8 要按**句子里的词**判夸还是骂）。
@@ -827,7 +844,7 @@ const FIXTURE_MOOD6 = (halfLifeMinutes = 20, roundDecay = 0.6) =>
   + '\n```\n'
 
 /**
- * 夹具的 `.runtime/common-sense.md` —— **F-126 那一族专用**（`G8`–`G11`）。
+ * 夹具的 `.runtime/common-sense.md` —— **F-126 那一族专用**（`G8`–`G13`）。
  *
  * 🔴 **默认夹具里没有这份文件**（`buildFixture()` 的 `commonSense` 默认 `null`），而且**必须**没有：
  *    · 老那 215 格全部跑在"没有常识文件"的夹具上 —— `G5` 的逐字期望值就是
@@ -1279,7 +1296,7 @@ try {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  console.log('\n═══ G8–G11 · F-126：机制② 那条尾巴也得带常识与时间行（§F-126）═══')
+  console.log('\n═══ G8–G13 · F-126：机制② 与「只有板子变了」那一刀都得带常识与时间行（§F-126 / §F-126b）═══')
   // ═══════════════════════════════════════════════════════════════════════════
   // 病（定形：`.team/leader/2026-10-22/spec-F-126.md`）：
   //   `tailBodyOf(id, { cut })` 里 `if (cut)` 才拼「常识 + 时间行」，而机制② 的调用点传 `cut: false`
@@ -1328,6 +1345,19 @@ try {
           ? '（缺段，判不了）'
           : (senseAt < time.index ? '常识 → 时间' : '时间 → 常识（次序反了）'),
       }
+    }
+    /**
+     * 板子那一段在不在、以及它落在时间行的哪一边 —— `G13` 用。
+     * 段序是契约（`inject.js::tailBodyOf` 那条注释）：板子排在时间行**之后**、情绪段之前。
+     * ⚠️ 红的时候要能一眼分出「没有板子」和「板子位置不对」：两种都错，但不是同一个修法。
+     */
+    const boardOrderOf = (text) => {
+      if (typeof text !== 'string') return '（一条尾巴都没有）'
+      const boardAt = text.indexOf('【这一票的进度】')
+      if (boardAt < 0) return '（没有）'
+      const time = new RegExp(TIME_LINE.source, 'm').exec(text)
+      if (time === null) return '有（时间行缺 ⇒ 次序判不了）'
+      return boardAt > time.index ? '有（在时间行之后）' : '有（在时间行之前 —— 段序反了）'
     }
 
     const f10 = buildFixture({ style: FIXTURE_STYLE(10), commonSense: FIXTURE_COMMON_SENSE })
@@ -1405,6 +1435,46 @@ try {
           + 'assistant/message · 一条 plugin 的 user 消息 · 纯装配）⇒ **一条都不许贴**'
           + '（触发点只有三个：① 每 n 个工具结果 · ② 老板开口之后 · ③ 板子内容变了）',
         { 注入条数: h5.count() }, { 注入条数: 0 })
+
+      // ── G13（**板子那一刀**；2026-10-22 老板拍「一条尾巴就是完整的包」）─────────────
+      // 病：这一刀以前**不带**常识与时间 —— 唯一调用点传的是 `withSense: byOne || byTwo`，
+      //     板子那条理由不在里面。而全份探针**没有一格**钉着它（`G12` 那几句注释是全份唯一
+      //     提到「板子」的地方）⇒ 行为没有判据 = 随便谁改回去都发现不了。
+      // 现场：老板一个字没说（收件箱空 ⇒ `byTwo = false`）、工具结果远不到 `every`
+      //   （`every: 10`，这一格只喂 1 个 ⇒ `byOne = false`）⇒ **唯一**的理由是 `boardChanged`。
+      // 🔴 板子的账本只听**插件事** `tools/result`（`inject.js` 的 `ctx.on('tools/result')`）；
+      //    `session/event` 的 `tool/result` 只喂 ① 的计数 ⇒ 用 `h6.teamResult('team_dev')` 造它。
+      // 🔴 **这一格的反向读数**（"红"这个字唯一的合法性来源）：把 `tailBodyOf` 那一处换回
+      //    `withSense: byOne || byTwo`（`.team\dev\2026-10-22\_tmp\inject-byoneortwo-f126-2.mjs`，
+      //    只差那一行）⇒ **G13 红**（常识段 / 时间行都读成「（没有）」），其余 220 格全绿。
+      //    跑法：`AGENIA_PROBE_ENTRY=<那份副本> AGENIA_PROBE_PRODUCT_DIR=<presets\agenia>`
+      //    （同 `F-126` 那次的对照；只给 `ENTRY` 不给 `PRODUCT_DIR` 会把量产物那一族整批换掉）。
+      const h6 = await harness(f10)
+      await h6.turnStart()
+      await h6.iSpeak()                        // 我开口（不是触发点）
+      await h6.teamResult('team_dev')          // 🔴 板子从"没有"变成"开发 1"（他一句话没说）
+      await h6.toolResult()                    // 同一件事的会话事件：① 的计数 1/10，远不到点
+      const oneBefore6 = h6.count()            // 前提：到这一步为止 ① 与 ② 一条都没贴过
+      const boardStep = await h6.stepBegin()   // 纯步边界：收件箱空 ⇒ ② 不成立
+      const text6 = h6.lastText()
+      check('G13', '§F-126b',
+        '【板子那一刀】**只有板子变了**（他一句话没说 + 工具结果不到 `every`）⇒ 那条尾巴'
+          + '**同样**同时带「## 共享记忆 · 常识」与时间行，段序仍是'
+          + ' `style → 常识 → 时间 → 板子 → 情绪`',
+        {
+          '①到点次数': oneBefore6,
+          本步领到的消息数: Array.isArray(boardStep?.claimed) ? boardStep.claimed.length : '（读不到）',
+          注入条数: h6.count(),
+          ...sectionsOf(text6),
+          板子: boardOrderOf(text6),
+        },
+        {
+          '①到点次数': 0,
+          本步领到的消息数: 0,
+          注入条数: 1,
+          ...WANT_SECTIONS,
+          板子: '有（在时间行之后）',
+        })
     } finally {
       rmSync(f10, { recursive: true, force: true })
       rmSync(f0, { recursive: true, force: true })
@@ -1540,7 +1610,19 @@ try {
     await h.turnStart()
     await bossThenStep(h)
     const text = h.last()?.content?.[0]?.text
-    check('I3', '§产物', '真产物贴出来的**尾巴段** === 真 `style.md` 切完那一段（逐字）', stylePartOf(text), cut)
+    // 🔴 F-126：机制② 那条尾巴**也带**常识与时间行 ⇒ 期望值 = style 段 + 常识块 + 一行时间行。
+    //    常识块**逐字**来自盘上那份 `.runtime/common-sense.md`（探针自己拼，不调产物的函数）；
+    //    时间行的值来自 `Date.now()` ⇒ 只认形状（同 `G5`）。
+    //    ⚠️ 这条**不是**放松成 `includes`：仍然整段 `===` —— 多一段 / 少一段 / 次序反了都红。
+    const i3SenseFile = join(PRODUCT_DIR, '.runtime', 'common-sense.md')
+    const i3SenseRaw = existsSync(i3SenseFile) ? readFileSync(i3SenseFile, 'utf8') : undefined
+    const i3Sense = typeof i3SenseRaw === 'string' && i3SenseRaw.trim().length > 0
+      ? `## 共享记忆 · 常识\n\n${i3SenseRaw.trim()}`
+      : undefined
+    check('I3', '§产物', '真产物贴出来的**尾巴段** === 真 `style.md` 切完那一段 + 常识块 + 一行时间行'
+      + '（style 与常识逐字、次序钉死；时间行只认形状）',
+      normalizeTimeLines(stylePartOf(text)),
+      [cut, ...(i3Sense === undefined ? [] : [i3Sense]), TIME_LINE_TOKEN].join('\n\n'))
     checkTrue('I4', '§产物', '真产物贴出来的尾巴段里不含 `<!--`', typeof text === 'string' && !text.includes('<!--'))
     checkTrue('I5', '§产物', '真产物贴出来的尾巴段不是兜底那两句（读到了文件，不是回退默认值）',
       typeof text === 'string' && text.includes('# 语言风格'))
@@ -2052,8 +2134,12 @@ try {
     await h.turnStart(T0)
     await bossThenStep(h)
     const text = h.lastText()
-    check('P1', '§形状', '夹具的尾巴段 === `cutTail(夹具 style.md)`（切口之前、剥注释、trim）',
-      stylePartOf(text), cutTail(fixtureStyleOnDisk(fixture)))
+    // 🔴 F-126：机制② 那一刀也带时间行（默认夹具**没有** `.runtime/common-sense.md` ⇒ 没有常识段），
+    //    所以期望值 = 切完那一段 + 一行时间行；仍整段 `===`，不是 `includes`。
+    check('P1', '§形状', '夹具的尾巴段 === `cutTail(夹具 style.md)` + 一行时间行'
+      + '（切口之前、剥注释、trim；时间行只认形状）',
+      normalizeTimeLines(stylePartOf(text)),
+      [cutTail(fixtureStyleOnDisk(fixture)), TIME_LINE_TOKEN].join('\n\n'))
     checkTrue('P2', 7, '切口**后面**那一大段不许出现在请求里（`## emoji` 表在切口后面）',
       typeof text === 'string' && !text.includes('## emoji'),
       `贴出来的正文里${typeof text === 'string' && text.includes('## emoji') ? '**有**' : '没有'}切口后面那一段`)
@@ -2069,8 +2155,10 @@ try {
       await h.turnStart(T0)
       await bossThenStep(h)
       const got = stylePartOf(h.lastText())
-      check('P4', 7, '没有 `<!-- 尾巴到此为止 -->` ⇒ **退回全文**（逐字），而且不是空的',
-        got, stripComments(FIXTURE_STYLE_NO_MARK(3)))
+      // 🔴 F-126：机制② 那一刀也带时间行（夹具无常识文件 ⇒ 只多这一行）。仍整段 `===`。
+      check('P4', 7, '没有 `<!-- 尾巴到此为止 -->` ⇒ **退回全文** + 一行时间行（逐字），而且不是空的',
+        normalizeTimeLines(got),
+        [stripComments(FIXTURE_STYLE_NO_MARK(3)), TIME_LINE_TOKEN].join('\n\n'))
       checkTrue('P5', 7, '退回的那一份**不许是空串**', typeof got === 'string' && got.trim().length > 0,
         `实测 ${brief(got)}`)
     } finally {
@@ -2084,8 +2172,10 @@ try {
       const h = await harness(emptyCut)
       await h.turnStart(T0)
       await bossThenStep(h)
-      check('P6', 7, '标记在最前面（切口之前一个字都没有）⇒ 也退回全文，不是空串',
-        stylePartOf(h.lastText()), stripComments(FIXTURE_STYLE_EMPTY_CUT(3)))
+      // 🔴 F-126：同 `P4` —— 机制② 那一刀也带时间行；仍整段 `===`。
+      check('P6', 7, '标记在最前面（切口之前一个字都没有）⇒ 也退回全文 + 一行时间行，不是空串',
+        normalizeTimeLines(stylePartOf(h.lastText())),
+        [stripComments(FIXTURE_STYLE_EMPTY_CUT(3)), TIME_LINE_TOKEN].join('\n\n'))
     } finally {
       rmSync(emptyCut, { recursive: true, force: true })
     }
@@ -2550,8 +2640,10 @@ try {
       checkIf(moodSectionWorks, 'Q7', 2,
         '读不到 `mood.md` ⇒ 尾巴**只贴 style 段**，不贴分数行（宁可不说，不许瞎说）',
         moodPartOf(text) === undefined ? '（没有情绪段）' : brief(moodPartOf(text)), '（没有情绪段）')
-      check('Q8', 2, '而且 style 段照贴、逐字不差（不是"整条不贴"）',
-        stylePartOf(text), cutTail(fixtureStyleOnDisk(noMood)))
+      // 🔴 F-126：机制② 那一刀也带时间行（夹具无常识文件 ⇒ 只多这一行）。仍整段 `===`。
+      check('Q8', 2, '而且 style 段照贴、逐字不差（不是"整条不贴"）—— 外加一行时间行',
+        normalizeTimeLines(stylePartOf(text)),
+        [cutTail(fixtureStyleOnDisk(noMood)), TIME_LINE_TOKEN].join('\n\n'))
       checkTrue('Q9', 2, '读不到 `mood.md` **要出声**（`console.error`，报文里点到 mood.md）—— 不许静默',
         stderrSeen.slice(before).some((m) => /mood\.md/.test(m)),
         `这一段里 console.error 收到的是：${brief(stderrSeen.slice(before).join(' | ') || '（一声都没有）')}`)

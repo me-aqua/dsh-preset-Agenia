@@ -1541,14 +1541,17 @@ export async function apply(ctx, config = {}) {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // ⑤ 尾巴提醒 + 情绪板 —— 两条机制**同一个落点**：`agent/pre-step` 里往本步的
-  //   `decision.messages` 塞一条。贴出去的是「`style.md` 的尾巴那一段 + 情绪板」。
+  // ⑤ 尾巴提醒 + 情绪板 —— 三个触发点**同一个落点**：`agent/pre-step` 里往本步的
+  //   `decision.messages` 塞一条。贴出去的是「`style.md` 的尾巴那一段 + 情绪板」
+  //   （段与段的次序、"包"里有哪些段全由 `tailBodyOf` 定）。
   //
   // ① 那一套是**快照**：DSH 只在快照文本变了才重发一条，文本不变时人格就钉在
   // 上一次变化的位置上。2026-09-24 实测钉了 **4 小时 15 分 / 45 万 token** ——
   // 那一次老板质问她，她没还嘴也没带表情；查下来人格根本没丢，是**离得太远、太旧**。
   //
-  // 这一条补上"真的每轮"。触发点**只有两个**（2026-09-25 老板定：就这两个，别加第三个）：
+  // 这一条补上"真的每轮"。触发点**只有三个** —— **不许再加第四个**：
+  //   ① 每 n 个工具结果（2026-09-25 老板定）· ② 老板开口之后（同一天定）·
+  //   ③ 板子内容变了（F-94；2026-10-22 老板认"不算违约"）。
   //
   //   机制①「每 n 个工具结果」：只数 `tool/result` 事件 —— 老板说话不算、我回话不算、
   //          步边界也不算；`turn/start` 把计数清零。n 写在 `style.md` **第一行**
@@ -1559,6 +1562,13 @@ export async function apply(ctx, config = {}) {
   //   机制②「老板开口之后、我第一次开口之前」：在 `agent/pre-step` 里（`await next()` 之后）
   //          看**这一步领到的 `messages`** 里有没有老板那条（`source.kind === 'user'`）——
   //          有就把 style **插进这一步的 messages**，紧跟在他那句话后面。
+  //   机制③「板子内容变了」（F-94）：与**上一次贴出去的**逐字相同就不贴；它跟 ①② 走同一个
+  //          出口，但**不记 ① 的账**、也不由 ② 触发。这一刀只多拼板子。
+  //
+  // 🔴 **三条尾巴一律带「`## 共享记忆 · 常识` + 时间行」（F-126；③ 由 2026-10-22 老板拍下）**：
+  //    一条尾巴就是完整的包（style + 常识 + 时间 [+ 板子] + 情绪），**没有任何开关**能关掉那两段。
+  //    别把「到点」当成唯一带常识的理由 —— 一轮里工具结果少于 `every` 时，② 是唯一那一刀；
+  //    而「只有板子变了」那一刀同样带（判据 `G13` 盯着这一条，别只靠读代码）。
   //
   // 🔴 **记账与贴必须分开 —— 这是 2026-09-26 返修的地基，别改回去：**
   //      `session/event` 的监听器是**在 `Session.append()` 的 `appending = true` 窗口里
@@ -2005,18 +2015,20 @@ export async function apply(ctx, config = {}) {
   /**
    * 这一步要贴出去的那条正文。**段与段的次序就是契约**（第 2 关钉死的）：
    *   1. `style.md` 的尾巴那一段（恒在）
-   *   2. `## 共享记忆 · 常识`（**只在 ① 到点那一刀**，F-89）—— 与第 3 段成对，要么都在要么都不在
-   *   3. 时间行（**只在 ① 到点那一刀**，F-102）
+   *   2. `## 共享记忆 · 常识`（F-89）—— 与第 3 段成对，要么都在要么都不在
+   *   3. 时间行（F-102）
    *   4. `【这一票的进度】`（**只在板子内容变了的时候**，F-94；一模一样就不贴）
    *   5. 情绪段（读得出来就拼在最后）
+   *
+   * 第 2、3 段**没有开关**：任何一条触发理由（①②③）贴出去的都是同一个完整的包
+   * （F-126；2026-10-22 老板拍「一条尾巴就是完整的包」）—— 分成几种内容组合只会让下一个
+   * 读代码的人重新踩「哪一刀带什么」。所以这里只有一个形参 `board`，没有 `withSense`。
    */
-  function tailBodyOf(id, { cut = false, board } = {}) {
+  function tailBodyOf(id, { board } = {}) {
     const parts = [styleOf().text]
-    if (cut) {
-      const sense = commonSenseOf()
-      if (sense !== undefined) parts.push(sense)
-      parts.push(timeLineOf(id, Date.now()))
-    }
+    const sense = commonSenseOf()
+    if (sense !== undefined) parts.push(sense)
+    parts.push(timeLineOf(id, Date.now()))
     if (typeof board === 'string' && board.length > 0) parts.push(board)
     const state = moods.get(id)
     if (state !== undefined) {
@@ -2107,7 +2119,8 @@ export async function apply(ctx, config = {}) {
     }
 
     // F-94：板子改走这条路 —— **内容与上一次贴出去的逐字相同就不贴**。
-    // 它是**第二个触发理由**（不是 ① 的账）：项目文件又动过 ⇒ 板子变了 ⇒ 这一刀贴板子。
+    // 它是**第三个触发点**（不记 ① 的账、也不由 ② 触发；2026-10-22 老板认"不算违约"）：
+    // 项目文件又动过 ⇒ 板子变了 ⇒ 这一刀贴板子。
     const boardNow = boardOf(id)
     const boardChanged = boardNow !== undefined && boardNow !== lastBoardPosted.get(id)
     const byOne = !byTwo && pendingTail.has(id)
@@ -2116,7 +2129,9 @@ export async function apply(ctx, config = {}) {
     pendingTail.delete(id)      // ② 赢下这一格 ⇒ ① 的挂账清掉；① 落地了也把账销掉
     if (boardChanged) lastBoardPosted.set(id, boardNow)
 
-    const tail = tailBodyOf(id, { cut: byOne, board: boardChanged ? boardNow : undefined })
+    // 🔴 F-126（2026-10-22 老板拍）：**三条理由贴的是同一个完整的包** —— 常识 + 时间行对
+    //    ①②③ 一律都在（`tailBodyOf` 里没有开关可关；③ 那一条由判据 `G13` 盯着）。
+    const tail = tailBodyOf(id, { board: boardChanged ? boardNow : undefined })
     const entered = messages.toSpliced(byTwo ? at + 1 : messages.length, 0, {
       id: randomUUID(),
       role: 'user',
