@@ -13,10 +13,19 @@
  *  ③ **排除表（两套共用，逐字就是这几条）**：
  *       · 路径前缀：`.git/` · `.workbuddy/` · `CLI/` · `.team/`
  *         · `.tools/_staging/` · `.tools/_scratch/` · `.tools/_backup/`
+ *         · `.runtime/`（**2026-10-22 加** —— 数据目录的**根相对**写法，见下面 ③b）
  *         · `presets/agenia/.runtime/`（**2026-10-16 加** —— **共享记忆库的数据目录**：
  *           `.gitignore:53` · `release-scan.mjs` 的 `PROTECTED_SEGMENTS` · `install.mjs` 的拒删名单
  *           **三处都当它是数据**，只有本表把它当代码 ⇒ 一次正常审计写入就让"代码有没有被动过"翻面。
  *           10-15 技术评审 F5 报的；本机实测：三分钟里 CODE 翻两次，变化的全是脑数据、**一个代码文件都没有**）
+ *  ③b **排除表与 `--root` 共用同一个基准**（2026-10-22 · `F-120`）。收录时给出的相对路径是
+ *     `path.relative(root, full)`；**表里每一条前缀也只能是"相对给定 root"的形状** —— 从前
+ *     `presets/agenia/.runtime/` 是**仓库根相对**写法，`--root presets\agenia` 时收录的相对路径是
+ *     `.runtime/…` ⇒ 那一条**永不匹配**，60 份脑数据（3.8 MB）混进 CODE，于是"代码有没有被动过"
+ *     被一次正常审计写入翻面（技术评审 2026-10-22 的 `equal=false`，48 份代码一个字节没动）。
+ *     ⇒ 现在根相对那一条是 `.runtime/`（**只有顶层**那一段叫 `.runtime` 才算数据：
+ *     `lib/.runtime/x` 这种是代码，不许被排除 —— 所以**不是**"任何一段叫 `.runtime` 就排"）。
+ *     两条并存的理由：`--root` 是自由变量，两个根（仓库根 / 预设根）各需要一条能命中的形状。
  *       · 任意一段目录名是：`node_modules`
  *       · 文件名是：`api.txt` · `.credentials.yaml` · `.credentials.yml`
  *       · 后缀是：`.log`
@@ -59,9 +68,14 @@ const REPO_DEFAULT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 const EXCLUDE_PREFIXES = [
   '.git/', '.workbuddy/', 'CLI/', '.team/',
   '.tools/_staging/', '.tools/_scratch/', '.tools/_backup/',
+  // 数据目录的**根相对**写法（③b）：`--root <预设根>` 时收录的相对路径就是 `.runtime/…`。
+  // 只认**顶层**那一段：`lib/.runtime/manifest.json` 这种仍然是代码（"任何一段叫 .runtime 就排"
+  // 会把真代码一起藏起来 —— 少算不是安全）。
+  '.runtime/',
   // 共享记忆库的**数据目录**（写法与 `.gitignore:53` 逐字一致）。
   // 库一开就每轮都在写：一次审计追加、一次常识确认都会让它变。
   // 2026-10-16 加 —— 来历见上面 ③ 那一行（10-15 技术评审 F5）。
+  // 它是"仓库根相对"的形状 ⇒ 只有 `--root` = 仓库根时才命中；预设根那一路由上面那条 `.runtime/` 管。
   'presets/agenia/.runtime/',
 ]
 const EXCLUDE_SEGMENTS = ['node_modules']
@@ -73,6 +87,10 @@ function isEnvClass(name) {
   return name === '.env' || name.startsWith('.env.')
 }
 
+/**
+ * `rel` 是**相对给定 root** 的路径（`/` 分隔、无前导 `./`）—— 排除表按同一个基准比（③b）。
+ * 前缀比的是**段**：`.runtime/` 只吃顶层的 `.runtime/…`，不吃 `lib/.runtime/…`。
+ */
 function excluded(rel) {
   const lower = rel.toLowerCase()
   for (const p of EXCLUDE_PREFIXES) if (lower.startsWith(p.toLowerCase())) return true
@@ -207,7 +225,7 @@ function main(argv) {
     tool: 'fingerprint.mjs',
     root,
     caliber: {
-      include: 'root 下全部普通文件 − 排除表（见文件头 ③）',
+      include: 'root 下全部普通文件 − 排除表（见文件头 ③；表里每一条前缀都相对给定 root，③b）',
       env_class: 'CODE 排除 `.env` / `.env.*`；ALL 收录它们 —— 两套的唯一差异',
       order: '相对路径的 UTF-8 字节序升序（Buffer.compare）',
       hash: 'sha256( Σ `${rel}\\0${fileSha}\\0${bytes}\\n` )，UTF-8',

@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import path from 'node:path'
 import { ENV, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, stagingReadings } from '../support/evidence.mjs'
-import { canonical, ensureMarkedDir, driveOf, isUnc, REAL_BRAIN_ROOT, TEST_ROOT_MARKER } from '../support/root-guard.mjs'
+import { canonical, ensureMarkedDir, driveOf, isUnc, runsParentOf, REAL_BRAIN_ROOT, TEST_ROOT_MARKER } from '../support/root-guard.mjs'
 import { childEnv, runBrain, stagingExists, writeFixture, writeFixtureText } from '../support/sut.mjs'
 
 before(() => {
@@ -128,6 +128,27 @@ describe('integration · env (ENV-01)', () => {
       for (const [label, r] of Object.entries(results)) {
         if (r.exit_code !== 0 && r.first_line === '') push('ENV01-LOG', `「${label}」被拒但没打印任何原因 —— 拒绝要说清是哪条路径不合法`)
       }
+      // ── ⑦ 运行根的**格子白名单**：两个格子都认，别处仍拒 ─────────────────────
+      //    被测：`runsParentOf()`（纯字符串判定，不摸盘）—— 合法运行根的父目录只有
+      //    `.team\test`（测试岗）与 `.team\retro`（技术评审岗），各写各的 `<日期>\_runs\<RUN_ID>`。
+      //    ⚠️ 为什么单独量它：`guardVerdict()` 里**格子判定在 marker 判定下游** —— 根没 marker 时
+      //    它先返回 `E_ROOT_NO_MARKER`，`_runs`/格子那一段根本不进。所以"越界的根被拒了"这句话
+      //    只有**带 marker** 的根才说明是格子那一关拒的（那份读数在 `.team/test/2026-10-21/F3-rootcells/`）。
+      const cellRows = [
+        ['测试岗格子', path.join(PATHS.repo, '.team', 'test', '2026-10-21', '_runs', 'env01-cell'), path.join(PATHS.repo, '.team', 'test')],
+        ['技术评审格子', path.join(PATHS.repo, '.team', 'retro', '2026-10-21', '_runs', 'env01-cell'), path.join(PATHS.repo, '.team', 'retro')],
+        ['（非法）两格之外：.tools/_scratch', path.join(PATHS.repo, '.tools', '_scratch', '_runs', 'env01-cell'), null],
+        ['（非法）隔壁抽屉：.team/leader', path.join(PATHS.repo, '.team', 'leader', '2026-10-21', '_runs', 'env01-cell'), null],
+        ['（非法）前缀不算：.team/test-evil', `${path.join(PATHS.repo, '.team')}\\test-evil\\2026-10-21\\_runs\\env01-cell`, null],
+        ['（非法）前缀不算：.team/retro2', `${path.join(PATHS.repo, '.team')}\\retro2\\2026-10-21\\_runs\\env01-cell`, null],
+      ]
+      rec.readings.runs_parents = cellRows.map(([label, root, want]) => ({ label, root, got: runsParentOf(root), want }))
+      for (const [label, root, want] of cellRows) {
+        const got = runsParentOf(root)
+        const same = want === null ? got === null : String(got).toLowerCase() === want.toLowerCase()
+        if (!same) push('ENV01-RUN-CELL', `「${label}」的运行根格子判定错了：${root} ⇒ 实得 ${JSON.stringify(got)} / 期望 ${JSON.stringify(want)}`)
+      }
+
       rec.readings.caveat = { note: 'C 盘零写入只有"配置/受控路径 + 现场观察"支持；不宣称 OS 级全盘监控（契约 §2.4 第 8 条）。' }
 
       caseFail(problems)

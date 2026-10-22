@@ -134,20 +134,51 @@ const JOB_ROWS = [
 const JOB_ROLES = JOB_ROWS.map((j) => j.role)
 
 /**
- * 每条作业行 `toolFilter.deny` 的**期望集**（与下面切块那处 `.sort()` 同口径：排序后拼串比）。
+ * 每条作业行**额外** deny 的期望集（0.2.1 起：基线 `workflow`/`ralph` 不再是 deny ——
+ * 那两行本来就住在 delegation 组里，而组员预设整个组都不搬过去 ⇒ **结构性没有**）。
  *
- * 基线：四条作业行都**必须** deny 掉 `workflow` / `ralph`（作业不该能再编排、也不该能自迭代）。
- * 额外：**判决岗还必须 deny `proposal_file`** —— 老板 2026-10-17 定：「判决应该不能提候选」。
+ * 额外：**判决岗还必须没有 `proposal_file`** —— 老板 2026-10-17 定：「判决应该不能提候选」。
  *   ⇒ 它判的是别人提的案子，自己再提一个就成了既当运动员又当裁判。
+ *   0.2.1 的落法是 `# @member-deny proposal_file` ⇒ 生成器给那一份注入器写 `proposalFile: false`。
  *
- * ⚠️ 为什么做成"按行推导"而不是写死一句 `=== 'ralph,workflow'`：
+ * ⚠️ 为什么做成"按行推导"而不是写死一句：
  *   `mig-test-whitelist-vs-blacklist-01` —— **加一个合法的项，它会不会红？**
- *   写死那两串时，判决岗加上 `proposal_file`（合法且有据）**也会红** ⇒ 那是一条 change-detector，不是安全边界。
+ *   写死那一串时，判决岗加上额外项（合法且有据）**也会红** ⇒ 那是一条 change-detector，不是安全边界。
  *   现在这一条同时钉住两件事：**该有的必须有**（少了红）、**不该有的不许有**（多了红）。
  */
-const JOB_DENY_BASE = ['ralph', 'workflow']
 const JOB_DENY_EXTRA = Object.freeze({ 'tool-job-memory-judge': ['proposal_file'] })
-const expectedJobDeny = (rowId) => [...JOB_DENY_BASE, ...(JOB_DENY_EXTRA[rowId] ?? [])].sort().join(',')
+const expectedJobDeny = (rowId) => [...(JOB_DENY_EXTRA[rowId] ?? [])].sort().join(',')
+
+/**
+ * 从**原文**里读组员注释：`# @member-persona` 与 `# @member-deny`。
+ * `effectiveYml` 把注释剔掉了，所以这两样只能从 raw 读 —— 它们是 0.2.1 迁移后
+ * "人格 / 工具否定项"的**唯一来源**（生成器按它们建组员预设）。
+ * @returns {Map<string, { persona?: string, deny: string[] }>}
+ */
+function memberAnnotations(rawText) {
+  const out = new Map()
+  let persona
+  let deny = []
+  for (const line of rawText.split('\n')) {
+    const p = /^\s*#\s*@member-persona\s+(.+?)\s*$/.exec(line)
+    if (p !== null) {
+      persona = p[1]
+      continue
+    }
+    const d = /^\s*#\s*@member-deny\s+(.+?)\s*$/.exec(line)
+    if (d !== null) {
+      deny = d[1].split(/[\s,]+/).filter(Boolean)
+      continue
+    }
+    const id = /^\s*- id:\s*(\S+)\s*$/.exec(line)
+    if (id !== null) {
+      out.set(id[1], { persona, deny })
+      persona = undefined
+      deny = []
+    }
+  }
+  return out
+}
 
 /**
  * 按 `- id:` 把**有效行**（已剔注释）切成块 —— 判"某一行自己的 config 长什么样"用。
@@ -340,14 +371,19 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
         ? `声明 ${declared.length} 项，都在（实测多出 ${onlyAge.length} 项）`
         : `声明了却没多出来：${declaredMissing.join(', ')} —— 那一行被抄丢了，或者缩进 / 方言变了`)
 
-    // ── ④ 四条作业行（`tool-job-*`）的结构：硬门全靠这几格 ────────────────────
+    // ── ④ 四条作业行（`tool-job-*`）的结构：0.2.1 起靠 `agentPreset` 指向组员预设 ──────────
     // 判据**按目标自身推导**：每一条 `tool-job-<角色>` 行都必须
-    //   · 工具名 = `job_<角色>`（`-` 换 `_`）· `backgroundMode: one-shot`（默认前台等 = 把组长卡住）
-    //   · `maxDepth: 1`（作业自己不许再招人）· `toolFilter.deny` = **基线那两条 + 这一行自己的额外项**
-    //     （基线 `[workflow, ralph]`；目前只有判决岗多一个 `proposal_file` —— 老板 2026-10-17 定，见 `JOB_DENY_EXTRA`）
-    //   · 开着 · 不写 `enableRunInBackground`（写了等于把 `run_in_background` 参数拿掉 —— 拍板 I1）
+    //   · 工具名 = `job_<角色>`（`-` 换 `_`）· `agentPreset: agenia-job-<角色>`
+    //     （人格与工具集住在那一份组员预设里；`persona` / `toolFilter` / `backgroundMode` 都是旧键，
+    //      写了会让 `tool-subagent` 直接报迁移错 ⇒ 整份预设 broken）
+    //   · `maxDepth: 1`（作业自己不许再招人）
+    //   · `# @member-deny` = **这一行自己的额外否定项**（基线 `workflow`/`ralph` 是结构性的：
+    //     组员预设不搬 delegation 组；目前只有判决岗多一个 `proposal_file` —— 老板 2026-10-17 定）
+    //   · 开着 · 不写 `enableRunInBackground`（0.2.1 的 tool-subagent schema 里没有这个键 ——
+    //     写了是"不认识的键"，**不是**"把参数拿掉"；调用侧那个参数平台也已删 —— 拍板 I1）
     // ⚠️ 活体现在**一条都没有**（装前）⇒ 这一条是**空集**；装完 4 条逐条判。
     //    读数里必须写明"现在是空的" —— 空集不许读成"验过了"（公共记忆 §三）。
+    const annotations = memberAnnotations(ageniaText)
     const jobBlocks = ymlBlocks.filter((b) => b.id.startsWith('tool-job-'))
     const jobProblems = []
     for (const b of jobBlocks) {
@@ -355,27 +391,30 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       const blueprint = JOB_ROWS.find((j) => j.rowId === b.id)
       const role = blueprint === undefined ? b.id.slice('tool-job-'.length) : blueprint.role
       const toolName = blockField(b, 'toolName')
-      const background = blockField(b, 'backgroundMode')
+      const presetRef = blockField(b, 'agentPreset')
       const depth = blockField(b, 'maxDepth')
-      const denyHit = /^\s*deny:\s*\[([^\]]*)\]\s*$/m.exec(body)
-      const deny = denyHit === null ? [] : denyHit[1].split(',').map((s) => s.trim()).filter(Boolean).sort()
+      const deny = (annotations.get(b.id)?.deny ?? []).slice().sort()
       if (blueprint === undefined) {
         jobProblems.push(`${b.id}：不在蓝图里（蓝图上的作业行是 ${JOB_ROWS.map((j) => j.rowId).join(' / ')}）`)
       } else if (toolName !== blueprint.toolName) {
         jobProblems.push(`${b.id}：toolName 实得 ${JSON.stringify(toolName)}，蓝图写的是 ${blueprint.toolName}`)
       }
       if (!JOB_ROLES.includes(role)) jobProblems.push(`${b.id}：角色 ${role} 不在编制里`)
-      if (background !== 'one-shot') jobProblems.push(`${b.id}：backgroundMode 实得 ${JSON.stringify(background)}，应为 one-shot`)
+      if (presetRef !== `agenia-job-${role}`) jobProblems.push(`${b.id}：agentPreset 实得 ${JSON.stringify(presetRef)}，应为 agenia-job-${role}`)
       if (String(depth) !== '1') jobProblems.push(`${b.id}：maxDepth 实得 ${JSON.stringify(depth)}，应为 1`)
       if (deny.join(',') !== expectedJobDeny(b.id)) {
-        jobProblems.push(`${b.id}：toolFilter.deny 实得 [${deny.join(', ')}]，应恰为 [${expectedJobDeny(b.id).split(',').reverse().join(', ')}]`)
+        jobProblems.push(`${b.id}：@member-deny 实得 [${deny.join(', ')}]，应恰为 [${expectedJobDeny(b.id).split(',').filter(Boolean).join(', ')}]`)
+      }
+      if (/^\s*(persona|toolFilter|backgroundMode)\s*:/m.test(body)) {
+        jobProblems.push(`${b.id}：还留着 0.2.1 已删的旧键（persona / toolFilter / backgroundMode）—— 那会让整份预设 broken`)
       }
       if (/^\s*enableRunInBackground\s*:/m.test(body)) {
-        jobProblems.push(`${b.id}：写了 enableRunInBackground —— 那会把 run_in_background 参数拿掉（拍板 I1）`)
+        jobProblems.push(`${b.id}：写了 enableRunInBackground —— 0.2.1 的 tool-subagent schema 里没有这个键`
+          + `（写了是"不认识的键"），调用侧那个 run_in_background 参数平台也已删（拍板 I1）`)
       }
       if (/^\s*disabled:\s*true\s*$/m.test(body)) jobProblems.push(`${b.id}：作业行是关着的 —— 那四条都开着`)
     }
-    yes('composition', '四条作业行（tool-job-*）的结构 = one-shot + maxDepth:1 + deny（基线 workflow/ralph；判决岗另加 proposal_file）（装前是空集）',
+    yes('composition', '四条作业行（tool-job-*）的结构 = agentPreset + maxDepth:1 + @member-deny（判决岗另加 proposal_file；workflow/ralph 结构性不搬）（装前是空集）',
       jobProblems.length === 0,
       jobProblems.length > 0
         ? jobProblems.join('；')
@@ -384,17 +423,19 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
           : `${jobBlocks.length} 条全对：${jobBlocks.map((b) => b.id).join(', ')}`))
 
     // ── ⑤ 委派名单：**名单 = 组合自己**（裁定 A4）────────────────────────────
-    // `persona-injector` 那行 config 里的 `delegationTools` 是后台硬门**唯一**的名单来源
+    // `persona-injector` 那行 config 里的 `delegationTools` 是委派门禁**唯一**的名单来源
     // （代码里不硬编码）。判"每个已启用的具名 `dsh-tool-subagent` 实例都在名单里"：
     //   · 表在 ⇒ 键集合必须**严格等于**组合里已启用的具名实例的 toolName 集合
-    //     （缺一个 = 那个工具没有硬门；多一个 = 名单里有不存在的工具），而且值 = 那一行的 `backgroundMode`；
-    //   · 表不在（装前就是这一支）⇒ 组合里**不许**有 `job_*` 作业行 —— 那四条的硬门全靠这张表。
+    //     （缺一个 = 那个工具没有门禁；多一个 = 名单里有不存在的工具）；
+    //   · 表不在（装前就是这一支）⇒ 组合里**不许**有 `job_*` 作业行 —— 那四条全靠这张表。
+    // 🔴 2026-10-19（0.2.1）：**模式值不再与行上的 `backgroundMode` 比对** —— 那个键已经删了
+    //    （委派一律异步）。名单仍保留 one-shot / continuable 两个值，作为"这门禁怎么判"的口径，
+    //    但"名单说 A、行上写 B"这条分叉在 0.2.1 里不可能出现（行上没有 B 了）。
     const subagentRows = ymlBlocks
       .filter((b) => String(blockField(b, 'name')).replace(/^['"]|['"]$/g, '') === '@deepseek-ai/dsh-tool-subagent')
       .map((b) => ({
         block: b,
         name: blockField(b, 'toolName'),
-        background: blockField(b, 'backgroundMode'),
         disabled: /^\s*disabled:\s*true\s*$/m.test(b.lines.join('\n')),
       }))
     const enabledNamed = subagentRows
@@ -405,18 +446,15 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     const dt = injBlock === undefined ? null : delegationToolsOf(injBlock)
     const jobToolNames = jobBlocks.map((b) => blockField(b, 'toolName')).filter(Boolean)
     const dtKeys = dt === null ? [] : [...dt.keys()].sort()
-    const dtModeGap = dt === null ? [] : enabledNamed
-      .filter((n) => dt.has(n) && dt.get(n) !== (subagentRows.find((r) => r.name === n) ?? {}).background)
-      .map((n) => `${n}：名单说 ${dt.get(n)}，那一行写的是 ${(subagentRows.find((r) => r.name === n) ?? {}).background}`)
     const dtProblem = dt === null
       ? (jobToolNames.length === 0
         ? null
         : `组合里没有 delegationTools，却有 ${jobToolNames.length} 条作业行（${jobToolNames.join(', ')}）——`
-          + '那几条作业的硬门全靠这张表（裁定 A4：它是必填键）')
+          + '那几条作业的门禁全靠这张表（裁定 A4：它是必填键）')
       : (dtKeys.join(',') !== enabledNamed.join(',')
         ? `名单实得 [${dtKeys.join(', ')}]，组合里已启用的具名实例是 [${enabledNamed.join(', ')}]`
           + ' —— 裁定 A4 第 4 条：多一个少一个都红'
-        : (dtModeGap.length > 0 ? `名单里的模式与那一行的 backgroundMode 分叉：${dtModeGap.join('；')}` : null))
+        : null)
     yes('composition', '每个已启用的具名 dsh-tool-subagent 实例都在 delegationTools 里（名单 = 组合自己）',
       dtProblem === null,
       dtProblem !== null
@@ -600,23 +638,32 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   yes('preset', '裸 subagent（外聘通道）那一行有 maxDepth: 1',
     /maxDepth:\s*1(\s|$)/m.test(hireRow),
     '不写就是默认 3 —— 用完就散的人还能再招人')
-  // 五条固定岗位行的两个键是**刻意不是默认值**的（老板 2026-09-20 拍板）：后台跑、不许再招人。
-  // 为什么值得钉：改成 `backgroundMode: one-shot` 会静默地把"组员后台跑"变回"组长被卡住"，
-  // 而改 `maxDepth` 会让"组员不许再招人"这条硬边界消失 —— 两者都不报错。
+  // 四个在岗固定岗位行的两个键是**刻意不是默认值**的（老板 2026-09-20 拍板）：不许再招人、
+  // 而且要指到自己的组员预设上。
+  // 🔴 2026-10-19（0.2.1）：`backgroundMode: continuable` 已删（委派一律异步）；
+  //    "组员拿什么人格 / 工具集"改由 `agentPreset` 指向的那份组员预设决定。
+  //    为什么仍值得钉：把 `agentPreset` 抄丢 ⇒ 组员会**继承组长那一代**（拿到组长的人格和派工权）。
   const teamRows = effective.split(/- id: team-/).slice(1)
-  const bgContinuable = teamRows.filter((r) => /backgroundMode:\s*continuable/.test(r)).length
+  const teamPresetRows = teamRows.filter((r) => /agentPreset:\s*agenia-team-[a-z0-9-]+\s*$/m.test(r))
   const depthOne = teamRows.filter((r) => /maxDepth:\s*1(\s|$)/m.test(r)).length
-  // ⚠️ 分母含**已撤岗但保留的那一行**（关掉不删 ⇒ 它的两个键也在）。行数 = 在岗四个 + 撤岗一个。
-  yes('preset', 'team-* 行都是 backgroundMode: continuable（组员默认后台跑）',
-    teamRows.length === FIXED_ROLES.length + RETIRED_ROLES.length && bgContinuable === teamRows.length,
-    `${bgContinuable}/${teamRows.length} 行`)
+  // ⚠️ 分母含**已撤岗但保留的那一行**（关掉不删 ⇒ 它的键也在）⇒ agentPreset 只算在岗那四个。
+  yes('preset', '四个在岗 team-* 行都用 agentPreset 指向自己的组员预设（0.2.1：人格与工具集住在那一份里）',
+    teamPresetRows.length === FIXED_ROLES.length,
+    `${teamPresetRows.length}/${FIXED_ROLES.length} 行（team-* 共 ${teamRows.length} 行，含已撤岗那一行）`)
   yes('preset', 'team-* 行都是 maxDepth: 1（组员不许再招人）',
     teamRows.length === FIXED_ROLES.length + RETIRED_ROLES.length && depthOne === teamRows.length,
     `${depthOne}/${teamRows.length} 行`)
-  // 每个固定岗位的能力行都要带自己的标记 —— 少了它，那个人会以为自己是组长。
+  // 每个固定岗位都要带自己的标记 —— 少了它，那个人会以为自己是组长。
+  // 🔴 2026-10-19（0.2.1）：标记从 `persona:` 配置值搬到了 **`# @member-persona` 注释**里
+  //    （那是生成组员预设的输入）；`effective` 剔掉了注释，所以这里必须读 **raw `yml`**。
   // ⚠️ 2026-10-15（I15）：已撤岗那一行的 persona 标记**仍然在** yml 里（关掉不删），
   //    所以期望 = team/ 里的 9 份说明书 + 撤岗的那 1 个 = 10 枚。
-  const marks = (effective.match(/【组员:[a-z0-9-]+】/g) ?? []).map((m) => m.slice(4, -1)).sort()
+  // 🔴 2026-10-19（0.2.1）：只认**真来源** —— `# @member-persona` 注释（在岗九行）
+  //    与还留在旧 `persona:` 配置里的那一行（撤岗的 team-retro）。
+  //    ⚠️ 别退回"扫全文所有【组员:…】"：说明性注释里也有这个词（``【组员:xxx】``、
+  //    "【组员:retro】不再是任何人的标记"），那样会多算两枚、假红。
+  const marks = [...yml.matchAll(/(?:@member-persona\s+|persona:\s*['"]?[^'"\n]*)【组员:([a-z0-9-]+)】/g)]
+    .map((m) => m[1]).sort()
   const wantMarks = [...roles, ...RETIRED_ROLES].sort()
   yes('preset', '每个岗位文件都有对应的【组员:xx】标记',
     marks.length === wantMarks.length && marks.every((m, i) => m === wantMarks[i]),
@@ -677,8 +724,10 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    所以下面口径 9 那张"目录里每一份 `.md`"的清单里没有它，**这是对的，不是漏了**。
   //    📌 2026-10-18（F-76，老板拍）：`roster` 删了（名册那 17 行压成 `leader.md` 里一行）；
   //    `leader` 与 `work-guidelines` **各出现两次** —— 开头一遍（先立规矩）、记忆之后一遍（贴近输出）。
-  yes('preset', 'leaderOrder 是 leader → work-guidelines → memory → board → leader → work-guidelines → persona → style',
-    leader.join(',') === 'leader,work-guidelines,memory,board,leader,work-guidelines,persona,style', leader.join(' → '))
+  //    📌 2026-10-18（F-94）：`board` 拿掉了（板子改走 ⑤ 尾巴那条路，**内容变了才贴**）⇒ 名单是 **7 元组**。
+  //    这条断言不是删掉，是跟着事实改：它现在同时钉着"`board` 不许回来"（回来 = 板子又住进 100 KB 快照）。
+  yes('preset', 'leaderOrder 是 leader → work-guidelines → memory → leader → work-guidelines → persona → style',
+    leader.join(',') === 'leader,work-guidelines,memory,leader,work-guidelines,persona,style', leader.join(' → '))
   // persona（她是谁）与 style（她怎么说话）排最后：越靠后离请求末尾越近，权重越高。
   // ⚠️ style **同时**是 inject.js 第 ⑤ 件事读的那个文件 —— 快照这条路和尾巴那条路读同一个文件，
   //    所以永远不会分叉（2026-09-24 老板定：不再分"开头注入的"和"每 n 步注入的"两份）。
@@ -1604,6 +1653,10 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     //    它在根上是对的（人还要用），但**不进版本库** —— 里面是本机路径与安装动作，别人照抄只会装坏，
     //    `.gitignore` 已经挡着它。⇒ **白名单管"它在根上合不合规"，gitignore 管"它进不进库"，两条分开**。
     'install-deepseek-vpn.ps1',
+    // 🆕 2026-10-22 加：项目级技术契约（**此前不存在**，测试岗在门 2 第 2 关从零建、227 行；
+    //    组长认它做项目设计档案：三件已上线东西的行为契约 + 注入触发点现在是三个、不许再加第四个）。
+    //    判据同上面那条：白名单管"它在根上合不合规"—— 它合规，因为项目级决定本该有一份落点。
+    'CONTRACT.md',
   ])
   const stray = readdirSync(REPO).filter((n) => !allowed.has(n))
   yes('repo', '仓库根只许出现白名单里的条目（临时文件当场红）', stray.length === 0,

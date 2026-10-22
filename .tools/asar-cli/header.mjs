@@ -12,7 +12,7 @@ import path from 'node:path';
 import url from 'node:url';
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
-const ASAR = 'E:/Harness/CLI/resources/app.asar';
+const ASAR = 'E:/HarnessCLI/resources/app.asar';
 const HEADER_OUT = path.join(here, 'asar-header.json');
 
 function readHeaderJson() {

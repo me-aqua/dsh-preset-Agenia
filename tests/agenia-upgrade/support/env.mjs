@@ -32,6 +32,11 @@ export const PATHS = {
   liveComposition: 'E:\\Harness\\presets\\agenia\\agent.cordis.yml',
   livePatch: 'E:\\Harness\\presets\\agenia\\cordis.patch.yml',
   liveInjector: 'E:\\Harness\\presets\\agenia\\inject.js',
+  /**
+   * **靶子落后声明**（F-105）—— 靶子（staged）与现役（`presets/agenia`）之间允许存在的差额，
+   * 只许写在这里；没有这份文件就不许有差额。形状与判据见 `support/target.mjs`。
+   */
+  targetLagDeclaration: 'E:\\Harness\\.tools\\_staging\\agenia-upgrade\\target-lag.json',
   /** 本轮体检脚本 / 探针 / 生成器（STAT-03 的静态扫描对象）。 */
   checkNotes: 'E:\\Harness\\.tools\\check-notes.mjs',
   injectProbe: 'E:\\Harness\\.tools\\inject-probe.mjs',
@@ -128,6 +133,72 @@ export const FROZEN = {
     contentDir: 'E:/Harness/presets/agenia',
   },
 
+  /**
+   * **0.2.1 的补丁形状**（2026-10-19 迁移）：一份组合派生 **N 份预设入口**，不是"组合 + 1 行注册行"。
+   *
+   * 来历（只看这两处的原文，不从实现反推）：
+   *   · `cordis.patch.yml` 文件头「一份预设变十份」那段：0.2.1 的 `tool-subagent` 删掉了 `persona` /
+   *     `toolFilter` ⇒ 每条委派行必须用 `agentPreset:` 指向**一份独立的组员预设**；
+   *   · `.tools/make-bundle-patch.mjs::memberBody()`：组员那一份 = 组合**去掉 delegation 组**，
+   *     `persona` 换成组员人格（组员行上方的 `# @member-persona`）。
+   *
+   * 这里只冻**两个名字**，份数与行数一律从组合推（`expectedPresetIds()` / `expectedPresetRows()`）——
+   * 钉死"10 份 / 259 行"会把判据钉在会变的东西上（`mig-test-criterion-drift-01`）。
+   */
+  patchPresets: {
+    /** 组长那一份的预设 id（组员份由 `agentPreset:` 的值给出，不在这里）。 */
+    leaderPresetId: 'agenia',
+    /** 组员那一份要**整组去掉**的那个 `cordis:group` 的 id —— 组员没有委派工具。 */
+    memberDropsGroup: 'delegation',
+    /**
+     * 🔴 **`delegation` 组里必须有的那 6 个包名**（`F-109` 第 4 关评审 `M-3` / 现场 `S-2`）。
+     *
+     * 为什么要有它：`expectedPresetRows()` 的第二行输入是 `subtreeIds(compRows, 'delegation')` ——
+     * **组员预设的工具集 = 组合减去这一组**。也就是说"哪几行在组里"是**承重事实**，
+     * 而在这一条之前它**零断言**（`row.parent` 只写不读、`subtreeIds` 只在 `composition.mjs` 里被调用）。
+     * 现场：把 `tool-fs` 误缩进进组、重跑生成器 ⇒ 九个岗位全线失去它，所有派生判据照旧绿。
+     *
+     * 为什么钉 6 个**包名**、不钉 19 个**行 id**：钉 id 的话，加一条委派行就要改这张表
+     * （`mig-test-whitelist-vs-blacklist-01`：加一个合法的项它就会红 = change-detector）；
+     * 钉包名的话，**加几条委派行都绿**，而"`tool-fs` 挪进组"或"`tool-workflow` 挪出组"当场红。
+     * 判据本体：`support/composition.mjs::delegationGroupProblems()`。
+     */
+    delegationToolNames: [
+      '@deepseek-ai/dsh-tool-subagent',
+      '@deepseek-ai/dsh-tool-subagent-control',
+      '@deepseek-ai/dsh-tool-subagent-control/list-agents',
+      '@deepseek-ai/dsh-tool-workflow',
+      '@deepseek-ai/dsh-tool-ralph',
+      '@deepseek-ai/dsh-workflow-ptc',
+    ],
+  },
+
+  /**
+   * **靶子过期判据**（F-105 · 2026-10-19）—— 测试打的是 staged 树，而 staged 树可以落后于现役，
+   * 前提是**落后被逐字声明**。这里冻的是判据的三个输入口径：
+   *
+   *   · `markers` —— **功能名目录**：现役里有、staged 里没有的，声明必须逐字点名。
+   *     ⚠️ 目录是**显式清单**（同 `FROZEN.ops` / `FROZEN.staged.injectedMarkdownFiles` 的规矩）：
+   *     现役新增一样功能，**同批**把它加进这里，否则判据看不见它（剩下的兜底只有字节数）。
+   *     这五样是 2026-10-19 复量出来的差额（`inject.js` 109601 B → 129771 B）：
+   *     `commonSenseOf` / `timeLineOf` / `lastBoardPosted` / `proposalFileEnabled` / `boardChanged`。
+   *   · `schema` —— 声明文件的形状版本（`PATHS.targetLagDeclaration`）。
+   *   · `dataSegments` —— **不是漂移**的目录名（任一段命中即跳过）：`.runtime/` 是共享记忆库的
+   *     数据目录，本来就不该同步进靶子（与 `evidence.mjs::stagedVsLiveDrift` / `release-scan.mjs` /
+   *     `install.mjs` 同一口径）。不排除 ⇒ 判据常驻红，而常驻红会把真红淹掉（`cand-20261019-0042`）。
+   *
+   * 🔴 **`watchedFiles: ['inject.js']` 已退役（2026-10-22 · `F-123`）**：那是一份**手维护的名单**，
+   *    48 份代码里只盯 1 份 —— 把 `lib/receipt.mjs` 改一个字符，判据照旧 `state=equal / ok=true`。
+   *    现在判据的输入是**两棵树逐文件枚举**（`support/target.mjs::measureTarget`），
+   *    枚举结果不落常量、每次现算 ⇒ 加一份合法的新文件不会让判据红（不是 change-detector），
+   *    而两棵树在同一新路径上内容不同**当场**红。名单若将来还需要，只能是"读数缓存"，不许当口径。
+   */
+  targetLag: {
+    schema: 1,
+    markers: ['commonSenseOf', 'timeLineOf', 'lastBoardPosted', 'proposalFileEnabled', 'boardChanged'],
+    dataSegments: ['.runtime'],
+  },
+
   /** staged 组合的冻结期望（提案 §B2.4 + 2026-10-15 批次 I15 撤复盘岗后的事实）。 */
   staged: {
     capabilityRows: 42,
@@ -164,8 +235,14 @@ export const FROZEN = {
     onlyInStandard: [],
     onlyInAgenia: 10,
     disabledLiteralRows: 5,
-    /** 进提示词的 .md 类数：persona/style/me-aqua/leader/work-guidelines + 9 角色。 */
-    injectedMarkdownClasses: 14,
+    /** 进提示词的 .md 类数：persona/style/leader/work-guidelines + 9 角色 = **13**。
+     *  🔴 2026-10-19（`F-109`）：**14 → 13**。`me-aqua.md` 是老板 2026-10-17 决定归档的
+     *     （归档落在**仓库根**的 `.team/_archive/me-aqua.md-20261017/me-aqua.md` —— 不是预设目录下的
+     *     `.team/`，那个不存在；"关于老板的事实"搬进了共享记忆库的 `boss` 类）
+     *     ⇒ 组合的 `leaderOrder`/`memberOrder` 里已经没有它。
+     *     **裁定：改冻结表，不补文件**（老板 2026-10-19 拍板：决定变了，判据跟着走）。
+     *     ⚠️ 这条只改**期望**，没动判别逻辑：名单少一份照样红（见下面 `injectedMarkdownFiles`）。 */
+    injectedMarkdownClasses: 13,
     /**
      * 🔴 **「会被注入的 `.md` 文件」的名单**（相对内容根，按路径去重）—— 与上面那个**计数**成对。
      *
@@ -175,9 +252,10 @@ export const FROZEN = {
      *      **不数「本回合实际注入了哪几份」**（那个环境相关：`inject.js` 读盘、**缺文件不回退** ⇒
      *      拿它当断言就是"红的是环境不是代码"）。"实际注入"那一半归**探针**（票 `T-TEST-07`）。
      *
-     * 🔴 **这个数（14）不是 order 里的 key 数** —— `charter` **一个 key 撑 9 个文件**
+     * 🔴 **这个数（13）不是 order 里的 key 数** —— `charter` **一个 key 撑 9 个文件**
      *    （`team/<role>.md` ×9）· `roster`/`board`/`memory` 是**算出来的** ⇒ **0 份** ·
-     *    `leader`/`work-guidelines`/`persona`/`me-aqua`/`style` 各 1 份 ⇒ **`5 + 9 = 14` 只有按文件算才对**。
+     *    `leader`/`work-guidelines`/`persona`/`style` 各 1 份 ⇒ **`4 + 9 = 13` 只有按文件算才对**
+     *    （`me-aqua` 2026-10-17 归档后不再注入，见上面那条 🔴）。
      *    （⚠️ 按 key 数接活会把加一个"算出来的"项也算进去 ⇒ **假变化**。怀疑「15 → 14」那次的口径混乱正是这一类。）
      *
      * 🔴 **两条一起钉**（名单 + 份数）才**能翻面**：
@@ -186,10 +264,28 @@ export const FROZEN = {
      *    ⚠️ 只钉个数会被"一进一出"骗过去（`officeBound` 那次的教训：同数不同集合）。
      */
     injectedMarkdownFiles: [
-      'leader.md', 'work-guidelines.md', 'persona.md', 'me-aqua.md', 'style.md',
+      'leader.md', 'work-guidelines.md', 'persona.md', 'style.md',
       'team/design.md', 'team/dev.md', 'team/test.md', 'team/review.md', 'team/hire.md',
       'team/memory-judge.md', 'team/memory-review.md', 'team/conversation-review.md', 'team/technical-review.md',
     ],
+    /**
+     * 🔴 **`leaderOrder` / `memberOrder` 里"不是文件"的 key**（**单一来源**）——
+     *    「算注入面由哪几份 `.md` 拼成」时跳过它们（那是读共享脑 / 名册 / 进度板算出来的正文）。
+     *
+     * 读它的两处（都在测试侧 —— 本文件开头那条规矩：**测试不许在别处再抄一份**）：
+     *   · `support/docs-surface.mjs::leaderInjectionSurface()` —— 算**组长**的注入面（`<key>.md`）；
+     *   · `static/composition.test.mjs`（`STAT-03` 那段）—— 算「配置里声明了哪些会被注入的 `.md`」，
+     *     那里 `charter` 另走一支（一个 key 撑 `team/<role>.md` ×9）。
+     *
+     * 🔴 **`charter` 故意不在这张表里，不许"补齐"成 `charter.md`**：
+     *   · `charter` 只对**组员**有效；`leaderOrder` 里出现它**本身就是错误**
+     *     （`presets/agenia/inject.js:1313-1317`：「charter 是组员自己那份说明书，组长没有」）；
+     *   · 生产侧那张 `NON_FILE_KEYS`（`presets/agenia/inject.js:1283`）多一个 `charter`，
+     *     是因为它判的是「这个 key 要不要去找 `<key>.md`」—— 组长 / 组员两个 order 都走同一段
+     *     `selfCheck()`。那是**另一个问题**（生产会不会拦），不是「组长的注入面由哪几份拼成」
+     *     ⇒ 别把生产那张表搬进测试。
+     */
+    computedOrderKeys: ['memory', 'roster', 'board'],
     /** 组合里**已启用**的具名 `dsh-tool-subagent` 实例数：四条固定岗位 + 裸 `subagent` + 四条 job。
      *  `team-retro` 那一行关着 ⇒ 它不注册 `team_retro` 这个工具名，也不进这个数。 */
     enabledNamedDelegations: 9,
@@ -205,10 +301,35 @@ export const FROZEN = {
     { id: 'tool-job-conversation-review', toolName: 'job_conversation_review', role: 'conversation-review', officeBound: false },
     { id: 'tool-job-technical-review', toolName: 'job_technical_review', role: 'technical-review', officeBound: false },
   ],
-  /** 四条 job 行的 toolFilter.deny（**恰为这两个，一个都不多**）。 */
-  jobToolFilterDeny: ['workflow', 'ralph'],
-  /** 四条 job 行的背景模式与深度（提案 §B2.2 checklist）。 */
-  jobBackgroundMode: 'one-shot',
+  /**
+   * 🔴 **0.2.1 迁移（2026-10-19）把"四条作业行的否定名单"挪了地方** —— 旧值 `['workflow','ralph']`
+   * 对应的是 `toolFilter.deny`，而 0.2.1 里 `toolFilter` 不再是 `tool-subagent` 的配置键
+   * （来源：`presets/agenia/agent.cordis.yml` L443-449 / L458-470 的 🔴 注释；体检脚本
+   * `.tools/check-notes.mjs::expectedJobDeny` 已是这个口径）。
+   *
+   * 现在两条并存、各管一件事：
+   *   · `jobMemberDeny` —— 行上方 `# @member-deny <名字>` 的**期望表**（生成器据此给组员预设的注入器写
+   *     `proposalFile: false`）。**只有判决岗**有；其余三行是空表。
+   *   · `memberPresetForbidden` —— 组员预设里**结构性不许有**的东西（委派组整个不搬过去
+   *     ⇒ workflow / ralph / 裸 subagent 根本不在那一份工具集里，所以不需要 deny 名单）。
+   */
+  jobMemberDeny: { 'tool-job-memory-judge': ['proposal_file'] },
+  memberPresetForbidden: ['delegation', 'tool-subagent', 'tool-workflow', 'tool-ralph'],
+  /**
+   * 🔴 **退休的常量（`F-109` · 2026-10-19；第 4 关评审 `O-5` 让它们离开主表）**：
+   * `backgroundMode` 在 0.2.1 里**已经不是 `tool-subagent` 的配置键**（组合
+   * `agent.cordis.yml:295-301` 的注释：委派本身就是异步的）。模式现在只住在
+   * `persona-injector.config.delegationTools`（上面那张 `delegationTools` 冻结表）。
+   *
+   * 为什么单开一张子表而不是直接删、也不是留在主表里：**留着是为了让"它为什么不在判据里"有处可查**，
+   * 但留在主表里会被下一个人（或下一把刀）当成仍然生效的期望用 —— 又造出一条
+   * `undefined === undefined`（`JOB-TOOLFILTER` 就是这么死的）。放这儿 = 一眼看出它不是判据输入。
+   * 三样退休的东西：`jobBackgroundMode` / `teamBackgroundMode` / `bareSubagent.backgroundMode`。
+   */
+  retired: {
+    jobBackgroundMode: 'one-shot',
+    teamBackgroundMode: 'continuable',
+  },
   jobMaxDepth: 1,
   jobProvider: 'spawn',
   /** config 键 —— **四条 job 行一律不许写它**（拍板 I1：写了等于把后台参数拿掉）。 */
@@ -297,8 +418,33 @@ export const FROZEN = {
     must: '必须后台运行',
     jobExample: 'run_in_background: true',
     selfOmitted: '（省略即后台）',
-    missingGuard: 'subagent 后台硬门未生效',
+    /**
+     * 拿不到 `tools.guard` 时，注入器必须**点名缺的是哪一样**。
+     * 🔴 0.2.1 换了措辞（旧句 `subagent 后台硬门未生效` 已经不存在）—— 判据改成钉**两个属性**：
+     * ①「没有 tools.guard」这句话在；② 同一句里说清后果（`missingGuardConsequence` 命中任一）。
+     * 这样"删掉整段告警"仍然红、"喊了但没说是哪样/没后果"也红 —— 比原来只钉一句原文更硬。
+     */
+    missingGuard: '没有 tools.guard',
+    missingGuardConsequence: ['没有生效', '没挂上'],
   },
+  /**
+   * 骨架里必须留下的两条口径（`work-guidelines.md`，**10-17「静态文件只留骨架」之后义务落在这儿**）。
+   * 原来的判据要的是 `NO-GO` 这个**词**——它在骨架化之后整份预设里 0 处（`leader.md` 也没有），
+   * 所以判据改成钉骨架**实际保留下来的**那件事：**门禁装不上必须出声、但那不是拦截**。
+   * 来历：`cand-20261017-static-files-keep-skeleton-only-01`（老板 2026-10-17「别往里写了」）。
+   *
+   * 🔴 `loud` 这根针钉的是**那一行上的义务**（`work-guidelines.md:44` 的原文是
+   *    `⚠️ **门禁装不上时必须出声**（注入器会打 …）—— 但那只是出声、**不是拦截**。`）——
+   *    它是一个**正则源串**（按行匹配，`guard.test.mjs` 用 `new RegExp` 建），不是字面子串：
+   *    「出声」两个字在同一份骨架里到处都是（该行后半句、`review.md`、`inject.js` 注释…）⇒ 拿它当针时，
+   *    把该行的义务改成「门禁装不上时注入器会打一条日志」而**后面那句"只是出声"留着**，判据照旧绿。
+   *    翻面输入就是那把刀 `K14`（它在新针下红、在旧针下存活 —— 已量过）。
+   * 🔴 但它也**不许钉字面邻接**（2026-10-19 第 4 关复审 R-2）：`B-6` 那张待挂的票要把施动者写出来 ——
+   *    「门禁装不上**时，注入器**必须出声」—— 义务一个字没少，字面针会**当场假红**。
+   *    ⇒ 允许中间夹少量字（`[^\n]{0,10}` 吃得下 `时，注入器`）。
+   *    两个方向都量过：`K14`（义务被换掉）⇒ 红；`A1`（写清施动者）⇒ 绿。
+   */
+  guardDocNeedles: { loud: '门禁装不上[^\\n]{0,10}必须出声', honest: '不是拦截' },
   /** officeBound 写边界的两个拒绝码（提案 §B1.5 冻结）。 */
   officeBoundCodes: { shell: 'E_GUARD_OFFICE_SHELL', write: 'E_GUARD_OFFICE_WRITE' },
   /** AGENTS.md 3e 的报文判据：门禁报文一定带这个前缀（用来与"工具自己的报错"分开）。 */
@@ -336,8 +482,8 @@ export const FROZEN = {
    * 与上面那个 `fixedTeamTools` 分工：那条是**行形状**的清单（五条都要逐字对），这条是**注册面**的清单。
    */
   enabledFixedTeamTools: ['team_design', 'team_dev', 'team_test', 'team_review'],
+  /** ⚠️ 其中 `backgroundMode` 已**零读点**（0.2.1 撤掉了这个键，见上面 `FROZEN.retired` 那条 🔴）；`maxDepth` 仍在判据里。 */
   bareSubagent: { toolName: 'subagent', backgroundMode: 'continuable', maxDepth: 1 },
-  teamBackgroundMode: 'continuable',
   teamMaxDepth: 1,
   /** 三条 disabled 子代理行必须保持 disabled（`tool-subagent-fork` / `-codex` / `-claude-code`）。 */
   disabledSubagentRowIds: ['tool-subagent-fork', 'tool-subagent-codex', 'tool-subagent-claude-code'],
@@ -484,13 +630,20 @@ export const FROZEN = {
     'cli-inventory.mjs',
   ],
 
-  /** STAT-04 的文档清单（契约 §13.5 列的那批）。 */
+  /**
+   * STAT-04 的文档清单（契约 §13.5 列的那批）。
+   *
+   * 🔴 **`STAT-04` 实际读的是 `static/docs.test.mjs` 的 `DOC_SPECS`，这张表零读点** ——
+   *    它只是给人对照的口径。所以往这里加一个名字之前先答一句：**谁会读它？**
+   *    答不出来就别加 —— 一个"声明了但零读点"的名字是假账：它让读者以为那份文件被管着，
+   *    而盘上它可能是 1 字节占位、甚至不在、整套判据一声不响。
+   *    这一栏现在与 `DOC_SPECS` 的 6 份逐项同名，多一处少一处都要先改那边。
+   */
   docs: [
     { rel: 'leader.md', root: 'staged' },
     { rel: 'work-guidelines.md', root: 'staged' },
     { rel: '说明.md', root: 'staged' },
     { rel: 'README.md', root: 'repo' },
-    { rel: 'AGENTS.md', root: 'repo' },
     { rel: 'AGENTS.local.md', root: 'repo' },
     { rel: '.team/leader/now.md', root: 'repo' },
   ],

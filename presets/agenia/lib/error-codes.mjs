@@ -139,7 +139,7 @@ export const CODES = Object.freeze({
   // ── guard（住在 inject.js；码名在这里留一份，供文档与断言共用）───────────
   // ⚠️ 这五个不是 CLI 退出码：它们是**工具调用层**的拒绝码（guard 在启动子代理前拒）。
   //    给 5 是"校验拒绝"族的归口，只为让 `CODES[code].exit` 有确定值。
-  E_GUARD_JOB_FOREGROUND: { exit: 5, zh: '一次性作业必须显式后台运行（run_in_background: true）' },
+  E_GUARD_JOB_FOREGROUND: { exit: 5, zh: '一次性作业不许前台（0.2.1 委派天生异步，省略即后台）' },
   E_GUARD_SELF_FOREGROUND: { exit: 5, zh: '可续聊委派不许前台（省略即后台）' },
   E_GUARD_OFFICE_SHELL: { exit: 5, zh: '受限岗位没有 shell' },
   E_GUARD_OFFICE_WRITE: { exit: 5, zh: '受限岗位只能写 .team/ 下的东西' },
@@ -157,5 +157,5 @@ export const CODES = Object.freeze({
   E_PROPOSAL_HASH_MISMATCH: { exit: 5, zh: '提候选时声明的 sha256 与 sha256(text) 不符（那一行的声明哈希从此是假话）' },
   E_PROPOSAL_DUPLICATE: { exit: 5, zh: '同一句出处 + 同一段正文已经提过（判重键 = (source, sha256(text))）' },
   E_PROPOSAL_IO: { exit: 4, zh: '候选池写不进去（锁争用到超时 / 原子写失败），报文带底层码' },
-  E_PROPOSAL_TOO_LONG: { exit: 2, zh: '提候选时正文超过每条 400 字的上限（2026-10-18 老板：「以后提案阶段超过400字的不准提」）—— 把来历挪进 log.md' },
+  E_PROPOSAL_TOO_LONG: { exit: 2, zh: '正文超过每条 400 字的上限（2026-10-18 老板：「以后提案阶段超过400字的不准提」·2026-10-22「不许超」）—— 提候选的工具与两条导入 CLI（proposal / maintenance）共用这一个码；把来历挪进 log.md 再导' },
 })

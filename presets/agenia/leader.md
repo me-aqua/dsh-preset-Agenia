@@ -20,7 +20,7 @@
 他们的说明书在 `presets/agenia/team/`（`design` `dev` `test` `review` `hire` `memory-judge` `memory-review` `conversation-review` `technical-review`），上岗时自动发，不用你转述。
 
 **四类一次性作业**（`job_memory_judge` / `job_memory_review` / `job_conversation_review` / `job_technical_review`）：
-**一律后台，必须显式 `run_in_background: true`**（省略就是前台等结果 ⇒ 门禁拒）。
+**一律后台** —— 0.2.1 起派活**天生异步**（派出去立刻返回、完事了再通知），旧版的 `run_in_background` 参数**平台已经删了**，直接派就行。
 ⚠️ **它们的作业书 `job-briefs/<角色>.md` 不注入** —— 叫它的时候**连活儿一起交过去**，否则它当场停。
 ⚠️ 撤岗的历史（复盘岗）见共享记忆：`two-daily-reviews-replace-retro`。
 
@@ -50,13 +50,23 @@
 🔴 **别拿 `health.status` / `reasons` 当判据**（它们判的是"开工痕迹"）。⇒ 判据全文见共享记忆：`health-read-two-halves`。
 
 ```sh
-<node> presets/agenia/bin/agenia-brain.mjs --op health-read --data-root <DR> --real-mode --workspace <WS>
+# 🔴 health-read 必须**显式给 day**：CLI 没有 `--day` 开关，不给就走 `state/current-day.json` 指针
+#    ⇒ 指针停在哪天（上一个 claim 写的），第一次跑就报哪天 —— 今天会读成**昨天**。
+echo '{"day":"<今天>"}' > today.json
+<node> presets/agenia/bin/agenia-brain.mjs --op health-read --data-root <DR> --real-mode --workspace <WS> --in today.json
 <node> presets/agenia/bin/agenia-brain.mjs --op claim-update --data-root <DR> --real-mode --in <payload.json>
 # payload = { "day":"<今天>", "owner_project":"<项目名>", "owner_session":"$env:DSH_SESSION_ID" }
+
+# 🔴 拿到 token 之后、派判决之前，**必须先把候选冻结**：
+<node> presets/agenia/bin/agenia-brain.mjs --op candidates-freeze --data-root <DR> --real-mode --in <freeze.json>
+# freeze.json = { "day":"<今天>", "generation":<claim 回来的那个>, "candidate_ids": ["proposal-…", …] }
+#   ← `candidate_ids` **非空**数组；池子里的字段叫 `imported_id`（不是 `entry_id`）；**`generation` 必填**（漏了报 E_ARG_SCHEMA）
 ```
 
-⇒ 拿到 `{generation, attempt, token}` ⇒ 连作业书一起交给 `job_memory_judge`（后台）。
-🔴 **记忆更新是整条链**：`claim-update` → **判决** → **复核**（先 `--op review-start`，再派 `job_memory_review`）
+⇒ 拿到 `{generation, attempt, token}` ⇒ **先冻候选** ⇒ 再连作业书一起交给 `job_memory_judge`（后台）。
+🔴 **`candidates-freeze` 这一步不能省**：**不冻结，判决里"拒绝"这一类一条都落不下** —— 被拒的候选明天会**重判一遍**，而**没有任何读数会说这件事**。
+⇒ 2026-10-21 实测：有工作区只做了 `claim-update` 就派判决，判决岗当场停。
+🔴 **记忆更新是整条链**：`claim-update` → **`candidates-freeze`** → **判决** → **复核**（先 `--op review-start`，再派 `job_memory_review`）
 → **`job-mark`（`state: done`）收口**。**少了复核，`phase` 永远到不了 `done`，而体检不抓它。**
 🔴 **链的尾巴**：判完 ⇒ **清池归档**（判过的搬 `proposals/archive/`，池子只留未判的；判据 = 拼回去逐字节相同）。
 

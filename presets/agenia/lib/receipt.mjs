@@ -13,8 +13,13 @@
  *      全树扫描（RCP-01 ⑤）就是这么判的。退出码那一行也随它一起住在本文件，`lib/error-codes.mjs` 只做汇总。
  *   ② **规范化只有一份**（Q10）：`canonicalJson()` 把对象键按 **UTF-8 字节序**升序重排、去空白，
  *      `findingsSetSha256()` 在它的 UTF-8 字节上取 SHA256。产出方用它填 `findings_set_sha256`；
- *      校验方**不重算后再跟声明值比**（那会要求产物的 JSON 写法与 Q10 逐字相同，等于造出第二份口径），
- *      只比对**两份声明值**彼此一致。
+ *      **校验方自己复算再跟声明值比**（`F-121`：自报一个 64 hex 就过，等于没验 ——
+ *      `cand-20261018-0113`）。规范化配方唯一 ⇒ 产物那份 JSON 怎么写都不影响复算，
+ *      所以"复算"不引入第二份口径。
+ *   ②b **`code_fingerprint.equal` 是作业自报**（`F-122`）：校验方自己判三样 ——
+ *      自洽（`equal:true` ⇒ 两个哈希逐字相同）、可复核（两个哈希都在且都是 64 hex）、
+ *      与盘面复算对账（调用方给了 `anchors.code_fingerprint` 时逐项相同）。
+ *      判不了的那一格（自洽但编造、调用方没给盘面复算）**不假装判过**，见 `codeFingerprintVerdict()`。
  *   ③ **每条 finding 恰好一个落点**（B3.2 的不变量）：漏 / 重 / 多 三张清单各报各的，不许糊成一个码。
  *   ④ **纯函数**：本模块不读盘、不写盘、不看时钟 —— 文件面的读与写由 CLI 负责。
  */
@@ -32,9 +37,20 @@ export const RECEIPT_SCHEMA = 1
  */
 export const RECEIPT_OVERWRITE_CODE = 'E_RECEIPT_OVERWRITE'
 
+/**
+ * 🔴 **`F-122` 的那个码**：作业期间的代码指纹对不上（`equal !== true`，或 `equal:true` 但
+ * 两个哈希互相矛盾 / 与盘面复算不符）⇒ **本次作废**（B3.1 逐字）。
+ *
+ * 它的产生面是 `codeFingerprintVerdict()`（`parseFindings` / `validateReceiptCoverage` 共用这一处）；
+ * `receipt-check` 把它抬到 CLI 层，所以它必须在这张表里 —— 不在表里的码会被
+ * `bin/agenia-local.mjs` 的 catch 折成 `E_INTERNAL`（exit 8），"作业作废"与"程序有 bug"就分不开了。
+ */
+export const CODE_FINGERPRINT_MOVED = 'E_CODE_FINGERPRINT_MOVED'
+
 /** 回执这一族码的退出码行（汇总进 `lib/error-codes.mjs` 的那张表）。 */
 export const RECEIPT_CODES = Object.freeze({
   [RECEIPT_OVERWRITE_CODE]: { exit: 5, zh: '回执不许静默覆盖（目标版本已存在 / expected_version 与 head 不符）' },
+  [CODE_FINGERPRINT_MOVED]: { exit: 5, zh: '作业期间的代码指纹对不上（before≠after 却写 equal:true，或与盘面复算不符）⇒ 本次作废' },
 })
 
 /** 处置枚举 —— **只有两种，无第三种静默态**（B3.2）。 */
@@ -97,6 +113,90 @@ export function findingsSetSha256(findings) {
   return createHash('sha256').update(canonicalJson(list), 'utf8').digest('hex')
 }
 
+/** 一个摘要的**比对键**：64 hex ⇒ 去空白 + 小写；否则 `null`（"缺"与"形状不对"在比对这一层同义）。 */
+function shaKeyOf(value) {
+  return isSha256(value) ? value.trim().toLowerCase() : null
+}
+
+/**
+ * **`F-121` 的判据**：`findings_set_sha256` 必须由校验方**自己复算**，不采信自报值。
+ *
+ * @param {Array} findings 发现数组（调用方已经确认它真的是数组）
+ * @param {unknown} declared 产物里声明的值
+ * @returns {{computed:string, declared:string|null, equal:boolean|null}}
+ *   `equal === null` = 没有可比的声明值（缺失 / 不是 64 hex）⇒ 这一格由 schema 那条判，不在这里判。
+ */
+export function findingsSetVerdict(findings, declared) {
+  const computed = findingsSetSha256(findings)
+  const declaredKey = shaKeyOf(declared)
+  return { computed, declared: declaredKey, equal: declaredKey === null ? null : declaredKey === computed }
+}
+
+/**
+ * **`F-122` 的判据**：`code_fingerprint` 是**作业自报**，校验方自己判三样（按能判的次序）。
+ *
+ *   ① **自洽性** —— `equal === true` 时 `before_sha256` 必须逐字等于 `after_sha256`；
+ *   ② **可复核性** —— `equal === true` 时两个哈希必须都在、都是 64 hex（只写 `{equal:true}` = "相信我" ⇒ 拒）；
+ *   ③ **与盘面复算对账** —— 调用方给了 `anchorsFp`（独立复算出来的那两个值）时，声明值必须与它逐项相同。
+ *   ④ `equal !== true`（作业自己说"本次作废"）⇒ 拒（既有行为，不许退化）。
+ *
+ * 🔴 **判不了的那一格（写清，别假装覆盖得更宽）**：两个哈希自洽、形状合法，而 `anchorsFp` 是 `null`
+ *    —— 校验方手里**没有那棵树**，算不出来。这一格**不报绿、也不把"没给"读成"相等"**：
+ *    返回 `ok:true` 只表示"形状与自洽过了"，"真不真"要由给 `anchorsFp` 的那一方关上
+ *    （`receipt-check` 目前没有 `code_root` 入参，加它是另一票）。
+ *
+ * @param {unknown} fp 作业产物里的 `code_fingerprint`
+ * @param {{before_sha256?:unknown, after_sha256?:unknown}|null} [anchorsFp] 独立复算值（可省）
+ * @returns {{ok:boolean, code:string|null, detail:string}}
+ */
+export function codeFingerprintVerdict(fp, anchorsFp = null) {
+  if (!isObject(fp)) {
+    return { ok: false, code: 'E_ARG_SCHEMA', detail: 'code_fingerprint 必填且必须是对象（B3.1 三个锚点之一）' }
+  }
+  if (fp.equal !== true) {
+    return {
+      ok: false,
+      code: CODE_FINGERPRINT_MOVED,
+      detail: `作业期间的代码指纹对不上（equal=${JSON.stringify(fp.equal)} · before=${String(fp.before_sha256).slice(0, 12)}… / after=${String(fp.after_sha256).slice(0, 12)}…）—— B3.1：不等 ⇒ 本次作废`,
+    }
+  }
+  const before = shaKeyOf(fp.before_sha256)
+  const after = shaKeyOf(fp.after_sha256)
+  if (before === null || after === null) {
+    const bad = []
+    if (before === null) bad.push(`before_sha256=${JSON.stringify(fp.before_sha256 ?? null)}`)
+    if (after === null) bad.push(`after_sha256=${JSON.stringify(fp.after_sha256 ?? null)}`)
+    return {
+      ok: false,
+      code: 'E_ARG_SCHEMA',
+      detail: `equal:true 但两个哈希不都可复核（${bad.join(' · ')}）—— 只写一个布尔等于"相信我"，校验方没有任何可复核的东西`,
+    }
+  }
+  if (before !== after) {
+    return {
+      ok: false,
+      code: CODE_FINGERPRINT_MOVED,
+      detail: `equal:true 却 before=${before.slice(0, 12)}… ≠ after=${after.slice(0, 12)}… —— 作业自己打自己的脸（自洽性先于一切）`,
+    }
+  }
+  if (isObject(anchorsFp)) {
+    const mismatches = []
+    for (const [key, own] of [['before_sha256', before], ['after_sha256', after]]) {
+      const anchor = shaKeyOf(anchorsFp[key])
+      if (anchor === null) continue // 调用方没给这一项（或给的形状不对）⇒ 这一项判不了，不假装判过
+      if (own !== anchor) mismatches.push(`${key}：声明 ${own.slice(0, 12)}… ≠ 盘面复算 ${anchor.slice(0, 12)}…`)
+    }
+    if (mismatches.length > 0) {
+      return {
+        ok: false,
+        code: CODE_FINGERPRINT_MOVED,
+        detail: `代码指纹的声明与盘面复算对不上（${mismatches.join(' · ')}）—— 校验方自己量过那棵树，不采信自报`,
+      }
+    }
+  }
+  return { ok: true, code: null, detail: '' }
+}
+
 // ── findings 文件 ───────────────────────────────────────────────────────────
 /**
  * 解析并校验一份 `技术评审.findings.json`（B3.1 的字段表）。
@@ -137,6 +237,11 @@ export function parseFindings(findingsJson) {
     return { ...findingsBad('E_ARG_SCHEMA', 'findings 不是一个数组'), problems }
   }
 
+  // F-122：指纹三样（自洽 / 可复核；③ 的盘面复算要 `validateReceiptCoverage` 拿到 anchors 才判）。
+  // 排在集合哈希之前：`before≠after` 是"作业自己打了自己的脸"，比"哈希对不上"更靠近病根。
+  const fpVerdict = codeFingerprintVerdict(obj.code_fingerprint)
+  if (!fpVerdict.ok) bad(fpVerdict.code, fpVerdict.detail)
+
   const map = new Map()
   obj.findings.forEach((row, index) => {
     const where = `findings[${index}]`
@@ -175,14 +280,21 @@ export function parseFindings(findingsJson) {
     }
   }
 
+  // F-121：**校验方自己复算**集合哈希再跟声明值比（自报一个 64 hex 不算证据）。
+  // 排在最后的理由：一行一条的 schema / 编号问题更具体，先报它们；集合哈希是"整份内容被动过"。
+  const setVerdict = findingsSetVerdict(obj.findings, obj.findings_set_sha256)
+  if (setVerdict.equal === false) {
+    bad('E_RECEIPT_HASH', `findings 内容的集合哈希与声明值对不上（声明 ${setVerdict.declared.slice(0, 12)}…，复算 ${setVerdict.computed.slice(0, 12)}…）—— 内容改一个字而声明不动，就是这一格`)
+  }
+
   const first = problems[0] ?? null
   return {
     ok: problems.length === 0,
     code: first?.code ?? null,
     findings: map,
     count: map.size,
-    computed_set_sha256: findingsSetSha256(obj.findings),
-    declared_set_sha256: isSha256(obj.findings_set_sha256) ? obj.findings_set_sha256.trim().toLowerCase() : null,
+    computed_set_sha256: setVerdict.computed,
+    declared_set_sha256: setVerdict.declared,
     code_fingerprint: isObject(obj.code_fingerprint) ? obj.code_fingerprint : null,
     report_sha256: isSha256(obj.report_sha256) ? obj.report_sha256.trim().toLowerCase() : null,
     problems,
@@ -228,11 +340,17 @@ export function receiptAnchors(receipt) {
 /**
  * 覆盖校验（B3.2 的形状，逐字）：`{ok, missing, duplicate, extra, ticketProblems, anchorProblems, code}`。
  *
+ * 校验方**自己复算**的两处（`F-121` / `F-122`，都不采信产物里的同名值）：
+ *   · `code_fingerprint` 的自洽 / 可复核 / 与 `anchors.code_fingerprint` 对账（`codeFingerprintVerdict`）；
+ *   · `findings_set_sha256` 与 findings 内容复算值对账（`findingsSetVerdict`）。
+ *
  * @param {object} receipt 机读回执
  * @param {object|Map|Array} findings findings 文件（对象/解析结果/数组都吃）
  * @param {Array<object>} tickets 票库（`current.json.tickets`）
- * @param {{report_sha256?:string, findings_set_sha256?:string}} anchors
- *   **独立锚点**（来自作业产物 / 本地状态）；回执自报的值只跟它比。
+ * @param {{report_sha256?:string, findings_set_sha256?:string,
+ *          code_fingerprint?:{before_sha256?:string, after_sha256?:string}}} anchors
+ *   **独立锚点**（来自作业产物 / 本地状态 / 盘面复算）；回执与作业自报的值只跟它比。
+ *   `code_fingerprint` 一旦给出，就按"盘面复算"逐项对账（③ 形）；没给 ⇒ 那一格**判不了**，不假装判过。
  * @returns {{ok:boolean, missing:string[], duplicate:string[], extra:string[],
  *            ticketProblems:Array<{id:string,code:string,detail:string}>,
  *            reasonProblems:Array<{id:string,code:string,detail:string}>,
@@ -240,6 +358,7 @@ export function receiptAnchors(receipt) {
  *            handoverProblems:Array<{code:string,detail:string}>,
  *            anchorProblems:Array<{code:string,detail:string}>,
  *            fingerprintProblems:Array<{code:string,detail:string}>,
+ *            setHashProblems:Array<{code:string,detail:string}>,
  *            code:string|null, message:string}}
  */
 export function validateReceiptCoverage(receipt, findings, tickets, anchors = {}) {
@@ -252,25 +371,29 @@ export function validateReceiptCoverage(receipt, findings, tickets, anchors = {}
   const handoverProblems = []
   const anchorProblems = []
   const fingerprintProblems = []
+  const setHashProblems = []
 
   const empty = () => ({
     ok: false, code: null,
     missing, duplicate, extra, ticketProblems, reasonProblems, dispositionProblems,
-    handoverProblems, anchorProblems, fingerprintProblems, message: '',
+    handoverProblems, anchorProblems, fingerprintProblems, setHashProblems, message: '',
   })
 
   if (!isObject(receipt)) {
     return { ...empty(), code: 'E_ARG_SCHEMA', message: `回执必须是一个对象，实得 ${JSON.stringify(receipt)?.slice(0, 120)}` }
   }
 
-  // ① 作业产物那一侧：`code_fingerprint.equal !== true` ⇒ **本次作废**（B3.1 逐字）
+  // ① 作业产物那一侧：`code_fingerprint` 是**作业自报**，校验方自己判（`F-122`）。
+  //    四种拒绝形状共用一个产生面（`codeFingerprintVerdict`）：④ `equal !== true`（既有行为）·
+  //    ① `before≠after` 却 `equal:true` · ② 只有布尔 / 哈希不都是 64 hex · ③ 与 `anchors.code_fingerprint` 不符。
+  //    一次就把原因码定死（先返回）：后面那些"一条 finding 落在哪"的判词建立在这份产物可信之上。
   const fp = isObject(findings) ? findings.code_fingerprint : null
-  if (isObject(fp) && fp.equal !== true) {
-    fingerprintProblems.push({
-      code: 'E_CODE_FINGERPRINT_MOVED',
-      detail: `作业期间的代码指纹对不上（before=${String(fp.before_sha256).slice(0, 12)}… / after=${String(fp.after_sha256).slice(0, 12)}…）—— B3.1：不等 ⇒ 本次作废`,
-    })
-    return { ...empty(), code: 'E_CODE_FINGERPRINT_MOVED', message: fingerprintProblems[0].detail }
+  if (isObject(fp)) {
+    const fpVerdict = codeFingerprintVerdict(fp, anchors?.code_fingerprint ?? null)
+    if (!fpVerdict.ok) {
+      fingerprintProblems.push({ code: fpVerdict.code, detail: fpVerdict.detail })
+      return { ...empty(), code: fpVerdict.code, message: fpVerdict.detail }
+    }
   }
 
   // ② 回执里的处置清单：**必须显式存在**（"零发现"要写 `[]`，缺字段不算零发现）
@@ -380,8 +503,23 @@ export function validateReceiptCoverage(receipt, findings, tickets, anchors = {}
     anchorProblems.push({ code: 'E_ARG_SCHEMA', detail: `回执 version 必须是 ≥1 的整数，实得 ${JSON.stringify(receipt.version)}` })
   }
 
-  // 判码次序 = 上面那五段的次序：先"漏/重/多"，再票、再理由、再枚举与接手、最后锚点。
+  // ⑥ `F-121`：findings 入参是**带 `findings_set_sha256` 的文件对象**时，校验方自己复算一次。
+  //    数组 / Map（以及解析结果那种 `findings` 是 Map 的形状）没有可比的声明值 ⇒ 这一格**不判**
+  //    （不许凭空造一个"期望值"，也不许因为"判不了"就判红）。
+  if (isObject(findings) && Array.isArray(findings.findings)) {
+    const setVerdict = findingsSetVerdict(findings.findings, findings.findings_set_sha256)
+    if (setVerdict.equal === false) {
+      setHashProblems.push({
+        code: 'E_RECEIPT_HASH',
+        detail: `findings 内容的集合哈希与声明值对不上（声明 ${setVerdict.declared.slice(0, 12)}…，复算 ${setVerdict.computed.slice(0, 12)}…）—— 内容改一个字而声明不动，就是这一格（F-121）`,
+      })
+    }
+  }
+
+  // 判码次序 = 上面那几段的次序：先"漏/重/多"，再票、再理由、再枚举与接手、再锚点，最后集合哈希自洽。
   // 这样每个负例都能拿到**它自己那一族**的稳定码，而不是被另一族的码先截走。
+  // ⚠️ 集合哈希自洽排在最后：一条 finding 落在哪是**逐条**判词，整份内容被动过是**整份**怀疑；
+  //    两者同属校验拒绝族（exit 5），先报得出"哪一条漏了"的那一个更有用。
   const code = missing.length > 0 ? 'E_COVERAGE_MISSING'
     : duplicate.length > 0 ? 'E_COVERAGE_DUP'
       : extra.length > 0 ? 'E_COVERAGE_EXTRA'
@@ -390,15 +528,16 @@ export function validateReceiptCoverage(receipt, findings, tickets, anchors = {}
             : dispositionProblems.length > 0 ? 'E_COVERAGE_DISPOSITION'
               : handoverProblems.length > 0 ? 'E_COVERAGE_HANDOVER'
                 : anchorProblems.length > 0 ? (anchorProblems[0].code === 'E_RECEIPT_HASH' ? 'E_RECEIPT_HASH' : 'E_ARG_SCHEMA')
-                  : null
+                  : setHashProblems.length > 0 ? 'E_RECEIPT_HASH'
+                    : null
 
-  const firstDetail = [missing, duplicate, extra, ticketProblems, reasonProblems, dispositionProblems, handoverProblems, anchorProblems]
+  const firstDetail = [missing, duplicate, extra, ticketProblems, reasonProblems, dispositionProblems, handoverProblems, anchorProblems, setHashProblems]
     .flatMap((list) => list.map((row) => (typeof row === 'string' ? row : row.detail)))[0] ?? ''
 
   return {
     ok: code === null,
     missing, duplicate, extra, ticketProblems, reasonProblems, dispositionProblems,
-    handoverProblems, anchorProblems, fingerprintProblems,
+    handoverProblems, anchorProblems, fingerprintProblems, setHashProblems,
     tickets_checked: ticketsKnown,
     receipt_anchors: receiptAnchorsOf,
     code,

@@ -37,11 +37,11 @@
 
 ## 派工一律后台（硬门只管住 9 个具名实例）
 
-· 四条一次性作业（`job_memory_judge` / `job_memory_review` / `job_conversation_review` / `job_technical_review`）：
-  **必须显式 `run_in_background: true`**（省略就是前台等结果 ⇒ 门禁拒）。
-· 四条固定岗位（`team_design` / `team_dev` / `team_test` / `team_review`）与裸 `subagent`：**省略即后台**。
+· 0.2.1 起**派活天生异步**（派出去立刻返回、完事了再通知）—— 旧版的 `run_in_background` 参数
+  **平台已经删了**，四条一次性作业与四个固定岗位**都一样**，**直接派就行**。
+· 四条固定岗位（`team_design` / `team_dev` / `team_test` / `team_review`）与裸 `subagent`：同上。
 ⚠️ **能保证的只有这 9 个具名实例** —— `workflow` / `ralph` 的内部 worker **拦不住（fail-open）**，别谎报"全覆盖"。
-⚠️ **门禁装不上时必须出声**（注入器会打 `subagent 后台硬门未生效`）—— 但那只是出声、**不是拦截**。
+⚠️ **门禁装不上时必须出声**（注入器会打「这个框架版本没有 `tools.guard` …… 委派门禁也没挂上」）—— 但那只是出声、**不是拦截**。
 📌 能力行与 `delegationTools` 是**冻结契约**：改 `agent.cordis.yml` 要**同批**动，体检 `composition` 那一族会对账。
 
 ## 工作位置：`.team/`

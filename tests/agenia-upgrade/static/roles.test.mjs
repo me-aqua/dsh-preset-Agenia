@@ -21,7 +21,7 @@ import path from 'node:path'
 import { FROZEN, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, stagingReadings } from '../support/evidence.mjs'
 import { importStaged, readStagedText, stagingExists, stagingPath } from '../support/sut.mjs'
-import { cfg, listMd, parseComposition } from '../support/composition.mjs'
+import { cfg, listMd, memberAnnotations, memberPresetIdFor, parseComposition } from '../support/composition.mjs'
 import { optionalEnv } from '../support/env.mjs'
 
 before(() => {
@@ -102,7 +102,8 @@ describe('static · roles (REV-02)', () => {
       // ── ① 静态角色矩阵（staged 组合 + 角色文件）────────────────────────
       let office = null
       if (stagingExists('agent.cordis.yml')) {
-        const rows = parseComposition(readStagedText('agent.cordis.yml'), 'staged').rows
+        const compRaw = readStagedText('agent.cordis.yml')
+        const rows = parseComposition(compRaw, 'staged').rows
         const byId = new Map(rows.map((r) => [r.id, r]))
         const inj = byId.get('persona-injector')
         office = inj ? cfg(inj, 'officeBound') : null
@@ -133,19 +134,47 @@ describe('static · roles (REV-02)', () => {
             push('OFFICE-BOUND', `冻结表自相矛盾：${job.id}.officeBound=${job.officeBound}，而 officeBoundRoles=${JSON.stringify(FROZEN.staged.officeBoundRoles)} ${inFrozenList ? '含' : '不含'} ${job.role}`)
           }
         }
-        // 四条 job 行的 persona 标记与 toolName
+        // 四条 job 行的 persona 标记、toolName、agentPreset、否定项
+        // 🔴 2026-10-19（0.2.1 迁移）：人格与否定项**不再是 config 里的键**（`persona` / `toolFilter`
+        //    写着它们整行报迁移错），改由行上方的两句注释表达：
+        //      `# @member-persona 【组员:<角色>】…` · `# @member-deny <名字>`
+        //    生成器按它们给那一份组员预设写 `persona.prefix` 与注入器的 `proposalFile: false`。
+        //    判据跟着"义务的落点"走，**没有放宽**：标记少了 ⇒ 作业会以为自己是组长，拿组长那份注入；
+        //    判决岗的 `proposal_file` 少了 ⇒ 判决岗就能自己提候选（老板 2026-10-17 明确不许）。
+        const ann = memberAnnotations(compRaw)
         for (const job of FROZEN.jobs) {
           const row = byId.get(job.id)
           if (!row) { push('JOB-ROW', `缺 job 行 ${job.id}`); continue }
-          const persona = cfg(row, 'persona')
-          if (typeof persona !== 'string' || !persona.startsWith(`【组员:${job.role}】`)) push('ROLE-MARK', `${job.id}: persona 必须以 【组员:${job.role}】 开头`)
-          if (cfg(row, 'toolName') !== job.toolName) push('JOB-TOOLNAME', `${job.id}: toolName 实得 ${JSON.stringify(cfg(row, 'toolName'))}`)
-          // 四行 job 的 toolFilter 恰为 [workflow, ralph] —— 所以"无 shell"不可能靠 toolFilter 实现
-          const tf = cfg(row, 'toolFilter')
-          const deny = tf instanceof Map ? tf.get('deny') : undefined
-          if (JSON.stringify(deny) !== JSON.stringify(FROZEN.jobToolFilterDeny)) {
-            push('JOB-TOOLFILTER', `${job.id}: toolFilter.deny 必须恰为 ${JSON.stringify(FROZEN.jobToolFilterDeny)}（写 pwsh/bash 会因平台二选一让整行启动失败 —— AGENTS.md 3e）`)
+          const mark = ann.get(job.id) ?? { persona: undefined, deny: [] }
+          if (typeof mark.persona !== 'string' || !mark.persona.startsWith(`【组员:${job.role}】`)) {
+            push('ROLE-MARK', `${job.id}: 行上方必须有 \`# @member-persona 【组员:${job.role}】…\`（0.2.1 的人格来源；实得 ${JSON.stringify(mark.persona)?.slice(0, 80)}）`)
           }
+          if (cfg(row, 'toolName') !== job.toolName) push('JOB-TOOLNAME', `${job.id}: toolName 实得 ${JSON.stringify(cfg(row, 'toolName'))}`)
+          if (cfg(row, 'maxDepth') !== FROZEN.jobMaxDepth) push('JOB-MAXDEPTH', `${job.id}: maxDepth 实得 ${JSON.stringify(cfg(row, 'maxDepth'))}，冻结 ${FROZEN.jobMaxDepth}`)
+          // 组员预设 id 的公式（生成器与组合必须同形）：`agenia-<toolName 下划线换横线>`。
+          // ⚠️ 公式**只有一份实现**（`support/composition.mjs::memberPresetIdFor`）——
+          //    `composition.test.mjs` 的 `TEAM-AGENTPRESET` / `SUBAGENT-AGENTPRESET` 也调它
+          //    （评审 `F-109` 第 4 关 `M-4`：同一件义务不许有两份算式）。
+          const wantPreset = memberPresetIdFor(job.toolName)
+          if (cfg(row, 'agentPreset') !== wantPreset) {
+            push('JOB-AGENTPRESET', `${job.id}: agentPreset 必须是 ${wantPreset}（生成器按公式算的组员预设 id），实得 ${JSON.stringify(cfg(row, 'agentPreset'))}`)
+          }
+          // 否定项：判决岗 `proposal_file`，其余空表（旧口径"四行 deny 恰为 [workflow, ralph]"已随 0.2.1 作废 ——
+          // 那两样是**结构性没有**（组员预设整个 delegation 组不搬），不需要 deny 名单）
+          const wantDeny = [...(FROZEN.jobMemberDeny[job.id] ?? [])].sort()
+          const gotDeny = [...mark.deny].sort()
+          if (JSON.stringify(gotDeny) !== JSON.stringify(wantDeny)) {
+            push('JOB-MEMBER-DENY', `${job.id}: \`# @member-deny\` 的期望是 ${JSON.stringify(wantDeny)}，实得 ${JSON.stringify(gotDeny)}（只有判决岗该 deny proposal_file；其余三行多写 = 那个岗位提不了候选）`)
+          }
+          for (const dead of FROZEN.memberPresetForbidden) {
+            if (gotDeny.includes(dead)) push('JOB-MEMBER-DENY', `${job.id}: deny 里写了 ${dead} —— 它在组员预设里结构性不存在（委派组整个不搬），写它只会让整行启动失败`)
+          }
+        }
+        // 阳性对照：这个提取器**分得清行**（4 条作业拿到 4 个不同的标记；否则上面那几条就是在瞎绿）
+        const marks = FROZEN.jobs.map((j) => (ann.get(j.id) ?? {}).persona ?? '').map((p) => /【组员:([^】]+)】/.exec(p)?.[1] ?? null)
+        rec.readings.job_role_marks = marks
+        if (new Set(marks.filter(Boolean)).size !== marks.filter(Boolean).length) {
+          push('ROLE-MARK', `提取器把不同的作业行读成了同一个人格标记（${JSON.stringify(marks)}）—— 判据会瞎绿`)
         }
       } else {
         push('SUT-SURFACE-MISSING', 'staged 还没有 agent.cordis.yml —— 角色矩阵无从对账（预期的首跑红）')

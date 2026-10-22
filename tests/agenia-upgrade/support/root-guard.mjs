@@ -30,8 +30,20 @@ export const REAL_PRESET_ROOT = 'E:\\Harness\\presets\\agenia'
 /** 运行根 marker 的文件名（提案 §B1.7）。 */
 export const TEST_ROOT_MARKER = '.agenia-test-root'
 
-/** 运行根必须落在这个父目录之下。 */
-export const RUNS_PARENT = 'E:\\Harness\\.team\\test'
+/**
+ * 合法的运行根父目录（白名单，两格）—— 运行根必须落在其中之一的 `<日期>\_runs\<RUN_ID>` 之下：
+ *   · `.team\test`  —— 测试岗的格子；
+ *   · `.team\retro` —— 技术评审岗的格子（它的作业书要求产物只写 `.team/retro/<日期>/`）。
+ * 🔴 这是**白名单**，不是"哪儿都行"：根守卫存在的理由是"运行根必须在一个**已知的、可清理的**格子里"。
+ *    加一格 = 改这张表；判据在 `guardVerdict` 与 `assertDeletable`。
+ */
+export const RUNS_PARENTS = [
+  'E:\\Harness\\.team\\test',
+  'E:\\Harness\\.team\\retro',
+]
+
+/** 测试岗那一格（用例/证据落点自己按它写的地方仍引这一个）。 */
+export const RUNS_PARENT = RUNS_PARENTS[0]
 
 /** 真实根名单（`dataRootVerdict` 与本模块共用同一份语义）。 */
 export const REAL_ROOTS = [REAL_BRAIN_ROOT, REAL_ROUTE_ROOT]
@@ -171,6 +183,15 @@ export function ensureMarkedDir(dir, { runRoot, runId, kind = 'agenia-test-root'
 }
 
 /**
+ * 这个运行根落在哪一格里（不是任何一格 ⇒ null）。
+ * 纯字符串判定，不摸盘 —— 阳性对照要能在**不做任何写入**的情况下量它（`ENV-01`）。
+ */
+export function runsParentOf(runRoot) {
+  if (runRoot === undefined || runRoot === null || String(runRoot).trim() === '') return null
+  return RUNS_PARENTS.find((parent) => isUnder(runRoot, parent)) ?? null
+}
+
+/**
  * 运行根守卫 —— 开盘前必须过（契约 §6.0 PC 预检 / §9.5）。
  * 一次把所有问题收齐（不是撞到第一个就退出），这样红基线能一眼看出"环境坏了"还是"被测对象没实现"。
  */
@@ -187,8 +208,8 @@ export function guardVerdict(env = process.env, { now = new Date() } = {}) {
     const runRoot = runVerdict.root
     readings.run_root = runRoot
     readings.run_id = path.basename(runRoot)
-    if (!isUnder(runRoot, RUNS_PARENT)) {
-      failures.push({ code: 'E_ROOT_OUTSIDE', detail: `运行根必须落在 ${RUNS_PARENT}\\<日期>\\_runs\\<RUN_ID>\\ 之下：${runRoot}` })
+    if (runsParentOf(runRoot) === null) {
+      failures.push({ code: 'E_ROOT_OUTSIDE', detail: `运行根必须落在 ${RUNS_PARENTS.join(' 或 ')} 之一下的 <日期>\\_runs\\<RUN_ID>\\：${runRoot}` })
     } else if (!/[\\/]_runs[\\/]/.test(runRoot)) {
       failures.push({ code: 'E_ROOT_OUTSIDE', detail: `运行根必须落在 _runs\\<RUN_ID>\\ 这一层：${runRoot}` })
     }
@@ -303,8 +324,8 @@ export function assertDeletable(target, { runRoot } = {}) {
   for (const real of REAL_ROOTS) {
     if (isUnder(canon, real)) failures.push({ code: 'E_ROOT_REAL_BRAIN', detail: `拒绝删除真实根：${canon} ⊆ ${real}` })
   }
-  if (normKey(canon) === normKey(RUNS_PARENT) || /[\\/]_evidence([\\/]|$)/.test(canon)) {
-    failures.push({ code: 'E_ROOT_OUTSIDE', detail: `禁止删 _evidence 或 .team/test 本身：${canon}` })
+  if (RUNS_PARENTS.some((parent) => normKey(canon) === normKey(parent)) || /[\\/]_evidence([\\/]|$)/.test(canon)) {
+    failures.push({ code: 'E_ROOT_OUTSIDE', detail: `禁止删 _evidence 或格子本身（${RUNS_PARENTS.join(' / ')}）：${canon}` })
   }
   if (failures.length > 0) throw new RootGuardError('ROOT-GUARD-REFUSED-DELETE', failures, { target: canon })
   return canon

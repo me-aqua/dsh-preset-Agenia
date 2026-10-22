@@ -14,9 +14,10 @@ import { before, describe, test } from 'node:test'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { ENV, FROZEN } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase, sha256Equal, sha256File, sha256Text, stagingReadings, writeJson } from '../support/evidence.mjs'
+import { caseFail, preflight, problem, runCase, sha256Equal, sha256File, stagingReadings, writeJson } from '../support/evidence.mjs'
 import { canonical, ensureMarkedDir } from '../support/root-guard.mjs'
 import { loadStagedModule, runLocal, stagingExists } from '../support/sut.mjs'
+import { q10Digest } from '../support/verify-recompute.mjs'
 
 before(() => {
   preflight()
@@ -24,7 +25,15 @@ before(() => {
 
 const DAY = '2026-10-14'
 const REPORT_SHA = 'a'.repeat(64)
-const SET_SHA = 'b'.repeat(64)
+/**
+ * `findingsFile()` 里那两条 finding 的**真值**（`F-121`：Q10 复算）。
+ *
+ * Q10（`CONTRACT.md §6.2` / `lib/receipt.mjs` 文件头）= `sha256(JSON.stringify(findings, 键按 UTF-8 字节序升序, 无空白))`。
+ * 作业产物该声明它、校验方复算它 —— 两边是**两份来源**，所以这里写常量而不是拿被测模块算
+ * （`cand-20261016-selfsourced-order-01`）。常量与内容的对账在 REV-03 ① 的 `FIXTURE-SET-SHA`。
+ * 独立复算记录（两门语言各算一遍）：`.team/test/2026-10-22/_evidence/q10-recompute.out.txt`。
+ */
+const SET_SHA = 'aeaf9b2e39eac06b2648c761b13106c82d44b64634e875a6d4729e2494c920f3'
 
 function caseWorkspace(id, name) {
   const runRoot = canonical(process.env[ENV.RUN_ROOT])
@@ -106,7 +115,10 @@ function writeArtifacts(ws) {
   writeFileSync(reportPath, '# 技术评审（夹具）\n\n- F1：（夹具）一条发现\n- F2：（夹具）另一条发现\n', 'utf8')
   const reportSha = sha256File(reportPath)
   const findingsPath = path.join(ws, 'retro', DAY, '技术评审.findings.json')
-  const ff = findingsFile({ report_sha256: reportSha, findings_set_sha256: sha256Text(JSON.stringify([finding('F1'), finding('F2')])) })
+  // 🔴 作业产物写的声明值必须是 **Q10 复算值**（`SET_SHA`，那份 2 条 finding 内容的真值）。
+  //    以前这里写的是 `sha256Text(JSON.stringify(…))` —— 键没排序，是"自报值与内容不符"的一个形状，
+  //    正是 `F-121` 要拒的（`receipt-check` 会读这份文件并自己复算）。
+  const ff = findingsFile({ report_sha256: reportSha })
   writeJson(findingsPath, ff)
   return { reportPath, reportSha, findingsPath, findingsSha: sha256File(findingsPath), findingsSetSha: ff.findings_set_sha256 }
 }
@@ -128,6 +140,18 @@ describe('integration · technical-review (REV-03 / RCP-03)', () => {
         const ws = caseWorkspace('REV-03', 'artifacts')
         const art = writeArtifacts(ws)
         rec.readings.artifacts = { report_sha256: art.reportSha, findings_sha256: art.findingsSha, findings_set_sha256: art.findingsSetSha }
+
+        // ①b 夹具自证（防漂移）：盘上那份产物声明的必须是**它自己内容的** Q10 复算值。
+        //     用测试侧独立实现算（不 import 被测模块）—— 这一格红了是夹具改错了，不是 SUT 坏了。
+        const setShaTruth = q10Digest([finding('F1'), finding('F2')])
+        const declaredOnDisk = JSON.parse(readFileSync(art.findingsPath, 'utf8')).findings_set_sha256
+        rec.readings.fixture_set_sha = { constant: SET_SHA, q10_truth: setShaTruth, declared_on_disk: declaredOnDisk }
+        if (SET_SHA !== setShaTruth) {
+          push('FIXTURE-SET-SHA', `夹具常量 SET_SHA=${SET_SHA.slice(0, 12)}… 与那两条 finding 的 Q10 复算值 ${setShaTruth.slice(0, 12)}… 不符 —— 先改夹具，别去动被测模块`)
+        }
+        if (declaredOnDisk !== setShaTruth) {
+          push('FIXTURE-SET-SHA', `盘上的 findings 产物声明 ${String(declaredOnDisk).slice(0, 12)}…，而它自己内容的 Q10 复算值是 ${setShaTruth.slice(0, 12)}… —— 这份产物自带"自报值与内容不符"，校验方会（也该）拒它`)
+        }
 
         // ② 报告与发现集的哈希必须**各自可独立校验**（改报告一字 ⇒ 锚点对不上）
         const before = sha256File(art.reportPath)

@@ -32,6 +32,16 @@ export const CASE_FILE_SUFFIX = '.test.mjs'
 export const ID_SHAPE = /^[A-Z]+-\d{2}$/
 
 /**
+ * 标题 → 用例 ID（**不是 ID 形状 ⇒ `null`**）。**这一份是唯一口径**：
+ * `discoverCases()` 用它决定"进不进分母"，入口自检表的 SHAPE 格（`support/self-check.mjs`）也用它 ——
+ * 表里再抄一条正则，就等于判据与实现各写一遍，两边一起错的时候谁也看不见。
+ */
+export function caseIdOf(title) {
+  const id = String(title).split(/\s+/)[0]
+  return ID_SHAPE.test(id) ? id : null
+}
+
+/**
  * 被发现的树的根：**由本文件的位置推出来**（不写绝对路径）。
  * ⇒ 换机器、clone 一份、或在一份沙盒副本里跑，分母自动跟着那棵树走。
  */
@@ -214,8 +224,8 @@ export function discoverCases({ root = testsRoot() } = {}) {
       const inFile = []
       const parsed = parseTestCalls(readFileSync(full, 'utf8'))
       for (const call of parsed.calls) {
-        const id = call.title.split(/\s+/)[0]
-        if (ID_SHAPE.test(id)) {
+        const id = caseIdOf(call.title)
+        if (id !== null) {
           cases.push({ id, file: rel, line: call.line })
           inFile.push(id)
         } else {

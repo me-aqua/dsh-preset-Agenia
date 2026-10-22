@@ -38,7 +38,13 @@
 
       （Who you are is defined in the content injected for every turn.
       Follow it exactly; it is your persona, not background information.）
-    suffix: 你在 {{cwd}} 干活。
+    # 🔴 2026-10-19（DSH 0.2.1）：`prefix` / `suffix` 是**提示词模板**，`{{…}}` 在渲染时
+    #    严格解析为**已注册的提示词变量**；0.2.1 注册的只有 `provider` / `model`。
+    #    原来这里写的是 `你在 {{cwd}} 干活。` ⇒ 建会话第一轮直接
+    #    `unknown prompt variable "{{cwd}}" in section "deployment:persona-suffix"`。
+    #    工作目录本来就会由**运行时上下文**（必需项）送给模型，这句不需要变量。
+    #    ⚠️ 别再往这两段里写 `{{cwd}}` / `{{workspace}}` 之类 —— 不注册的变量 = 整轮失败。
+    suffix: 你在当前工作目录里干活。
 
 # ── 每轮注入 ────────────────────────────────────────────────────────────────
 
@@ -79,16 +85,15 @@
     #    「**把 leader 和 guidelines 放两遍吧，第一遍接在开头的 persona 前面，后一次放在记忆后面**」·
     #    「**5的顺序你按照4删掉名册之后再重新给我说下选项**」⇒ 名册（`roster`）已删。
     #    落法：`leader` 与 `work-guidelines` **各两遍** —— 第一遍在开头（先立规矩），
-    #    第二遍在 `memory` / `board` 之后（贴近输出）。
+    #    第二遍在 `memory` 之后（贴近输出）。
     #    名册那点不可替代的信息（说明书在 `team/` 下、文件名是这 9 个）搬进了 `leader.md`
     #    「叫谁走哪条路」那张表下面 —— 它跟着 leader 一起被注入两遍。
-    #    ⚠️ 次序**就是判据**：`.team/test/2026-10-18/F-76` 逐项比这个 8 元组，挪一项就是另一票。
+    #    ⚠️ 次序**就是判据**：`.team/test/2026-10-18/F-76` 逐项比这个 7 元组，挪一项就是另一票。
     #    ⚠️ 改完**要重启 harness 才生效** —— `inject.js` 只在 `apply()` 里读一次 config，它从不读 yml。
     leaderOrder:
       - leader            # 第一遍：先立规矩
       - work-guidelines
-      - memory            # 算出来的：共享记忆库（常识 + 长期记忆）
-      - board             # 算出来的：这一票干到哪了
+      - memory            # 算出来的：共享记忆库（组长：长期记忆；组员：常识 + general 索引）
       - leader            # 第二遍：贴近输出（老板原话「后一次放在记忆后面」）
       - work-guidelines
       - persona           # 她是谁
@@ -149,14 +154,18 @@
     # 名单从这一行读，**代码里不硬编码**；以后加一条委派行，必须同批加进这张表
     # （多一个少一个都会被静态对账抓住）。
     #
-    # 四条一次性作业是 `one-shot`：省略 `run_in_background` 会在**前台等结果** ⇒ 门禁
-    # 要求调用方显式传 `true`；四条固定岗位与裸 `subagent` 是 `continuable`：省略即后台，
-    # 只有显式 `false` 才被拒。
+    # 0.2.1 起委派**天生异步**（调用即返回 `started subagent`，完成后再通知），
+    # `run_in_background` 这个参数**已经不存在** ⇒ 两个模式都是"省略就满足后台要求"，
+    # 差别只剩拒绝面：`one-shot` 拒显式 `false` / `'true'` / `null` / `0`，`continuable` 只拒显式 `false`。
+    # 🔴 别把"必须显式传 `true`"那条门禁加回来 —— 0.2.1 上它会让四条作业**一次都发不出去**
+    #    （理由写在 `inject.js` 的 `subagentBackgroundVerdict` 那几行 🔴 注释里）。
     # 🔴 2026-10-15（执行二 · 批次 I15）：`team_retro` 从这张表里去掉了 —— 那一行已关（下面），
     #    关掉的行不注册那个工具名，名单与"已启用的具名实例"因此重新对齐（9 个）。
     #
-    # 🔴 与 job 行那个禁忌配对看：**不许给 job 行写 `enableRunInBackground`**（那是 config 键，
-    #    写了等于把 `run_in_background` 参数从工具里拿掉）；调用参数叫 `run_in_background`。
+    # 🔴 与 job 行那个禁忌配对看：**不许给 job 行写 `enableRunInBackground`** —— 0.2.1 的
+    #    `dsh-tool-subagent` config schema 里没有这个键（它只属于 bash / pwsh / terminal / workflow 四家），
+    #    写了是"不认识的键"，不是"把参数拿掉"；调用那侧的 `run_in_background` 参数也已经删了。
+    #    `.tools/check-notes.mjs` 与静态对账仍按"不许出现"判 —— 别加回去。
     delegationTools:
       job_memory_judge: one-shot
       job_memory_review: one-shot
@@ -287,17 +296,22 @@
     #    逐字一样，光靠描述教不会她，只能写进提示词。
     # ⚠️ maxDepth: 1 是 2026-09-24 补的：这一行原来没写 ⇒ 默认 3 ⇒ **外聘还能自己再招人**
     #    （跟被关掉的 subagent_fork 同一类风险）。补上之后，外聘也招不动人了。
+    # 🔴 2026-10-19（DSH 0.2.1 迁移）：`persona` 与 `toolFilter` 不再是这一行的配置键 ——
+    #    `tool-subagent` 见到它们**直接报迁移错**，整份预设因此判 broken（菜单里那条被 UI 藏掉）。
+    #    现在一个岗位的"人格 + 工具集"必须是一份**独立的 Agent Preset**，这一行只用
+    #    `agentPreset:` 指过去。下面那行 `# @member-persona` 是这个岗位人格的**来源**：
+    #    `.tools/make-bundle-patch.mjs` 读它生成对应的组员预设 —— **改人格就改这一行**。
+    #    ⚠️ `backgroundMode` 也一起撤了：0.2.1 的委派**本身就是异步的**（调用即返回
+    #    `started subagent`，完成后再通知），没有"前台/后台"这个配置键了。
+    # @member-persona 【组员:hire】你是这个组临时外聘的专家，干完就走。队伍的来龙去脉、干活的次序、以及你自己的岗位说明书会随请求自动注入 —— 开工前先读它们。
     - id: tool-subagent
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: subagent
         modelSelectionSettings: true
-        backgroundMode: continuable
         maxDepth: 1
-        persona: |-
-          【组员:hire】你是这个组临时外聘的专家，干完就走。
-          队伍的来龙去脉、干活的次序、以及你自己的岗位说明书会随请求自动注入 —— 开工前先读它们。
+        agentPreset: agenia-hire
 
     # ⚠️ 2026-09-22 老板拍板：**这一行关掉**（出厂 standard 里它是开的）。
     #
@@ -344,73 +358,58 @@
     #
     # 每个岗位一行。组长按名字叫他们，每个人都有自己那一份说明书。
     #
-    # 加一个岗位，三步：
+    # 加一个岗位，四步（0.2.1 迁移后）：
     #   1. 在 team/ 里放一个 .md（第一行当岗位名字，正文就是说明书）
-    #   2. 在这里复制一行，改三处：id、toolName、persona 里的标记
-    #   3. 如果这个岗位要受限，把它加进上面 officeBound
+    #   2. 在这里复制一行，改三处：id、toolName、agentPreset 的 id
+    #   3. 在那一行上面加 `# @member-persona 【组员:<岗位>】…` —— 生成器靠它建组员预设
+    #   4. 如果这个岗位要受限，把它加进上面 officeBound
     #
     #   ⚠️ toolName 必须写成 team_<岗位名>（岗位名 = 你刚放进去那个 .md 的文件名）。
     #      进度板按这个约定认人（inject.js 里的 TEAM_TOOL）：写成别的形状**不会报错**，
     #      只是那个人永远不出现在板子上。体检脚本有一条断言盯着这个形状。
+    #   ⚠️ agentPreset 的 id 必须与生成器算出来的一致：`agenia-<toolName 去掉前缀、下划线换横线>`。
     #
     # 下面几处是踩过坑的，别顺手改：
-    #   * persona 里那枚【组员:xxx】标记是必需的 —— 少了它，组员会以为自己是组长。
+    #   * `# @member-persona` 里那枚【组员:xxx】标记是必需的 —— 少了它，组员会以为自己是组长。
     #   * maxDepth: 1 —— 组员自己不能再招人，这是结构上的硬拦。
-    #   * backgroundMode: continuable —— **组员默认后台跑**（老板 2026-09-20 拍板）。
-    #     意义是：组员干活的时候，组长还能跟老板说话、还能接着派下一件。
-    #     ⚠️ 它同时削掉了两条结构性保护，替代措施写在 `leader.md`「派工」那一节，
-    #        改这个键之前先读那一节：关卡次序不再由"等结果"强制，评审期间也不再物理锁住组长。
-    #   * toolFilter 里只能写"组员继承得到的"工具名。写一个只属于他自己那一层的名字，
-    #     会让整个岗位启动失败（四条一起挂）。错了会打印可用的完整名单，照着读。
-    #   * ⚠️ 2026-09-22 起 **deny 里不许再写 subagent_fork** —— 上面那一行已经关了，
-    #     它的工具名不再注册，写一个不存在的名字同样会让四个岗位一起挂。
-    #     （这条是推论、没实测；真要再打开那一行，先跑一次挂载测试。）
-    #   * 不要在 toolFilter 里写 pwsh/bash —— 两个平台只注册其中一个，写错那个同样会挂。
-    #     平台差异交给底层处理，别在这里表达。
+    #   * 组员预设**不含 delegation 组** ⇒ 组员没有委派工具（结构上就不可能再招人）。
+    #     0.2.1 的委派一律异步，组长派完就回来 —— 替代措施写在 `leader.md`「派工」那一节。
 
+    # @member-persona 【组员:design】你是这个项目的设计和美工。你的岗位说明书会随请求自动注入 —— 开工前先读它。
     - id: team-design
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: team_design
-        backgroundMode: continuable
         maxDepth: 1
-        persona: '【组员:design】你是这个项目的设计和美工。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
-        toolFilter:
-          deny: [workflow, ralph]
+        agentPreset: agenia-team-design
 
+    # @member-persona 【组员:dev】你是这个项目的实现者。你的岗位说明书会随请求自动注入 —— 开工前先读它。
     - id: team-dev
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: team_dev
-        backgroundMode: continuable
         maxDepth: 1
-        persona: '【组员:dev】你是这个项目的实现者。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
-        toolFilter:
-          deny: [workflow, ralph]
+        agentPreset: agenia-team-dev
 
+    # @member-persona 【组员:test】你是这个项目的测试与流水线负责人。你的岗位说明书会随请求自动注入 —— 开工前先读它。
     - id: team-test
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: team_test
-        backgroundMode: continuable
         maxDepth: 1
-        persona: '【组员:test】你是这个项目的测试与流水线负责人。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
-        toolFilter:
-          deny: [workflow, ralph]
+        agentPreset: agenia-team-test
 
+    # @member-persona 【组员:review】你是这个项目的独立评审。你只审不改。岗位说明书会随请求自动注入 —— 开工前先读它。
     - id: team-review
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: team_review
-        backgroundMode: continuable
         maxDepth: 1
-        persona: '【组员:review】你是这个项目的独立评审。你只审不改。岗位说明书会随请求自动注入 —— 开工前先读它。'
-        toolFilter:
-          deny: [workflow, ralph]
+        agentPreset: agenia-team-review
 
     # 🔴 2026-10-15（执行二 · 批次 I15）：**这一行关掉**（关掉不删，跟 tool-subagent-fork 同一个做法）。
     #
@@ -424,6 +423,9 @@
     # ⚠️ 为什么是关掉而不是删掉：跟 `tool-subagent-fork` 同一条做法 —— 能力行不动，
     #    "关掉 ≠ 删掉"，组合的行数与差集（42 行 / 十项）因此一个都不用改。
     # ⚠️ 关掉之后这个工具名不再注册 ⇒ **别再把它写进任何 toolFilter / delegationTools**。
+    # 🔴 2026-10-19（0.2.1）：这一行的 `persona` / `toolFilter` 是**旧键**，**别原样打开** ——
+    #    先按上面 team_* 的迁移做（加 `# @member-persona`，把 `agentPreset: agenia-team-retro`
+    #    写进 config），否则重新打开会让整份预设判 broken。
     - id: team-retro
       name: '@deepseek-ai/dsh-tool-subagent'
       disabled: true
@@ -442,76 +444,70 @@
     #   · `team/<角色>.md`   = 岗位说明书，**注入**（memberOrder 里那个 charter）
     #   · `job-briefs/<角色>.md` = 这一次的作业书，**不注入**，由组长连活儿一起交过去
     #
-    # 四行的形状是**冻结**的（提案 §B2.2 + 裁定 A4/I1），十项逐条都要对：
+    # 四行的形状是**冻结**的（提案 §B2.2 + 裁定 A4/I1），0.2.1 迁移后是这几项：
     #   * `provider: spawn` · `maxDepth: 1`（作业不许再招人）
-    #   * `backgroundMode: one-shot` —— 一次性作业**默认前台**，所以门禁要求调用方
-    #     显式传 `run_in_background: true`（省略就等着，会把组长卡住）
-    #   * `toolFilter.deny` 的**基线是 `[workflow, ralph]`**；判决岗那一行多一个 `proposal_file`
-    #     （谁多写、为什么，见本段末尾那条）。不许在这里写 `pwsh`/`bash`
-    #     （平台二选一，写错那个会让整行启动失败）
-    #   * **绝不写 `enableRunInBackground`**：它是 config 键，写了等于把 `run_in_background`
-    #     参数从工具里拿掉，"必须显式 true"那条门禁就永远无法满足
-    #   * `persona` 开头那枚【组员:<角色>】是分流用的锚点（`ROLE_MARK`）—— 少了它，
+    #   * `agentPreset: agenia-job-<角色>` —— 人格与工具集住在那一份组员预设里
+    #   * 组员预设的**工具集**自带"不许 workflow / ralph"（那两行本来就在 delegation 组里，
+    #     组员预设整个组都不搬过去 ⇒ 结构性没有，不需要 deny 名单了）
+    #   * 判决岗还要"没有 proposal_file"：由下面 `# @member-deny proposal_file` 表达
+    #     （生成器给那一份的注入器写 `proposalFile: false`）
+    #   * `# @member-persona` 开头那枚【组员:<角色>】是分流用的锚点（`ROLE_MARK`）—— 少了它，
     #     作业会当自己是组长，拿到组长那份注入
     #   * `toolName` 的形状是 `job_<角色下划线形式>`；它**不是** `team_*`，所以
     #     `TEAM_TOOL` 不认它 ⇒ 作业**不进旧进度板**的五关计数（这是有意的，不是漏的）
+    #   * **没有 `backgroundMode` 了**：0.2.1 的委派**一律异步**（调用即返回
+    #     `started subagent`），"一次性作业必须显式后台"那条门禁失去意义 ——
+    #     `inject.js` 的 `subagentBackgroundVerdict` 已同步改成"没有这个参数就放行"。
     #
     # ⚠️ 四行都**开着**（没有 `disabled`）。
-    #    `toolFilter.deny` 的**基线**是 `workflow` + `ralph` 这两个名字；**判决岗那一行多一个**
-    #    `proposal_file` —— 老板 2026-10-17 定的：「判决应该不能提候选，其他这几个应该都可以自己提候选」。
-    #    ⇒ **只有** `tool-job-memory-judge` 这一行能多写它；其余三行多写 = 那个岗位提不了候选，而那不是它的活。
-    #    ⚠️ 被关掉的行里的工具名（例如 `subagent_fork`）**哪里都不许写**：关掉的行不注册那个名字，
-    #    写一个继承不到的名字会让整行启动失败（四条作业一起挂）。
+    #    `proposal_file` 的 deny 只有**判决岗**有 —— 老板 2026-10-17 定的：
+    #    「判决应该不能提候选，其他这几个应该都可以自己提候选」。
+    #    ⇒ **只有** `tool-job-memory-judge` 这一行能写 `@member-deny`；其余三行多写 = 那个岗位提不了候选，而那不是它的活。
+    #    ⚠️ 被关掉的行里的工具名（例如 `subagent_fork`）**哪里都不许写**：关掉的行不注册那个名字。
     #    📌 体检那条判据已经按行推导（`.tools/check-notes.mjs` 的 `expectedJobDeny`），所以这里的话与它同形。
+    # 🔴 `proposal_file` 只出现在**这一行**的 deny 里（2026-10-17 · F-53）。
+    #    老板的话：「判决应该不能提候选，其他这几个应该都可以自己提候选」。
+    #    落法是**结构性**的 —— 它的工具集里根本没有这个工具（不是"调用被拒"）。
+    #    0.2.1 迁移后 `toolFilter` 没了，这条改由下面的 `# @member-deny proposal_file` 表达：
+    #    生成器会给这一份组员预设的注入器写 `proposalFile: false`，那个工具因此**不注册**。
+    #    ⚠️ 其余三行作业与四个岗位行**都不许**写这条；`review` 尤其需要它
+    #    （它没有命令行，不给就只能写草稿求人代转）。
+    # @member-persona 【组员:memory-judge】你是一次性后台作业：记忆判决。你的岗位说明书会随请求自动注入 —— 开工前先读它。
+    # @member-deny proposal_file
     - id: tool-job-memory-judge
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: job_memory_judge
-        backgroundMode: one-shot
         maxDepth: 1
-        persona: '【组员:memory-judge】你是一次性后台作业：记忆判决。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
-        # 🔴 `proposal_file` 只出现在**这一行**的 deny 里（2026-10-17 · F-53）。
-        #    老板的话：「判决应该不能提候选，其他这几个应该都可以自己提候选」。
-        #    落法是**结构性**的 —— 它的工具集里根本没有这个工具（不是"调用被拒"）；
-        #    所以这里不写、工具里也不写任何"认出判决岗再拒绝"的身份判定。
-        #    ⚠️ 其余三行作业与四个岗位行**都不许** deny 它；`review` 尤其需要它
-        #    （它没有命令行，不给就只能写草稿求人代转）。
-        toolFilter:
-          deny: [workflow, ralph, proposal_file]
+        agentPreset: agenia-job-memory-judge
 
+    # @member-persona 【组员:memory-review】你是一次性后台作业：记忆复核。你的岗位说明书会随请求自动注入 —— 开工前先读它。
     - id: tool-job-memory-review
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: job_memory_review
-        backgroundMode: one-shot
         maxDepth: 1
-        persona: '【组员:memory-review】你是一次性后台作业：记忆复核。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
-        toolFilter:
-          deny: [workflow, ralph]
+        agentPreset: agenia-job-memory-review
 
+    # @member-persona 【组员:conversation-review】你是一次性后台作业：会话评审。你的岗位说明书会随请求自动注入 —— 开工前先读它。
     - id: tool-job-conversation-review
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: job_conversation_review
-        backgroundMode: one-shot
         maxDepth: 1
-        persona: '【组员:conversation-review】你是一次性后台作业：会话评审。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
-        toolFilter:
-          deny: [workflow, ralph]
+        agentPreset: agenia-job-conversation-review
 
+    # @member-persona 【组员:technical-review】你是一次性后台作业：技术评审。你的岗位说明书会随请求自动注入 —— 开工前先读它。
     - id: tool-job-technical-review
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: job_technical_review
-        backgroundMode: one-shot
         maxDepth: 1
-        persona: '【组员:technical-review】你是一次性后台作业：技术评审。你的岗位说明书会随请求自动注入 —— 开工前先读它。'
-        toolFilter:
-          deny: [workflow, ralph]
+        agentPreset: agenia-job-technical-review
 
     # ⚠️ 2026-09-28 换版（0.1.7）：这一格原来写着
     #      `- id: workflow-worker-thread / name: '@deepseek-ai/dsh-workflow-worker-thread'

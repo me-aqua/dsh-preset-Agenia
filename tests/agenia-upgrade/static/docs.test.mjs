@@ -5,9 +5,24 @@
  * 就是这么写的）—— 它证明不了文义，只证明那些必须出现的字面量在、必须消失的旧口径不在。
  * 所以每一条断言都写成"指名道姓的针"，而不是"读起来对不对"。
  *
- * ⚠️ **本文件出现活体路径是故意的**：`AGENTS.md` / `README.md` / `.team/leader/now.md`
+ * ⚠️ **本文件出现活体路径是故意的**：`README.md` / `.team/leader/now.md`
  *    不在 `presets/agenia/` 里，staging 不镜像它们 ⇒ 它们只能按项目根读。
- *    预设自己的三份（leader.md / work-guidelines.md / 说明.md）走 staging（被测对象永远是 staging）。
+ *    预设自己的那几份（leader.md / work-guidelines.md / 说明.md）走 staging（被测对象永远是 staging）。
+ *
+ * 🔴 **2026-10-19（`F-110`）—— 8 条判据的靶子搬家，义务一条没删**：
+ *    原来有 3 条钉在"**某一份文件里必须有某个词**"（`leader.md 五关` / `work-guidelines.md 回执` /
+ *    `work-guidelines.md distribution`），另有 5 条钉在 `AGENTS.md`。
+ *    · 前 3 条：`F-76`（2026-10-18）之后注入是**按 `leaderOrder` 把多份 .md 拼成一个整体**贴给模型的，
+ *      **模型不关心是哪一份** ⇒ 靶子改成**注入面**（范围见 `support/docs-surface.mjs`：
+ *      由被测组合的 `leaderOrder` 算出来，**不是全仓任意处**）。
+ *    · **`distribution`** 是我们自己发明的英文词：**文档一次没写过**（`pinned` 钉在会变的东西上不算，
+ *      钉一个不存在的词更不算）⇒ 认中文「四类分布」（英文写法也认，词形不是义务）。
+ *    · 后 5 条：`AGENTS.md` 是 **1 字节占位 + `.gitignore:58` 忽略 + `git ls-files` 不认**，
+ *      载体本身不存在 ⇒ 靶子换成真正承载它的地方：**四条 job 行的载体是组合**（`agent.cordis.yml`
+ *      的 `- id: tool-job-<角色>` 那一行，且必须**开着**），**`job-briefs/` 的载体是注入面**。
+ *      `AGENTS.md` 那两条 `mustNot`（"差异是六项" / "必须正好是上面这六项"）**已删**，
+ *      整条 spec 也一并从 `DOC_SPECS` 去掉 —— **空转的判据不是判据**（`mig-rules-10`），
+ *      且**载体不存在**（`AGENTS.md` 1 字节 + `.gitignore:58` 忽略）。
  */
 import { before, describe, test } from 'node:test'
 import { existsSync, readFileSync } from 'node:fs'
@@ -15,6 +30,7 @@ import path from 'node:path'
 import { FROZEN, PATHS } from '../support/env.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, sha256Text, sha256File, stagingReadings, oracleReadings } from '../support/evidence.mjs'
 import { readStagedText, stagingExists } from '../support/sut.mjs'
+import { CODES as SURFACE_CODES, INJECTED_OBLIGATIONS, injectedSurfaceProblems, jobRowProblems, leaderInjectionSurface, syntheticComposition } from '../support/docs-surface.mjs'
 
 before(() => {
   preflight({ calibrateLive: true })
@@ -36,8 +52,8 @@ const DOC_SPECS = [
       ['run_in_background', '调用参数名（拍板 I1：不许与 config 键 enableRunInBackground 混写）'],
       ['后台', '一律后台这条硬规则'],
       ['一次性', '四作业是一次性、不是常驻编制'],
-      ['五关', '四作业不是五关环节'],
-      ['回执', '技术复盘的组长处置回执职责'],
+      // ⚠️ 「五关」与「回执」**不再钉在这一份上**：那是"注入面里说了没有"那一族
+      //    （`INJECTED_OBLIGATIONS`）—— 同一段注入文字由多份 .md 拼成，模型不关心是哪一份。
     ],
     mustNot: [['enableRunInBackground', '把 config 键当成调用参数写进了给模型的文档（拍板 I1）']],
   },
@@ -47,10 +63,9 @@ const DOC_SPECS = [
     must: [
       ['大阶段', '路线层级：目标 → 大阶段 → 任务 → 五关'],
       ['任务', '路线层级：目标 → 大阶段 → 任务 → 五关'],
-      ['五关', '路线层级：目标 → 大阶段 → 任务 → 五关'],
       ['run_in_background', '后台 guard 的调用参数'],
-      ['回执', '技术回执'],
-      ['distribution', '四类分布的字段/口径指针'],
+      // ⚠️ 「五关」「回执」「distribution」三条搬进注入面那一族（见文件头 🔴）：
+      //    前两条是"哪一份"的问题，第三条钉的是一个**文档从未写过的英文词**。
     ],
     mustNot: [],
   },
@@ -74,21 +89,11 @@ const DOC_SPECS = [
     ],
     mustNot: [],
   },
-  {
-    rel: 'AGENTS.md',
-    root: 'repo',
-    must: [
-      ['tool-job-memory-judge', '能力差异表要按新计数改（4 条 job 行）'],
-      ['tool-job-memory-review', '能力差异表要按新计数改（4 条 job 行）'],
-      ['tool-job-conversation-review', '能力差异表要按新计数改（4 条 job 行）'],
-      ['tool-job-technical-review', '能力差异表要按新计数改（4 条 job 行）'],
-      ['job-briefs', '不注入的作业书目录'],
-    ],
-    mustNot: [
-      ['差异是六项', '能力差异表还写着"差异是六项"（新计数是 10 项 / 42 行）'],
-      ['必须正好是上面这六项', 'onlyInAgenia 的期望还写着"正好是上面这六项"'],
-    ],
-  },
+  // 🔴 `AGENTS.md` **不在这个清单里**（`F-110` · 2026-10-19，第 4 关评审 `B-2` 落盘）：
+  //    原来那 5 条 `must`（4 条 job 行 + `job-briefs/`）已搬到真正承载它们的地方
+  //    （四条作业行 → 组合；`job-briefs/` → 注入面，见下面 `F-110` 那一段），
+  //    剩下那两条 `mustNot`（"差异是六项" / "必须正好是上面这六项"）已删，**整条 spec 一并去掉**：
+  //    **空转的判据不是判据**（`mig-rules-10`），且**载体不存在**（`AGENTS.md` 1 字节 + `.gitignore:58` 忽略）。
   {
     rel: 'AGENTS.local.md',
     root: 'repo',
@@ -98,13 +103,11 @@ const DOC_SPECS = [
   {
     rel: '.team/leader/now.md',
     root: 'repo',
-    // 🔴 2026-10-16（票 `T-TEST-04` · 技术评审 F6）：这一页**每天开工重写** ⇒ 断言**不许钉它今天写了什么**。
-    //    原来钉的是「大阶段」「五关」两个**词** —— 那与"今天她写没写这两个字"等价，红绿**不由代码决定**。
+    // 🔴 这一页**每天开工重写** ⇒ 断言**不许钉它今天写了什么**，也不许钉它的形状/措辞
+    //    （`work-guidelines.md:82` 只写"第一行永远是写下它的那一天"）。形态判据见 `nowFormProblems()`：
+    //    只要求首行有一个**真实存在的 ISO 日期**。
     //    ⚠️ 路线层级那套词**没有丢**：`leader.md` / `work-guidelines.md` 两份**冻结**文档上照样钉着
     //      （见上面两条 spec）—— 从活页上撤掉，不是从判据里撤掉。
-    //    ⇒ 改成钉**形态**：第一行必须是 `# now（YYYY-MM-DD · 一句话）` 那个固定形状
-    //      （队伍规矩：`now.md` 的第一行永远是**它被写下的那一天**）。她随便重写照旧绿；
-    //      把形状写坏（没有标题行 / 没有日期 / 日期不成形）才红。
     must: [],
     mustNot: [],
     form: 'now-first-line',
@@ -112,28 +115,48 @@ const DOC_SPECS = [
 ]
 
 /**
- * `now.md` 的**形态**判据（`T-TEST-04`）—— **只看形状，不看内容**。
+ * `now.md` 的**形态**判据（`T-TEST-04`）—— 钉那条规矩（`work-guidelines.md:82`）：
+ * **「第一行永远是写下它的那一天」**。两条实质：
+ *   ① 首行里有一个 ISO 日期（`YYYY-MM-DD`）—— **形状随意**（`# now（…）` / `# 组长 now · …` / 裸日期都行）；
+ *   ② 那个日期必须**真的存在**（`2026-02-31` / `2026-13-01` 不算 —— 造出来再读回去比年月日）。
  *
- * 队伍规矩（`work-guidelines.md` / `AGENTS.md`）：`now.md` 的**第一行永远是它被写下的那一天**，
- * 格式固定：`# now（YYYY-MM-DD · 一句话说清手头这件事）`。
- * 这条判据与"今天她写了什么"**无关**：日期是哪一天不管、那"一句话"是什么不管；
- * 变的只有形状（有没有那一行、日期成不成 `YYYY-MM-DD`、括号与分隔符在不在）。
+ * 🔴 判据**不许要求日期以外的任何东西**：`work-guidelines.md:82` 只写了"第一行是那一天"，
+ *    "日期之外还得有一句话"没有任何文档承载 ⇒ `# 2026-10-19` 这种**只有日期**的页是**绿**。
+ *    判据自己发明格式/措辞要求 = `T-TEST-09`（把"提及"当"声明"）那个病。
  *
  * @returns {Array<{code:string,message:string}>} 空数组 = 形态合格
  */
 function nowFormProblems(text) {
   const out = []
   const first = String(text ?? '').split(/\r?\n/).find((l) => l.trim() !== '') ?? ''
-  const m = /^#\s*now\s*[（(]\s*(\d{4}-\d{2}-\d{2})\s*[·・]\s*(.+?)\s*[）)]\s*$/.exec(first.trim())
-  if (m === null) {
+  const trimmed = first.trim()
+  if (trimmed === '') {
     out.push({
       code: 'DOC-FORM-NOW-HEAD',
-      message: `now.md 第一行不是 \`# now（YYYY-MM-DD · 一句话）\` 那个固定形状（队伍规矩：第一行永远是它被写下的那一天）。实得：${JSON.stringify(first.trim().slice(0, 120))}`,
+      message: 'now.md 整页是空的（一个非空行都没有）—— 队伍规矩：第一行永远是它被写下的那一天',
     })
     return out
   }
-  const day = Date.parse(`${m[1]}T00:00:00Z`)
-  if (Number.isNaN(day)) out.push({ code: 'DOC-FORM-NOW-DATE', message: `now.md 第一行那个日期不是合法日期：${m[1]}` })
+  const m = /(\d{4})-(\d{2})-(\d{2})/.exec(trimmed)
+  if (m === null) {
+    out.push({
+      code: 'DOC-FORM-NOW-HEAD',
+      message: `now.md 第一行没有 ISO 日期（\`YYYY-MM-DD\`）—— 队伍规矩：第一行永远是它被写下的那一天。`
+        + `**形状不限**，但那个日期必须在。实得：${JSON.stringify(trimmed.slice(0, 120))}`,
+    })
+    return out
+  }
+  // 日期必须是**真的那一天**。
+  // ⚠️ 只 `Date.parse()` 不够：V8 会把 `2026-02-31` **滚成** `2026-03-03`（实测），
+  //    于是"不存在的日期"永远绿着 —— 那又是一条翻不了面的判据。这里做过一遍
+  //    「造出来 → 再读回去，年月日必须一模一样」，`2026-02-31` / `2026-13-01` 都当场红。
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  const da = Number(m[3])
+  const day = new Date(Date.UTC(y, mo - 1, da))
+  if (Number.isNaN(day.getTime()) || day.getUTCFullYear() !== y || day.getUTCMonth() !== mo - 1 || day.getUTCDate() !== da) {
+    out.push({ code: 'DOC-FORM-NOW-DATE', message: `now.md 第一行那个日期不是合法日期：${m[0]}（不存在的日子 / 月份越界）` })
+  }
   return out
 }
 
@@ -182,29 +205,134 @@ describe('static · docs', () => {
           misses,
           stale,
         }
-        // ── 形态判据（`T-TEST-04`）：**不钉内容**，只钉形状 ──────────────────────
-        // 🔴 判据自己也要有阳性对照：`nowFormProblems()` 先在一段**形状坏掉的样例**上跑，
-        //    必须报出问题 —— 否则"形态判据"可能是个永远绿的摆设。
+        // ── 形态判据（`T-TEST-04`）：**不钉内容、不钉形状**，只钉"首行有那一天" ──────────────
+        // 🔴 判据自己也要有阳性对照：每个方向**各量一次**（都在用例内部跑 —— 活体那一页是组长的
+        //    文件，测试岗没有它的写权限）。
+        //   ① **首行没有日期**（含整页空行）⇒ 必须红（`DOC-FORM-NOW-HEAD`）；
+        //   ② **首行有日期、日期之后什么都没有** ⇒ 必须**绿** —— 判据不许要求日期以外的字
+        //      （`work-guidelines.md:82` 没写"还得有一句话"）；日期不存在（`2026-02-31` /
+        //      月份越界 `2026-13-01`）⇒ 必须红（`DOC-FORM-NOW-DATE`）；
+        //   ③ **合法形状**（只要求日期在）⇒ 0 问题 —— 而且**两种形状都得绿**：
+        //      `# now（…）` 与组长实际写的 `# 组长 now · 日期（…）`。只放嘴上不放判据里，等于没放开。
         if (spec.form === 'now-first-line') {
-          // 【怎么翻面】两条对照，**都在用例内部**（活体那一页是组长的文件，测试岗没有它的写权限）：
-          //   ① **内容无关**：同一形状、**完全不同的内容**（另一个日期、另一句话、另一段正文）⇒ 必须 0 问题。
-          //   ② **形状坏掉**：没有 `# now（日期 · 一句话）` 首行 ⇒ 必须报 `DOC-FORM-NOW-HEAD`。
-          const formProbe = nowFormProblems('# 今天的事\n\n- 手头：……\n')
-          const formSameShapeOtherContent = nowFormProblems('# now（2019-01-01 · 一句完全不同的话，跟今天毫无关系）\n\n- 随便什么正文\n- 另一个大阶段：脑暴\n')
+          const caseNoDate = { text: '# 今天的事\n\n- 手头：……\n', want: ['DOC-FORM-NOW-HEAD'] }
+          const caseOnlyDate = { text: '# 2026-10-19\n', want: [] }
+          const caseEmptySlot = { text: '# now（2026-10-19 · ）\n', want: [] }
+          const caseBlank = { text: '\n   \n\n', want: ['DOC-FORM-NOW-HEAD'] }
+          const caseBadDate = { text: '# 2026-02-31 · 不存在的日子\n', want: ['DOC-FORM-NOW-DATE'] }
+          const caseBadMonth = { text: '# 2026-13-01 · 不存在的月份\n', want: ['DOC-FORM-NOW-DATE'] }
+          const caseFreeform = { text: '# 组长 now · 2019-01-01（傍晚 · 一句跟今天毫无关系的话）\n\n- 随便什么正文\n- 另一个大阶段：脑暴\n', want: [] }
+          const caseCanon = { text: '# now（2019-01-01 · 一句完全不同的话，跟今天毫无关系）\n\n- 随便什么正文\n', want: [] }
+          const controls = [
+            ['①没有日期', caseNoDate],
+            ['①整页空行', caseBlank],
+            ['②只有日期、日期之后什么都没有（绿）', caseOnlyDate],
+            ['②旧形状的空槽 `# now（日期 · ）`（只有日期 ⇒ 绿）', caseEmptySlot],
+            ['②日期不存在（2026-02-31）', caseBadDate],
+            ['②月份越界（2026-13-01）', caseBadMonth],
+            ['③合法·组长那种形状', caseFreeform],
+            ['③合法·`# now（…）` 形状', caseCanon],
+          ].map(([name, c]) => ({ name, want: c.want, got: nowFormProblems(c.text).map((p) => p.code) }))
           rec.readings.now_form_control = {
-            same_shape_other_content_problems: formSameShapeOtherContent.map((p) => p.code),
-            broken_sample_problems: formProbe.map((p) => p.code),
-            note: '① 同形状换内容必须 0 问题（内容无关）② 没有 `# now（日期 · 一句话）` 首行必须报 DOC-FORM-NOW-HEAD',
+            controls,
+            note: '①没有日期/整页空 ⇒ DOC-FORM-NOW-HEAD ②只有日期/空槽 ⇒ 0 问题（判据不许要求日期以外的字）'
+              + ' ②日期不存在/月份越界 ⇒ DOC-FORM-NOW-DATE ③合法形状（形状随意）⇒ 0 问题',
           }
-          if (formSameShapeOtherContent.length !== 0) {
-            push('DOC-FORM-CONTROL', `形态判据自控失败：**同形状、换内容**的样例（另一个日期、另一句话）竟然被判出问题 ${JSON.stringify(formSameShapeOtherContent.map((p) => p.code))} —— 那说明这条判据还在钉内容`)
-          }
-          if (formProbe.length === 0) {
-            push('DOC-FORM-CONTROL', '形态判据自控失败：一段**没有** `# now（YYYY-MM-DD · …）` 首行的样例竟然被判成合格 —— 这条判据抓不到它本来要抓的东西')
+          for (const c of controls) {
+            if (JSON.stringify(c.got) !== JSON.stringify(c.want)) {
+              push('DOC-FORM-CONTROL',
+                `形态判据自控失败：${c.name} 期望 ${JSON.stringify(c.want)}，实得 ${JSON.stringify(c.got)}`
+                + '（两个方向必须各自翻面：没日期要红、日期不存在要红；有日期就得绿 —— 不许要求日期以外的字）')
+            }
           }
           const formProblems = nowFormProblems(text)
           rec.readings.docs[spec.rel].form = { kind: spec.form, problems: formProblems.map((p) => p.code) }
           for (const p of formProblems) push(p.code, p.message)
+        }
+      }
+
+      // ── 注入面 / 载体（`F-110`）—— 8 条原来钉在"某一份文件"上的义务 ──────────────────
+      // 🔴 判据问的是「**这件事在模型真的看得见的地方说了吗**」，不是「某一份文件里有没有某个词」。
+      //    范围由**被测组合**的 `leaderOrder` 算出来 —— 不是全仓任意处，也不是这里硬编的名单。
+      const compositionText = stagingExists('agent.cordis.yml') ? readStagedText('agent.cordis.yml') : null
+      const surfaceInfo = leaderInjectionSurface(compositionText)
+      const surfaceDocs = {}
+      for (const rel of surfaceInfo.surface) surfaceDocs[rel] = stagingExists(rel) ? readStagedText(rel) : null
+      if (surfaceInfo.problems.length > 0) {
+        for (const p of surfaceInfo.problems) push(p.code, p.message)
+      } else {
+        for (const p of injectedSurfaceProblems({ docs: surfaceDocs, surface: surfaceInfo.surface }).problems) push(p.code, p.message, p.detail)
+      }
+      const jobVerdict = jobRowProblems({ compositionText, jobs: FROZEN.jobs, docs: surfaceDocs, surface: surfaceInfo.surface })
+      for (const p of jobVerdict.problems) push(p.code, p.message, p.detail)
+
+      // 读数：这一族判据**看的是哪几份**、每一条在哪儿命中 —— 红的时候要能一眼看出靶子对不对
+      rec.readings.injection_surface = {
+        leader_order: surfaceInfo.order,
+        surface: surfaceInfo.surface,
+        computed_keys: FROZEN.staged.computedOrderKeys,
+        parse_warnings: surfaceInfo.warnings,
+        files: Object.fromEntries(surfaceInfo.surface.map((rel) => [rel, {
+          exists: typeof surfaceDocs[rel] === 'string',
+          chars: typeof surfaceDocs[rel] === 'string' ? surfaceDocs[rel].length : null,
+        }])),
+        obligations: INJECTED_OBLIGATIONS.map((ob) => ({
+          id: ob.id,
+          name: ob.name,
+          forms: ob.forms.map((re) => String(re)),
+          said_in: surfaceInfo.surface.filter((rel) => typeof surfaceDocs[rel] === 'string' && ob.forms.some((re) => re.test(surfaceDocs[rel]))),
+        })),
+        note: '搜索范围 = 组合 `leaderOrder` 里那几份 .md（`memory`/`roster`/`board` 是算出来的，不是文件）；'
+          + '**不是全仓任意处** —— 说明.md / README.md / 代码里的同名字样都不算。',
+      }
+      rec.readings.job_rows = {
+        rows: jobVerdict.readings.rows,
+        note: '四条一次性作业的载体 = 组合里 `- id: tool-job-<角色>` 那一行（必须开着）。'
+          + '原来这 4 条钉在 `AGENTS.md` 的能力差异表上（1 字节占位 + .gitignore:58 忽略 ⇒ 永远够不着）。'
+          + '`said_in` 只记录、不判红：调用名那一半由 `leader.md` 那 4 条老针守着（那里更严，能单独翻面）。',
+      }
+
+      // 🔴 自控（`mig-rules-14`：阳/阴两向都要各量一次）。同一个判据函数喂三份**合成注入面**：
+      //   ① 每条义务的 `sample` 都放进注入面 ⇒ **0 问题**（绿的那一头）；
+      //   ② 注入面一份都不说 ⇒ 4 条 `DOC-INJECTED-UNSAID`；
+      //   ③ 那些词**只放进不在注入面的那一份**（`说明.md`，活体里它真有 job-briefs ×3）⇒ **仍然 4 条全红**
+      //      —— 这一格就是"不许退化成全仓任意处找得到"的判据自己。（③ 失败 = 靶子塌成了"到处都算"。）
+      //   另外每条的 `sample` 必须被它自己的 `forms` 命中：样本连自己都命不中，说明这条义务的正则写坏了，
+      //      那时候"永远绿"和"从来没人说过"长得一模一样。
+      //   ⚠️ 自控里的组合用**合成**的（四条行都在、都开着）：真组合被刀改过时不许把自控格带红 ——
+      //      那是树的问题，不是判据翻面能力的证据（`S5`/`S6`/`S9` 第一次跑就是这样）。
+      for (const ob of INJECTED_OBLIGATIONS) {
+        if (!ob.forms.some((re) => re.test(ob.sample))) {
+          push('DOC-SURFACE-CONTROL', `「${ob.name}」的自控样本 ${JSON.stringify(ob.sample)} 连它自己的 forms 都命不中（正则写坏了 ⇒ 这条义务永远绿）`)
+        }
+      }
+      {
+        const synthSurface = surfaceInfo.surface.length > 0 ? surfaceInfo.surface : ['leader.md', 'work-guidelines.md']
+        const synthComposition = syntheticComposition(FROZEN.jobs)
+        const words = INJECTED_OBLIGATIONS.map((ob) => ob.sample).join(' ')
+        const allSaid = Object.fromEntries(synthSurface.map((rel) => [rel, `合成注入面：${words}\n`]))
+        const noneSaid = Object.fromEntries(synthSurface.map((rel) => [rel, '这里什么也没有。\n']))
+        const saidOutside = { ...noneSaid, '说明.md': `合成注入面（不在 leaderOrder 里）：${words}\n` }
+        const judge = (docs) => [
+          ...injectedSurfaceProblems({ docs, surface: synthSurface }).problems,
+          ...jobRowProblems({ compositionText: synthComposition, jobs: FROZEN.jobs }).problems,
+        ].map((p) => p.code).sort()
+        const wantRed = Array(INJECTED_OBLIGATIONS.length).fill(SURFACE_CODES.injectedUnsaid).sort()
+        const controls = [
+          { name: '①每条样本都放进注入面 ⇒ 绿', want: [], got: judge(allSaid) },
+          { name: '②注入面一份都不说 ⇒ 每条各自点名', want: wantRed, got: judge(noneSaid) },
+          { name: '③样本只放在不在注入面的 `说明.md` 里 ⇒ 仍然全红（不算说了）', want: wantRed, got: judge(saidOutside) },
+        ]
+        rec.readings.injection_control = {
+          surface: synthSurface,
+          controls,
+          note: '自控用**合成**组合（四条 job 行都在、都开着）——真组合被刀改过时不许把自控格带红。'
+            + '③ 是"靶子只认注入面"的那一格：同一批词放进非注入面的一份，判据不许变绿。',
+        }
+        for (const c of controls) {
+          if (JSON.stringify(c.got) !== JSON.stringify(c.want)) {
+            push('DOC-SURFACE-CONTROL', `注入面判据自控失败：${c.name} —— 期望 ${JSON.stringify(c.want)}，实得 ${JSON.stringify(c.got)}`)
+          }
         }
       }
 

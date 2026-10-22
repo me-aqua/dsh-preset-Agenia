@@ -32,6 +32,13 @@
  *     例：`init-real` 的「根必须不存在」那条一次性保护 ⇒ 纯函数注入 `exists:true` 来钉，
  *     绝不许拿盘上那个真根去撞。
  *   · 🔴 万一哪天真跑上了：**立即停测、如实报现场、别自己清理**（清理才是把它写坏的那一下）。
+ *
+ * ★ **端到端正例打在哪棵树上**（2026-10-22 补，读 ③b 那一段时要先知道这件事）：
+ *   它打的**不是** staging 里那份 preset（那是开发副本、盘上没有 `.runtime` ⇒ 以前只能是 HOLD），
+ *   而是 `support/installed.mjs` 在**运行根里**拷出来的一份"装好的预设"——
+ *   靶子仍是副本**自己算出来的** `REAL_BRAIN_ROOT`，数据段由 `support/min-runtime.mjs` 摆在它上面。
+ *   ⇒ 本节那条死命令（真实库只许跑只读 op）**一个字没松**：这条正例跑的三个 op 全是只读，
+ *     而且它自己量前后树哈希；`presets/agenia` 与 `.tools/_staging` 都不在它的写面上。
  * ══════════════════════════════════════════════════════════════════════════════════════════
  */
 import { before, describe, test } from 'node:test'
@@ -53,6 +60,17 @@ import {
 } from '../support/evidence.mjs'
 import { canonical, driveOf, ensureMarkedDir, isUnc, REAL_BRAIN_ROOT, REAL_ROUTE_ROOT } from '../support/root-guard.mjs'
 import { brainPaths, loadStagedModule, routePaths, runBrain, runCli, runRoute, stagingExists, writeFixture } from '../support/sut.mjs'
+// 端到端正例的两块料（来历见各自的文件头）：
+//   · `installed.mjs` —— 把 staged preset 拷成"装好的预设"（落在运行根里，staging 一个字节不动）
+//   · `min-runtime.mjs` —— 那份最小 `.runtime`（数据段）的声明 / 落盘 / 自洽校验 / 抽走与还原
+import { installedPreset, loadInstalledModule } from '../support/installed.mjs'
+import {
+  MIN_RUNTIME,
+  materializeMinimalRuntime,
+  quarantineRuntime,
+  restoreQuarantinedRuntime,
+  verifyMinimalRuntime,
+} from '../support/min-runtime.mjs'
 
 before(() => {
   preflight()
@@ -691,32 +709,158 @@ describe('integration · data-root (DR)', () => {
         expectReject(label, runRealMode(label, { op: 'entry-count', testMode: false, extra: ['--data-root', nonReal, '--real-mode'] }, true), 'E_ROOT_OUTSIDE')
       }
 
-      // ★ 正例（只读 op）：开关真能把门打开。
+      // ★ 正例（端到端）：开关真能把门打开 —— 打在一个**装好的**预设上。
       //   没有这一条，上面那三条"被拒"就可能是"命令坏了蒙对"（§9.5 第 1 条：正例必须存在）。
-      //   `entry-count` 是**只读**的 ⇒ 真实库一个字节都不会变（死命令允许的正是这一类）。
-      //   🔴 `T-TEST-02`：靶子 = **SUT 自己那个**真实根，而它在**开发副本（staging）里不存在**
-      //      （staging 不是装好的库）⇒ 这一格**判不了**：不是绿、也不是红，是 **HOLD**（第三态，明写）。
-      //      「开关真能把门打开」那半由**纯函数正例**（`REAL-MODE-VERDICT` 的「真实根 + 开关（正例）」）覆盖；
-      //      这里要补的是**端到端**那一格，它需要盘上真有一个装好的库 —— 换到装好的位置上它自己会绿。
-      //      🔴 **不许**为了让它绿而在 staging 里造一个假 `.runtime`（那会把后续每一跑都污染）。
+      //   `entry-count` / `state-read` / `report-read` 全是**只读** op ⇒ 库一个字节都不会变
+      //   （死命令允许的正是这一类；这一格自己量前后树哈希，见下面的 `REAL-MODE-WROTE`）。
+      //
+      //   🔴 `T-TEST-02` 那条口径不变：靶子还是 **SUT 自己算出来的** `REAL_BRAIN_ROOT`
+      //      （`<预设目录>/.runtime`），**不由用例写死**。旧版打的是 staging 里那份 preset，
+      //      而 staging 是**开发副本**、盘上没有 `.runtime` ⇒ 只能是第三态 HOLD
+      //      （`REAL-MODE-POSITIVE-VACUOUS`：不是绿、也不是红，是判不了）。
+      //      文件头那条死命令又不许在 staging 里造一个假库（会污染后续每一跑）。
+      //   ⇒ 两件事同时成立时的解法只有一个：**换到"装好的位置"上**（本文件那句
+      //      "换到装好的位置上它自己会绿"就是这么写的）：
+      //      ① `support/installed.mjs` 把 staged preset 整棵拷进**运行根**（装好的预设）；
+      //      ② `support/min-runtime.mjs` 把最小数据段摆在**副本自己算出来的那个 `.runtime`** 上；
+      //      ③ 跑**副本的** `bin/agenia-brain.mjs`：真子进程、真参数、真根判定、真 op。
+      //      staging 本体与 `presets/agenia` 本体：一个字节都不动。
+      //
+      //   🔴 这一格**不只判"exit 0"**：读数必须与盘上那份文件对得上（版本 / 条目数 / 字符数 /
+      //      `day` / `derived:false`），**而且格里要把夹具抽走一次**（改名搬开 ⇒ 该报 `E_DATA_MISSING`）——
+      //      否则"开关打开了"这句话，一个恒定返回 ok 的实现也能满足（`mig-rules-14`）。
+      //      抽走之后**必须放回去**，并且树哈希要与抽走前逐字节相同。
       {
-        const label = '给了开关 · 真实根 · 只读 op（正例）'
-        if (!existsSync(sutRealBrain)) {
-          caseHold(rec, 'REAL-MODE-POSITIVE-VACUOUS',
-            `SUT 自己那个真实根 ${sutRealBrain} **不在盘上** ⇒ 端到端正例判不了（staging 是开发副本、不是装好的库）。`
-            + '**这一格不是绿**；开关那半由纯函数正例覆盖。')
-          realModeResults[label] = { held: `SUT 真实根不在盘上：${sutRealBrain}` }
+        const label = '给了开关 · 装好的预设 · 只读 op（正例）'
+        const installed = installedPreset('DR-01', 'installed', process.env)
+        const installedPaths = await loadInstalledModule(installed, 'lib/paths.mjs', ['REAL_BRAIN_ROOT'])
+        const installedRealBrain = installedPaths.mod?.REAL_BRAIN_ROOT ?? null
+        const expectRealBrain = path.join(installed.presetRoot, '.runtime')
+        rec.readings.installed_preset = {
+          scenario_dir: installed.dir,
+          preset_root: installed.presetRoot,
+          source: installed.source,
+          source_runtime_present: installed.source_runtime_present,
+          real_brain: installedRealBrain,
+          expect_real_brain: expectRealBrain,
+        }
+        realModeResults[label] = { preset_root: installed.presetRoot, real_brain: installedRealBrain }
+
+        if (installedPaths.mod === null) {
+          push('INSTALLED-SURFACE', `装好的副本里 lib/paths.mjs 载不进来（${installedPaths.errors.join(' / ')}）⇒ 端到端正例没有靶子`)
+        } else if (typeof installedRealBrain !== 'string' || installedRealBrain === '') {
+          push('INSTALLED-REAL-ROOT', '装好的副本里 lib/paths.mjs 没有导出 REAL_BRAIN_ROOT ⇒ 端到端正例没有靶子')
+        } else if (canonical(installedRealBrain) !== canonical(expectRealBrain)) {
+          push('INSTALLED-REAL-ROOT', `副本里的真实脑根必须**跟着预设目录走**（F4 的不变量）：实得 ${installedRealBrain}，应为 ${expectRealBrain}`)
+        } else if (!canonical(installedRealBrain).startsWith(canonical(installed.dir))) {
+          push('INSTALLED-REAL-ROOT', `副本算出来的真实脑根跑出了运行根（${installedRealBrain} ⊄ ${installed.dir}）—— 夹具绝不许落在运行根之外`)
         } else {
-          const res = runRealMode(label, { op: 'entry-count', testMode: false, extra: ['--data-root', sutRealBrain, '--real-mode'] }, true)
-          if (res !== null) {
-            if (res.exit_code !== 0) {
-              push('REAL-MODE-POSITIVE', `${label} 必须成功（开关真能把门打开），实得 exit=${res.exit_code} / ${res.json?.error?.code ?? '(无码)'}：${res.stdout.trim().slice(0, 240)}`)
-            } else if (res.json?.ok !== true) {
-              push('REAL-MODE-POSITIVE', `${label} 的 stdout 信封必须 ok=true，实得 ${JSON.stringify(res.json)?.slice(0, 240)}`)
-            } else {
-              realModeResults[label].count = res.json.count ?? null
-              realModeResults[label].snapshot = res.json.snapshot ?? null
+          // ① 夹具落盘 + 自洽（盘上那棵树 vs 声明 vs 测试侧独立重算，三者对不上先在这里点名）
+          const made = materializeMinimalRuntime(installedRealBrain, MIN_RUNTIME)
+          const checked = verifyMinimalRuntime(installedRealBrain, MIN_RUNTIME)
+          rec.readings.min_runtime = {
+            root: installedRealBrain,
+            files: made.files.map((f) => f.rel),
+            file_count: made.files.length,
+            dirs: made.dirs,
+            verify_ok: checked.ok,
+            verify_problems: checked.problems,
+            readings: checked.readings,
+          }
+          realModeResults[label].fixture = { root: installedRealBrain, file_count: made.files.length, dir_count: made.dirs.length, verify_ok: checked.ok }
+          for (const p of checked.problems) push(p.code, p.detail)
+
+          // 只读 op 一律走**副本的** CLI；`--real-mode` 与 `AGENIA_TEST_RUN_ROOT` 互斥 ⇒ 必须剥。
+          const runInstalled = (op, inFile) => runCli('agenia-brain.mjs', {
+            op,
+            dataRoot: installedRealBrain,
+            inFile,
+            testMode: false,
+            extra: ['--real-mode'],
+          }, { env: process.env, stripEnv: [ENV.RUN_ROOT], cliPath: installed.brainCli })
+
+          const treeBefore = treeHash(installedRealBrain)
+          const want = MIN_RUNTIME.expect
+
+          // ② `entry-count`：开关真能把门打开，且读出来的是**盘上那份文件**里的数
+          const pos = runInstalled('entry-count')
+          realModeResults[label].entry_count = {
+            exit_code: pos.exit_code,
+            code: pos.json?.error?.code ?? null,
+            snapshot: pos.json?.snapshot ?? null,
+            count: pos.json?.count ?? null,
+            chars: pos.json?.chars ?? null,
+          }
+          if (pos.exit_code !== 0 || pos.json?.ok !== true) {
+            push('REAL-MODE-POSITIVE', `${label} 必须成功（开关真能把门打开），实得 exit=${pos.exit_code} / ${pos.json?.error?.code ?? '(无码)'}：${pos.stdout.trim().slice(0, 240)}`)
+          } else {
+            if (pos.json.snapshot !== want.version) push('REAL-MODE-POSITIVE-READING', `${label} 报的快照版本 = ${JSON.stringify(pos.json.snapshot)}，夹具里是 ${want.version}`)
+            if (pos.json.count !== want.count) push('REAL-MODE-POSITIVE-READING', `${label} 报的条目数 = ${JSON.stringify(pos.json.count)}，盘上那份快照里是 ${want.count} 条`)
+            if (pos.json.chars !== want.chars) push('REAL-MODE-POSITIVE-READING', `${label} 报的字符数 = ${JSON.stringify(pos.json.chars)}，重算是 ${want.chars}`)
+            const wantTotals = { count: want.count, chars: want.chars }
+            if (JSON.stringify(pos.json.totals) !== JSON.stringify(wantTotals)) {
+              push('REAL-MODE-POSITIVE-READING', `${label} 报的 totals = ${JSON.stringify(pos.json.totals)}，盘上那份快照声明的是 ${JSON.stringify(wantTotals)}`)
             }
+          }
+
+          // ③ `state-read`：读到的**那一天**只能来自盘上的 `current-day` 指针 ——
+          //    运行根注入的时钟是 `MIN_RUNTIME.clockDay`（另一个日子），所以"读对了日子"这件事分得开。
+          const st = runInstalled('state-read')
+          realModeResults[label].state_read = { exit_code: st.exit_code, code: st.json?.error?.code ?? null, day: st.json?.day ?? null, day_source: st.json?.day_source ?? null }
+          if (st.exit_code !== 0 || st.json?.ok !== true) {
+            push('REAL-MODE-POSITIVE-READING', `${label}（state-read）必须成功，实得 exit=${st.exit_code} / ${st.json?.error?.code ?? '(无码)'}：${st.stdout.trim().slice(0, 240)}`)
+          } else {
+            if (st.json.day !== MIN_RUNTIME.day) push('REAL-MODE-POSITIVE-READING', `${label}（state-read）的 day = ${JSON.stringify(st.json.day)} ≠ 夹具里的 ${MIN_RUNTIME.day}`)
+            if (st.json.day_source !== 'pointer') push('REAL-MODE-POSITIVE-READING', `${label}（state-read）的 day_source = ${JSON.stringify(st.json.day_source)}，应是 pointer（否则"读到了那一天"这句话说不清）`)
+            if (st.json.state?.phase !== 'unclaimed') push('REAL-MODE-POSITIVE-READING', `${label}（state-read）的 phase = ${JSON.stringify(st.json.state?.phase)}，夹具里是 unclaimed`)
+          }
+
+          // ④ `report-read`：`derived:false` 只可能在"报告文件真的在盘上"时出现 —— 那正是夹具里那份壳。
+          const rep = runInstalled('report-read')
+          realModeResults[label].report_read = { exit_code: rep.exit_code, code: rep.json?.error?.code ?? null, day: rep.json?.day ?? null, derived: rep.json?.derived ?? null }
+          if (rep.exit_code !== 0 || rep.json?.ok !== true) {
+            push('REAL-MODE-POSITIVE-READING', `${label}（report-read）必须成功，实得 exit=${rep.exit_code} / ${rep.json?.error?.code ?? '(无码)'}：${rep.stdout.trim().slice(0, 240)}`)
+          } else {
+            if (rep.json.day !== MIN_RUNTIME.day) push('REAL-MODE-POSITIVE-READING', `${label}（report-read）的 day = ${JSON.stringify(rep.json.day)} ≠ ${MIN_RUNTIME.day}`)
+            if (rep.json.derived !== false) push('REAL-MODE-POSITIVE-READING', `${label}（report-read）报 derived=${JSON.stringify(rep.json.derived)} —— 报告文件在盘上时必须是 false（true = 它现算的，那份壳没被读）`)
+            if (rep.json.report?.snapshot !== want.version) push('REAL-MODE-POSITIVE-READING', `${label}（report-read）里 report.snapshot = ${JSON.stringify(rep.json.report?.snapshot)} ≠ ${want.version}`)
+          }
+
+          // ⑤ 零写入：三个只读 op 跑完，库的树哈希必须与跑之前逐字节相同
+          const treeAfterReads = treeHash(installedRealBrain)
+          rec.readings.min_runtime.after_reads = { exists: treeAfterReads.exists, count: treeAfterReads.count, sha256: treeAfterReads.sha256 }
+          if (treeAfterReads.sha256 !== treeBefore.sha256) {
+            push('REAL-MODE-WROTE', `只读 op 改动了库（${treeBefore.count} 份/${String(treeBefore.sha256).slice(0, 16)} → ${treeAfterReads.count} 份/${String(treeAfterReads.sha256).slice(0, 16)}）—— 只读 op 一个字节都不许写`)
+          }
+
+          // ⑥ 格内阳性对照：把夹具**抽走**，同一条命令必须失败（且必须是"数据不在"那种失败）。
+          //    没有这一步，"exit 0"可以由一个不看盘、恒定返回 ok 的实现满足。
+          let quarantined = null
+          try {
+            quarantined = quarantineRuntime(installedRealBrain)
+            const gone = runInstalled('entry-count')
+            realModeResults[label].ablation_without_runtime = {
+              moved_to: quarantined.movedTo,
+              exit_code: gone.exit_code,
+              code: gone.json?.error?.code ?? null,
+            }
+            if (gone.exit_code === 0) {
+              push('REAL-MODE-POSITIVE-FIXTURE', '把 `.runtime` 整个搬走之后 entry-count 仍然 exit 0 ⇒ 这个读数不是从那个目录里读出来的（夹具不承重）')
+            } else if ((gone.json?.error?.code ?? null) !== 'E_DATA_MISSING') {
+              push('REAL-MODE-POSITIVE-FIXTURE', `搬走 .runtime 之后应报 E_DATA_MISSING，实得 ${gone.json?.error?.code ?? '(无码)'} / exit=${gone.exit_code}：${gone.stdout.trim().slice(0, 240)}`)
+            }
+          } finally {
+            if (quarantined !== null) restoreQuarantinedRuntime(quarantined)
+          }
+          const back = runInstalled('entry-count')
+          realModeResults[label].restored_exit_code = back.exit_code
+          if (back.exit_code !== 0) {
+            push('REAL-MODE-POSITIVE-RESTORE', `夹具放回原位之后这一格必须重新成功，实得 exit=${back.exit_code} / ${back.json?.error?.code ?? '(无码)'}：${back.stdout.trim().slice(0, 240)}`)
+          }
+          const treeRestored = treeHash(installedRealBrain)
+          rec.readings.min_runtime.after_restore = { exists: treeRestored.exists, count: treeRestored.count, sha256: treeRestored.sha256 }
+          if (treeRestored.sha256 !== treeBefore.sha256) {
+            push('REAL-MODE-POSITIVE-RESTORE', `夹具搬走→放回之后库的树哈希变了（${String(treeBefore.sha256).slice(0, 16)} → ${String(treeRestored.sha256).slice(0, 16)}）—— 还原不是逐字节的`)
           }
         }
       }

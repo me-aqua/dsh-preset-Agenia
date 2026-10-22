@@ -85,7 +85,7 @@ function proposalError(code, message) {
 /** `E_PROPOSAL_DUPLICATE` 的报文（纯函数与主路**同一处**拼 —— 两条路的报错必须长一样）。 */
 function duplicateMessage(source, prior) {
   return `${PROPOSAL_FILE_CODES.DUP}: 重复 —— 同一句出处（${source}）已经用同一段正文提过，`
-    + `候选池里已有那一行是 ${String(prior?.imported_id)}（第 ${String(prior?.seq)} 行）。`
+    + `池子里已有那一条是 ${String(prior?.imported_id)}（池子编号 ${String(prior?.seq)}：池内单调递增、清池后不回落、不是行号）。`
     + '换了正文再来会收（判重键 = 出处 + sha256(text)）。'
 }
 
@@ -197,6 +197,7 @@ function atOf(at) {
  * @param {{root: string, at?: string|Date, day?: string}} options `root` = **脑根**（`<内容根>/.runtime`）；
  *   `at` / `day` 只为可复跑的用例准备，生产留空 = 读时钟
  * @returns {Promise<object>} `{ok, proposal_id, entry_id, pool_path, seq, content_sha256, sha256, source, kind, imported_at}`
+ *   （`seq` = **池子编号**：池内单调递增、清池后不回落、不是行号）
  */
 export async function proposalFileRun(args, options = {}) {
   // `options` 是**入参的第二半**，所以它坏了也走四个码之一 —— 不许抛裸 `TypeError`
@@ -223,7 +224,8 @@ export async function proposalFileRun(args, options = {}) {
     sha256: pre.sha256,
     day,
     at,
-    // payload 要在锁里才拼得出来：`entry.id` 的号 = 池子里第几行，而那个数只有锁里才算得准。
+    // payload 要在锁里才拼得出来：`entry.id` 的号 = **池子编号**（池内单调递增、清池后不回落、不是行号），
+    // 而那个数只有锁里才算得准 —— 锁外先算一个，另一个进程随时会把它抢走。
     payloadOf: ({ entry_id: entryId }) => ({ entry: { id: entryId, type: pre.kind, text: args.text } }),
   })
 
@@ -231,9 +233,18 @@ export async function proposalFileRun(args, options = {}) {
     if (appended.code === PROPOSAL_FILE_CODES.DUP) {
       throw proposalError(PROPOSAL_FILE_CODES.DUP, duplicateMessage(args.source, appended.existing))
     }
+    // 🔴 发号现在要读完 `pool + archive + judged` 三本账才敢发（发重号的代价比发不出号大）。
+    //    所以"盘上有一行读不出号"会把**今天所有候选**一起堵住 —— 而提的人最容易想到的修法
+    //    （"我提一条维护案去把它修好"）正好也被堵住：维护案自己也要先发一次号。
+    //    ⇒ 这一支必须把**唯一可行的那条路**写在报文里（模型只读得到 message）。
+    const corrupt = String(appended.code) === 'E_DATA_CORRUPT'
     throw proposalError(
       PROPOSAL_FILE_CODES.IO,
-      `${PROPOSAL_FILE_CODES.IO}: 候选池写不进去（${String(appended.code)}）—— ${String(appended.message)}`,
+      `${PROPOSAL_FILE_CODES.IO}: 候选池写不进去（${String(appended.code)}）—— ${String(appended.message)}`
+        + (corrupt
+          ? '。🔴 修法只有一条：**手改盘上那一行**（补 `imported_id`，或删掉半行/坏行）——'
+            + '**提维护案也不行**：维护案也要先发一次号，而发号正是被那一行堵住的那一步'
+          : ''),
     )
   }
 

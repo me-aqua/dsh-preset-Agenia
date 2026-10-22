@@ -423,14 +423,33 @@ function opSnapshotList({ root }) {
   }
 }
 
+/**
+ * `entry-count`：库里现在有多少条、多少字，以及**参考线**与**超出量**。
+ *
+ * 🔴 `capRef` / `overBy` 的唯一来源是 `capacityVerdict()`（F-78）：本层既不写死那条参考线，
+ *    也不自己再算一遍 `max(0, chars - cap)` —— 参考线一旦散成两处，改一处忘另一处就会给出
+ *    互相对不上的读数。两个字段直接取同一个判定返回的 `capRef.chars` / `overBy.chars`。
+ *
+ * 字段是**字符口径的标量**（`capRef` 是那条线本身那个数，不是 `{count, chars}` 那份对象）：
+ * 复核要的是「线在哪、超了多少」两个数。
+ *
+ * 判定给不出读数（当前快照里某一条不合格）时 **op 当场红** —— 半个答案比红更坏：
+ * 那时 `chars` 还能量、`overBy` 却无从算起。
+ */
 function opEntryCount({ root }) {
   const read = SNAP.readCurrentSnapshot(root)
   if (!read.ok) throw cliError(read.code, read.message, { path: read.path })
   const entries = read.snapshot.entries ?? []
   const counts = SNAP.currentCounts(root)
+  const capacity = capacityVerdict(entries)
+  if (!capacity.ok) {
+    throw cliError('E_DATA_CORRUPT', `当前快照 ${read.version} 里有一条不合格，量不出参考线读数：${capacity.reason}`, { path: read.path, version: read.version })
+  }
   return {
     count: counts.count,
     chars: counts.chars,
+    capRef: capacity.capRef.chars,
+    overBy: capacity.overBy.chars,
     distribution: read.snapshot.distribution,
     totals: read.snapshot.totals,
     snapshot: read.version,
@@ -631,9 +650,9 @@ function opJudgeStart({ root, payload }) {
  *
  * 拒绝次序是**刻意**的（STO-03 钉的就是第一条）：
  *   token → generation/attempt → phase → 常识三处核对 → 基准快照（CAS）→ 维护案资格 → 容量/op 形状
- *   → 「已判」索引的 id 清单 → 落盘。
- * 前八条一条都不许写盘 —— **包括最后那条**（T-MEM-10）：它在 ⑦ 发布**之前**跑完，所以"拒"永远不会
- * 留下"快照已发布、索引没追加"（那是 ⑧ 的 `E_TXN_IO`，且**已发布的事务不回滚**）。
+ *   → 「已判」索引的 id 清单 / 维护案的处置有没有着落 → 落盘。
+ * 前八条一条都不许写盘 —— **包括最后那条**（T-MEM-10 / 维护案的 verdict 来源）：它都在 ⑦ 发布**之前**跑完，
+ * 所以"拒"永远不会留下"快照已发布、索引没追加"（那是 ⑧ 的 `E_TXN_IO`，且**已发布的事务不回滚**）。
  */
 function opJudgeCommit({ root, payload }) {
   const at = S.nowIso()
@@ -722,13 +741,20 @@ function opJudgeCommit({ root, payload }) {
   const version = SNAP.nextVersion(current.ok ? current.version : 'v0')
   for (const row of archived) if (row.to === null && row.disposition !== 'merged') row.to = version
 
+  // `accepted_maintenance_ids` = **真的被处置过的**那些条目（快照里 `archived` 的来路就是它）。
+  // `action: null` 的裁决什么都没动 ⇒ 它的 `target_id` 不是"被维护过的条目"，不许记进来
+  // （记了就与 `archived` 对不上：那一条既没被改、也没被退休/合并，却出现在"被处置"清单里）。
+  const acceptedMaintenanceIds = decisions
+    .filter((d) => d?.action !== null && d?.action !== undefined)
+    .map((d) => d?.target_id)
+    .filter((id) => typeof id === 'string')
   const snapshot = SNAP.buildSnapshot({
     version,
     parentVersion: baseVersion,
     entries: patched,
     commonSenseSha256: cs.sha256,
     acceptedProposalIds: Array.isArray(payload?.accepted) ? payload.accepted : [],
-    acceptedMaintenanceIds: decisions.map((d) => d?.target_id).filter((id) => typeof id === 'string'),
+    acceptedMaintenanceIds,
     archived,
     generatedAt: at,
   })
@@ -746,12 +772,15 @@ function opJudgeCommit({ root, payload }) {
   }
   // ⑦ 发布**之前**（就在下面 `publishUpdate` 上面一行）：「已判」索引该写哪几行（T-MEM-07 §2.3 的行集合）
   //    —— **纯计算，但它的拒绝就在这里发生**。
-  //    `judgedRowSpecsOf` 读两处 id 清单：`state.frozen_proposal_ids`（盘上状态）与 `payload.accepted`
-  //    （调用方入参），任何一项不是非空字符串 ⇒ 整体拒（盘上的坏 `E_DATA_CORRUPT` / 入参坏 `E_ARG_SCHEMA`）。
+  //    `judgedRowSpecsOf` 读三处来源：`state.frozen_proposal_ids`（盘上状态）· `payload.accepted`（本轮接受的**提案**）
+  //    · `payload.maintenance_decisions`（本轮**处置过哪些维护案**、处置成什么）。
+  //    两个 id 清单里任何一项不是非空字符串 ⇒ 整体拒（盘上的坏 `E_DATA_CORRUPT` / 入参坏 `E_ARG_SCHEMA`）；
+  //    冻结清单里有维护案、而裁决里没有任何一条指向它 ⇒ 也拒（`E_ARG_SCHEMA`）——
+  //    它没有裁决就记不出 verdict：写 `rejected` 是"把没处置说成被拒"，写 `accepted` 是"说成生效"。
   //    🔴 **顺序就是判据**：事务一发布就不回滚（见 ⑧ 的 `E_TXN_IO`），在发布之后才拒，
   //    留下的正是"快照已发布、索引没追加"那半截状态。
   //    本函数是纯的（不写盘）⇒ 提前到这里没有副作用，拒绝时三个落点一个字节都不会动。
-  const judgedSpecs = judgedRowSpecsOf({ state, accepted: payload?.accepted, day, snapshot: version, at })
+  const judgedSpecs = judgedRowSpecsOf({ state, accepted: payload?.accepted, decisions, day, snapshot: version, at })
 
   const published = SNAP.publishUpdate(root, { snapshot, report, day, nextState })
   S.appendAudit(root, {
@@ -830,18 +859,34 @@ function uniqueIdsOf(records, guard = {}) {
   return out
 }
 
+/** 维护案的 id 前缀 —— 池子行 / 快照条目的号只由 `lib/proposals.mjs::poolIdOf` 拼：`<kind>-<YYYYMMDD>-<seq4>`。 */
+const MAINTENANCE_CASE_PREFIX = 'maintenance-'
+
 /**
  * 这一轮该往「已判」索引写哪几行（**纯函数**，不写盘；形状见契约 §2.2/§2.3）。
  *
  * 行集合 = 本轮冻结清单（`state.frozen_proposal_ids`，按它的顺序）
  *          + `payload.accepted` 里不在清单里的 id（按 accepted 的顺序排在后面），
- * 同一个 id 只出一行（首次出现的位置）。`verdict = accepted` ⇔ id ∈ `payload.accepted`。
+ * 同一个 id 只出一行（首次出现的位置）。
  *
- * 为什么必须补上 `payload.accepted` 那一段：报告的 `accepted_proposal_ids` 直接取自它
- * （`lib/snapshot.mjs::buildSnapshot`）—— 不补，"索引 = 报告的派生"就不是恒等式（V9）。
+ * `verdict` **按这一条是什么，各取各的来源** —— 一张清单只说得了它自己那一类：
+ *   · 普通提案（`proposal-…`）：`accepted` ⇔ id ∈ `payload.accepted`。这份清单是判决方**这一轮接受的全部提案**
+ *     （报告的 `accepted_proposal_ids` 直接取自它），冻结清单里没被接受的那些就是被拒的那些
+ *     （契约 §2.3 第 3 条 · **现行口径见 §9.1（a）**：那一半只管提案，维护案另有来源）。
+ *   · 维护案（`maintenance-…`）：两个来源，按这个次序取：
+ *     · `payload.accepted` 里有它 ⇒ `accepted`。**这是合法形状**：2026-10-18 的报告里
+ *       `accepted_proposal_ids` 81 条中有 14 条是 `maintenance-…`，那天的索引行也全 `accepted`；
+ *     · 否则看 `payload.maintenance_decisions` 里**指向这一份案**的那条裁决
+ *       （指针字段 `maintenance_id`；2026-10-18 那份报告用的是 `pool_id` —— 两种写法都认）：
+ *       · 裁决带 `action`（非 null）⇒ 这件案**生效了** ⇒ `accepted`；
+ *       · 裁决只有 `action: null`（判决方明确写"这次不处置"）⇒ `rejected` —— 维护案**唯一**有据的"拒"；
+ *     · **两处都没有它 ⇒ 整体拒**（`E_ARG_SCHEMA`，⑦ 发布之前）：这时它没有任何 verdict 来源 ——
+ *       记 `rejected` 是把"它没被处置过"说成"它被拒了"，记 `accepted` 是把它说成"生效了"。
+ *
+ * 为什么必须补上 `payload.accepted` 那一段：不补，"索引 = 报告的派生"就不是恒等式（V9）。
  * 维护案的 `target_id` 是**快照条目 id**（`m-…`），不是池子 id ⇒ 一个都不记（记了会全变孤儿）。
  *
- * 🔴 **两个输入各有一项不成 id 就整体拒**（T-MEM-10 · 契约 §8.3 第 3/4 行），而且**码不一样**：
+ * 🔴 **两个 id 输入各有一项不成 id 就整体拒**（T-MEM-10 · 契约 §8.3 第 3/4 行），而且**码不一样**：
  * 冻结清单是**盘上的状态**（`state/update/<day>.json`）⇒ `E_DATA_CORRUPT`（7）；
  * `payload.accepted` 是**调用方这一次传进来的入参** ⇒ `E_ARG_SCHEMA`（2）。
  * 两半合成一条记录流之前，每条记录自己带着"我是哪一半的第几项" —— 不靠下标推：
@@ -850,7 +895,7 @@ function uniqueIdsOf(records, guard = {}) {
  * ⚠️ **本函数必须在 ⑦ 发布之前调用**（`opJudgeCommit` 里它就在 `publishUpdate` 上面一行）：
  * 已发布的事务不回滚，拒绝晚一步就变成"快照已发布、索引没追加"。
  */
-function judgedRowSpecsOf({ state, accepted, day, snapshot, at }) {
+function judgedRowSpecsOf({ state, accepted, decisions, day, snapshot, at }) {
   // 两条输入的码写在同一张表里：一处能看全"哪一半该报什么"，不会有人以为它们该统一。
   const halves = [
     {
@@ -873,16 +918,60 @@ function judgedRowSpecsOf({ state, accepted, day, snapshot, at }) {
     ),
   })
   const acceptedIds = new Set(halves[1].ids)
-  return ids.map((importedId) => ({
-    schema: PROP.JUDGED_SCHEMA,
-    imported_id: importedId,
-    day,
-    verdict: acceptedIds.has(importedId) ? 'accepted' : 'rejected',
-    snapshot,
-    generation: state.generation,
-    attempt: state.judge_attempt,
-    at,
-  }))
+  const dispositions = maintenanceDispositionsOf(decisions)
+  return ids.map((importedId) => {
+    const isMaintenanceCase = importedId.startsWith(MAINTENANCE_CASE_PREFIX)
+    const disposition = isMaintenanceCase ? dispositions.get(importedId) : undefined
+    if (isMaintenanceCase && disposition === undefined && !acceptedIds.has(importedId)) {
+      throw cliError(
+        'E_ARG_SCHEMA',
+        `冻结清单里的维护案 ${importedId} **既不在 payload.accepted 里、maintenance_decisions 里也没有任何一条指向它**`
+        + '（指针字段 `maintenance_id`；2026-10-18 那份报告用的是 `pool_id` —— 两种都认）'
+        + ' —— 整体拒：它没有可用的 verdict 来源。记 rejected 是把"它没被处置过"说成"它被拒了"，'
+        + '记 accepted 是把它说成"生效了"—— 两个都是编的。'
+        + '要收下这一轮：把它写进 accepted，或者给它补一条裁决（处置就带 action；不处置就写 `action: null` 并给出原因）。',
+      )
+    }
+    return {
+      schema: PROP.JUDGED_SCHEMA,
+      imported_id: importedId,
+      day,
+      verdict: acceptedIds.has(importedId) || disposition?.carriedOut === true ? 'accepted' : 'rejected',
+      snapshot,
+      generation: state.generation,
+      attempt: state.judge_attempt,
+      at,
+    }
+  })
+}
+
+/**
+ * `payload.maintenance_decisions` → `Map<维护案 id, {carriedOut}>`。
+ *
+ * 一条裁决属于哪一份维护案，读它自己的指针字段：`maintenance_id`（现在写成这样）或 `pool_id`
+ * （2026-10-18 那份报告写成这样）—— 两种都是判决方写下的同一件事，所以两种都认。
+ * `carriedOut` = 这条裁决带 `action`（非 null）：那件案**真的被处置了**。
+ * 同一份案有多条裁决（例如一案退两个目标）时，**任一条**带 action 就算生效。
+ */
+function maintenanceDispositionsOf(decisions) {
+  const map = new Map()
+  for (const decision of Array.isArray(decisions) ? decisions : []) {
+    if (decision === null || typeof decision !== 'object') continue
+    const caseId = maintenanceCaseIdOf(decision)
+    if (caseId === null) continue
+    const prior = map.get(caseId)
+    const acted = decision.action !== null && decision.action !== undefined
+    map.set(caseId, { carriedOut: acted || prior?.carriedOut === true })
+  }
+  return map
+}
+
+/** 一条裁决指向的那份维护案 id；没有指针 / 指针不是非空字符串 ⇒ `null`（这条裁决不归属任何案）。 */
+function maintenanceCaseIdOf(decision) {
+  const raw = typeof decision?.maintenance_id === 'string' && decision.maintenance_id !== ''
+    ? decision.maintenance_id
+    : decision?.pool_id
+  return typeof raw === 'string' && raw !== '' ? raw : null
 }
 
 /**

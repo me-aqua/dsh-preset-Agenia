@@ -48,17 +48,22 @@ export const name = 'agenia'
 export const inject = ['systemPrompt', 'tools']
 
 /**
- * 组长默认收到哪些、按什么顺序。⚠️ `agent.cordis.yml` 的 `leaderOrder` 是事实来源，这一份只是兜底。
+ * 组长默认收到哪些、按什么顺序。⚠️ `agent.cordis.yml` 的 `leaderOrder` 是事实来源，这一份只是兜底：
+ * 配置里没写名单（`leaderOrder` 不是数组）时，注入按这一份走。
  *
- * ⚠️ **`memory`（共享记忆）刻意不在这份兜底里，两边都不在**（2026-10-16）：
- * 它是**活体组合里声明的那一项** —— 真挂载时 `apply()` 收到的 `leaderOrder` / `memberOrder`
- * 里就有它，走的是事实来源那一条路。兜底这一份只在"配置里根本没写名单"时用，
- * 而那种情况下没有任何理由去猜库里有没有东西 ⇒ 读不到就只会在每个空夹具上白喊一声。
- * （同一条理由也解释了为什么 `style` 一直不在这份兜底里。）
+ * @roster memory=present style=absent leader=present work-guidelines=present persona=present
+ *
+ * 成员语义见 `CONTRACT.md §7`。
  */
-const DEFAULT_LEADER_ORDER = ['leader', 'work-guidelines', 'memory', 'board', 'leader', 'work-guidelines', 'persona']
+const DEFAULT_LEADER_ORDER = ['leader', 'work-guidelines', 'memory', 'leader', 'work-guidelines', 'persona']
 
-/** 组员默认收到哪些。⚠️ `memory` 为什么不在里面：见上面那一段。 */
+/**
+ * 组员默认收到哪些。名单以下方常量本身为准；组员线不贴尾巴（⑤ 只贴组长），没写名单时注入面就是这一份。
+ *
+ * @roster memory=absent work-guidelines=present charter=present
+ *
+ * 成员语义见 `CONTRACT.md §7`。
+ */
 const DEFAULT_MEMBER_ORDER = ['work-guidelines', 'charter']
 
 /**
@@ -549,7 +554,9 @@ async function sharedMemoryText(contentDir, role, warn) {
   } else if (sense.text.trim().length === 0) {
     say('memory-common-sense-empty',
       `[agenia] 共享记忆的常识是空文件（${senseFile}）—— 常识这一节不注入（长期记忆照旧）。`)
-  } else {
+  } else if (role !== undefined) {
+    // F-89：组员照旧（他们是一次性作业，很多活不到 10 个工具结果 ⇒ 走尾巴等于永远不看常识）；
+    // 组长改走 ⑤ 那一刀（`commonSenseOf`），这里不 push。
     blocks.push(`## 共享记忆 · 常识\n\n${sense.text.trim()}`)
   }
 
@@ -699,10 +706,16 @@ const DELEGATION_CONFIG_ERROR_REJECT = (toolName) =>
  * 缺 / `null` / 不是映射（数组、字符串）/ 空映射 / 有非法模式值 ⇒
  * `configError = 'E_GUARD_CONFIG_MISSING'` —— 调用方必须出声，**不许静默放前台**。
  *
- * `backgroundExposed` = 这份名单里**暴露了 `run_in_background` 参数**的那些工具。
- * 唯一会把参数拿掉的是行 config 里的 `enableRunInBackground: false`，而组合里一行都没写它
- * ⇒ 名单里每个工具都暴露着。这条不变量是有用的：那四条 `one-shot` 的"必须显式 true"
- * 全靠它才可能被满足（拍板 I1）。
+ * `backgroundExposed` = 名单里的**全部**键（`new Set(mode.keys())`），没有筛选条件。
+ * 🔴 0.2.1 起它**不指任何平台事实** —— 别拿它推"某个工具暴露了 `run_in_background`"：
+ *    委派走的是 `@deepseek-ai/dsh-tool-subagent`（0.2.1-rc.2），它的 config schema 只有
+ *    `provider` / `toolName` / `modelSelectionSettings` / `agentOptions` / `agentPreset` /
+ *    `allowedAgentPresets` / `maxDepth`，**没有 `enableRunInBackground`**；工具参数表里
+ *    **也没有 `run_in_background`**。（`enableRunInBackground` 在 0.2.1 还活着，但那是
+ *    bash / pwsh / terminal / workflow 四个工具的 config 键，与委派无关。）
+ *    ⇒ 没有"参数被拿掉"这件事可判。这个字段留着只是给对账/读数一份名单，语义已经不是
+ *    "参数暴露"；而且那四条 `one-shot` 也不再靠"必须显式 true"（省略就放行，见下面
+ *    `subagentBackgroundVerdict` 的规则）。
  *
  * @param {object} config - `persona-injector` 那一行的 config 段。
  * @returns {{ mode: Map<string,string>, backgroundExposed: Set<string>, configError: string|null }}
@@ -733,9 +746,10 @@ export function delegationToolNames(config) {
 /**
  * 调用前判定（**纯函数**）：`null` = 放行；`{ code, message }` = 拒绝（**绝不启动子代理**）。
  *
- * 规则（提案 §B1.5 逐字）：
- *   · 名单里是 `one-shot` ⇒ 只有 `args.run_in_background === true` 才放行，否则 `E_GUARD_JOB_FOREGROUND`；
- *     省略 / `false` / `'true'` / `null` / `0` 一律算"会前台等着"，全拒（判据是 `=== true`，不是真值）。
+ * 规则（提案 §B1.5，2026-10-19 按 DSH 0.2.1 改过 `one-shot` 那一条）：
+ *   · 名单里是 `one-shot` ⇒ `true` **或省略**放行（0.2.1 的委派一律异步，参数已经删了）；
+ *     只有显式 `false` / `'true'` / `null` / `0` 才拒（`E_GUARD_JOB_FOREGROUND`）——
+ *     判据仍是 `=== true`，只是"省略"从"前台等着"变成了"框架本身就异步"。
  *   · 名单里是 `continuable` ⇒ 省略或 `true` 放行，只有显式 `false` 才拒（`E_GUARD_SELF_FOREGROUND`）。
  *   · 不在名单里 ⇒ 放行 —— 无关工具（含框架自己的 `job_output` / `job_kill` / `job_list`）
  *     一个都不许误伤；判定只看**工具名 + 这一个参数**。
@@ -750,25 +764,36 @@ export function subagentBackgroundVerdict(toolName, args, policy) {
       code: GUARD_CONFIG_ERROR,
       message: `「${name}」这次调用被拒：委派名单配置坏了（${GUARD_CONFIG_ERROR}）—— `
         + `persona-injector 那一行的 ${DELEGATION_TOOLS_KEY} 缺失或非法。`
-        + '修好配置再派活；要让它后台跑，调用时必须显式写 run_in_background: true。',
+        + '修好配置再派活；0.2.1 里委派本身就是异步的，不需要也不能传 run_in_background。',
     }
   }
   const mode = policy.mode instanceof Map ? policy.mode.get(name) : undefined
   if (mode === undefined) return null
   const flag = args === null || typeof args !== 'object' ? undefined : args.run_in_background
   if (mode === 'one-shot') {
-    if (flag === true) return null
+    // 🔴 2026-10-19（DSH 0.2.1）：`run_in_background` 这个参数**已经从工具里删掉了** ——
+    //    0.2.1 的委派一律异步（调用即返回 `started subagent`，完成后再通知），
+    //    所以"省略"是唯一可能的值，它本来就满足"不会把组长卡在前台"这条门禁的**目标**。
+    //    ⇒ 省略放行；只有真有人硬塞 `false` 才拒（旧版语义保留，免得再引入一个前台通道）。
+    //    ⚠️ 别把它改回"必须 === true"：那会让四条作业在 0.2.1 上**一次都发不出去**。
+    if (flag === true || flag === undefined) return null
+    // 报文要说清**为什么被拒**：省略在上一行就放行了，走到这里一定是**显式**塞了非 `true` 的值
+    // （`false` / `'true'` / `null` / `0` / 别的）。所以别再说"省略会在前台等着"—— 那是 0.2.0 的事。
+    const shown = typeof flag === 'string' ? `'${flag}'` : String(flag)
     return {
       code: 'E_GUARD_JOB_FOREGROUND',
-      message: `「${name}」是一次性作业，必须后台运行 —— 请显式传 run_in_background: true`
-        + '（省略、false 或别的值都会让它在前台等着，把组长卡住）。',
+      message: `「${name}」是一次性作业，必须后台运行 —— 这次被拒是因为显式塞了 run_in_background: ${shown}。`
+        + '0.2.1 的委派天生异步（调用即返回 started subagent，完成后再通知），这个参数已经从工具里删掉了：'
+        + '省略它就是后台；门禁只为兼容老调用，仍把 run_in_background: true 当「后台」放行。'
+        + "显式 false / 'true' / null / 0 都是「要前台」的意思 —— 把这个参数整个去掉再派。",
     }
   }
   if (flag === false) {
     return {
       code: 'E_GUARD_SELF_FOREGROUND',
-      message: `「${name}」必须后台运行（省略即后台）—— 只有显式 run_in_background: false 才会被拒；`
-        + '把它去掉，或改成 true。',
+      message: `「${name}」必须后台运行（省略即后台）—— 这次被拒是因为显式传了 run_in_background: false。`
+        + '0.2.1 的委派天生异步（调用即返回 started subagent，完成后再通知），这个参数已经从工具里删掉了；'
+        + '把它整个去掉就对了，不用再补任何值。',
     }
   }
   return null
@@ -1191,10 +1216,10 @@ export function proposalFileDefinition(brainRoot) {
         additionalProperties: true,
         properties: {
           ok: { type: 'boolean' },
-          proposal_id: { type: 'string', description: '候选 id = 池子那一行的 imported_id' },
+          proposal_id: { type: 'string', description: '候选 id = 池子里那一条的 imported_id' },
           entry_id: { type: 'string', description: '记忆条目 id（与 proposal_id 同一个号）' },
           pool_path: { type: 'string', description: '落到哪个文件' },
-          seq: { type: 'integer', description: '池子里第几行（从 1 数）' },
+          seq: { type: 'integer', description: '池子编号：池内单调递增、清池后不回落、不是行号' },
           content_sha256: { type: 'string', description: '内容哈希 = sha256(stableStringify(payload))' },
           sha256: { type: 'string', description: '声明哈希 = sha256(text)' },
           source: { type: 'string' },
@@ -1208,7 +1233,7 @@ export function proposalFileDefinition(brainRoot) {
       // 与正文一字不差照抄进它的 payload 才收（否则"声明与内容对不上"）。两条路的这项口径已开票 F-58。
       render: (_args, value) => [{
         type: 'text',
-        text: `已追加候选 ${String(value?.proposal_id)}（池子第 ${String(value?.seq)} 行 · ${String(value?.kind)}）→ ${String(value?.pool_path)}\n`
+        text: `已追加候选 ${String(value?.proposal_id)}（池子编号 ${String(value?.seq)} · ${String(value?.kind)}）→ ${String(value?.pool_path)}\n`
           + '⚠️ 这条 source 之后**走不了命令行导入**（`--op proposal-import` 会回 E_ARG_HASH）：'
           + '换了正文一定拒；同文也要把这次的 entry_id 与正文一字不差照抄进它的 payload 才收 —— 两条路口径已开票 F-58。',
       }],
@@ -1263,7 +1288,7 @@ export async function apply(ctx, config = {}) {
   // ─────────────────────────────────────────────────────────────
   // ⚠️ 新加的 config 键必须**同批**进这张白名单，否则每次挂载都会误报"不认识的配置键"
   //    （2026-10-15 批次 I2 加 `delegationTools` 时就是这么加进来的）。
-  const KNOWN_CONFIG = ['leaderOrder', 'memberOrder', 'officeBound', 'contentDir', DELEGATION_TOOLS_KEY]
+  const KNOWN_CONFIG = ['leaderOrder', 'memberOrder', 'officeBound', 'contentDir', DELEGATION_TOOLS_KEY, 'proposalFile']
   /**
    * 这几个 key **不是"内容根这一层的一个 .md"**，所以下面那条"文件在不在"的检查要跳过它们：
    *   · `roster` / `board` —— 算出来的正文；
@@ -1473,8 +1498,8 @@ export async function apply(ctx, config = {}) {
     // 实际上什么都能改、还卡着组长。这里必须出声，不然没人会发现。
     console.error(
       `[agenia] 这个框架版本没有 tools.guard —— 岗位写权限边界没有生效（现在 `
-        + `${[...officeBound].join('、')} 这几个岗位可以写任何地方、也能跑命令行），`
-        + 'subagent 后台硬门未生效（四条一次性作业省略 run_in_background 会在前台等着，把组长卡住）。',
+        + `${[...officeBound].join('、')} 这几个岗位可以写任何地方、也能跑命令行）。`
+        + '委派门禁也没挂上（0.2.1 的委派本身异步，影响面主要是"配置坏了没人拦"）。',
     )
   }
 
@@ -1485,7 +1510,15 @@ export async function apply(ctx, config = {}) {
   //   🔴 失败策略同 ③：拿不到 / 注册失败都**出声**，绝不让一条工具把整份注入拖下水
   //      （这份文件一挂就是"人格注入 0 字符"）。
   // ─────────────────────────────────────────────────────────────
-  if (tools !== undefined && typeof tools.register === 'function') {
+  // 🔴 2026-10-19（DSH 0.2.1）：`proposalFile: false` = 这一份预设**按设计**就没有提候选这个工具。
+  //   判决岗（memory-judge）用它 —— 老板 2026-10-17 的原话：「判决应该不能提候选，
+  //   其他这几个应该都可以自己提候选」。0.2.1 之前这条靠 `toolFilter.deny` 实现，
+  //   那条路没了（`toolFilter` 删了）⇒ 改成让这个工具**根本不注册**（结构性，不是"调用被拒"）。
+  //   ⚠️ 只有判决岗那一份组员预设带它；其余预设不写这个键 ⇒ 照常注册。
+  const proposalFileEnabled = config.proposalFile !== false
+  if (!proposalFileEnabled) {
+    // 有意不装：不出声（这是配置要的结果，不是失败）。
+  } else if (tools !== undefined && typeof tools.register === 'function') {
     ctx.effect(
       () => {
         try {
@@ -1576,6 +1609,8 @@ export async function apply(ctx, config = {}) {
    * 一个会话一个布尔量（不是计数器）：一步请求里两条 style 是 2026-09-24 挨过骂的形状。
    */
   const pendingTail = new Set()
+  /** F-94：上一次**贴出去**的板子正文（每个会话一份）—— 逐字相同就不贴。 */
+  const lastBoardPosted = new Map()
   /** 情绪板那一路的信号，一个会话一份（时间全取事件自带的 `time`，不碰真实时钟）。 */
   const moods = new Map()
 
@@ -1715,6 +1750,45 @@ export async function apply(ctx, config = {}) {
       text: body.length > 0 ? body : DEFAULT_LEADER_REMINDER,
       every: hit === null ? DEFAULT_EVERY : Number(hit[1]),
     }
+  }
+
+  /**
+   * F-89：`## 共享记忆 · 常识` 那一段（**只走尾巴那一刀**，不再进 `memory` 快照）。
+   * 读不到 / 空的 ⇒ `undefined` 并出声 —— 这一刀只贴风格，不许静默变空。
+   * ⚠️ 每次现读（存盘即生效），与 `styleOf` 同一个理由。
+   */
+  function commonSenseOf() {
+    let raw
+    try {
+      raw = readFileSync(join(contentDir, RUNTIME_DIR, COMMON_SENSE_FILE), 'utf8')
+    } catch {
+      raw = undefined
+    }
+    if (raw === undefined || raw.trim().length === 0) {
+      warnOnce('tail-common-sense', `[agenia] 读不到 ${RUNTIME_DIR}/${COMMON_SENSE_FILE}（尾巴那一刀要贴的常识）`
+        + ' —— 这一刀只贴风格。')
+      return undefined
+    }
+    return `## 共享记忆 · 常识\n\n${raw.trim()}`
+  }
+
+  /** 上一次贴尾巴的时刻（每个会话一份）—— F-102 的「距上次提醒」只从这儿取。 */
+  const lastTailAt = new Map()
+  const WEEKDAY = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+  /**
+   * F-102：到点那一刀里的时间行。**时间取自进程当时**（`now` 必须是 `Date.now()`），
+   * 不从会话历史、不从快照里推 —— 那两样都可能停在几小时前。
+   * 第一次贴没有"上次" ⇒ 不写那半句（写 0 是编造一个没发生过的事实）。
+   */
+  function timeLineOf(id, now) {
+    const d = new Date(now)
+    const two = (n) => String(n).padStart(2, '0')
+    const head = `现在 ${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}（${WEEKDAY[d.getDay()]}）`
+    const prev = lastTailAt.get(id)
+    lastTailAt.set(id, now)
+    if (typeof prev !== 'number') return head
+    return `${head} · 距上次提醒约 ${Math.max(0, Math.round((now - prev) / MINUTE))} 分钟`
   }
 
   /**
@@ -1929,15 +2003,27 @@ export async function apply(ctx, config = {}) {
   }
 
   /**
-   * 这一步要贴出去的那条正文：`style.md` 的**尾巴那一段**；情绪段读得出来就拼在**后面**
-   * （中间一个空行）—— 两条机制走同一个出口，所以两边永远同时出现。
+   * 这一步要贴出去的那条正文。**段与段的次序就是契约**（第 2 关钉死的）：
+   *   1. `style.md` 的尾巴那一段（恒在）
+   *   2. `## 共享记忆 · 常识`（**只在 ① 到点那一刀**，F-89）—— 与第 3 段成对，要么都在要么都不在
+   *   3. 时间行（**只在 ① 到点那一刀**，F-102）
+   *   4. `【这一票的进度】`（**只在板子内容变了的时候**，F-94；一模一样就不贴）
+   *   5. 情绪段（读得出来就拼在最后）
    */
-  function tailBodyOf(id) {
-    const text = styleOf().text
+  function tailBodyOf(id, { cut = false, board } = {}) {
+    const parts = [styleOf().text]
+    if (cut) {
+      const sense = commonSenseOf()
+      if (sense !== undefined) parts.push(sense)
+      parts.push(timeLineOf(id, Date.now()))
+    }
+    if (typeof board === 'string' && board.length > 0) parts.push(board)
     const state = moods.get(id)
-    if (state === undefined) return text
-    const emotion = emotionTextOf(state)
-    return emotion === undefined ? text : `${text}\n\n${emotion}`
+    if (state !== undefined) {
+      const emotion = emotionTextOf(state)
+      if (emotion !== undefined) parts.push(emotion)
+    }
+    return parts.join('\n\n')
   }
 
   /**
@@ -2020,12 +2106,17 @@ export async function apply(ctx, config = {}) {
       state.bossHeard = true
     }
 
+    // F-94：板子改走这条路 —— **内容与上一次贴出去的逐字相同就不贴**。
+    // 它是**第二个触发理由**（不是 ① 的账）：项目文件又动过 ⇒ 板子变了 ⇒ 这一刀贴板子。
+    const boardNow = boardOf(id)
+    const boardChanged = boardNow !== undefined && boardNow !== lastBoardPosted.get(id)
     const byOne = !byTwo && pendingTail.has(id)
-    if (!byTwo && !byOne) return decision               // 这一步既不关 ② 的事、也没有 ① 的账
+    if (!byTwo && !byOne && !boardChanged) return decision   // 这一步既不关 ②/① 的事、板子也没变
 
     pendingTail.delete(id)      // ② 赢下这一格 ⇒ ① 的挂账清掉；① 落地了也把账销掉
+    if (boardChanged) lastBoardPosted.set(id, boardNow)
 
-    const tail = tailBodyOf(id)
+    const tail = tailBodyOf(id, { cut: byOne, board: boardChanged ? boardNow : undefined })
     const entered = messages.toSpliced(byTwo ? at + 1 : messages.length, 0, {
       id: randomUUID(),
       role: 'user',
@@ -2088,7 +2179,7 @@ export async function apply(ctx, config = {}) {
     const entries = await gather(role === undefined ? leaderOrder : memberOrder, {
       contentDir,
       role,
-      board: role === undefined ? boardOf(agentId) : undefined,
+      board: undefined,   // F-94：板子不进快照（`boardOf` 改由 ⑤ 尾巴那条路贴）
       // 共享记忆库读不到时那几声（`memory` 那个 key）—— 同一个问题每个会话只喊一次。
       warn: warnOnce,
     })

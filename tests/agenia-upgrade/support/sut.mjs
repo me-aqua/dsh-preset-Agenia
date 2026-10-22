@@ -221,10 +221,22 @@ function childProcessEnv(env, stripEnv = []) {
  * 契约 §9.5 第 5 条：退出码用不截断管道收集，失败也留 stdout/stderr。
  *
  * `stripEnv`：要给子进程**剥掉**的环境变量名（见 `childProcessEnv` 那条 🔴）。
+ *
+ * `cliPath`：**另一棵树上的同一个 CLI**（缺省 `null` = `AGENIA_STAGING_PRESET` 里那个）。
+ *   存在的唯一理由：`DR-01` 的端到端正例要打在**一份装好的预设副本**上
+ *   （副本自己算 `REAL_BRAIN_ROOT`，见 `support/installed.mjs`）——
+ *   参数形状、子进程环境、信封解析全部照旧，只有"跑哪棵树上的 bin"变了。
  */
-export function runCli(cliName, opts = {}, { env = process.env, timeoutMs = 60000, stripEnv = [] } = {}) {
-  const spec = callSpec(cliName, opts, env)
-  if (!existsSync(spec.abs)) throw new SutSurfaceMissing(`bin/${cliName}`, spec.abs)
+export function runCli(cliName, opts = {}, { env = process.env, timeoutMs = 60000, stripEnv = [], cliPath = null } = {}) {
+  const spec = cliPath === null
+    ? callSpec(cliName, opts, env)
+    : {
+        cli: path.basename(cliPath),
+        abs: canonical(cliPath),
+        args: baseArgs(opts),
+        cwd: canonical(requireEnv(ENV.RUN_ROOT, env)),
+      }
+  if (!existsSync(spec.abs)) throw new SutSurfaceMissing(cliPath === null ? `bin/${cliName}` : cliPath, spec.abs)
   const started = Date.now()
   const res = spawnSync(NODE_BIN, [spec.abs, ...spec.args], {
     cwd: spec.cwd,

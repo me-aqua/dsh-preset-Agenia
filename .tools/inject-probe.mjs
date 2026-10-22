@@ -38,6 +38,20 @@
  *      凡是"钉着旧名字 / 旧活力方向 / 旧亲密值 / 旧行形状"的期望值，改的是**事实**，不是把红改绿。
  *      🔴 **`口径 6` 那条 `E2-4` 是改写成新事实、不是删**（方案第六节 · 老板选了选项 B）：
  *      低重逢区间三格仍各不相同；**高重逢区间逐字验证"封顶在 1.00"**。
+ *   🔴 **2026-10-20（`F-106` · 门 1）「判据不许钉在会变的东西上」** —— 两格：
+ *      · **`I1`** 老写法 `check(…, Number(hit[1]), 3)` 把产物刻度写死在判据里。
+ *        `style.md` 第一行 `every: 3 → 10` 之后它**假红**（事实是有意改的，判据没跟）。
+ *        现在钉的是实质：**第一行那个数 = 实现实际用的刻度**（喂第 N 个结果才贴）。
+ *        刻度从 0 / 1 / 20 三个副本验过：**跟着走、不红**；实现把刻度读错（`Math.min(N,5)`）
+ *        ⇒ **只红 `I1`** 一格（`实测 5 / 期望 10`）。
+ *      · **`G5`** 老期望 `cutTail(FIXTURE_STYLE(3))` 里的 `3` 与"真文件是 10"**无关**
+ *        （`cutTail` 把注释剥掉，3 和 10 切出来逐字相同）—— 它那天红**不是**刻度漂移，
+ *        是 `inject.js` 的 **F-102 时间行**（`现在 …（周X）`）进了 ① 到点那一刀，
+ *        而期望值里没有它。现在：期望值取**实现读到的那份落盘正文**，时间行只认**形状**
+ *        （值来自 `Date.now()`，钉值等于把判据钉在"跑的那一分"上）。
+ *        那把时间行改形（去掉星期）⇒ **只红 `G5`** 一格。
+ *      ⚠️ 这两格都**不是**"把红改绿"：改完的格子在刀下照样红（读数见
+ *        `.team/test/2026-10-20/F-106/`，小刀与副本由 `make-mutants.mjs` 造）。
  *
  * 两条守门（位置问题，不是省钱问题）：
  *   守门 A：机制① 在"他刚说完、我还没开口"时不许触发。
@@ -46,6 +60,12 @@
  * 跑法：<node.exe> .tools/inject-probe.mjs
  *   退出码：0 = 全过 · 1 = 有红 · 2 = 没红但有挂起（未验，≠ 通过）。
  *   每条断言都带口径编号，红的时候能直接对上方案第四节那 18 条。
+ * 🔴 **夹具写在 `os.tmpdir()` 里，而 Windows 上那就是 `%TEMP%`**（这台机器 = **C 盘**）——
+ *    与「C 盘一个字节都不许写」直接冲突。**跑之前把 `TEMP`/`TMP` 指到项目所在那个盘**，
+ *    或者给 `AGENIA_PROBE_TMP=<那个盘上**已经存在**的目录>`（探针**不替你建目录**：建目录本身就是写；
+ *    路径不在就让 `mkdtemp` 当场报 ENOENT）。落在 C 盘时它会当场印一行 `[探针] 🔴 …`
+ *    （**出声不改行为** —— 真要挡住得改这条纪律的载体，不是探针）。
+ *    ⚠️ 这一段是**票外改动**（`F-106` 第 4 关 `R-5` 点名），不算 `F-106` 的交付，另票裁。
  *
  * ⚠️ 它在一个**假的 ctx** 上挂真 `inject.js`，所以判据是"这段逻辑有没有按契约跑"，
  *    **不代替**挂载测试与真回合（见 .tools/mount-test/README.md）。
@@ -56,7 +76,7 @@
  *    `session append cannot reenter while another append is being published`。
  *    这个守卫 2026-09-26 之前**是缺的** —— 假 ctx 的 `inbox` 是纯数组，`inject()` 直接 push，
  *    永远不重入失败 ⇒ 机制① 死了一整天，三套工具全绿。S 族是它自己的阳性对照。
- * ⚠️ 它**一个字节都不改 `presets/`**：夹具正文住在系统临时目录里，
+ * ⚠️ 它**一个字节都不改 `presets/`**：夹具正文住在临时目录里（`PROBE_TMP`，见上面那条 🔴），
  *    "改文件即生效"那一族量的是夹具，不是产物。
  * ⚠️ **时间全从参数进**（每条事件自带 `time`，`moodOf` 的 `now` 是入参）——
  *    否则断言会在半夜自己变红。
@@ -100,6 +120,55 @@ let ENTRY_MODULE
 const loadEntry = async () => (ENTRY_MODULE ??= await import(pathToFileURL(PRESET_ENTRY).href))
 
 /**
+ * 🔴 **票外改动（第 4 关 `R-5`，评审点了名）**：这里是本票唯一不在验收口径里的一段 ——
+ *    `F-106` 定形给测试岗的只有两条线（两格刻度 + `tests/` 读平台版本），这条警告两样都不是。
+ *    留着它是因为它说的是**真缺陷**（静默写 C 盘），但它**不算 `F-106` 的交付**，另票处理
+ *    （候选 `proposal-20261020-0060`）。撤不撤由组长裁；裁决之前它按"票外、已报备"读。
+ *
+ * 夹具落在哪个临时根。
+ * 🔴 这一族工作区的硬约束是**「C 盘一个字节都不许写」**，而 `os.tmpdir()` 在 Windows 上
+ *    读的就是 `%TEMP%` —— 这台机器那是 **C 盘**。探针每跑一次都要拍几十份 `agenia-probe-*`
+ *    （跑完自己 `rmSync`，但**写过了**）。所以这里不再装作没事：
+ *   · `AGENIA_PROBE_TMP` 显式指定（**不替你建目录** —— 建目录本身就是写；不存在就让 `mkdtemp` 当场报 ENOENT）；
+ *   · 否则 `os.tmpdir()`，**但它落在 C 盘而仓库不在 C 盘时印一行警告**。
+ * ⚠️ 警告**不改行为**（出声 ≠ 拦截）：要真的不碰 C 盘，跑之前把 `TEMP`/`TMP` 指到
+ *    项目所在那个盘，或者给 `AGENIA_PROBE_TMP`。
+ */
+const driveOf = (p) => (/^[A-Za-z]:/.test(p) ? p.slice(0, 1).toLowerCase() : null)
+
+/**
+ * 这条临时根是不是"落在 C 盘、而仓库不在 C 盘"—— **纯函数，一个字节都不写**。
+ * 抽出来就是为了**验得动**（第 4 关 `R-5` 的教训：为了验这个判断去真写 C 盘是错的做法）：
+ *
+ * | 输入 | 期望 |
+ * | --- | --- |
+ * | `('C:\\x', 'E:\\Harness')` | 警告（`'C'`） |
+ * | `('C:\\x', 'C:\\repo')` | `null`（仓库也在 C 盘 ⇒ 这条约束在这台机器上不成立） |
+ * | `('E:\\x', 'E:\\Harness')` | `null` |
+ * | `('\\\\srv\\share\\x', 'E:\\Harness')` | `null`（UNC 没有盘符，判不了就不出声） |
+ *
+ * 返回值是那句警告要用的盘符（`'E'`），不需要警告时 `null`。
+ */
+function foreignCDrive(tmpRoot, repoRoot) {
+  const here = driveOf(repoRoot)
+  const there = driveOf(tmpRoot)
+  if (there !== 'c' || here === null || here === 'c') return null
+  return here.toUpperCase()
+}
+
+const PROBE_TMP = (() => {
+  const explicit = process.env.AGENIA_PROBE_TMP
+  const root = typeof explicit === 'string' && explicit !== '' ? explicit : tmpdir()
+  const fixDrive = foreignCDrive(root, REPO)
+  if (fixDrive !== null) {
+    console.error(`[探针] 🔴 夹具的临时根在 C 盘（${root}）—— 「C 盘一个字节都不许写」这条硬约束正在被破。`
+      + `\n       改法：跑之前把 TEMP/TMP 指到 ${fixDrive}: 盘，或给 AGENIA_PROBE_TMP=<${fixDrive}: 盘上的一个目录>。`)
+  }
+  return root
+})()
+
+
+/**
  * 口径编号 → 一句话（红的时候直接印出来，省得来回翻方案）。
  * ⚠️ **编号 = `.team/leader/2026-09-26/方案-情绪模块改三维.md` 第五节那张表**（1–18）。
  *    上一批那套编号（机制①/②、限长、六维情绪）属于上一票的方案 —— 这一批整表又换了。
@@ -134,10 +203,18 @@ const CRITERION = {
     + '缺一维 ⇒ 那一格只写分数、形状不对 ⇒ 整块不认 + 出声、改它不用重启',
   '§封顶': '老板拍板选项 B「封顶就封顶」：高重逢区间里夸 / 骂**不动数**，亲密逐字 `1.00`',
   // 🆕 2026-10-15（批次 I4c）：委派后台硬门那一族的判据（STAT-03 点名的三个标记就在这一族里）。
-  '§硬门': '委派后台硬门：名单从组合的 `delegationTools` 读（代码里不硬编码）· 一次性作业省略后台 ⇒ '
-    + '`E_GUARD_JOB_FOREGROUND`（报文含「必须后台运行」/「run_in_background: true」）· continuable 只有显式 false 才拒'
-    + '（`E_GUARD_SELF_FOREGROUND`）· 配置坏了按 A13 窄形状拦委派名（放行 `job_output`/`job_kill`/`job_list`）· '
-    + '拿不到 `tools.guard` 必须出声（「subagent 后台硬门未生效」）',
+  '§硬门': '委派后台硬门：名单从组合的 `delegationTools` 读（代码里不硬编码）· 一次性作业**省略**后台（含 args 整个缺）'
+    + '⇒ 放行（0.2.1 的委派一律异步、那个参数平台已删），只有显式 false / \'true\' / 1 / 0 / null 才拒（`E_GUARD_JOB_FOREGROUND`，'
+    + '报文含「必须后台运行」）· continuable 省略 / true 放行，只有显式 false 才拒（`E_GUARD_SELF_FOREGROUND`，报文含「（省略即后台）」）· '
+    + '模式只住在 `delegationTools` 一处（`backgroundMode` 0.2.1 已撤，活行上一个都不许有）· '
+    + '配置坏了按 A13 窄形状拦委派名（放行 `job_output`/`job_kill`/`job_list`），且**三条**拒绝报文（配置坏 / 作业 / 岗位）'
+    + '给的都是 0.2.1 的实话：不出现**这三种已见形状**的「教人传已删的参数」（值形态+指令语境 / 模态词+写传 / 显式写传）、'
+    + '并说出平台理由（**说法限于词表** —— 形状与词表的边界写在 GD9 注释里，别读成"原文可以改"）· '
+    + '拿不到 `tools.guard` 必须出声（点名「没有 tools.guard」+ 说清后果）',
+  // 🆕 2026-10-22：`F-126`（门 2 第 2 关补做）—— 机制② 那条尾巴**也要**带常识与时间行。
+  '§F-126': '机制②（老板开口之后、我第一次开口之前）那条尾巴**同样**带 `## 共享记忆 · 常识` 与时间行：'
+    + '0 个工具结果 / 少于 `every` / `every: 0` 三种现场都要带；机制① 到点那一刀与段序不许退化'
+    + '（`style → 常识 → 时间 → 板子 → 情绪`）',
 }
 
 /** `[A1 · 口径1]` / `[J6 · §形状]` */
@@ -749,6 +826,23 @@ const FIXTURE_MOOD6 = (halfLifeMinutes = 20, roundDecay = 0.6) =>
   + JSON.stringify({ halfLifeMinutes, roundDecay, scenes: FIXTURE_SCENES6 }, null, 2)
   + '\n```\n'
 
+/**
+ * 夹具的 `.runtime/common-sense.md` —— **F-126 那一族专用**（`G8`–`G11`）。
+ *
+ * 🔴 **默认夹具里没有这份文件**（`buildFixture()` 的 `commonSense` 默认 `null`），而且**必须**没有：
+ *    · 老那 215 格全部跑在"没有常识文件"的夹具上 —— `G5` 的逐字期望值就是
+ *      「style 尾巴 + 一行时间行」，补上这份文件会让它当场多一段 ⇒ 那是**删改既有格**。
+ *    · 而"常识在不在尾巴里"这件事，在默认夹具上**永远量不到**（`commonSenseOf()` 恒 `undefined`）
+ *      ⇒ 拿一条没有常识的尾巴走绿。所以量它的那几格必须把它显式带上。
+ * ⚠️ 正文里**不许出现** `## 共享记忆 · 常识` 这一行：那一行是 `commonSenseOf()` 自己加的抬头，
+ *    写进来就分不清"抬头是产物给的还是夹具给的"。
+ */
+const FIXTURE_COMMON_SENSE =
+  '# 常识（探针夹具 · `.runtime/common-sense.md`）\n'
+  + '\n'
+  + '- 夹具常识第一条：测试和实现最好分开。\n'
+  + '- 夹具常识第二条：注释和文档只描述当下状态。\n'
+
 /** 夹具的 `me-aqua.md` —— 作息三行，格式照契约（`下班：HH:MM`）。 */
 const FIXTURE_ME_AQUA = (offWork = '18:00') =>
   '# 关于老板（探针夹具）\n'
@@ -789,6 +883,9 @@ const FIXTURE_LEADER_LOG = (first = '09:00') =>
  *                  ⚠️ 形状照真文件（`.team/leader/2026-09-26/log.md` 实测）：标题行在前，
  *                  首条记录是 `## HH:MM · …`。**这条形状是接口**（口径 10），改了读不出来。
  * @param date      哪个抽屉（默认 = 探针固定那天 `2026-09-26`）
+ * @param commonSense `.runtime/common-sense.md` 的正文（`F-126` 那一族用）。
+ *                  ⚠️ 传 **`null`**（默认）= **不放这份文件** —— 这个默认值是老 215 格的一部分，
+ *                  改它 = 换量程（`G5` 的期望值会跟着变），不是"补一份更全的夹具"。
  */
 function buildFixture({
   style = FIXTURE_STYLE(3),
@@ -796,12 +893,19 @@ function buildFixture({
   meAqua = FIXTURE_ME_AQUA(),
   leaderLog = FIXTURE_LEADER_LOG(),
   date = FIXTURE_DATE,
+  commonSense = null,
 } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'agenia-probe-'))
+  const dir = mkdtempSync(join(PROBE_TMP, 'agenia-probe-'))
   mkdirSync(join(dir, 'team'), { recursive: true })
   writeFileSync(join(dir, 'style.md'), style, 'utf8')
   if (mood !== null) writeFileSync(join(dir, 'mood.md'), mood, 'utf8')
   if (meAqua !== null) writeFileSync(join(dir, 'me-aqua.md'), meAqua, 'utf8')
+  // 🔴 `commonSenseOf()` 读的是 `<内容根>/.runtime/common-sense.md`（`RUNTIME_DIR` + `COMMON_SENSE_FILE`）。
+  //    只有 `F-126` 那一族显式要它；默认 `null` ⇒ 一个字节都不多写。
+  if (commonSense !== null) {
+    mkdirSync(join(dir, '.runtime'), { recursive: true })
+    writeFileSync(join(dir, '.runtime', 'common-sense.md'), commonSense, 'utf8')
+  }
   // 🔴 口径 10/11：开工时刻 = 这个抽屉的**首条记录时间**（`## HH:MM`）。
   //    文件就叫 **`log.md`** —— 真目录里那个累计日志是 `.team/leader/log.md`（没有日期那层），
   //    两者同名不同路径，所以这里不需要别的名字。
@@ -820,6 +924,15 @@ function buildFixture({
   }
   return dir
 }
+
+/**
+ * 夹具 `style.md` **落盘那一份**的正文 —— "逐字比"那几格的**期望值**从这里取。
+ * 🔴 为什么不写 `FIXTURE_STYLE(3)`：那个 `3` 是**夹具的刻度**（量程，会变），
+ *    而期望值该是"实现**读到的那些字节**"。只有一个来源时，改刻度才不会把判据一起带红。
+ *    （`cutTail` 本来就会剥掉 `<!-- every: N -->` ⇒ 今天两者同值；那是巧合，不是保证：
+ *     `P4` 那几格比的是 `stripComments(全文)`，**注释不剥**，那时刻度就露在期望值里了。）
+ */
+const fixtureStyleOnDisk = (dir) => readFileSync(join(dir, 'style.md'), 'utf8')
 
 /** 契约里写的"剥注释"口径：删掉全部 HTML 注释（含跨行）再 trim。 */
 const stripComments = (raw) => raw.replace(/<!--[\s\S]*?-->/g, '').trim()
@@ -841,6 +954,27 @@ function stylePartOf(text) {
   if (typeof text !== 'string') return text
   const at = text.indexOf('【情绪板】')
   return (at < 0 ? text : text.slice(0, at)).trimEnd()
+}
+
+/**
+ * 那条时间行 —— **F-102** 只在**① 到点那一刀**里加它（`inject.js` 的 `tailBodyOf` 第 3 段）。
+ * 形状（`inject.js::timeLineOf`）：`现在 2026-10-20 12:36（周二）`；
+ * 第二次起尾巴上还带 ` · 距上次提醒约 N 分钟`。
+ * 🔴 **它的值不进任何断言**（值来自 `Date.now()`，那个字面量每跑一次都不一样；
+ *    而且 F-104 正要把"真实时钟"这件事改掉 —— 判据钉值 ⇒ 那两票互相绊）。
+ */
+const TIME_LINE = /^现在 \d{4}-\d{2}-\d{2} \d{2}:\d{2}（周[日一二三四五六]）(?: · 距上次提醒约 \d+ 分钟)?$/
+/** 归一之后的固定字样（判据只认形状，不认这一刻是几点）。 */
+const TIME_LINE_TOKEN = '现在 <日期> <时:分>（<周X>）'
+
+/**
+ * 把**整行完全长得像时间行**的那一段换成固定字样；别的东西**一个字都不动**。
+ * ⇒ 多出来的任何东西都留着，会让"逐字比"那一格红（不是被悄悄吃掉）。
+ * 按 `\n\n` 分段再拼回去：段内一个字符都不会丢（第一段是风格尾巴，本身就有空行）。
+ */
+function normalizeTimeLines(text) {
+  if (typeof text !== 'string') return text
+  return text.split('\n\n').map((seg) => (TIME_LINE.test(seg) ? TIME_LINE_TOKEN : seg)).join('\n\n')
 }
 
 /** 注入正文里，`【情绪板】` 那一段（没有 ⇒ undefined）。 */
@@ -1087,6 +1221,11 @@ try {
   {
     const h = await harness(fixture)
     await h.turnStart()
+    // ⚠️ **`6` 是夹具的"量程"，不是产物刻度**：夹具的 `style.md` 是 `buildFixture()` 按
+    //    `FIXTURE_STYLE(3)` 造出来的 ⇒ 第 3、第 6 个结果各贴一条，于是 `G0` 要"恰好 2 条"。
+    //    这是**探针自己的量程**（改夹具 = 换量程，要交代，见 `CRITERION['§夹具']`）；
+    //    产物那份 `style.md` 的刻度（今天是 10）**到不了这一组** —— `G5` 的期望值也已经是
+    //    "实现读到的那份落盘正文"而不是一个写死的数（`F-106`）。
     for (let k = 0; k < 6; k++) await toolStep(h)   // 第 3、第 6 个结果各贴一条
     const got = h.injected.map((x) => x.message)
     // ⚠️ 先把"确实贴了两条"钉死：不然 `[].every(...)` 恒真，
@@ -1117,14 +1256,159 @@ try {
       ids.length === 2 && ids.every((x) => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x))
         && new Set(ids).size === ids.length,
       `拿到 ${ids.length} 条：${ids.join(', ')}`)
-    const want = cutTail(FIXTURE_STYLE(3))
-    check('G5', '§形状', '**尾巴那一段**与 style.md 切口之前那一段逐字一致（剥掉全部 HTML 注释后 trim）',
-      stylePartOf(got[0]?.content?.[0]?.text), want)
+    // 🔴 期望值**不写死刻度**：风格尾巴取自"实现读到的那份 `style.md` 落盘正文"（`fixtureStyleOnDisk`）。
+    //    刻度（`<!-- every: N -->`）改动 ⇒ `cutTail` 把注释剥掉 ⇒ 这一格**不动**。
+    // 🔴 而 **F-102 的时间行**（`现在 …（周X）`）是 `tailBodyOf` 拼出来的第 3 段、**不是** `style.md` 的一部分
+    //    ⇒ 只把它的**形状**归一再比（值来自 `Date.now()`，钉值就等于把这一格钉在"跑的那一分"上）。
+    //    这一族里它**只**出现在 ① 到点那一刀（G 组两个触发点都是 ①）⇒ 期望值就是"风格尾巴 + 一行时间行"。
+    //    ⚠️ 契约的段序再加一段（`inject.js::tailBodyOf` 里那条注释）时，这一格要同批跟 —— 那是有意的：
+    //       它是"注入正文长什么样"的判据，正文多一段它就该红。
+    // 🔴 **改前的义务 vs 改后的义务（第 4 关 `R-6`/§2.2 要求写准）**：
+    //    改前它把时间行当"**多出来的东西**"判红（那时期望值里没有它）；
+    //    改后它是期望值的一部分 ⇒ **时间行多了红、少了也红**。
+    //    ⇒ 这一格现在**新担了一条**"① 到点那一刀必须有时间行"的义务，验收时别读成"只是把红改绿"。
+    const want = [cutTail(fixtureStyleOnDisk(fixture)), TIME_LINE_TOKEN].join('\n\n')
+    check('G5', '§形状', '**尾巴那一段**与 style.md 切口之前那一段逐字一致（剥掉全部 HTML 注释后 trim）'
+      + '；其后**恰好**一行 F-102 时间行（只认形状、不认那几点的值；多一行少一行都红）',
+      normalizeTimeLines(stylePartOf(got[0]?.content?.[0]?.text)), want)
     checkTrue('G6', 6, '正文里不含任何 `<!--`（注释真被剥了，不是只剥第一行）',
       got.length === 2 && got.every((m) => !m.content[0].text.includes('<!--')), `拿到 ${got.length} 条`)
     checkTrue('G7', 6, '正文没有外框（不许出现"自动提醒"这类护栏）',
       got.length === 2 && got.every((m) => !/自动提醒|REMINDER_(HEAD|TAIL)|不是老板的消息/.test(m.content[0].text)),
       `拿到 ${got.length} 条`)
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n═══ G8–G11 · F-126：机制② 那条尾巴也得带常识与时间行（§F-126）═══')
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 病（定形：`.team/leader/2026-10-22/spec-F-126.md`）：
+  //   `tailBodyOf(id, { cut })` 里 `if (cut)` 才拼「常识 + 时间行」，而机制② 的调用点传 `cut: false`
+  //   ⇒ 一轮里 `tool/result` 少于 `every`（今天 10）时，常识与时间**一次都不出现**。
+  //   老板 2026-10-22 报的就是这一格：他每句话之后那条组装尾巴里没有时间也没有常识。
+  //
+  // 🔴 **这一族必须自带 `.runtime/common-sense.md`，而默认夹具必须继续没有它**（两件事都要紧）：
+  //    · 默认夹具没有这份文件 ⇒ `commonSenseOf()` 恒 `undefined` ⇒ 在默认夹具上量"常识在不在"
+  //      **永远量不到**，会拿一条没有常识的尾巴走绿（假绿）。
+  //      实测：全份探针此前**一条**判据都没碰过「共享记忆 · 常识」这一段（grep 零命中）。
+  //    · 反过来给默认夹具补上它，`G5` 的逐字期望值会当场多一段 ⇒ 那是**删改既有格**，不是新增。
+  //    ⇒ 只有这一族用 `buildFixture({ commonSense: FIXTURE_COMMON_SENSE })`。
+  //
+  // 🔴 **反向三红的合法性靠 `G11`**（阳性对照是"红"这个字唯一的合法性来源）：
+  //    `G8`/`G9`/`G11` 共用**同一个内容根 `f10`**（同一份 `style.md` 刻度、同一份常识文件）。
+  //    改前：`G11`（机制① 到点那一刀）**绿** ⇒ 证明这份常识文件真的被读到了、常识段真的检测得到；
+  //    于是 `G8`/`G9`/`G10` 的红就只剩一个解释：**机制② 那条路不拼常识与时间**。
+  //    少了 `G11`，"三红"可能只是"夹具没写进去" —— 那是拿前提失败冒充 bug。
+  //
+  // ⚠️ 期望值只钉**形状与次序**：时间行的值来自 `Date.now()`，钉值等于把判据钉在"跑的那一分"上
+  //    （同 `G5`）。常识段钉**逐字** —— 那是夹具写下去的字节，不随机器 / 时刻变。
+  // ⚠️ 段序是契约（`inject.js::tailBodyOf` 那条注释）：`style → 常识 → 时间 → 板子 → 情绪`。
+  {
+    const SENSE_BLOCK = `## 共享记忆 · 常识\n\n${FIXTURE_COMMON_SENSE.trim()}`
+    /** 两段都在、且常识在前 —— 这一族每一格的期望值。 */
+    const WANT_SECTIONS = {
+      常识段: '有（逐字 = 夹具那一份）',
+      时间行: TIME_LINE_TOKEN,
+      次序: '常识 → 时间',
+    }
+    /**
+     * 一条注入正文的段读数：常识在不在（**逐字**）、时间行在不在（**只认形状**）、谁在前。
+     * ⚠️ 一件都没有时也给同一形状的读数 —— 红的时候能一眼分出"缺段"和"被改成别的样子"。
+     */
+    const sectionsOf = (text) => {
+      if (typeof text !== 'string') {
+        return { 常识段: '（一条尾巴都没有）', 时间行: '（没有）', 次序: '（缺段，判不了）' }
+      }
+      const senseAt = text.indexOf(SENSE_BLOCK)
+      // ⚠️ `TIME_LINE` 是整段形状（`^…$`）⇒ 用 `m` 让它按**行**匹配，不去动它本身。
+      const time = new RegExp(TIME_LINE.source, 'm').exec(text)
+      return {
+        常识段: senseAt < 0 ? '（没有）' : '有（逐字 = 夹具那一份）',
+        时间行: time === null ? '（没有）' : TIME_LINE_TOKEN,
+        次序: senseAt < 0 || time === null
+          ? '（缺段，判不了）'
+          : (senseAt < time.index ? '常识 → 时间' : '时间 → 常识（次序反了）'),
+      }
+    }
+
+    const f10 = buildFixture({ style: FIXTURE_STYLE(10), commonSense: FIXTURE_COMMON_SENSE })
+    const f0 = buildFixture({ style: FIXTURE_STYLE(0), commonSense: FIXTURE_COMMON_SENSE })
+    try {
+      // ── G8（定形验收口径 1）：老板开口 + **0 个工具结果** ──────────────────────
+      const h1 = await harness(f10)
+      await h1.turnStart()
+      await bossThenStep(h1)                       // 他开一次口，走到回答他的那一步：0 个工具结果
+      check('G8', '§F-126',
+        '① 老板开口 + **0 个工具结果**（every: 10）⇒ 机制② 那条尾巴**同时**带'
+          + '「## 共享记忆 · 常识」与时间行',
+        { 注入条数: h1.count(), ...sectionsOf(h1.lastText()) },
+        { 注入条数: 1, ...WANT_SECTIONS })
+
+      // ── G9（定形验收口径 2 = **老板报的那一格**）：同一回合只有 3 个工具结果 ──────
+      const h2 = await harness(f10)
+      await h2.turnStart()
+      for (let k = 0; k < 3; k++) await toolStep(h2)   // every: 10 ⇒ 机制① 一次都不响
+      // ⚠️ 这一格自带前提：先钉"机制① 在这之前一条都没贴"。不然刻度要是被改成 3，
+      //    下面读到的那条尾巴就是**机制① 的**（它本来就有常识与时间）⇒ 这一格变成假绿。
+      const oneBefore2 = h2.count()
+      await bossThenStep(h2)
+      check('G9', '§F-126',
+        '② **老板报的那一格**：同一回合只有 3 个工具结果（every: 10 ⇒ 机制① 一次都没响）'
+          + '+ 老板开口 ⇒ 机制② 那条尾巴**同时**带常识与时间行',
+        { '机制①到点次数': oneBefore2, 注入条数: h2.count(), ...sectionsOf(h2.lastText()) },
+        { '机制①到点次数': 0, 注入条数: 1, ...WANT_SECTIONS })
+
+      // ── G10（定形验收口径 3）：`every: 0` ⇒ 机制① 关掉，机制② 那条**仍然**要带 ──
+      const h3 = await harness(f0)
+      await h3.turnStart()
+      for (let k = 0; k < 4; k++) await toolStep(h3)   // every: 0 ⇒ 一条都不贴
+      const oneBefore3 = h3.count()
+      await bossThenStep(h3)
+      check('G10', '§F-126',
+        '③ `every: 0`（机制① 关掉）⇒ 机制② 那条**仍然**同时带常识与时间行'
+          + '（n=0 的意思是"只留机制②"，不是"两条都关"）',
+        { '机制①到点次数': oneBefore3, 注入条数: h3.count(), ...sectionsOf(h3.lastText()) },
+        { '机制①到点次数': 0, 注入条数: 1, ...WANT_SECTIONS })
+
+      // ── G11（定形验收口径 4）：机制① **到点那一刀** —— 现状不许退化 ─────────────
+      // 这一格同时是 `G8`–`G10` 的**阳性对照**（同一份 `f10`：常识真的读得到、检测得到）。
+      const h4 = await harness(f10)
+      await h4.turnStart()
+      for (let k = 0; k < 10; k++) await toolStep(h4)  // 第 10 个结果 ⇒ 机制① 到点
+      check('G11', '§F-126',
+        '④ 机制① **到点那一刀**（第 10 个工具结果）⇒ 常识与时间行照旧都在'
+          + '（这一格是**防退化**：F-126 不许把它弄丢；它同时是 G8/G9/G10 的阳性对照）',
+        { 注入条数: h4.count(), ...sectionsOf(h4.lastText()) },
+        { 注入条数: 1, ...WANT_SECTIONS })
+
+      // ── G12（**围栏**，不是定形那四格之一）：除了那三个理由，谁都不许单独触发 ──────
+      // 定形的不做清单点名要一条「防第四个偷偷进来」的判据：
+      //   触发点 = ① 每 n 个工具结果 · ② 老板开口之后 · ③ 板子内容变了（老板 2026-10-22 认了板子不算违约）
+      //   —— **就这三个，不许再加第四个**。
+      // 这里喂的是一串"看着像但都不算"的事件（这一回合 `every: 10`，一个工具结果都没有 ⇒ ① 根本不成立）：
+      //   `turn/start` · `step/start` · `step/end` · `tool/call` · `assistant/message`（我开口）·
+      //   一条 `source.kind: 'plugin'` 的 user 消息（系统自己发的，不是他）· 纯装配。
+      // ⚠️ **边界写清，别假装覆盖得更宽**：这是一张**黑名单** —— 它只钉**这七种**事件今天不触发，
+      //    拦不住"明天在第八种事件上偷偷加一个"。真要挡住第四个，靠的是 `inject.js`
+      //    `agent/pre-step` 里那**一行**唯一的出口（`if (!byTwo && !byOne && !boardChanged) return`），
+      //    加新理由必须同时改那一行与 CONTRACT.md 的那一节 —— 那半边是评审的眼睛，不是这一格。
+      const h5 = await harness(f10)
+      await h5.turnStart()
+      await h5.stepStart()
+      await h5.stepEnd()
+      await h5.toolCall()
+      await h5.iSpeak()
+      await h5.plugin()
+      await h5.stepBegin()      // 那条 plugin 消息被领进这一步：它不许被读成"老板又开了一次口"
+      await h5.assemble()
+      check('G12', '§F-126',
+        '【围栏·不是四格之一】七种"看着像触发"的事件（turn/start · step/start · step/end · tool/call · '
+          + 'assistant/message · 一条 plugin 的 user 消息 · 纯装配）⇒ **一条都不许贴**'
+          + '（触发点只有三个：① 每 n 个工具结果 · ② 老板开口之后 · ③ 板子内容变了）',
+        { 注入条数: h5.count() }, { 注入条数: 0 })
+    } finally {
+      rmSync(f10, { recursive: true, force: true })
+      rmSync(f0, { recursive: true, force: true })
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1170,14 +1454,14 @@ try {
   //    所以拿夹具当被测对象时（`AGENIA_PROBE_ENTRY` 指到别处，而且没给 `AGENIA_PROBE_PRODUCT_DIR`）
   //    **这一族不判**：那时它量的是"另一个东西的内容"，判了只会把阳性对照染红
   //    （09-25 那次 `I1` 就是这么红的）。
-  // 🔴 **但"不判"不等于"消失"**（2026-09-26 返修）：夹具模式下这 12 条**逐条记挂起、照样进分母** ——
-  //    这条清单必须和下面真正判的那 12 个编号一一对应（`Z9` 与"三种跑法分母对照"是它的守卫）。
+  // 🔴 **但"不判"不等于"消失"**（2026-09-26 返修）：夹具模式下这 17 条**逐条记挂起、照样进分母** ——
+  //    这条清单必须和下面真正判的那 17 个编号一一对应（`Z9` 与"三种跑法分母对照"是它的守卫）。
   if (!TESTING_PRODUCT) {
     console.log('（I 族：这次测的是夹具，不是产物 —— 17 条记挂起，分母不缩）')
     // ⚠️ `O7`（"产物那个块解析得出 3 条场景"）也只在产物模式下判 —— 它同样必须进分母。
     skip('O7', 2, '产物的 `mood.md` 解析得出恰好 3 条场景：这次测的是夹具，不是产物 ⇒ **未验**')
     for (const [id, criterion, what] of [
-      ['I1', 1, '`style.md` 第一行是 `<!-- every: 3 -->`'],
+      ['I1', 1, '`style.md` 第一行那个 `<!-- every: N -->` 就是实现**实际用的**刻度（第 N 个工具结果才贴）'],
       ['I2', 1, '`every` 那枚注释在第一行'],
       ['I6', 6, '真 `style.md` 里有切口标记'],
       ['I7', 6, '真尾巴那一段 ≤ 400 字符'],
@@ -1199,8 +1483,49 @@ try {
     const raw = readFileSync(STYLE_FILE, 'utf8')
     const head = raw.split('\n')[0] ?? ''
     const hit = /<!--\s*every:\s*(\d+)\s*-->/.exec(head)
-    check('I1', 1, '`style.md` **第一行**就是 `<!-- every: 3 -->`（n 的默认值 = 3）',
-      hit === null ? `第一行没有 every 注释：${JSON.stringify(head)}` : Number(hit[1]), 3)
+    /**
+     * 🔴 **`I1`：刻度不写死在判据里。**
+     *
+     * 老的写法是 `check(…, Number(hit[1]), 3)` —— 那一格 2026-10-20 假红过一次：
+     * 老板把 `style.md` 第一行从 `every: 3` 改成 `every: 10`，**事实是有意改的**，
+     * 而判据里钉着 3 ⇒ 红得和"实现坏了"一模一样。那种红会把人教成"忽略脚本"。
+     *
+     * 现在这一格钉的是**实质**：`style.md` 第一行那个数 **= 实现实际用的刻度**。
+     * ⚠️ 不能写成"从文件读一个数、再跟同一个数比" —— 期望值和实现读**同一份来源**时，
+     *    两边永远相等，那不是判据（`cand-20261016-selfsourced-order01`）。
+     *    所以量的是**行为**：喂第 `N` 个工具结果时正好贴一条，第 `N-1` 个时一条都不贴。
+     *    ⇒ 刻度改成 10 它照样绿（真值跟着走）；实现把刻度读错 / 读死 / 不读它 —— 红。
+     *    ⇒ 第一行**没有**那枚注释时，I2 红，这一格也红（实现会静默退到 `DEFAULT_EVERY`）。
+     */
+    const everyFromFile = hit === null ? null : Number(hit[1])
+    /**
+     * 喂几步。
+     * · 刻度 ≥ 1 ⇒ 正好喂 `N` 步（第 N 步才该贴）。
+     * · 刻度 = 0（机制① 关着）⇒ 喂 **5** 步：只喂 1 步的话，"真关着"和"刻度读错了"
+     *   在读数上**一模一样**（都是 0）—— 那是个假绿。5 步是够看的样本量，
+     *   **故意不写 3**：3 是实现的兜底常数（`DEFAULT_EVERY`），抄进探针就等于
+     *   把"读不出来就退兜底"那条错路写成期望值。
+     * · 刻度 > `STEPS_CAP`（`style.md` 第一行一个手滑的 `every: 100000`）⇒ **不喂、直接红**，
+     *   报文写明"超出探针量程，这一格判不了"。**不许静默截断**：截断会把错刻度喂成绿。
+     */
+    const STEPS_CAP = 200
+    const beyondCap = everyFromFile !== null && everyFromFile > STEPS_CAP
+    const steps = beyondCap ? 0 : (everyFromFile === null ? 1 : (everyFromFile === 0 ? 5 : everyFromFile))
+    const everyH = await harness(PRODUCT_DIR)
+    await everyH.turnStart()
+    let firstTailAt = 0     // 0 = 这几步里一条都没贴
+    for (let k = 1; k <= steps && firstTailAt === 0; k++) {
+      await toolStep(everyH)
+      if (everyH.count() > 0) firstTailAt = k
+    }
+    check('I1', 1, '`style.md` 第一行那个 `<!-- every: N -->` 就是实现**实际用的**刻度：'
+      + '前 N−1 个工具结果不贴、第 N 个正好贴一条（刻度值本身不写死在这一格里）',
+      beyondCap ? '（没喂步：刻度超出探针量程）' : firstTailAt,
+      beyondCap
+        ? `刻度 ${everyFromFile} 超出探针量程（> ${STEPS_CAP} 步）⇒ 这一格判不了，要人看`
+        : (everyFromFile === null
+          ? `第一行没有 \`<!-- every: N -->\`：${JSON.stringify(head)}（实现会静默退到 DEFAULT_EVERY ⇒ 这一格红）`
+          : everyFromFile))
     checkTrue('I2', 1, '`every` 那枚注释在第一行，不在别处',
       /^\s*<!--\s*every:\s*\d+\s*-->/.test(head), JSON.stringify(head))
 
@@ -1728,7 +2053,7 @@ try {
     await bossThenStep(h)
     const text = h.lastText()
     check('P1', '§形状', '夹具的尾巴段 === `cutTail(夹具 style.md)`（切口之前、剥注释、trim）',
-      stylePartOf(text), cutTail(FIXTURE_STYLE(3)))
+      stylePartOf(text), cutTail(fixtureStyleOnDisk(fixture)))
     checkTrue('P2', 7, '切口**后面**那一大段不许出现在请求里（`## emoji` 表在切口后面）',
       typeof text === 'string' && !text.includes('## emoji'),
       `贴出来的正文里${typeof text === 'string' && text.includes('## emoji') ? '**有**' : '没有'}切口后面那一段`)
@@ -2226,7 +2551,7 @@ try {
         '读不到 `mood.md` ⇒ 尾巴**只贴 style 段**，不贴分数行（宁可不说，不许瞎说）',
         moodPartOf(text) === undefined ? '（没有情绪段）' : brief(moodPartOf(text)), '（没有情绪段）')
       check('Q8', 2, '而且 style 段照贴、逐字不差（不是"整条不贴"）',
-        stylePartOf(text), cutTail(FIXTURE_STYLE(3)))
+        stylePartOf(text), cutTail(fixtureStyleOnDisk(noMood)))
       checkTrue('Q9', 2, '读不到 `mood.md` **要出声**（`console.error`，报文里点到 mood.md）—— 不许静默',
         stderrSeen.slice(before).some((m) => /mood\.md/.test(m)),
         `这一段里 console.error 收到的是：${brief(stderrSeen.slice(before).join(' | ') || '（一声都没有）')}`)
@@ -2934,15 +3259,49 @@ try {
       ? readFileSync(join(PRODUCT_DIR, 'mood.md'), 'utf8') : ''
     checkIf(TESTING_PRODUCT, 'H10', 14, '`mood.md` 里「分数是调语气用的，不是绩效报表」**还在**',
       /分数是调语气用的/.test(moodRaw) ? '在' : '不在了 —— 老板 2026-09-26 下午点名要它留着', '在')
-    // 口径 10：**时间与"今天"都必须从事件时间推**。
-    // ⚠️ `new Date(now)` 这类**带参数**的构造是合法的（参数就是从事件里来的时间戳）；
-    //    不许的是 `Date.now()` / `new Date()` 这种"读真实时钟"的写法 ——
-    //    它们会让"今天的抽屉是哪个"跟着跑的那天漂。
-    const clockHits = [...src.matchAll(/Date\.now\s*\(|new Date\s*\(\s*\)/g)].map((m) => m[0])
-    // ⚠️ 只对**产物入口**判：参考夹具里用 `new Date(事件时间戳)` 把"今天"推出来是**合规**的
-    //    （带参数 = 不读真实时钟）；而"无参 `new Date()`"才是禁的。
-    checkIf(PRESET_ENTRY === join(PRESET_DIR, 'inject.js'), 'H11', 10, '`inject.js` 里没有 `Date.now()` / 无参 `new Date()`（时间与"今天"全从事件自带的时间戳进）',
-      clockHits.length === 0 ? '（一次都没有）' : clockHits, '（一次都没有）')
+    // 口径 10：**"今天的抽屉是哪个"必须从事件时间推**，不许读真实时钟。
+    // 边界（两件事各守一半，缺一不可）：
+    //   · 禁区 = 任何地方的无参 `new Date()`，以及任何地方的 `Date.now()`；
+    //   · 唯一的例外 = `timeLineOf(<会话 id>, Date.now())` 这一处**实参** —— 尾巴那条「现在几点」
+    //     按 F-102 的口径取**进程当时**（他读的是"现在几点"，不是"今天在哪个抽屉"）。
+    //     豁免按**调用形状**给，不按文件给：这个钟只许喂给那一行，不许被别处借去算抽屉或算别的。
+    // ⚠️ 静态判据抠整份源码、注释也算（mig-rules-13），而 `inject.js` 那段文档注释**必须**逐字写
+    //    "`now` 必须是 `Date.now()`"（那是 F-102 的规范）⇒ 这里**先剥注释**再扫（保留行号）：
+    //    注释不是代码，规范本身不该被自己的判据判红。
+    // ⚠️ 只对**产物入口**判：参考夹具用 `new Date(事件时间戳)` 把"今天"推出来是合规的
+    //    （带参数 = 不读真实时钟），换入口时这一条不适用。
+    const stripCommentsKeepingLines = (text) => text
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+      .replace(/(^|[^:])\/\/[^\n]*/g, (m, p1) => p1 + ' '.repeat(m.length - p1.length))
+    const SANCTIONED_CLOCK = /timeLineOf\(\s*[A-Za-z_$][\w$]*\s*,\s*Date\.now\(\)\s*\)/g
+    const lineAt = (text, index) => text.slice(0, index).split('\n').length
+    const clockScanOf = (text) => {
+      const blanked = stripCommentsKeepingLines(text)
+      const allowed = [...blanked.matchAll(SANCTIONED_CLOCK)].map((m) => ({ line: lineAt(blanked, m.index) }))
+      const scrubbed = blanked.replace(SANCTIONED_CLOCK, (m) => m.replace(/[^\n]/g, ' '))
+      const violations = [...scrubbed.matchAll(/Date\.now\s*\(|new Date\s*\(\s*\)/g)]
+        .map((m) => ({ line: lineAt(scrubbed, m.index), text: m[0].startsWith('new') ? '无参 new Date()' : 'Date.now()' }))
+      return { allowed, violations }
+    }
+    // ⚠️ `AGENIA_PROBE_H11_ENTRY` 的用途**只有一个**：阳性对照 —— 拿一份**变异副本**证明
+    //    "别处塞一个无参 `new Date()` / 一个不在 `timeLineOf` 里的 `Date.now()`"真的会红。
+    //    用了它必须在读数里看得见（下面那行会印出来），不许静默。
+    const h11Override = process.env.AGENIA_PROBE_H11_ENTRY
+    const h11Witness = typeof h11Override === 'string' && h11Override.trim() !== ''
+    if (h11Witness) console.log(`H11 判的源码：${h11Override}（由 AGENIA_PROBE_H11_ENTRY 指定 —— 阳性对照，不是产物本身）`)
+    const h11Scan = clockScanOf(h11Witness ? readFileSync(h11Override, 'utf8') : src)
+    const h11Ok = h11Scan.violations.length === 0 && h11Scan.allowed.length === 1
+    const h11Got = h11Ok ? '豁免 1 处 · 违规 0 处'
+      : `豁免 ${h11Scan.allowed.length} 处`
+        + (h11Scan.allowed.length === 0
+          ? `（一处都没有：F-102 的时间行该读的那个钟不见了）`
+          : `（${h11Scan.allowed.map((x) => `行 ${x.line}`).join('、')}）`)
+        + ` · 违规 ${h11Scan.violations.length} 处`
+        + (h11Scan.violations.length === 0 ? ''
+          : `（${h11Scan.violations.map((x) => `行 ${x.line}：${x.text}`).join('；')}）`)
+    checkIf(h11Witness || PRESET_ENTRY === join(PRESET_DIR, 'inject.js'), 'H11', 10,
+      '`inject.js` 读真实时钟只许 `timeLineOf(id, Date.now())` 那一处（F-102 的「现在几点」）：别处的 `Date.now()` 与**任何**无参 `new Date()` 都不许',
+      h11Got, '豁免 1 处 · 违规 0 处')
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2959,7 +3318,8 @@ try {
   //   ③ 两处都没有 ⇒ 这一族**逐条记挂起**（未验，不许静默算过）。
   //
   // ⚠️ 为什么不满足于"源码里有那几个字符串"：字符串命中证明不了"名单真的从组合来"，
-  //    更证明不了"省略 run_in_background 真的会被拒"。这里两条都真跑。
+  //    更证明不了"省略 run_in_background 在 0.2.1 上真的会**放行**、显式 false 真的会被拒"。
+  //    这里两条都真跑。
   {
     const LIVE_ENTRY = join(PRESET_DIR, 'inject.js')
     const STAGED_ENTRY = join(REPO, '.tools', '_staging', 'agenia-upgrade', 'preset', 'inject.js')
@@ -3013,44 +3373,108 @@ try {
           'delegationToolNames(组合 config) == 组合里已启用的具名 dsh-tool-subagent 实例（代码里不硬编码名单）',
           guard.delegationToolNames(guardConfig), enabled)
 
-        // GD12：名单里的**模式**必须 = 组合里那一行的 `backgroundMode`
-        //       （分叉 ⇒ 硬门按错的模式放行 / 拒绝，而且不报错）。
-        const modeGap = enabled.filter((n) => table[n] !== modes[n])
-          .map((n) => `${n}：名单说 ${table[n]}，那一行写的是 ${modes[n]}`)
+        // GD12：**模式只有一个来源**（`delegationTools`）。
+        //   0.2.1 把每行那个 `backgroundMode` 撤了 —— 组合里只剩在 `disabled: true` 的行上，
+        //   活着的行一条都没有。所以原来那句"名单里的值 = 那一行的 backgroundMode"**没有第二个来源可对**
+        //   （两边都是它自己 ⇒ 同义反复，而且恒红）。新轴换**行身份**（与 `tests/static/composition.test.mjs`
+        //   的 `DELEGATION-TOOLS-MODE` 同口径）：
+        //     · 名单里的值必须由行身份推出：`job_*` ⇒ one-shot；`team_*` / 裸 `subagent` ⇒ continuable；
+        //     · **已启用**的行上一个 `backgroundMode` 都不许有 —— 写在活行上就是造第二份真相
+        //       （0.2.1 不读它 ⇒ 改它不生效，下一个人会照它改模式，而硬门按另一份判）。
+        //   阳性对照：解析器得**确实看得见**这个键（拿一段合成的组合喂它）——
+        //   否则"活行上都没有"可能只是解析器瞎了，这一格会静默空转。
+        const MODE_SELF_TEST = [
+          '- id: synthetic-enabled',
+          '  name: "@deepseek-ai/dsh-tool-subagent"',
+          '  config:',
+          '    toolName: job_synthetic',
+          '    backgroundMode: one-shot',
+        ].join('\n')
+        const parserSeesDeadKey = readDelegationConfig(MODE_SELF_TEST).modes.job_synthetic === 'one-shot'
+        const modeBad = []
+        for (const n of enabled) {
+          const want = /^job_/.test(n) ? 'one-shot' : 'continuable'
+          if (table[n] !== want) {
+            modeBad.push(`${n}：名单说 ${table[n]}，行身份说 ${want}（job_ = one-shot；team_ / subagent = continuable）`)
+          }
+          if (modes[n] !== undefined) {
+            modeBad.push(`${n}：已启用的行上还写着 0.2.1 撤掉的 backgroundMode=${modes[n]} —— 模式只许在 delegationTools 一处`)
+          }
+        }
         checkTrue('GD12', '§硬门',
-          '名单里的模式逐条 = 组合里那一行的 backgroundMode（分叉 ⇒ 硬门按错的模式放行 / 拒绝）',
-          modeGap.length === 0,
-          modeGap.length > 0 ? modeGap.join('；') : `${enabled.length} 条逐条一致`)
+          '模式只有一个来源：名单里的值 = 由行身份推出（job_* ⇒ one-shot；team_*/subagent ⇒ continuable）· 已启用的行上不许再写 backgroundMode（0.2.1 已撤）',
+          oneShot.length > 0 && cont.length > 0 && parserSeesDeadKey && modeBad.length === 0,
+          `解析器自证看得见 backgroundMode：${parserSeesDeadKey ? '是' : '**否 —— 这一格会空转**'}`
+            + ` · one-shot ${oneShot.length} / continuable ${cont.length}`
+            + (modeBad.length > 0 ? ` · ${modeBad.join('；')}` : ' · 逐条都对'))
 
-        // GD2：名单合法 ⇒ 没有 configError，而且名单里每个工具都**暴露着** `run_in_background`
-        //      （唯一会把参数拿掉的是 `enableRunInBackground: false`；那是"必须显式 true"能成立的前提）。
+        // GD2：组合里这份名单**本身是合法的** ⇒ `delegationPolicy` 不该报 configError。
+        //   ⚠️ 这一格原来还断言"名单里每个工具都**暴露着** `run_in_background` 参数" —— 那是 0.2.0 的平台事实。
+        //   0.2.1 把这个参数从工具里删了，`backgroundExposed` 现在只是 `new Set(mode.keys())`（注入器自己算的派生量）
+        //   ⇒ 它跟名单的键**永远相等**，翻不了面，不是判据（套件那侧的同款 `POLICY-EXPOSED` 已经因此删掉）。
+        //   只留能翻面的那一半：名单合法 ⇒ configError = null；`backgroundExposed` 降级成读数。
         checkTrue('GD2', '§硬门',
-          '名单合法 ⇒ configError 为空 · 名单里每个工具都暴露着 run_in_background 参数',
-          policy.configError === null && [...policy.backgroundExposed].sort().join(',') === enabled.join(','),
-          `configError=${JSON.stringify(policy.configError)} · backgroundExposed ${[...policy.backgroundExposed].length}/${enabled.length} 个`)
+          '组合里这份名单合法 ⇒ delegationPolicy 不报 configError（出现非法模式值 / 形状不对就该红）',
+          policy.configError === null,
+          `configError=${JSON.stringify(policy.configError)}`
+            + ` · 读数（不作判据）：backgroundExposed ${[...policy.backgroundExposed].length}/${enabled.length} 个`
+            + '（0.2.1 已无此参数；它是派生量 = 名单的键）')
 
         // GD3 / GD4 / GD5：`one-shot` 那几条（**从组合读，不写死**）。
-        const omitBad = oneShot.filter((n) => {
-          const v = guard.subagentBackgroundVerdict(n, {}, policy)
-          return v === null || v.code !== 'E_GUARD_JOB_FOREGROUND'
-            || !String(v.message).includes('必须后台运行')
-            || !String(v.message).includes('run_in_background: true')
-        })
+        // 🔴 2026-10-20（`F-112`，DSH 0.2.1）：`run_in_background` 这个参数**已经从工具里删了** ——
+        //    0.2.1 的委派一律异步（调用即返回，完成后再通知），所以"省略"是唯一可能的值，
+        //    它本来就满足这条门禁的**目标**（不把组长卡在前台）。三格按"0.2.1 上该长什么样"重切：
+        //      · GD3 = 名单里的**两档**：省略 ⇒ 放行（新义务）；显式 false ⇒ 仍拒（旧义务里仍然成立的那一半）。
+        //      · GD4 = **阳性对照**：显式 true 仍放行。
+        //      · GD5 = **判据的形状**还是 `=== true`：显式 `'true'` / 1 / 0 / null 一律拒
+        //        （不是 `!== false` 那种松判据）；而**"缺参数"这一档翻面**（旧：拒 → 新：放行）。
+        //    ⚠️ 两档必须成对：只钉"省略放行"会给"把门禁删掉"发通行证；只钉"false 拒"会漏掉翻面。
+        const jobBad = []
+        for (const n of oneShot) {
+          for (const [label, args] of [['省略', {}], ['args 整个缺', undefined]]) {
+            const v = guard.subagentBackgroundVerdict(n, args, policy)
+            if (v !== null) jobBad.push(`${n}/${label}：应放行（0.2.1 委派一律异步、参数已删），实得 ${v.code}`)
+          }
+          const refused = guard.subagentBackgroundVerdict(n, { run_in_background: false }, policy)
+          if (refused === null || refused.code !== 'E_GUARD_JOB_FOREGROUND') {
+            jobBad.push(`${n}/false：应拒（E_GUARD_JOB_FOREGROUND），实得 ${JSON.stringify(refused)}`)
+          } else if (!String(refused.message).includes('必须后台运行')) {
+            jobBad.push(`${n}/false：报文应含「必须后台运行」，实得 ${String(refused.message).slice(0, 120)}`)
+          }
+        }
         checkTrue('GD3', '§硬门',
-          `${oneShot.length} 条 one-shot：省略 run_in_background ⇒ 一律拒（E_GUARD_JOB_FOREGROUND + 报文含「必须后台运行」/「run_in_background: true」）`,
-          oneShot.length > 0 && omitBad.length === 0,
-          omitBad.length > 0 ? `没拒干净的：${omitBad.join(', ')}` : `${oneShot.join(', ')} 逐条都对`)
+          `${oneShot.length} 条 one-shot：省略 run_in_background（含 args 整个缺）⇒ 放行；显式 false ⇒ 拒（E_GUARD_JOB_FOREGROUND + 报文含「必须后台运行」）`,
+          oneShot.length > 0 && jobBad.length === 0,
+          jobBad.length > 0 ? jobBad.join('；') : `${oneShot.join(', ')} 两档都对`)
         const passBad = oneShot.filter((n) => guard.subagentBackgroundVerdict(n, { run_in_background: true }, policy) !== null)
         checkTrue('GD4', '§硬门',
-          '同一批 one-shot：显式 run_in_background: true ⇒ 放行（**阳性对照** —— 否则"一律拒"也能让 GD3 绿）',
+          '同一批 one-shot：显式 run_in_background: true ⇒ 放行（**阳性对照**：GD3/GD5 判的是拒档，没有这一格，"见参数就拒"也能让它们绿）',
           oneShot.length > 0 && passBad.length === 0,
           passBad.length > 0 ? `被误拒的：${passBad.join(', ')}` : `${oneShot.length} 条都放行`)
-        const truthyBad = oneShot.filter((n) => ['x', 1, 0, false, null].some((v) => guard.subagentBackgroundVerdict(n, { run_in_background: v }, policy) === null)
-          || guard.subagentBackgroundVerdict(n, undefined, policy) === null)
+        const looseShapes = [
+          ['字符串 true', { run_in_background: 'true' }],
+          ['1', { run_in_background: 1 }],
+          ['0', { run_in_background: 0 }],
+          ['null', { run_in_background: null }],
+        ]
+        const shapeBad = []
+        for (const n of oneShot) {
+          for (const [label, args] of looseShapes) {
+            const v = guard.subagentBackgroundVerdict(n, args, policy)
+            if (v === null || v.code !== 'E_GUARD_JOB_FOREGROUND') {
+              shapeBad.push(`${n}/「${label}」：应拒（E_GUARD_JOB_FOREGROUND），实得 ${v === null ? '放行' : v.code}`)
+            }
+          }
+          // 0.2.1 唯一可能的值：**缺参数**（键在、值是 undefined，与"整个省略"同档）。
+          // 这一档单独判 —— 谁把判据改回"必须 === true"，它立刻红（那会让四条作业一次都发不出去）。
+          if (guard.subagentBackgroundVerdict(n, { run_in_background: undefined }, policy) !== null) {
+            shapeBad.push(`${n}/缺参数（键在、值 undefined）：应放行（与省略同档）`)
+          }
+        }
         checkTrue('GD5', '§硬门',
-          'one-shot 的判据是 `=== true`：`\'true\'` / 1 / 0 / false / null / 参数缺失 一律算"会前台等着" ⇒ 全拒',
-          oneShot.length > 0 && truthyBad.length === 0,
-          truthyBad.length > 0 ? `漏拒的：${truthyBad.join(', ')}` : `${oneShot.length} 条 × 6 种写法都被拒`)
+          'one-shot 的判据仍是 `=== true`：显式 `\'true\'` / 1 / 0 / null 一律拒（不是 `!== false` 的松判据）；而**缺参数 ⇒ 放行**（0.2.1 唯一可能的值）',
+          oneShot.length > 0 && shapeBad.length === 0,
+          shapeBad.length > 0 ? shapeBad.join('；') : `${oneShot.length} 条 × 4 种非 true 值都被拒 · 缺参数都放行`)
 
         // GD6：`continuable` 那几条 —— 省略 / true 放行，**只有显式 false** 才拒。
         const contBad = []
@@ -3088,28 +3512,303 @@ try {
           notBroken.length > 0 ? `这几种没认出来：${notBroken.map((r) => `#${r.i}→${JSON.stringify(r.code)}`).join(', ')}` : `${brokenConfigs.length} 种形状都认出来了`)
 
         // GD9：错误态的**窄形状**（追加裁定 v1.1 · A13）—— 拦委派名，**放行**收作业结果的那三个。
+        //   同一格还钉**三条拒绝报文说的是不是 0.2.1 的实话**。三条路都要看（`F-116`：生产侧把
+        //   作业 / 岗位那两句也改成了实话 ⇒ 判据跟着从"只看配置坏掉那条"覆盖到三条）：
+        //     · `E_GUARD_CONFIG_MISSING`（配置坏了）
+        //     · `E_GUARD_JOB_FOREGROUND`（一次性作业被硬塞了非 `true` 的值）
+        //     · `E_GUARD_SELF_FOREGROUND`（可续聊岗位被硬塞了 `false`）
+        //   `run_in_background` 这个参数平台已经删了（`inject.js:769-773`），所以每条拒绝报文：
+        //     ① **不许教人去传它** —— 判"教"这个动作，**不是**"出现过参数名"。
+        //        🔴 0.2.1 的**实话**里本来就会出现 `run_in_background: true`：`inject.js:782` 的
+        //           兼容说明「门禁只为兼容老调用，仍把 run_in_background: true 当「后台」放行」——
+        //           那是**陈述**，不是**指令**。**把出现本身当教，这条正确的报文会当场假红** ——
+        //           已实测（`.team/test/2026-10-20/F-116/_runs/step1-先红-取样放宽判据未改.txt`）。
+        //     ② 要说出**平台理由**（委派是异步的 / 这个参数没了）—— 禁令**不算理由**：
+        //        「不要传 run_in_background。」只下了禁令、没给原因 ⇒ 那正是要拦的半修。
+        //   ── 三处"回看"的口径（第 4 关 `B-1` / `B-2` / `B-9`：原来都是**固定字数窗口**，
+        //      而字数是对着证人量出来的 ⇒ 一定有缝，插一个状语就漏）──────────────────────────
+        //     · **指令语境**：从那个 `: true` 回看到**上一个分句标点**（`，；。！？`；`：` **透明**）为止，
+        //       这一段里有表内词即算教。⇒ 表内词离参数名 20 字也认
+        //       （`请务必记住：…补成 run_in_background: true`）。
+        //       🔴 第 4 关第二遍 `B-11`：停标一开始用的是"句末"（逗号**不**停）⇒ 窗口 = 整句 ⇒
+        //          同一句的**前一个分句**里有个表内词就把本分句的**陈述**判成教
+        //          （`请注意：…，仍把 run_in_background: true 当「后台」放行` ⇒ 假红）。
+        //          **判据咬住正确的话，比没咬住错的话更糟** ⇒ 逗号停、`：` 透明。
+        //     · **否定**：从命中点回看到**上一个分句标点**（`，。；：、`）为止，有否定词即算否定语境。
+        //       ⇒ `不必显式地写…`（「不」落在第 5 字）也认；`不是必须传` / `不需要显式传` / `不要写` 照旧。
+        //     · **值形态**：参数名后面紧跟的值**不是 `true`** ⇒ 那是在**陈述被拒的那个值**，不是教人传。
+        //       ⇒ `这次被拒是因为显式传 run_in_background: false。` 是实话，**不许判红**（`B-1`）。
+        //   ⚠️ **边界要写清，别假装覆盖得更宽**（两个方向都写）：
+        //        · **会漏**：① 只判**这三种已见形状**（值形态+指令语境 / 模态词+写传 / 显式写传）。
+        //          三支都不认的教法 —— `请把 run_in_background 传进来` · `run_in_background 必须为 true` ·
+        //          `务必传 …` · `把它去掉，或改成 true` · **表外动词** ·
+        //          **表内词落在上一句或另一个分句**（`请务必记住：调用子代理的时候，一定要把参数补成 …`，
+        //          中间多一个逗号就够）—— 属已知边界；只有"另起一句"这一类任何正则都挡不住，别的都是没补。
+        //        · **误判面（已收）**：表内词在**同一个分句**里但整段其实是**陈述** ⇒ 仍可能误判
+        //          （`写法很简单：设 run_in_background: true` 这种形状与指令同形，分不开）。
+        //          第 4 关第二遍点的那两句（表内词在**前一个分句**）已由"逗号停"消灭，进了 `CONTROLS` 当反向证人。
+        //        · ② 只认 `PLATFORM_REASON` 这张**词表**：说法不在表里会红。换说法要么补表，
+        //          要么先改这里 —— **不是**"原文可以改"。
+        //     ③ 极性/语境见上面那三行 —— **不是**整句豁免：一句里别处的「不」不许把真教法一并放走。
+        //   📌 对照表 `CONTROLS` 是这一格的一部分（`F-112` 第 4 关 `E-3` / `E-4`）：① 的三支
+        //      **各有一行证人**、② 两种说法各有证人、外加三条"对的报文"的反向证人 ——
+        //      删掉任一支，它那一行当场翻面 ⇒ 这一格红。表里第 2 列**逐字**是喂进去的原串。
+        //   刀：`n1`/`n2`（作业 / 岗位那两句回退成 0.2.0 的教法）· `n5`/`n6`/`n7`（配置那条）·
+        //       `p1`~`p3`（删掉 ① 的任一支）· `p4`（动词表放宽：陈述被判教）·
+        //       `p5`（去掉"参数名后面不是 true ⇒ 陈述"）· `p6`（否定回看退回 4 字）· `p7`（语境回看退回 8 字）·
+        //       `p8`（判 ② 之前不摘冻针）· `p9`（语境窗退回"逗号不停"）。
         const badPolicy = guard.delegationPolicy(undefined)
         const mustReject = ['subagent', 'team_test', 'team_design',
           'job_memory_judge', 'job_memory_review', 'job_conversation_review', 'job_technical_review']
         const mustAllow = ['job_output', 'job_kill', 'job_list', 'read', 'present', 'send_message', 'edit', 'pwsh']
         const leaks = mustReject.filter((n) => guard.subagentBackgroundVerdict(n, {}, badPolicy) === null)
         const kills = mustAllow.filter((n) => guard.subagentBackgroundVerdict(n, {}, badPolicy) !== null)
+        /**
+         * 三处"回看"的落点（口径见上面那一段）——**都不是固定字数**：
+         *   `backToStop`：从 `at` 往回走到**上一个标点**为止，返回那一段。
+         *   `NEG_BEFORE`：用**分句**标点；`valueFormTeach` 的语境窗用 `VALUE_CTX_STOPS`。
+         */
+        const CLAUSE_STOPS = '，,。；;：:、！!？?\n'
+        /**
+         * 第一支（值形态 + 指令语境）的语境窗 —— **逗号停、`：` 透明**（第 4 关第二遍 `B-11`）。
+         * 🔴 一开始它用 `SENTENCE_STOPS`（逗号**不**停）⇒ 窗口 = 整句 ⇒ 认"同一句的**前一个分句**里
+         *    有个表内词、而本分句是**陈述**"：
+         *      · `请注意：门禁只为兼容老调用，仍把 run_in_background: true 当「后台」放行。`（`请` 在第 0 字）⇒ 判教
+         *      · `显式传 false 会被拒，平台仍把 run_in_background: true 当后台放行。`（`传` 在前一分句）⇒ 判教
+         *    两句都是**对的**。**判据咬住正确的话，比没咬住错的话更糟** ⇒ 这两个原串已进 `CONTROLS` 当反向证人。
+         * ⚠️ `：` **必须透明**：`写法很简单：设 run_in_background: true` 的 `设` 就在冒号后面。
+         * ⚠️ 代价（写清）：`请务必记住：调用子代理的时候，一定要把参数补成 …`（中间多一个逗号）会漏 ——
+         *    那一类落在"表内词在**别的分句**"这条边界里。
+         */
+        const VALUE_CTX_STOPS = '，,；;。！!？?\n'
+        const backToStop = (text, at, stops) => {
+          let i = at
+          while (i > 0 && !stops.includes(text[i - 1])) i -= 1
+          return text.slice(i, at)
+        }
+        /**
+         * 否定语境：从命中点回看到**上一个分句标点**为止，有否定词 ⇒ 这一处不是在教。
+         * ⚠️ 原来是"前 4 个字"—— 那 4 是对着三条证人量出来的（最远 3 字），余量 1 字；
+         *    `不必显式地写 run_in_background: true`（「不」落在第 5 字）当场假红（第 4 关 `B-9`）。
+         * ⚠️ 不退回"整句豁免"：分句标点仍然隔断 ⇒「不要说别的，必须传…」照样判教。
+         */
+        const NEG_BEFORE = (text, at) => /[不无别未非]/.test(backToStop(text, at, CLAUSE_STOPS))
+        /**
+         * 指令语境的"表内词"——**逐字列出来，不用字符类**。
+         * 🔴 上一版写的是 `[写传指定设填]`：那是**六个单字**，`指`/`定` 各自成词
+         *    ⇒「一**定**要把参数补成 …」里的 `定` 被当成动词，让一条本该判"教"的句子**撞巧**过关。
+         *    口径与代码对不上就是这种事（第 4 关 `B-3`）。
+         * ⚠️ `用` / `给` **不收**：「调用」里的 `用` 离参数名 4 个字，收进去会把
+         *    `inject.js:782` 那句「兼容老调用，仍把 run_in_background: true 当后台放行」判红（`p4` 钉住）。
+         * ⚠️ `补成|改成|写成|设为|填成` 是第 4 关第二遍 `B-13` 补的：它们**只在"教人传一个值"的句子里**出现，
+         *    比裸动词准。补之前 `…一定要把参数补成 run_in_background: true` 里**没有**表内词 ——
+         *    那种句子原来靠句首的 `请`/`务必` 才红，把 `请务必` 去掉就是真漏。见 `CONTROLS` 的对照。
+         */
+        const CONTEXT_WORD = /必须|需要|请|务必|记得|别忘了|直接|手动|写|传|指定|设|填|补成|改成|写成|设为|填成/
+        /** 值形态 `run_in_background: true` 的每一处。 */
+        const VALUE_FORM = /run_in_background\s*[:：]\s*true/g
+        /**
+         * 参数名后面紧跟一个**非 `true`** 的值 ⇒ 那是在陈述被拒的那个值，不是教人传。
+         * 🔴 `(?!\s*true)` 里的 `\s*` **不能省**：写成 `(?!true)` 时，`\s*[:：]\s*` 末尾那个 `\s*` 可以匹配**空**，
+         *    于是 `: true` 在"空格那一格"上通过了否定前瞻 ⇒ 被当成"陈述" ⇒ 第三支对**任何带值的**都哑掉。
+         *    这是刀台的 `EXPECT` 抓出来的：`n1` 的读数只有三支（少了 `显式写传`），实跑 3 / 期望 4。
+         */
+        const REPORTS_OTHER_VALUE = /^\s*[:：]\s*(?!\s*true)/
+        /**
+         * ① 第一支：**值形态 + 指令语境**。
+         * ⚠️ 这一支**不能写成一条大正则**：窗口一旦放宽，贪婪匹配会把"先否定一句、后面真教"的两个命中
+         *    吞成一个（`不要写 run_in_background: false，必须传 run_in_background: true` 会漏）。
+         *    所以**按每一个 `: true` 逐个回看**。
+         */
+        const valueFormTeach = (msg) => {
+          for (const m of msg.matchAll(VALUE_FORM)) {
+            const before = backToStop(msg, m.index, VALUE_CTX_STOPS)
+            for (const c of before.matchAll(new RegExp(CONTEXT_WORD.source, 'g'))) {
+              if (!NEG_BEFORE(before, c.index)) return true
+            }
+          }
+          return false
+        }
+        /**
+         * ① 第二、三支：形状命中 ⇒ 否定隔离 + "后面不是 `true` ⇒ 陈述"。
+         * ⚠️ `REPORTS_OTHER_VALUE` 是第 4 关 `B-1`：`inject.js:789` 那句「显式传了 run_in_background: false」
+         *    正是这一票要求报文**把实参原样写出来**的结果 —— 拿它当"教人传"，等于把实话判红。
+         */
+        const shapeTeach = (msg, source, { valueGuard = false } = {}) => {
+          const re = new RegExp(source, 'g')
+          let m
+          while ((m = re.exec(msg)) !== null) {
+            const after = msg.slice(m.index + m[0].length)
+            if ((!valueGuard || !REPORTS_OTHER_VALUE.test(after)) && !NEG_BEFORE(msg, m.index)) return true
+            if (m.index === re.lastIndex) re.lastIndex += 1   // 防零长匹配死循环
+          }
+          return false
+        }
+        /** ① 三种**已见**的"教人传"形状（命中任一即算）。每一支各有一行证人（`CONTROLS`）。 */
+        const TEACHES_DEAD_ARG = [
+          ['值形态', valueFormTeach],
+          ['模态词+写传', (msg) => shapeTeach(msg, '(?:必须|需要|请)[^。；]{0,6}(?:显式)?\\s*(?:写|传|指定)[^。；]{0,10}run_in_background')],
+          ['显式写传', (msg) => shapeTeach(msg, '显式(?:写|传)\\s*run_in_background', { valueGuard: true })],
+        ]
+        /** ① 判"教没教"：返回命中的形状名（空数组 = 没教）。 */
+        const teaches = (msg) => TEACHES_DEAD_ARG.filter(([, fn]) => fn(msg)).map(([name]) => name)
+        /**
+         * ② "为什么"只认**平台事实**；禁令不是理由。三组说法都认（同一个事实）：
+         *   · **委派是即时的**：`异步` / `即发` / `即返回`（`inject.js` 自己的注释就用「调用即返回」）；
+         *   · **这个参数没了**：`参数…删 / 移除 / 没有 / 不再 / 不存在 / 撤 / 去掉 / 取消 / 废弃 / 下线 / 停止支持`，
+         *     或者反过来（`删 / 没有 …参数`）。**`撤` 是项目自己在用的词**（`agent.cordis.yml:304`
+         *     就写「`backgroundMode` 也一起撤了」）—— 第 4 关 `B-8`；
+         *   · **省略就是后台**：`省略…后台` —— 收，但**判之前先把冻针摘掉**（见下面 `reasonText`）。
+         *     🔴 第 4 关第一遍 `B-8` 我拒过这一条，理由是「`（省略即后台）` 是冻针，算成理由会让 ② 恒真」。
+         *     **那个诊断对，处置改了**（第 4 关第二遍）：一条**正向判据**不许被另一条判据**强制要求**的
+         *     子串满足 —— 一行修法就是判 ② 之前 `replaceAll('（省略即后台）', '')`。
+         *     摘掉之后 `省略…后台` 只在**冻针之外另写一遍**时才算理由；`n2`（0.2.0 那句岗位报文）
+         *     摘掉冻针后只剩「把它去掉，或改成 true」⇒ ② **照样红**（`CONTROLS` 那一行是它的证人，`p8` 钉住）。
+         * ⚠️ 这是**词表**，不是"说没说清"的判定器 —— 表外的说法会红（边界写在上面）。
+         * ⚠️ 窗口用 `{0,16}` 而**不是** `{0,8}`：`这个参数在 0.2.1 里被去掉了` 里隔着 10 个字；
+         *    而 `[^。；]` 本身不许跨句。
+         * 🔴 `去掉` **不收成裸词**，只收**被动式**（`…被去掉了`）：`把这个参数整个去掉再派`
+         *    是一条**指令**，拿它当"平台理由"会让"只留义务、不给理由"那类报文当场假绿
+         *    （实测：`n3-msg-job-noreason` 那把刀整把变绿）。这一格靠 `n3` 钉住。
+         */
+        /** "这个参数没了"那一路的动词（**描述性**的那几个；`去掉` 见下面单独一条）。 */
+        const GONE = '删|移除|没有|不再|不存在|撤|取消|废弃|下线|停止支持'
+        const PLATFORM_REASON = new RegExp([
+          '异步|即发|即返回',
+          `(?:参数|run_in_background)[^。；]{0,16}(?:${GONE}|被[^。；]{0,6}去掉)`,
+          `(?:${GONE})[^。；]{0,16}(?:参数|run_in_background)`,
+          '省略[^。；]{0,6}后台',
+        ].join('|'))
+        /**
+         * 判 ② 之前要看的正文 —— **先把冻针那半句摘掉**（第 4 关第二遍）。
+         * 为什么：`（省略即后台）` 是 `FROZEN.guardMessageNeedles.selfOmitted`，
+         *   `guard.test.mjs:216` 对**每一条**岗位报文强制 `includes` 它 ⇒ 不摘掉的话，
+         *   「② 说没说清平台理由」在岗位这一路上会被一条**别的**判据强制满足（同义反复）。
+         * ⚠️ 摘的是**带全角括号的整串**（冻针逐字），不是「省略即后台」六个字 ——
+         *   报文在冻针之外另写一遍，仍然算它说清了理由。
+         */
+        const reasonText = (msg) => msg.replaceAll('（省略即后台）', '')
+        /**
+         * 对照表 —— **判据的一部分**，不是读数（`F-112` 第 4 关 `E-3` / `E-4`）。
+         *   第 1 列 = 行名（报文里印这个）· 第 2 列 = **喂进去的原串（逐字）** · 第 3 列 = 该判成什么。
+         *   `teach` = ① 该判"教" · `clean` = ① 该判"没教" · `reason` / `no-reason` = ② 该不该认出平台理由。
+         * ⚠️ 为什么钉在断言里而不是只写一份读数：读数会过期，判据不会（`cand-20261017-0058`）。
+         */
+        const CONTROLS = [
+          ['①值形态+指令语境（证人）', '写法很简单：设 run_in_background: true。', 'teach'],
+          ['①模态词+写传（证人）', '必须传 run_in_background。', 'teach'],
+          ['①显式写传（证人）', '显式传 run_in_background。', 'teach'],
+          ['①同一句、模态词离参数名 20 字（证人）', '请务必记住：调用子代理的时候一定要把参数补成 run_in_background: true。', 'teach'],
+          ['①同一句、模态词离参数名 20 字（换字·真漏那一版）', '请务必记住：调用子代理的时候一定要把那个参数补成 run_in_background: true。', 'teach'],
+          ['①同一句、只有表外→表内动词（证人）', '调用子代理的时候一定要把参数补成 run_in_background: true。', 'teach'],
+          ['①同一句、只有模态词离得远（20 字外，表外动词）', '请务必记住：调用子代理的时候一定要把参数弄成 run_in_background: true。', 'teach'],
+          ['①否-显式写传（反向证人）', '0.2.1 已删掉这个参数，不需要显式传 run_in_background。', 'clean'],
+          ['①否-模态词（反向证人）', '这不是必须传 run_in_background（省略就是后台）。', 'clean'],
+          ['①否-值形态（反向证人）', '不要写 run_in_background: true，那会被忽略。', 'clean'],
+          ['①否-否定词离得远（反向证人）', '不必显式地写 run_in_background: true。', 'clean'],
+          ['①陈述-参数名后面不是 true（反向证人）', '这次被拒是因为显式传 run_in_background: false。', 'clean'],
+          ['①陈述不是教（兼容说明）', '门禁只为兼容老调用，仍把 run_in_background: true 当「后台」放行。', 'clean'],
+          ['①陈述-表内词在前一个分句（反向证人）', '请注意：门禁只为兼容老调用，仍把 run_in_background: true 当「后台」放行。', 'clean'],
+          ['①陈述-裸动词在前一个分句（反向证人）', '显式传 false 会被拒，平台仍把 run_in_background: true 当后台放行。', 'clean'],
+          ['①否-同一个分句里的「调用」（反向证人）', '兼容起见，调用时仍把 run_in_background: true 当后台放行。', 'clean'],
+          ['②没有这个参数', '0.2.1 里没有这个参数了。', 'reason'],
+          ['②已经移除', '这个参数已经移除。', 'reason'],
+          ['②即发（调用即返回）', '0.2.1 的委派是即发的（调用即返回）。', 'reason'],
+          ['②撤了', '0.2.1 已经把 run_in_background 撤了。', 'reason'],
+          ['②去掉了', '这个参数在 0.2.1 里被去掉了。', 'reason'],
+          ['②取消', '这个参数已经被取消。', 'reason'],
+          ['②废弃', '0.2.1 废弃了这个参数。', 'reason'],
+          ['②下线', '这个参数已经下线。', 'reason'],
+          ['②停止支持', '0.2.1 停止支持这个参数了。', 'reason'],
+          ['②省略即后台（冻针之外另写一遍）', '省略即后台，不用再补任何值。', 'reason'],
+          ['②只剩冻针那半句 ⇒ 不算理由', '「team_test」必须后台运行（省略即后台）—— 只有显式 run_in_background: false 才会被拒；把它去掉，或改成 true。', 'no-reason'],
+          ['②只有禁令不算理由', '不要传 run_in_background。', 'no-reason'],
+        ]
+        const controlBad = []
+        for (const [name, sample, want] of CONTROLS) {
+          const hit = teaches(sample)
+          const hasReason = PLATFORM_REASON.test(reasonText(sample))
+          const got = want === 'teach' ? (hit.length > 0 ? 'teach' : 'clean')
+            : want === 'clean' ? (hit.length === 0 ? 'clean' : `teach（${hit.join('+')}）`)
+              : want === 'reason' ? (hasReason ? 'reason' : 'no-reason')
+                : (hasReason ? 'reason' : 'no-reason')
+          if (got !== want) controlBad.push(`「${name}」喂的是 ${JSON.stringify(sample)} ⇒ 该 ${want}，实得 ${got}`)
+        }
+        /**
+         * 三条拒绝路径的报文 —— **真的调那条路**取回来，不是拼字符串；同一条路上的多条工具名
+         * 报文逐字相同 ⇒ 按正文去重，报告只印路径名（不然一条错会印 7 遍）。
+         */
+        const SAMPLED = [
+          ['配置坏了', mustReject.map((n) => [n, guard.subagentBackgroundVerdict(n, {}, badPolicy)])],
+          ['作业显式 false', oneShot.map((n) => [n, guard.subagentBackgroundVerdict(n, { run_in_background: false }, policy)])],
+          ['岗位显式 false', cont.map((n) => [n, guard.subagentBackgroundVerdict(n, { run_in_background: false }, policy)])],
+        ]
+        /** 空转闸：某条路一条拒绝报文都没取到 ⇒ 这一格必须红（否则"取样为空"会读成"全绿"）。 */
+        const idlePath = SAMPLED.filter(([, rows]) => rows.length === 0 || rows.some(([, v]) => v === null))
+          .map(([name]) => name)
+        const teachesDeadArg = []
+        const silentWhy = []
+        for (const [path, rows] of SAMPLED) {
+          const seen = new Set()
+          for (const [, v] of rows) {
+            const msg = String(v?.message ?? '')
+            if (msg === '' || seen.has(msg)) continue
+            seen.add(msg)
+            const hit = teaches(msg)
+            if (hit.length > 0) teachesDeadArg.push(`${path} → ${hit.join('+')}：${msg.slice(0, 60)}`)
+            if (!PLATFORM_REASON.test(reasonText(msg))) silentWhy.push(`${path}：${msg.slice(0, 60)}`)
+          }
+        }
         checkTrue('GD9', '§硬门',
-          '配置坏掉时：委派名（subagent / team_* / job_*）一律拒，而 job_output / job_kill / job_list 必须放行（A13）',
-          leaks.length === 0 && kills.length === 0,
-          `${leaks.length > 0 ? `漏拦：${leaks.join(', ')}` : '该拦的都拦了'}`
-            + ` · ${kills.length > 0 ? `误杀：${kills.join(', ')}` : '该放行的都放了'}`)
+          '配置坏掉时：委派名（subagent / team_* / job_*）一律拒、job_output / job_kill / job_list 放行（A13）'
+            + ' · 而且**三条**拒绝报文（配置坏 / 作业 / 岗位）说的都是 0.2.1 的实话：不出现这三种「教人传」的形状'
+            + '（值形态+指令语境 / 模态词+写传 / 显式写传），并说出平台理由（说法限于词表）',
+          leaks.length === 0 && kills.length === 0 && idlePath.length === 0
+            && controlBad.length === 0 && teachesDeadArg.length === 0 && silentWhy.length === 0,
+          // ⚠️ 判定词**短**、排在前面：`describe()` 对 200 字以上的串只印前 40 个字符
+          //    ⇒ 长报文会把"红在哪一半"挤出屏幕。逐条详情走下面的 `console.log`（不截断）。
+          (() => {
+            const bad = []
+            if (leaks.length > 0) bad.push(`漏拦 ${leaks.length}`)
+            if (kills.length > 0) bad.push(`误杀 ${kills.length}`)
+            if (idlePath.length > 0) bad.push(`空转 ${idlePath.length}`)
+            if (controlBad.length > 0) bad.push(`对照翻面 ${controlBad.length}`)
+            if (teachesDeadArg.length > 0) bad.push(`①还在教人传 ${teachesDeadArg.length}`)
+            if (silentWhy.length > 0) bad.push(`②没说清平台理由 ${silentWhy.length}`)
+            return bad.length === 0
+              ? `全对（取样 ${SAMPLED.length} 条路 · 对照 ${CONTROLS.length} 行）`
+              : `红在：${bad.join(' · ')}`
+          })())
+        // ── 判定读数（**不作判据**，但绿的时候也要印出来）─────────────────────────
+        // 为什么要印：① "这一格到底看了几条报文、几行对照"不印就只能读代码猜；
+        //             ② `E-4` 的教训 —— 喂进去的东西（原串）要能从读数里对上。
+        console.log(`      判定：① 教不教 = ${teachesDeadArg.length === 0 ? `没教（绿，${SAMPLED.length} 条路都看了）` : `**教了（红）${teachesDeadArg.length} 条**`}`
+          + ` · ② 平台理由 = ${silentWhy.length === 0 ? '有（绿）' : `**没有（红）${silentWhy.length} 条**`}`
+          + ` · 对照 ${CONTROLS.length - controlBad.length}/${CONTROLS.length} 行`
+          + ` · 取样 ${SAMPLED.length - idlePath.length}/${SAMPLED.length} 条路（${SAMPLED.map(([name]) => name).join(' / ')}）`
+          + ' · 原串逐字见本节 `CONTROLS` 表')
+        for (const line of teachesDeadArg) console.log(`        ✗ ① ${line}`)
+        for (const line of silentWhy) console.log(`        ✗ ② ${line}`)
+        for (const line of controlBad) console.log(`        ✗ 对照 ${line}`)
+        for (const line of idlePath) console.log(`        ✗ 空转 ${line}`)
 
         // GD10：apply 层 —— **拿不到 `tools.guard` 必须出声**（不许静默失效）。
+        //   🔴 0.2.1 换了措辞：旧句「subagent 后台硬门未生效」在注入器里**已经不存在**了
+        //   （钉一句原文的判据会变成常驻红）。判据改钉**两个属性**（与套件那侧同一口径）：
+        //     ① 点名缺的是哪一样（`没有 tools.guard`）；② 这次挂载的告警**整体**说清了后果
+        //     （`没有生效` / `没挂上`）—— 判的是整个 stderr 切片，**不按句切**。
+        //   这样"删掉整段告警"红、"喊了但没说是哪样 / 没后果"也红 —— 比只钉一句原文更硬。
         const errMark = stderrSeen.length
         await harness(guardDir, { guard: 'absent', entry: guardEntry })
         const silence = stderrSeen.slice(errMark).join(' ｜ ')
         checkTrue('GD10', '§硬门',
-          '真挂一次：拿不到 tools.guard ⇒ 必须 console.error（报文含「subagent 后台硬门未生效」）',
-          silence.includes('subagent 后台硬门未生效'),
-          silence === '' ? '**一句都没喊** —— 那正是"静默失效"（评审会以为自己只审不改）' : `出声了：${silence.slice(0, 140)}`)
+          '真挂一次：拿不到 tools.guard ⇒ 必须 console.error，且点名「没有 tools.guard」+ 说清后果（没有生效 / 没挂上）',
+          silence.includes('没有 tools.guard') && ['没有生效', '没挂上'].some((s) => silence.includes(s)),
+          silence === '' ? '**一句都没喊** —— 那正是"静默失效"（评审会以为自己只审不改）' : `出声了：${silence.slice(0, 160)}`)
 
         // GD11：apply 层 —— 装上**记录式**门禁：判定真的按名单走（不是只验纯函数）。
+        //   0.2.1：作业**省略**后台 ⇒ 放行（参数已删）；作业显式 false ⇒ 拒；continuable 省略 ⇒ 放行 / false ⇒ 拒；
+        //   无关工具一律放行。两档成对 ⇒ "门禁没装上"和"门禁装上了但什么都放行"都会红。
         const recorder = { handler: null }
         await harness(guardDir, { guard: (h) => { recorder.handler = h }, entry: guardEntry, config: guardConfig })
         const callGuard = (name, args) => (typeof recorder.handler === 'function'
@@ -3117,19 +3816,25 @@ try {
           : '<门禁没装上>')
         const applyBad = []
         if (typeof recorder.handler !== 'function') applyBad.push('门禁没被装上（ctx.effect 里没调 tools.guard）')
+        else if (oneShot.length === 0 || cont.length === 0) applyBad.push('名单里 one-shot / continuable 有一边是空的 —— 这一格会空转')
         else {
           const job = oneShot[0]
-          const refused = callGuard(job, {})
+          const self = cont[0]
+          const omitted = callGuard(job, {})
+          if (omitted !== undefined) applyBad.push(`${job} 省略后台应放行（0.2.1 参数已删），实得 ${JSON.stringify(omitted)}`)
+          const refused = callGuard(job, { run_in_background: false })
           if (typeof refused !== 'string' || !refused.includes('必须后台运行')) {
-            applyBad.push(`${job} 省略后台应被拒，实得 ${JSON.stringify(refused)}`)
+            applyBad.push(`${job} 显式 false 应被拒（报文含「必须后台运行」），实得 ${JSON.stringify(refused)}`)
           }
           if (callGuard(job, { run_in_background: true }) !== undefined) applyBad.push(`${job} 显式 true 应放行`)
+          if (callGuard(self, {}) !== undefined) applyBad.push(`${self}（continuable）省略应放行`)
+          if (typeof callGuard(self, { run_in_background: false }) !== 'string') applyBad.push(`${self}（continuable）显式 false 应被拒`)
           if (callGuard('read', {}) !== undefined) applyBad.push('无关工具 read 应放行')
         }
         checkTrue('GD11', '§硬门',
-          '真挂一次：门禁被装上，而且它按名单判（作业省略后台 ⇒ 拒；显式 true / 无关工具 ⇒ 放行）',
+          '真挂一次：门禁被装上，而且它按名单判（作业省略后台 ⇒ 放行；作业显式 false ⇒ 拒；continuable 省略 ⇒ 放行 / false ⇒ 拒；无关工具 ⇒ 放行）',
           applyBad.length === 0,
-          applyBad.length > 0 ? applyBad.join('；') : `handler 在 · 名单 ${enabled.length} 个 · 作业 ${oneShot.length} 条`)
+          applyBad.length > 0 ? applyBad.join('；') : `handler 在 · 名单 ${enabled.length} 个 · 作业 ${oneShot.length} 条 / 岗位 ${cont.length} 条`)
       }
     }
   }

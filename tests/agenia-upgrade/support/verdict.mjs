@@ -1,14 +1,15 @@
 /**
  * 「**这一跑算不算数**」—— 唯一判据点（纯函数，不碰盘、不读 env）。
  *
- * 为什么单独成模块：这条判断原本散在 `run-all.mjs` 的几行 `if` 里，而它要回答的是三个问题：
+ * 为什么单独成模块：这条判断原本散在 `run-all.mjs` 的几行 `if` 里，而它要回答的是四个问题：
  *   ① 这一跑的**范围**是不是它声明的那个范围（跑到 N / 声明 M）；
  *   ② 这一跑的**读数**能不能互相印证（`node --test` 自报的 `tests N` 必须等于结算条数）；
- *   ③ 这一跑的结果是不是**绿**（红要非零；`HOLD` = 判不了，**也不是绿**）。
- * 三者任一不成立 ⇒ 这一跑不算数。放进纯函数，才能被自检表逐格钉住（`support/self-check.mjs`）。
+ *   ③ 这一跑的结果是不是**绿**（红要非零；`HOLD` = 判不了，**也不是绿**）；
+ *   ④ 这一跑打的**靶子**是不是它自称的那一棵（靶子与现役有差却没声明 ⇒ 这一跑不算数，见 `target.mjs`）。
+ * 四者任一不成立 ⇒ 这一跑不算数。放进纯函数，才能被自检表逐格钉住（`support/self-check.mjs`）。
  *
  * 退出码语义（与 `.tools/check-notes.mjs` 同一套）：
- *   `0` 全绿且这一跑算数 · `1` 有红 / 不一致 / 空跑 / 半跑 / 两套读数打架 · `2` 有 `HOLD`（有挂起，判不了）
+ *   `0` 全绿且这一跑算数 · `1` 有红 / 不一致 / 空跑 / 半跑 / 两套读数打架 / 靶子过期未声明 · `2` 有 `HOLD`（有挂起，判不了）
  *   （`3` 是"用法或环境不成立"，由入口自己判，不进这里。）
  */
 
@@ -27,12 +28,14 @@
  * @param {number|null} input.nodeTests  `node --test` 自报的 `tests N`（读不出 = null）
  * @param {number|null} input.nodeFail   `node --test` 自报的 `fail N`
  * @param {number} input.settleExit      `support/evidence.mjs --settle` 的退出码
+ * @param {string[]} [input.targetProblems] 靶子（staged）过期/声明不符那几条 —— **每条都算一条红因**
  * @returns {{exitCode: number, ok: boolean, fullScope: boolean, failures: string[], note: string}}
  */
 export function entryVerdict(input) {
   const {
     denominator, scopeCases, scopeDeclared, settled, red, green, hold,
     consistent, diffCount, nodeExit, nodeTests, nodeFail, settleExit,
+    targetProblems = [],
   } = input
 
   /** 这一跑**声明的**范围。没声明 ⇒ 声明的就是全量（分母）。 */
@@ -66,7 +69,11 @@ export function entryVerdict(input) {
   if (red > 0) reds.push(`结算里有 RED ${red} 条 —— 退出码必须非零（红就是红，"一致"不等于"绿"）`)
   if (hold > 0) holds.push(`有 HOLD ${hold} 条 —— 判不了，不是绿（绿 ${green} / 红 ${red} / 挂起 ${hold}）`)
 
-  // ④ 登记 ↔ 盘上；结算自己有没有说不通过。
+  // ④ 靶子：这一跑打的那棵 staged 树，与现役（`presets/agenia`）的差必须被声明过。
+  //    红因**一条一个问题**（靶子过期、声明少报、声明过期各是各的），不许收成一句"有问题"。
+  for (const p of targetProblems) reds.push(p)
+
+  // ⑤ 登记 ↔ 盘上；结算自己有没有说不通过。
   if (!consistent) reds.push(`登记 ≠ 盘上（${diffCount} 处）—— 这一跑的分母与登记表对不上`)
   if (settleExit !== 0) reds.push(`settle exit ${settleExit} —— 结算自己说不通过`)
 

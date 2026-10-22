@@ -650,6 +650,13 @@ describe('unit · memory (MEM)', () => {
         rec.readings.corrupt_snapshot = { exit_code: corrupt.exit_code, code: corrupt.json?.error?.code ?? null }
         if (corrupt.exit_code === 0) push('SNAPSHOT-CORRUPT', '半截快照必须 E_DATA_CORRUPT，不许当成空库')
         else if (corrupt.json?.error?.code !== 'E_DATA_CORRUPT') push('SNAPSHOT-CORRUPT', `半截快照应以 E_DATA_CORRUPT 拒绝，实得 ${corrupt.json?.error?.code}`)
+        // 🔴 `F-101`：钉**退出码这个数**，不只钉码。
+        //    病根：`E_DATA_CORRUPT ⇒ 7` 过去只活在 `support/env.mjs:535` 那张**期望表**里 ——
+        //    跑出来的退出码**没有任何一格钉过它** ⇒ 实现把 7 悄悄改成 5（错误码仍然对）这一格看不出来。
+        //    ⚠️ 这里写**字面量 7**、不读 `FROZEN.exitCodes.E_DATA_CORRUPT`（`support/env.mjs:515` 那张表）：
+        //    期望值若也从那张表来，判据就成了"自己证明自己"（`cand-20261016-selfsourced-order-01`）。
+        //    7 是数据损坏族的冻结口径（提案 §B1.4）。
+        else if (corrupt.exit_code !== 7) push('SNAPSHOT-CORRUPT', `半截快照必须以 exit 7 拒绝（数据损坏族），实得 exit=${corrupt.exit_code}`)
       }
       // ③ 旧 .team 记忆不许被自动导入
       // 🔴 裁定 v1.13 ①：**换独立空脑根**。原先借的是上面那个"已经被我写坏半截快照"的根 ⇒ `entry-count` 必然退 7、
@@ -1340,10 +1347,15 @@ describe('unit · memory (MEM)', () => {
        * V9：**从报告重建**（索引是派生的，不是独立真相）。
        *
        * 口径写死：取 `state/update/<day>.json` 的 `(generation, judge_attempt)` = 当前那一轮，
-       * 把 `judged.jsonl` 里同 day + 同 generation + 同 attempt 的行分两组对账：
-       *   · `accepted` 组 必须 **等于** 报告里的 `accepted_proposal_ids`（双向，去重后比）；
-       *   · 全部行       必须 **等于** 该轮冻结清单 ∪ 报告 accepted（双向）。
+       * 把 `judged.jsonl` 里同 day + 同 generation + 同 attempt 的行分**三类**对账：
+       *   · **提案的** accepted 行 必须 **等于** 报告 `accepted_proposal_ids` 里的提案 id（双向，去重后比）；
+       *   · **维护案的** accepted 行 必须 **等于**「报告 accepted 里有它」∪「裁决带 action 指向它」（双向）；
+       *   · 全部行 必须 **等于** 该轮冻结清单 ∪ 报告 accepted（双向）。
        * ⇒ 报告 + 冻结清单 = 索引的全部真相；索引不许自带额外真相。
+       *
+       * 🔴 **两条期望的"独立"程度不一样**（第 4 关 F-2）：这里的期望来自**报告**，而报告与索引是
+       *    **同一笔事务、同一份 payload** 写出来的两份产物 ⇒ 这一条证的是"索引与报告一致"，
+       *    **不是**独立于实现的期望。真正按设计写死的期望在 `f111_maintenance` 那几格。
        * ⚠️ 同一天 redo 两次时，报告只保留**最后一轮**的 accepted（`reportOf` 是当前快照的投影）
        *    ⇒ 所以口径按"当前那一轮"取，不是"这一天所有轮次"。
        *
@@ -1405,6 +1417,20 @@ describe('unit · memory (MEM)', () => {
         if (reportRes.json?.derived === true) {
           push('V9-DERIVED', `「${label}」：报告是从当前快照现算的（derived=true）—— judge-commit 必须把报告**真的落盘**，否则"从报告重建"没有独立输入`)
         }
+        // 🔴 报告里的 `accepted_proposal_ids` **可以装维护案 id**：2026-10-18 那份报告 81 条里有 14 条
+        //    是 `maintenance-…`，那天索引行也全 `accepted`。⇒ 比"accepted 行"时两边必须**同口径**：
+        //    提案比提案（两边都先剔掉 `maintenance-…`）、维护案单独比（见下）。
+        //    只剔一边 ⇒ 10-18 那个形状下，**做对的实现会被判红**（第 4 关 F-2 抓到的就是这一格）。
+        //    维护案那一半有**两个**来源：① 报告 accepted 里有它 ② 裁决带 `action` 指向它。
+        //    指针字段两种写法都认：2026-10-18 的报告写 `pool_id`，2026-10-20 写 `maintenance_id`
+        //    （都是判决方自己写下的"这条裁决属于哪一份案"）。
+        const isMaintenanceId = (id) => typeof id === 'string' && id.startsWith('maintenance-')
+        const reportAcceptedProposals = reportAccepted.filter((id) => !isMaintenanceId(id))
+        const reportAcceptedSet = new Set(reportAccepted)
+        const reportDecisions = Array.isArray(reportRes.json?.report?.maintenance_decisions) ? reportRes.json.report.maintenance_decisions : []
+        const decisionPointer = (d) => (typeof d?.maintenance_id === 'string' && d.maintenance_id !== ''
+          ? d.maintenance_id
+          : (typeof d?.pool_id === 'string' ? d.pool_id : null))
         const shapeProblems = []
         for (const row of rows) {
           for (const key of ['schema', 'imported_id', 'day', 'verdict', 'snapshot', 'generation', 'attempt', 'at', 'seq']) {
@@ -1438,8 +1464,17 @@ describe('unit · memory (MEM)', () => {
         if (setOf(all).join('\n') !== wantAll.join('\n')) {
           push('V9-REBUILD', `「${label}」：本轮行集合应 = 冻结清单 ∪ 报告 accepted = ${JSON.stringify(wantAll)}，实得 ${JSON.stringify(setOf(all))}`)
         }
-        if (setOf(accepted).join('\n') !== setOf(reportAccepted).join('\n')) {
-          push('V9-REBUILD', `「${label}」：accepted 行集合应 **等于** 报告 accepted_proposal_ids = ${JSON.stringify(setOf(reportAccepted))}，实得 ${JSON.stringify(setOf(accepted))} —— 索引是报告的派生，不许自带额外真相`)
+        // 提案那一半：accepted 行必须**等于**报告 `accepted_proposal_ids` 里的提案 id（双向）。
+        // 🔴 两边**同口径过滤**：报告那份清单可能装维护案 id（10-18 形状），只剔行那一侧就会把对的实现判红。
+        if (setOf(accepted.filter((id) => !isMaintenanceId(id))).join('\n') !== setOf(reportAcceptedProposals).join('\n')) {
+          push('V9-REBUILD', `「${label}」：**提案**的 accepted 行集合应 **等于** 报告 accepted_proposal_ids 里的提案部分 = ${JSON.stringify(setOf(reportAcceptedProposals))}，实得 ${JSON.stringify(setOf(accepted.filter((id) => !isMaintenanceId(id))))} —— 索引是报告的派生，不许自带额外真相`)
+        }
+        // 维护案那一半：**两个来源** —— ① 报告 accepted 里有它 ② 裁决带 `action` 指向它。
+        const maintIds = all.filter((id) => isMaintenanceId(id))
+        const wantMaintAccepted = maintIds.filter((id) => reportAcceptedSet.has(id) || reportDecisions.some((d) => decisionPointer(d) === id && d?.action !== null && d?.action !== undefined))
+        const gotMaintAccepted = accepted.filter((id) => isMaintenanceId(id))
+        if (setOf(gotMaintAccepted).join('\n') !== setOf(wantMaintAccepted).join('\n')) {
+          push('V9-REBUILD', `「${label}」：维护案的 accepted 行集合应 = 「报告 accepted 里有它」∪「裁决带 action 指向它」= ${JSON.stringify(setOf(wantMaintAccepted))}，实得 ${JSON.stringify(setOf(gotMaintAccepted))} —— 维护案的 verdict 来源是它自己的 accepted 条目或裁决，不是别处的推断`)
         }
       }
       checkV9('round1', { snapshot: commit1.json?.new_snapshot })
@@ -2077,6 +2112,281 @@ describe('unit · memory (MEM)', () => {
           && onePollution.w2acc_judged_exists === false
         if (!pollutionOk) {
           push('W4-INDEPENDENT', `W4：一格只许污染一处 —— 期待 W1 的根里"池子坏行 1 条 + 索引不存在"、W3 与 W2（含 accepted 那半）的根里"池子坏行 0 条"、两个提交根的索引都还不存在；实得 ${JSON.stringify(onePollution)}（两处一起坏时，"红"分不出是谁的锅；也说明我这一格的夹具没造对 —— 这一格判不了，不是通过）`)
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // F-111 ①：**「今天拒了几件」必须答得出真值** —— 维护案（`maintenance-…`）不是提案
+      //
+      // 🔴 病根：`judgedRowSpecsOf` 只按 `payload.accepted` 判，而**这一轮的** accepted 装的是提案 id
+      //    ⇒ 已经生效的维护案在 `judged.jsonl` 里全记成 `rejected`。
+      //    2026-10-20 活体：冻结 31 条 = 28 条提案（全 accepted）+ 3 份维护案（全部生效），
+      //    `judged.jsonl` seq 169–171 三行都写着 `rejected` ⇒ 卡片"拒绝 3 件"，真值 0。
+      //
+      // ⚠️ 但 `payload.accepted` **可以**装维护案 id（2026-10-18 的报告：81 条里 14 条是 `maintenance-…`，
+      //    那天索引行也全 accepted）⇒ 维护案有两个 accepted 来源：① accepted 里有它 ② 裁决带 `action` 指向它。
+      //
+      // 为什么这一格**不拿 `judgedRowSpecsOf` 的输出当期望值**（那是同源自证）：
+      //   期望值只从**夹具的设计**来（哪条提案会被真拒 / 哪份维护案会被处置 / 那条裁决怎么写），
+      //   读数只从**盘上的 `judged.jsonl`** 来；两者之间没有第三处。
+      //
+      // 四格各自一个独立脑根（一格前置挂了，不挡另外三格）：
+      //   · `carried`         —— 维护案**生效**（裁决带 action）⇒ 必须 `accepted`；同一轮里**真被拒**的提案仍 `rejected`；
+      //   · `no-dec`          —— 冻结了维护案、accepted 里没有、裁决里也没有 ⇒ 提交必须整体拒（不替它猜 verdict）；
+      //   · `declined`        —— 裁决**明确写 `action: null`**（今天不处置）⇒ 维护案唯一可以记 `rejected` 的情形；
+      //   · `accepted-shape`  —— 2026-10-18 那个形状（维护案 id 在 `accepted` 里、没有裁决）⇒ 必须 `accepted`。
+      // ═══════════════════════════════════════════════════════════════════════
+      /**
+       * 造一轮「含维护案的判决」。形状（每格一个独立脑根）：
+       *   ① init → claim → freeze(`[]`) → start → commit（`entries_patch` 放进一条**目标条目**）⇒ v1；
+       *   ② 导入一条普通提案 + 一份维护案（基准 = v1）；
+       *   ③ 另一天：claim → freeze([提案, 维护案]) → start ⇒ 停在"只差这一次提交"。
+       * @param {string} name 独立脑根名（读数与红报文里点名它）
+       * @param {string} code 前置不成立时记哪个原因码
+       * @param {object} spec `{ decisionOf(maintId, targetId), ops(targetId), acceptedOf(propId, maintId) }`
+       * @returns {object|null} 前置不成立 ⇒ null（调用方记"判不了"，**不许当通过**）
+       */
+      const maintenanceRound = (name, code, { decisionOf, ops = () => [], acceptedOf = () => [] }) => {
+        const brain = caseBrainRoot('MEM-11', `maint-${name}`)
+        const day1 = '2026-10-13' // 注入式时钟是 2026-10-14（`AGENIA_NOW_FILE`）⇒ 夹具的日子不许晚于它
+        const day2 = '2026-10-14'
+        const target = mkEntry(1, '（夹具·F-111①）维护案的处置目标')
+        const init = runBrain('init', {}, { dataRoot: brain.root })
+        const cs = init.json?.common_sense_sha256 ?? 'a'.repeat(64)
+        const claim1 = runBrain('claim-update', { day: day1, owner_project: 'harness', owner_session: `session-f111-${name}-1` }, { dataRoot: brain.root })
+        const gen1 = claim1.json?.generation ?? 1
+        const att1 = claim1.json?.attempt ?? 1
+        const freeze1 = runBrain('candidates-freeze', { day: day1, generation: gen1, candidate_ids: [] }, { dataRoot: brain.root })
+        const start1 = runBrain('judge-start', { day: day1, generation: gen1, attempt: att1, token: `tok-f111-${name}-1`, job_id: `job-memory-judge-f111-${name}-1` }, { dataRoot: brain.root })
+        const commit1 = runBrain('judge-commit', {
+          day: day1, generation: gen1, attempt: att1, token: `tok-f111-${name}-1`, base_snapshot: 'v0',
+          entries_patch: [{ kind: 'add', entry: target }], accepted: [], maintenance_decisions: [],
+          common_sense_sha256: cs, report: {},
+        }, { dataRoot: brain.root })
+        const impProp = runBrain('proposal-import', {
+          day: day2, source: `dev/2026-10-20/F-111-maint-${name}-被真拒的提案.json`, sha256: 'b'.repeat(64),
+          base_snapshot: 'v1', update_generation: 1, review_attempt: 1,
+          payload: { entry: mkEntry(2, '（夹具·F-111①）这一条会被真拒') },
+        }, { dataRoot: brain.root })
+        const impMaint = runBrain('maintenance-import', {
+          day: day2, source: `memory-review 2026-10-19 · F-111-maint-${name} · 维护案`, sha256: 'c'.repeat(64),
+          base_snapshot: 'v1', update_generation: 1, review_attempt: 1,
+          payload: { maintenance: 'retire', target_entry_id: target.id, source_entry_ids: [target.id], reason: '（夹具）目标条目已无可搬原文' },
+        }, { dataRoot: brain.root })
+        const propId = impProp.json?.imported_id ?? null
+        const maintId = impMaint.json?.imported_id ?? null
+        const claim2 = runBrain('claim-update', { day: day2, owner_project: 'harness', owner_session: `session-f111-${name}-2` }, { dataRoot: brain.root })
+        const generation = claim2.json?.generation ?? 1
+        const attempt = claim2.json?.attempt ?? 1
+        const freeze2 = runBrain('candidates-freeze', { day: day2, generation, candidate_ids: [propId, maintId] }, { dataRoot: brain.root })
+        const start2 = runBrain('judge-start', { day: day2, generation, attempt, token: `tok-f111-${name}-2`, job_id: `job-memory-judge-f111-${name}-2` }, { dataRoot: brain.root })
+        const steps = {
+          init: init.exit_code, claim1: claim1.exit_code, freeze1: freeze1.exit_code, start1: start1.exit_code, commit1: commit1.exit_code,
+          import_prop: impProp.exit_code, import_maint: impMaint.exit_code,
+          claim2: claim2.exit_code, freeze2: freeze2.exit_code, start2: start2.exit_code,
+        }
+        const stepsOk = Object.values(steps).every((v) => v === 0) && typeof propId === 'string' && typeof maintId === 'string'
+        if (!stepsOk) {
+          push(code, `前置「${name}」不成立（这一格判不了，**不是通过**）：退出码 ${JSON.stringify(steps)} · prop=${JSON.stringify(propId)} · maint=${JSON.stringify(maintId)} · 码 ${JSON.stringify({ init: init.json?.error?.code ?? null, commit1: commit1.json?.error?.code ?? null, import_prop: impProp.json?.error?.code ?? null, import_maint: impMaint.json?.error?.code ?? null, claim2: claim2.json?.error?.code ?? null, freeze2: freeze2.json?.error?.code ?? null, start2: start2.json?.error?.code ?? null })}`)
+          return null
+        }
+        return {
+          brain, day: day2, day1, generation, attempt, token: `tok-f111-${name}-2`, cs, propId, maintId, targetId: target.id,
+          commit: () => runBrain('judge-commit', {
+            day: day2, generation, attempt, token: `tok-f111-${name}-2`, base_snapshot: 'v1',
+            entries_patch: ops(target.id), accepted: acceptedOf(propId, maintId), maintenance_decisions: decisionOf(maintId, target.id),
+            common_sense_sha256: cs, report: {},
+          }, { dataRoot: brain.root }),
+        }
+      }
+      /** 这一天的判决行（读数：`verdict !== accepted` 就是卡片那句"拒绝 N 件"的口径）。 */
+      const dayRowsOf = (brain, day) => readJsonl(brain.judgedFile).rows.filter((r) => r?.day === day)
+      const verdictMapOf = (brain, day, generation, attempt) => {
+        const rows = readJsonl(brain.judgedFile).rows.filter((r) => r?.day === day && r?.generation === generation && r?.attempt === attempt)
+        return { rows, byId: new Map(rows.map((r) => [r?.imported_id, r?.verdict])), text: rows.map((r) => `${r?.imported_id}:${r?.verdict}`) }
+      }
+      const maintReadings = (rec.readings.f111_maintenance = {
+        note: 'F-111 ①：维护案在 judged.jsonl 里的 verdict（来源 = `payload.accepted` 里的它，或 `maintenance_decisions` 里带 action 的裁决），以及"今天拒了几件"的读数。',
+        cells: {},
+        roots: {},
+      })
+
+      // ── 第一格：**已生效**的维护案必须记 accepted；同一轮真被拒的提案仍记 rejected ──
+      //   读数 ①：判定行（`maintId:accepted` / `propId:rejected`）；
+      //   读数 ②：这一天 `verdict !== accepted` 的行数（与 daily-cards 的"拒绝 N 件"同一口径）。
+      const mc = maintenanceRound('carried', 'V9-MAINT-VERDICT', {
+        decisionOf: (maintId, targetId) => [{ maintenance_id: maintId, action: 'retire', target_id: targetId, reason: '（夹具）目标条目已无可搬原文' }],
+        ops: (targetId) => [{ kind: 'retire', id: targetId }],
+      })
+      if (mc === null) {
+        maintReadings.cells.carried = { root: null, note: '前置不成立（见 V9-MAINT-VERDICT 那条）' }
+      } else {
+        maintReadings.roots.carried = mc.brain.root
+        const commit = mc.commit()
+        const rows = verdictMapOf(mc.brain, mc.day, mc.generation, mc.attempt)
+        const dayRows = dayRowsOf(mc.brain, mc.day)
+        const rejectedCount = dayRows.filter((r) => r?.verdict !== 'accepted').length
+        const wantRejected = 1 // 夹具设计：这一天只有那 1 条普通提案被真拒；维护案是**生效**的
+        const carriedReport = runBrain('report-read', { day: mc.day }, { dataRoot: mc.brain.root })
+        const carriedAcceptedMaint = Array.isArray(carriedReport.json?.report?.accepted_maintenance_ids)
+          ? carriedReport.json.report.accepted_maintenance_ids : null
+        maintReadings.cells.carried = {
+          root: mc.brain.root,
+          fixture: `维护案 ${mc.maintId}（action='retire'，裁决用 maintenance_id 指向它）· 会被真拒的提案 ${mc.propId}`,
+          commit_exit: commit.exit_code,
+          commit_code: commit.json?.error?.code ?? null,
+          new_snapshot: commit.json?.new_snapshot ?? null,
+          rows: rows.text,
+          day_rejected: rejectedCount,
+          want_rejected: wantRejected,
+          report_accepted_maintenance_ids: carriedAcceptedMaint,
+        }
+        if (commit.exit_code !== 0) {
+          push('V9-MAINT-VERDICT', `含维护案的那一轮 judge-commit 必须成功（这一格的前置），实得 exit=${commit.exit_code} / ${commit.json?.error?.code ?? '(无码)'}`)
+        } else {
+          if (rows.byId.get(mc.maintId) !== 'accepted') {
+            push('V9-MAINT-VERDICT', `**已生效**的维护案 ${mc.maintId}（裁决 \`{maintenance_id:"${mc.maintId}", action:"retire"}\`，快照已按它退休条目）在 \`judged.jsonl\` 里必须记 \`accepted\`，实得 ${JSON.stringify(rows.byId.get(mc.maintId) ?? '(缺行)')} —— 它的 verdict 必须来自**指向它自己的**那条裁决；` + '`payload.accepted` 里没有它**不等于**它被拒')
+          }
+          if (rows.byId.get(mc.propId) !== 'rejected') {
+            push('V9-MAINT-VERDICT', `阳性对照（旧行为不许倒退）：这一轮**真被拒**的提案 ${mc.propId}（冻结了但不在 \`accepted\` 里）必须仍记 \`rejected\`，实得 ${JSON.stringify(rows.byId.get(mc.propId) ?? '(缺行)')}`)
+          }
+          // O-1 的**阳性对照**：带 `action` 的裁决真的处置了条目 ⇒ 它的 target_id **必须**在清单里。
+          // 只钉"null 的不许进"而不钉"非 null 的必须进"，等于给"这份清单一律清空"开了绿灯。
+          if (carriedAcceptedMaint === null || !carriedAcceptedMaint.includes(mc.targetId)) {
+            push('V9-MAINT-VERDICT', `带 \`action:"retire"\` 的裁决**真的处置了**条目 ${mc.targetId} ⇒ 它必须出现在报告的 \`accepted_maintenance_ids\` 里；实得 ${JSON.stringify(carriedAcceptedMaint)}`)
+          }
+          if (rejectedCount !== wantRejected) {
+            push('V9-REJECT-COUNT', `「今天到底拒了几件」：这一天（${mc.day}）只有 ${wantRejected} 件真被拒（提案 ${mc.propId}），读数（与 daily-cards 同一口径：这一天的行里 \`verdict !== accepted\` 的条数）= ${rejectedCount}，逐行 = ${JSON.stringify(rows.text)} —— 多出来的那件是**已经生效**的维护案 ${mc.maintId}，它被记成了 rejected`)
+          }
+          checkV9('f111-maint-carried', { bp: mc.brain, day: mc.day, snapshot: commit.json?.new_snapshot })
+        }
+      }
+
+      // ── 第二格：冻结了维护案、却**没有任何裁决指向它** ⇒ 提交整体拒，不替它猜 verdict ──
+      //   为什么这一格必须存在：维护案只有"生效 / 明确不处置"两种真实结局；
+      //   一条裁决都没有时，写 `rejected` 是把"没处置"说成"拒了"，写 `accepted` 是把"没处置"说成"生效了"。
+      //   拒的时机也钉住：**发布之前**（跑前跑后快照目录 / 索引 / 状态三样逐字相同）。
+      const mn = maintenanceRound('no-decision', 'V9-MAINT-NODECISION', { decisionOf: () => [] })
+      if (mn === null) {
+        maintReadings.cells.no_decision = { root: null, note: '前置不成立（见 V9-MAINT-NODECISION 那条）' }
+      } else {
+        maintReadings.roots.no_decision = mn.brain.root
+        const before = commitFacts(mn.brain, mn.day)
+        const commit = mn.commit()
+        const after = commitFacts(mn.brain, mn.day)
+        const rows = dayRowsOf(mn.brain, mn.day)
+        maintReadings.cells.no_decision = {
+          root: mn.brain.root,
+          fixture: `冻结 [${mn.propId}, ${mn.maintId}]，但 accepted = [] 且 maintenance_decisions = []`,
+          exit_code: commit.exit_code,
+          code: commit.json?.error?.code ?? null,
+          names_case: String(commit.stdout ?? '').includes(mn.maintId),
+          published_snapshot: !sameFacts(before.snapshots, after.snapshots),
+          judged_grew: !sameFacts(before.judged, after.judged),
+          state_moved: !sameFacts(before.state, after.state),
+          day_rows: rows.length,
+        }
+        if (commit.exit_code !== 2 || (commit.json?.error?.code ?? null) !== 'E_ARG_SCHEMA') {
+          const looksRight = commit.exit_code === 0
+            ? `（它 exit 0 ⇒ **替这一件维护案猜了 verdict**：这一天 ${rows.length} 行 = ${JSON.stringify(rows.map((r) => `${r?.imported_id}:${r?.verdict}`))}，而"它没被处置过"在读数上没有任何痕迹）`
+            : ''
+          push('V9-MAINT-NODECISION', `冻结清单里有维护案 ${mn.maintId}，而它既不在 \`payload.accepted\` 里、\`payload.maintenance_decisions\` 里也没有任何一条指向它 ⇒ judge-commit 必须**整体拒**：exit 2 / \`E_ARG_SCHEMA\`（它没有 verdict 来源；没有裁决就不能记 verdict），实得 exit=${commit.exit_code} / ${commit.json?.error?.code ?? '(无码)'}${looksRight}`)
+        } else {
+          if (!sameFacts(before.snapshots, after.snapshots) || !sameFacts(before.judged, after.judged) || !sameFacts(before.state, after.state)) {
+            push('V9-MAINT-NODECISION', `它确实拒了（exit ${commit.exit_code} / ${commit.json?.error?.code ?? '(无码)'}），但**拒绝发生在事务之后**：快照目录变了=${!sameFacts(before.snapshots, after.snapshots)} / 索引变了=${!sameFacts(before.judged, after.judged)} / 状态变了=${!sameFacts(before.state, after.state)} —— 这一拒必须在 ⑦ 发布之前，否则就是"快照已发布、索引没跟上"`)
+          }
+          if (!String(commit.stdout ?? '').includes(mn.maintId)) {
+            push('V9-MAINT-NODECISION', `拒绝报文必须**点名**那一份没被处置的维护案（${mn.maintId}）—— 否则判的人不知道该补哪一条裁决；实得 stdout=${JSON.stringify(String(commit.stdout ?? '').slice(0, 300))}`)
+          }
+        }
+      }
+
+      // ── 第三格：裁决**明确写 `action: null`**（今天不处置）⇒ 只有这一种维护案可以记 rejected ──
+      //   这一格是"维护案的拒必须有据"的阳性对照：拒不是推出来的，是判决方写下来的。
+      //   指针**用旧写法 `pool_id`**（2026-10-18 那份报告就是这种写法）—— 这一格同时给实现里的
+      //   `pool_id` fallback 当证人：三格都只写 `maintenance_id` 的话，删掉 fallback 会全绿。
+      const md = maintenanceRound('declined', 'V9-MAINT-DECLINED', {
+        decisionOf: (maintId, targetId) => [{ pool_id: maintId, action: null, target_id: targetId, reason: '（夹具）这一件今天不处置 —— 目标已有别的来源覆盖' }],
+      })
+      if (md === null) {
+        maintReadings.cells.declined = { root: null, note: '前置不成立（见 V9-MAINT-DECLINED 那条）' }
+      } else {
+        maintReadings.roots.declined = md.brain.root
+        const commit = md.commit()
+        const rows = verdictMapOf(md.brain, md.day, md.generation, md.attempt)
+        const report = runBrain('report-read', { day: md.day }, { dataRoot: md.brain.root })
+        const decision = (report.json?.report?.maintenance_decisions ?? []).find((d) => (d?.maintenance_id ?? d?.pool_id) === md.maintId) ?? null
+        const acceptedMaintIds = Array.isArray(report.json?.report?.accepted_maintenance_ids) ? report.json.report.accepted_maintenance_ids : null
+        maintReadings.cells.declined = {
+          root: md.brain.root,
+          fixture: `维护案 ${md.maintId} 的裁决 = {pool_id, action:null}（明确不处置；指针用旧写法 pool_id）`,
+          commit_exit: commit.exit_code,
+          commit_code: commit.json?.error?.code ?? null,
+          rows: rows.text,
+          report_decision_action: decision === null
+            ? '(报告里没有这一条裁决)'
+            : (decision.action === undefined ? '(裁决里没有 action 字段)' : decision.action),
+          report_accepted_maintenance_ids: acceptedMaintIds,
+        }
+        if (commit.exit_code !== 0) {
+          push('V9-MAINT-DECLINED', `\`action: null\` 的裁决是合法的（"考虑过、这次不处置"），这一轮 judge-commit 必须成功，实得 exit=${commit.exit_code} / ${commit.json?.error?.code ?? '(无码)'}`)
+        } else {
+          if (decision === null || decision.action !== null) {
+            push('V9-MAINT-DECLINED', `夹具/报告不一致：报告 \`maintenance_decisions\` 里必须有 ${md.maintId} 那条 \`action:null\` 的裁决（指针是 \`pool_id\`，它是这一格"拒"的来源），实得 ${JSON.stringify(decision)}`)
+          }
+          if (rows.byId.get(md.maintId) !== 'rejected') {
+            push('V9-MAINT-DECLINED', `判决方**明确写了** \`action:null\`（不处置）的维护案 ${md.maintId}（裁决用 \`pool_id\` 指向它）必须记 \`rejected\` —— 这是维护案唯一有据的"拒"；实得 ${JSON.stringify(rows.byId.get(md.maintId) ?? '(缺行)')}`)
+          }
+          if (rows.byId.get(md.propId) !== 'rejected') {
+            push('V9-MAINT-DECLINED', `阳性对照：同一轮里那条真被拒的提案 ${md.propId} 也必须仍记 \`rejected\`，实得 ${JSON.stringify(rows.byId.get(md.propId) ?? '(缺行)')}`)
+          }
+          if (acceptedMaintIds === null || acceptedMaintIds.includes(md.targetId)) {
+            push('V9-MAINT-DECLINED', `\`action:null\` 的裁决**没有处置任何条目** ⇒ 它的 target_id（${md.targetId}）不许出现在报告的 \`accepted_maintenance_ids\` 里（那是"被维护过的条目"清单）；实得 ${JSON.stringify(acceptedMaintIds)}`)
+          }
+          checkV9('f111-maint-declined', { bp: md.brain, day: md.day, snapshot: commit.json?.new_snapshot })
+        }
+      }
+      // ── 第四格：**2026-10-18 那个形状** —— 维护案 id 出现在 `payload.accepted` 里、没有裁决 ──
+      //   那天报告 `accepted_proposal_ids` 81 条里 14 条是 `maintenance-…`，索引行也全 accepted。
+      //   这一格钉两件事：① 这种行按 accepted 记（`accepted` 里写了它就是判决方写下的"接受"，不需要裁决）；
+      //   ② `checkV9` 的"accepted 行 vs 报告"两边**同口径过滤** —— 只剔一边，这个形状下对的实现会被判红。
+      const mp = maintenanceRound('accepted-shape', 'V9-MAINT-ACCEPTED-SHAPE', {
+        decisionOf: () => [],
+        acceptedOf: (propId, maintId) => [propId, maintId],
+      })
+      if (mp === null) {
+        maintReadings.cells.accepted_shape = { root: null, note: '前置不成立（见 V9-MAINT-ACCEPTED-SHAPE 那条）' }
+      } else {
+        maintReadings.roots.accepted_shape = mp.brain.root
+        const commit = mp.commit()
+        const rows = verdictMapOf(mp.brain, mp.day, mp.generation, mp.attempt)
+        maintReadings.cells.accepted_shape = {
+          root: mp.brain.root,
+          fixture: `冻结 [${mp.propId}, ${mp.maintId}] · accepted = [提案, 维护案] · maintenance_decisions = []（10-18 形状）`,
+          commit_exit: commit.exit_code,
+          commit_code: commit.json?.error?.code ?? null,
+          rows: rows.text,
+        }
+        if (commit.exit_code !== 0) {
+          push('V9-MAINT-ACCEPTED-SHAPE', `维护案 id 写在 \`payload.accepted\` 里是合法形状（2026-10-18 那 14 条就是），这一轮 judge-commit 必须成功，实得 exit=${commit.exit_code} / ${commit.json?.error?.code ?? '(无码)'}`)
+        } else {
+          if (rows.byId.get(mp.maintId) !== 'accepted') {
+            push('V9-MAINT-ACCEPTED-SHAPE', `\`payload.accepted\` 里写了的维护案 ${mp.maintId} 必须记 \`accepted\`（2026-10-18 的 14 条就是这个形状），实得 ${JSON.stringify(rows.byId.get(mp.maintId) ?? '(缺行)')}`)
+          }
+          if (rows.byId.get(mp.propId) !== 'accepted') {
+            push('V9-MAINT-ACCEPTED-SHAPE', `同一轮里被接受的提案 ${mp.propId} 也必须记 accepted，实得 ${JSON.stringify(rows.byId.get(mp.propId) ?? '(缺行)')}`)
+          }
+          checkV9('f111-maint-accepted-shape', { bp: mp.brain, day: mp.day, snapshot: commit.json?.new_snapshot })
+        }
+      }
+      // 四格必须是四个**独立**脑根（一格拒了/成功了，另外几格的夹具照旧造得出来、跑得到）。
+      // 🔴 先要求四格**都造出了根**：某格前置挂了就把它的根从名单里滤掉，会让"互不相同"退化成空对空。
+      {
+        const roots = [maintReadings.roots.carried, maintReadings.roots.no_decision, maintReadings.roots.declined, maintReadings.roots.accepted_shape]
+        if (roots.some((r) => typeof r !== 'string')) {
+          push('V9-MAINT-VERDICT', `F-111 ① 的四格必须**各自造出自己的脑根**（读数是"互不相同"，可某一格前置就挂了 ⇒ 这一条判不了，**不是通过**）：实得 ${JSON.stringify(roots.map((r) => r ?? null))}`)
+        } else if (new Set(roots.map((r) => r.toLowerCase())).size !== roots.length) {
+          push('V9-MAINT-VERDICT', `F-111 ① 的四格必须各用**一个独立的脑根**（共用根 ⇒ 一格提交成功就改了另几格的现场，读数分不出是谁的锅），实得 ${JSON.stringify(roots)}`)
         }
       }
 

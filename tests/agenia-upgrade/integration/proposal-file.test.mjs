@@ -22,7 +22,9 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawn } from 'node:child_process'
 import { caseFail, caseHold, problem, runCase, runRoot } from '../support/evidence.mjs'
+import { FROZEN } from '../support/env.mjs'
 import { DISCOVERY, FROZEN_IDS, REGISTRY } from '../support/registry.mjs'
+import { memberAnnotations, parseComposition, presetEntries } from '../support/composition.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 /** 仓库根 = `integration/` 往上三层（`tests/agenia-upgrade/integration` ⇒ 仓库根）。 */
@@ -31,6 +33,8 @@ const PRESET = path.join(REPO, 'presets', 'agenia')
 const TOOL = path.join(PRESET, 'tools', 'proposal-file.mjs')
 const YML = path.join(PRESET, 'agent.cordis.yml')
 const INJECT = path.join(PRESET, 'inject.js')
+/** 派生补丁（0.2.1 起里面有 10 份预设入口；`proposalFile: false` 落在那里，不在组合行上）。 */
+const PATCH = path.join(PRESET, 'cordis.patch.yml')
 const CHECK_NOTES = path.join(REPO, '.tools', 'check-notes.mjs')
 const PROPOSALS_DIR = path.join(PRESET, '.runtime', 'proposals')
 /** 契约 §1 冻结的工具名，§2.2 冻结的四个码（形状与重复必须分开）。 */
@@ -105,6 +109,125 @@ function poolRows(root) {
   return { rows, text, file, exists: true }
 }
 
+/**
+ * **F-114 的夹具动作：清一次池。**
+ *
+ * 口径照老板 2026-10-16 定的那条（`proposals/archive/MANIFEST.json` 的 `rule`）：
+ *   · 归档里每行 = 池子那一行的**原样字节**，顺序不变（"搬家不改写"）；
+ *   · 池子只留**没判**的那几行（同样原样字节，顺序不变）；
+ *   · 判过的那些进 `judged.jsonl`（清池搬的就是"判过的"）—— `judgedCount` 允许只写前几条，
+ *     因为盘上真有一批"归档里有、judged 里没有"的行（2026-10-20 现量：113 个 id，全是 `20261015` 的）。
+ *     ⇒ 那几行的号**只活在归档内容里**，判据用它把"只读 judged"的实现也挡住。
+ *
+ * 🔴 归档文件名**故意不含号、且日子不是内容的日子**（第 4 关 `B-2`）：
+ *    · 真盘上两种形状都有 —— `pool-judged-20261019-0032-20261019-0031.jsonl`（首 id 比末 id **大**）
+ *      与 `pool-judged-2026-10-18.jsonl`（名字是**清池日**，内容却是 `20261017` 的 id）；
+ *    · 名字若恰好等于内容（旧夹具就是这样：`…-0003-…-0001`），一个**只解析文件名、从不读内容**的实现
+ *      会白拿上界 ⇒ A/B 两格全绿 ⇒ 判据变成装饰。
+ *    ⇒ 现在名字里的号读出来必须**低于**内容最大号，名字里的日子必须**不是**内容的日子（见 `f114NameDrawOf`）。
+ *
+ * @param {string} root 脑根
+ * @param {number} keepCount 池子里留几行（剩下的搬进归档）
+ * @param {{archiveName: string, day: string, judgedCount?: number, extraArchived?: Array}} opts
+ *   `day` = 这些行的日期（YYYY-MM-DD，进 judged 行）；`judgedCount` = 给前几条写 judged 行（缺省 = 全部）；
+ *   `extraArchived` = **额外塞进归档的行**（`N-1` 的跳号历史行，见 `f114GapRow`）
+ */
+function f114ClearPool(root, keepCount, { archiveName, day, judgedCount, extraArchived = [] }) {
+  const pool = poolRows(root)
+  if (pool.rows === null) throw new Error(`夹具池子坏了：第 ${pool.corruptLine} 行不是合法 JSON`)
+  const lines = pool.text.split(/\r?\n/).filter((l) => l.trim() !== '')
+  const archivedLines = lines.slice(0, lines.length - keepCount)
+  const keptLines = lines.slice(lines.length - keepCount)
+  const archiveFile = path.join(root, 'proposals', 'archive', archiveName)
+  mkdirSync(path.dirname(archiveFile), { recursive: true })
+  // 归档 = 搬过来的原样字节（顺序不变）+ 额外塞进去的那几行（跳号的历史行，同样是"原样字节"）
+  writeFileSync(archiveFile, [...archivedLines, ...extraArchived.map((r) => JSON.stringify(r))].map((l) => `${l}\n`).join(''), 'utf8')
+  writeFileSync(pool.file, keptLines.map((l) => `${l}\n`).join(''), 'utf8')
+  const archivedRows = pool.rows.slice(0, pool.rows.length - keepCount)
+  const judgedFile = path.join(root, 'proposals', 'judged.jsonl')
+  const judgedRows = archivedRows
+    .slice(0, judgedCount === undefined ? archivedRows.length : judgedCount)
+    .map((r, i) => ({
+      schema: 1,
+      imported_id: r.imported_id,
+      day,
+      verdict: 'accepted',
+      snapshot: 'v1',
+      generation: 1,
+      attempt: 1,
+      at: `${day}T05:00:00.000Z`,
+      seq: i + 1,
+    }))
+  writeFileSync(judgedFile, judgedRows.map((r) => `${JSON.stringify(r)}\n`).join(''), 'utf8')
+  return {
+    archiveFile,
+    archiveName,
+    archiveBytes: readFileSync(archiveFile),
+    judgedFile,
+    judgedBytes: readFileSync(judgedFile),
+    archivedIds: [...archivedRows.map((r) => r.imported_id), ...extraArchived.map((r) => r.imported_id)],
+    judgedIds: judgedRows.map((r) => r.imported_id),
+    keptIds: keptLines.map((l) => JSON.parse(l).imported_id),
+    /** 留下的那几行的**原样字节**（"已发的号一个不动"就比它）。 */
+    keptLines,
+  }
+}
+
+/**
+ * **一行跳号的历史归档行**（第 4 关第二遍 `N-1`）。
+ *
+ * 为什么必须塞它：活体的号**不稠密**（2026-10-20 现量：归档 300 行、最大号 80+；另有 113 行只在归档、
+ * 不在 judged），而一个"数行数"的实现（`池子行数 + 归档行数 + 1`）在**稠密**夹具上**恰好**给出期望值
+ * （A `0+3+1=4`、B `2+2+1=5`、C `3+1=4`）⇒ 它会三格全绿，而"号随行数走"正是这一票要治的病。
+ *
+ * 塞一行 `…-0009`（seq 9）就把"行数"与"最大号"分开：A 的归档 4 条、最大号 9 ⇒ 数行数给 5，正确给 10。
+ * 这一行**只在归档里**、不进 judged —— 与盘上那 113 个"只在归档"的 id 同形（旧批次清池早于索引建立）。
+ */
+function f114GapRow({ kind, day, seq }) {
+  const dayKey = String(day).replace(/-/g, '')
+  const id = `${kind}-${dayKey}-${String(seq).padStart(4, '0')}`
+  return {
+    schema: 1,
+    kind,
+    imported_id: id,
+    imported_at: `${day}T00:10:00.000Z`,
+    seq,
+    source: '（F-114 夹具）跳号的历史归档行：那一批判过、清过，但不在 judged.jsonl 里',
+    sha256: 'f'.repeat(64),
+    content_sha256: 'e'.repeat(64),
+    base_snapshot: 'v0',
+    update_generation: 1,
+    review_attempt: 1,
+    payload: { entry: { id: `cand-${dayKey}-${String(seq).padStart(4, '0')}`, type: 'general', text: '（F-114 夹具）跳号那一行' } },
+  }
+}
+
+/**
+ * **"名字派"自检**（第 4 关 `B-2`）：从归档文件名里能读出什么 —— 两种真盘上见过的形状都算。
+ *
+ *   · 号：`<8 位日子>-<4 位号>` 成对出现（真实那份 `pool-judged-20261019-0032-…` 就是这个形状）；
+ *   · 日子：`2026-10-20` 或 `20261014` 那种日子串（真实那份 `pool-judged-2026-10-18.jsonl`）。
+ *
+ * 判据要求：**名字里能读出的最大号 < 内容里的最大号**，且**名字里的日子 ≠ 内容的日子**。
+ * 名字若与内容一致 ⇒ 一个"从不读内容"的实现会白拿上界 ⇒ 这格就是装饰（`mig-rules-10`）。
+ */
+function f114NameDrawOf(name) {
+  const text = String(name ?? '')
+  const pairs = [...text.matchAll(/(\d{8})-(\d{4})/g)].map((m) => ({ day: m[1], seq: Number(m[2]) }))
+  const maxNumber = pairs.reduce((max, p) => Math.max(max, p.seq), 0)
+  const dayMatch = /(\d{4})-(\d{2})-(\d{2})/.exec(text) ?? /(\d{4})(\d{2})(\d{2})/.exec(text)
+  const day = dayMatch === null ? null : `${dayMatch[1]}${dayMatch[2]}${dayMatch[3]}`
+  return { pairs: pairs.length, maxNumber, day }
+}
+
+/** `proposal-20261014-0003` / `maintenance-…` ⇒ `3`（认不出 ⇒ `null`）。 */
+const seqOfId = (id) => {
+  const m = /-(\d+)$/.exec(String(id))
+  return m === null ? null : Number(m[1])
+}
+/** 一串 id 里最大的那个 `seq`（空 ⇒ 0）。 */
+const maxSeqOf = (ids) => ids.reduce((max, id) => Math.max(max, seqOfId(id) ?? 0), 0)
+
 let importSeq = 0
 const importFresh = (file) => import(`${pathToFileURL(file).href}?pfl=${importSeq += 1}`)
 let toolCache
@@ -142,15 +265,12 @@ function rowBlocks(ymlText) {
   })
 }
 
-/** 行块里的 `deny: [a, b]`（行内列表；作业行与岗位行都是这个形状）。 */
-function denyOf(block) {
-  for (const line of block.lines) {
-    const m = /^\s*deny:\s*\[([^\]]*)\]\s*$/.exec(line)
-    if (m !== null) return m[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean)
-  }
-  return null
-}
-
+/**
+ * 🔴 2026-10-19（0.2.1）：原来的 `denyOf(block)`（读 YAML 的 `deny: [a, b]` 行）**已删除**。
+ * 那个键不再是 `tool-subagent` 的配置形状 ⇒ 它在 0.2.1 上对每一行都返回 `null`，
+ * 而 PFL-06 / PFL-07 一旦拿 `null` 当"没有"，两条都会变成**空绿**。
+ * 否定项的现口径：行上方的 `# @member-deny`（见 `memberAnnotations`，与体检脚本同形）。
+ */
 const isDisabled = (block) => block.lines.some((l) => /^\s*disabled:\s*true\s*$/.test(l))
 
 /** `persona-injector` 那一行的 `officeBound:` 块序列。 */
@@ -331,6 +451,241 @@ test('PFL-02 一次调用 = 一条候选 + 一句出处（正向全套 + 反向�
     if (bad.ok) push('SHAPE-ACCEPTED', '不给 source 竟然成功了 —— 静默补空是明令禁止的那一条')
     else if (bad.code !== CODES.SHAPE) push('SHAPE-CODE', `不给 source 必须回 ${CODES.SHAPE}，实得 ${JSON.stringify(bad.code)}`)
     if (poolRows(root).rows.length !== before) push('PARTIAL-WRITE', '被拒的那次调用改了池子 —— 拒绝必须零写入')
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // F-114 · 同日清池之后接着提：号不许回落到已发过的号上
+    //
+    // 并进本用例（不加 ID）：这一格本来就是"编号契约"的家 —— 上面已经钉了 `proposal_id` 的形状、
+    // 两个 id 同号、首条 `seq` 必须是 1。这里补的是"**下一条的号从哪来**"。
+    //
+    // 现场（2026-10-20 实测）：池子清到 4 行之后新一批从 `0005` 重数，一路数到 `0034`/`0035`
+    // 撞上清池时**留下来**的那两行 ⇒ 池子里两条 `maintenance-20261020-0034`、两条 `…-0035`，
+    // 46 行只有 44 个不同编号。根因不是运气：`seq` 原来是"池子当前行数 + 1"，
+    // 清池把判过的行搬进 `archive/` ⇒ 行数回落 ⇒ 号回落。
+    //
+    // 四格（每一格都单独承重）：
+    //   ① 清池之后（池子空 / 池子留了行）同一天再提 ⇒ 新号 **> 今天已发过的最大号**，且不与任何已发号重复；
+    //   ② 没清池时行为不变（连号 1,2,3 …）；**跨天也不许从 1 重数**（池子的 `seq` 是导入顺序）；
+    //   ③ 已发的号一个不动（归档 / 已判索引 / 池子里留下的行，逐字节比）；
+    //   ④ 夹具自证：这几格必须"按旧口径一定会撞"（`池子行数 + 1 ≤ 今天最大号`），否则是假绿。
+    // ═══════════════════════════════════════════════════════════════════════════
+    const f114 = (rec.readings.f114 = { scenarios: {}, criterion: {} })
+    const D1 = '2026-10-14'
+    const D2 = '2026-10-15'
+    /** 发一条候选（`proposal_file` 那条路）。失败也收成读数（不中断后面的格）。 */
+    const post = async (where, text, source, day, at) => {
+      const r = await callRun(mod, { text, source }, { root: where, at, day })
+      return r.ok ? r.value : { __failed: true, code: r.code, message: r.message }
+    }
+    /**
+     * 发一条 **maintenance**（`--op maintenance-import` 那条路）。
+     *
+     * 为什么直接打 `lib/proposals.mjs::appendProposal`、不照 `runBrain` 起子进程：
+     * CLI 的 `importOp` 只做校验 + 写 audit，**发号就在 `appendProposal` 里**（CLI 与工具共用 `poolIdOf`）；
+     * 而 `importOp` 要的 `base_snapshot` / fence 是另一条判据（MEM-11 的主场），这里只钉号。
+     */
+    const proposalsLib = await importFresh(path.join(PRESET, 'lib', 'proposals.mjs'))
+    const canCli = typeof proposalsLib.appendProposal === 'function'
+    if (!canCli) push('SUT-SURFACE-MISSING', '`lib/proposals.mjs` 没有导出 `appendProposal` —— CLI 那条路的发号判不了')
+    const postMaint = (where, text, source, day, at) => {
+      if (!canCli) return { __failed: true, code: 'SUT-SURFACE-MISSING', message: 'appendProposal 不在' }
+      try {
+        return proposalsLib.appendProposal(where, {
+          kind: 'maintenance',
+          source,
+          sha256: sha256(text),
+          contentSha256: sha256(`maintenance:${text}`),
+          baseSnapshot: 'v0',
+          updateGeneration: 1,
+          reviewAttempt: 1,
+          payload: { entry: { id: null, type: 'general', text } },
+          day,
+          at,
+        })
+      } catch (error) {
+        return { __failed: true, code: error?.code ?? null, message: String(error?.message ?? error) }
+      }
+    }
+    const idOf = (r) => (r === undefined || r === null || r.__failed ? null : (r.proposal_id ?? r.imported_id ?? null))
+    const seqOf = (r) => (r === undefined || r === null || r.__failed ? null : r.seq ?? null)
+    const fmtRes = (r) => (idOf(r) === null ? { failed: { code: r?.code ?? null, message: r?.message ?? null } } : { id: idOf(r), seq: seqOf(r) })
+
+    // ── ① 清池之后**池子空**：同一天再提一条，号必须 > 今天已发过的最大号 ─────────
+    {
+      const rootA = makeRoot('PFL-02-f114-clear')
+      const firstA = []
+      for (let i = 1; i <= 3; i += 1) {
+        firstA.push(await post(rootA, `（F-114）清池前第 ${i} 条`, `（F-114）清池前出处 ${i}`, D1, `${D1}T0${i}:00:00.000Z`))
+      }
+      const setupA = firstA.filter((r) => r.__failed)
+      if (setupA.length > 0) push('F114-SETUP', `清池前那三条必须先拿到号，实得 ${JSON.stringify(setupA.map((r) => ({ code: r.code, message: r.message })))}`)
+      // 清池：判过的三条原样搬进 archive/，池子清空。
+      // 🔴 归档名 = **清池日**（`2026-10-20`，与内容的日子 20261014 不同）、**一个号都不含**（第 4 关 B-2）。
+      // 🔴 judged 只写前两条 —— 盘上真有"归档里有、judged 里没有"的行（113 个），所以 0003 的号**只活在归档内容里**。
+      // 🔴 `N-1`：归档里再塞**一行跳号的** `…-0009`（那条只在归档、不在 judged，与盘上那 113 条同形）——
+      //    "数行数"的实现（`0 行 + 4 行 + 1 = 5`）与"看最大号"（9 → 10）从此分家。
+      const archiveNameA = 'pool-judged-2026-10-20.jsonl'
+      const gapA = f114GapRow({ kind: 'proposal', day: D1, seq: 9 })
+      const clearedA = f114ClearPool(rootA, 0, { archiveName: archiveNameA, day: D1, judgedCount: 2, extraArchived: [gapA] })
+      const poolAfterClearA = poolRows(rootA).rows.length
+      const maxUsedA = Math.max(maxSeqOf(clearedA.archivedIds), maxSeqOf(clearedA.judgedIds), maxSeqOf(clearedA.keptIds))
+      const nameA = f114NameDrawOf(archiveNameA)
+      const afterA = await post(rootA, '（F-114）清池之后同一天的新一条', '（F-114）清池之后出处', D1, `${D1}T09:00:00.000Z`)
+      f114.scenarios.A = {
+        shape: '清池把判过的全搬走 ⇒ 池子空，号只活在 archive/ 内容里（judged 只盖住前两条；归档里另有一行跳号）',
+        day: D1,
+        issued_before_clear: firstA.map(idOf),
+        archived: clearedA.archivedIds,
+        gap_row: gapA.imported_id,
+        judged_covers: clearedA.judgedIds,
+        archive_name: archiveNameA,
+        name_reads: nameA,
+        pool_rows_after_clear: poolAfterClearA,
+        max_seq_used_today: maxUsedA,
+        old_rule_would_give: poolAfterClearA + 1,
+        count_rows_would_give: poolAfterClearA + clearedA.archivedIds.length + 1,
+        new: fmtRes(afterA),
+      }
+      // ④ 夹具自证之一：按旧口径（池子行数+1）一定落在已发号里
+      f114.criterion.A_adversarial = (poolAfterClearA + 1) <= maxUsedA
+      if (!f114.criterion.A_adversarial) {
+        push('F114-FIXTURE', `夹具失效：清池之后按旧口径给 ${poolAfterClearA + 1}、而今天最大号只有 ${maxUsedA} —— 旧口径不会撞，这一格就没在检查任何东西（不是通过）`)
+      }
+      // ④ 夹具自证之二（B-2）：名字里读不出这一格的号 —— 否则"只读文件名"的实现白拿上界
+      if (!(nameA.maxNumber < maxUsedA)) {
+        push('F114-FIXTURE-NAME', `夹具失效：归档文件名 ${JSON.stringify(archiveNameA)} 里读出的最大号 ${nameA.maxNumber} 不低于内容最大号 ${maxUsedA}`
+          + ' ⇒ 一个**只解析文件名、从不读内容**的实现会白拿上界（这格变装饰）。名字要写成"清池日、不含号"')
+      }
+      if (nameA.day === D1.replace(/-/g, '')) {
+        push('F114-FIXTURE-NAME', `夹具失效：归档文件名里的日子（${nameA.day}）恰好等于内容的日子（${D1}）`
+          + ' ⇒ "按名字取日期"的实现会把这份归档当成当天的，也白拿上界。名字里的日子要是**清池日**')
+      }
+      if (afterA.__failed) push('F114-IMPORT', `清池之后同一天提一条必须成功，实得 ${afterA.code}: ${afterA.message}`)
+      else {
+        if (!(Number.isInteger(seqOf(afterA)) && seqOf(afterA) > maxUsedA)) {
+          push('F114-SEQ-REWIND', `清池之后新号回落到今天已发过的号里：今天最大 seq=${maxUsedA}，新的一条 seq=${JSON.stringify(seqOf(afterA))}`
+            + `（旧口径 = 池子行数+1 = ${poolAfterClearA + 1}）—— 号一天之内必须单调递增，不随清池回落`)
+        } else if (seqOf(afterA) !== maxUsedA + 1) {
+          push('F114-SEQ-JUMP', `清池之后新号跳了：今天最大 seq=${maxUsedA} ⇒ 应为 ${maxUsedA + 1}（契约 §2.1 是 max(…) + 1），实得 ${JSON.stringify(seqOf(afterA))}`
+            + ' —— 跳号本身不撞号，但"从文件名/行内 seq 里读出来的号"一定跳（2026-10-20 现量：读 judged 行内 seq 会跳到 188）')
+        }
+        if ([...clearedA.archivedIds, ...clearedA.judgedIds, ...clearedA.keptIds].includes(idOf(afterA))) {
+          push('F114-ID-DUP', `清池之后发出了一个**已经发过**的号：${idOf(afterA)}（今天这些号都已经在盘上）`)
+        }
+      }
+      // ③ 已发的号一个不动
+      if (!readFileSync(clearedA.archiveFile).equals(clearedA.archiveBytes)) push('F114-MUTATED', `归档被这次提改动了（搬家不改写）：${clearedA.archiveFile}`)
+      if (!readFileSync(clearedA.judgedFile).equals(clearedA.judgedBytes)) push('F114-MUTATED', `已判索引被这次提改动了：${clearedA.judgedFile}`)
+    }
+
+    // ── ② 清池之后**池子留了行**（2026-10-20 的真实形状）：新号不许撞上留下的那几行 ──
+    {
+      const rootB = makeRoot('PFL-02-f114-survive')
+      const B = []
+      B.push(await post(rootB, '（F-114·B）第 1 条 proposal', '（F-114·B）出处 1', D1, `${D1}T01:00:00.000Z`))
+      B.push(await post(rootB, '（F-114·B）第 2 条 proposal', '（F-114·B）出处 2', D1, `${D1}T02:00:00.000Z`))
+      B.push(await postMaint(rootB, '（F-114·B）第 3 条 maintenance', '（F-114·B）出处 3', D1, `${D1}T03:00:00.000Z`))
+      B.push(await postMaint(rootB, '（F-114·B）第 4 条 maintenance', '（F-114·B）出处 4', D1, `${D1}T04:00:00.000Z`))
+      const setupB = B.filter((r) => r.__failed)
+      if (setupB.length > 0) push('F114-SETUP', `② 的前置（四条混着 kind 的号）没成立，实得 ${JSON.stringify(setupB.map((r) => ({ code: r.code, message: r.message })))}`)
+      // 清池：前两条（更早的）判过搬走，后两条留下 —— 就是 2026-10-20 那 4 行留下来的形状。
+      // 🔴 归档名同 A：清池日（`2026-10-19`）+ 一个号都不含（第 4 关 B-2）。
+      // 🔴 `N-1`：归档里再塞**一行跳号的** `maintenance-…-0008`（只在归档、不进 judged）——
+      //    "数行数"的实现（`池子 2 + 归档 3 + 1 = 6`）与"看最大号"（8 → 9）从此分家。
+      const archiveNameB = 'pool-judged-2026-10-19.jsonl'
+      const gapB = f114GapRow({ kind: 'maintenance', day: D1, seq: 8 })
+      const clearedB = f114ClearPool(rootB, 2, { archiveName: archiveNameB, day: D1, extraArchived: [gapB] })
+      const poolAfterClearB = poolRows(rootB).rows.length
+      const maxUsedB = Math.max(maxSeqOf(B.map(idOf)), maxSeqOf(clearedB.archivedIds))
+      const nameB = f114NameDrawOf(archiveNameB)
+      const afterB = await postMaint(rootB, '（F-114·B）清池之后同一天的 maintenance', '（F-114·B）清池之后出处', D1, `${D1}T09:00:00.000Z`)
+      const poolAfterB = poolRows(rootB)
+      f114.scenarios.B = {
+        shape: '清池只搬走判过的（先发的两条），后发的两条留下；归档里另有一行跳号 —— 2026-10-20 的真实形状',
+        day: D1,
+        issued_before_clear: B.map(idOf),
+        archived: clearedB.archivedIds,
+        gap_row: gapB.imported_id,
+        kept: clearedB.keptIds,
+        archive_name: archiveNameB,
+        name_reads: nameB,
+        pool_rows_after_clear: poolAfterClearB,
+        max_seq_used_today: maxUsedB,
+        old_rule_would_give: poolAfterClearB + 1,
+        count_rows_would_give: poolAfterClearB + clearedB.archivedIds.length + 1,
+        new: fmtRes(afterB),
+        pool_ids_after: poolAfterB.rows === null ? `corrupt@${poolAfterB.corruptLine}` : poolAfterB.rows.map((r) => r?.imported_id),
+      }
+      f114.criterion.B_adversarial = (poolAfterClearB + 1) <= maxUsedB
+      if (!f114.criterion.B_adversarial) {
+        push('F114-FIXTURE', `夹具失效：② 清池之后按旧口径给 ${poolAfterClearB + 1}、今天最大号 ${maxUsedB} —— 撞不上（不是通过）`)
+      }
+      if (!(nameB.maxNumber < maxUsedB) || nameB.day === D1.replace(/-/g, '')) {
+        push('F114-FIXTURE-NAME', `② 夹具失效：归档名 ${JSON.stringify(archiveNameB)} 的名字读数 ${JSON.stringify(nameB)} 与内容（今天最大号 ${maxUsedB}、日子 ${D1}）对得上`
+          + ' ⇒ "名字派"实现能白拿上界（见 §1.3 / 第 4 关 B-2）')
+      }
+      if (afterB.__failed) push('F114-IMPORT', `② 清池之后提一条必须成功，实得 ${afterB.code}: ${afterB.message}`)
+      else {
+        if (!(Number.isInteger(seqOf(afterB)) && seqOf(afterB) > maxUsedB)) {
+          push('F114-SEQ-REWIND', `② 清池之后新号回落到今天已发过的号里：今天最大 seq=${maxUsedB}，新的 seq=${JSON.stringify(seqOf(afterB))}（旧口径 = ${poolAfterClearB + 1}）`)
+        } else if (seqOf(afterB) !== maxUsedB + 1) {
+          push('F114-SEQ-JUMP', `② 清池之后新号跳了：今天最大 seq=${maxUsedB} ⇒ 应为 ${maxUsedB + 1}（契约 §2.1 是 max(…) + 1），实得 ${JSON.stringify(seqOf(afterB))}`)
+        }
+        if (poolAfterB.rows !== null) {
+          const sameSeq = poolAfterB.rows.filter((r) => r?.seq === seqOf(afterB) && r?.imported_id !== idOf(afterB))
+          if (sameSeq.length > 0) {
+            push('F114-SEQ-DUP-IN-POOL', `② 池子里出现两条同 seq 的行（${JSON.stringify(seqOf(afterB))}）：${sameSeq.map((r) => `${r?.imported_id}@${r?.seq}`).join(' / ')}`
+              + ' —— seq 是池子的导入顺序，同号会让 judge-pending 的先后失去依据（kind 不同也算撞：一个号只有一个位置）')
+          }
+        }
+        if ([...clearedB.archivedIds, ...clearedB.keptIds].includes(idOf(afterB))) {
+          push('F114-ID-DUP', `② 清池之后发出了一个**已经发过**的号：${idOf(afterB)}（池子/归档里已经有了）`)
+        }
+      }
+      // ③ 已发的号一个不动：留下的那两行**逐字节**不变、归档与已判索引逐字节不变
+      //    （逐字节 = 直接比池子文本里那几行，不许 `JSON.parse` 再 `JSON.stringify` 回来 —— 那样会把排版/键序的差别洗掉）
+      if (poolAfterB.rows !== null) {
+        const poolNowLines = (readText(poolAfterB.file) ?? '').split(/\r?\n/).filter((l) => l.trim() !== '')
+        const keptNow = poolNowLines.slice(0, clearedB.keptLines.length)
+        if (JSON.stringify(keptNow) !== JSON.stringify(clearedB.keptLines)) {
+          push('F114-MUTATED', `② 池子里**留下的那几行**不是原来那几行了（逐字节）：应为 ${JSON.stringify(clearedB.keptLines)}，实得 ${JSON.stringify(keptNow)}`)
+        }
+      }
+      if (!readFileSync(clearedB.archiveFile).equals(clearedB.archiveBytes)) push('F114-MUTATED', `② 归档被这次提改动了：${clearedB.archiveFile}`)
+      if (!readFileSync(clearedB.judgedFile).equals(clearedB.judgedBytes)) push('F114-MUTATED', `② 已判索引被这次提改动了：${clearedB.judgedFile}`)
+    }
+
+    // ── ③ 没清池：行为不变（1,2,3 连号）；跨天也不许从 1 重数 ────────────────────
+    {
+      const rootC = makeRoot('PFL-02-f114-noclear')
+      const C = []
+      for (let i = 1; i <= 3; i += 1) C.push(await post(rootC, `（F-114·C）没清池第 ${i} 条`, `（F-114·C）出处 ${i}`, D1, `${D1}T0${i}:00:00.000Z`))
+      const seqsC = C.map(seqOf)
+      const idsC = C.map(idOf)
+      const cross = await post(rootC, '（F-114·C）跨天那一条', '（F-114·C）跨天出处', D2, `${D2}T01:00:00.000Z`)
+      f114.scenarios.C = {
+        shape: '没清池（行为不变）+ 跨天（池子没过夜清空时，号接着数）',
+        no_clear_seqs: seqsC,
+        no_clear_ids: idsC,
+        cross_day: { day: D2, ...fmtRes(cross) },
+      }
+      if (C.some((r) => r.__failed)) push('F114-SETUP', `③ 没清池那三条没拿到号：${JSON.stringify(C.map((r) => ({ code: r?.code, message: r?.message })))}`)
+      else if (JSON.stringify(seqsC) !== JSON.stringify([1, 2, 3])) {
+        push('F114-NO-CLEAR', `③ 没清池时号必须还是连号 1,2,3（行为不变），实得 ${JSON.stringify(seqsC)}（id ${JSON.stringify(idsC)}）`)
+      }
+      if (cross.__failed) push('F114-IMPORT', `③ 跨天那一条必须成功，实得 ${cross.code}: ${cross.message}`)
+      else {
+        // 池子的 `seq` 是**导入顺序**（judge-pending 按它排）：跨天从 1 重数会让前一天的行排到新行后面
+        if (!(Number.isInteger(seqOf(cross)) && seqOf(cross) > 3)) {
+          push('F114-ORDER', `③ 跨天之后新行的 seq 必须 > 池子里现有最大号（3），实得 ${JSON.stringify(seqOf(cross))}`
+            + ' —— 池子的 seq 是导入顺序；从 1 重数会让前一天的行排到新行之后（判序倒退）')
+        }
+        if (idOf(cross) !== `proposal-20261015-0004`) {
+          push('F114-ID-DAY', `③ 跨天那一条的 id 必须是 \`proposal-20261015-0004\`（日期换成新的一天、号接着数），实得 ${JSON.stringify(idOf(cross))}`)
+        }
+      }
+    }
+
     caseFail(problems)
   })
 })
@@ -506,37 +861,70 @@ test('PFL-05 报文能指名：来源重了 / 内容哈希不符是两个码，�
 // ═════════════════════════════════════════════════════════════════════════════
 // PFL-06 · 判决岗的工具集里没有它（配置层判据 + 阳性对照）
 // ═════════════════════════════════════════════════════════════════════════════
-test('PFL-06 判决岗看不见它：那一行 deny 里必须写着 proposal_file（阳性对照先过）', async () => {
+test('PFL-06 判决岗看不见它：`# @member-deny proposal_file` + 补丁里那一份 `proposalFile: false`（阳性对照先过）', async () => {
   await runCase('PFL-06', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
     const yml = readText(YML)
     if (yml === null) { push('SUT-SURFACE-MISSING', `读不到 ${YML}`); return caseFail(problems) }
+    // 🔴 2026-10-19（0.2.1 迁移）：`toolFilter` 不再是 `tool-subagent` 的配置键（写着它整行报迁移错），
+    //    "判决岗不能提候选"改由行**上方**那句注释表达：`# @member-deny proposal_file`
+    //    —— 生成器据此给**那一份**组员预设的注入器写 `proposalFile: false`（工具因此根本不注册）。
+    //    判据跟着义务的落点走，而且**加了一条更硬的**：读**装出去的那一份**（补丁）。
     const blocks = rowBlocks(yml)
     rec.readings.rows = blocks.length
-    const judge = blocks.find((b) => b.id === 'tool-job-memory-judge')
-    if (judge === undefined) { push('ROW-MISSING', '找不到 `- id: tool-job-memory-judge` 那一行'); return caseFail(problems) }
-    const deny = denyOf(judge)
-    rec.readings.judge_deny = deny
-    if (deny === null) { push('ROW-SHAPE', '判决行里没有 `deny: [...]` 这一格'); return caseFail(problems) }
+    const ann = memberAnnotations(yml)
+    const judgeAnn = ann.get('tool-job-memory-judge')
+    if (judgeAnn === undefined) { push('ROW-MISSING', '找不到 `- id: tool-job-memory-judge` 那一行（或它上方没有组员注释）'); return caseFail(problems) }
+    rec.readings.judge_deny = judgeAnn.deny
+    rec.readings.judge_persona = (judgeAnn.persona ?? '').slice(0, 60)
 
-    // ① 阳性对照：这一格现在就该找得到 workflow / ralph（证明提取器读的是**那一行**，不是随便一行）
-    for (const needle of ['workflow', 'ralph']) {
-      if (!deny.includes(needle)) {
-        push('PRECONDITION-CONTROL', `阳性对照失败：判决行的 deny 里本来就应该有 ${needle}（现量 ${JSON.stringify(deny)}）`
-          + ' —— 这不是被测对象红了，是提取器读错了格子')
-      }
+    // ① 阳性对照：**提取器读的是那一行**（那一行的人格标记必须认得出来）——
+    //    旧版的对照是"deny 里本来就该有 workflow/ralph"；0.2.1 里那两样结构性没有，
+    //    所以改用"这一行的人格标记必须对得上"（读错格子 ⇒ 不是被测对象红了，是提取器读错了）。
+    if (!/【组员:memory-judge】/.test(judgeAnn.persona ?? '')) {
+      push('PRECONDITION-CONTROL', `阳性对照失败：判决行上方的 \`# @member-persona\` 里本来就应该有 【组员:memory-judge】（现量 ${JSON.stringify(judgeAnn.persona)?.slice(0, 80)}）`
+        + ' —— 这不是被测对象红了，是提取器读错了格子')
+    }
+    // ①b 反向对照：另外三行作业**必须读成空 deny**（同一份提取器；否则它就是对所有行吐同一坨）
+    const otherDenies = ['tool-job-memory-review', 'tool-job-conversation-review', 'tool-job-technical-review']
+      .map((id) => ({ id, deny: (ann.get(id) ?? {}).deny ?? null }))
+    rec.readings.other_job_denies = otherDenies
+    for (const o of otherDenies) {
+      if (o.deny === null) push('PRECONDITION-CONTROL', `阳性对照失败：读不到 ${o.id} 的组员注释（提取器坏了）`)
+      else if (o.deny.length > 0) push('DENY-LEAK', `${o.id} 的 \`# @member-deny\` 写了 ${JSON.stringify(o.deny)} —— 只有判决岗该被挡（多写 = 那个岗位提不了候选）`)
     }
 
-    // ② 主判据：deny 里有 proposal_file ⇒ 它的工具集里根本没有这个工具（结构性，不是"调用被拒"）
-    if (!deny.includes(TOOL_NAME)) {
-      push('DENY-MISSING', `判决行的 toolFilter.deny 里没有 ${TOOL_NAME}（现量 ${JSON.stringify(deny)}）`
-        + ' —— 「判决岗不许提」在配置层根本没落：它照样看得见这个工具')
+    // ② 主判据：判决岗的否定项里有 proposal_file（结构性：它的工具集里根本没有这个工具）
+    if (!judgeAnn.deny.includes(TOOL_NAME)) {
+      push('DENY-MISSING', `判决行上方的 \`# @member-deny\` 里没有 ${TOOL_NAME}（现量 ${JSON.stringify(judgeAnn.deny)}）`
+        + ' —— 「判决岗不许提」在配置层根本没落：生成器不会给那一份写 proposalFile: false')
     }
 
     // ③ 反例：deny 里不许写"继承不到"的名字（那会让整行起不来，比漏挡更糟）
-    if (deny.includes('pwsh') || deny.includes('bash')) push('DENY-PLATFORM', 'deny 里不许写 pwsh/bash（平台二选一，写错那个整行启动失败）')
-    if (deny.includes('subagent_fork')) push('DENY-DEAD-NAME', 'deny 里不许写已关掉的行里的工具名（subagent_fork 不再注册）')
+    if (judgeAnn.deny.includes('pwsh') || judgeAnn.deny.includes('bash')) push('DENY-PLATFORM', 'deny 里不许写 pwsh/bash（平台二选一，写错那个整行启动失败）')
+    if (judgeAnn.deny.includes('subagent_fork')) push('DENY-DEAD-NAME', 'deny 里不许写已关掉的行里的工具名（subagent_fork 不再注册）')
+    for (const dead of FROZEN.memberPresetForbidden) {
+      if (judgeAnn.deny.includes(dead)) push('DENY-DEAD-NAME', `deny 里写了 ${dead} —— 它在组员预设里结构性不存在（委派组整个不搬），写它只会让整行启动失败`)
+    }
+
+    // ④ 落点（**装出去的那一份**）：补丁里 `preset-agenia-job-memory-judge` 的注入器写着 `proposalFile: false`，
+    //    而**其余九份一份都不许有** —— 这才是"它的工具集里根本没有这个工具"的结构性证明
+    //    （组合行上的注释只是**来源**；装出去的是补丁）。
+    const patchText = readText(PATCH)
+    if (patchText === null) push('SUT-SURFACE-MISSING', `读不到 ${PATCH}`)
+    else {
+      const entries = presetEntries(parseComposition(patchText, 'live-patch').rows)
+      const withFlag = entries.filter((e) => e.injector?.config?.proposalFile === false).map((e) => e.id)
+      rec.readings.preset_entries = entries.map((e) => e.id)
+      rec.readings.preset_proposalFile_false = withFlag
+      if (!withFlag.includes('agenia-job-memory-judge')) {
+        push('ARTIFACT-FLAG', `补丁里 agenia-job-memory-judge 那一份的注入器没有 \`proposalFile: false\`（实得带这一格的是 ${JSON.stringify(withFlag)}）—— 生成器没把 @member-deny 落成产物`)
+      }
+      const leaks = withFlag.filter((id) => id !== 'agenia-job-memory-judge')
+      if (leaks.length > 0) push('ARTIFACT-FLAG', `补丁里这些预设也写了 proposalFile: false：${JSON.stringify(leaks)} —— 只有判决岗该没有这个工具`)
+      if (entries.length === 0) push('ARTIFACT-FLAG', '补丁里一份预设入口都没读到 —— 判不了（不许当绿）')
+    }
     caseFail(problems)
   })
 })
@@ -553,25 +941,31 @@ test('PFL-07 除判决岗外所有岗位都看得见它（含 review）；且它
     const blocks = rowBlocks(yml)
 
     // ① 除了判决那一行，任何一行都不许 deny 它
+    // 🔴 2026-10-19（0.2.1）：否定项从 `toolFilter.deny` 搬到行上方的 `# @member-deny` 注释 ——
+    //    旧写法（只读 YAML 的 deny 列表）在 0.2.1 上**对每一行都返回 null**，于是这条会**静默变空**
+    //    （"没读到"和"没有"长得一样）。所以改成读注释，并且**先自证提取器有读到东西**。
+    const ann = memberAnnotations(yml)
     const leaking = []
-    for (const b of blocks) {
-      if (b.id === 'tool-job-memory-judge') continue
-      const deny = denyOf(b)
-      if (deny !== null && deny.includes(TOOL_NAME)) leaking.push(b.id)
+    for (const [id, mark] of ann) {
+      if (id === 'tool-job-memory-judge') continue
+      if (mark.deny.includes(TOOL_NAME)) leaking.push(id)
     }
     rec.readings.deny_leak = leaking
+    rec.readings.annotated_rows = ann.size
     if (leaking.length > 0) push('DENY-LEAK', `这些行 deny 了 ${TOOL_NAME}，它们就看不见工具了：${leaking.join(', ')}（只有判决岗该被挡）`)
 
-    // ② review 是唯一受限岗位 —— 这一格必须显式读出来
-    const reviewRow = blocks.find((b) => b.id === 'team-review')
-    if (reviewRow === undefined) push('ROW-MISSING', '找不到 `- id: team-review` 那一行')
-    else {
-      const deny = denyOf(reviewRow)
-      rec.readings.review_deny = deny
-      if (deny !== null && deny.includes(TOOL_NAME)) {
+    // ② review 是唯一受限岗位 —— 这一格必须显式读出来（**先证明读到了那一行**，否则下面那条是空话）
+    const reviewMark = ann.get('team-review')
+    if (reviewMark === undefined || typeof reviewMark.persona !== 'string') {
+      push('ROW-MISSING', '读不到 `- id: team-review` 那一行的组员注释（`# @member-persona`）—— 这一格判不了，不许当绿')
+    } else {
+      rec.readings.review_deny = reviewMark.deny
+      if (reviewMark.deny.includes(TOOL_NAME)) {
         push('REVIEW-BLOCKED', 'review 这一行 deny 了它 —— review 恰恰最需要这个工具（它没有命令行）')
       }
     }
+    // ②b 阳性对照：这份提取器**在活体组合上真的读到了行**（一行都没读到 ⇒ 上面两条全是空绿）
+    if (ann.size === 0) push('PRECONDITION-CONTROL', '提取器在活体组合上一行注释都没读到 —— 上面两条是空绿，不是通过')
 
     // ③ 它必须真的注册上了（两条落法之一；都没有 ⇒ 红）
     const injectSrc = readText(INJECT) ?? ''

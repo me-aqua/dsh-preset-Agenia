@@ -58,10 +58,57 @@ export const BATCH_F = ['REV-01', 'REV-03', 'RCP-03', 'INS-01', 'INS-02', 'INS-0
 export const BATCH_G = ['PFL-01', 'PFL-02', 'PFL-03', 'PFL-04', 'PFL-05', 'PFL-06', 'PFL-07', 'PFL-08', 'PFL-09', 'PFL-10', 'PFL-11']
 
 /**
- * 已落笔的七批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条。
+ * 批次 H 的 4 条 —— **门 1 · 回执链路四票**（`F-120`～`F-123`，2026-10-22）。
+ *
+ * 四票是同一句话的四张脸：**校验方不自己复算，只信作业自报**。
+ *   · `VRF-01` `F-120` 指纹口径（`.tools/fingerprint.mjs` 的排除表按**根相对**写）
+ *   · `VRF-02` `F-121` `findings_set_sha256` 必须由校验方复算（含 `receipt-check` 这个真消费点）
+ *   · `VRF-03` `F-122` `code_fingerprint.equal` 是自报 ⇒ 拒三种形状
+ *   · `VRF-04` `F-123` 「打的是哪棵树」逐树枚举，不是盯 `inject.js` 一份
+ * 契约在 `CONTRACT.md` §6（本批与契约同批落盘）。
+ * ⚠️ 它们**不进** `FROZEN_IDS`：那张清单是历史冻结的 A–F 55 条；批次 G/H 各自
+ * 以**显式 ID 清单**存在（同一条政策：清单比计数常数硬）。
+ */
+export const BATCH_H = ['VRF-01', 'VRF-02', 'VRF-03', 'VRF-04']
+
+/**
+ * 批次 I 的 3 条 —— **门 1 · `F-112` 剩下两格**（+ 顺手 `F-111③`，2026-10-22）。
+ *
+ * 三格是同一句话的三张脸：**照着一张声明的名字表签字**。
+ *   · `SURF-01` `F-112` ① 注入面清单「声明了就必须在盘上」（删 `persona.md` / `style.md` 原来一声不响）
+ *   · `SURF-02` `F-112` ② `inject.js` 兜底名单的注释与常量必须是同一个名单
+ *     （注释说 `memory` 不在、常量里它在 ⇒ 读注释的人与跑代码的人拿到两个答案）。
+ *     🔴 2026-10-22 收口：**声明必须机读** —— 注释块里没有 `@roster` 那一行 ⇒ 红；散文不算声明。
+ *   · `SURF-03` `F-112` ① 的**补格**：在盘上还不够，**不许是空壳**（去掉空白后必须还有字）。
+ *     2026-10-22 补：`SURF-01` 当时只判 `existsSync`，1 字节占位（`AGENTS.md` 那种）会假绿。
+ *     两根轴**各报各的**：缺一份只红 `SURF-01`，改成 1 字节只红 `SURF-03`。
+ * 契约在 `CONTRACT.md` §7（本批与契约同批落盘）。
+ * ⚠️ 它们**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G / H 的规矩。
+ */
+export const BATCH_I = ['SURF-01', 'SURF-02', 'SURF-03']
+
+/**
+ * 批次 J 的 3 条 —— **门 1 · `F-125`**（每条进库的正文都有 400 字上限，2026-10-22）。
+ *
+ * 三板是同一句话的三张脸：**同一个上限只挂在一条入口上，就等于没有**。
+ *   · `MTC-01` `F-125` `payload.entry.text` 401 必拒 / 400 必过（纯函数 + **两条导入 CLI**
+ *     `--op maintenance-import` / `--op proposal-import`：401 ⇒ exit 2 且零写入，400 ⇒ 追加一行）
+ *   · `MTC-02` `F-125` `payload.engine_ops[].entry.text` 401 必拒 / 400 必过（**别只查一处**；
+ *     真维护案用的就是这一格，纯 retire 案不许被误伤）
+ *   · `MTC-03` **阳性对照**（旧的**工具**面，不是导入面）：普通候选 401 字仍被 `proposal-file.mjs`
+ *     拒（400 过 · 同一把尺子）—— 它证明"同一台机器、同一把尺子"，不是"CLI 那条路没闸"的证据。
+ * 契约在 `CONTRACT.md` §8（本批与契约同批落盘）。
+ * ⚠️ 它们**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G / H / I 的规矩。
+ */
+export const BATCH_J = ['MTC-01', 'MTC-02', 'MTC-03']
+
+/**
+ * 已落笔的十批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
+ * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
+ * 批次 J 是 `F-125` 维护案 400 字帽（同日）。
  * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -70,7 +117,10 @@ const BATCH_OF = (id) =>
           : BATCH_E.includes(id) ? 'E'
             : BATCH_F.includes(id) ? 'F'
               : BATCH_G.includes(id) ? 'G'
-                : null
+                : BATCH_H.includes(id) ? 'H'
+                  : BATCH_I.includes(id) ? 'I'
+                    : BATCH_J.includes(id) ? 'J'
+                      : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -93,6 +143,21 @@ const F = {
   install: 'integration/install-rollback.test.mjs',
   env: 'integration/env.test.mjs',
   proposalFile: 'integration/proposal-file.test.mjs',
+  /** 门 1 回执链路四票（批次 H）—— 一票一个文件，红的时候一眼看得出是哪一票。 */
+  vrf01: 'integration/vrf01-fingerprint-root.test.mjs',
+  vrf02: 'integration/vrf02-findings-recompute.test.mjs',
+  vrf03: 'unit/vrf03-fingerprint-equal.test.mjs',
+  vrf04: 'static/vrf04-staging-surface.test.mjs',
+  /** 门 1 · `F-112` 剩下两格（批次 I）—— 一格一个文件：红的时候一眼看得出是"清单"还是"注释"。
+   *  ⚠️ 例外：`SURF-01` / `SURF-03` **同住一个文件**（同一张清单的两根轴：在不在 / 是不是空壳）——
+   *  放一起是为了让反向那一跑一眼看到"一份改成 1 字节 ⇒ 只有 SURF-03 红、SURF-01 仍绿"。 */
+  surf01: 'static/surface-exists.test.mjs',
+  surf02: 'static/inject-roster.test.mjs',
+  surf03: 'static/surface-exists.test.mjs',
+  /** 门 1 · `F-125` 维护案 400 字帽（批次 J）—— 三条同住一个文件：
+   *  两个入口面（`payload.entry` / `engine_ops`）+ 一条旧闸的阳性对照；
+   *  红的时候一眼看得出是"哪一格没有闸"，绿的时候三条各自都还在量东西。 */
+  mtc: 'integration/maintenance-cap.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -132,13 +197,13 @@ const ROWS = [
   ['MEM-08', 'memory', F.memoryUnit, '常识 SHA 三处核对：无确认改动停更、运行中再改拒提交', '下一批'],
   ['MEM-09', 'memory', F.memoryUnit, '快照字段齐全、原子发布、直写/半写可检测、旧快照只读', '下一批'],
   ['MEM-10', 'memory', F.memoryReport, '报告 + 每日状态四类分布：汇总严格相等、含 0 类、无硬帽字段、字符按 code point 口径', '批次 C'],
-  ['MEM-11', 'memory', F.memoryUnit, '各岗位提案口与 append-only 导入校验（schema/基准版本/来源/哈希/fence）', '下一批'],
+  ['MEM-11', 'memory', F.memoryUnit, '各岗位提案口与 append-only 导入校验（schema/基准版本/来源/哈希/fence）；「已判」索引的行集合与维护案 verdict（来源 = accepted 里的它，或 maintenance_decisions 里带 action 的裁决）', '下一批'],
   ['MEM-12', 'memory', F.memoryUnit, '普通提案不得删/并/退/改类型；斩杀只经复核→次日判决；归档可查', '下一批'],
 
   // ── 后台 guard（3）───────────────────────────────────────────────────────
-  ['GRD-01', 'guard', F.guard, 'job_* 仅显式 true 放行；team_*/subagent 显式 false 拒；config 错误态一律拒；门禁在 officeBound 提前返回之前', '批次 B'],
-  ['GRD-02', 'guard', F.guard, '合法调用与无关工具一律放行；guard 只按工具名+参数行动', '批次 B'],
-  ['GRD-03', 'guard', F.guard, '拿不到 tools.guard 必须 loud（含“subagent 后台硬门未生效”）且 R1 判 NO-GO', '批次 B'],
+  ['GRD-01', 'guard', F.guard, 'job_* 显式 true **或省略**（0.2.1）放行、显式 false/非布尔真值拒；team_*/subagent 显式 false 拒；config 错误态一律拒；门禁在 officeBound 提前返回之前', '批次 B'],
+  ['GRD-02', 'guard', F.guard, '合法调用与无关工具一律放行；guard 只按工具名+参数行动；判据两侧都成立（翻面）', '批次 B'],
+  ['GRD-03', 'guard', F.guard, '拿不到 tools.guard 必须 loud（点名缺哪样 + 说清后果）；骨架里写着「装不上要出声、但那不是拦截」', '批次 B'],
 
   // ── 作业状态机（4）───────────────────────────────────────────────────────
   ['JOB-01', 'job', F.jobs, '后台完成通知驱动（非轮询）；丢通知时只检测未结、不冒充完成', '下一批'],
@@ -148,7 +213,7 @@ const ROWS = [
 
   // ── 会话包 / 角色 / 技术作业（3）─────────────────────────────────────────
   ['REV-01', 'review', F.packet, '多帧 zstd 会话包：全部解出、窗口/排除项正确、坏帧不产半包', '下一批'],
-  ['REV-02', 'review', F.roles, '四角色工具面/写边界/CODE 不变；无 shell；越界写一律拒（officeBoundVerdict 单测 + 静态角色矩阵）', '批次 B'],
+  ['REV-02', 'review', F.roles, '四角色工具面/写边界/CODE 不变；无 shell；越界写一律拒（officeBoundVerdict 单测 + 静态角色矩阵；组员标记与否定项按 0.2.1 的注释口径读）', '批次 B'],
   ['REV-03', 'review', F.technicalReview, '技术作业产物：CODE 前后哈希、findings 稳定 id、报告/发现集哈希可独立校验', '下一批'],
 
   // ── 回执 / 票（4）───────────────────────────────────────────────────────
@@ -177,7 +242,7 @@ const ROWS = [
   ['ENV-02', 'env', F.envScan, '静态扫描：无 %TEMP% 默认、无 C 盘硬编码、无默认真实根、删除前有 marker 校验、不得 import 生成器（A11）', '批次 B'],
 
   // ── 读取义务（1）───────────────────────────────────────────────────────
-  ['READ-01', 'read', F.readObligations, '四份作业书 + 组长流程的必读输入清单/版本/哈希核对条款齐备', '批次 B'],
+  ['READ-01', 'read', F.readObligations, '四份作业书（清单/版本/哈希）+ 组长侧（全文读 + 评前评后指纹两次）条款齐备', '批次 B'],
 
   // ── 候选池工具（11）：F-53 写在 `.team/` 里的真身，F-57 搬进项目────────────
   ['PFL-01', 'proposal-file', F.proposalFile, '安全：跑前跑后真实候选池一个字节不变', '批次 G'],
@@ -185,12 +250,28 @@ const ROWS = [
   ['PFL-03', 'proposal-file', F.proposalFile, '形状拒绝五格：text/source/kind/sha256/多余键 各自点名', '批次 G'],
   ['PFL-04', 'proposal-file', F.proposalFile, '判重键 = (source, sha256)：同源同文拒 · 同源换文收 · 换出处收', '批次 G'],
   ['PFL-05', 'proposal-file', F.proposalFile, '报文能指名：来源重了 / 内容哈希不符是两个码，各自点名', '批次 G'],
-  ['PFL-06', 'proposal-file', F.proposalFile, '判决岗看不见它：那一行 deny 里有 proposal_file（阳性对照先过）', '批次 G'],
+  ['PFL-06', 'proposal-file', F.proposalFile, '判决岗看不见它：# @member-deny proposal_file + 补丁里那一份 proposalFile: false（阳性对照先过）', '批次 G'],
   ['PFL-07', 'proposal-file', F.proposalFile, '除判决岗外都看得见（含 review）；且它真的注册上了', '批次 G'],
   ['PFL-08', 'proposal-file', F.proposalFile, '不依赖 shell · 不拆 review 写边界 · inject 顶层不 import 脑库', '批次 G'],
   ['PFL-09', 'proposal-file', F.proposalFile, '冻结契约同步：冻结 ID 一条不少 · 体检指名 · 增量常量对账', '批次 G'],
   ['PFL-10', 'proposal-file', F.proposalFile, '落点：判重与追加在同一把锁里（持锁时不写 · 两进程只进一条）', '批次 G'],
   ['PFL-11', 'proposal-file', F.proposalFile, '不许按人拒绝：主路不吃身份也照样能提', '批次 G'],
+
+  // ── 门 1 · 回执链路四票（4）：校验方必须自己复算（F-120～F-123，2026-10-22）──────────
+  ['VRF-01', 'verify-recompute', F.vrf01, 'F-120 指纹口径：写 <root>/.runtime/ 不许让 CODE 翻面 · 改 lib/ 必须翻面 · 现役预设根 CODE 名单里 .runtime/ 必须 0 份', '批次 H'],
+  ['VRF-02', 'verify-recompute', F.vrf02, 'F-121 findings_set_sha256 必须由校验方复算：内容改一个字声明不动 ⇒ parseFindings / 覆盖校验 / receipt-check 三处都拒（E_RECEIPT_HASH）；零发现与真值两例必须过', '批次 H'],
+  ['VRF-03', 'verify-recompute', F.vrf03, 'F-122 code_fingerprint 三种形状必须拒（before≠after 却 equal:true / 只有 {equal:true} / 声明与盘面复算不符）；equal:false 与真 equal 两例不许被改坏', '批次 H'],
+  ['VRF-04', 'verify-recompute', F.vrf04, 'F-123 staging 树覆盖面：差异做在非 inject.js 文件（或同一新路径）上必须非 equal；相同树 / 只改 mtime / 只在 .runtime 上不同必须 equal', '批次 H'],
+
+  // ── 门 1 · `F-112` 剩下两格（2）：照着一张声明的名字表签字（2026-10-22）──────────────
+  ['SURF-01', 'surface-declared', F.surf01, 'F-112① 注入面清单「声明了就必须在盘上」：13 份声明逐份 existsSync（缺一份 ⇒ 红并点名）+ 名单↔份数成对 + 五组控制面（三份都在 / 少一份 / 少两份 / 一份都不在 / 空表）', '批次 I'],
+  ['SURF-02', 'surface-declared', F.surf02, 'F-112② inject.js 兜底名单的注释与常量是同一个名单：注释块里必须有 `@roster` 机读声明（散文不算声明、没有它 ⇒ 红并点名那份兜底）+ 与常量逐项一致（说"不在"的不许在、说"在"的必须在；点名 key + 两处行号）+ 不许沉默（memory/style 必须表态）+ 常量不许零读点 + 十四组控制面', '批次 I'],
+  ['SURF-03', 'surface-declared', F.surf03, 'F-112① 补格：注入面声明的每一份 .md 不许是空壳（去掉空白后必须非空：1 字节 / 只剩空白 / 只有 BOM ⇒ 红并点名；读不出正文也点名；缺一份不归这一格）+ 九组控制面（含 CRLF 2 字节那一格）', '批次 I'],
+
+  // ── 门 1 · `F-125` 正文 400 字帽（3）：同一个上限只挂在一条入口上就等于没有（2026-10-22）──────
+  ['MTC-01', 'maintenance-cap', F.mtc, 'F-125 `payload.entry.text`：401 字必拒（码带 TOO_LONG 且已登记；报文给 401/400/位置）/ 400 字必过 · BOM 与 CRLF 归一后 400 也算过（同一把 `charCountOf`）· **两条导入 CLI 同两格**：`--op maintenance-import` 与 `--op proposal-import` 各导一次，401 ⇒ exit 2 且池子零写入、400 ⇒ exit 0 且恰好追加一行（正文仍是 400 字）', '批次 J'],
+  ['MTC-02', 'maintenance-cap', F.mtc, 'F-125 `payload.engine_ops[].entry.text`：401 必拒 / 400 必过 · 超长那条在第二位也要被抓（不许只看第一条）· 纯 retire 案（无正文）不许被误伤 · 两处都超也拒 · 真 CLI 同两格外加零写入', '批次 J'],
+  ['MTC-03', 'maintenance-cap', F.mtc, 'F-125 阳性对照（旧**工具**面，不是导入面）：普通候选 401 字**仍然**被 `proposal_file` 拒（码 = `E_PROPOSAL_TOO_LONG` 且已登记；报文给 401/400）· 400 过 · BOM/CRLF 归一后 400 也过 · 主路拒时零写入、400 时追加一行 —— 两把闸不互相顶掉', '批次 J'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -245,6 +326,13 @@ export const GROUP_COUNTS = {
   'static-doc': 6, route: 8, store: 4, memory: 12, guard: 3, job: 4,
   review: 3, receipt: 4, health: 2, 'data-root': 3, install: 3, env: 2, read: 1,
   'proposal-file': 11,
+  /** 门 1 回执链路四票（`F-120`～`F-123`）—— 契约见 `CONTRACT.md` §6。 */
+  'verify-recompute': 4,
+  /** 门 1 · `F-112` 剩下两格（+ 顺手 `F-111③`）—— 契约见 `CONTRACT.md` §7。
+   *  `SURF-01` 与 `SURF-03` 同住一个文件（同一张清单的两根轴：在不在 / 是不是空壳）。 */
+  'surface-declared': 3,
+  /** 门 1 · `F-125` 维护案 400 字帽 —— 契约见 `CONTRACT.md` §8。 */
+  'maintenance-cap': 3,
 }
 
 /**
@@ -261,9 +349,12 @@ export function registryProblems() {
   for (const p of consistency({ registry: REGISTRY, discovery: DISCOVERY, frozenIds: FROZEN_IDS }).problems) problems.push(p.message)
   // 发现器自己报的问题（没有 ID 的 test() / 重复 ID）。
   for (const p of DISCOVERY.problems) problems.push(p.message)
-  // 冻结清单必须正好盖住"批次 G 之外的全部登记行"（多一条或少一条都是清单与表分家）。
-  const nonG = REGISTRY.filter((r) => !BATCH_G.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonG) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G 之外的 ${nonG} 条（清单与表分家了）`)
+  // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
+  // ⚠️ G / H / I / J 都是**后加的显式批次**（不进历史冻结清单），四个都要从这一格里排掉 ——
+  //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里 57 条"，而真正坏掉的可能是**别处**。
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J]
+  const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -290,6 +381,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }

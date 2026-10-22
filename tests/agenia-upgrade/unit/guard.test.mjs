@@ -139,18 +139,40 @@ describe('unit · guard', () => {
         const badMode = TOOLS.filter((t) => policy.mode.get(t.name) !== t.mode)
         if (badMode.length > 0) push('POLICY-MODE', `模式与冻结表不符：${badMode.map((t) => `${t.name} 应为 ${t.mode} 实得 ${policy.mode.get(t.name)}`).join('；')}`)
       }
-      if (!(policy?.backgroundExposed instanceof Set)) push('POLICY-SHAPE', 'delegationPolicy(config).backgroundExposed 必须是 Set')
-      else {
-        const missingExposed = JOB_TOOLS.filter((t) => !policy.backgroundExposed.has(t.name))
-        if (missingExposed.length > 0) {
-          push('POLICY-EXPOSED', `这四条 job 工具没有暴露 run_in_background 参数：${missingExposed.map((t) => t.name).join(', ')} —— 那样 guard 的"必须显式 true"根本无法满足（拍板 I1：不写 enableRunInBackground 就是为了留着它）`)
-        }
+      /**
+       * 名单的键 == 组合里的实例（`G1`）—— 上面三格就是这条：
+       * `POLICY-SHAPE`（`mode` 必须是 Map）· `POLICY-NAMES`（键集）· `POLICY-MODE`（每个键的模式）。
+       *
+       * 🔴 这里**没有** `POLICY-EXPOSED`（2026-10-19 第 4 关评审 B-3，组长裁决：删掉）。理由写在
+       *    `mig-rules-10` 上 —— 它不能翻面，所以它不是判据：
+       *      ① `delegationPolicy()`（staged/inject.js:730）算 `backgroundExposed` 的方式就是
+       *         `new Set(mode.keys())` ⇒ 只要上面 `POLICY-NAMES` 绿（`mode.keys()` == 冻结的九个头），
+       *         这一条在逻辑上**不可能红**；它测的不是被测对象，是两张冻结表的一行算术。
+       *      ② `run_in_background` 这个参数在 0.2.1 上**已经不存在**（见本用例 ② 段那段 🔴：省略即后台）
+       *         ⇒ "这四条工具**暴露着**这个参数"是一句与平台相反的断言。
+       *    ⇒ 删掉它**没有**丢掉真保护：那三格逐字未动，而且各有刀 ——
+       *      `K17`（组合里多一个委派工具）⇒ `POLICY-NAMES` 当场红；
+       *      `K18`（判决岗模式从 `one-shot` 改成 `continuable`）⇒ `POLICY-MODE` 当场红（都量过）。
+       *      `POLICY-SHAPE`（`mode` 必须是 Map）这一轮**没有单独下刀** —— 别把它读成"证过了"。
+       *    `backgroundExposed` 的读数照旧留在 `rec.readings.policy.backgroundExposed`（是证据，不是判据）。
+       */
+      rec.readings.exposed_note = {
+        note: 'backgroundExposed = new Set(mode.keys())（inject.js:730）⇒ 它是派生量，不作判据；名单的键由 POLICY-NAMES 钉（刀 K17），每个键的模式由 POLICY-MODE 钉（刀 K18）。',
       }
 
-      // ── ② job_*：只有 `=== true` 才放行（G2）──────────────────────────
+      // ── ② job_*：显式 `true` **或省略**放行（0.2.1），显式 `false` / 非布尔真值一律拒（G2）──
+      // 🔴 **2026-10-19（DSH 0.2.1）：这条判据跟着平台改，但**没有放宽**。**
+      //    平台事实：`run_in_background` 这个参数已从工具里删掉，0.2.1 的委派一律异步
+      //    （调用即返回 `started subagent`）⇒ "省略"从"在前台等着"变成"框架本身就异步"，
+      //    它本来就满足这条门禁的**目标**。来源：`presets/agenia/inject.js:744-752,769-773`
+      //    的 🔴 注释（实现岗落地的平台决定，不是测试岗猜的）。
+      //    改后**两侧都钉**，少一侧就退化成"永远拒"或"永远放":
+      //      · 省略 ⇒ **必须放行**（`GUARD-JOB-OMITTED`）—— 谁把它改回"必须 === true"，
+      //        这一格立刻红（那种半修会让四条作业在 0.2.1 上一次都发不出去）；
+      //      · 显式 `false` / `'true'` / `null` / `0` ⇒ **仍然必须拒**（`GUARD-JOB-FOREGROUND`）
+      //        —— "硬塞一个前台值"这条路照样堵着。
       const jobResults = {}
       const badArgs = [
-        ['省略', {}],
         ['false', { run_in_background: false }],
         ['字符串 true', { run_in_background: 'true' }],
         ['null', { run_in_background: null }],
@@ -167,6 +189,12 @@ describe('unit · guard', () => {
               if (!v.message.includes(needle)) push('GUARD-JOB-MSG', `${tool.name} 传「${label}」的报文里没有「${needle}」：${v.message.slice(0, 160)}`)
             }
           }
+        }
+        // 省略 = 后台（0.2.1 的平台决定）：与上面那条**成对**
+        const omitted = verdictOf(verdictFn(tool.name, {}, policy))
+        jobResults[`${tool.name}/省略`] = { kind: omitted.kind, code: omitted.code }
+        if (omitted.kind !== 'allow') {
+          push('GUARD-JOB-OMITTED', `${tool.name} 省略 run_in_background 必须放行（0.2.1 的委派一律异步、参数已经删了），实得 ${omitted.kind}/${omitted.code}：${omitted.message.slice(0, 160)}`)
         }
         const ok = verdictOf(verdictFn(tool.name, { run_in_background: true }, policy))
         jobResults[`${tool.name}/true`] = { kind: ok.kind, code: ok.code }
@@ -324,9 +352,11 @@ describe('unit · guard', () => {
       rec.readings.unrelated_harmed = harmed
 
       // ── ③ 判据会翻面：同一条断言的两侧都成立（负例已在 GRD-01，这里钉正侧）──
+      // 🔴 2026-10-19（0.2.1）：one-shot 的"非法侧"从「省略」改成「显式 false」——
+      //    "省略"现在是合法的（见 GRD-01 ②）。翻面的**形状**没变：合法放行 / 非法拒绝两侧都成立。
       const flip = {
         job_legal: verdictOf(verdictFn('job_memory_judge', { run_in_background: true }, policy)).kind,
-        job_illegal: verdictOf(verdictFn('job_memory_judge', {}, policy)).kind,
+        job_illegal: verdictOf(verdictFn('job_memory_judge', { run_in_background: false }, policy)).kind,
         self_legal: verdictOf(verdictFn('team_test', {}, policy)).kind,
         self_illegal: verdictOf(verdictFn('team_test', { run_in_background: false }, policy)).kind,
       }
@@ -359,7 +389,7 @@ describe('unit · guard', () => {
     })
   })
 
-  test('GRD-03 拿不到 tools.guard 必须 loud（含“subagent 后台硬门未生效”）且 R1 判 NO-GO', async () => {
+  test('GRD-03 拿不到 tools.guard 必须 loud（点名缺哪样 + 说清后果）且骨架写着「出声≠拦截」', async () => {
     await runCase('GRD-03', async (rec) => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -377,21 +407,35 @@ describe('unit · guard', () => {
       }
       const baseUrl = `file:///${PATHS.stagedPreset.replace(/\\/g, '/')}/inject.js`
       const configWith = config ?? { contentDir: PATHS.stagedPreset, delegationTools: FROZEN.delegationTools }
+      /**
+       * 🔴 判据口径（2026-10-19 · 0.2.1 换措辞之后）—— 钉**两个属性**，不是一句原文：
+       *   ① 点名缺的是哪一样（`没有 tools.guard`）；② 同一句里说清后果（"没有生效 / 没挂上"）。
+       * 这样"整段告警被删掉"仍然红、"喊了但没说清哪样/什么后果"也红。
+       * 旧原文 `subagent 后台硬门未生效` 在 0.2.1 的注入器里已经不存在（实现岗按平台改的措辞）。
+       */
+      const NEEDLE = FROZEN.guardMessageNeedles.missingGuard
+      const CONSEQ = FROZEN.guardMessageNeedles.missingGuardConsequence
+      const namesAndConsequence = (text) => text.includes(NEEDLE) && CONSEQ.some((c) => text.includes(c))
 
       // ── ① 静态：那句话必须写在"拿不到 guard"的分支里 ──────────────────
       const src = readStagedText('inject.js')
-      rec.readings.static_needle_present = src.includes(FROZEN.guardMessageNeedles.missingGuard)
-      if (!src.includes(FROZEN.guardMessageNeedles.missingGuard)) {
-        push('GUARD-SILENT', `staged/inject.js 里没有「${FROZEN.guardMessageNeedles.missingGuard}」这句话 —— 硬门没生效必须出声（G6）`)
+      rec.readings.static_needle = { needle: NEEDLE, consequence_hits: CONSEQ.filter((c) => src.includes(c)) }
+      if (!src.includes(NEEDLE)) {
+        push('GUARD-SILENT', `staged/inject.js 里没有「${NEEDLE}」这句话 —— 硬门没生效必须点名缺的是哪一样（G6）`)
+      } else if (!CONSEQ.some((c) => src.includes(c))) {
+        push('GUARD-SILENT', `staged/inject.js 提到了「${NEEDLE}」却没说后果（${CONSEQ.join(' / ')} 一个都没有）—— "缺了"不是"没生效"（G6）`)
       }
 
       // ── ② 行为：假 ctx（tools.guard 不是函数）⇒ console.error 必须响 ──
       const noGuardRun = await withCapturedErrors(() => applyFn(fakeCtx({ tools: {}, baseUrl }), configWith))
       rec.readings.no_guard_run = { captured: noGuardRun.captured, threw: noGuardRun.threw ? String(noGuardRun.threw.message).slice(0, 300) : null }
-      const loud = noGuardRun.captured.some((l) => l.includes(FROZEN.guardMessageNeedles.missingGuard))
-        || (noGuardRun.threw && String(noGuardRun.threw.message).includes(FROZEN.guardMessageNeedles.missingGuard))
+      // 出声 = 有一条报文**同时**点名缺哪样 + 说清后果（见上面那段 🔴 的口径）
+      const loudLine = noGuardRun.captured.find((l) => namesAndConsequence(l))
+      const loud = loudLine !== undefined
+        || (noGuardRun.threw !== null && noGuardRun.threw !== undefined && namesAndConsequence(String(noGuardRun.threw.message)))
       if (!loud) {
-        push('GUARD-SILENT', `拿不到 tools.guard 时没有出声（既没 console.error 也没有含「${FROZEN.guardMessageNeedles.missingGuard}」的异常）：captured=${JSON.stringify(noGuardRun.captured).slice(0, 300)}`)
+        push('GUARD-SILENT', `拿不到 tools.guard 时没有**说得清**的出声：要有一条报文同时含「${NEEDLE}」与 ${JSON.stringify(CONSEQ)} 之一`
+          + `（既没 console.error 也没有这样的异常）：captured=${JSON.stringify(noGuardRun.captured).slice(0, 300)}`)
       }
 
       // ── ③ 有 guard 时必须装上，且 config 错误态要出声（裁定 A4 第 3 条）──
@@ -418,12 +462,35 @@ describe('unit · guard', () => {
         push('SELFCHECK-UNKNOWN-KEY', `配置自检把新增的 ${FROZEN.delegationToolsKey} 当成"不认识的配置键"（${unknownKey.join(' / ').slice(0, 200)}）—— 新键要同批进 inject.js 的 KNOWN_CONFIG 白名单`)
       }
 
-      // ── ④ R1 必须判 NO-GO + 不许把 fail-open 说成结构拦截 ──────────────
+      // ── ④ 骨架必须留下那两条口径：**装不上要出声** + **出声不是拦截** ──────────
+      // 🔴 2026-10-19：原来是"work-guidelines.md 必须写 `NO-GO`"。那个词在**整份预设里 0 处**
+      //    （10-17「静态文件只留骨架」把知识搬去共享记忆了，老板原话「别往里写了」）——
+      //    义务没有消失，它落在骨架保留的那两条上：门禁装不上**必须出声**、**但那不是拦截**。
+      //    判据因此改钉这两条（**不是放宽**：谁把告警义务删掉、或把 fail-open 写成"拦得住"，这里都红）。
+      //    来历：`cand-20261017-static-files-keep-skeleton-only-01`。
+      // 🔴 2026-10-19 第 4 关复审 R-2：`loud` 这根针是**按行匹配的正则**（`FROZEN.guardDocNeedles.loud`
+      //    是正则源串），不是字面子串 —— 理由写在 `support/env.mjs` 那段 🔴 里：
+      //    钉字面邻接会把"门禁装不上**时，注入器**必须出声"（`B-6` 那张待挂票要写的样子）判成红。
+      //    两个方向：`K14`（义务被换成"会打一条日志"）⇒ 红；`A1`（写清施动者）⇒ 绿。
       if (stagingExists('work-guidelines.md')) {
         const wg = readStagedText('work-guidelines.md')
-        rec.readings.r1_no_go_needle = wg.includes('NO-GO')
-        rec.readings.guard_scope_needle = /后台硬门|门禁|guard/.test(wg)
-        if (!wg.includes('NO-GO')) push('R1-GATE', 'work-guidelines.md 没有写"guard 没装上 ⇒ R1 判 NO-GO"（契约 GRD-03 的 R1 gate）')
+        const loudNeedle = FROZEN.guardDocNeedles.loud
+        const honestNeedle = FROZEN.guardDocNeedles.honest
+        const loudRe = new RegExp(loudNeedle)
+        const loudHit = wg.split(/\r?\n/).some((l) => loudRe.test(l))
+        rec.readings.r1_needles = {
+          loud: loudHit,
+          loud_re: loudNeedle,
+          honest: wg.includes(honestNeedle),
+          scope: /后台硬门|门禁|guard/.test(wg),
+          no_go: wg.includes('NO-GO'),
+        }
+        if (!loudHit) {
+          push('R1-GATE', `work-guidelines.md 里没有一行匹配「${loudNeedle}」—— 门禁装不上必须**出声**这条义务没写下来（装不上是静默失败，没人发现）`)
+        }
+        if (!wg.includes(honestNeedle)) {
+          push('R1-GATE', `work-guidelines.md 里没有「${honestNeedle}」—— 必须写明"那只出声、不拦人"（否则读的人会以为失败时是结构拦截，fail-open 的残余就被藏起来了）`)
+        }
         if (!/后台硬门|门禁|guard/.test(wg)) push('R1-GATE', 'work-guidelines.md 里没有一处提到后台硬门/门禁 ⇒ 范围与 fail-open 残余没写清（拍板 I7）')
         if (/所有委派路径(都)?(被)?拦/.test(wg)) push('SCOPE-HONESTY', 'work-guidelines.md 写了"所有委派路径都拦住了" —— 拍板 I7 明令禁止（workflow/ralph 的内部 worker 不在结构保证内）')
       } else {

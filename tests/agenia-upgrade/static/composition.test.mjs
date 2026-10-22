@@ -27,10 +27,15 @@ import {
   guardCoverageProblems,
   listDirs,
   listMd,
+  memberAnnotations,
+  memberPresetIdFor,
   multisetDiff,
   parseComposition,
   patchStructuralProblems,
   plain,
+  presetEntries,
+  registrationRows,
+  roleOfPresetId,
   rowGet,
 } from '../support/composition.mjs'
 import { caseFail, normalizeSha, oracleReadings, preflight, problem, runCase, sha256Equal, stagedVsLiveDrift, stagingReadings } from '../support/evidence.mjs'
@@ -171,6 +176,129 @@ describe('static · composition', () => {
         const byId = new Map(comp.rows.map((r) => [r.id, r]))
 
         // ── 四行 job 的十项（提案 §B2.2 checklist 逐项）────────────────────
+        // 🔴 **0.2.1 迁移（2026-10-19）把其中三项挪了地方** —— 义务一件没少，落点换了：
+        //    `backgroundMode` / `persona` / `toolFilter` 已**不是** `tool-subagent` 的配置键
+        //    （组合 `agent.cordis.yml:295-301` 的注释：见到 `persona`/`toolFilter` 整行报迁移错；
+        //      `backgroundMode` 一起撤了 —— 0.2.1 的委派本身就是异步的）。
+        //    ⇒ 三样现在的载体：
+        //      · **人格** ← 行上方 `# @member-persona 【组员:<role>】…`（生成器写进那份组员预设的
+        //        `persona.prefix`）· 与 REV-02（`roles.test.mjs`）同一口径；
+        //      · **否定项** ← 行上方 `# @member-deny <名字>`（生成器写注入器的 `proposalFile: false`）；
+        //      · **后台模式** ← `persona-injector.config.delegationTools`（裁定 A4 冻结表）。
+        //    ⇒ 判据跟着义务走：**新落点少了**要红（人格/否定项/模式各一条），
+        //      **旧键写回来**也要红（`JOB-LEGACY-KEY`：0.2.1 见到就报迁移错，整份预设被判 broken）。
+        //    ⚠️ 旧写法里的 `FROZEN.jobToolFilterDeny` **根本不存在**（`env.mjs` 里没有这个键）
+        //      ⇒ 那句比较是 `undefined === undefined`，永远是绿 —— 一条静默失效的判据。
+        //      本票把它换成"旧键必须不存在"，并删掉对那个不存在常量的引用。
+        const ann = memberAnnotations(compText)
+        const patchDoc = stagingExists('cordis.patch.yml') ? parseComposition(readStagedText('cordis.patch.yml'), 'staged-patch') : null
+        const patchEntries = patchDoc === null ? null : registrationRows(patchDoc.rows).map((r) => cfg(r, 'id'))
+        rec.readings.patch_preset_ids = patchEntries
+
+        // ── 🔴 `PERSONA-PREFIX`：**预设 id ↔ `persona.prefix` 的标记**（评审 `F-109` 第 4 关 `M-2`）──
+        // 【钉什么】装配时读的是**那一份预设的 `persona.prefix`**（组合 L297-299 自己这么写：
+        //   "一个岗位的人格必须是一份独立的 Agent Preset"），不是行上方那句注释。两处必须对上：
+        //     · 每份**组员**入口：`prefix` 必须以 `【组员:<由 config.id 推出来的角色>】` **开头**；
+        //     · **组长**那一份：`prefix` **不许**带任何 `【组员:`（带了组长就会被认成组员）；
+        //     · 任一份**读不到** `prefix` ⇒ 红（"读不到"不许当"没有"）。
+        // 【为什么】换锚那一批（22 条）里 12 条是人格，而断言链**止于组合里的注释**：
+        //   `JOB-PERSONA` / `CHARTER-MARKER` / `ROLE-MARK` 读的都是注释；`personaPrefix` 字段原来**零读点**
+        //   （唯一读它的是 `_probe/` 的探针 —— 探针读数不是判据）。
+        //   输入（评审给的）：把生成器的 `memberPersona()` 写成组长那份 ⇒ 注释没动、id 多重集没动、
+        //   ④ 在组长份里逐字找得到 ⇒ **全套绿**，而组员装配起来以为自己是组长。
+        // 【怎么翻面】`T10`（把 `preset-agenia-team-review` 的 `prefix` 换成 `【组员:dev】…`）⇒ 红。
+        if (patchDoc !== null) {
+          const prefixes = {}
+          for (const ent of presetEntries(patchDoc.rows)) {
+            const role = roleOfPresetId(ent.id)
+            prefixes[ent.id] = {
+              role,
+              prefix_head: typeof ent.personaPrefix === 'string' ? ent.personaPrefix.slice(0, 60) : ent.personaPrefix,
+            }
+            if (typeof ent.personaPrefix !== 'string' || ent.personaPrefix.trim() === '') {
+              push('PERSONA-PREFIX', `预设 ${ent.id} 读不到 persona.prefix（或它是空的）—— 装配时那一份没有身份标记，"读不到"不许当"没有"`)
+              continue
+            }
+            if (ent.id === FROZEN.patchPresets.leaderPresetId) {
+              if (/【组员:/.test(ent.personaPrefix)) {
+                push('PERSONA-PREFIX', `组长那一份（${ent.id}）的 persona.prefix 里带了「【组员:…】」标记 —— 那会让组长被认成组员（分流是按这枚标记走的）`)
+              }
+              continue
+            }
+            if (role === null || !FROZEN.teamRoles.includes(role)) {
+              push('PERSONA-PREFIX', `预设 ${ent.id} 的 config.id 推不出一个已知角色（推出 ${JSON.stringify(role)}）—— 这一份的身份标记没有对照物`)
+              continue
+            }
+            if (!ent.personaPrefix.startsWith(`【组员:${role}】`)) {
+              push('PERSONA-PREFIX', `预设 ${ent.id} 的 persona.prefix 必须以「【组员:${role}】」开头（角色由 config.id 推出 —— 这是装配时真正读的那一份），实得 ${JSON.stringify(ent.personaPrefix.slice(0, 80))} —— 这个岗位会以为自己是别人`)
+            }
+          }
+          rec.readings.persona_prefixes = prefixes
+
+          // ── 🔴 `PERSONA-PREFIX-SOURCE`：标记之后那一段人格**正文**也要对回源注释（评审 `F-2`）──
+          // 【钉什么】每份**组员**预设的 `persona.prefix`，去掉块标量那个尾部换行之后，必须与组合里
+          //   **那一行** `# @member-persona` 的正文**逐字相同**。源行 = 组合里 `agentPreset === 这一份的 id`
+          //   的那一行（`memberAnnotations()` 已经算好，不新造公式）。
+          // 【为什么】`PERSONA-PREFIX` 只钉开头那枚 `【组员:<角色>】`；标记之后的人格正文原来全树零断言
+          //   （`JOB-PERSONA` / `CHARTER-MARKER` / `ROLE-MARK` 读的是组合里的注释 = 源，④ 又跳过 `persona` 行）
+          //   ⇒ 生成器"标记写对、正文写错"（按换行截断 / 取错模板）时全套绿。
+          // 【怎么翻面】`T12`（某份组员预设的正文改一个字、标记不动）⇒ 红。
+          const sources = {}
+          for (const ent of presetEntries(patchDoc.rows)) {
+            if (ent.id === FROZEN.patchPresets.leaderPresetId) continue // 组长份没有 `# @member-persona` 源行
+            if (typeof ent.personaPrefix !== 'string' || ent.personaPrefix.trim() === '') continue // 上面已报 PERSONA-PREFIX
+            const srcRows = comp.rows.filter((r) => cfg(r, 'agentPreset') === ent.id)
+            if (srcRows.length !== 1) {
+              push('PERSONA-PREFIX-SOURCE', `预设 ${ent.id} 在组合里的源行不唯一：\`agentPreset: ${ent.id}\` 的行有 ${srcRows.length} 条（${srcRows.map((r) => r.id).join(', ') || '无'}）—— 人格正文没有对照物`)
+              continue
+            }
+            const src = srcRows[0]
+            const mark = ann.get(src.id)
+            const wantBody = typeof mark?.persona === 'string' ? mark.persona : null
+            if (wantBody === null) {
+              push('PERSONA-PREFIX-SOURCE', `${src.id} 行上方读不到 \`# @member-persona\` 的正文 —— 预设 ${ent.id} 的 persona.prefix 没有对照物（"读不到"不许当"没有"）`)
+              continue
+            }
+            // ⚠️ 块标量读取器（`readBlockScalar`）总给值补一个尾部换行；去掉再逐字比
+            //    （`persona.prefix` 是提示词正文，尾部换行不是"人格"的一部分）。
+            const gotBody = ent.personaPrefix.replace(/[\r\n]+$/, '')
+            sources[ent.id] = {
+              source_row: src.id,
+              equal: gotBody === wantBody,
+              prefix_body_head: gotBody.slice(0, 80),
+              source_body_head: wantBody.slice(0, 80),
+            }
+            if (gotBody !== wantBody) {
+              push('PERSONA-PREFIX-SOURCE', `预设 ${ent.id} 的 persona.prefix 正文与源注释不一致（源行 ${src.id} 上方的 \`# @member-persona\`）：`
+                + `补丁 ${JSON.stringify(gotBody.slice(0, 80))} ≠ 组合 ${JSON.stringify(wantBody.slice(0, 80))}`
+                + ' —— 标记对、正文错：装配时这个岗位的人格不是组里写的那一段')
+            }
+          }
+          rec.readings.persona_prefix_sources = sources
+        }
+        const injRowCfg = byId.get('persona-injector')?.config
+        const injConfigPlain = injRowCfg instanceof Map ? plain(injRowCfg) : null
+        const dt = injConfigPlain === null ? undefined : injConfigPlain[FROZEN.delegationToolsKey]
+        rec.readings.delegation_tools = dt ?? null
+        // 旧键**任何一条已启用的委派行上**都不许回来（0.2.1 见到 `persona`/`toolFilter` 直接报迁移错）。
+        // ⚠️ **作用域 = 已启用的行**：关着的行（`disabled: true`）不参与装配，框架不校验它的键
+        //    —— 把"关着的历史行还带 0.2.0 的键"判成红，等于给一个不存在的违规开罚单。
+        //    `team-retro` 那一行组合里自己写着 🔴「别原样打开，先按 team_* 的迁移做」⇒ 只记读数（落 `rec.readings`）；
+        //    "关掉≠删掉"由 STAT-03 的 `DISABLED-COUNT`（5 行字面 true）守：真有人原样打开，那一条先红。
+        {
+          const offenders = []
+          for (const r of enabledDelegations(comp.rows)) {
+            for (const legacy of ['backgroundMode', 'persona', 'toolFilter']) {
+              if (cfg(r, legacy) !== undefined) offenders.push(`${r.id}.${legacy}`)
+            }
+          }
+          if (offenders.length > 0) push('LEGACY-KEY-EXISTS', `已启用的委派行上还留着 0.2.1 已撤掉的键：${offenders.join(', ')}（persona / toolFilter 会让整行报迁移错、整份预设被 UI 藏掉）`)
+        }
+        rec.readings.disabled_rows_legacy_keys = comp.rows
+          .filter((r) => disabledKind(r) === 'literal-true')
+          .map((r) => ({ id: r.id, legacy_keys: ['backgroundMode', 'persona', 'toolFilter'].filter((k) => cfg(r, k) !== undefined) }))
+          .filter((x) => x.legacy_keys.length > 0)
+        rec.readings.disabled_rows_note = '关着的行不参与装配 ⇒ 上面的旧键**不判红**（判了就是给不存在的违规开罚单）。组合 L422-424 自己写着「别原样打开」；「关掉≠删掉」由 STAT-03 的 DISABLED-COUNT 守。'
         for (const job of FROZEN.jobs) {
           const row = byId.get(job.id)
           if (!row) { push('STAGED-JOB-ROW', `缺 job 行 ${job.id}`); continue }
@@ -178,16 +306,35 @@ describe('static · composition', () => {
           if (cfg(row, 'provider') !== FROZEN.jobProvider) push('JOB-PROVIDER', `${job.id}: provider 实得 ${JSON.stringify(cfg(row, 'provider'))}，冻结 ${FROZEN.jobProvider}`)
           if (cfg(row, 'toolName') !== job.toolName) push('JOB-TOOLNAME', `${job.id}: toolName 实得 ${JSON.stringify(cfg(row, 'toolName'))}，冻结 ${job.toolName}`)
           if (cfg(row, 'toolName') !== `job_${job.role.replace(/-/g, '_')}`) push('JOB-TOOLNAME', `${job.id}: toolName 必须 = job_<role 下划线形式>`)
-          if (cfg(row, 'backgroundMode') !== FROZEN.jobBackgroundMode) push('JOB-BGMODE', `${job.id}: backgroundMode 实得 ${JSON.stringify(cfg(row, 'backgroundMode'))}，冻结 ${FROZEN.jobBackgroundMode}`)
           if (cfg(row, 'maxDepth') !== FROZEN.jobMaxDepth) push('JOB-MAXDEPTH', `${job.id}: maxDepth 实得 ${JSON.stringify(cfg(row, 'maxDepth'))}，冻结 ${FROZEN.jobMaxDepth}`)
-          const persona = cfg(row, 'persona')
-          if (typeof persona !== 'string' || !persona.startsWith(`【组员:${job.role}】`)) push('JOB-PERSONA', `${job.id}: persona 必须以 【组员:${job.role}】 开头，实得 ${JSON.stringify(persona)?.slice(0, 80)}`)
-          const tf = cfg(row, 'toolFilter')
-          const deny = tf instanceof Map ? tf.get('deny') : undefined
-          if (JSON.stringify(deny) !== JSON.stringify(FROZEN.jobToolFilterDeny)) push('JOB-TOOLFILTER', `${job.id}: toolFilter.deny 必须恰为 ${JSON.stringify(FROZEN.jobToolFilterDeny)}，实得 ${JSON.stringify(deny)}`)
+          // ① 人格：**行上方的注释**是唯一来源（0.2.1）
+          const mark = ann.get(job.id) ?? { persona: undefined, deny: [] }
+          if (typeof mark.persona !== 'string' || !mark.persona.startsWith(`【组员:${job.role}】`)) {
+            push('JOB-PERSONA', `${job.id}: 行上方必须有 \`# @member-persona 【组员:${job.role}】…\`（0.2.1 的人格来源：生成器把它写进那份组员预设的 persona.prefix），实得 ${JSON.stringify(mark.persona)?.slice(0, 80)}`)
+          }
+          // ② 否定项：`# @member-deny` 的期望表（只有判决岗 deny proposal_file）
+          const wantDeny = [...(FROZEN.jobMemberDeny[job.id] ?? [])].sort()
+          const gotDeny = [...mark.deny].sort()
+          if (JSON.stringify(gotDeny) !== JSON.stringify(wantDeny)) {
+            push('JOB-MEMBER-DENY', `${job.id}: \`# @member-deny\` 期望 ${JSON.stringify(wantDeny)}，实得 ${JSON.stringify(gotDeny)}（多写 = 那个岗位的工具被拿掉；少写 = 判决岗能自己提候选）`)
+          }
+          // ③ 后台模式：`delegationTools` 里那一条（A4 冻结表）
+          if (dt === undefined || dt === null) {
+            push('JOB-MODE', 'persona-injector 的 config 缺 delegationTools —— 后台模式没有落点（裁定 A4）')
+          } else if (dt[job.toolName] !== FROZEN.delegationTools[job.toolName]) {
+            push('JOB-MODE', `${job.id}: delegationTools[${job.toolName}] 实得 ${JSON.stringify(dt[job.toolName])}，冻结 ${JSON.stringify(FROZEN.delegationTools[job.toolName])}`)
+          }
+          // ④ 旧键不许回来（0.2.1 见到 persona/toolFilter 直接报迁移错、整份预设 broken）
+          for (const legacy of ['backgroundMode', 'persona', 'toolFilter']) {
+            if (cfg(row, legacy) !== undefined) push('JOB-LEGACY-KEY', `${job.id}: 写了 0.2.1 已撤掉的键 ${legacy}（那会让整行报迁移错、整份预设被 UI 藏掉）`)
+          }
           const cfgRaw = rowGet(row, 'config')
           if (cfgRaw instanceof Map && cfgRaw.has(FROZEN.forbiddenJobConfigKey)) push('JOB-FORBIDDEN-KEY', `${job.id}: 写了 config 键 ${FROZEN.forbiddenJobConfigKey} —— 那等于把后台参数从工具里拿掉（拍板 I1）`)
           if (disabledKind(row) !== 'none') push('JOB-DISABLED', `${job.id}: job 行必须启用（实得 disabled=${disabledKind(row)}）`)
+          // ⑤ `agentPreset` 必须**真的指向补丁里存在的一份预设**（悬空引用 = 装配时那一行定不到人）
+          const preset = cfg(row, 'agentPreset')
+          if (typeof preset !== 'string' || preset.trim() === '') push('JOB-AGENTPRESET', `${job.id}: 缺 agentPreset（0.2.1 的组员必须指一份独立预设）`)
+          else if (patchEntries !== null && !patchEntries.includes(preset)) push('JOB-AGENTPRESET', `${job.id}: agentPreset=${preset} 在补丁的预设入口里不存在（实得 ${JSON.stringify(patchEntries)}）—— 悬空引用`)
         }
 
         // ── officeBound 恰为 1（只剩 review；2026-10-16 两批移出见 env.mjs 那条 🔴）──
@@ -200,19 +347,47 @@ describe('static · composition', () => {
         }
 
         // ── 五条固定 team_* 与裸 subagent 逐字不变 ────────────────────────
+        // 🔴 0.2.1：`backgroundMode` 已不是委派行的配置键 ⇒ 模式改判 `delegationTools` 那一条
+        //    （`team_*` / 裸 `subagent` 一律 `continuable`，裁定 A4）；旧键写回来另报 `TEAM-LEGACY-KEY`。
         for (let i = 0; i < FROZEN.fixedTeamRowIds.length; i += 1) {
           const row = byId.get(FROZEN.fixedTeamRowIds[i])
           const toolName = FROZEN.fixedTeamTools[i]
           if (!row) { push('STAGED-TEAM-ROW', `缺固定行 ${FROZEN.fixedTeamRowIds[i]}`); continue }
+          // ⚠️ 关着的那一条（`team-retro`）**不参加** 0.2.1 的三项：它不装配、不注册工具名、
+          //    也没有对应的组员预设（组合 L422-424 明写"别原样打开，先迁移"）。它只参加下面
+          //    `DISABLED-ROW` 那一条（关着就得一直关着）。
+          const off = disabledKind(row) === 'literal-true'
           if (cfg(row, 'toolName') !== toolName) push('TEAM-TOOLNAME', `${row.id}: toolName 实得 ${JSON.stringify(cfg(row, 'toolName'))}`)
-          if (cfg(row, 'backgroundMode') !== FROZEN.teamBackgroundMode) push('TEAM-BGMODE', `${row.id}: backgroundMode 必须 ${FROZEN.teamBackgroundMode}`)
           if (cfg(row, 'maxDepth') !== FROZEN.teamMaxDepth) push('TEAM-MAXDEPTH', `${row.id}: maxDepth 必须 ${FROZEN.teamMaxDepth}`)
+          if (off) continue
+          if (dt === undefined || dt === null) push('TEAM-MODE', 'persona-injector 的 config 缺 delegationTools —— 后台模式没有落点（裁定 A4）')
+          else if (dt[toolName] !== FROZEN.delegationTools[toolName]) push('TEAM-MODE', `${row.id}: delegationTools[${toolName}] 实得 ${JSON.stringify(dt[toolName])}，冻结 ${JSON.stringify(FROZEN.delegationTools[toolName])}`)
+          if (cfg(row, 'backgroundMode') !== undefined) push('TEAM-LEGACY-KEY', `${row.id}: 写了 0.2.1 已撤掉的 backgroundMode`)
+          // 固定岗位的组员预设：**等于公式**（评审 `M-4`），不只是"定得到人"。
+          // 🔴 上一版只断言"`agentPreset` 在补丁的入口里存在"，于是**把 `team-design` 与 `team-dev`
+          //    两行的 `agentPreset` 对调**（份数不变 · 每份行数不变 · 两份都存在）⇒ 全绿，
+          //    而装配时 `team_design` 拿到 dev 的人格、`team_dev` 拿到 design 的。
+          //    公式只有一份实现（`support/composition.mjs::memberPresetIdFor`，与 `roles.test.mjs` 共用）。
+          const preset = cfg(row, 'agentPreset')
+          const wantPreset = memberPresetIdFor(toolName)
+          if (typeof preset !== 'string' || preset.trim() === '') push('TEAM-AGENTPRESET', `${row.id}: 缺 agentPreset（0.2.1 的组员必须指一份独立预设）`)
+          else if (preset !== wantPreset) push('TEAM-AGENTPRESET', `${row.id}: agentPreset=${preset}，按公式（agenia-<toolName 下划线换横线>）应等于 ${wantPreset} —— 指错一份 = 装配时这个岗位拿到别人的人格`)
+          else if (patchEntries !== null && !patchEntries.includes(preset)) push('TEAM-AGENTPRESET', `${row.id}: agentPreset=${preset} 在补丁的预设入口里不存在 —— 悬空引用`)
         }
         const bare = byId.get('tool-subagent')
         if (!bare) push('STAGED-ROW', '缺裸 subagent 行')
         else {
-          if (cfg(bare, 'backgroundMode') !== FROZEN.bareSubagent.backgroundMode) push('SUBAGENT-BGMODE', `裸 subagent 必须 ${FROZEN.bareSubagent.backgroundMode}`)
+          if (dt === undefined || dt === null) push('SUBAGENT-MODE', 'persona-injector 的 config 缺 delegationTools —— 后台模式没有落点（裁定 A4）')
+          else if (dt[FROZEN.bareSubagent.toolName] !== FROZEN.delegationTools[FROZEN.bareSubagent.toolName]) push('SUBAGENT-MODE', `裸 subagent 的 delegationTools 实得 ${JSON.stringify(dt[FROZEN.bareSubagent.toolName])}，冻结 ${JSON.stringify(FROZEN.delegationTools[FROZEN.bareSubagent.toolName])}`)
           if (cfg(bare, 'maxDepth') !== FROZEN.bareSubagent.maxDepth) push('SUBAGENT-MAXDEPTH', `裸 subagent 的 maxDepth 必须 ${FROZEN.bareSubagent.maxDepth}`)
+          if (cfg(bare, 'backgroundMode') !== undefined) push('SUBAGENT-LEGACY-KEY', '裸 subagent 行写了 0.2.1 已撤掉的 backgroundMode')
+          const preset = cfg(bare, 'agentPreset')
+          // 公式同上（`M-4`）。⚠️ 外聘那一份的 id 不是 `agenia-subagent` —— 裸 `subagent` 没有自己的
+          // 岗位行，它的名字是 `hire`（组合 L302 那句 `# @member-persona 【组员:hire】` 就在这一行上方）。
+          const wantPreset = memberPresetIdFor(FROZEN.bareSubagent.toolName)
+          if (typeof preset !== 'string' || preset.trim() === '') push('SUBAGENT-AGENTPRESET', '裸 subagent 缺 agentPreset（外聘那一份预设）')
+          else if (preset !== wantPreset) push('SUBAGENT-AGENTPRESET', `裸 subagent 的 agentPreset=${preset}，外聘那一份必须叫 ${wantPreset}（公式：agenia-<名字>；裸 subagent 的岗位名是 hire）`)
+          else if (patchEntries !== null && !patchEntries.includes(preset)) push('SUBAGENT-AGENTPRESET', `裸 subagent 的 agentPreset=${preset} 在补丁的预设入口里不存在 —— 悬空引用`)
         }
         // ── 🔴 `bareSubagentRows` **接活**（票 `T-TEST-06` ③）：它原来是**死常量**（`tests/**` 里零读点）──
         // 【钉什么】**已启用的行里，`toolName === 'subagent'` 的那一行恰好 1 行**。
@@ -291,16 +466,20 @@ describe('static · composition', () => {
               }
             }
           }
-          // ② 「认岗位」的标记（AGENTS.md 3e ②：组员行的 `persona` 以 `【组员:<role>】` 开头，装配时靠它认人）
+          // ② 「认岗位」的标记（AGENTS.md 3e ②：装配时靠 `【组员:<role>】` 认人）
+          // 🔴 0.2.1：这个标记**不在委派行的 config 里了**（`persona` 已不是 `tool-subagent` 的配置键）
+          //    ⇒ 现在的载体是**行上方那句注释** `# @member-persona 【组员:<role>】…`，
+          //      生成器把它写成那份组员预设的 `persona.prefix` —— 装配时读的是那一份。
+          //    判据钉的仍是同一件义务（"这个岗位的组员拿得到它自己的人格标记"），只是**换了落点**；
+          //    与 REV-02（`roles.test.mjs:137-175`）同一口径（同一份 `memberAnnotations()`）。
           const marker = (role) => `【组员:${role}】`
           // 角色 → 它那一行：固定岗位是 `team-<role>`；作业角色是 `tool-job-<role>`；
-          // **`hire` 没有自己的行** —— 它是**裸 `subagent` 那一行**上多出来的那个 `persona` 键（AGENTS.md 3b）。
+          // **`hire` 没有自己的行** —— 它是**裸 `subagent` 那一行**（AGENTS.md 3b）。
           const rowFor = (role) => byId.get(`team-${role}`) ?? byId.get(`tool-job-${role}`) ?? (role === 'hire' ? byId.get('tool-subagent') : undefined)
           const markerRows = {}
           for (const role of FROZEN.teamRoles) {
             const row = rowFor(role)
-            // ⚠️ `persona` 住在**行下面的 `config:`** 里（不是行自身的键）⇒ 用 `cfg()`，不是 `rowGet()`。
-            const persona = row ? String(cfg(row, 'persona') ?? '') : ''
+            const persona = row ? String((ann.get(row.id) ?? {}).persona ?? '') : ''
             const teamText = teamFiles?.includes(`${role}.md`) ? readFileSync(path.join(teamDir, `${role}.md`), 'utf8') : null
             const briefText = briefFiles?.includes(`${role}.md`) ? readFileSync(path.join(briefsDir, `${role}.md`), 'utf8') : null
             markerRows[role] = {
@@ -311,7 +490,7 @@ describe('static · composition', () => {
             }
             if (row === undefined) push('CHARTER-MARKER', `${role} 找不到它那一行（team-${role} / tool-job-${role}${role === 'hire' ? ' / tool-subagent' : ''}）—— 认岗位的标记没有落点`)
             else if (!markerRows[role].in_persona) {
-              push('CHARTER-MARKER', `${role} 的组员行 persona 里没有「${marker(role)}」—— 装配时认不出这个岗位（AGENTS.md 3e ② / §B1.5 deployment:persona-prefix）`)
+              push('CHARTER-MARKER', `${role} 那一行上方的 \`# @member-persona\` 里没有「${marker(role)}」—— 装配时认不出这个岗位（AGENTS.md 3e ② / §B1.5 deployment:persona-prefix；0.2.1 的人格载体是那句注释 → 组员预设的 persona.prefix）`)
             }
             if (markerRows[role].team_md_has_any_marker && !markerRows[role].in_team_md) {
               push('CHARTER-MARKER', `team/${role}.md 里带了**别人**的「【组员:…】」标记 —— 那会把岗位认错`)
@@ -322,7 +501,7 @@ describe('static · composition', () => {
           }
           rec.readings.role_markers = markerRows
           rec.readings.marker_note = {
-            note: 'v1.7/B5 说"`team/<role>.md` 必须带 `【组员:<role>】`"；实测**只有 4 条作业角色的 .md 带**（conversation-review / memory-judge / memory-review / technical-review），5 条固定岗位 + hire 的 .md 不带 —— 它们的标记按 AGENTS.md 3e ② 住在**组员行的 `persona`** 里（本用例对**全部 10 个角色**都断言了这一条）。所以这里断言的是**角色级**不变量（每个角色都要有落点 + 不许串岗 + 作业书不许带），而**不是**"每个 team/*.md 都必须带" —— 后者会误伤 6 份冻结正确的说明书。要不要把 .md 那份也变成强制，请组长拍。',
+            note: 'v1.7/B5 说"`team/<role>.md` 必须带 `【组员:<role>】`"；实测**只有 4 条作业角色的 .md 带**（conversation-review / memory-judge / memory-review / technical-review），5 条固定岗位 + hire 的 .md 不带 —— 它们的标记按 AGENTS.md 3e ② 住在**组员行上方那句 `# @member-persona` 注释**里（0.2.1 起的人格载体；本用例对**全部 9 个角色**都断言了这一条）。所以这里断言的是**角色级**不变量（每个角色都要有落点 + 不许串岗 + 作业书不许带），而**不是**"每个 team/*.md 都必须带" —— 后者会误伤 5 份冻结正确的说明书。要不要把 .md 那份也变成强制，请组长拍。',
           }
         }
         const teamSubdirs = listDirs(teamDir) ?? []
@@ -376,11 +555,12 @@ describe('static · composition', () => {
         // ── 🔴 注入的 `.md` 文件：**名单 + 份数**（票 `T-TEST-06` ③ · 两个死常量接活之一）──────
         // 【口径】数「**配置里声明了哪几份**」（确定性 · 与盘上文件在不在无关）；
         //   不数「本回合实际注入了哪几份」（环境相关 ⇒ 归探针，票 `T-TEST-07`）。
-        //   `charter` 一个 key 撑 9 个文件 · `roster`/`board`/`memory` 是**算出来的** ⇒ 0 份。
+        //   `charter` 一个 key 撑 9 个文件 · `roster`/`board`/`memory` 是**算出来的** ⇒ 0 份
+        //   （那张表是 `FROZEN.staged.computedOrderKeys`，与 `docs-surface.mjs` 同源 —— 别在这儿再抄一份）。
         // 【两条一起钉才**能翻面**】加一个**算出来的**项 ⇒ 名单与份数**都不动**（绿）；
         //   加一个**真文件** ⇒ **两样都红**。只钉个数会被"一进一出"骗过去。
         {
-          const NON_FILE = ['roster', 'board', 'memory']
+          const NON_FILE = FROZEN.staged.computedOrderKeys
           const files = new Set()
           for (const key of ['leaderOrder', 'memberOrder']) {
             const list = injRow ? cfg(injRow, key) : null
@@ -477,7 +657,19 @@ describe('static · composition', () => {
       for (const [needle, why] of mustBeGone) if (checkNotes.includes(needle)) push('CHECKNOTES-STALE', `check-notes.mjs 里还留着旧口径：${why}`)
 
       const probe = readFileSync(PATHS.injectProbe, 'utf8')
-      for (const marker of ['subagentBackgroundVerdict', '必须后台运行', 'subagent 后台硬门未生效']) {
+      // 🔴 2026-10-20（`F-112`）：第三个标记原来是 `subagent 后台硬门未生效` —— 那句话在 0.2.1 的注入器里
+      //    **已经不存在**（现在的告警是「没有 tools.guard …… 没有生效 / 没挂上」）⇒ 拿死话当"探针里有没有
+      //    这一族"的标记，只会把判据变成常驻红。
+      // 🔴 2026-10-20（第 4 关 `N-2`）：也不能只钉 `没有 tools.guard` —— 这串字在探针里同时出现在
+      //    `§硬门` 口径原文、GD10 的注释里 ⇒ 把断言整段删掉它照样绿（`mig-rules-13`：静态判据连注释一起抠）。
+      //    第三个标记钉的是**断言那一行本身**（`silence.includes('没有 tools.guard')`，只在 GD10 的条件里出现），
+      //    删断言 ⇒ 红；只留口径/注释 ⇒ 也红。
+      const markers = [
+        'subagentBackgroundVerdict',
+        '必须后台运行',
+        "silence.includes('没有 tools.guard')",
+      ]
+      for (const marker of markers) {
         if (!probe.includes(marker)) push('PROBE-GUARD', `inject-probe.mjs 里没有 ${marker} —— 新的 guard 断言族（G*）还没加`)
       }
 
@@ -531,12 +723,19 @@ describe('static · composition', () => {
           if (JSON.stringify(keys) !== JSON.stringify(expected)) {
             push('DELEGATION-TOOLS-KEYS', `${FROZEN.delegationToolsKey} 的键集合实得 ${JSON.stringify(keys)}，必须**严格等于**组合里已启用的 ${FROZEN.staged.enabledNamedDelegations} 个具名实例 ${JSON.stringify(expected)}（裁定 A4 第 4 条：多一个/少一个都红）`)
           }
-          // 值必须与组合里那一行的 backgroundMode 一致（否则 guard 会按错的模式放行/拒绝）
+          // 值必须与**这一行是什么**一致（否则 guard 会按错的模式放行/拒绝）。
+          // 🔴 0.2.1：`backgroundMode` 这个配置键已经不存在了 ⇒ 原来那句"与 yml 的 backgroundMode 比"
+          //    没有第二个来源可对（两边都是它自己 ⇒ 同义反复）。换成的口径是**从行身份推**：
+          //    `job_*` 是一次性后台作业 ⇒ `one-shot`；`team_*` / 裸 `subagent` 是常驻/可续 ⇒ `continuable`。
+          //    这条能翻面：把 `job_memory_judge` 写成 `continuable`（或把一行 team 写成 one-shot）⇒ 红。
+          //    ⚠️ **代价认下来**：0.2.1 起模式没有"第二个来源"可交叉核对了；A4 冻结表 + 行身份
+          //    这两条已经是能拿到的最强一对（这一点已写进交接页，请组长决定要不要再加一处落点）。
           const modeMismatch = []
           for (const row of enabledDelegations(compRows)) {
             const name = cfg(row, 'toolName') ?? row.id
-            const want = cfg(row, 'backgroundMode')
-            if (dt[name] !== want) modeMismatch.push(`${name}: delegationTools=${JSON.stringify(dt[name])} vs yml backgroundMode=${JSON.stringify(want)}`)
+            const want = /^job_/.test(String(name)) ? 'one-shot' : 'continuable'
+            if (dt[name] !== want) modeMismatch.push(`${name}: delegationTools=${JSON.stringify(dt[name])} vs 由行身份推出的 ${JSON.stringify(want)}（job_* = one-shot；team_*/subagent = continuable）`)
+            if (cfg(row, 'backgroundMode') !== undefined) modeMismatch.push(`${name}: 行上又写了 0.2.1 已撤掉的 backgroundMode —— 模式只许在 ${FROZEN.delegationToolsKey} 一处`)
           }
           rec.readings.delegation_mode_mismatch = modeMismatch
           if (modeMismatch.length > 0) push('DELEGATION-TOOLS-MODE', `delegationTools 的值与组合里那一行的 backgroundMode 不符：${modeMismatch.join('；')}`)

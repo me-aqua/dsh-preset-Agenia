@@ -74,14 +74,31 @@ def main():
     ap.add_argument("--day", required=True)
     ap.add_argument("--workspace", required=True,
                     help="工作区根（必填·不许猜：写死会让别的会话把卡落进你的抽屉）")
+    ap.add_argument("--data-root", default=None,
+                    help="数据根（预设级·所有工作区共用）。不给就按 --workspace 推；推出来的不存在会当场停")
     a = ap.parse_args(); day = a.day
     WS = os.path.abspath(a.workspace)
-    DR = os.path.join(WS, "presets", "agenia", ".runtime")
+    # 🔴 2026-10-20（`F-111` ⑤）：`DR` 原来**只按 WS 推**，新工作区里那个路径根本不存在
+    #    而 `jload` 读不到就返回 `{}` ⇒ 一路空到底 ⇒ **出一张零值卡，还 exit 0**。
+    #    零值卡比"没卡"更坏：它看起来成功了。⇒ 数据根不存在就当场停，别往下算。
+    #    数据根是**预设级**的（所有工作区共用一个），所以允许显式给 `--data-root`。
+    if a.data_root:
+        DR = os.path.abspath(a.data_root)
+    else:
+        DR = os.path.join(WS, "presets", "agenia", ".runtime")
     out_dir = os.path.join(WS, ".team", "leader", day)
     print("workspace:", WS)
+    print("data-root:", DR)
     print("cards  -> ", out_dir)
     if not os.path.isdir(os.path.join(WS, ".team")):
         sys.exit("E_NO_TEAM: %s 下没有 .team/ —— 工作区给错了？" % WS)
+    if not os.path.isdir(DR):
+        sys.exit(
+            "E_DATA_ROOT_MISSING: 数据根不存在：%s\n"
+            "  · 数据根是**预设级**的，不在工作区里 —— 用 --data-root 指过去"
+            "（本机是 E:\\Harness\\presets\\agenia\\.runtime）\n"
+            "  · 不指的话这里会读出一张**零值卡**，那比没卡更坏（看起来成功了）" % DR
+        )
     os.makedirs(out_dir, exist_ok=True)
 
     # ── 读数据 ────────────────────────────────────────────────────────

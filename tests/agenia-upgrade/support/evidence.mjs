@@ -15,6 +15,7 @@ import { canonical, guardVerdict, assertRunGuard, RootGuardError } from './root-
 import { ENV, FROZEN, PATHS, optionalEnv } from './env.mjs'
 import { calibrate } from './composition.mjs'
 import { CASES_BY_ID, TOTAL, countByStatus, REGISTRY, registryProblems, DISCOVERY } from './registry.mjs'
+import { platformReading, platformLine } from './platform.mjs'
 
 export const EVIDENCE_PARENT = 'E:\\Harness\\.team\\test'
 
@@ -429,6 +430,13 @@ export function preflight({ calibrateLive = false } = {}) {
   const st = stagingReadings()
   out.staged_tree_sha256 = st.tree_sha256
   out.staged_tree_files = st.tree_files
+  // 🔴 **`R-5`**：`_preflight` 也记**测试树**（尺子本身）在**开跑那一刻**的指纹 ——
+  //    收口那份 `sources` 是"跑完之后"量的，冒充不了"这一跑加载的是哪一版"。
+  //    与 `settled` 侧 `test_tree` 比一次，`same` 才是"跑的是交付那版"的落点。
+  const tt = testTreeDigest()
+  out.test_tree_sha256 = tt.sha256
+  out.test_tree_files = tt.files
+  out.test_tree = { at: tt.at, manifest: tt.manifest }
   // **T-R1-04**：`_preflight` 也记"staged vs 活体"的两棵树读数（**只记不判** —— 判在 STAT-01 那条用例上）。
   // 记在这儿的好处：每一跑（含定向跑）的 `_preflight` 里都留下"那一刻两棵树是什么"，可复现。
   out.staged_vs_live = (() => {
@@ -485,6 +493,77 @@ export function sourceInventory() {
   }
   walk(root)
   return out
+}
+
+/**
+ * 🔴 **`R-5`（2026-10-20 第 4 关）：这一跑执行的是**哪一版尺子**。
+ *
+ * 病根：预检只哈希 **preset 树**（`staged_tree_sha256`），而"测试代码本身"只有**收口那一刻**的
+ * `sources`（`sourceInventory()` 在 `settle()` 里现算）—— 那是跑完之后量到的树，
+ * 冒充不了"开跑那一刻 `node --test` 加载的是哪一版"。
+ * 评审就是靠这一点说明"`RED 0` 那一跑覆盖不了一次 5 分钟之后的改动"。
+ *
+ * 所以：**预检也算一次**（落进 `_preflight/preflight.<pid>.json`），收口再算一次、
+ * 与**最早那份预检**比，得出 `test_tree.same`：
+ *   · `true`  ⇒ 这一跑里测试树没动过 ⇒ "跑的是交付那版"这一格**有落点**；
+ *   · `false` ⇒ 中途被改过（或两棵树不是同一棵）⇒ 收口那份 `sources` **不能**代表"跑的那版"，
+ *                `differ` 点名是哪几个文件；
+ *   · `null`  ⇒ 判不了（盘上没有带测试树指纹的预检 —— 老 run-root）。
+ *
+ * 指纹 = 逐文件 `rel:sha256` 按路径排序拼起来再 sha256 一次（只吃内容，不吃 mtime/字节数）。
+ */
+export function testTreeDigest() {
+  const files = sourceInventory()
+  const lines = files.map((f) => `${f.rel}:${f.sha256}`).join('\n')
+  return {
+    at: new Date().toISOString(),
+    files: files.length,
+    sha256: sha256Text(lines),
+    manifest: files.map((f) => ({ rel: f.rel, sha256: f.sha256 })),
+  }
+}
+
+/** 盘上最早那份**带测试树指纹**的预检（多个测试文件各写一份，取 `at` 最小的）。 */
+function earliestTestTreePreflight() {
+  const dir = path.join(evidenceRoot(), '_preflight')
+  if (!existsSync(dir)) return null
+  let first = null
+  for (const name of readdirSync(dir)) {
+    if (!/^preflight\..*\.json$/.test(name)) continue
+    try {
+      const p = JSON.parse(readFileSync(path.join(dir, name), 'utf8'))
+      if (typeof p.test_tree_sha256 !== 'string') continue
+      if (first === null || String(p.at) < String(first.at)) first = p
+    } catch {
+      // 坏掉的一份不该让收口崩：跳过它，别的预检还在
+    }
+  }
+  return first
+}
+
+/** 收口侧：把"现在这棵树"与"开跑那一刻那棵树"比一次。 */
+export function testTreeComparison() {
+  const now = testTreeDigest()
+  const first = earliestTestTreePreflight()
+  const prev = new Map((first?.test_tree?.manifest ?? []).map((f) => [f.rel, f.sha256]))
+  const cur = new Map(now.manifest.map((f) => [f.rel, f.sha256]))
+  const differ = []
+  // 没有预检 ⇒ **没比过**，`differ` 留空（别把"盘上每一份"都列成差异，那会被读成"全变了"）。
+  if (first !== null) {
+    for (const [rel, sha] of cur) if (prev.get(rel) !== sha) differ.push(rel)
+    for (const [rel] of prev) if (!cur.has(rel)) differ.push(rel)
+    differ.sort()
+  }
+  return {
+    settle_sha256: now.sha256,
+    settle_files: now.files,
+    preflight_at: first?.at ?? null,
+    preflight_sha256: first?.test_tree_sha256 ?? null,
+    preflight_files: first?.test_tree_files ?? null,
+    /** `null` = 判不了；`true` = 这一跑里尺子没动过。 */
+    same: first === null ? null : first.test_tree_sha256 === now.sha256,
+    differ,
+  }
 }
 
 function readPhase(phase) {
@@ -570,6 +649,12 @@ export function settle() {
     .filter((c) => c.settled && c.problems.some((p) => scaffoldingCodes.includes(p.code)))
     .map((c) => ({ id: c.id, codes: [...new Set(c.problems.filter((p) => scaffoldingCodes.includes(p.code)).map((p) => p.code))] }))
   const diff = before && after ? realRootsDiff(before, after) : null
+  /**
+   * 🔴 **`F-106`**：这一跑的平台版本 —— **读数**，不是判据（不进 `reporter_check_ok`、不改退出码）。
+   * 它只回答"上面那些 `sources` / `test_tree` / `staged_tree_sha256` 是**对着哪一版平台**量的"。
+   * ⚠️ 判不了时这里照样有一节（`ok:false` + `problems`）——"没有这一节"和"读不出来"是两件事。
+   */
+  const platform = platformReading()
   return {
     run_id: runId(),
     evidence_root: root,
@@ -617,6 +702,16 @@ export function settle() {
     staged_tree_sha256: stagingReadings().tree_sha256,
     staged_tree_files: stagingReadings().tree_files,
     sources: sourceInventory(),
+    /** 🔴 **`R-5`**：这一跑**执行的是哪一版尺子** —— "开跑那一刻的测试树" vs "收口这一刻的测试树"。
+     *    `same:true` 才让上面那份 `sources` 有资格代表"跑的那版"；`false` / `null` 都别拿它当基线。 */
+    test_tree: testTreeComparison(),
+    /** 🔴 **`F-106`**：这一跑**跑在哪个平台版本**上（读数，不进判词；判不了也有这一节）。
+     *  `hardcoded_fallback:true` ⇒ 那两行是**本机兜底（硬编码路径）**读出来的，别当"换机器也可信"。 */
+    platform: {
+      ok: platform.ok, line: platformLine(platform), asar: platform.asar, source: platform.source,
+      level: platform.level, hardcoded_fallback: platform.hardcoded_fallback,
+      app: platform.app, dsh: platform.dsh, problems: platform.problems, tried: platform.tried,
+    },
     by_group: groupSummary(cases),
     cases,
   }
@@ -641,6 +736,7 @@ export function settleMarkdown(s) {
   lines.push(`# 红基线结算 · RUN_ID \`${s.run_id}\``)
   lines.push('')
   lines.push(`- 生成时间：${s.generated_at}`)
+  lines.push(`- **平台版本（F-106）**：${s.platform?.ok ? '' : '🔴 **判不了** —— '}${s.platform?.line ?? '（这一节不在：这份 settlement 是老的）'}`)
   lines.push(`- 注册表分母：**${s.registry.total}**（已写 **${s.registry.written}** · pending-write **${s.registry.pendingWrite}**）`)
   // 分母是从哪来的（F-57）：盘上发现的条数 + 登记↔盘上的差异数（差异不为 0 时逐条点名）。
   const discoveryDiffs = s.discovery?.problems ?? []

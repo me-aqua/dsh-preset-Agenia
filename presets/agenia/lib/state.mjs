@@ -141,6 +141,9 @@ export const noticesDir = (root) => path.join(root, 'notices')
 export const proposalsDir = (root) => path.join(root, 'proposals')
 export const poolPath = (root) => path.join(root, 'proposals', 'pool.jsonl')
 export const poolLockPath = (root) => path.join(root, 'proposals', '.pool.lock')
+/** 清池归档：判过的那些池子行的**原样副本**（`pool-judged-*.jsonl`）。
+ *  ⚠️ 文件名里的日期是**清池日**、不是发号日 ⇒ 要"今天发过哪些号"只能读里面的内容。 */
+export const proposalsArchiveDir = (root) => path.join(root, 'proposals', 'archive')
 /** 「已判」索引（T-MEM-07）：**与池子同目录**、同样 append-only。一行 = 一次判决结果。 */
 export const judgedPath = (root) => path.join(root, 'proposals', 'judged.jsonl')
 /** 索引自己的锁（与池子的 `.pool.lock` 同一套形状，互不阻塞：两个文件各自读-改-写）。 */

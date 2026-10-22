@@ -15,6 +15,7 @@ import path from 'node:path'
 import { FROZEN } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, stagingReadings } from '../support/evidence.mjs'
 import { loadStagedModule, runLocal, stagingExists, stagingPath } from '../support/sut.mjs'
+import { q10Digest } from '../support/verify-recompute.mjs'
 
 before(() => {
   preflight()
@@ -42,7 +43,18 @@ function stagedTextSources() {
 }
 
 const REPORT_SHA = 'a'.repeat(64)
-const SET_SHA = 'b'.repeat(64)
+/**
+ * `findingsFile()` 里那两条 finding 的**真值**（`F-121`：Q10 复算）。
+ *
+ * Q10（`CONTRACT.md §6.2` / `lib/receipt.mjs` 文件头）= `sha256(JSON.stringify(findings, 键按 UTF-8 字节序升序, 无空白))`。
+ * 这里写**常量**、不在测试里现算：这是"作业产物该声明的那个值"，与校验方的复算必须是**两份来源**
+ * （`cand-20261016-selfsourced-order-01`：期望与实现读同一份来源，它就不是判据）。
+ * 常量与内容的对账在 RCP-01 ① 的 `FIXTURE-SET-SHA` —— 内容一改那里先红，不会静默腐烂。
+ * 独立复算记录（两门语言各算一遍）：`.team/test/2026-10-22/_evidence/q10-recompute.out.txt`。
+ */
+const SET_SHA = 'aeaf9b2e39eac06b2648c761b13106c82d44b64634e875a6d4729e2494c920f3'
+/** 零发现（`findings: []`）那格的真值 = `digest([])`。声明成别的值就是"自报值与内容不符"。 */
+const ZERO_SET_SHA = '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945'
 const TICKET_ID = 'ticket-20261014-01'
 
 /** 合成夹具（形状照提案 §B3.1/§B3.2/§B3.3 与 example JSON；**不含真实私有数据**）。 */
@@ -54,7 +66,12 @@ const finding = (id, over = {}) => ({
   summary: `（夹具）${id} 的一句话摘要`,
   ...over,
 })
-const findingsFile = (ids = ['F1', 'F2']) => ({
+/**
+ * findings 产物夹具。
+ * `setSha` 默认是那两条 finding 的 Q10 真值；**零发现那两格必须显式传 `ZERO_SET_SHA`**
+ * （`[]` 的复算值与两条 finding 的不一样，默认值顶上去就变成"自报值与内容不符"）。
+ */
+const findingsFile = (ids = ['F1', 'F2'], setSha = SET_SHA) => ({
   schema: 1,
   day: '2026-10-14',
   report_path: 'retro/2026-10-14/技术评审.md',
@@ -62,7 +79,7 @@ const findingsFile = (ids = ['F1', 'F2']) => ({
   generated_at: '2026-10-14T11:00:00+08:00',
   code_fingerprint: { before_sha256: 'c'.repeat(64), after_sha256: 'c'.repeat(64), equal: true },
   findings: ids.map((id) => finding(id)),
-  findings_set_sha256: SET_SHA,
+  findings_set_sha256: setSha,
 })
 const receipt = (over = {}) => ({
   schema: 1,
@@ -137,6 +154,22 @@ describe('unit · receipts (RCP)', () => {
       const findings = findingsFile()
       const tickets = [ticket()]
 
+      // ⓪ 夹具自证（防漂移）：两个常量必须真是它们各自内容的 Q10 复算值。
+      //    用**测试侧独立实现**（`support/verify-recompute.mjs::q10Digest`，不 import 被测模块）算 ——
+      //    这一格红了是"夹具内容或常量改错了"，不是 SUT 坏了。
+      const setShaGuards = [
+        ['两条 finding（F1+F2）', SET_SHA, q10Digest(findingsFile().findings)],
+        ['零发现（[]）', ZERO_SET_SHA, q10Digest([])],
+      ]
+      rec.readings.fixture_set_sha = setShaGuards.map(([label, declared, computed]) => ({
+        label, declared, computed, equal: declared === computed,
+      }))
+      for (const [label, declared, computed] of setShaGuards) {
+        if (declared !== computed) {
+          push('FIXTURE-SET-SHA', `夹具的 findings_set_sha256 常量与那份内容的 Q10 复算值不符（${label}：常量 ${declared.slice(0, 12)}… vs 复算 ${computed.slice(0, 12)}…）—— 先改夹具，别去动被测模块`)
+        }
+      }
+
       // ① parseFindings 正例 + findings_set_sha256 锚点
       const parsed = parseFindings(findings)
       rec.readings.parsed = { ok: parsed?.ok ?? null, count: parsed?.count ?? null, code: parsed?.code ?? null }
@@ -190,10 +223,14 @@ describe('unit · receipts (RCP)', () => {
       if (badSet.ok !== false) push('RECEIPT-HASH', `发现集哈希不符也必须被拒，实得 ok=${badSet.ok} code=${badSet.code}`)
 
       // ⑤ 零发现：findings [] + receipt findings [] ⇒ 通过（**不许**读成"缺回执"）
-      const zero = coverageOf(validateReceiptCoverage, [receipt({ findings: [] }), findingsFile([]), [], { report_sha256: REPORT_SHA, findings_set_sha256: SET_SHA }])
+      //    零发现也是一份**真内容**（`[]`），所以声明值、锚点、回执三处都必须是 `digest([])` 的真值
+      //    （ZERO_SET_SHA）；拿两条 finding 的 SET_SHA 顶上，就是 `F-121` 要拒的"自报值与内容不符"。
+      const zeroReceipt = (over = {}) => receipt({ findings: [], findings_set_sha256: ZERO_SET_SHA, ...over })
+      const zeroAnchors = { report_sha256: REPORT_SHA, findings_set_sha256: ZERO_SET_SHA }
+      const zero = coverageOf(validateReceiptCoverage, [zeroReceipt(), findingsFile([], ZERO_SET_SHA), [], zeroAnchors])
       rec.readings.zero_findings = zero
       if (zero.ok !== true) push('ZERO-FINDINGS', `零发现（两边都显式空清单）必须通过，实得 ok=${zero.ok} code=${zero.code}`)
-      const zeroMissing = coverageOf(validateReceiptCoverage, [receipt({ findings: undefined }), findingsFile([]), [], { report_sha256: REPORT_SHA, findings_set_sha256: SET_SHA }])
+      const zeroMissing = coverageOf(validateReceiptCoverage, [zeroReceipt({ findings: undefined }), findingsFile([], ZERO_SET_SHA), [], zeroAnchors])
       if (zeroMissing.ok !== false) push('ZERO-FINDINGS', `零发现但回执里连空清单都没有 ⇒ 必须红（不许把"缺字段"当成"零发现"），实得 ok=${zeroMissing.ok}`)
 
       // ⑥ 回执文件面（CLI）：receipt-check 读锚点

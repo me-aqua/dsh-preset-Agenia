@@ -6,18 +6,35 @@
  * 旧跑法里 `node --test` 的退出码与 `settle` 的"分母 55"是**两条互不知情的读数**，
  * 中间没有任何东西要求它们说同一件事。
  *
- * 一次做六件事：
+ * 一次做七件事：
  *   ⓪ **自检**（`support/self-check.mjs` 的冻结表：判据被改回去 ⇒ 拒跑 exit 3）
  *   ① 建运行根（三层 marker，与冻结跑法一致）→ ② 真实根 before 哈希 → ③ `node --test <glob>`
- *   → ④ 真实根 after 哈希 → ⑤ `--settle` → ⑥ **打一行**，并用**一个**退出码收口。
+ *   → ④ 真实根 after 哈希 → ⑤ `--settle` → ⑥ **打一行**，并用**一个**退出码收口
+ *   → ⓻ **靶子对数**（`support/target.mjs`：这一跑打的 staged 树与现役 `presets/agenia` 的差
+ *      必须被声明过；差的字节数 / 缺的功能名都打在 `F57-TARGET` 那一行上）。
+ *
+ * 🔴 ⓻ 与其余六件**同时成立**才算数：靶子过期而未声明 ⇒ 这一跑记 `exit 1`（红因在 `F57-FAIL` 里），
+ *    **`F57-OK` 一个都不许出**。为什么把这条放在入口而不是新加一个用例 ID：加 ID 会动分母，
+ *    还会让测试岗自己的阳性对照（`_ref/`）从 10 绿掉成 9 绿（`support/self-check.mjs` 文件头那段 🔴）。
  *
  * 用法（cwd 随便；`--glob` 相对 `--repo`）：
  *   node tests/agenia-upgrade/run-all.mjs --run-root=<绝对路径>\...\_runs\<RUN_ID>
  *   node tests/agenia-upgrade/run-all.mjs --run-root=… --glob="tests/agenia-upgrade/static/read-obligations.test.mjs"
  *   （不给 `--run-root` ⇒ 拒跑 exit 3 —— 证据落点不靠默认值猜）
  *
- * 那一行的形状（**唯一**允许写分母的地方）：
+ * 控制台先出这两行（顺序钉死），再出那一条携带分母的行：
+ *   [平台] 0.2.1-rc.2（@deepseek-ai/dsh-desktop + @deepseek-ai/dsh 同版）· asar 取自 环境变量 VIPSHOME
+ *   F57-TARGET 靶子=现役 · inject.js 逐字节相同（129771 B · sha256 eb524ab7…）
  *   F57-SETTLE 分母 66 · 盘上发现 66 · 跑到 20 文件/66 条 · RED 0 / GREEN 64 / HOLD 2 · 登记=盘上 ✓ · node --test exit 0（tests 66 · fail 0） · settle exit 0
+ *
+ * 🔴 头两行回答的是**两件不同的事**，别混着读：
+ *   · `[平台]` = 这一跑跑在**哪个平台版本**上（`resources/app.asar` 里的版本号，`F-106`）——
+ *     **读数**：不参与判词、不改退出码；判不了会印 `[平台] 🔴 判不了`（不是"不印"）。
+ *   · `F57-TARGET` = 这一跑打的是**哪棵树**（被测的 preset 树 vs 现役）。
+ *   （"跑的是哪版**测试代码**"是第三件，由 `[尺子]` 那一行 + 结算里的 `test_tree.same` 回答 ——
+ *     `[尺子]` 只进控制台，不进 `judgement.txt`。）
+ *
+ * `judgement.txt` 里逐行是：`[平台]` → `F57-TARGET` → `F57-SETTLE` → 判词 → `exit=`。
  *
  * 🔴 **`F57-OK` 只在"分母 = 跑到 = 全绿 = 无 HOLD"时出现**。其余情况一个 OK 都不许有：
  *   · `HOLD > 0` ⇒ `exit 2`（判不了不是绿）
@@ -32,6 +49,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { entryVerdict, judgementLines } from './support/verdict.mjs'
 import { runSelfCheck } from './support/self-check.mjs'
+import { targetReport } from './support/target.mjs'
+import { platformReading, platformLine } from './support/platform.mjs'
 import { DISCOVERY } from './support/registry.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -64,6 +83,20 @@ if (!existsSync(REPO)) {
   console.error(`F57-USAGE: --repo 指到的地方不存在：${REPO}`)
   process.exit(3)
 }
+
+// ── ⓻ 靶子对数：这一跑打的是**哪棵树**、它与现役差多少 ────────────────────────
+// 先量、先打（比用例更早）—— 用例炸了也要能读到这一行：绿不绿是一回事，"绿的是哪版"是另一回事。
+const target = targetReport()
+/**
+ * 🔴 **`F-106`**：这一跑跑在**哪个平台版本**上（`resources/app.asar` 里那两份 package.json）。
+ * 它是**读数**，不参与判词、不改退出码 —— 但它必须有落点：判据是对着这一版平台写的，
+ * 平台换了（例如 0.2.2 把 `run_in_background` 还回来）而这一行还印着旧版本，人才看得见。
+ * ⚠️ 别和 `AGENIA_ORACLE_VERSION` 混：那是冻结的 0.2.0 桌面 oracle（被测期望的来历）。
+ */
+const platform = platformReading()
+const PLATFORM_LINE = platformLine(platform)
+console.log(PLATFORM_LINE)
+console.log(target.line)
 
 // ── ① 运行根：目录 + 三层 marker + 注入式时钟（与冻结跑法同形）──────────────
 const dirs = ['tmp', 'state', 'brain-root', 'workspace', 'fixtures']
@@ -135,8 +168,23 @@ if (s === null) {
   const bad = `F57-NO-SETTLEMENT: 结算报告没生成（${settlementFile}）—— 这一跑不算结算`
   console.error(bad)
   if (settleRun.stderr.trim() !== '') console.error(settleRun.stderr.trim().split('\n').slice(0, 8).join('\n'))
-  writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${bad}\nexit=1\n`, 'utf8')
+  writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${PLATFORM_LINE}\n${target.line}\n${bad}\nexit=1\n`, 'utf8')
   process.exit(1)
+}
+
+// 🔴 **`R-5`**：这一跑**执行的是哪一版尺子**（测试树）—— 与"打的是哪棵树"（`target.line`）并列，
+//    都是"这一跑的结论该算在谁头上"的锚点。收口那份 `sources` 是跑完之后量的，冒充不了它。
+const testTree = s.test_tree ?? null
+if (testTree === null) {
+  console.log('[尺子] 判不了：这份 settlement 没有 `test_tree`（老 run-root）⇒ "跑的是哪版测试代码"没有落点')
+} else if (testTree.same === true) {
+  const short = String(testTree.preflight_sha256).slice(0, 16)
+  console.log(`[尺子] 测试树 ${short} · ${testTree.settle_files} 份 · 开跑 ${testTree.preflight_at} 与收口一致 ⇒ 这一跑跑的**就是** \`sources\` 里那版`)
+} else if (testTree.same === false) {
+  console.log(`[尺子] 🔴 测试树在跑动中变过：开跑 ${String(testTree.preflight_sha256).slice(0, 16)} ≠ 收口 ${String(testTree.settle_sha256).slice(0, 16)}`)
+  console.log(`       差异 ${JSON.stringify(testTree.differ)} ⇒ 收口那份 \`sources\` 不能代表"跑的那版"；这一跑不能当基线的收口证据`)
+} else {
+  console.log('[尺子] 判不了：预检里没有测树指纹（`test_tree_sha256`）⇒ "跑的是哪版"没有落点')
 }
 
 const denominator = s.registry.total
@@ -188,6 +236,7 @@ const verdict = entryVerdict({
   nodeTests,
   nodeFail,
   settleExit: settleRun.code,
+  targetProblems: target.problems.map((p) => p.message),
 })
 
 const line = [
@@ -208,7 +257,7 @@ console.log(line)
  */
 const judgement = judgementLines(verdict, { settled, denominator, scopeCases })
 for (const l of judgement) console.log(l)
-writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[line, ...judgement, `exit=${verdict.exitCode}`].join('\n')}\n`, 'utf8')
+writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[PLATFORM_LINE, target.line, line, ...judgement, `exit=${verdict.exitCode}`].join('\n')}\n`, 'utf8')
 
 if (JSON_OUT !== null) {
   writeFileSync(path.resolve(JSON_OUT), `${JSON.stringify({
@@ -217,6 +266,20 @@ if (JSON_OUT !== null) {
     ran_files: ranFiles, settled, red: s.settled.red, green: s.settled.green, hold,
     node_exit: testRun.code, node_tests: nodeTests, node_fail: nodeFail, settle_exit: settleRun.code,
     reporter_check_ok: s.reporter_check_ok,
+    target: {
+      ok: target.ok, state: target.state, line: target.line,
+      staged_root: target.measured.stagedRoot, baseline_root: target.measured.baselineRoot,
+      declaration: target.declaration.path, declaration_present: target.declaration.present,
+      actuals: target.actuals, problems: target.problems,
+    },
+    /** 🔴 `F-106`：这一跑的平台版本（读数；判不了也照样出这一节，`ok:false` + `problems`）。 */
+    platform: {
+      ok: platform.ok, line: PLATFORM_LINE, asar: platform.asar, source: platform.source,
+      level: platform.level, hardcoded_fallback: platform.hardcoded_fallback,
+      app: platform.app, dsh: platform.dsh, problems: platform.problems,
+      /** ⚠️ `R-8`：`tried` 必须在这儿 —— "判不了"的全部用处就是"试过 ①·②·③·④"。 */
+      tried: platform.tried,
+    },
     exit_code: verdict.exitCode, ok: verdict.ok, full_scope: verdict.fullScope,
     problems: verdict.failures, line, judgement,
   }, null, 2)}\n`, 'utf8')
