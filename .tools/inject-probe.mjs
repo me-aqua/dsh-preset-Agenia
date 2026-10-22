@@ -82,7 +82,7 @@
  *    否则断言会在半夜自己变红。
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -194,7 +194,8 @@ const CRITERION = {
   17: '`node --check` = 0 · 探针全绿 · 体检全绿',
   18: '改 `inject.js` 后必须重启才生效（真回合，归组长）',
   '§形状': '注入消息的形状与拼接线（契约 3.4 / 老口径 7 的形状那半边）',
-  '§产物': '真 presets/agenia/ 的内容文件（口径 1/2/6/14 的产物那半边）',
+  '§产物': '真 presets/agenia/ 的内容文件（口径 1/2/6/14 的产物那半边）+ '
+    + '`.runtime/common-sense.md` 在盘上、且不是空壳（`I18`；红 = 真常识文件没了 / 是空壳）',
   '§夹具': '夹具内容根自己的形状（改夹具 = 换量程，要交代）',
   // ── 2026-09-26 第三批新加的四条（方案第七节 #1–#10 的落点，编号是契约内部项）─────
   '§改名': '维度改名彻底：`疲劳` / `亲近` **作为维度名**不再出现在真产物与三份文档里（键名不动）',
@@ -1524,13 +1525,13 @@ try {
   //    所以拿夹具当被测对象时（`AGENIA_PROBE_ENTRY` 指到别处，而且没给 `AGENIA_PROBE_PRODUCT_DIR`）
   //    **这一族不判**：那时它量的是"另一个东西的内容"，判了只会把阳性对照染红
   //    （09-25 那次 `I1` 就是这么红的）。
-  // 🔴 **但"不判"不等于"消失"**（2026-09-26 返修）：夹具模式下这 17 条**逐条记挂起、照样进分母** ——
-  //    这条清单必须和下面真正判的那 17 个编号一一对应（`Z9` 与"三种跑法分母对照"是它的守卫）。
+  // 🔴 **但"不判"不等于"消失"**（2026-09-26 返修）：夹具模式下这一族**逐条记挂起、照样进分母**。
+  // 🔴 **挂起条数不手写**（`F-135` 第 4 关返修）：报数那一句读的是下面 `I_FAMILY_SKIPS` 的 `length`，
+  //    和真正要挂起的那些编号**同一份数据** —— 手数的那一份这次跟对了、下次加格还会漏（评审原话）。
+  //    这张表必须和下面真正判的那些编号一一对应（`Z9` 与"三种跑法分母对照"是它的守卫）。
   if (!TESTING_PRODUCT) {
-    console.log('（I 族：这次测的是夹具，不是产物 —— 17 条记挂起，分母不缩）')
-    // ⚠️ `O7`（"产物那个块解析得出 3 条场景"）也只在产物模式下判 —— 它同样必须进分母。
-    skip('O7', 2, '产物的 `mood.md` 解析得出恰好 3 条场景：这次测的是夹具，不是产物 ⇒ **未验**')
-    for (const [id, criterion, what] of [
+    // ⚠️ 表先声明、后报数：下面那一句里的条数就是这张表的 `length`，不另写数字。
+    const I_FAMILY_SKIPS = [
       ['I1', 1, '`style.md` 第一行那个 `<!-- every: N -->` 就是实现**实际用的**刻度（第 N 个工具结果才贴）'],
       ['I2', 1, '`every` 那枚注释在第一行'],
       ['I6', 6, '真 `style.md` 里有切口标记'],
@@ -1548,7 +1549,12 @@ try {
       ['I15', '§改名', '真产物那条尾巴里 `疲劳` / `亲近` **不作为维度名**出现'],
       ['I16', 6, '真 `mood.md` 的「他久别归来」那道门还是 `.65`（没跟着基线一起抬）'],
       ['I17', 6, '真产物那一路上：他第一次开口、没夸没骂 ⇒ 亲密恰好 .50（基线）'],
-    ]) skip(id, criterion, `${what}：这次测的是夹具，不是产物 ⇒ **未验**`)
+      ['I18', '§产物', '真那份 `.runtime/common-sense.md` 在盘上、而且不是空壳（去掉空白后还有字）'],
+    ]
+    console.log(`（I 族：这次测的是夹具，不是产物 —— ${I_FAMILY_SKIPS.length} 条记挂起，分母不缩）`)
+    // ⚠️ `O7`（"产物那个块解析得出 3 条场景"）也只在产物模式下判 —— 它同样必须进分母。
+    skip('O7', 2, '产物的 `mood.md` 解析得出恰好 3 条场景：这次测的是夹具，不是产物 ⇒ **未验**')
+    for (const [id, criterion, what] of I_FAMILY_SKIPS) skip(id, criterion, `${what}：这次测的是夹具，不是产物 ⇒ **未验**`)
   } else {
     const raw = readFileSync(STYLE_FILE, 'utf8')
     const head = raw.split('\n')[0] ?? ''
@@ -1615,7 +1621,16 @@ try {
     //    时间行的值来自 `Date.now()` ⇒ 只认形状（同 `G5`）。
     //    ⚠️ 这条**不是**放松成 `includes`：仍然整段 `===` —— 多一段 / 少一段 / 次序反了都红。
     const i3SenseFile = join(PRODUCT_DIR, '.runtime', 'common-sense.md')
-    const i3SenseRaw = existsSync(i3SenseFile) ? readFileSync(i3SenseFile, 'utf8') : undefined
+    // ⚠️ 读失败（不存在 / 是个目录 / 读不了）一律只落成 `undefined`，**不许把整份探针崩掉**：
+    //    下面 `I18` 要把它判成一条**点名**的红；崩掉的进程报不出"是哪份文件没了"。
+    let i3SenseRaw
+    let i3SenseReadError
+    try {
+      i3SenseRaw = readFileSync(i3SenseFile, 'utf8')
+    } catch (err) {
+      i3SenseReadError = err?.code ?? String(err)
+      i3SenseRaw = undefined
+    }
     const i3Sense = typeof i3SenseRaw === 'string' && i3SenseRaw.trim().length > 0
       ? `## 共享记忆 · 常识\n\n${i3SenseRaw.trim()}`
       : undefined
@@ -1623,6 +1638,71 @@ try {
       + '（style 与常识逐字、次序钉死；时间行只认形状）',
       normalizeTimeLines(stylePartOf(text)),
       [cut, ...(i3Sense === undefined ? [] : [i3Sense]), TIME_LINE_TOKEN].join('\n\n'))
+
+    /**
+     * 🔴 `I18`（`F-135`）：**真那份 `.runtime/common-sense.md` 在盘上、而且不是空壳**。
+     *
+     * 为什么这半件事必须单独一格：`I3` 的期望值**就是从这份文件的字节算出来的**
+     * （`i3Sense === undefined ? [] : [i3Sense]`）—— 文件没了 / 只剩空白，期望值跟着少一段，
+     * 两边仍然 `===`、格子仍然绿。⇒ `I3` 绿证明的是"盘上有什么就贴什么"，
+     * 它**不证明盘上还有常识要贴**。这一格守的才是那件事本身。
+     *
+     * 口径与 `SURF-03` 一致：**去掉空白后必须还有字**（不是"字节数 ≥ 2" —— 一个换行也是 2 字节）。
+     * ⚠️ 没并进 `SURF-01/03` 那张 13 份名单：那张是**注入面清单**，根在 `presets/agenia/*.md`；
+     *    这份在 `.runtime/` 下，路径根不同 —— 混进同一张表就把"同一张表"的口径弄坏了。
+     * ⚠️ `commonSenseOf()` / `tailBodyOf()` 的行为不动：读不到 ⇒ `undefined` + `warnOnce`、
+     *    尾巴不拼那段。那个失败策略是对的（不编、不抛、出声）；缺的是"退化时有人报红"，
+     *    这一格补的就是那一半。
+     *
+     * 编号 `I18`：`I` 族量的就是"真产物那几份内容文件"（`style.md` / `mood.md` / 这一份），
+     * 这一格与 `I3` 是同一份字节的两面（贴出来的对不对 / 文件在不在）⇒ 归 `I` 族，接在 `I17` 后面。
+     * 不挑 `I12`：`I12` 已经被占了（`mood.md` 那几档刻度），挑它就和既有编号撞车。
+     * 不挑 `G14`：`G*` 量的是**注入行为**、靶子是夹具；这一格量的是盘上那份数据文件。
+     */
+    // 🔴 红因必须分流（`F-135` 第 4 关返修）：读数只有两态时，「文件不在」和「文件在盘上、
+    //    但读不出正文」会印成同一句「盘上没有这份文件」—— 而后者恰恰是上面那个 `try/catch` 存在的理由。
+    //    判据本体一个字不动（期望值仍是 `{在盘上:'是', 正文:'非空'}`），只让**实测**那一列说真话：
+    //    真的不在 / 在盘上但是个目录（或不是普通文件）/ 是普通文件但读不出来 / 空壳。
+    //    `statSync(..., { throwIfNoEntry: false })`：不存在（含路径中间那段不是目录）返回 `undefined`，
+    //    存在就把"是不是普通文件"一并说出来 —— 一次调用分完流，不用 `existsSync` 再 `statSync`。
+    //
+    // 🔴 `statSync` 自己也抛（`F-135` 复审尾巴）：`throwIfNoEntry` 只把 **ENOENT** 落成 `undefined`，
+    //    `EACCES` / `EPERM` / `EIO` 这些**照样抛** —— 于是"文件在盘上、但连 stat 都不让"时，
+    //    探针会在**报出是哪份文件之前**整份崩掉（崩了就说不出红因）。和上面 `readFileSync` 那次
+    //    是同一个形状，所以用同一个护法：留住错误码，往下走，让 `I18` 把它判成一条点名这一格的红。
+    let i18Stat
+    let i18StatError
+    try {
+      i18Stat = statSync(i3SenseFile, { throwIfNoEntry: false })
+    } catch (err) {
+      i18StatError = err?.code ?? String(err)
+      i18Stat = undefined
+    }
+    // 🔴 `statSync` 那次没抛时，读数照旧由下面这一块分四支 —— 这一整块与上一版**逐字相同**
+    //    （含缩进；只把落点名字从 `i18Reading` 改成 `i18StatReading`，好在下面再叠一支）。
+    const i18StatReading = i18Stat === undefined
+      ? { 在盘上: '否（盘上没有这份文件）', 正文: '（文件不在，判不了）' }
+      : !i18Stat.isFile()
+        ? {
+          在盘上: `是（在盘上，但读不出正文：它${i18Stat.isDirectory() ? '是个目录' : '不是普通文件'}）`,
+          正文: '（读不了，判不了）',
+        }
+        : i3SenseRaw === undefined
+          ? { 在盘上: `是（在盘上，但读不出来：${i3SenseReadError}）`, 正文: '（读不了，判不了）' }
+          : { 在盘上: '是', 正文: i3SenseRaw.trim().length > 0 ? '非空' : '空壳（去掉空白后一个字都没有）' }
+    // 🔴 第五支（`F-135` 复审尾巴）：`statSync` **自己抛**了 ⇒ 上面那四支一支都落不到。
+    // ⚠️ 这一支只能报"判不了"：stat 抛 EACCES 时**连"在不在盘上"都问不到**（那不是 ENOENT）。
+    //    它抛则上面那次 `readFileSync` 在同样的权限下必然也抛，所以这里不会把"其实读得出来的
+    //    正文"误判成红；反过来，万一真出现 stat 抛、read 却读到了字节（非常规文件系统），
+    //    这一格仍是一条写着"哪一步抛的"的红 —— 不抛，也不会被吞成绿。
+    const i18Reading = i18StatError !== undefined
+      ? { 在盘上: `判不了（statSync 自己抛了：${i18StatError}）`, 正文: '（读不了，判不了）' }
+      : i18StatReading
+    check('I18', '§产物', '真那份 `presets/agenia/.runtime/common-sense.md` **在盘上**、而且**不是空壳**'
+      + '（红 = 真常识文件没了 / 是空壳；那时 `commonSenseOf()` 只 `warnOnce` 一行、尾巴静默少一段，'
+      + '而 `I3` 会跟着少算一段、照旧绿）',
+      i18Reading,
+      { 在盘上: '是', 正文: '非空' })
     checkTrue('I4', '§产物', '真产物贴出来的尾巴段里不含 `<!--`', typeof text === 'string' && !text.includes('<!--'))
     checkTrue('I5', '§产物', '真产物贴出来的尾巴段不是兜底那两句（读到了文件，不是回退默认值）',
       typeof text === 'string' && text.includes('# 语言风格'))
