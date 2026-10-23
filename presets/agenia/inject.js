@@ -2240,6 +2240,114 @@ export async function apply(ctx, config = {}) {
   })
 
   // ─────────────────────────────────────────────────────────────
+  // ⑥ 思考链清理（`F-148`）：在瀑布**内侧**改两个地方 —— 落盘的**不是** delta，是 `block-end` 的载荷。
+  //
+  // 为什么是两处（2026-10-23 14:4x 复核，四段代码连起来读的）：适配器自己攒了一份原文
+  // （`dsh-llm-deepseek/lib/index.js` 的 `thinking_delta` ⇒ `content.text += text`），
+  // `content_block_stop` 吐的 `block-end` 载荷带的就是它；而 `dsh-llm` 的 `assemble()` 第一句是
+  // `if (partial.block) return partial.block` ⇒ **载荷优先**，delta 攒的那一份被整份丢掉。
+  // ⇒ 只改 `reasoning-delta` 等于改了一个会被覆盖的字段：碎段照样落盘。
+  //
+  // 为什么在这儿：`dsh-agent-loop` 拿到流之后 `live.push(chunk)`，`live.blocks()` 才被写成
+  // `assistant/message` 的 `content` ⇒ 在瀑布内侧清掉，会话流 / GUI 历史 / 以后的重放看到的
+  // 都是清完的。口径（单元表 · 围栏状态机 · 流式不变式）全在 `CONTRACT.md` §10，这里只做接缝。
+  //
+  // 🔴 必须是 `async function*`：返回值被 `for await (const chunk of llm.stream(request))` 直接消费，
+  //    写成普通 `async` 函数返回 Promise 会当场 `TypeError` —— 那不是"过滤没生效"，是"回答整个没了"。
+  // 🔴 改的是一个 delta、一份载荷，各走各的路，别混：
+  //    ① `reasoning-delta.text`（流里那一份）—— 用 `push()` 逐段落判；
+  //    ② `block-end` 的 **reasoning 载荷**（落盘那一份）—— 用 `stripShortParagraphs()` **整份重算**
+  //       （不拿 delta 那份 filter 状态去推：适配器在某些协议下只给载荷、一个 delta 都不吐）；
+  //    ③ 收尾次序：尾巴必须在 `finish` **之前**吐出去 —— `finish` 之后 `dsh-agent-loop` 不再要 chunk。
+  // 🔴 正文（`block.type === 'text'` 的载荷）/ 工具调用 / 用量 **同一个对象** 原样透传，一个字节不动。
+  // 🔴 过滤这一步的任何异常都吞掉：出事的 chunk 原样放行、流继续、同一个调用里只出声一次 ——
+  //    它住在每一条模型调用的内侧，抛一次就是整条流断，答案正文跟着一起没。
+  // ⚠️ 参数 `options` 故意不读：这一层只用 `next()` 与 chunk（契约 §10.5 第 2 条）。
+  // ⚠️ 纯逻辑那份**懒加载**（`await import()`），不是顶层静态 import —— 顶层静态 import 脑库会让
+  //    "脑库一坏 ⇒ 人格注入 0 字符"（PFL-08 钉着这一条）。加载失败也不许拖垮对话：
+  //    出声一次，然后这一层降级成原样放行（流照走、答案正文一个字节不动）。
+  // ─────────────────────────────────────────────────────────────
+  const reasoningFilter = import('./lib/reasoning-filter.mjs').catch((error) => {
+    console.error(
+      '[agenia] F-148 思考链过滤器加载不了（lib/reasoning-filter.mjs），这一层降级为原样放行：'
+        + String(error && error.message ? error.message : error),
+    )
+    return null
+  })
+
+  ctx.on('llm/stream', async function* (options, next) {
+    const stream = await next()
+    const module = await reasoningFilter
+    // 模块不在（上面已经出过声）⇒ 什么都不改，把流原样交出去。
+    if (module === null) {
+      for await (const chunk of stream) yield chunk
+      return
+    }
+    const filter = module.createReasoningFilter()
+    const stripShortParagraphs = module.stripShortParagraphs
+    // 尾巴那条 chunk 的 index：delta 那条路用**最后见过**的 index；`block-end` 那条路用它**自己的** index
+    // （载荷就是按这个 index 落的，尾巴排在它前面，两者同属这一块）。
+    let lastIndex
+    let warned = false
+    /** 一个 `llm/stream` 调用里不论出错几次，只喊一次（同一个问题刷满日志就等于没说）。 */
+    const complain = (error) => {
+      if (warned) return
+      warned = true
+      console.error(
+        '[agenia] F-148 思考链过滤出错，这一条 chunk 原样放行（后面的照旧过滤）：'
+          + String(error && error.message ? error.message : error),
+      )
+    }
+    const isObject = (value) => value !== null && typeof value === 'object'
+    /** 这一条 `block-end` 是不是**落盘那一份** reasoning 载荷（正文块的载荷不算）。 */
+    const isReasoningPayload = (chunk) => isObject(chunk) && chunk.type === 'block-end'
+      && isObject(chunk.block) && chunk.block.type === 'reasoning'
+      && typeof chunk.block.text === 'string'
+    /**
+     * 把 filter 里攒着的那一段（还没被 `\n` 终结的）吐成一条 `reasoning-delta`；空 ⇒ `null`（不吐空 chunk）。
+     * `index === undefined` = 一条 reasoning-delta 都没见过 ⇒ 没有尾巴可吐。
+     */
+    const tailOf = (index) => {
+      if (index === undefined) return null
+      let tail = ''
+      try {
+        tail = filter.flush()
+      } catch (error) {
+        complain(error)
+        return null
+      }
+      return tail === '' ? null : { type: 'reasoning-delta', index, text: tail }
+    }
+
+    for await (const chunk of stream) {
+      let out = chunk
+      try {
+        if (isObject(chunk) && chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') {
+          lastIndex = chunk.index
+          out = { ...chunk, text: filter.push(chunk.text) }
+        } else if (isReasoningPayload(chunk)) {
+          // 这一块到此为止：先把尾巴吐在它前面，再改写落盘的那份载荷。
+          const tail = tailOf(chunk.index)
+          if (tail !== null) yield tail
+          out = { ...chunk, block: { ...chunk.block, text: stripShortParagraphs(chunk.block.text) } }
+        } else if (isObject(chunk) && chunk.type === 'finish') {
+          // 尾巴排在 `finish` 之前 —— 它后面不会再有人来取 chunk。
+          const tail = tailOf(lastIndex)
+          if (tail !== null) yield tail
+        }
+      } catch (error) {
+        complain(error)
+        out = chunk
+      }
+      yield out
+    }
+
+    // 没有 `finish` 的协议（delta-only）：到流末尾再收一次；已经收过就是空串，不会重复吐。
+    const tail = tailOf(lastIndex)
+    if (tail !== null) yield tail
+  })
+
+  // ─────────────────────────────────────────────────────────────
   // ④ 进度提醒的第二半：老板一开口，就是新的一票，账清零。
   //
   // ⚠️ **它必须排在文件最后，而且必须排在 ⑤ 那个 `session/event` 监听器后面。**

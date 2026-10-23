@@ -911,3 +911,242 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 - 盘上：`tests/agenia-upgrade/integration/packet.test.mjs` 的 `REV-01` 里 **⑦** 那一组；
 - 登记：**不动** `support/registry.mjs`（没加用例 ID）；
 - 分母：`TOTAL` 由盘上扫出 = **76**（一格没加、一条没删）。
+
+---
+
+## §10 · `F-148` · 思考链里「≤3 单元」的段落**不进会话历史**（代码块例外）
+
+> 定形：`.team/leader/2026-10-23/spec-F-148.md`（含老板 2026-10-23 14:08 逐字补的那条：
+> 「**代码块是用三个` 声明的吗，这个留着**」）。这一节是它的技术契约。
+> 判据：`tests/agenia-upgrade/unit/rfg01-reasoning-filter.test.mjs`（`RFG-01`）+
+> `tests/agenia-upgrade/integration/rfg02-reasoning-seam.test.mjs`（`RFG-02`）+
+> `tests/agenia-upgrade/integration/rfg03-reasoning-assembly.test.mjs`（`RFG-03`）。
+> **三次落盘、三个新 ID**：`RFG-01`/`RFG-02` 落在 14:1x（分母 76 → 78）；
+> `RFG-03` 是 **14:4x 第 2 关重开时补的**（发现"只改 delta 会被 `block-end` 载荷覆盖"⇒ 见 §10.5 那张表；分母 78 → **80**）。
+> 红基线：`.team/test/2026-10-23/log.md` 第四节（首跑）与**第五节**（重开那一轮）。
+> ⚠️ **这一节改过一次**：§10.5 从"只改 `reasoning-delta`"扩到"**也改 `block-end` 的 reasoning 载荷**、并且
+> **尾巴排在 `finish` 之前**"。**导出签名一个都没动**（§10.1 原样）。
+
+### §10.0 一句话，四张脸
+
+**病根一句话：思考链在落盘之前没人清 —— 把会话历史撑爆的不是结论，是碎片。**（定形「问题」）
+
+| 脸 | 现场（2026-10-23 14:0x 组长现量） | 本节钉住的 |
+| --- | --- | --- |
+| ① 碎片 | 一条 4 MB 流：reasoning 块 502 · 段落 299,959 · **≤3 单元的段落 293,150（97.7%）**，占 686,852 字符（71.5%） | §10.2 的单元表 + §10.3 的删除判据 |
+| ② 接缝 | `llm/stream` 是 waterfall；`dsh-agent-loop` 在 **`live.blocks()` 之前**消费它 | §10.5：在瀑布**内侧**改写 `reasoning-delta.text` **和 `block-end` 的 reasoning 载荷**（落盘的是后者） |
+| ③ 代码块 | 老板 14:08：「**这个留着**」⇒ 围栏块整块保留（哪怕围栏行本身只有 3 个反引号） | §10.3 ⑤ 的围栏状态机 |
+| ④ 不许断流 | 过滤器住在**每一条模型调用的内侧**：抛一次 = 整条流断，答案正文跟着一起没 | §10.5：出错 ⇒ 原样放行 + 出声一次 |
+
+### §10.1 模块与导出（冻结）
+
+**文件（两份载体，同一份字节）**：
+
+- 生产：`presets/agenia/lib/reasoning-filter.mjs`（**新建**）
+- 靶子：`.tools/_staging/agenia-upgrade/preset/lib/reasoning-filter.mjs`（**实现关同批同步**；测试只读它）
+
+**四个命名导出（冻结；缺一个 / 改签名都是 `SUT-SURFACE-MISSING`）**：
+
+| 导出 | 签名 | 返回 |
+| --- | --- | --- |
+| `MIN_UNITS` | `const` | `3` —— **唯一那个 `3`**（定形「不做」第 3 条：不进 `agent.cordis.yml`）；判据在模块内读它，用例只断言它等于 3 |
+| `countUnits` | `(text: string) → number` | 非负整数（口径见 §10.2） |
+| `stripShortParagraphs` | `(text: string) → string` | 清完的全文（**批式**；口径见 §10.3） |
+| `createReasoningFilter` | `() → { push(delta), flush() }` | 见 §10.4 |
+
+🔴 这三个函数**纯**：不读盘、不读 env、不改入参、不写全局状态。`createReasoningFilter()` 每次调用返回**独立**的一份状态（两次调用不许共享 `inFence` 与半行缓冲）。
+
+### §10.2 单元数口径（唯一一份 —— 逐字来自定形的表）
+
+`countUnits(text)` = 下面这张表逐项求和（**一个字 / 一个词算一个单元**）：
+
+| 什么 | 算几个 | 口径（本节写死：实现与判据都照这一列） |
+| --- | --- | --- |
+| 汉字 | 1/字 | CJK 统一表意文字区：U+3400–4DBF · U+4E00–9FFF · U+F900–FAFF · U+20000–2FA1F |
+| 英文单词 | 1/词 | **连续的 `[A-Za-z]` 串**算一个（`OK` = 1 · `Let` = 1 · `CONTRACT` = 1） |
+| emoji | 1/个 | `\p{Extended_Pictographic}` 每个字符 1；**修饰符计 0**：U+FE0F（VS16）· U+200D（ZWJ）· U+1F3FB–U+1F3FF（肤色） |
+| 阿拉伯数字 | 1/个 | **一个数字算一个**：`13:44` = 4（`:` 不算）· `12` = 2 |
+| 特殊字符 | 1/个 | 除空白 / 汉字 / 拉丁字母 / 数字 / emoji 之外**一切不在 `P0` 里的字符**：`→` `·` `✅` `≥` `_` `#` `/` 反引号 各 1 |
+| 空白 | 0 | `\s`（空格 / `\t` / 换行 / 全角空格 U+3000） |
+| 标点 | 0 | 下面那张 `P0` 表 |
+
+**`P0`（计 0 的标点，逐字）**：
+
+- 中文 / 全角：`，` `。` `、` `：` `；` `！` `？` `（` `）` `【` `】` `「` `」` `《` `》` `『` `』` `“` `”` `‘` `’` `…` `—` `～`
+- ASCII：`,` `.` `:` `;` `!` `?` `(` `)` `[` `]` `{` `}` `<` `>` `"` `'` `-`
+
+**四条容易踩的口径（每条都有用例）**：
+
+1. `·`（U+00B7）在 Unicode 里是标点，但定形那张表把它**点名算 1** ⇒ 它**不在 `P0` 里**。`_`（Pc）· `#`（Po）· `/`（Po）同理 —— 都是 1。
+2. `-`（连字符）**计 0**：定形的样例「`- M CONTRACT.md`」算出来必须是 **3**
+   （`-` 0 + `M` 1 + `CONTRACT` 1 + `.` 0 + `md` 1）；把 `-` 算 1 它就是 4，那条样例就不再是"该删的碎片"。
+3. 反引号计 1（`\p{Sk}` 符号，不是标点）⇒ 围栏行 ` ``` ` 本身是 3 单元 —— **它靠围栏规则留下，不靠单元数**（§10.3 ⑤）。
+4. 不在 `P0` 里的符号（`*` `~` `=` `+` `@` `$` `%` `&` `|` `\` `^`）一律**计 1**（定形："非标点符号 1"）。
+   `~~~` 因此是 3 单元；本票**不**把它当围栏（§10.3 ⑤ 只认反引号）。
+
+⚠️ `countUnits` **不需要自己 trim**：空白与 `P0` 都计 0 ⇒ `countUnits('  我应该： ')` 与 `countUnits('我应该：')` 都是 3。
+
+### §10.3 段落、删除判据、围栏例外（状态机）
+
+**① 归一**：`\r\n` → `\n`；孤立 `\r` → `\n`。
+
+**② 段落** = 按 `\n` 切（`'a\nb'` = 两段；`'a\n'` = 两段，第二段是空串）。
+
+**③ 重建**（这是"连同它后面那个换行"的**唯一**定义）：按段落序列拼回去 ——
+**留下的段原样保留、它后面那个 `\n` 也保留；删掉的段连同它后面那个 `\n` 一起消失。**
+⇒ `stripShortParagraphs('四个汉字啊\nabc\n')` = `'四个汉字啊\n'`（`abc` 是 1 单元，删；段尾那个 `\n` 跟着它一起没了，而 `四个汉字啊` 自己的 `\n` 留着）。
+
+**④ 判据**：`0 ≤ countUnits(段) ≤ 3` ⇒ **删**；`≥ 4` ⇒ **留**。
+
+**⑤ 围栏状态机**（老板 14:08 那一条；**只认反引号**）：
+
+- `fenceLine(段)` = 段的 `trim()` **以三个反引号开头**（` ``` ` / ` ```js ` / ` ```text ` 都算；连续 ≥3 个反引号开头的也算，判据只看前三个）。
+- 逐段走，状态 `inFence`（初值 `false`）：
+  - `inFence === false`：`fenceLine` ⇒ **保留**这一段、`inFence = true`；否则按 ④ 判。
+  - `inFence === true`：**无条件保留**；若 `fenceLine` ⇒ `inFence = false`（这一行本身也保留）。
+- 文本 / 流走到末尾时 `inFence` 仍为 `true`（**没闭合**）⇒ 从 opening 到末尾的每一段都保留
+  （"宁可多留，不许把代码吃掉"）。
+- `~~~` **不是围栏**：按普通段落判（三个 `~` = 3 单元 ⇒ 删）。
+
+**⑥ 两条已知后果（定形已认，不是缺陷）**：空段落（0 单元）也删 ⇒ 段落之间的空行没了；
+围栏那两行（各 3 个反引号）会留在历史里 —— 老板点名要的。
+
+### §10.4 流式契约（`push` / `flush`）
+
+`createReasoningFilter()` 返回一个对象，**两个方法，都是纯同步**（不返回 Promise）：
+
+| 方法 | 入参 | 返回 | 语义 |
+| --- | --- | --- | --- |
+| `push(delta)` | `string`（增量，可能把一行切成两半） | `string`（**可能空串**） | 只吐出"**已经完整、判据已定**"的段落：返回这一段流到目前为止**可以放出去**的文本 |
+| `flush()` | 无 | `string` | 吐出剩下的那一段（最后一个没被 `\n` 终结的段落），并把内部状态**清空**（下一次 `push` 从零开始） |
+
+**跨 delta 的两样状态**：`inFence`（§10.3 ⑤）与**半行缓冲**。⇒ 三个反引号被拆在多个 delta 里
+（`'``'` + ``'`\n'``）也必须认得出 —— **只有整行到齐才判**（半行永远不放出去）。
+
+**🔴 不变式（唯一承重判据；`RFG-01` 的 `S` 那几格逐条量它）**：
+
+> 对**任意**切分 `text = d1 + d2 + … + dn`，
+> `push(d1) + push(d2) + … + push(dn) + flush()` **逐字节等于** `stripShortParagraphs(text)`。
+
+**不许**为了"早一点吐"把半行放出去（那会让"3 还是 4 单元"在切分点附近翻面），也**不许**留尾巴
+（`flush()` 之后不许再有内容出来；`flush()` 之后的新 `push` 按**新的一段文本**算）。
+
+### §10.5 接缝：`inject.js` 里的 `llm/stream` 监听器（冻结）
+
+**接缝事实（2026-10-23 从 `E:\HarnessCLI\resources\app.asar` 解出来逐行读的，不是猜）**：
+
+- `node_modules/@deepseek-ai/cordis/lib/index.js:317-325`：`waterfall(...args)` —— 监听器签名是
+  `(…args, next)`，`next()` 走到下一个监听器 / 最内层；**它的返回值原样就是 `waterfall()` 的返回值**。
+- `dsh/node_modules/@deepseek-ai/dsh-llm/lib/index.js:2397`：
+  `return this.ctx.waterfall(this, "llm/stream", options, () => this.adapterStream(options, prepared))`
+  ⇒ 监听器被调成 **`(options, next)`**。
+- 同文件 `adapterStream` 那一行：`async *adapterStream(...)` ⇒ 链上没有别的监听器时，
+  **`next()` 同步返回一个 AsyncGenerator**（不是 Promise）。
+- `dsh/node_modules/@deepseek-ai/dsh-agent-loop/lib/index.js:1084-1090`：
+  `const stream = preparedCall?.stream(request) ?? this.loopCtx.llm.stream(request)` → `for await (const chunk of stream)` → `live.push(chunk)`。
+
+🔴 **落盘的不是 delta，是 `block-end` 的那份载荷**（2026-10-23 14:4x 复核，四段代码连起来读的）：
+
+| 位置（asar 内） | 读到什么 | 后果 |
+| --- | --- | --- |
+| `dsh-llm-deepseek/lib/index.js:1889-1897` | `thinking_delta` ⇒ `content.text += text`，同时吐 `{type:'reasoning-delta', index, text}` | 适配器**自己**攒了一份原始全文 |
+| 同文件 `:1981-1988` | `content_block_stop` ⇒ `yield {type:'block-end', index, block:{...block.content}}` | 这份载荷里的 `text` 是**未过滤的全文** |
+| `dsh-llm/lib/index.js:991-996` | `case "block-end"` ⇒ `partial.block = chunk.block` | 载荷被存下来 |
+| 同文件 `:1020-1021` | `assemble()` 第一句 `if (partial.block) return partial.block` | **载荷优先**：delta 攒的那一份被整份丢弃 |
+| `dsh-agent-loop/lib/index.js:361` / `:453-454` | `new BlockAssembler()` / `blocks()` → `assembler.blocks()` | 落盘的 `assistant/message.content[]` 就是 `block-end` 的载荷 |
+
+⇒ **只改 `reasoning-delta` 等于什么都没改**：它改写的是一个**会被覆盖**的字段。
+这一条是 `/loom` 之后补的（2026-10-23 14:4x，`F-148` 第 2 关重开）；上一个版本的 §10.5 只写了 delta，**那一版在真机上不生效**。
+
+⇒ **两条硬约束（实现关最容易踩的两脚）**：
+
+1. 🔴 **监听器必须是 `async function*`（async generator）** —— 调用它要**同步**拿到 AsyncIterable。
+   写成普通 `async` 函数返回 `Promise` ⇒ `for await (… of Promise)` 当场 `TypeError`，
+   **整条模型调用挂掉**（不是"过滤没生效"，是"回答没了"）。⚠️ 这一格**不靠读代码判**：`RFG-02` 的 `S1`
+   直接 `await` 之前先看返回值有没有 `Symbol.asyncIterator`（Promise 没有）。
+2. 监听器**只许用 `next()` 与 chunk**，不许依赖 `options` 的字段（用例喂 `{}`）。
+
+**行为契约（逐条都有判据）**：
+
+- **注册**：`apply(ctx, config)` 里注册**恰好一条** `ctx.on('llm/stream', …)`（多一条 = 量到两条不同的过滤）。
+- **取流**：`const stream = await next()`（或直接 `next()`，两种都行）—— 每次调用**恰好 `next()` 一次**。
+- **改 `reasoning-delta`**：`chunk.type === 'reasoning-delta'` 且 `typeof chunk.text === 'string'`
+  ⇒ 用 filter 的 `push(chunk.text)` 改写 `text`，**其余字段逐个保留**（`index` / `type` / 以后加的字段）。
+  改写后的 chunk 可以是新对象（`{ ...chunk, text }` 就是标准写法）。
+- 🔴 **改 `block-end` 里 reasoning 那份载荷**（这一条是落盘的那一份，缺了它整票不生效）：
+  `chunk.type === 'block-end'` 且 `chunk.block?.type === 'reasoning'` 且 `typeof chunk.block.text === 'string'`
+  ⇒ 改写 `block.text` 为 **`stripShortParagraphs(原载荷 text)`**（用模块的**第二个导出**，不是拿 delta 那份 filter 状态去推）。
+  `block` 里其余字段原样保留；`text` 不是字符串的 `block-end`（含 text 块 / tool-call 块）**原样透传**。
+  ⚠️ **"只有 `block-end`、没有 delta"那种形状也必须被清**：载荷就是全文，口径同一条
+  （`RFG-03` 的 `A2` 那一格量的就是它；适配器在某些协议下就是不吐 delta）。
+- **其它 chunk 原样透传**：`text-delta` / tool-call 那一族 / `block-start` / `usage` —— **同一个对象**、
+  同一个相对次序、一个不少（定形："答案正文、工具调用、用量一个字节不动"）。
+- **`text` 不是字符串的 `reasoning-delta`**：**原样透传**（不许当空串改写）。
+- 🔴 **收尾次序：尾巴必须在 `finish` 之前吐出去**。
+  - `finish` 到达时：先把 filter 里攒着的尾巴 `flush()` 成一条 `reasoning-delta`（`index` 取最后见过的那个），
+    **再**把 `finish` 交出去；`finish` **之后不再吐任何 reasoning 尾巴**。
+  - `block-end`（reasoning）到达时同样先 `flush()`（这一块的尾巴排在 `block-end` 前面），然后改写载荷。
+  - 流里**没有** `finish`（delta-only 协议）⇒ 循环结束后再 `flush()` 一次（此时已是流末尾，没有 `finish` 可排）。
+  - 一条 `reasoning-delta` 都没见过 ⇒ 不吐尾巴。
+  - 为什么钉死次序：`dsh-agent-loop` 在 `finish` 之后不会再要 chunk；尾巴排在它后面 = 谁也不读。
+- **空结果**：`push` / `flush` 返回空串时，吐不吐一条 `text: ''` 的 chunk —— **这一格不判**
+  （用例只看 `reasoning-delta` 文本的**拼接**，不看 chunk 条数；两种实现都合法）。
+- 🔴 **不许抛**：过滤这一步（`filter.push` / `filter.flush` / `stripShortParagraphs` / 拼 chunk / 读 `chunk.text`）的**任何**异常
+  都必须被吞掉 ——
+  ① 出事的那个 chunk **原样**（同一个对象）吐出；
+  ② 流**继续**往下走（后面该过滤的照样过滤）；
+  ③ **出声一次**：同一个 `llm/stream` 调用里，不论出错几次，`console.error` **只打一次**
+     （内容里点名 `reasoning-delta` 或 `F-148`，便于现场搜）。
+  ⚠️ 边界：`next()` **自己**抛（适配器失败）不在本条之内 —— 那一刻没有 chunk 可透传，
+  也不许被包装成"过滤失败"。
+
+**判据在哪一层看（别在 chunk 序列上看）**：`RFG-03` 判的是**装配之后**的文本 ——
+把监听器交出去的流喂给一个复刻 `BlockAssembler`（`dsh-llm/lib/index.js:954-1123`）的装配器，
+取那个 index 的 reasoning 块 `text`，必须等于手写的清洗结果。
+⚠️ 证据等级（照实写）：装配器是**复刻**，不是真类（真类只在 `app.asar` 里，测试树 import 不到 ——
+它连 `@deepseek-ai/dsh-typert-protocol` 等 6 个包一起才加载得起来）。复刻的规则由三条**自控格**钉住
+（`A-PREF` 载荷≠delta 时**载荷赢** · `A-ACC` 无载荷时按 delta 累加 · `A-IGN` `block-end` 之后到的 delta 被忽略），
+这三格红了报 `ASSEMBLER-RECOMPUTE`（先查量具，别去改实现）。
+
+### §10.6 判据索引（照这个跑）
+
+```powershell
+# 临时件落项目所在那个盘（C 盘一个字节都不许写）
+$env:TEMP='E:\Harness\.team\test\2026-10-23\tmp'; $env:TMP=$env:TEMP
+# 这一票三条（新 ID）：**一跑一根、别复用运行根**
+node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-23\_runs\<RUN_ID> --glob="tests/agenia-upgrade/unit/rfg01-reasoning-filter.test.mjs"
+node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-23\_runs\<RUN_ID2> --glob="tests/agenia-upgrade/integration/rfg02-reasoning-seam.test.mjs"
+node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-23\_runs\<RUN_ID3> --glob="tests/agenia-upgrade/integration/rfg03-reasoning-assembly.test.mjs"
+# 全量：去掉 --glob，再给一个全新的运行根（分母 80）
+```
+
+| 格 | 守的是 | 现在（2026-10-23 14:5x · 第 2 关重开那一轮） |
+| --- | --- | --- |
+| `RFG-01` | §10.1–§10.4：单元表七行 + `P0` + 四条易踩口径 · 3 / 4 边界 · `\r\n` · 空段落 · 围栏六格（行本身 / 围栏内 / 围栏外 / 未闭合 / 跨 delta / 带语言标记） · `push`+`flush` 与批式**逐字节等价**（含一字符一切） · `MIN_UNITS === 3` | 🟢 **绿**（交付的实现落在 staged 上，38 格全成立；`REF` 38/38 · `NULL` 28/38 红 · 刀只翻围栏那 10 格） |
+| `RFG-02` | §10.5：注册恰好一条 · **同步**返回 AsyncIterable · `next()` 恰好一次 · `reasoning-delta` 被过滤 · 其它 chunk 同对象同次序 · 其它字段保留 · 尾巴靠 `flush` 吐出来 · 出错不抛 + 出声一次 | 🟢 **绿**（`S6` 那一刀仍只翻一格）—— ⚠️ `S5` 已**改口径**：从"最后一条是尾巴"改成"**存在一条 `reasoning-delta` 的文本恰好是尾巴**"（次序那一格挪进 `RFG-03` 的 `A3`，因为"排在 `finish` 之前"是新加的那条契约；`S5` 不再兼管次序） |
+| `RFG-03` | §10.5 的**落盘那一层**：装配之后（`BlockAssembler` 口径）该 index 的 reasoning `text` 必须等于手写的清洗结果 —— `A1` 真实适配器形状（`block-start`→delta→`block-end` 载荷是**未过滤全文**→`usage`→`finish`） · `A2` **只有 `block-end`、没有 delta** · `A3` 尾巴排在 `finish` **之前**、`finish` 之后不再吐 reasoning · `A4` 三条量具自控（`A-PREF` / `A-ACC` / `A-IGN`） | 🔴 **RED**（今天是 `A1` + `A2` + `A3` 三条：交付的实现只改 delta ⇒ 载荷覆盖；尾巴排在 `finish` 之后 ⇒ 谁也不读）—— 同一个用例里 **`REF` 那一臂全绿**、**两把刀分别只翻 `A1`/`A2` 与 `A3`** |
+
+> 这一列是**第 2 关重开那一轮**的读数；实现关补完 `block-end` 之后由测试岗重跑并改写这一列（与 §9.3 同一规矩：
+> 判据在用例里，改它才需要重跑；读数与命令落在 `.team/test/2026-10-23/log.md` 第五节）。
+
+### §10.7 边界（这一节不覆盖什么）
+
+- **不回填旧流**：22 号以来的会话流一个字节都不动（老板 2026-10-23 14:07：「不用回填，只管新的会话」）。
+  本票只在**装上之后新产生**的思考链上生效。
+- **不改** `text-delta` / tool-call / `usage` / `assistant/attempt` 的口径；不重写 `live.blocks()`。
+- **不加 config 开关**：`3` 只有一处载体（`MIN_UNITS`），不进 `agent.cordis.yml` / `cordis.patch.yml`。
+- **不碰 `F-144`** 的 `lib/packet.mjs` 一族；不改 `.tools/**`。
+- **不做 markdown 语义**：一个段落 = **一行**（不合并软换行，不认列表 / 标题 / 引用块的结构）；
+  **只认反引号围栏**（`~~~` 不处理）；行内反引号（单反引号包一段代码）不改变任何判定。
+- **生效点在重启之后**（`inject.js` 只在 `apply()` 里读一次）⇒ 前四格今天能全绿，**GUI 那一格只能老板重启后点一次**（定形验收 #5）。
+- ⚠️ 这一节**不承诺**"历史体积降多少"：清理只发生在**之后**的思考链上；
+  `.team/test/2026-10-23/` 里报的"删前 / 删后"是**离线重放**读数，不是线上统计。
+
+### §10.8 登记面（三处同批，缺一处就是"跑了但不进分母"）
+
+- 盘上：`tests/agenia-upgrade/unit/rfg01-reasoning-filter.test.mjs`（`RFG-01`）+
+  `tests/agenia-upgrade/integration/rfg02-reasoning-seam.test.mjs`（`RFG-02`）+
+  `tests/agenia-upgrade/integration/rfg03-reasoning-assembly.test.mjs`（`RFG-03`）；
+- 登记：`support/registry.mjs` 的 `BATCH_L` + `ROWS` + `GROUP_COUNTS['reasoning-filter'] = 3`
+  （以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_L`，否则冻结清单与表当场分家）；
+- 分母：`TOTAL` 由盘上扫出 = **80**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；76 + 这 3 条，中间那一格 78 是 14:1x 的读数）。
