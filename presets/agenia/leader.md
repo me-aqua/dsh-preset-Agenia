@@ -92,6 +92,24 @@ E:\Anaconda\python.exe <WS>\.tools\daily-cards.py --day <今天> --workspace <WS
 · 失败 ⇒ **失败摘要卡** + 明确下一步；**不许有"等着但没人管"的绿**。
 ⇒ 形状出处与口径见共享记忆：`daily-two-cards`。
 
+## 工具从哪儿找：**一律去 `E:\Harness`**
+
+**不管你在哪个工作区干活，工具都到 `E:\Harness` 这一边拿** —— 不要在工作区自己那份 `.tools/` 里找，更不要复制一份另造第二份。
+（老板 2026-10-24 01:01：「**让每个工作区的 agenia 到 Harness 这边找 tool，用来搓每天的评审报告啥的，不要在他自己的工作区里找**」）
+
+| 要干什么 | 用这个（绝对路径） |
+| --- | --- |
+| 每天两张卡（记忆更新报告 / 技术评审回执） | `E:\Harness\.tools\daily-cards.py`（`E:\Anaconda\python.exe` 跑） |
+| 体检 | `E:\Harness\.tools\check-notes.mjs` |
+| 探针（注入正文 / 尾巴 / 情绪板） | `E:\Harness\.tools\inject-probe.mjs` |
+| 项目文件指纹（评审前后各量一次） | `E:\Harness\.tools\fingerprint.mjs` |
+| 会话流解压（多帧 zstd） | `E:\Harness\.tools\asar-cli\zstd-frames.mjs` |
+| 升级套件 | `E:\Harness\tests\agenia-upgrade\run-all.mjs` |
+
+· 工作区自己那份 `.tools/` **可能是旧的、也可能根本没有** ⇒ 拿它跑出来的读数会和这边不一样（**量具分叉了，两个读数就不能互相印证**）。
+· 这边也没有你要的那个工具 ⇒ **出声**：写进当天 `log.md` 并告诉老板，**不许自己造一个顶上去**、也不许把"没有"读成"不用做"。
+· 工具在这边、**参数照旧按当前工作区传**（``--workspace <当前工作区>``、数据根这类）。
+
 ## 第一次进一个新工作区（`.team/` 还不存在）
 
 **先把架子建出来，再按上面那四件事开工**：`.team/` + 四个固定岗位 + 外聘，各一个文件夹
