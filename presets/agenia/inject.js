@@ -1424,15 +1424,37 @@ export async function apply(ctx, config = {}) {
       .join(' · ')
 
     const lines = [`【这一票的进度】${head}`]
-    if (!called('test') && called('dev')) {
-      lines.push('⚠️ 叫过开发，还没叫过测试 —— 没人验过的改动不算完成。')
-    } else if (ledger.afterTest > 0) {
-      lines.push(`⚠️ 最后一次测试之后，项目文件又动过 ${ledger.afterTest} 次 —— 那次测试作废，要重测。`)
-    }
+    const warning = boardWarningOf(ledger)
+    if (warning !== '') lines.push(warning)
     if (called('review') && ledger.afterReview > 0) {
       lines.push(`⚠️ 最后一次评审之后，项目文件又动过 ${ledger.afterReview} 次 —— 那次评审作废，要重审。`)
     }
     return lines.join('\n')
+  }
+
+  /**
+   * 板子那条告警**选哪一句** —— 纯函数：只读账本（`{ counts, afterTest }`），不读盘、不建会话。
+   *
+   * 三种现场、三句互斥的话（`CONTRACT.md` §3.3）：
+   *   ① 测试计数 **0** ⇒ 板子**永远**不说「最后一次测试之后」/「那次测试作废」—— 那次测试没发生过：
+   *      · 动过项目文件 ⇒ 说"文件改过 + 一次测试都没叫过"（**叫没叫过开发都一样**）；
+   *      · 没动过文件、叫过开发 ⇒ 说"叫过开发，还没叫过测试"。
+   *   ② 叫过测试、之后又动过（`afterTest > 0`）⇒ 说"最后一次测试之后…那次测试作废，要重测"。
+   * 其余情况不告警（返回空串）。`afterTest` 的计数口径不在这里（在 `tools/result` 那个监听器里）。
+   */
+  function boardWarningOf(ledger) {
+    const called = (role) => (ledger.counts.get(role) ?? 0) > 0
+    if (!called('test')) {
+      if (ledger.afterTest > 0) {
+        return '⚠️ 改过项目文件，但一次测试都没叫过 —— 没人验过这些改动。'
+      }
+      if (called('dev')) return '⚠️ 叫过开发，还没叫过测试 —— 没人验过的改动不算完成。'
+      return ''
+    }
+    if (ledger.afterTest > 0) {
+      return `⚠️ 最后一次测试之后，项目文件又动过 ${ledger.afterTest} 次 —— 那次测试作废，要重测。`
+    }
+    return ''
   }
 
   ctx.on('tools/result', (call, result) => {

@@ -136,7 +136,44 @@ export const INJECTED_OBLIGATIONS = [
 ]
 
 /**
+ * 「否定出现」的词表 —— 定形 `F-152` 问题 B 那五个，**不许多一个**：
+ * `不` / `没` / `不是` / `不写` / `没有`。
+ *
+ * ⚠️ 已知边界（刻意留着，写进契约 §1.4，别在用例里各写一遍）：
+ *    · 只认**紧邻**（中间最多一个空格或标点）⇒「**没写** X」「未写 X」「无 X」「并非 X」仍会被读成"说了"（假绿）；
+ *    · 双重否定（「不能不写 X」）会把紧邻的「不写」当成否定 ⇒ 读成"没说"（假阴性）。
+ */
+const NEGATIONS = ['不是', '没有', '不写', '不', '没']
+
+/** 命中处前面是不是**紧邻否定**（中间允许夹**一个**空格或标点）。 */
+function negatedAt(prefix) {
+  const tail = prefix.replace(/[\s\p{P}]$/u, '')
+  return NEGATIONS.some((word) => tail.endsWith(word))
+}
+
+/** 一条正则在一段文字里的**全部**命中（带 `g` 的正则要走完全部，不能只 `test` 一次）。 */
+function hitsOf(text, re) {
+  const out = []
+  const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`)
+  let m
+  while ((m = g.exec(text)) !== null) {
+    out.push({ before: text.slice(0, m.index), text: m[0] })
+    if (m.index === g.lastIndex) g.lastIndex += 1
+  }
+  return out
+}
+
+/** 这一份文本里，这条义务有没有**真的**被承诺：至少留一处命中不紧邻否定。 */
+function promisedIn(text, ob) {
+  return ob.forms.some((re) => hitsOf(text, re).some((hit) => !negatedAt(hit.before)))
+}
+
+/**
  * 逐条判「注入面里说了没有」。
+ *
+ * 「说了」= 至少有一处命中**不紧邻否定**（`NEGATIONS` 那五个；中间最多一个空格或标点）——
+ * **提到 ≠ 声明**：一句「这份文档不写五关（故意的）」是诚实的空缺，不算承诺（`CONTRACT.md` §1.4）。
+ * 同一份文字里否定之外还有一处真承诺 ⇒ 仍算说了（只剔掉紧邻否定的那一处）。
  *
  * @param {{docs: Record<string,string|null|undefined>, surface: string[], obligations?: typeof INJECTED_OBLIGATIONS}} args
  * @returns {{problems: Array<{code:string,message:string,detail:object|null}>, readings: object}}
@@ -156,14 +193,14 @@ export function injectedSurfaceProblems({ docs, surface, obligations = INJECTED_
   for (const ob of obligations) {
     const hits = surface.filter((rel) => {
       const text = docs?.[rel]
-      return typeof text === 'string' && ob.forms.some((re) => re.test(text))
+      return typeof text === 'string' && promisedIn(text, ob)
     })
     rows.push({ id: ob.id, name: ob.name, forms: ob.forms.map((re) => String(re)), said_in: hits })
     if (hits.length === 0) {
       problems.push({
         code: CODES.injectedUnsaid,
         message: `注入面里没有任何一份说到「${ob.name}」—— 模型根本看不到这件事。`
-          + `搜索范围（组合的 \`leaderOrder\` 那几份）：${surface.map((rel) => `${rel}=${typeof docs?.[rel] === 'string' ? '0 命中' : '不在'}`).join('、')}。`
+          + `搜索范围（组合的 \`leaderOrder\` 那几份）：${surface.map((rel) => `${rel}=${typeof docs?.[rel] === 'string' ? '0 处承诺（否定形态不算）' : '不在'}`).join('、')}。`
           + `为什么是这里：${ob.why}`,
         detail: { obligation: ob.id, surface, forms: ob.forms.map((re) => String(re)) },
       })

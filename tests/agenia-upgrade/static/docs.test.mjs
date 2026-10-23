@@ -25,12 +25,15 @@
  *      且**载体不存在**（`AGENTS.md` 1 字节 + `.gitignore:58` 忽略）。
  */
 import { before, describe, test } from 'node:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { FROZEN, PATHS } from '../support/env.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, sha256Text, sha256File, stagingReadings, oracleReadings } from '../support/evidence.mjs'
 import { readStagedText, stagingExists } from '../support/sut.mjs'
 import { CODES as SURFACE_CODES, INJECTED_OBLIGATIONS, injectedSurfaceProblems, jobRowProblems, leaderInjectionSurface, syntheticComposition } from '../support/docs-surface.mjs'
+import { fixtureDir } from '../support/verify-recompute.mjs'
 
 before(() => {
   preflight({ calibrateLive: true })
@@ -158,6 +161,139 @@ function nowFormProblems(text) {
     out.push({ code: 'DOC-FORM-NOW-DATE', message: `now.md 第一行那个日期不是合法日期：${m[0]}（不存在的日子 / 月份越界）` })
   }
   return out
+}
+
+/**
+ * ── `F-152` · `DOC-01` 的两格新自控（**不加用例号**）：**提到 ≠ 声明** ────────────────────────
+ *
+ * 病根（`support/docs-surface.mjs` 的 `injectedSurfaceProblems`，2026-10-23 现读）：
+ * 判"这条义务在注入面里说了没有"用的是 `ob.forms.some((re) => re.test(text))` ⇒ **命中一个词就算说了**。
+ * 于是一句「这份文档不写五关（故意的）」也会被读成"注入面承诺了五关"——
+ * **诚实的空缺**和**真的承诺**在读数上长得一样（`said_in` 都非空、都不红）。
+ *
+ * 要的口径（定形 `spec-F-152.md` 问题 B + 契约 `CONTRACT.md` §1.4）：命中处**紧邻否定**
+ * （`不` / `没` / `不是` / `不写` / `没有`，中间可夹**一个**空格或标点）⇒ 这一处**不算承诺**；
+ * 真的承诺仍要算。判据落在 `injectedSurfaceProblems` 里，**`forms` 表不动**（词形不是义务）。
+ *
+ * 两格（合成注入面，一份文件、四条义务都在场）：
+ *   a **只写空缺**：另外三条义务各写一句真承诺，`five-gates` 只写一句"这份文档不写五关" ⇒
+ *     该红**恰好一条** `DOC-INJECTED-UNSAID`（`detail.obligation === 'five-gates'`）——
+ *     "恰好一条"这一半就是"诚实的空缺**不许**造成别的红"。
+ *   b **同一份面 + 一句真承诺** ⇒ **绿**（证明这刀只切否定，不切正经句子）。
+ * 反向刀：把最小实现里"剔掉否定出现"那一步删掉 ⇒ **只有 a 格翻绿**（假绿回来）。
+ *
+ * ⚠️ 三条老自控**不在这里**（它们住在 `STAT-04` 那一格里、读的是真注入面：`static/docs.test.mjs:300-345`）——
+ *    本节只加两格新的，`forms` / `INJECTED_OBLIGATIONS` / 那三格一个字没动。
+ */
+const SURFACE_FILE = 'leader.md'
+const SURFACE_GAP_OBLIGATION = 'five-gates'
+/** 那条义务的**字面样本**从义务表里取（不在这里再抄一份："五关"怎么写由 `INJECTED_OBLIGATIONS` 说了算）。 */
+const GAP_OB = INJECTED_OBLIGATIONS.find((ob) => ob.id === SURFACE_GAP_OBLIGATION)
+const OTHER_SAMPLES = INJECTED_OBLIGATIONS.filter((ob) => ob.id !== SURFACE_GAP_OBLIGATION).map((ob) => ob.sample)
+
+/**
+ * 三种"诚实的空缺"写法（否定词与命中词之间：0 个 / 一个标点 / 0 个；表格按定形那张表）。
+ * 第三种用的是 `五道关`（同一条义务的另一种词形）—— 别只钉 `五关` 一种写法。
+ */
+const GAP_TEXTS = [
+  ['不写＋0：《这份文档不写五关（故意的）》', '这份文档不写五关（故意的）。'],
+  ['没有＋一个标点：《这一节没有「五关」—— 写在这里会误导》', '这一节没有「五关」—— 写在这里会误导。'],
+  ['不是＋0：《这里不是五道关，是四道关》', '这里不是五道关，是四道关。'],
+]
+/** 同一份注入面里**真承诺**那一句（对应义务的合法写法；它必须让这一格变绿）。 */
+const PROMISE_TEXT = '本路线是五关：定形 / 契约与测试 / 实现 / 独立评审 / 验收。'
+
+/** 一份合成注入面：另外三条义务各一句真承诺 + `five-gates` 那一句由调用方给。 */
+// ⚠️ 前缀里**不许出现任何否定词**：这段文字是夹具，逗号前面的词会变成后面那句的"紧邻否定"（会污染读数）。
+const surfaceDocs = (gapText) => ({
+  [SURFACE_FILE]: `合成注入面（自控用 · 假的那一份）：${OTHER_SAMPLES.join(' / ')}\n${gapText}\n`,
+})
+
+/** 两格：`want` = 期望的问题码（按 `码:义务` 归一排序后逐字比）。 */
+const SURFACE_NEGATION_CELLS = [
+  {
+    key: 'a',
+    label: '只写空缺（这份文档不写 X）⇒ 这一条必须红',
+    docsOf: (gapText) => surfaceDocs(gapText),
+    want: [`${SURFACE_CODES.injectedUnsaid}:${SURFACE_GAP_OBLIGATION}`],
+  },
+  {
+    key: 'b',
+    label: '同一份面 + 一句真承诺 ⇒ 必须绿',
+    docsOf: (gapText) => surfaceDocs(`${gapText}\n${PROMISE_TEXT}`),
+    want: [],
+  },
+]
+
+/**
+ * 把 `problems` 归一成 `码:义务`（排序 ⇒ 可逐字比）。
+ * 被测面把义务放在 `detail.obligation` 里，最小实现直接放在 `obligation` 上 —— 两边都认，判的是同一件事。
+ */
+const normalizedProblems = (problems) => problems
+  .map((p) => `${p.code}:${p.detail?.obligation ?? p.obligation ?? '?'}`)
+  .sort()
+
+/**
+ * 照 `CONTRACT.md` §1.4 写的最小实现（阳性对照 + 刀的载体）—— **只判"有没有真的承诺"这一件事**。
+ * 两处刻意写成这样：
+ *   · 「剔掉否定出现」是**单独一整行**（`kept = kept.filter(…)`）—— 反向刀一删的就是这一行；
+ *   · 删掉之后 `kept` 仍是**全部命中** ⇒ 回到"命中就算说了"（假绿），而不是换个崩法。
+ */
+const SURFACE_REF_SOURCE = `// DOC-01 的两格自控：照 CONTRACT.md §1.4 写的最小实现（**不是生产代码**，只住在运行根里）。
+const NEGATIONS = ['不是', '没有', '不写', '不', '没']
+
+/** 命中处前面是不是**紧邻否定**（中间允许夹一个空格或标点）。 */
+function negatedAt(prefix) {
+  const tail = prefix.replace(/[\\s\\p{P}]$/u, '')
+  return NEGATIONS.some((word) => tail.endsWith(word))
+}
+
+/** 一条正则在一段文字里的**全部**命中（带 g 的正则要自己走，不能只 test 一次）。 */
+function hitsOf(text, re) {
+  const out = []
+  const g = new RegExp(re.source, 'g')
+  let m
+  while ((m = g.exec(text)) !== null) {
+    out.push({ before: text.slice(0, m.index), text: m[0] })
+    if (m.index === g.lastIndex) g.lastIndex += 1
+  }
+  return out
+}
+
+/** 这一份文本里，这条义务有没有**真的**被承诺（命中处都不紧邻否定）。 */
+function promiseIn(text, ob) {
+  for (const re of ob.forms) {
+    let kept = hitsOf(text, re)
+    kept = kept.filter((hit) => !negatedAt(hit.before))
+    if (kept.length > 0) return true
+  }
+  return false
+}
+
+export function surfaceProblemsOf(docs, surface, obligations) {
+  const problems = []
+  for (const ob of obligations) {
+    const said = surface.some((rel) => {
+      const text = docs?.[rel]
+      return typeof text === 'string' && promiseIn(text, ob)
+    })
+    if (!said) problems.push({ code: 'DOC-INJECTED-UNSAID', obligation: ob.id })
+  }
+  return problems
+}
+`
+
+/** 反向刀要删的那一行（在 `SURFACE_REF_SOURCE` 里逐字存在；找不到就当场报 `SURFACE-KNIFE-LINE-MISSING`）。 */
+const SURFACE_KNIFE_LINE = /^ *kept = kept\.filter\(\(hit\) => !negatedAt\(hit\.before\)\)$/m
+
+/** 落一份源码到运行根之下并 import 它（URL 带哈希 ⇒ 同一进程里不会拿到缓存里的旧字节）。 */
+async function importSurfaceSource(dir, name, source) {
+  const sub = path.join(dir, name)
+  mkdirSync(sub, { recursive: true })
+  const file = path.join(sub, 'surface.mjs')
+  writeFileSync(file, source, 'utf8')
+  const sha256 = createHash('sha256').update(source, 'utf8').digest('hex')
+  return { mod: await import(`${pathToFileURL(file).href}?sha256=${sha256}`), file, sha256, bytes: Buffer.byteLength(source, 'utf8') }
 }
 
 function readDoc(spec, problems) {
@@ -496,6 +632,116 @@ describe('static · docs', () => {
       rec.readings.go_machine_evidence = {
         note: '拍板 Q4 冻结了 evidence 形状（`.team/route/evidence/tr-20261014-01.json`），但路线 updater 还没实现 ⇒ 这一条保持 PENDING，不计绿也不计红',
         route_root_exists: existsSync(PATHS.realRouteRoot),
+      }
+
+      // ── ⑥ `F-152` · 提到 ≠ 声明（两格新自控，不加用例号）───────────────────────────
+      // 合成注入面、四条义务都在场；`five-gates` 换成一句**诚实的空缺**（三种写法各喂一次）⇒
+      // 这一条必须**恰好红一条** `DOC-INJECTED-UNSAID`；同一份面再补一句真承诺 ⇒ 必须绿。
+      // ⚠️ 今天（判据还没改）三条空缺 **都不红**（命中即说了）⇒ 这一格红——那正是定形里"门 3 要治的东西"
+      // 还活着的证据。它不是"用例写歪了"：期望值来自 `CONTRACT.md` §1.4，且同一格的最小实现（REF）能全部成立。
+      {
+        const sutRows = []
+        for (const cell of SURFACE_NEGATION_CELLS) {
+          for (const [label, gapText] of GAP_TEXTS) {
+            const docs = cell.docsOf(gapText)
+            const got = normalizedProblems(injectedSurfaceProblems({ docs, surface: [SURFACE_FILE] }).problems)
+            sutRows.push({ cell: cell.key, label, want: cell.want, got })
+            if (JSON.stringify(got) !== JSON.stringify(cell.want)) {
+              push('DOC-SURFACE-NEGATION-CONTROL',
+                `否定形态自控失败（${cell.key} ${cell.label}）：${label} —— 期望 ${JSON.stringify(cell.want)}，实得 ${JSON.stringify(got)}。`
+                + (cell.key === 'a'
+                  ? '「诚实的空缺」被读成了"说了" ⇒ 提到不等于声明这条口径没落地（契约 §1.4）；'
+                    + '⚠️ 这也是 2026-10-19 那句「写一句诚实的空缺反而红」的**实测答案**：今天它不是红，是**假绿**'
+                  : '真承诺被误判成"没说" ⇒ 这一刀切到了正经句子'))
+            }
+          }
+        }
+        rec.readings.surface_negation_control = {
+          obligation: SURFACE_GAP_OBLIGATION,
+          promise_sample: PROMISE_TEXT,
+          rows: sutRows,
+          note: '一格 a = 只写空缺（三种写法）⇒ 恰好一条 `DOC-INJECTED-UNSAID`；一格 b = 同一份面 + 一句真承诺 ⇒ 0 条。'
+            + '另外三条义务用的是它们自己的 `sample`（从 `INJECTED_OBLIGATIONS` 取，不另抄一份）。',
+        }
+
+        // 阳性对照：照 §1.4 写的最小实现，同样两格必须全部成立（它证明这两格是**可实现的**）。
+        let ref = null
+        try {
+          ref = await importSurfaceSource(fixtureDir('DOC-01', 'surface-negation-ref'), 'ref', SURFACE_REF_SOURCE)
+        } catch (err) {
+          push('SURFACE-CONTROL-REF-IMPORT', `最小实现 import 失败（阳性对照这一格不成立）：${String(err?.message ?? err).slice(0, 200)}`)
+        }
+        if (ref !== null) {
+          const refRows = []
+          for (const cell of SURFACE_NEGATION_CELLS) {
+            for (const [label, gapText] of GAP_TEXTS) {
+              const got = normalizedProblems(ref.mod.surfaceProblemsOf(cell.docsOf(gapText), [SURFACE_FILE], INJECTED_OBLIGATIONS))
+              refRows.push({ cell: cell.key, label, want: cell.want, got })
+              if (JSON.stringify(got) !== JSON.stringify(cell.want)) {
+                push('SURFACE-CONTROL-REF-CELL',
+                  `阳性对照（照 §1.4 的最小实现）在 ${cell.key} 没成立：${label} —— 期望 ${JSON.stringify(cell.want)}，实得 ${JSON.stringify(got)}`
+                  + ' —— 要么这两格写得不可实现，要么最小实现写错了；这两件事必须分开处理，不许拿"判据还没改"糊过去')
+              }
+            }
+          }
+          rec.readings.surface_negation_ref = { file: ref.file, bytes: ref.bytes, sha256: ref.sha256, rows: refRows }
+
+          // 反向刀：删掉「剔掉否定出现」那一行 ⇒ 只有 a 格翻绿（假绿回来），b 格不动。
+          const cut = SURFACE_REF_SOURCE.match(SURFACE_KNIFE_LINE)
+          if (cut === null) {
+            push('SURFACE-KNIFE-LINE-MISSING',
+              `REF 里找不到「剔掉否定出现」那一行（这把刀真正用的正则是 \`${SURFACE_KNIFE_LINE.source}\`）—— `
+              + '这一刀没有落点，证明不了任何事')
+          } else {
+            let knife = null
+            try {
+              knife = await importSurfaceSource(fixtureDir('DOC-01', 'surface-negation-ref'), 'knife', SURFACE_REF_SOURCE.replace(SURFACE_KNIFE_LINE, ''))
+            } catch (err) {
+              push('SURFACE-KNIFE-IMPORT', `刀出了 import 失败（那不是"翻绿"，是换个崩法）：${String(err?.message ?? err).slice(0, 200)}`)
+            }
+            if (knife !== null) {
+              const knifeRows = []
+              for (const cell of SURFACE_NEGATION_CELLS) {
+                for (const [label, gapText] of GAP_TEXTS) {
+                  const got = normalizedProblems(knife.mod.surfaceProblemsOf(cell.docsOf(gapText), [SURFACE_FILE], INJECTED_OBLIGATIONS))
+                  knifeRows.push({ cell: cell.key, label, got })
+                }
+              }
+              const flipped = [...new Set(knifeRows
+                .filter((row) => row.cell === 'a' && row.got.length === 0)
+                .map((row) => `${row.cell}:${row.label}`))]
+              const bChanged = knifeRows.filter((row) => row.cell === 'b' && row.got.length > 0)
+              rec.readings.surface_negation_knife = {
+                subject: 'reference',
+                why: '刀删的是最小实现里那一行；被测面（`support/docs-surface.mjs`）里那一步在不在，由 ⑥ 的两格自己回答',
+                removed_line: cut[0].trim(),
+                file: knife.file,
+                sha256: knife.sha256,
+                flipped,
+                rows: knifeRows,
+              }
+              if (flipped.length !== GAP_TEXTS.length) {
+                push('SURFACE-KNIFE-NOT-FLIPPED',
+                  `把「剔掉否定出现」删掉之后，a 格里只有 ${flipped.length}/${GAP_TEXTS.length} 种写法翻绿（${flipped.join(' / ') || '一条都没有'}）`
+                  + ' ⇒ 这一刀没让"假绿"完整回来：要么刀切得不全，要么那一格本来就不是这条判据在守')
+              }
+              if (bChanged.length > 0) {
+                push('SURFACE-KNIFE-SIDE-EFFECT',
+                  `这一刀把 b 格（同一份面 + 真承诺）也弄红了（${bChanged.map((r) => r.label).join(' / ')}）—— `
+                  + '删"剔掉否定"不该动到真承诺那一格（一个变异体只证一格：mig-rules-16）')
+              }
+            }
+          }
+        }
+
+        rec.readings.surface_negation_boundary = {
+          not_in_table: '否定词表就是定形那五个（`不` / `没` / `不是` / `不写` / `没有`），只剔**紧邻**（中间最多一个空格或标点）。'
+            + '「没写五关」「未写五关」「无五关」「并非五关」**不在表里** ⇒ 今天仍会被读成"说了"（已知的假绿，要扩就扩这张表，别在用例里各写一遍）。'
+            + '双重否定（「不能不写五关」）同理：紧邻的「不写」会被当成否定 ⇒ 读成"没说"（已知的假阴性）。',
+          where: '真注入面的读数与三条老自控住在 `STAT-04` 那一格（`static/docs.test.mjs:300-345`）；这里只加 `DOC-01` 的两格，不加用例号。',
+          honest_gap: '2026-10-19 记的那半句「写一句诚实的空缺反而红」实测**不成立**：今天诚实的空缺**不红**（命中即说了 ⇒ 假绿 0 条）；'
+            + '真成立的是「提到被当成声明 ⇒ 诚实的空缺被读成说了」。修完之后它只该造成**它自己那一条** `DOC-INJECTED-UNSAID`（上面 a 格断言的"恰好一条"就是这一半）。',
+        }
       }
 
       caseFail(problems)

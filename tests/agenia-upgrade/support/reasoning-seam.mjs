@@ -1,16 +1,18 @@
 /**
- * `F-148` 接缝的两个**量具**（`RFG-02` 与 `RFG-03` 共用，**只有一份**）：
+ * `F-148` 接缝的三个**量具**（`RFG-02` / `RFG-03` 与 `BRD-01` 共用，**只有一份**）：
  *
- *   ① `loadSeam()` —— 在**假 ctx** 上跑 staged `inject.js` 的 `apply()`，把注册出来的
- *      `llm/stream` 监听器取出来。假 ctx 的形状照 `.tools/inject-probe.mjs:470-489` 那套
+ *   ⓪ `loadAppliedSurface()` —— 在**假 ctx** 上跑 staged `inject.js` 的 `apply()`，把注册出来的
+ *      监听器按事件名收成一册交出来。假 ctx 的形状照 `.tools/inject-probe.mjs:478-497` 那套
  *      （`get` / `on` / `effect` 三样 + `baseUrl`），被测面永远是 staged 树。
+ *      🔴 **建一次会话只有这一条路**：三个用例（思考链接缝两层 + 板子三态）都从这里开，
+ *      谁也不许另起一套 —— 两套量具量出来的读数不能互相印证（`cand-20261019-0030`）。
+ *   ① `loadSeam()` —— 从上面那一册里取 `llm/stream` 监听器（`RFG-02` / `RFG-03`）。
  *   ② `drive()` —— **同步调用**监听器、先看返回值形状，再迭代。三件事分开记：
  *      `syncAsyncIterable`（`dsh-agent-loop` 是 `for await`，Promise 会当场 TypeError）、
  *      `calls`（`next()` 次数）、`threw`（调用期 / 迭代期冒出来的异常）。
  *
- * 为什么做成一份：两个用例判的是同一件事的两层（delta 层 / 装配层），
- * 量具抄两份的那天两份就会分叉 —— 而"分叉的量具"量出来的两个读数不能互相印证
- * （`cand-20261019-0030`）。
+ * 为什么做成一份：这几个用例判的是同一份 `apply()` 的不同出口（delta 层 / 装配层 / 板子），
+ * 量具抄两份的那天两份就会分叉。
  */
 import { sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -19,23 +21,26 @@ import { loadStagedModule, stagingRoot } from './sut.mjs'
 export const EVENT = 'llm/stream'
 
 /**
- * 在假 ctx 上跑 `apply()`，取 `llm/stream` 的监听器。
+ * 在**假 ctx** 上跑一次 `apply()`，交出它注册的监听器。
  *
+ * `config` 缺省 = `{ contentDir: <staged> }`（`apply()` 的入参形状）。需要别的键（例如
+ * `delegationTools`，免得 apply() 往 stderr 喊"配置坏了"）就传整份进来。
+ *
+ * @param {{config?: object}} [options]
  * @returns {Promise<{
  *   surfaceMissing: boolean, importErrors: string[], applyError: string|null,
- *   registrations: number, events: string[], handler: Function|null,
+ *   events: string[], handlers: Map<string, Function[]>,
  * }>}
  */
-export async function loadSeam() {
+export async function loadAppliedSurface({ config } = {}) {
   const inject = await loadStagedModule('inject.js', [])
   const handlers = new Map()
   const out = {
     surfaceMissing: inject.surfaceMissing,
     importErrors: inject.errors,
     applyError: null,
-    registrations: 0,
     events: [],
-    handler: null,
+    handlers,
   }
   if (inject.surfaceMissing || inject.mod === null) return out
   if (typeof inject.mod.apply !== 'function') {
@@ -46,7 +51,7 @@ export async function loadSeam() {
     baseUrl: pathToFileURL(`${stagingRoot()}${sep}`).href,
     get(name) {
       if (name === 'systemPrompt') return {}
-      // 门禁 / 提候选这两样与本票无关：给个不吭声的桩，免得 apply() 往 stderr 喊两句
+      // 门禁 / 提候选这两样与这些用例无关：给个不吭声的桩，免得 apply() 往 stderr 喊两句
       if (name === 'tools') return { guard: () => () => {}, register: () => () => {} }
       return undefined
     },
@@ -57,15 +62,33 @@ export async function loadSeam() {
     effect(run) { return run() },
   }
   try {
-    await inject.mod.apply(ctx, { contentDir: stagingRoot() })
+    await inject.mod.apply(ctx, config ?? { contentDir: stagingRoot() })
   } catch (err) {
     out.applyError = String(err?.message ?? err).slice(0, 300)
   }
-  const list = handlers.get(EVENT) ?? []
-  out.registrations = list.length
   out.events = [...handlers.keys()]
-  out.handler = list.length > 0 ? list[0] : null
   return out
+}
+
+/**
+ * 取 `llm/stream` 的监听器（`RFG-02` / `RFG-03` 的唯一入口）。
+ *
+ * @returns {Promise<{
+ *   surfaceMissing: boolean, importErrors: string[], applyError: string|null,
+ *   registrations: number, events: string[], handler: Function|null,
+ * }>}
+ */
+export async function loadSeam() {
+  const surface = await loadAppliedSurface()
+  const list = surface.handlers.get(EVENT) ?? []
+  return {
+    surfaceMissing: surface.surfaceMissing,
+    importErrors: surface.importErrors,
+    applyError: surface.applyError,
+    registrations: list.length,
+    events: surface.events,
+    handler: list.length > 0 ? list[0] : null,
+  }
 }
 
 /**

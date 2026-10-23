@@ -143,13 +143,29 @@ export const BATCH_K = ['ANC-01']
 export const BATCH_L = ['RFG-01', 'RFG-02', 'RFG-03']
 
 /**
- * 已落笔的十二批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
+ * 批次 M 的 1 条 —— **门 2 · `F-152`**（板子把两种「没验过」说成同一句话，2026-10-23）。
+ *
+ * 一张脸：**同一个句子里，两种现场必须说两句不同的话** ——
+ * `afterTest > 0` 那一支没先问「叫过测试没有」，于是一个**一次测试都没叫过**的会话只要动过项目文件，
+ * 就会读到「最后一次测试之后，项目文件又动过 N 次 —— 那次测试作废」，可那次测试从来没发生过。
+ *   · `BRD-01` 三格（A 叫过开发没叫过测试 / B 从没叫过测试但文件动过 / C 叫过测试之后又动了）：
+ *     判的是**注入文字**（假 ctx 上跑 staged `inject.js` 的 `apply()` → 喂 `tools/result` → 走一次
+ *     `agent/pre-step` 瀑布 → 读那一步真的塞进请求的那条尾巴）；每格断言"该出现的那一句 + 不该出现的那几句"，
+ *     外加进度行的前置（`BRD-STATE-SETUP`）· 阳性对照（照 §3.3 写的最小实现三格全成立）·
+ *     反向刀（删掉「从没叫过测试、但文件动过」那一支 ⇒ **只有 B 格**翻红）。
+ * 契约在 `CONTRACT.md` §3.3（板子告警的三态）；定形在 `.team/leader/2026-10-23/spec-F-152.md`。
+ * ⚠️ 它**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G / H / I / J / K / L 的规矩。
+ */
+export const BATCH_M = ['BRD-01']
+
+/**
+ * 已落笔的十三批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
- * 批次 L 是 `F-148` 思考链过滤（同日 · 紧急票）。
+ * 批次 L 是 `F-148` 思考链过滤（同日 · 紧急票），批次 M 是 `F-152` 板子三态（同日）。
  * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -163,7 +179,8 @@ const BATCH_OF = (id) =>
                     : BATCH_J.includes(id) ? 'J'
                       : BATCH_K.includes(id) ? 'K'
                         : BATCH_L.includes(id) ? 'L'
-                          : null
+                          : BATCH_M.includes(id) ? 'M'
+                            : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -210,6 +227,9 @@ const F = {
   rfg02: 'integration/rfg02-reasoning-seam.test.mjs',
   /** 门 2 · `F-148` 的**落盘那一层**（装配之后）：真适配器形状 + 只有 block-end 的形状 + 尾巴排 finish 之前。 */
   rfg03: 'integration/rfg03-reasoning-assembly.test.mjs',
+  /** 门 2 · `F-152` 板子三态（批次 M）—— 判的是**注入文字**：假 ctx 上跑 apply() → tools/result →
+   *  agent/pre-step 瀑布 → 读那一步真的塞进请求的那条尾巴（量具 `support/board-surface.mjs`）。 */
+  brd01: 'integration/brd01-board-states.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -332,6 +352,9 @@ const ROWS = [
   ['RFG-01', 'reasoning-filter', F.rfg01, 'F-148 `lib/reasoning-filter.mjs`：单元表七行（汉字 1 / 英文单词 1 / emoji 1 / 阿拉伯数字 1 / 特殊字符 1 / 空白 0 / 标点 0）+ `P0` 逐字 + 四条易踩口径（`·`/`_`/`#`/`/` 计 1 · `-` 计 0 · 反引号计 1 · `~~~` 不当围栏）· 3 与 4 的边界 · `\\r\\n` 归一 · 空段落也删 · `\\n` 重建口径 · 代码块例外六格（围栏行 / 围栏内 / 围栏外 / 未闭合 / 跨 delta / 带语言标记）· `push`+`flush` 与批式**逐字节等价**（含一字符一切、`\\r` 与 `\\n` 跨 delta）· 两个 filter 不共享状态 · `MIN_UNITS === 3` —— 外加阳性对照（照契约写的最小实现全格成立）、反向对照（什么都不做 ⇒ 该删的格必须红）与反向刀（删掉围栏状态机那两行 ⇒ 只有围栏格翻面）', '批次 L'],
   ['RFG-02', 'reasoning-filter', F.rfg02, 'F-148 `inject.js` 的 `llm/stream` 监听器（**delta 层**）：`apply()` 之后**恰好一条** · 调用它**同步**拿到 AsyncIterable（`dsh-agent-loop` 是 `for await (… of llm.stream(request))`，返回 Promise 会 TypeError）· `next()` 恰好一次 · `reasoning-delta` 的文本被过滤（半行 + 围栏被拆在多个 delta 里 · 末段靠 `flush()` 吐尾巴）· 其它 chunk（正文 / 工具调用 / usage / finish）**同一个对象、同一次序、一个不少** · `index` 逐个保留 · 过滤时抛错 ⇒ **不冒到流上** + 出事的 chunk 原样吐出 + 后面的照旧过滤 + `console.error` 只一次 —— 外加阳性对照（照 §10.5 写的最小接缝六格全成立）与反向刀（删掉那对 `try`/`catch` ⇒ 只翻 S6）', '批次 L'],
   ['RFG-03', 'reasoning-filter', F.rfg03, 'F-148 **落盘的那一份**（`block-end` 的 reasoning 载荷，`dsh-llm/lib/index.js:1020-1021` 的「载荷优先」）：真适配器形状（`block-start` → 若干 `reasoning-delta`（含 ≤3 与 ≥4 单元的段）→ `block-end`（`block.text` = 那些 delta 的**未过滤拼接**）→ `usage` → `finish`）**装配之后**该 index 的 reasoning `text` 必须等于手写的清洗结果 · **只有 `block-end`、一个 delta 都没有**的形状也得清 · 尾巴（末段没有换行）必须排在**第一条 `finish` 之前**、`finish` 之后不许再有 `reasoning-delta` · `block-end` 的 **text 块**载荷一个字节不许动 —— 外加三条量具自控（`A-PREF` 载荷赢 / `A-ACC` 无载荷按 delta 累加 / `A-IGN` `block-end` 后被忽略；坏了报 `ASSEMBLER-RECOMPUTE`）、阳性对照（照 §10.5 写的最小接缝四格全绿）与两把刀（删载荷改写 ⇒ 只翻 A1/A2；删 `finish` 前 flush ⇒ 只翻 A3）', '批次 L'],
+
+  // ── 门 2 · `F-152` 板子三态（1）：同一个句子里两种「没验过」必须说两句话（2026-10-23）──────
+  ['BRD-01', 'board-states', F.brd01, 'F-152 板子告警三态（判**注入文字**：假 ctx 上跑 staged `inject.js` 的 `apply()` → 喂 `tools/result` → 走一次 `agent/pre-step` 瀑布 → 读那一步真的塞进 `decision.messages` 的尾巴）：A 叫过开发、从没叫过测试、文件没动 ⇒ 「⚠️ 叫过开发，还没叫过测试 —— 没人验过的改动不算完成。」（逐字）；B 从没叫过测试、项目文件动过一次 ⇒ 一句**新的**话，必须说明"文件改/动过 + 一次测试都没叫过"，且**不许**出现「最后一次测试之后」「那次测试作废」「叫过开发」—— **同一个格子两条输入**（B1 外聘叫过 / B2 开发叫过；组长 2026-10-23 拍板：「从没叫过测试」优先于「测试之后又动了」，红因点名是哪一条输入）；C 叫过测试之后又动过一次 ⇒ 「⚠️ 最后一次测试之后，项目文件又动过 1 次 —— 那次测试作废，要重测。」（逐字）—— 每格另判板子**进度行**的前置（`BRD-STATE-SETUP`）与"板子整段没贴"（`BRD-NO-BOARD`）；外加阳性对照（照 §3.3 写的最小实现三格每条输入全成立）与反向刀（删掉「从没叫过测试、但文件动过」那一支 ⇒ **只有 B 格的每一条输入**翻红，`KNIFE-WRONG-VECTOR` 抓多翻/少翻）', '批次 M'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -397,6 +420,8 @@ export const GROUP_COUNTS = {
   'anchors-shape': 1,
   /** 门 2 · `F-148` 思考链过滤 —— 契约见 `CONTRACT.md` §10。 */
   'reasoning-filter': 3,
+  /** 门 2 · `F-152` 板子告警三态 —— 契约见 `CONTRACT.md` §3.3。 */
+  'board-states': 1,
 }
 
 /**
@@ -414,11 +439,11 @@ export function registryProblems() {
   // 发现器自己报的问题（没有 ID 的 test() / 重复 ID）。
   for (const p of DISCOVERY.problems) problems.push(p.message)
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
-  // ⚠️ G / H / I / J / K / L 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
+  // ⚠️ G / H / I / J / K / L / M 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -445,6 +470,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
