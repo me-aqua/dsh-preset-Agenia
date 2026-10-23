@@ -138,12 +138,18 @@ export function findingsSetVerdict(findings, declared) {
  *   ① **自洽性** —— `equal === true` 时 `before_sha256` 必须逐字等于 `after_sha256`；
  *   ② **可复核性** —— `equal === true` 时两个哈希必须都在、都是 64 hex（只写 `{equal:true}` = "相信我" ⇒ 拒）；
  *   ③ **与盘面复算对账** —— 调用方给了 `anchorsFp`（独立复算出来的那两个值）时，声明值必须与它逐项相同。
+ *      "给了"与"没给"按**实参本身**分：`undefined` / `null` = 没给；其余一律算给了 ——
+ *      给了但不是对象（字符串 / 数组 / 数字 / 布尔）⇒ 拒（`E_ARG_SCHEMA`）；
+ *      对象里**给出来的那一项**不是 64 hex ⇒ 拒（`E_ARG_SCHEMA`）；
+ *      某一项**没出现**（`undefined`）⇒ 只跳过那一项（没给就是没给）。
+ *      对象在、但两项**都没出现**（`{}` / 两项都写成 `undefined`）⇒ 一项都没核 ⇒ 与 `null` 同形：
+ *      `ok:true` + `detail` 写明这一格判不了。
  *   ④ `equal !== true`（作业自己说"本次作废"）⇒ 拒（既有行为，不许退化）。
  *
- * 🔴 **判不了的那一格（写清，别假装覆盖得更宽）**：两个哈希自洽、形状合法，而 `anchorsFp` 是 `null`
- *    —— 校验方手里**没有那棵树**，算不出来。这一格**不报绿、也不把"没给"读成"相等"**：
- *    返回 `ok:true` 只表示"形状与自洽过了"，"真不真"要由给 `anchorsFp` 的那一方关上
- *    （`receipt-check` 目前没有 `code_root` 入参，加它是另一票）。
+ * 🔴 **判不了的那一格（写清，别假装覆盖得更宽）**：两个哈希自洽、形状合法，而 `anchorsFp` 是 `null` /
+ *    省略 / 两项都没给的对象 —— 校验方手里**没有那棵树**，算不出来。这一格**不报绿、也不把"没给"读成"相等"**：
+ *    返回 `ok:true` 只表示"形状与自洽过了"，`detail` 逐字写明这一格判不了；
+ *    "真不真"要由给 `anchorsFp` 的那一方关上（`receipt-check` 目前没有 `code_root` 入参，加它是另一票）。
  *
  * @param {unknown} fp 作业产物里的 `code_fingerprint`
  * @param {{before_sha256?:unknown, after_sha256?:unknown}|null} [anchorsFp] 独立复算值（可省）
@@ -179,19 +185,50 @@ export function codeFingerprintVerdict(fp, anchorsFp = null) {
       detail: `equal:true 却 before=${before.slice(0, 12)}… ≠ after=${after.slice(0, 12)}… —— 作业自己打自己的脸（自洽性先于一切）`,
     }
   }
-  if (isObject(anchorsFp)) {
-    const mismatches = []
-    for (const [key, own] of [['before_sha256', before], ['after_sha256', after]]) {
-      const anchor = shaKeyOf(anchorsFp[key])
-      if (anchor === null) continue // 调用方没给这一项（或给的形状不对）⇒ 这一项判不了，不假装判过
-      if (own !== anchor) mismatches.push(`${key}：声明 ${own.slice(0, 12)}… ≠ 盘面复算 ${anchor.slice(0, 12)}…`)
+  if (anchorsFp === null || anchorsFp === undefined) {
+    return {
+      ok: true,
+      code: null,
+      detail: '调用方没给盘面复算（anchorsFp）⇒ "代码指纹与盘面复算对账"这一格判不了：本次只核了形状与自洽，没有核过那棵树',
     }
-    if (mismatches.length > 0) {
+  }
+  if (!isObject(anchorsFp)) {
+    const shape = Array.isArray(anchorsFp) ? '数组' : typeof anchorsFp
+    const shown = typeof anchorsFp === 'string' ? `（${JSON.stringify(anchorsFp.slice(0, 80))}）` : ''
+    return {
+      ok: false,
+      code: 'E_ARG_SCHEMA',
+      detail: `anchorsFp 给了 ${shape}${shown}，但它必须是对象 —— 给了东西就得是个东西；"没给"与"给错了"不合并`,
+    }
+  }
+  const mismatches = []
+  let compared = 0
+  for (const [key, own] of [['before_sha256', before], ['after_sha256', after]]) {
+    const raw = anchorsFp[key]
+    if (raw === undefined) continue // 调用方没给这一项 ⇒ 这一项跳过（没给就是没给，这一项无锚可对）
+    const anchor = shaKeyOf(raw)
+    if (anchor === null) {
       return {
         ok: false,
-        code: CODE_FINGERPRINT_MOVED,
-        detail: `代码指纹的声明与盘面复算对不上（${mismatches.join(' · ')}）—— 校验方自己量过那棵树，不采信自报`,
+        code: 'E_ARG_SCHEMA',
+        detail: `anchorsFp.${key} 不是 64 hex（${typeof raw === 'string' ? JSON.stringify(raw.slice(0, 80)) : String(raw)}）—— 给出来的那一项必须可复核`,
       }
+    }
+    compared += 1
+    if (own !== anchor) mismatches.push(`${key}：声明 ${own.slice(0, 12)}… ≠ 盘面复算 ${anchor.slice(0, 12)}…`)
+  }
+  if (mismatches.length > 0) {
+    return {
+      ok: false,
+      code: CODE_FINGERPRINT_MOVED,
+      detail: `代码指纹的声明与盘面复算对不上（${mismatches.join(' · ')}）—— 校验方自己量过那棵树，不采信自报`,
+    }
+  }
+  if (compared === 0) {
+    return {
+      ok: true,
+      code: null,
+      detail: 'anchorsFp 是对象，但 before_sha256 / after_sha256 一项都没给 ⇒ "代码指纹与盘面复算对账"这一格判不了：本次只核了形状与自洽，没有核过那棵树',
     }
   }
   return { ok: true, code: null, detail: '' }

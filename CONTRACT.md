@@ -373,16 +373,44 @@ findings 内容改一个字、声明不动 ⇒ 它必须**非零退出**且点�
 **过哪些形状。** `equal:true` + 两哈希相同 + 等于盘面复算（给了 `anchors` 时）⇒ 过；
 没给 `anchors` 时，形状合法且自洽 ⇒ 过（③ 那一格此时**判不了**，见下）。
 
+**`F-129` 追加：`anchors.code_fingerprint` 自己的形状 —— 给了就是给了，给错了要拒。**
+③ 只说"不符要拒"，没说"给的东西本身形状不对"算哪一格：**给了但形状不对 ⇒ 拒（不降级成"没给"）；
+真没给 ⇒ 跳过，并写明这一格判不了。** 五行钉这一格（判据 `ANC-01`）：
+
+| # | 形状 | 码 |
+| --- | --- | --- |
+| ⑤ | 调用方给了 `anchors.code_fingerprint`，但它**不是对象**（字符串 / 数组 / 数字 / 布尔） | `E_ARG_SCHEMA` |
+| ⑥ | 是对象，但**给出来的那一项**不是 64 hex（`'abc'` / `'xyz'` / 空串 / `42` / `false`） | `E_ARG_SCHEMA` |
+| ⑦ | 是对象，但**那一项没出现**（`undefined`） | —— 跳过那一项（没给就是没给；另一项照常对账） |
+| ⑧ | `null` / 省略（真的没给） | —— 跳过对账；`ok:true`，且 `detail` **必须写明这一格判不了**（空串读起来就像"核过"） |
+| ⑨ | 是对象，但**两项都没出现**（`{}` / 两项都写成 `undefined`） | —— 一项都没核 ⇒ 与 ⑧ 同形：跳过对账；`ok:true`，且 `detail` **必须写明这一格判不了** |
+
+**一个空对象不是一次对账。** `{}`（或两项都写成 `undefined`）是"给了对象、但一项都没给"：一项都没核过 ⇒ 与 ⑧ 同形 ——
+**同一段结论（含「判不了」），各自的前缀不同**（前缀点明是哪一形，比逐字相同更好读；`detail` 不要求逐字相同）。
+它是这四个形状之外的第 5 行，`ANC-01` 的 `G1` 一起判它。
+
+**"这一项给没给"只看是不是 `undefined`。** `undefined` = 没给（跳过那一项，⑦）；
+`null` = **给了但形状不对**（按 ⑥ 拒）；空串（`''`）同样是"给了"，也按 ⑥ 拒 —— `null` 与"没给"是两件事，`''` 更不是"没给"。
+
+⚠️ **裸 64 hex 字符串是最会骗人的那一格。** `anchors.code_fingerprint` 直接传 `"<64 hex>"` 时，
+它的**内容**是对的、`isSha256` 也认它，但它的**形状**不是对象 ⇒ 仍是 ⑤（`E_ARG_SCHEMA`）。
+不许因为它"看着像对的"就当成没给、静默跳过 —— 那一步放过的正是"校验方以为自己核过了、其实一个字节都没核"。
+
+**次序。** `fp` 自己的 ①②③④ 先判；`fp` 不合法时报的是 `fp` 那一条，轮不到 `anchors` 的形状
+（判据：`ANC-01` 的 `D2` —— 同时喂坏 `fp` 与非对象 `anchors`，报成 `E_ARG_SCHEMA` 就是次序反了）。
+
 **边界（写清，别假装覆盖得更宽）。**
 
 - 🔴 **判不了的那一格**：`{before_sha256: X, after_sha256: X, equal: true}` 而 `X` 是**编的**、
   调用方又没给 `anchors.code_fingerprint` —— 校验方**手里没有那棵树**，算不出来。
   这一格**不假装判过**（不报绿、也不许把"没给"读成"相等"），它只能由"谁去量那棵树"关上：
   `receipt-check` 目前**没有** `code_root` 入参，本轮**不加**（加一个新 CLI 入参是另一票的事）。
-- ⚠️ `E_CODE_FINGERPRINT_MOVED` 今天**不在** `lib/error-codes.mjs` 的 `CODES` 表里
-  （`presets/agenia/bin/agenia-local.mjs:486` 会把不在表里的码映射成 `E_INTERNAL`，退出码 8）。
-  ⇒ 本轮这一票只钉**纯函数层**（`parseFindings` / `validateReceiptCoverage`）。
-  若实现要把 ①②③ 抬到 CLI 层，**必须同批**把该码登记进 `CODES`。
+- ⚠️ `E_CODE_FINGERPRINT_MOVED` **在** `lib/error-codes.mjs` 的 `CODES` 表里：该文件 `:108` 把
+  `receipt.mjs:51` 的 `RECEIPT_CODES` 摊进 `CODES`，而 `receipt.mjs:53` 把它登记为 `{ exit: 5, … }`。
+  `presets/agenia/bin/agenia-local.mjs:486` 只在码**不在**表里时才折成 `E_INTERNAL`（`:489` 取 `CODES[code].exit`）⇒
+  这个码**不会**被折成 `E_INTERNAL / 8`，抬到 CLI 层不需要再登记。
+  ⇒ 本轮这一票只钉**纯函数层**（`parseFindings` / `validateReceiptCoverage`）的理由是另一条：
+  `receipt-check` 没有 `code_root` 入参（见上一条 🔴），③ 那一格在 CLI 层没有可喂的复算值。
 
 ### §6.4 `F-123` · 「打的是哪棵树」必须**逐树枚举**
 
