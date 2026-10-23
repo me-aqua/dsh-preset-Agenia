@@ -165,6 +165,32 @@ function gate(mod, envelope, kind = 'maintenance') {
 const looksTooLong = (code) => typeof code === 'string' && /TOO_LONG/.test(code)
 
 /**
+ * "太长"这个拒绝的退出码（`CONTRACT.md` §8.2 ⑤：401 ⇒ **exit 2**；`E_PROPOSAL_TOO_LONG`）。
+ * 这个数在这里写死，**不从被测的 `CODES` 表里读**：从被测读，实现把退出码改掉这一格也不会红。
+ */
+const LENGTH_REJECT_EXIT = 2
+
+/**
+ * 纯谓词：**这一次读数算不算一次合格的"太长"拒绝**。
+ * 输入只有退出码与 stderr 尾巴两样 —— 不碰盘、不 spawn、不看池子 ⇒ 拿**合成读数**喂它也能判
+ * （`MTC-01` 第 4 段的谓词自控就是这么喂的）；真那一格与自控读的是**同一个**谓词（一把尺子，两个读者）。
+ *
+ * 判定只分三种，第二种是这一格的病根：
+ *   · `0`        ⇒ 它收下了 ⇒ 没有"拒绝"可读；
+ *   · 非零但 ≠ 2 ⇒ **别的入参错也是非零** —— 只判"非零"分不出"这道闸在"与"别的错先炸了"；
+ *   · `2`        ⇒ 合格。
+ * `stderrText` **不参与判定**（只进红因）：退出码是契约，报文可以被人改 —— 拿报文当判据，等于把契约交给散文。
+ */
+function lengthRejectionVerdict(exitCode, stderrText = '') {
+  if (exitCode === LENGTH_REJECT_EXIT) return { ok: true, why: '' }
+  const base = exitCode === 0
+    ? '它收下了（exit 0）—— 这条入口没有闸，没有"拒绝"可读'
+    : `非零但不是 ${LENGTH_REJECT_EXIT}（实得 exit ${JSON.stringify(exitCode)}）—— 别的入参错也是非零，那种非零说明不了这道闸在`
+  const tail = String(stderrText ?? '').trim()
+  return { ok: false, why: tail === '' ? base : `${base}；stderr：${tail}` }
+}
+
+/**
  * 真 CLI 跑一次导入（老板嘴里那个"入口"）。
  * `op` 缺省 `maintenance-import`；另一条合法值是 `proposal-import` —— 两条都走 `importOp`，
  * 差的只是 `kind`（见文件头）。拒绝码先读 stdout 的错误信封，取不到再退回 stderr 那一行。
@@ -344,6 +370,26 @@ test('MTC-01 payload.entry.text：401 字必拒 · 400 字必过（两条导入 
     proposalCell('proposal_entry_400', T400, 'accept')
 
     // ── 4. 真 CLI：老板嘴里那个"入口"（维护案这一条）────────────────────────────
+    //    ⓪ 谓词自控（喂**合成读数**）：这一格钉的是"**只有 exit 2** 才算一次合格的'太长'拒绝"，
+    //      那句判断住在 `lengthRejectionVerdict()` 里。谓词翻不了面时，下面那一格的绿只是装饰
+    //      （`mig-rules-11`；同款做法见 `integration/packet.test.mjs` 的 `FAIL-SHAPE-CONTROL`）。
+    const EXIT_PREDICATE_CONTROL = [
+      { label: '照契约该接受的（E_PROPOSAL_TOO_LONG 的退出码）', exit_code: 2, stderr: '[2026-10-22T04:00:00+08:00] E_PROPOSAL_TOO_LONG 维护案正文 401 字，上限 400', want: true },
+      { label: '别的入参错（非零但不是 2）', exit_code: 1, stderr: '[2026-10-22T04:00:00+08:00] E_ARG_HASH 哈希形状不合', want: false },
+      { label: '它收下了（exit 0，没有拒绝报文）', exit_code: 0, stderr: '', want: false },
+    ]
+    rec.readings.cli401_exit_predicate_control = EXIT_PREDICATE_CONTROL.map((c) => {
+      const v = lengthRejectionVerdict(c.exit_code, c.stderr)
+      return { label: c.label, exit_code: c.exit_code, stderr: c.stderr, want: c.want, got: v.ok, why: v.why }
+    })
+    for (const c of rec.readings.cli401_exit_predicate_control) {
+      if (c.got === c.want) continue
+      // 红因必须点到**是哪个退出码过去了**：只说"自控失败"读不出它把哪一格当成了合格拒绝。
+      push('MTC-CLI-401-EXIT-CONTROL', c.want
+        ? `「太长」谓词自控：「${c.label}」喂 exit ${c.exit_code} **应当**被接受，实判**不接受**（${c.why}）—— 真的 exit ${c.exit_code} 也会被这一格判红`
+        : `「太长」谓词自控：「${c.label}」喂 exit ${c.exit_code} **不**应当被接受，实判**接受** —— 它把 exit ${c.exit_code} 也当成了合格的"太长"拒绝`)
+    }
+
     const payload401 = { maintenance: 'modify', base_snapshot: 'v0', target_entry_id: 'cand-x', entry: { id: 'cand-x', type: 'general', text: T401 } }
     const cli401 = cliImport('MTC-01', 'cli-entry-401', envelopeOf('（F-125·MTC-01）CLI 401', payload401))
     rec.readings.cli_entry_401 = cli401
@@ -351,7 +397,10 @@ test('MTC-01 payload.entry.text：401 字必拒 · 400 字必过（两条导入 
     else if (cli401.missingBrain !== undefined) push('SUT-SURFACE-MISSING', `读不到 ${cli401.missingBrain}`)
     else {
       // 一条红只报一件事：**收下了** ⇒ 就已经说明"没有这道闸"（那时谈"码对不对 / 有没有零写入"没有对象）。
-      if (cli401.exit_code === 0) push('MTC-CLI-401-EXIT', '--op maintenance-import 收下了 401 字的维护案（exit 0）—— 这就是"入口没有闸"本身')
+      // "算不算一次合格的'太长'拒绝"**只**由 `lengthRejectionVerdict()` 判 —— 钉的是 `exit 2`，
+      // 不是"非零"：别的入参错也是非零（本用例第 5 段那三行说的就是这个病）。
+      const verdict = lengthRejectionVerdict(cli401.exit_code, cli401.stderr)
+      if (!verdict.ok) push('MTC-CLI-401-EXIT', `--op maintenance-import 导 401 字的维护案必须 exit ${LENGTH_REJECT_EXIT}（"太长"那个码的退出码）：${verdict.why}`)
       else {
         if (!looksTooLong(cli401.code)) push('MTC-CLI-401-CODE', `CLI 的拒绝码必须一眼看出"太长"（带 TOO_LONG），实得 ${JSON.stringify(cli401.code)}；stderr：${cli401.stderr}`)
         if (cli401.pool_rows !== 0) push('MTC-CLI-401-WRITE', `被拒的那一次改了池子（${JSON.stringify(cli401.pool_rows)} 行）—— 拒绝必须零写入`)

@@ -238,6 +238,11 @@ export function fenceVerdict(payload, state, existingVersions) {
  *   ③ **尺子只有一把**：`lib/memory.mjs::charCountOf`（去开头 BOM → `\r\n`/`\r` 归一成 `\n` → 数 code point）。
  *      用它而不是 `String.length`，所以 `"\uFEFF" + 400 字` 与 `300 字 + 100 个 \r\n` 都算 400（该收）。
  *
+ * ⚠️ **只判字符串**：`entry.text` / `engine_ops[].entry.text` **不是字符串**（数字 / 数组 / 对象）时，
+ *    这一关**跳过、不报一句**；形状层也不查内层 `payload` 长什么样（`shapeVerdict` 只查信封那六样）
+ *    ⇒ **非字符串的正文今天不受这 400 字约束**，`importOp` 照样把 `payload.payload` 写进池子。
+ *    真治它（形状层拒"`text` 在、但不是字符串"）归 `F-150`；这里只把实情写下来，行为不动。
+ *
  * 只卡入口、不扫存量（F-72）：已被收进库的长条目靠复核重写，不靠拒收。
  * @param {object} payload 导入信封（`{source, sha256, payload: {entry?, engine_ops?}, …}`）
  * @param {string} kind `maintenance` / `proposal`（只影响报文怎么称呼这份案，不决定闸开不开）
@@ -247,6 +252,8 @@ function bodyCapVerdict(payload, kind) {
   const inner = payload?.payload ?? {}
   const label = kind === 'maintenance' ? '维护案' : '普通提案'
   const overlong = []
+  // ⚠️ 下面两处都只判**字符串**：不是字符串（数字 / 数组 / 对象）⇒ 静默跳过，一个字都不数。
+  //    所以"进了库"不等于"过了这把尺子"；真治它归 `F-150`（见本函数文档注释末段）。
   const entryText = inner?.entry?.text
   if (typeof entryText === 'string') {
     const n = charCountOf(entryText)

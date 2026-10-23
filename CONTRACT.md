@@ -739,7 +739,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 | `MTC-03` | §8.2 ④：阳性对照（旧**工具**面）—— 普通候选 401 仍被 `proposal_file` 拒、400 过、同一把尺子、拒=零写入 | 🟢 **绿**（旧闸在，行为没变） |
 | 反向 | 同一份用例跑**改动前**的 `importVerdict`（`git show HEAD:` 的副本，不回落项目文件） | 🔴 `RED 2 / GREEN 1`，红因里含新断言那两条（`MTC-PROP-401-ACCEPTED` + `MTC-CLI-PROP-401-EXIT`：401 被收下、exit 0）（读数 `.team/test/2026-10-22/log.md` 第二十八节） |
 | 翻面 | 同一份用例跑**照本节写的最小实现**（只在副本上；两条 `kind` 同一条闸） | 🟢 `RED 0 / GREEN 3` —— 证明这三格"该绿时绿"，红不是用例写歪了 |
-| 半修 | 同一份用例跑**只给 `--op maintenance-import` 装闸**的现役副本（= 定形原来那句 `kind === 'maintenance'`） | 🔴 `RED 1 / GREEN 2` —— 红的**恰好**是 `MTC-01` 新那两条（`MTC-PROP-401-ACCEPTED` / `MTC-CLI-PROP-401-EXIT`），维护案那两格仍 `exit 2`：判据分得出"一条入口有闸"与"两条入口都有闸" |
+| 半修 | 同一份用例跑**只给 `--op maintenance-import` 装闸**的现役副本（= 定形原来那句 `kind === 'maintenance'`） | 🔴 **用例这一层**：`RED 1 格 / GREEN 2 格`（分母 = 3 条用例 `MTC-01`/`MTC-02`/`MTC-03`，红的是 `MTC-01`）· **问题码这一层**：红的那 1 格里 **2 条**（`MTC-PROP-401-ACCEPTED` / `MTC-CLI-PROP-401-EXIT`）—— `MTC-02`/`MTC-03` 仍绿，维护案那两格仍 `exit 2`：判据分得出"一条入口有闸"与"两条入口都有闸" |
 
 **边界（这一节不覆盖什么）。**
 
@@ -763,7 +763,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 - 盘上：`integration/maintenance-cap.test.mjs`（`MTC-01` + `MTC-02` + `MTC-03`，三条同住一个文件：
   两个入口面 + 一条旧闸的阳性对照）；
 - 登记：`support/registry.mjs` 的 `BATCH_J` + `ROWS` + `GROUP_COUNTS['maintenance-cap'] = 3`；
-- 分母：`TOTAL` 由盘上扫出 = **76**（历史冻结的 55 条 `FROZEN_IDS` 一条不少）。
+- 分母：`TOTAL` 由盘上扫出 = **80**（历史冻结的 55 条 `FROZEN_IDS` 一条不少）。
 
 ---
 
@@ -771,7 +771,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 
 > 定形：`.team/leader/2026-10-23/spec-F-144.md`。这一节是它的技术契约。
 > 判据：`tests/agenia-upgrade/integration/packet.test.mjs` 的 **`REV-01` 里 ⑦ 那一组**
-> （不加新用例 ID ⇒ 分母仍 **76**）。红基线：`.team/test/2026-10-23/log.md`。
+> （不加新用例 ID ⇒ 分母仍 **80**）。红基线：`.team/test/2026-10-23/log.md`。
 
 ### §9.0 一句话，四张脸
 
@@ -932,13 +932,13 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
   真实 134 的证据在定形与 `.team/test/2026-10-23/log.md` 的现场读数里，出处写明。
 - **不改"读多少"以外的语义**：不重写 packer、不改 `manifest` 十个顶层字段、不改人话筛的判据、
   不改"turn 闭合必须在整条流上判"（`packet.mjs:630-633`）。
-- **不加新 op、不加新用例 ID**：闸挂在既有 `--op session-packet` 上，判据并进 `REV-01`（分母仍 76）。
+- **不加新 op、不加新用例 ID**：闸挂在既有 `--op session-packet` 上，判据并进 `REV-01`（分母仍 80）。
 
 ### §9.5 登记面
 
 - 盘上：`tests/agenia-upgrade/integration/packet.test.mjs` 的 `REV-01` 里 **⑦** 那一组；
 - 登记：**不动** `support/registry.mjs`（没加用例 ID）；
-- 分母：`TOTAL` 由盘上扫出 = **76**（一格没加、一条没删）。
+- 分母：`TOTAL` 由盘上扫出 = **80**（本节一格没加：这 80 条全是继承来的）。
 
 ---
 

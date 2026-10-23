@@ -178,7 +178,7 @@ const CRITERION = {
   1: '维度 = 三个（掌控 · 活力 · 亲密）；愉悦/唤起/新异不再出现',
   2: '场景库条数与 `moodConstants` 的校验**同步**（改一边没改另一边 ⇒ 整块不认）',
   3: '掌控：成功率是**滑动窗口**（最近 20 次结果，跨回合不清零）',
-  4: '掌控：**上一回合的错，下一回合仍有影响**（治 P3）',
+  4: '掌控：**上一回合的错，下一回合仍有影响**（治的是"上一回合的错被 `turn/start` 清零"那个毛病）',
   5: '掌控：两个**不同的错**不算"同一个坑"（治 P4）',
   6: '亲密：**重逢项在他开口那一刻不归零**（治 P5）',
   7: '亲密：夸涨 / 骂跌 / 双命中骂赢 / 一句最多一档',
@@ -189,7 +189,8 @@ const CRITERION = {
   12: '活力：`1 − 净工时/满量程`（**干得越久分越低**）；在场累加 / 离开 ≥15 分钟按半衰 60 回退（时间从参数进）',
   13: '三个新常数住在 `mood.md`，`.js` 里一个都没有',
   14: '`mood.md` 的「分数是调语气用的，不是绩效报表」还在',
-  15: '尾巴全长（style 段 + 情绪段）有人守（收悬项 ⑧）',
+  15: '尾巴全长有人守（收悬项 ⑧）：情绪板之前那一段（style + 常识 + 时间行）+ 恰好 2 个字符 + 情绪段 = 真发出去那一条 —— '
+    + '它只钉"间隔恰好 2 个字符"与"情绪段非空"，证明不了那段内容来自哪几份源',
   16: '组员**一条都不贴**（口径 8b 回归）',
   17: '`node --check` = 0 · 探针全绿 · 体检全绿',
   18: '改 `inject.js` 后必须重启才生效（真回合，归组长）',
@@ -220,6 +221,13 @@ const CRITERION = {
   //    第三个触发点（只有板子变了）那一刀也带常识与时间行。它是**另一根轴**，不并进 `§F-126`。
   '§F-126b': '第三个触发点（**只有板子变了**：他一句话没说 + 工具结果不到 `every`）那条尾巴'
     + '**同样**同时带常识与时间行，段序仍是 `style → 常识 → 时间 → 板子 → 情绪`',
+  // `G12` 守的是契约 §3.2「触发点只有三个」，它不是 `F-126` 那四格之一 ⇒ 单开一个键（分法同 `§F-126b`）。
+  //    它红的时候要印的是"哪七种事件"，不是"尾巴里有什么段"。
+  '§围栏': '触发点只有三个（① 每 n 个工具结果 · ② 老板开口之后 · ③ 板子内容变了）：'
+    + '七种"看着像触发"的事件（`turn/start` / `step/start` / `step/end` / `tool/call` / `assistant/message` / '
+    + '一条 plugin 的 user 消息 / 纯装配）**一条都不许贴**。'
+    + '⚠️ 这是一张**黑名单**：它只钉这七种今天不触发，拦不住"明天在第八种事件上加一个"——'
+    + '那半边由 `inject.js` 里 `agent/pre-step` 那个唯一出口 + 契约 §3.2 管。',
 }
 
 /** `[A1 · 口径1]` / `[J6 · §形状]` */
@@ -1431,10 +1439,10 @@ try {
       await h5.plugin()
       await h5.stepBegin()      // 那条 plugin 消息被领进这一步：它不许被读成"老板又开了一次口"
       await h5.assemble()
-      check('G12', '§F-126',
+      check('G12', '§围栏',
         '【围栏·不是四格之一】七种"看着像触发"的事件（turn/start · step/start · step/end · tool/call · '
           + 'assistant/message · 一条 plugin 的 user 消息 · 纯装配）⇒ **一条都不许贴**'
-          + '（触发点只有三个：① 每 n 个工具结果 · ② 老板开口之后 · ③ 板子内容变了）',
+          + '（这一格只判这七种事件不触发；它证明不了"触发点只有三个"）',
         { 注入条数: h5.count() }, { 注入条数: 0 })
 
       // ── G13（**板子那一刀**；2026-10-22 老板拍「一条尾巴就是完整的包」）─────────────
@@ -1539,7 +1547,7 @@ try {
       ['I3', '§产物', '真产物贴出来的尾巴段 === 真 `style.md` 切完那一段'],
       ['I4', '§产物', '真产物尾巴段里不含 `<!--`'],
       ['I5', '§产物', '真产物尾巴段不是兜底那两句'],
-      ['I10', 15, '真产物全长 = style 段 + 2 + 情绪段'],
+      ['I10', 15, '真产物全长 = 情绪板之前那一段（style + 常识 + 时间行）+ 2 + 情绪段'],
       ['I11', 15, '真产物全长 ≤ 1000 字符'],
       ['I8', 2, '真 `mood.md` 解析得出恰好 3 条场景'],
       ['I9', 2, '`inject.js` 里"场景数必须正好 N"那个 N = 3'],
@@ -1619,7 +1627,10 @@ try {
     // 🔴 F-126：机制② 那条尾巴**也带**常识与时间行 ⇒ 期望值 = style 段 + 常识块 + 一行时间行。
     //    常识块**逐字**来自盘上那份 `.runtime/common-sense.md`（探针自己拼，不调产物的函数）；
     //    时间行的值来自 `Date.now()` ⇒ 只认形状（同 `G5`）。
-    //    ⚠️ 这条**不是**放松成 `includes`：仍然整段 `===` —— 多一段 / 少一段 / 次序反了都红。
+    //    ⚠️ 这条**不是**放松成 `includes`：比的是**`【情绪板】` 之前那一段**（`stylePartOf` 只切到那里），
+    //    仍然整段 `===` —— 在**那一段里**，多一段 / 少一段 / 次序反了都红。
+    //    `【情绪板】` 及它后面（情绪段）**一个字都不比**：情绪段在不在归 `I10`（`tailMood > 0`），
+    //    整条注入的长度上限归 `I11`（≤ 1000 字符）。
     const i3SenseFile = join(PRODUCT_DIR, '.runtime', 'common-sense.md')
     // ⚠️ 读失败（不存在 / 是个目录 / 读不了）一律只落成 `undefined`，**不许把整份探针崩掉**：
     //    下面 `I18` 要把它判成一条**点名**的红；崩掉的进程报不出"是哪份文件没了"。
@@ -1713,7 +1724,7 @@ try {
     //    只是把被测对象换成**真 `style.md` + 真 `mood.md`**。
     const tailStyle = typeof text === 'string' ? stylePartOf(text).length : 0
     const tailMood = typeof text === 'string' ? (moodPartOf(text) ?? '').length : 0
-    checkTrue('I10', 15, `【口径 15·真产物全长】真发出去那一条 = style 段 + 一个空行 + 情绪段（style ${tailStyle} + 2 + 情绪 ${tailMood}）`,
+    checkTrue('I10', 15, `【口径 15·真产物全长】情绪板之前那一段（style + 常识 + 时间行）+ 恰好 2 个字符 + 情绪段 = 真发出去那一条（style ${tailStyle} + 2 + 情绪 ${tailMood}）`,
       typeof text === 'string' && tailMood > 0 && text.length === tailStyle + tailMood + 2,
       `实测全长 ${typeof text === 'string' ? text.length : '拿不到'}（style ${tailStyle} + 2 + 情绪 ${tailMood}）`)
     checkTrue('I11', 15, '【口径 15·真产物上限】真产物那条尾巴 ≤ 1000 字符（同 `Y3` 代拍的那个数）',
@@ -2223,9 +2234,9 @@ try {
     checkTrue('P2', 7, '切口**后面**那一大段不许出现在请求里（`## emoji` 表在切口后面）',
       typeof text === 'string' && !text.includes('## emoji'),
       `贴出来的正文里${typeof text === 'string' && text.includes('## emoji') ? '**有**' : '没有'}切口后面那一段`)
-    checkTrue('P3', 6, `夹具的尾巴段 ≤ 400 字符（实测 ${String(stylePartOf(text)).length}）`,
+    checkTrue('P3', 6, `夹具尾巴里**情绪板之前**那一段（style 段 + 一行时间行）≤ 400 字符（实测 ${String(stylePartOf(text)).length}）`,
       typeof text === 'string' && stylePartOf(text).length <= 400,
-      `实测 ${String(stylePartOf(text)).length} 字符`)
+      `实测 ${String(stylePartOf(text)).length} 字符（**不含**情绪段；整条注入的上限由 \`P7\` 的 1000 管）`)
   }
   {
     // 口径 7：喂一份**没有标记**的夹具 ⇒ 退回全文（不许静默变空）。
@@ -2261,7 +2272,7 @@ try {
     }
   }
   {
-    // 【测试位代拍】整条注入 ≤ 700 字符（口径 6 只管 style 段；这条是防情绪段自己失控的护栏）。
+    // 【测试位代拍】整条注入（尾巴段 + 情绪段）≤ 1000 字符（口径 6 只管 style 段；这条是防情绪段自己失控的护栏）。
     const h = await harness(fixture)
     await h.turnStart(T0)
     await bossThenStep(h)
@@ -4034,7 +4045,7 @@ try {
   if (reds.length > 0) {
     console.log('\n红的是「实现还没跟上契约」。逐条对上 `now.md` 的验收口径：')
     for (const r of reds) {
-      console.log(`  · [${r.id} · 口径${r.criterion}] ${r.label}`)
+      console.log(`  · ${tag(r.id, r.criterion)} ${r.label}`)
       console.log(`      ${describe(r.got, r.want)}`)
       console.log(`      口径原文：${CRITERION[r.criterion]}`)
     }
