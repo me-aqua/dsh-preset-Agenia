@@ -758,6 +758,352 @@ describe('integration · packet (REV-01)', () => {
         }
       }
 
+      // ══════════════════════════════════════════════════════════════════════════════
+      // ⑦ 解压总量的**软上限** · `E_PACKET_TOO_LARGE` · 「崩溃不许悄悄发生」—— 2026-10-23（`F-144`）
+      //
+      // 【被测面】`agenia-brain.mjs --op session-packet`（真子进程）。契约 = `CONTRACT.md` §9。
+      //
+      // 【病根一句话】解压总量没有上限 ⇒ 撞到某个量级 V8 直接把进程杀掉（`exit 134`，
+      //   2026-10-23 11:34 现量：40 源 ≈121,000,000 字 · 11.5 s · 崩前堆 2111 MB / 上限 2237 MB · stdout 空）
+      //   ⇒ 调用方拿不到 `{ok:false}`、不落 state/health/receipt ⇒「今天没做」与「今天做失败了」
+      //   长得一模一样。
+      //
+      // 【夹具口径】两条合成会话流（各 10 个 turn / 40 行 / 12 帧）+ 一条**被排除**的坏帧源
+      //   （`other_project`：它一个字节都不许被解压，所以也不许进 `out_bytes` / `session_count`）。
+      //   🔴 **不许依赖真会话流**（定形验收 #4：那份 40 源真流会被清理，只做一次性验收）；
+      //   常驻用例只用"可注入的上限 + 几十 KB 的合成流"造出同一条超限路。
+      //
+      // 【怎么翻面】（每条都能单独红，也能单独绿）
+      //   · 上限真的在（`CAP-KNOB-OVER`）⇒ 把上限调低 1 字节必须拒。闸不在 ⇒ 这一格从"拒"变"跑成功"。
+      //   · 边界写成 `>=` ⇒ `CAP-KNOB-EXACT`（`out_bytes === limit` 必须过）红。
+      //   · 上限比的是"留下多少"而不是"读了多少" ⇒ `CAP-FILTER-PATH`（`human:true` 那条路）红。
+      //   · 先解压后判 ⇒ 那条被排除的坏帧源会当场 `E_PACKET_FRAMES`（`CAP-SESSION-COUNT` 红）。
+      //   · 拒的时候"读到一半就报数" ⇒ `CAP-NO-TRUNCATE`（`out_bytes` 必须是全量）红。
+      //   · 三个数按 `packetError(code, msg, {...})` 写、出口不改 ⇒ `error.details` 是 `null`
+      //     （`packetError` 挂在 `err.detail`，CLI 的 catch 只转发 `err.details`）⇒ `CAP-KNOB-OVER` 红。
+      //
+      // ⚠️ 期望值**手算**（不引用实现自报；手算就是"改前读数"）。
+      // ══════════════════════════════════════════════════════════════════════════════
+      {
+        const CAP_ENV = 'AGENIA_PACKET_MAX_BYTES'
+        /** 契约 §9.1 ③：缺省 = 512 MiB（理由那一段是可算的：一个 code point ≤ 4 B ⇒ 121,000,000 字 ≤ 484,000,000 B）。 */
+        const DEFAULT_LIMIT = 536870912
+        const testDataRoot = process.env[ENV.TEST_DATA_ROOT]
+        const capWs = caseWorkspace('REV-01', 'cap')
+        const capStatusRoot = path.join(capWs, '.team')
+        const capOutDir = path.join(capStatusRoot, 'retro', DAY, 'conversation-packet')
+        mkdirSync(path.join(capStatusRoot, 'route'), { recursive: true })
+        mkdirSync(capOutDir, { recursive: true })
+        // 一条**没有评审完成记录**的路线 ⇒ `window.from = null` ⇒ 没有源会被判成 `outside_window`。
+        writeJson(path.join(capStatusRoot, 'route', 'current.json'), {
+          goal: { id: 'g1', title: '（夹具）目标' },
+          stages: [], current_stage_id: null, tasks: [], current_task_id: null, tickets: [],
+        })
+
+        const CT0 = Date.parse('2026-10-14T12:00:00Z')
+        const capIso = (ms) => new Date(ms).toISOString()
+        const PAD = '（夹具）本段是刻意拉长的正文，用来把「解压后总量」顶到几十 KB —— 上限那一格只跟这个量有关。'.repeat(4)
+
+        /** 一条合成会话流：10 个 turn × 4 行 = 40 行，切成 12 帧（帧 ↔ 行**不是**一对一）。 */
+        const capStream = (tag) => {
+          const lines = []
+          let seq = 1000
+          for (let t = 1; t <= 10; t += 1) {
+            const base = CT0 + t * 30000
+            lines.push(JSON.stringify({ type: 'turn/start', seq: (seq += 1), time: base, data: { turn: t } }))
+            lines.push(JSON.stringify({
+              type: 'user/message', seq: (seq += 1), time: base + 1000,
+              data: { content: [{ type: 'text', text: `（夹具）老板第 ${t} 句 · ${tag} · ${PAD}` }], source: { kind: 'user' }, role: 'user', id: `msg-u-${tag}-${t}` },
+              surfaceOp: 'append',
+            }))
+            lines.push(JSON.stringify({
+              type: 'assistant/message', seq: (seq += 1), time: base + 2000,
+              data: {
+                turn: t, step: 1,
+                message: {
+                  role: 'assistant', id: `msg-a-${tag}-${t}`,
+                  source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-flash-dev0' },
+                  content: [{ type: 'reasoning', text: '想一下' }, { type: 'text', text: `（夹具）第 ${t} 轮的最后输出 · ${tag} · ${PAD}` }],
+                },
+              },
+              surfaceOp: 'append',
+            }))
+            lines.push(JSON.stringify({ type: 'turn/end', seq: (seq += 1), time: base + 3000, data: { turn: t, reason: { kind: 'completed' } } }))
+          }
+          const cuts = [2, 5, 9, 14, 18, 23, 27, 31, 34, 36, 38, 40]
+          const frames = []
+          let at = 0
+          for (const cut of cuts) {
+            frames.push(`${lines.slice(at, cut).join('\n')}\n`)
+            at = cut
+          }
+          return frames
+        }
+
+        const capFramesA = capStream('A')
+        const capFramesB = capStream('B')
+        const capFileA = fixturePath('REV-01', 'cap-src-a', 'jsonl.zstd')
+        const capFileB = fixturePath('REV-01', 'cap-src-b', 'jsonl.zstd')
+        writeFileSync(capFileA, Buffer.concat(capFramesA.map((t) => zlib.zstdCompressSync(Buffer.from(t, 'utf8')))))
+        writeFileSync(capFileB, Buffer.concat(capFramesB.map((t) => zlib.zstdCompressSync(Buffer.from(t, 'utf8')))))
+        // 被排除的那条源故意是**坏帧**：实现要是为了"量一量它多大"去解压，会当场 `E_PACKET_FRAMES`。
+        const capFileExcluded = fixturePath('REV-01', 'cap-src-excluded', 'jsonl.zstd')
+        writeFileSync(capFileExcluded, Buffer.concat([
+          zlib.zstdCompressSync(Buffer.from('（夹具）别的项目 · 不该被解压\n', 'utf8')),
+          Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x00]),
+        ]))
+        const capTextA = capFramesA.join('')
+        const capTextB = capFramesB.join('')
+        const capAllText = `${capTextA}${capTextB}`
+        const WANT = {
+          session_count: 2,
+          // 解压后 UTF-8 字节总量 = 两条流各自逐帧"实解 N B"之和
+          out_bytes: Buffer.byteLength(capAllText, 'utf8'),
+          all_chars: frozenCharCount(capAllText),
+          frames: capFramesA.length + capFramesB.length,
+        }
+        rec.readings.cap_fixture = {
+          out_bytes: WANT.out_bytes, all_chars: WANT.all_chars, frames: WANT.frames,
+          bytes_a: Buffer.byteLength(capTextA, 'utf8'), bytes_b: Buffer.byteLength(capTextB, 'utf8'),
+          excluded_source: { session_id: 'cap-src-other', project: 'other', reason: 'other_project', file_is_corrupt: true },
+        }
+        if (WANT.out_bytes < 20000 || WANT.out_bytes > 4 * 1024 * 1024) {
+          push('CAP-FIXTURE', `夹具的解压后总量应当在"几十 KB"这个量级，实得 ${WANT.out_bytes} B —— 太大就违背定形验收 #4（常驻用例不许扛大流），太小则上限那一格（调低 1 字节）没有说服力`)
+        }
+
+        const capPayload = ({ humanAll = false } = {}) => ({
+          day: DAY,
+          project: 'harness',
+          exclude_session_ids: [],
+          now: capIso(CT0 + 400000),
+          sources: [
+            { session_id: 'cap-src-a', project: 'harness', file: capFileA, last_event_at: capIso(CT0 + 290000), ...(humanAll ? { human: true } : {}) },
+            { session_id: 'cap-src-b', project: 'harness', file: capFileB, last_event_at: capIso(CT0 + 295000), ...(humanAll ? { human: true } : {}) },
+            // 源序刻意放在**第三位**：它要是被计进账，`session_count` 会变成 3（不是"第一个恰好没算"）
+            { session_id: 'cap-src-other', project: 'other', file: capFileExcluded, last_event_at: capIso(CT0 + 300000) },
+          ],
+        })
+        const capRun = (tag, payload, limit) => {
+          const env = { ...process.env }
+          delete env[CAP_ENV]
+          if (limit !== undefined) env[CAP_ENV] = String(limit)
+          const inFile = writeFixture('REV-01', `cap-${tag}`, payload)
+          return runCli('agenia-brain.mjs', { op: 'session-packet', dataRoot: testDataRoot, workspace: capWs, inFile, testMode: true }, { env })
+        }
+        const capTrace = (r) => ({
+          exit: r.exit_code, signal: r.signal ?? null, timed_out: r.timed_out === true, ok: r.json?.ok ?? null,
+          code: r.json?.error?.code ?? null, details: r.json?.error?.details ?? null,
+          packet_bytes: r.json?.packet_bytes ?? null, frames: r.json?.frames ?? null,
+          stdout_head: String(r.stdout ?? '').slice(0, 200), stderr_head: String(r.stderr ?? '').slice(0, 200),
+        })
+
+        const rDefault = capRun('default', capPayload(), undefined)
+        const rExact = capRun('exact', capPayload(), WANT.out_bytes)
+        const capDirsBeforeOver = listPacketDirs(capOutDir)
+        const rOver = capRun('over', capPayload(), WANT.out_bytes - 1)
+        const capDirsAfterOver = listPacketDirs(capOutDir)
+        const rOff = capRun('off', capPayload(), 0)
+        const rNeg = capRun('negative', capPayload(), -1)
+        const rJunk = capRun('junk', capPayload(), '1KB')
+        const rHuman = capRun('human-over', capPayload({ humanAll: true }), WANT.out_bytes - 1)
+        const capNoDay = capPayload()
+        delete capNoDay.day
+        const rNoDay = capRun('shape-no-day', capNoDay, undefined)
+        const capMissing = capPayload()
+        capMissing.sources[0].file = path.join(capWs, '（夹具）这条流不在盘上.jsonl.zstd')
+        const rMissing = capRun('shape-missing-stream', capMissing, undefined)
+        rec.readings.cap_runs = {
+          default: capTrace(rDefault), exact: capTrace(rExact), over: capTrace(rOver), off: capTrace(rOff),
+          negative: capTrace(rNeg), junk: capTrace(rJunk), human_over: capTrace(rHuman),
+          shape_no_day: capTrace(rNoDay), shape_missing_stream: capTrace(rMissing),
+          dirs_before_over: capDirsBeforeOver, dirs_after_over: capDirsAfterOver,
+        }
+
+        // ── 正例 ①：不注入上限 ⇒ 照常出包，四项手算值对上，且生效上限读得到 ────────────────
+        if (rDefault.exit_code !== 0 || rDefault.json?.ok !== true) {
+          push('CAP-DEFAULT', `不注入上限时，几十 KB 的合法小流必须照常出包（缺省 512 MiB 不会挡它），实得 exit=${rDefault.exit_code} code=${JSON.stringify(rDefault.json?.error?.code ?? null)}：${String(rDefault.stdout ?? '').trim().slice(0, 200)}`)
+        } else {
+          const pb = rDefault.json?.packet_bytes ?? null
+          if (pb === null || typeof pb !== 'object') {
+            push('CAP-DEFAULT', '成功那一跑的信封顶层必须有 `packet_bytes = {session_count, out_bytes, limit}`（契约 §9.1 ⑤）—— 生效上限在成功路上读不到，就等于"闸在不在"在跑得通的那一跑里没有读数')
+          } else {
+            if (pb.limit !== DEFAULT_LIMIT) push('CAP-DEFAULT', `不注入时生效上限必须是缺省 ${DEFAULT_LIMIT} B（= 512 MiB，见 CONTRACT §9.1 ③），实得 ${JSON.stringify(pb.limit)}`)
+            if (pb.out_bytes !== WANT.out_bytes) push('CAP-DEFAULT', `成功路上的 out_bytes 应为两条进包流解压后字节之和 ${WANT.out_bytes}，实得 ${JSON.stringify(pb.out_bytes)}`)
+            if (pb.session_count !== WANT.session_count) push('CAP-SESSION-COUNT', `成功路上的 session_count 应为进包的源数 2（第三条是 other_project，一个字节都不许解压），实得 ${JSON.stringify(pb.session_count)}`)
+          }
+          const fr = rDefault.json?.frames ?? null
+          if (fr === null || typeof fr !== 'object') {
+            push('CAP-DEFAULT', '成功那一跑必须带回 `frames` 四条读数')
+          } else {
+            if (fr.count !== WANT.frames) push('CAP-DEFAULT', `frames.count 应为两条流的帧数之和 ${WANT.frames}，实得 ${JSON.stringify(fr.count)}`)
+            if (fr.all_chars !== WANT.all_chars) push('CAP-DEFAULT', `frames.all_chars 应为手算的 ${WANT.all_chars}（B3.4 口径：去 BOM、CRLF→LF、按 code point），实得 ${JSON.stringify(fr.all_chars)}`)
+          }
+          const man = rDefault.json?.packet_dir ? manifestOf({ manifest_path: path.join(rDefault.json.packet_dir, 'manifest.json') }) : null
+          if (man === null) push('CAP-DEFAULT', '成功那一跑必须落下 manifest.json（读不到 ⇒ 这条正例不成立）')
+          else {
+            if (man.frames?.all_chars !== WANT.all_chars) push('CAP-DEFAULT', `manifest.frames.all_chars 应为 ${WANT.all_chars}，实得 ${JSON.stringify(man.frames?.all_chars)}`)
+            const ids = Array.isArray(man.source_ids) ? [...man.source_ids].sort() : null
+            if (JSON.stringify(ids) !== JSON.stringify(['cap-src-a', 'cap-src-b'])) {
+              push('CAP-SESSION-COUNT', `进包的 source_ids 必须恰好是 ['cap-src-a','cap-src-b']，实得 ${JSON.stringify(ids)}`)
+            }
+          }
+        }
+
+        // ── 正例 ②（边界）：`out_bytes === limit` ⇒ **过**（"超过才拒"，口径同 §8.1 的 400/401）────
+        if (rExact.exit_code !== 0 || rExact.json?.ok !== true) {
+          push('CAP-KNOB-EXACT', `out_bytes 恰好等于上限（${WANT.out_bytes} B）时必须**过** —— 上限是"超过才拒"，不是"到了就拒"；实得 exit=${rExact.exit_code} code=${JSON.stringify(rExact.json?.error?.code ?? null)}：${String(rExact.stdout ?? '').trim().slice(0, 200)}`)
+        } else if (rExact.json?.packet_bytes?.limit !== WANT.out_bytes) {
+          push('CAP-KNOB-EXACT', `注入上限的那一跑必须把**生效上限**报回来（应为注入的 ${WANT.out_bytes}），实得 ${JSON.stringify(rExact.json?.packet_bytes?.limit)}`)
+        }
+
+        // ── 反例 ①：调低 1 字节 ⇒ `E_PACKET_TOO_LARGE` + 三个数的 `error.details` ────────────
+        if (rOver.exit_code === 0 || rOver.json?.ok !== false) {
+          push('CAP-KNOB-OVER', `上限调到 ${WANT.out_bytes - 1} B（< 解压总量 ${WANT.out_bytes}）必须**拒**，实得 exit=${rOver.exit_code} ok=${JSON.stringify(rOver.json?.ok ?? null)} —— 今天这一跑是"照做"（没有上限，超限就是照常出包）`)
+        } else {
+          const code = rOver.json?.error?.code ?? null
+          if (code !== 'E_PACKET_TOO_LARGE') {
+            push('CAP-KNOB-OVER', `超限的稳定码必须是 E_PACKET_TOO_LARGE，实得 ${JSON.stringify(code)} —— 码没登记进 lib/error-codes.mjs 的 CODES 时，CLI 的 catch 会把它折成 E_INTERNAL（"包太大"与"程序有 bug"就长得一模一样）`)
+          }
+          if (rOver.exit_code !== 5) push('CAP-KNOB-OVER', `E_PACKET_TOO_LARGE 的退出码应是 5（校验拒绝族，PACKET_* 五个码全是 5），实得 ${rOver.exit_code}`)
+          const d = rOver.json?.error?.details ?? null
+          if (d === null || typeof d !== 'object') {
+            push('CAP-KNOB-OVER', '`E_PACKET_TOO_LARGE` 必须把三个数放进 `error.details`：{session_count, out_bytes, limit}（⚠️ lib/packet.mjs 的 packetError() 把它挂在 err.detail（单数），而 CLI 的 catch 只转发 err.details（复数）—— 只改 throw 不改出口，这三个数在 stdout 里是 null）')
+          } else {
+            if (d.session_count !== WANT.session_count) push('CAP-SESSION-COUNT', `error.details.session_count 应为进包的源数 2（不是 sources 的 3 条），实得 ${JSON.stringify(d.session_count)}`)
+            if (d.limit !== WANT.out_bytes - 1) push('CAP-KNOB-OVER', `error.details.limit 必须是**这一次生效**的那个数 ${WANT.out_bytes - 1}，实得 ${JSON.stringify(d.limit)}`)
+            if (d.out_bytes !== WANT.out_bytes) {
+              push('CAP-NO-TRUNCATE', `拒的时候 error.details.out_bytes 必须是**解压总量**（${WANT.out_bytes}），实得 ${JSON.stringify(d.out_bytes)} —— 比它小就是"读到被顶住那一刻就报数"，也就是"少读几帧凑合"（定形不做清单第 4 条禁的就是这件事）`)
+            }
+          }
+        }
+        if (JSON.stringify(capDirsAfterOver) !== JSON.stringify(capDirsBeforeOver)) {
+          push('CAP-NO-TRUNCATE', `超限那一跑必须在 outDir 里**零写入**：跑前 ${JSON.stringify(capDirsBeforeOver)} / 跑后 ${JSON.stringify(capDirsAfterOver)}（失败不留半包，与既有 PACKET-NO-HALF 同一条）`)
+        }
+
+        // ── 三个值的语义：`0` = 关闸 · 负数/非整数 = 当场拒 ─────────────────────────────────
+        //   `0` 这一格**两件事都要抓**：① 信封顶层**没有** `packet_bytes`（上限读不到 ⇒ 红）
+        //   ② 在、但 `limit !== null`（"关"被写成 0 / 缺省值 / 干脆没这个键 ⇒ 红）。
+        //   🔴 不许写成 `(v ?? '…') !== null`：`??` 把 `null` 也当成"没有值" ⇒ 那个比较**恒真**，
+        //   契约要的 `null` 反倒判红（2026-10-23 现场：`limit: null` 却报 `[CAP-OFF] … 实得 null`）。
+        const capOffProblems = (envelope) => {
+          if (envelope === null || typeof envelope !== 'object' || !Object.prototype.hasOwnProperty.call(envelope, 'packet_bytes')) {
+            return ['信封顶层没有 `packet_bytes` —— 成功的那一跑对"闸关没关"没有读数（契约 §9.1 ⑤ 的第二个出口）']
+          }
+          const pb = envelope.packet_bytes
+          if (pb === null || typeof pb !== 'object') {
+            return [`\`packet_bytes\` 必须是对象 {session_count, out_bytes, limit}，实得 ${JSON.stringify(pb)}`]
+          }
+          if (!Object.prototype.hasOwnProperty.call(pb, 'limit')) {
+            return [`\`packet_bytes\` 里没有 \`limit\` 这个键（实得键 ${JSON.stringify(Object.keys(pb))}）—— 生效上限没被报出来`]
+          }
+          if (pb.limit !== null) {
+            return [`上限关掉时 \`packet_bytes.limit\` 必须是 null（不是 0 —— 0 与"关"混在一起，读的人分不出"没设闸"和"闸设成 0"），实得 ${JSON.stringify(pb.limit)}`]
+          }
+          return []
+        }
+        //   谓词自控（六格，喂合成信封）：翻不了面的判据是装饰 —— 只有"该绿时绿"与"该红时红"都出现过，
+        //   下面那一格的绿才算读数。（`mig-rules-11`；同款做法见本文件 `FAIL-SHAPE-CONTROL`。）
+        const CAP_OFF_CONTROL = [
+          { label: '照契约写的成功信封（limit === null）', envelope: { ok: true, packet_bytes: { session_count: 2, out_bytes: WANT.out_bytes, limit: null } }, wantRed: 0 },
+          { label: '不注入上限那一跑的读数（limit = 缺省值；它走的是"正常出包"那条分支，不是关闸那条）', envelope: { ok: true, packet_bytes: { session_count: 2, out_bytes: WANT.out_bytes, limit: DEFAULT_LIMIT } }, wantRed: 1 },
+          { label: 'limit 是 0（把"关"写成"设成 0"）', envelope: { ok: true, packet_bytes: { session_count: 2, out_bytes: WANT.out_bytes, limit: 0 } }, wantRed: 1 },
+          { label: '顶层没有 packet_bytes', envelope: { ok: true, op: 'session-packet' }, wantRed: 1 },
+          { label: 'packet_bytes 是 null', envelope: { ok: true, packet_bytes: null }, wantRed: 1 },
+          { label: 'packet_bytes 里没有 limit 键', envelope: { ok: true, packet_bytes: { session_count: 2, out_bytes: WANT.out_bytes } }, wantRed: 1 },
+        ]
+        rec.readings.cap_off_control = CAP_OFF_CONTROL.map((c) => {
+          const red = capOffProblems(c.envelope)
+          return { label: c.label, want_red: c.wantRed, got_red: red.length === 0 ? 0 : 1, red }
+        })
+        for (const c of rec.readings.cap_off_control) {
+          if (c.got_red !== c.want_red) {
+            push('CAP-OFF', `CAP-OFF 谓词自控：「${c.label}」应判 ${c.want_red === 0 ? '绿' : '红'}、实判 ${c.got_red === 0 ? '绿' : '红'}（${c.red.join(' / ') || '无红因'}）—— 谓词不翻面时，下面那一格的绿是装饰`)
+          }
+        }
+        if (rOff.exit_code !== 0 || rOff.json?.ok !== true) {
+          push('CAP-OFF', `\`${CAP_ENV}=0\` 的语义是"关掉上限"，几十 KB 的小流必须照常出包，实得 exit=${rOff.exit_code} code=${JSON.stringify(rOff.json?.error?.code ?? null)}`)
+        } else {
+          for (const msg of capOffProblems(rOff.json)) push('CAP-OFF', msg)
+        }
+        for (const [label, r, raw] of [['负整数', rNeg, '-1'], ['带单位的字符串', rJunk, "'1KB'"]]) {
+          if (r.exit_code === 0 || r.json?.ok !== false) {
+            push('CAP-BAD-VALUE', `上限的值是${label}（${raw}）⇒ 必须当场 E_ARG_SCHEMA 拒掉（不许静默当 0 就当"关闸"，也不许当无穷），实得 exit=${r.exit_code} ok=${JSON.stringify(r.json?.ok ?? null)}`)
+          } else if (r.json?.error?.code !== 'E_ARG_SCHEMA') {
+            push('CAP-BAD-VALUE', `上限的值是${label}（${raw}）时稳定码应是 E_ARG_SCHEMA，实得 ${JSON.stringify(r.json?.error?.code ?? null)}`)
+          } else if (r.exit_code !== 2) {
+            push('CAP-BAD-VALUE', `E_ARG_SCHEMA 的退出码是 2，实得 ${r.exit_code}`)
+          }
+        }
+
+        // ── 量的是"读了多少"，不是"留下多少"：同一条上限也要挡住 `human:true` 那条路 ──────────
+        //    它走 `filterStream`（40 源那次崩的正是那一段），而留下的人话包比解压总量小得多 ——
+        //    按"留下多少"判的实现，会在不开 human 那一格绿、在这一格红。
+        if (rHuman.exit_code === 0 || rHuman.json?.ok !== false || rHuman.json?.error?.code !== 'E_PACKET_TOO_LARGE') {
+          push('CAP-FILTER-PATH', `同一条上限必须也挡住 \`sources[].human: true\` 那条路（解压总量同为 ${WANT.out_bytes} B，上限 ${WANT.out_bytes - 1} B ⇒ 必须 E_PACKET_TOO_LARGE），实得 exit=${rHuman.exit_code} code=${JSON.stringify(rHuman.json?.error?.code ?? null)} ok=${JSON.stringify(rHuman.json?.ok ?? null)}`)
+        }
+        if (rHuman.json?.error?.code === 'E_PACKET_TOO_LARGE' && rHuman.json?.error?.details?.out_bytes !== WANT.out_bytes) {
+          push('CAP-FILTER-PATH', `\`human:true\` 那一跑的 out_bytes 也必须是解压总量 ${WANT.out_bytes}（不是筛完留下多少），实得 ${JSON.stringify(rHuman.json?.error?.details?.out_bytes)}`)
+        }
+
+        // ══ 「崩溃不许悄悄发生」：exit 非 0 ⇒ stdout 必须是可解析的 JSON；**绝不 134** ══════
+        //  谓词先拿四种合成样本自证（该红时红、该绿时绿），再逐条量真实的路。
+        const failShape = (r, wantCode) => {
+          if (r.exit_code === 0) return ['退出码是 0 —— 这条路**根本没失败**（没有失败可读，所以"失败时 stdout 是不是 JSON"这一格今天读不到）']
+          const fails = []
+          if (r.exit_code === 134) fails.push('退出码是 134 —— 那是进程被 V8 杀掉，不是一条失败读数（定形"问题"第 3 条：这条就是今天那个 crash 的形状）')
+          if (r.signal !== null && r.signal !== undefined) fails.push(`进程被信号杀掉（signal=${r.signal}）—— 调用方拿不到 {ok:false}`)
+          if (r.timed_out === true) fails.push('超时被杀（timed_out）—— 没有读数')
+          if (r.spawn_error) fails.push(`子进程起不来：${String(r.spawn_error).slice(0, 160)}`)
+          const lines = String(r.stdout ?? '').split(/\r?\n/).filter((l) => l.trim() !== '')
+          let envelope = null
+          try { envelope = JSON.parse(lines[lines.length - 1] ?? '') } catch { envelope = null }
+          if (envelope === null) fails.push(`stdout 里没有可解析的 JSON（前 120 字：${JSON.stringify(String(r.stdout ?? '').slice(0, 120))}）—— 契约 §9.1 ⑥：退出码非 0 时 stdout 必须是一行 JSON`)
+          else {
+            if (envelope.ok !== false) fails.push(`stdout 的 JSON 里 ok 应为 false，实得 ${JSON.stringify(envelope.ok)}`)
+            if (wantCode !== undefined && (envelope?.error?.code ?? null) !== wantCode) {
+              fails.push(`错误码应是 ${wantCode}，实得 ${JSON.stringify(envelope?.error?.code ?? null)}`)
+            }
+          }
+          return fails
+        }
+        const CAP_CONTROL = [
+          { label: '真·134（今天那个 crash 的形状）', rec: { exit_code: 134, signal: null, timed_out: false, stdout: '' }, want: 'BAD' },
+          { label: '被信号杀掉', rec: { exit_code: null, signal: 'SIGKILL', timed_out: false, stdout: '' }, want: 'BAD' },
+          { label: '非 0 但 stdout 是散文（GC 日志）', rec: { exit_code: 5, signal: null, timed_out: false, stdout: 'FATAL ERROR: invalid array length Allocation failed - JavaScript heap out of memory\n' }, want: 'BAD' },
+          { label: '照契约写的失败形状', rec: { exit_code: 5, signal: null, timed_out: false, stdout: '{"ok":false,"op":"session-packet","error":{"code":"E_PACKET_TOO_LARGE","message":"（样本）","details":{"session_count":2,"out_bytes":40000,"limit":39999}}}\n' }, want: 'OK' },
+        ]
+        const capControl = CAP_CONTROL.map((s) => {
+          const fails = failShape(s.rec, undefined)
+          return { label: s.label, want: s.want, got: fails.length === 0 ? 'OK' : 'BAD', fails }
+        })
+        rec.readings.fail_shape_control = capControl
+        for (const c of capControl) {
+          if (c.want !== c.got) {
+            push('FAIL-SHAPE-CONTROL', `失败形状谓词自控：「${c.label}」应判 ${c.want}、实判 ${c.got}（${c.fails.join(' / ') || '无红因'}）—— 谓词不咬的话，下面那张表就是装饰`)
+          }
+        }
+        const CAP_PATHS = [
+          ['缺 day', rNoDay, 'E_ARG_SCHEMA'],
+          ['会话流不在盘上', rMissing, 'E_PACKET_FRAMES'],
+          [`上限是负整数（${CAP_ENV}=-1）`, rNeg, 'E_ARG_SCHEMA'],
+          [`解压总量超限（${CAP_ENV}=${WANT.out_bytes - 1}）`, rOver, 'E_PACKET_TOO_LARGE'],
+        ]
+        rec.readings.fail_shape_paths = CAP_PATHS.map(([label, r, want]) => ({
+          label, want_code: want, exit: r.exit_code, signal: r.signal ?? null, timed_out: r.timed_out === true,
+          code: r.json?.error?.code ?? null, stdout_head: String(r.stdout ?? '').slice(0, 160), fails: failShape(r, want),
+        }))
+        for (const [label, r, want] of CAP_PATHS) {
+          for (const f of failShape(r, want)) push('FAIL-SHAPE', `「${label}」：${f}`)
+        }
+        rec.readings.cap_note = {
+          real_crash: {
+            measured_at: '2026-10-23 11:34（组长现量，另一个工作区的 40 源真流）',
+            exit: 134, ms: 11500, heap_before_crash_mb: 2111, heap_limit_mb: 2237, stdout: '（空 —— 没有 JSON）',
+          },
+          why_not_in_this_case: '定形验收 #4：那份 40 源真流会被清理 ⇒ 只做一次性验收读数，不做常驻用例。常驻用例靠"可注入的上限 + 几十 KB 合成流"造同一条超限路；`exit 134` 那一格今天由 fail_shape_control 的合成样本守着（谓词认得出 134），不是"这一跑真的 134 过"。',
+        }
+      }
+
       caseFail(problems)
     })
   })

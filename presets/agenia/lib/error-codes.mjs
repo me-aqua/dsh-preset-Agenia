@@ -7,12 +7,14 @@
  *
  * 追加裁定 **v1.10 ②** 补冻两个派生码：`E_ARG_SCHEMA` ⇒ **2** · `E_TXN_IO` ⇒ **4**
  * （"入参不成形状"与"打包 IO 失败"两处调用它们；值就是下面表里那两个，别处不许再写一份）。
- * 🔴 `E_PACKET_*` 五个（`MANIFEST` / `FRAMES` / `CONTENT_SHA` / `WINDOW` / `EXCLUDE`）**原先不在本表**：
+ * 🔴 `E_PACKET_*` 那五个（`MANIFEST` / `FRAMES` / `CONTENT_SHA` / `WINDOW` / `EXCLUDE`）**原先不在本表**：
  *    它们是 `lib/packet.mjs` 里 `validateSessionPacket` 的**返回码**，不是 CLI 退出码（v1.10 ② 明写"不许混"）。
  *    **2026-10-15 起有 CLI 暴露它们了**（`bin/agenia-brain.mjs --op session-packet`）⇒ 按那条规矩
  *    **同批搬进本表**：码名从 `lib/packet.mjs` 的 `PACKET_CODES` **取值**（不再抄一遍），这里只补退出码。
  *    ⚠️ 不搬的后果是"稳定码变 `E_INTERNAL`"——CLI 的 catch 只认本表里的码，别的全折成内部错误，
  *    于是"包坏了"和"程序有 bug"在报文里长得一模一样。
+ *    （第六个 `E_PACKET_TOO_LARGE` —— 解压总量超过上限，F-144 2026-10-23 —— 走同一条：码名在
+ *    `PACKET_CODES`，退出码 5 在本表。）
  *
  * 域：ARG|ROOT|PATH|LOCK|CAS|TXN|STATE|DATA|CAP|STREAK|CS|JOB|CLAIM|FENCE|COVERAGE|RECEIPT|
  *     TICKET|EVIDENCE|STAGE|TASK|ROUTE|GUARD|INSTALL|MANIFEST|PACKET|SCAN|PROPOSAL|INTERNAL
@@ -30,9 +32,12 @@ import { RECEIPT_CODES } from './receipt.mjs'
 import { PACKET_CODES } from './packet.mjs'
 
 /**
- * 会话包那五个码 ⇒ **退出码 5（校验拒绝）**。
+ * 会话包那一族码 ⇒ **退出码 5（校验拒绝）**。
  * 码名**从 `lib/packet.mjs` 取**（`PACKET_CODES` 才是它们唯一的一份），这里只补"CLI 该退几"。
- * ⚠️ 五个都是"校验没过"：包不合法就该停，不是数据缺失（7）也不是内部错误（8）。
+ * ⚠️ 它们都是"校验没过 / 这份包不该出"：包不合法、或者"你让我读这么多"超过上限，都该停
+ *    —— 不是数据缺失（7），也不是内部错误（8）。
+ * 🔴 `E_PACKET_TOO_LARGE`（F-144，2026-10-23）必须在本表里：没登记的码会被 CLI 的 catch
+ *    折成 `E_INTERNAL` ⇒ "包太大"与"程序有 bug"在报文里长得一模一样。
  */
 const PACKET_EXIT = Object.freeze({
   [PACKET_CODES.MANIFEST]: { exit: 5, zh: '会话包的 manifest 不合（v1.5 的字段表：缺字段 / 形状错 / schema 不是 agenia.session-packet/1）' },
@@ -40,6 +45,7 @@ const PACKET_EXIT = Object.freeze({
   [PACKET_CODES.CONTENT_SHA]: { exit: 5, zh: '会话包 content.jsonl 的字节 sha256 与 manifest.content_sha256 不一致' },
   [PACKET_CODES.WINDOW]: { exit: 5, zh: '会话包的评审窗口不合（from/to 不是 ISO8601，或 from 比 to 还晚）' },
   [PACKET_CODES.EXCLUDE]: { exit: 5, zh: '会话包的排除项不合（不在 other_project / self_review / outside_window 三类里）' },
+  [PACKET_CODES.TOO_LARGE]: { exit: 5, zh: '会话包的解压总量超过生效上限（AGENIA_PACKET_MAX_BYTES；details 带 session_count / out_bytes / limit）—— 整份拒，不截断' },
 })
 
 /** 退出码族（只作可读常量；表里每个码自带数字）。 */

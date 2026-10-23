@@ -258,6 +258,7 @@ $env:AGENIA_PROBE_TMP=$env:TEMP
 | 2026-10-22 | 🔴 **§8 边界改口：两条导入 CLI 都在这条闸里** —— `--op proposal-import`（普通提案）与 `--op maintenance-import`（维护案）都走 `importOp` → `importVerdict`，`kind` 只决定报文怎么称呼。`MTC-01` 里那条「只记读数」的 `--op proposal-import` 改成**判据**（401 ⇒ **exit 2 且池子零写入**、400 ⇒ **exit 0 且追加一行**）；§8.2 判三样 → **判四样**（④ 阳性对照改成只对**旧工具面** `proposal_file` 承重）。**分母仍 76**（改格，没加格） | 测试岗，`F-125` 第 3 关后收口（实现岗交活时点出的两处；读数 `.team/test/2026-10-22/log.md` 第二十八节） |
 | 2026-10-22 | `F-126` 契约收口 —— §1.2/§1.3 判据索引跟到 `G13` · §2.3 第 3 条改成"没有开关" · §2.2 现场编号加限定 + 标题改「四个现场」 · §4 判据表照 221/221 改（+`G13` 行）· §6.5 表照四条全绿改 · 全份 `inject.js:NNNN` 行号**逐条现量对齐** · §8 标题改口 | 测试岗，`F-126` 契约收口（读数 `.team/test/2026-10-22/log.md` 第三十节 / 第三十一节） |
 | 2026-10-22（登记落盘 2026-10-23 凌晨） | 登记 `F-135`：探针新增 **`I18`** —— **真那份 `presets/agenia/.runtime/common-sense.md` 在盘上、且不是空壳**（期望 `{在盘上:'是', 正文:'非空'}`；「非空」的口径同 `SURF-03`：**去掉空白后还得有字**，不是 `bytes >= 2`；红因「不在 / 是个目录 / 空壳」三句各说各的）；落到 §1.2 判据行 + §4 `I18` 行（**探针分母 221 → 222**）。读数：全量 `222/222 · 0 红 · 0 挂起 · exit 0`（2026-10-22 `23:43` 那一跑）；反向三种因各 1 红、同跑 `I3` 仍 `ok`。§6.5 / §7.4 / §8.3 的 `TOTAL`（70 / 73 / 76）是**套件**那本账的分母，与探针不同轴 —— 没动 | 测试岗，`F-135` 第 4 关复审的**唯一阻塞**（`CONTRACT.md` 没登记 `I18`）。读数出处：`.team/test/2026-10-22/_runs/f135-fix/`（`log-section.md` §四 / §六 / §七 · `probe-pos.log`；探针那一版 `D8583409…` / 288,775 B / 4,043 行） |
+| 2026-10-23 | 追加 §9：会话包的解压总量**有上限**（`AGENIA_PACKET_MAX_BYTES`，缺省 **536870912** B）+ 超限码 **`E_PACKET_TOO_LARGE`**（exit 5，payload `{session_count, out_bytes, limit}` 落在 `error.details`）+ **失败形状**（exit 非 0 且 stdout 是 JSON，不许 134）+ **不许截断**。判据并进 `REV-01` 的 ⑦ 那一组 ⇒ **分母仍 76**（一格没加）。⚠️ 定形里"建议 `100_000_000`"两个约束都过不了（< 30 源的 100,531,323 < 崩溃点 121,000,000），本节按算术取 512 MiB | 测试岗，门 2 第 2 关（定形 `.team/leader/2026-10-23/spec-F-144.md`；红基线 `.team/test/2026-10-23/log.md`） |
 
 ---
 
@@ -735,3 +736,178 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
   两个入口面 + 一条旧闸的阳性对照）；
 - 登记：`support/registry.mjs` 的 `BATCH_J` + `ROWS` + `GROUP_COUNTS['maintenance-cap'] = 3`；
 - 分母：`TOTAL` 由盘上扫出 = **76**（历史冻结的 55 条 `FROZEN_IDS` 一条不少）。
+
+---
+
+## §9 · `F-144` · 会话包的解压总量**有上限**，超限是一条读数（不是 `exit 134`）
+
+> 定形：`.team/leader/2026-10-23/spec-F-144.md`。这一节是它的技术契约。
+> 判据：`tests/agenia-upgrade/integration/packet.test.mjs` 的 **`REV-01` 里 ⑦ 那一组**
+> （不加新用例 ID ⇒ 分母仍 **76**）。红基线：`.team/test/2026-10-23/log.md`。
+
+### §9.0 一句话，四张脸
+
+**病根一句话：解压总量没有上限，撞上去的那一刻进程被 V8 杀掉 ⇒ 调用方拿不到 `{ok:false}`、
+不落 state/health/receipt ⇒「今天没做」与「今天做失败了」长得一模一样。**（定形"问题"第 3 条）
+
+| 脸 | 现场（2026-10-23 的盘） | 本节钉住的东西 |
+| --- | --- | --- |
+| ① 崩 | 40 源（解压后 ≈121,000,000 字）⇒ `exit 134` · 11.5 s · 崩前堆 2111 MB / 上限 2237 MB · **stdout 是空的** | §9.1 ⑥：失败必须是 stdout 上的一行 JSON，**不许 134** |
+| ② 临界 | 30 源（100,531,323 字）过 / 40 源崩；**与源数无关，只与解压后的总量有关**；`--max-old-space-size=8192` 无效 | §9.1 ②③：闸量的量就是"解压后总量"，且**可注入** |
+| ③ 无读数 | 被 V8 杀掉那一次，stdout/stderr 里只有 GC 日志 | §9.1 ⑤：超限时 `{session_count, out_bytes, limit}` 三个数必须落地，**成功路上也要有** |
+| ④ 不许凑 | "少读几帧凑合过去"和"读不到"在包里长得一样 | §9.1 ⑦：超限只能**拒**，不许截断 |
+
+### §9.1 口径（写死；判据里只有一处）
+
+**① 量的定义（`out_bytes`）** —— 一个数，两个出口用同一把尺子：
+
+> `out_bytes` = 本次**进包**（= 被 `classifySource` 判为 `included`、因而会被解压）的那些源，
+> 其"解压后文本"的 **UTF-8 字节总量** = 这些源**逐帧"实解 N B"之和**。
+
+- 是**字节**，不是字符：`all_chars`（B3.4 的 code point 口径）是另一本账，**两本不要混**。
+  实测给的两个量（100,531,323 / ≈121,000,000）都是 `all_chars`；`out_bytes` 是它们的字节侧。
+- 是**读进来多少**，不是**最后留下多少**：开了 `sources[].window` 裁剪或 `human:true` 人话筛的源，
+  照样按"解压后总量"计 —— 因为崩的是"读多少"（定形"不做"清单第 4 条禁的也是"少读几帧"）。
+- 被排除的源**一个字节都不计**（与 v1.6 ② 的"先分类、后解压"同一条）：排除项不进 `out_bytes`、
+  不进 `session_count`，也不许为了量它们去解压。
+- 这个量在**任何拼接/`toString` 之前**就成立（逐帧"实解 N B"是现成帧工具报的读数）⇒ 闸可以在
+  攒出大字符串之前判，不必先把整条流拼成一个 `Buffer`。
+
+**② 可注入的上限**：环境变量 **`AGENIA_PACKET_MAX_BYTES`**（十进制非负整数字面量，允许首尾空白）。
+
+**③ 缺省值 = `536870912`（= 512 × 1024 × 1024 = 512 MiB）。** 这个数不是拍的，是算术：
+定形给的崩溃点是 `all_chars` 侧 ≈121,000,000 字；一个 code point 最多 4 个 UTF-8 字节 ⇒ 崩溃点在
+`out_bytes` 侧**最多** 484,000,000 B。取 536,870,912 同时满足两条：
+
+- **不制造新的失败**：现在能过的最大那一档 30 源（100,531,323 字）最多 402,125,292 B < 536,870,912
+  ⇒ 缺省下它**仍然出包**（定形验收 #1"现有能跑的档结果逐字不变"）；
+- **不比现在的崩溃点更小**：任何编码比例下 484,000,000 ≤ 536,870,912 ⇒ 缺省不会把 40 源那一跑
+  从"崩"换成"另一条假红"，它只会换成一条**读数**。
+
+🔴 定形里"建议 `100_000_000`"这个数**两个约束都过不了**：它 < 100,531,323（30 源现在能过）
+< 121,000,000（崩溃点）⇒ 按它落地的当天，30 源会被判成 `E_PACKET_TOO_LARGE`。**本节取 512 MiB。**
+🔴 **它不是内存护栏**（它比崩溃点还大）：把峰值内存压下去是定形目标 B（`packet.mjs:857` 那句
+`Buffer.concat(keptChunks).toString('utf8')` 与 `pieces.join('')` 那一串整块分配），**不在本节的判据里**。
+本闸的义务只有两条：**无上限变有上限** · **超限有读数**。
+
+**④ 三个值的语义**（`0` / 缺省 / 负数，各有一条断言）：
+
+| 取值 | 语义 | 判据 |
+| --- | --- | --- |
+| 变量不在 / 空串 / 全空白 | 用缺省 536,870,912 | `CAP-DEFAULT` |
+| `0` | **关掉上限**（照常出包；读数里 `limit === null`） | `CAP-OFF` |
+| 负整数 / 非十进制整数（`1KB` / `1.5` / `1e9`） | 当场 **`E_ARG_SCHEMA`（exit 2）** 拒掉 | `CAP-BAD-VALUE` |
+| 正整数 `N` | `out_bytes > N` ⇒ 拒；`out_bytes === N` ⇒ **过** | `CAP-KNOB-OVER` / `CAP-KNOB-EXACT` |
+
+- `0` 不许表示"上限 0"：那样"闸关了"和"闸设成 0"在读的人眼里是同一个数。
+- 负数不许静默当 `0`（= 静默关闸），也不许当无穷。
+
+**⑤ 错误码与 payload**：
+
+- 码 **`E_PACKET_TOO_LARGE`**；退出码 **`5`**（校验拒绝族 —— `PACKET_*` 那五个码全是 5，第六个码
+  不另开一族）。
+- 🔴 必须**同批登记进 `presets/agenia/lib/error-codes.mjs` 的 `CODES`**（写法与那五个同一条：
+  `lib/packet.mjs` 的 `PACKET_CODES` 里加 `TOO_LARGE: 'E_PACKET_TOO_LARGE'`，`error-codes.mjs` 的
+  `PACKET_EXIT` 里补 `{ exit: 5, zh: '…' }`）。没登记的码会被 CLI 的 catch **折成 `E_INTERNAL`**
+  ⇒ "包太大"与"程序有 bug"在报文里长得一模一样（这条病在 §8.1 已经吃过一次）。
+- payload（三样，缺一样这条契约就不成立）落在 **`error.details`**：
+
+| 字段 | 含义 | 不许是什么 |
+| --- | --- | --- |
+| `session_count` | 本次**进包**的源数（`included` 之后、被解压的那些） | 不是 `sources.length`（排除项不算） |
+| `out_bytes` | 见 §9.1 ①（解压后 UTF-8 字节总量） | 不是压缩字节、不是 `all_chars`、不是"读到被顶住那一刻的前缀和" |
+| `limit` | 这一次**生效**的上限 | 不是缺省值、不是注入的字符串原文 |
+
+- 🔴 **陷阱（会静默吞掉这三个数）**：`lib/packet.mjs::packetError()` 把第三个参数挂在 `err.detail`
+  （**单数**），而 `bin/agenia-brain.mjs` 的 catch 只转发 `err.details`（**复数**，`cliError` 用的那个）。
+  照 `packetError(code, msg, {...})` 写、不改出口 ⇒ `error.details` 在 stdout 里是 `null`。
+  修法任选一条（在 throw 处挂 `details` / 教 catch 也认 `detail`），但**三个数必须出现在 `error.details` 里**。
+- 同一把尺子的**第二个出口**：成功那一跑的 CLI 信封顶层必须有
+  **`packet_bytes = {session_count, out_bytes, limit}`**（同形、同值、同一份计算）。
+  理由：生效上限只在失败路上读得到的话，"闸在不在"在跑得通的那一跑里**没有读数** ——
+  而这一票的全部就是"把没有读数变成有读数"。⚠️ `manifest` 的十个顶层字段**不动**（v1.7 的 `cropped`、
+  v1.8 的 `human` 都走这条先例：账走返回值与 audit）。
+
+**⑥ 失败形状**（这一节的主体）：
+
+- 超限 ⇒ **退出码非 0**（= 5）· **stdout 恰好一行可解析 JSON**，形状与其它 op 一致：
+  `{"ok":false,"op":"session-packet","error":{"code":"E_PACKET_TOO_LARGE","message":"…","details":{…}}}`。
+- 🔴 **不许 `exit 134` · 不许被信号杀掉 · 不许 `timed_out`** —— 三种都是"没有读数"。
+- 这条判据钉的是**形状**、不是某一跑的巧合：任何一条走 `session-packet` 的路，退出码非 0 时
+  stdout 必须是可解析 JSON 且带 `ok:false` + 稳定码（`FAIL-SHAPE` 那一组逐条量四条真实的路）。
+
+**⑦ 不许截断**：
+
+- 超限时**不许**为了"凑出一份包"少读几帧 / 少解一条源 / 只把前 N 条源拼进去。
+  根子：错的是"你让我读这么多"，不是"读不到" ⇒ 只能**拒**，不能**凑**。
+- 判据两条（都在 `CAP-NO-TRUNCATE`）：① 超限那一跑报的 `out_bytes` 必须是**全量**
+  （两条流加起来的解压后字节），不是"读到被顶住那一刻的前缀和"；② 超限那一跑**零写入**
+  （`outDir` 里不多出包目录 —— 与既有 `PACKET-NO-HALF` 同一条）。
+
+### §9.2 判五样，每样单独承重
+
+1. **闸在**（`CAP-KNOB-OVER`）：同一份几十 KB 的合成流，把上限调到 `out_bytes - 1` ⇒ 必须拒。
+   闸不在 ⇒ 这一格从"拒"变"跑成功"（第 2 关那一刻这一格是红的；现在的读数见 §9.3）。只判"上限够大时能出包"会被"根本没有闸"骗过去。
+2. **边界是"超过才拒"**（`CAP-KNOB-EXACT`）：`out_bytes === limit` ⇒ 必须**过**。
+   口径与 §8.1 的"400 可以 / 401 不行"同一条；写成 `>=` 的实现会在这里当场红。
+3. **量的是"读了多少"，不是"留下多少"**（`CAP-FILTER-PATH`）：同一条上限也必须挡住
+   `sources[].human: true` 那条路（它走 `filterStream` —— 40 源那次崩的就是那一段）。
+   按"留下多少"判的实现，在不开 `human` 的那一格绿、在这一格**红**：两份流的解压总量相同，
+   留下的人话包小得多。
+4. **排除项不算账**（`CAP-SESSION-COUNT`）：夹具里第三条源是 `other_project` + **坏帧文件**。
+   ⇒ `session_count` 必须是 **2**（不是 3）；实现要是为了量它去解压，会当场撞 `E_PACKET_FRAMES`。
+5. **不许截断 + 不许留半包**（`CAP-NO-TRUNCATE`）：见 §9.1 ⑦ 那两条。
+
+**正例（不许退化）**：`CAP-DEFAULT`（不注入上限）与 `CAP-KNOB-EXACT` 两跑都必须出包，且
+`all_chars` / `frames.count` / `out_bytes` 三项等于**手算**值（不引用实现自报）。手算就是"改前读数"。
+
+### §9.3 判据索引（照这个跑）
+
+```powershell
+# 临时件落项目所在那个盘（C 盘一个字节都不许写）
+$env:TEMP='E:\Harness\.team\test\2026-10-23\tmp'; $env:TMP=$env:TEMP
+# 这一组住在 REV-01 里（不加用例 ID）；**一跑一根、别复用运行根**
+node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-23\_runs\<RUN_ID> --glob="tests/agenia-upgrade/integration/packet.test.mjs"
+# 全量：去掉 --glob，再给一个全新的运行根
+```
+
+| 格（问题码） | 守的是 | 现在（2026-10-23 12:23 现量 · 现役 `presets/agenia`） |
+| --- | --- | --- |
+| `CAP-DEFAULT` | §9.1 ③④：不注入 ⇒ `packet_bytes.limit === 536870912`；`out_bytes` / `session_count` / `all_chars` / `frames.count` 等于手算 | 🟢 **绿**（`cap_runs.default`：`exit 0` · `packet_bytes {session_count 2, out_bytes 37034, limit 536870912}` · `frames {count 24, all_chars 21994}` · 落下的 `manifest.frames.all_chars` 也是 21994 = 手算） |
+| `CAP-KNOB-EXACT` | §9.2 ②：`out_bytes === limit` ⇒ 过，且生效上限被报回来 | 🟢 **绿**（`cap_runs.exact`：`exit 0` · 生效上限 `packet_bytes.limit = 37034`，正好等于 `out_bytes` ⇒ 边界是"超过才拒"，写成 `>=` 会在这里当场红） |
+| `CAP-KNOB-OVER` | §9.2 ①/§9.1 ⑤：`out_bytes > limit` ⇒ `E_PACKET_TOO_LARGE` + 三个数的 `error.details` | 🟢 **绿**（`cap_runs.over`：`exit 5` · `E_PACKET_TOO_LARGE` · `error.details {session_count 2, out_bytes 37034, limit 37033}` —— 三个数真在 `details` 里，不是 `null`） |
+| `CAP-OFF` | §9.1 ④：`0` ⇒ 关闸、`limit === null`、照常出包 | 🟢 **绿**（`cap_runs.off`：`exit 0` · `packet_bytes {session_count 2, out_bytes 37034, limit null}`；`cap_off_control` 六格 `want/got = 0/0 · 1/1 · 1/1 · 1/1 · 1/1 · 1/1` —— 谓词两向都翻过面） |
+| `CAP-BAD-VALUE` | §9.1 ④：负数 / `1KB` ⇒ `E_ARG_SCHEMA`（exit 2），不许静默当 0/当无穷 | 🟢 **绿**（`cap_runs.negative`：`-1` → `exit 2 / E_ARG_SCHEMA`；`cap_runs.junk`：`'1KB'` → `exit 2 / E_ARG_SCHEMA` —— 两种值都没被静默当 0、也没被当无穷） |
+| `CAP-FILTER-PATH` | §9.2 ③：`human:true` 那条路也挡得住同一条上限 | 🟢 **绿**（`cap_runs.human_over`：`human:true` + 上限 37033 → `exit 5` · `E_PACKET_TOO_LARGE` · `details.out_bytes 37034` = 解压总量，不是筛完剩下多少） |
+| `CAP-SESSION-COUNT` | §9.2 ④：`session_count` 数的是**进包**的源（2，不是 3），排除项一个字节都没解 | 🟢 **绿** —— **这一格今天起才有判词**（闸装上之前它"不是红，是没有读数"）。两个载体今天都在：`cap_runs.default.packet_bytes.session_count 2` · `cap_runs.over.details.session_count 2` · `manifest.source_ids = [cap-src-a, cap-src-b]`。第三条源 `cap-src-other` 是 `other_project` 且**故意是坏帧文件** —— 实现要是为了量它去解压会当场 `E_PACKET_FRAMES`，这一跑没撞上就是它一个字节都没解。⚠️ **不许把这格读成"一直绿"**。 |
+| `CAP-NO-TRUNCATE` | §9.1 ⑦：拒的时候 `out_bytes` 是全量 · 零写入 | 🟢 **绿**（`cap_runs.over.details.out_bytes 37034` = 两条流加起来的全量，不是"读到被顶住那一刻的前缀和"；`dirs_before_over` 与 `dirs_after_over` 逐项相同 —— 超限那一跑在 `outDir` 里零写入） |
+| `FAIL-SHAPE` | §9.1 ⑥：四条真实的路（缺 `day` / 流不在 / 上限是负数 / 超限）—— 每条 exit 非 0 且 stdout 是可解析 JSON、`ok:false`、码对，**无 134 / 无信号 / 无超时** | 🟢 **绿**（`fail_shape_paths` 四条真实的路各 0 红因：缺 `day` → `exit 2 / E_ARG_SCHEMA` · 流不在盘上 → `exit 5 / E_PACKET_FRAMES` · 上限 `-1` → `exit 2 / E_ARG_SCHEMA` · 超限 → `exit 5 / E_PACKET_TOO_LARGE`；四条 stdout 都是可解析 JSON、`ok:false`）；⚠️ **照实补一句**：`exit 134` 那一格**仍然没有实测样本**（§9.4 的代价照旧）—— 它由 `FAIL-SHAPE-CONTROL` 的 `{exit:134, stdout:''}` 合成样本承重，不是"这一跑真的 134 过" |
+| `FAIL-SHAPE-CONTROL` | §9.1 ⑥ 的**谓词自控**：把 `{exit:134, stdout:''}` / 信号杀 / "非 0 但 stdout 是散文" 三种样本喂进同一个谓词，必须都判 BAD；照契约写的样本必须判 OK | 🟢 **绿**（`fail_shape_control` 四格 `want = got`：真 `134` → BAD · 信号杀 → BAD · 非 0 但 stdout 是散文 → BAD · 照契约写的 → OK ⇒ 谓词咬得动，上面那张表的绿不是写歪了） |
+
+> **这一列读的是哪一次跑**：`_runs/f144-doc923A`（`2026-10-23 12:23` 现量 · REV-01 定向跑：`分母 76 · 盘上发现 76 · 跑到 1 文件/1 条 · RED 0 / GREEN 1 / HOLD 0 · node --test exit 0 · settle exit 0`）。
+> 逐格读数键在 `.team/test/2026-10-23/_evidence/f144-doc923A/REV-01/result.json`（`readings.cap_runs` / `cap_off_control` / `fail_shape_paths` / `fail_shape_control`），承重断言在 `tests/agenia-upgrade/integration/packet.test.mjs` 的 ⑦ 组（第 `922–1097` 行）。
+> 同一版跑过**两次全量**：`_runs/f144-full3`（`12:17`）与 `_runs/f144-doc923B`（`12:25`）—— 两次都是 `RED 0 / GREEN 76 / HOLD 0`；
+> 三次跑（含上面那根定向跑）的 `[尺子]` 都是 `986d7d99267f11a9 · 44 份`、`F57-TARGET` 都是"48 份逐字节相同"
+> ⇒ 十格读的就是**盘上这一版**（`tests/**` 与 `presets/agenia/**` 在这三次跑之间一个字节没动）。
+> 这一列只改措辞、不改判据：两把尺子都不量 `CONTRACT.md`，所以读数不随这一段字变 —— 判据本身在
+> `packet.test.mjs`，改它才需要重跑（下一班要动就照本节开头那段命令跑一根新运行根）。
+
+### §9.4 边界（这一节不覆盖什么）
+
+- **不覆盖"峰值内存降下来"**：那是定形目标 B。本节的闸比崩溃点还大（§9.1 ③），它挡不住 40 源那一跑
+  的整块分配；验收口径 #2 对 40 源的要求是"**要么跑成功、要么 `E_PACKET_TOO_LARGE`**，只有 `exit 134`
+  算失败"，两条都算过。
+- **不做真流常驻用例**：那个工作区的 40 源真流会被清理（定形验收 #4）⇒ 只做一次性验收读数，
+  不进 `tests/`。常驻用例一律是"可注入的上限 + 几十 KB 的合成流"。
+  ⚠️ 代价（照实写）：**`exit 134` 那一格在常驻用例里今天没有实测样本** —— `FAIL-SHAPE` 拿
+  `FAIL-SHAPE-CONTROL` 的 `{exit:134, stdout:''}` 样本证明"谓词认得出 134"，而不是"这一跑真的 134 过"。
+  真实 134 的证据在定形与 `.team/test/2026-10-23/log.md` 的现场读数里，出处写明。
+- **不改"读多少"以外的语义**：不重写 packer、不改 `manifest` 十个顶层字段、不改人话筛的判据、
+  不改"turn 闭合必须在整条流上判"（`packet.mjs:630-633`）。
+- **不加新 op、不加新用例 ID**：闸挂在既有 `--op session-packet` 上，判据并进 `REV-01`（分母仍 76）。
+
+### §9.5 登记面
+
+- 盘上：`tests/agenia-upgrade/integration/packet.test.mjs` 的 `REV-01` 里 **⑦** 那一组；
+- 登记：**不动** `support/registry.mjs`（没加用例 ID）；
+- 分母：`TOTAL` 由盘上扫出 = **76**（一格没加、一条没删）。

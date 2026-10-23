@@ -1357,6 +1357,12 @@ function opHealthRead({ root, args, payload }) {
  * ⚠️ 窗口的 `from` **不由本 op 决定**（v1.6 ①：取 `route/current.json` 里最近一次 review **完成事件**）。
  *    ⇒ "换一个窗口"= 换 `now` **加**让组长先推进路线；想凭一个参数改写 `from` 是做不到的，也不该做到。
  *
+ * 🔴 **F-144（2026-10-23，CONTRACT §9）：解压总量有上限** —— 旋钮是环境变量
+ *    `AGENIA_PACKET_MAX_BYTES`（十进制非负整数；缺省 536870912 = 512 MiB；`0` = 关掉），
+ *    超限 ⇒ `E_PACKET_TOO_LARGE`（exit 5）+ `error.details = {session_count, out_bytes, limit}`，
+ *    **整份拒、不截断**。成功那一跑的信封顶层带同一个 `packet_bytes` 读数（`limit === null` = 闸关掉了）。
+ *    判定与量法全在 `lib/packet.mjs`（文件头 F-144 那一节）；本文件只把读数原样带回 stdout。
+ *
  * 返回值里三样是**必核读数**：包的落点 · manifest 必填字段齐不齐 · `validateSessionPacket` 的读数。
  *
  * 🔴 **工作区与落点由 `resolvePacketWorkspace()` 判**（`lib/paths.mjs::workspaceWriteVerdict`）：
@@ -1455,6 +1461,9 @@ function opSessionPacket({ root, args, payload }) {
     content_sha256: built.content_sha256,
     frames: built.frames,
     excluded: built.excluded,
+    // F-144（契约 §9.1 ⑤）：这一跑**生效**的上限与量出来的解压总量 `{session_count, out_bytes, limit}`。
+    // 成功路上也要有读数 —— 只在失败路上读得到的话，"闸在不在"在跑得通的那一跑里就没有读数。
+    packet_bytes: built.packet_bytes ?? null,
     // v1.7：裁剪的账（每源生效窗口 / 留了几条 / 丢了几条 / 几行没有时间戳 / 有贡献的帧数）。
     // 没给裁剪窗口时恒为 `[]` —— 旧调用方看到的东西一个字段都没变。
     cropped: built.cropped ?? [],

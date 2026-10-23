@@ -69,7 +69,7 @@
  *       · **给了 `true`** ⇒ 这条源**只留两类行**进包，其余一行不留：
  *         ① **老板的行**（`source.kind === 'user'`）—— **原样进包，一个字都不投影**；
  *         ② **每个 turn 的最后一条 `assistant`** —— **投影到 D 档**（见下）。
- *         判据落在**行**上（跟 v1.7 同一个粒度）；turn 这一层在**整条流**上判（见 `filterStream`）。
+ *         判据落在**行**上（跟 v1.7 同一个粒度）；turn 这一层在**整条流**上判（见 `filterFileInto`）。
  *       · **没给 / 给了 `false`** ⇒ **与 v1.7 逐字相同**（判据见下面那张翻面表）。
  *       · 🔴🔴 **D 档 = 保证的降级，不是措辞变化**（组长 2026-10-15 逐字拍的，
  *         `.team/dev/2026-10-15/log.md` §32.7）：
@@ -132,6 +132,28 @@
  *     ⚠️ 这个口径**只有一份实现**（B1.5 冻在 `lib/memory.mjs` 的 `charCountOf`），这里 import 它 ——
  *     不在本文件里再写第二份，否则同一份文本会在两个地方数出两个数。
  *
+ *   · **F-144（2026-10-23，CONTRACT §9）：解压总量有上限 · 超限是一条读数 · 全程不拼整份文本。**
+ *     ① **闸量的量 = `out_bytes`**：本次**进包**（`classifySource` 判为 `included`、因而会被解压）的那些源，
+ *        其"解压后文本"的 UTF-8 字节总量 = 这些源**逐帧"实解 N B"之和**（现成帧工具报的读数，见 `runFramesTool`）。
+ *        是**字节**不是字符（`all_chars` 是另一本账）；是**读进来多少**不是**最后留下多少**
+ *        （开了 `window` 裁剪 / `human` 人话筛的源照样按解压总量计）；被排除的源**一个字节都不计**。
+ *     ② **上限可注入**：`AGENIA_PACKET_MAX_BYTES`（十进制非负整数字面量，允许首尾空白）。
+ *        缺省 **536870912**（512 MiB）；`0` = **关掉**（`limit === null`，不表示"上限 0"）；
+ *        负数 / 带单位 / 小数 / 指数 ⇒ 当场 `E_ARG_SCHEMA`（exit 2）。
+ *     ③ **超限 ⇒ `E_PACKET_TOO_LARGE`（exit 5）**，`error.details = {session_count, out_bytes, limit}`
+ *        （`out_bytes` 是**全量**，不是"读到被顶住那一刻的前缀和"）；`out_bytes === limit` **过**，
+ *        只有 `>` 才拒。拒的时候 `outDir` 里**一个包目录都不落**。
+ *     ④ **成功路上也有读数**：`buildSessionPacket` 的返回值与本 op 的信封顶层带
+ *        `packet_bytes = {session_count, out_bytes, limit}` —— 生效上限只在失败路上读得到的话，
+ *        "闸在不在"在跑得通的那一跑里就没有读数。`manifest` 的**十个顶层字段不动**（账走返回值与 audit）。
+ *     ⑤ **峰值内存与"总文本量"脱钩**（这一条是本体，不是优化）：整条流**一次都不拼成一个 Buffer / 一个字符串** ——
+ *        逐源跑现成帧工具 → 文本落在磁盘 → 逐块（`READ_CHUNK_BYTES`）读进来算账 → 逐行过滤 → 逐块写进
+ *        `content.jsonl`。字符数（§B3.4）与 SHA-256 都是**流式**累加（`createCharCounter` / `createContentSink`），
+ *        自校验（`validateSessionPacket`）也一样。121 MB 那一跑崩在"先 `Buffer.concat` / `pieces.join('')`
+ *        攒出大字符串再处理"上 —— 闸比崩溃点还大，光装闸挡不住它。
+ *     ⑥ 不许截断：错的是"你让我读这么多"，不是"读不到" ⇒ 只能拒，不许少读几帧凑一份包
+ *        （所以量是**先量完所有进包源**再判，不是为了省事在顶住那一刻就报数）。
+ *
  * 四条纪律：
  *   ① **帧边界与解压只走现成工具** `.tools/asar-cli/zstd-frames.mjs`，而且是**子进程**调：
  *      那个脚本有顶层副作用（import 就会执行）⇒ 本模块一次都不 import 它，
@@ -157,7 +179,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { now as clockNow } from './clock.mjs'
@@ -167,9 +189,9 @@ import { charCountOf } from './memory.mjs'
 export const PACKET_SCHEMA = 'agenia.session-packet/1'
 
 /**
- * 五个稳定码（v1.5 逐字）。
- * ⚠️ 它们是 `validateSessionPacket` 的**返回码**，不是 CLI 退出码 ⇒ 没有进 `lib/error-codes.mjs`
- *    （那份表管 CLI 退出码族）。哪天有 CLI 暴露它们，同批搬进那张表。
+ * 六个稳定码（v1.5 的五个 + F-144 的解压总量）。
+ * ⚠️ 它们是 `validateSessionPacket` 的**返回码**，同时也是 CLI `--op session-packet` 的**错误码**：
+ *    后者由 `lib/error-codes.mjs` 的 `PACKET_EXIT` 给退出码（值从本表取，不抄第二遍）。
  */
 export const PACKET_CODES = Object.freeze({
   MANIFEST: 'E_PACKET_MANIFEST',
@@ -177,6 +199,8 @@ export const PACKET_CODES = Object.freeze({
   CONTENT_SHA: 'E_PACKET_CONTENT_SHA',
   WINDOW: 'E_PACKET_WINDOW',
   EXCLUDE: 'E_PACKET_EXCLUDE',
+  /** F-144：解压总量超过生效上限（`AGENIA_PACKET_MAX_BYTES`）⇒ 整份拒，不截断。 */
+  TOO_LARGE: 'E_PACKET_TOO_LARGE',
 })
 
 /** 三类排除原因（v1.5 / v1.6 ② 的枚举）。 */
@@ -200,6 +224,16 @@ const PACKET_TMP_PREFIX = '.packet-tmp-'
  * （那一格**拒绝 C 盘**）—— 见文件头那张序表。
  */
 const SCRATCH_DIR_VAR = 'AGENIA_SCRATCH_DIR'
+
+/**
+ * 解压总量上限的旋钮（CONTRACT §9.1 ②③④）。
+ * 缺省 **536870912**（512 MiB）是算出来的，不是拍的：崩溃点在 `all_chars` 侧 ≈121,000,000 字，
+ * 一个 code point 最多 4 个 UTF-8 字节 ⇒ `out_bytes` 侧最多 484,000,000 B；取 512 MiB 同时满足
+ * "不制造新的失败"（现在能过的 30 源最多 402,125,292 B）与"不比崩溃点更小"。
+ * ⚠️ **它不是内存护栏**（比崩溃点还大）：把峰值内存压下去靠的是全程流式，不是这个数。
+ */
+const PACKET_MAX_BYTES_VAR = 'AGENIA_PACKET_MAX_BYTES'
+const PACKET_MAX_BYTES_DEFAULT = 536870912
 
 /** 沿模块目录往上找现成工具；找不到 ⇒ `null`（**不回落自造解压**）。 */
 function findZstdTool() {
@@ -273,8 +307,267 @@ function packetError(code, message, detail) {
   const err = new Error(message)
   err.name = 'PacketError'
   err.code = code
+  // 🔴 两个键同批挂上：`detail`（单数）是本文件内的旧读法，`details`（复数）是 CLI catch 转发的那一个
+  //    （`bin/agenia-brain.mjs` 的 catch 只读 `err.details`）—— 只挂单数时，payload 在 stdout 里是 null，
+  //    而码名与退出码全对，看着像做完了。
   err.detail = detail ?? null
+  err.details = detail ?? null
   return err
+}
+
+// ── 解压总量上限（F-144 · CONTRACT §9.1 ②③④）─────────────────────────────────
+
+/**
+ * 这一次**生效**的上限：`null` = 关掉（`AGENIA_PACKET_MAX_BYTES=0`），否则是字节数。
+ *
+ * 只认**十进制非负整数字面量**（允许首尾空白）：
+ *   变量不在 / 空串 / 全空白 ⇒ 缺省 `536870912`；
+ *   `0` ⇒ `null`（关闸；不许用 0 表示"上限 0"—— 那样"没设闸"和"闸设成 0"在读的人眼里是同一个数）；
+ *   负数 / `1KB` / `1.5` / `1e9` ⇒ **当场** `E_ARG_SCHEMA`（不许静默当 0 就当关闸，也不许当无穷）。
+ */
+function packetMaxBytesOf(env = process.env) {
+  const raw = env?.[PACKET_MAX_BYTES_VAR]
+  if (raw === undefined || raw === null) return PACKET_MAX_BYTES_DEFAULT
+  if (typeof raw !== 'string') {
+    throw packetError('E_ARG_SCHEMA', `${PACKET_MAX_BYTES_VAR} 必须是十进制非负整数的字面量，实得 ${JSON.stringify(raw)}`)
+  }
+  const text = raw.trim()
+  if (text === '') return PACKET_MAX_BYTES_DEFAULT
+  if (!/^\d+$/.test(text)) {
+    throw packetError(
+      'E_ARG_SCHEMA',
+      `${PACKET_MAX_BYTES_VAR} 只收十进制非负整数（负数 / 带单位 / 小数 / 指数一律拒；0 = 关掉上限）：${JSON.stringify(raw)}`,
+    )
+  }
+  const value = Number(text)
+  return value === 0 ? null : value
+}
+
+// ── 流式量具（F-144 的本体：峰值内存不随总文本量长）─────────────────────────────
+
+/** 一次读多少字节（搬运 / 行扫描 / 自校验共用；内存只与它 + 最长的一行有关）。 */
+const READ_CHUNK_BYTES = 256 * 1024
+
+/**
+ * `buf` 里**完整的 UTF-8 序列**结束在哪（之后那 0–3 个字节是半个字，要留到下一块再解）。
+ * 用途：逐块解码时不能把一块的尾巴切成 U+FFFD —— 整份 `toString('utf8')` 不会那样。
+ */
+function completeUtf8End(buf) {
+  let n = buf.length
+  let back = 0
+  while (n > 0 && back < 3 && (buf[n - 1] & 0xc0) === 0x80) {
+    n -= 1
+    back += 1
+  }
+  if (n === 0) return 0
+  const lead = buf[n - 1]
+  const need = lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1
+  return buf.length - (n - 1) >= need ? buf.length : n - 1
+}
+
+/**
+ * §B3.4 的字符计数，**逐块累加**（不把整份文本拼成一个字符串）。
+ * 口径与 `charCountOf`（`lib/memory.mjs` 里那一份唯一实现）逐字相同：去开头的 BOM → `\r\n`/`\r` 归一成
+ * `\n` → 按 Unicode code point 数；不 trim、不做 NFC。跨块的两处状态各留一个：
+ * `carry`（半个 UTF-8 序列，不完整就不解）· `pendingCR`（块末尾那个 `\r` 可能和下一块开头的 `\n` 组成 `\r\n`）。
+ * ⚠️ 与 `charCountOf(整份文本)` 的等价只在**合法 UTF-8** 上成立 —— 进包的内容是从会话流解压出来的
+ *    UTF-8，写进 `content.jsonl` 之后还是同一份字节。
+ */
+function createCharCounter() {
+  let carry = Buffer.alloc(0)
+  let count = 0
+  let atStart = true
+  let pendingCR = false
+
+  const accept = (input) => {
+    let s = input
+    if (atStart) {
+      s = s.replace(/^\uFEFF+/, '')
+      if (s.length > 0) atStart = false
+    }
+    if (pendingCR) {
+      count += 1 // 上一块末尾那个 \r ⇒ 归一成 \n，算 1 个字
+      pendingCR = false
+      if (s.charCodeAt(0) === 0x0a) s = s.slice(1) // \r\n 合成一个 \n
+    }
+    if (s.length === 0) return
+    if (s.charCodeAt(s.length - 1) === 0x0d) {
+      s = s.slice(0, -1)
+      pendingCR = true
+    }
+    let n = 0
+    for (let i = 0; i < s.length; i += 1) {
+      const c = s.charCodeAt(i)
+      if (c === 0x0d) {
+        n += 1
+        if (s.charCodeAt(i + 1) === 0x0a) i += 1 // \r\n 只算 1 个
+        continue
+      }
+      if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+        const low = s.charCodeAt(i + 1)
+        if (low >= 0xdc00 && low <= 0xdfff) {
+          i += 1 // 一个代理对 = 一个 code point
+          n += 1
+          continue
+        }
+      }
+      n += 1
+    }
+    count += n
+  }
+
+  return {
+    push(buf) {
+      let chunk = buf
+      if (carry.length > 0) {
+        chunk = Buffer.concat([carry, buf])
+        carry = Buffer.alloc(0)
+      }
+      const end = completeUtf8End(chunk)
+      if (end < chunk.length) carry = Buffer.from(chunk.subarray(end))
+      if (end === 0) return
+      accept(chunk.subarray(0, end).toString('utf8'))
+    },
+    /** 记一个快照（拍完还能接着往里推；`rewind` 之后从快照那一刻继续）。 */
+    mark() {
+      return { count, atStart, pendingCR, carry: Buffer.from(carry) }
+    },
+    rewind(mark) {
+      count = mark.count
+      atStart = mark.atStart
+      pendingCR = mark.pendingCR
+      carry = Buffer.from(mark.carry)
+    },
+    /** 收口：把留在手里的那半个序列与末尾那个 `\r` 也算掉。只许调一次。 */
+    finish() {
+      if (carry.length > 0) {
+        accept(carry.toString('utf8'))
+        carry = Buffer.alloc(0)
+      }
+      if (pendingCR) {
+        count += 1
+        pendingCR = false
+      }
+      return count
+    },
+  }
+}
+
+/** 把一份文件**按块**喂给 `onChunk`（顺序读，不整份读进内存）。 */
+function eachChunkOfFile(file, onChunk) {
+  const fd = openSync(file, 'r')
+  const buf = Buffer.allocUnsafe(READ_CHUNK_BYTES)
+  try {
+    for (;;) {
+      const n = readSync(fd, buf, 0, buf.length, null)
+      if (n <= 0) break
+      onChunk(n === buf.length ? buf : buf.subarray(0, n))
+    }
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/**
+ * 按 `\n` 切行，一次一块地读一份落盘的文本，`onLine(line, offset)` 拿到这一行的**字节**
+ * （含行尾 LF；文件末尾没有 LF 的那半行也照给）。`offset` 是这一行在文件里的起始字节。
+ * 跨块的那半行会攒起来（只有一行比那块还长时才用得到）。
+ */
+function eachLineOfFile(file, onLine) {
+  const fd = openSync(file, 'r')
+  const chunk = Buffer.allocUnsafe(READ_CHUNK_BYTES)
+  let carry = null
+  let offset = 0
+  try {
+    for (;;) {
+      const n = readSync(fd, chunk, 0, chunk.length, null)
+      if (n <= 0) break
+      const view = n === chunk.length ? chunk : chunk.subarray(0, n)
+      let start = 0
+      let nl = view.indexOf(0x0a, start)
+      while (nl !== -1) {
+        const piece = view.subarray(start, nl + 1)
+        const line = carry === null ? piece : Buffer.concat([carry, piece])
+        const at = offset
+        offset += line.length
+        carry = null
+        start = nl + 1
+        if (onLine(line, at) === false) return
+        nl = view.indexOf(0x0a, start)
+      }
+      if (start < view.length) {
+        const rest = view.subarray(start)
+        carry = carry === null ? Buffer.from(rest) : Buffer.concat([carry, rest])
+      }
+    }
+    if (carry !== null) onLine(carry, offset)
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/** 一份文件的字符数（§B3.4 口径，流式）。 */
+function countCharsOfFile(file) {
+  const counter = createCharCounter()
+  eachChunkOfFile(file, (chunk) => counter.push(chunk))
+  return counter.finish()
+}
+
+/** 一份文件的字节 sha256 + 字符数（§B3.4 口径）—— 两样都流式累加，供自校验用。 */
+function measureTextFile(file) {
+  const hash = createHash('sha256')
+  const counter = createCharCounter()
+  eachChunkOfFile(file, (chunk) => {
+    hash.update(chunk)
+    counter.push(chunk)
+  })
+  return { sha256: hash.digest('hex'), all_chars: counter.finish() }
+}
+
+/**
+ * `content.jsonl` 的**流式写入口**：写一块算一块（字节 sha256 + §B3.4 字符数），
+ * 峰值内存只与一块的大小有关。
+ *
+ * `mark()` / `rewind()`：输出是一条源一条源地写，而"这条源一条都没留下"要到写完才知道 ⇒
+ * 没贡献的那一条把**字节与账一起退回**（`ftruncate` + 哈希与计数器的快照），
+ * 不为了这件事先把整条源的输出攒在内存里。
+ */
+function createContentSink(file) {
+  const fd = openSync(file, 'w')
+  let hash = createHash('sha256')
+  const counter = createCharCounter()
+  let bytes = 0
+  let closed = false
+  return {
+    write(buf) {
+      if (buf.length === 0) return
+      let off = 0
+      // ⚠️ 位置**显式**给（不靠文件指针）：`rewind()` 用 `ftruncate` 把尾巴切掉之后，
+      //    文件指针还停在原处，接着写就会在中间留一段空洞 —— 包里的字节会静默变成 0。
+      while (off < buf.length) off += writeSync(fd, buf, off, buf.length - off, bytes + off)
+      hash.update(buf)
+      counter.push(buf)
+      bytes += buf.length
+    },
+    mark() {
+      return { bytes, hash: hash.copy(), counter: counter.mark() }
+    },
+    rewind(mark) {
+      ftruncateSync(fd, mark.bytes)
+      hash = mark.hash
+      counter.rewind(mark.counter)
+      bytes = mark.bytes
+    },
+    close() {
+      if (closed) return
+      closed = true
+      closeSync(fd)
+    },
+    /** 收口读数（`close()` 之后调；只在最后调一次 —— `digest()` 用掉就没了）。 */
+    result() {
+      return { sha256: hash.digest('hex'), all_chars: counter.finish(), bytes }
+    },
+  }
 }
 
 /** ISO8601 的毫秒数；解不出 ⇒ `null`（调用方决定怎么出声）。 */
@@ -301,8 +594,6 @@ function stampOf(iso) {
   return at.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
 }
 
-const sha256Of = (buf) => createHash('sha256').update(buf).digest('hex')
-
 /** 读一份 JSON；不在 / 读不出 / 不是 JSON ⇒ `null`（窗口是"没有评审记录"这种合法态）。 */
 function readJsonSoft(file) {
   try {
@@ -318,9 +609,16 @@ function readJsonSoft(file) {
 const FRAME_LINE = /^\s*帧\s+(\d+):\s*偏移\s+(\d+)\s*·\s*总长\s+(\d+)\s*B\s*·\s*块\s+(\d+)\s*·\s*声明解压\s+(\S+)\s*·\s*实解\s+(\d+)\s*B(.*)$/
 
 /**
- * 跑一次现成工具，把它解出来的文本落到 `outFile`。
+ * 跑一次现成工具，把它解出来的文本落到 `outFile`，返回**帧这一层的读数**。
  * 任何"读不动"的形状（工具非 0 退出 / 输出形状不认识 / 帧报了 ❌ / 逐帧字节数与落盘文件对不上）
  * ⇒ 抛 `E_PACKET_FRAMES`。**绝不返回半截**。
+ *
+ * 🔴 这里**不把落盘文本读进内存**（F-144）：只核"逐帧实解之和 = 落盘文件的字节数"（`statSync`），
+ *    文本按块流过去（`eachChunkOfFile` / `eachLineOfFile`）。`out_bytes` 就是逐帧那些"实解 N B"的和 ——
+ *    它在任何拼接之前就成立，闸可以在攒出大字符串之前判。
+ *
+ * @returns {{frames:Array<{index:number,offset:number,bytes:number,outBytes:number,tail:string}>,
+ *            count:number, bytes:number, out_bytes:number, out_file:string}}
  */
 function runFramesTool(tool, file, outFile) {
   const res = spawnSync(process.execPath, [tool, file, '--json-out', outFile], {
@@ -351,12 +649,12 @@ function runFramesTool(tool, file, outFile) {
     throw packetError(PACKET_CODES.FRAMES, `第 ${bad.index} 帧坏了（工具报了 ${bad.tail.includes('❌') ? '解压失败' : '声明解压数与实解数不符'}）：${where}`)
   }
   if (!existsSync(outFile)) throw packetError(PACKET_CODES.FRAMES, `工具没有把解出来的文本落到 ${outFile}（${where}）`)
-  const buf = readFileSync(outFile)
   const outBytes = frames.reduce((n, f) => n + f.outBytes, 0)
-  if (outBytes !== buf.length) {
-    throw packetError(PACKET_CODES.FRAMES, `逐帧"实解"合计 ${outBytes} B 与落盘文本 ${buf.length} B 对不上 —— 有帧没进内容（${where}）`)
+  const fileBytes = statSync(outFile).size
+  if (outBytes !== fileBytes) {
+    throw packetError(PACKET_CODES.FRAMES, `逐帧"实解"合计 ${outBytes} B 与落盘文本 ${fileBytes} B 对不上 —— 有帧没进内容（${where}）`)
   }
-  return { text: buf.toString('utf8'), buf, frames, count: frameCount, bytes: Number(declared[1]) }
+  return { frames, count: frameCount, bytes: Number(declared[1]), out_bytes: outBytes, out_file: outFile }
 }
 
 /** 首帧那一段字节单独喂给同一个工具 ⇒ 首帧字符数（**不自己解压**，只按工具报的边界抠字节）。 */
@@ -379,7 +677,7 @@ function firstFrameChars(tool, src, stem, first) {
   writeFileSync(sliceFile, buf)
   const r = runFramesTool(tool, sliceFile, outFile)
   if (r.count !== 1) throw packetError(PACKET_CODES.FRAMES, `首帧那一段应当只有 1 帧，工具读成 ${r.count} 帧：${src}`)
-  return charCountOf(r.text)
+  return countCharsOfFile(r.out_file)
 }
 
 /**
@@ -389,13 +687,14 @@ function firstFrameChars(tool, src, stem, first) {
  * `<outDir>/.packet-tmp-<id>/`，或 `AGENIA_SCRATCH_DIR` 那一格）；不给 ⇒ 自己按 `scratchRootFor()`
  * 找一格，并连格一起清掉 —— **源流所在目录一个字节都不写**。
  *
+ * ⚠️ 这条是**要整份文本**的那条路（`readSessionStream`），所以它确实把文本读进内存；
+ *    打包那条路由 `buildSessionPacket` 自己走流式，不经过这里。
+ *
  * @param {string} file 会话流（多帧 zstd）的路径
  * @param {string|null} [resolvedTool] 现成帧工具（打包路径解一次、每条源复用）
  * @param {string|null} [scratchParent] 临时件落点的父目录；`null` ⇒ 裸读路径自己找
  * @returns {{text:string, buf:Buffer, frames:Array<{index:number,offset:number,bytes:number,outBytes:number,tail:string}>,
  *            count:number, bytes:number, first_frame_chars:number, tool:string}}
- *   ⚠️ `buf` / `frames` 是 v1.7 加的**只读副产品**（裁剪要按"工具报的每帧实解字节数"切文本）；
- *      不裁剪时一个都不碰，所以旧读数的字节不受影响。
  */
 function readStreamDetail(file, resolvedTool = null, scratchParent = null) {
   const src = path.resolve(String(file ?? ''))
@@ -410,8 +709,9 @@ function readStreamDetail(file, resolvedTool = null, scratchParent = null) {
   const stem = makeTempDir(parent)
   try {
     const r = runFramesTool(tool, src, path.join(stem, 'frames.txt'))
-    const first = r.frames.length > 1 ? firstFrameChars(tool, src, stem, r.frames[0]) : charCountOf(r.text)
-    return { text: r.text, buf: r.buf, frames: r.frames, count: r.count, bytes: r.bytes, first_frame_chars: first, tool }
+    const buf = readFileSync(r.out_file)
+    const first = r.frames.length > 1 ? firstFrameChars(tool, src, stem, r.frames[0]) : charCountOf(buf.toString('utf8'))
+    return { text: buf.toString('utf8'), buf, frames: r.frames, count: r.count, bytes: r.bytes, first_frame_chars: first, tool }
   } finally {
     removeTempDir(stem, parent) // 成功 / 失败都清（清理前校验落点；清不掉会在 stderr 出声）
   }
@@ -621,11 +921,16 @@ function projectHumanEvent(obj) {
 }
 
 /**
- * 按生效窗口裁一条**已经解出来**的流（v1.7），需要的话再按"人话"筛一遍（v1.8）—— 一行一行过。
+ * 按生效窗口裁一条**已经解出来**的流（v1.7），需要的话再按"人话"筛一遍（v1.8）—— 一行一行过，
+ * 留下来的行**逐条写进 `sink`**（`content.jsonl` 的流式写入口）。
  *
  * 🔴 **不自己解压、不自己算帧边界**（纪律 ①）：只用工具报出来的每帧"实解 N B"做前缀和，
- *    把拼接文本切回"一帧一段"，帧内再按 LF 切行。切不齐（前缀和 ≠ 文本字节数）就当场抛
+ *    按这些**工具给的字节数**判每一行落在第几帧。切不齐（前缀和 ≠ 落盘文本的字节数）就当场抛
  *    —— 宁可红，不许按错位的边界裁。
+ *
+ * 🔴 **两遍都读那份落盘文本**（顺序读，一遍一行；不把整份文本拼成一个 `Buffer` / 一个字符串）：
+ *    第一遍切行、取时间戳、（开人话时）判 turn 归属与"最后一条"；第二遍才定去留 ——
+ *    因为"一条 assistant 是不是这个 turn 的最后一条"要看它**后面**的行。
  *
  * 🔴 **turn 这一层在"整条流"上判，不在裁剪之后的那几行上判**（v1.8 的要点）：
  *    `turn/start` / `turn/end` 可能落在窗口外（一个 turn 从窗口前开、在窗口里收尾）
@@ -635,50 +940,41 @@ function projectHumanEvent(obj) {
  * 读数口径（写进文件头那张表）：`count` = 有贡献的帧数 · `bytes` = 这些帧的压缩字节 ·
  * `first_frame_chars` = 第一个有贡献的帧里**留下来的**那些行的字符数（投影过的行按投影后的字算）。
  *
- * @param {{buf:Buffer, frames:Array<{bytes:number,outBytes:number}>}} detail `readStreamDetail()` 的返回值
+ * @param {string} srcFile 现成工具解出来的文本（一条源一份，落在临时格上）
+ * @param {Array<{bytes:number,outBytes:number}>} frames 工具报的逐帧读数
  * @param {{fromMs:number|null, toMs:number, from:string|null, to:string}|null} win 生效窗口；`null` = 只筛不裁
  * @param {boolean} human 要不要套人话筛（v1.8；`false` ⇒ 与 v1.7 逐字相同）
- * @returns {{text:string, count:number, bytes:number, first_frame_chars:number, kept_events:number,
+ * @param {{write:(buf:Buffer)=>void}} sink 留下的行往哪儿写（`createContentSink()` 的返回值）
+ * @returns {{count:number, bytes:number, first_frame_chars:number, kept_events:number,
  *            dropped_events:number, untimed_lines:number, untimed_samples:Array<object>,
  *            kept_lines:number, human:object|null}}
  */
-function filterStream(detail, win, human) {
-  const buf = detail.buf
-  const frames = detail.frames
+function filterFileInto(srcFile, frames, win, human, sink) {
   const frameStart = new Array(frames.length)
   let cursor = 0
   for (let i = 0; i < frames.length; i += 1) {
     frameStart[i] = cursor
     cursor += frames[i].outBytes
   }
-  if (cursor !== buf.length) {
-    throw packetError(PACKET_CODES.FRAMES, `逐帧"实解"合计 ${cursor} B 与解出来的文本 ${buf.length} B 对不上 —— 帧边界切不开，不许硬裁（v1.7）`)
+  const srcBytes = statSync(srcFile).size
+  if (cursor !== srcBytes) {
+    throw packetError(PACKET_CODES.FRAMES, `逐帧"实解"合计 ${cursor} B 与解出来的文本 ${srcBytes} B 对不上 —— 帧边界切不开，不许硬裁（v1.7）`)
   }
 
   // ── 第一遍：切行 · 取时间戳 · （开人话时）判 turn 归属与"最后一条" ────────────────
-  const starts = []
-  const ends = []
   const times = []
-  const lineFrames = []
   const kinds = human ? [] : null
   const turnOfLine = human ? [] : null
   const turns = []
   let openTurn = -1
   let framePtr = 0
-  let scanStart = 0
-  while (scanStart < buf.length) {
-    const nl = buf.indexOf(0x0a, scanStart)
-    const lineEnd = nl === -1 ? buf.length : nl + 1
+  eachLineOfFile(srcFile, (line, at) => {
     // 这一行落在第几帧：帧按顺序解、行起点单调 ⇒ 一个指针往后推就够（O(行数)）
-    while (framePtr + 1 < frames.length && scanStart >= frameStart[framePtr + 1]) framePtr += 1
-    const index = starts.length
-    starts.push(scanStart)
-    ends.push(lineEnd)
-    lineFrames.push(framePtr)
-    const lineText = buf.subarray(scanStart, lineEnd).toString('utf8')
+    while (framePtr + 1 < frames.length && at >= frameStart[framePtr + 1]) framePtr += 1
+    const index = times.length
     let obj = null
     try {
-      obj = JSON.parse(lineText)
+      obj = JSON.parse(line.toString('utf8'))
     } catch {
       obj = null
     }
@@ -724,8 +1020,8 @@ function filterStream(detail, win, human) {
         openTurn = -1
       }
     }
-    scanStart = lineEnd
-  }
+  })
+  const lineCount = times.length
 
   const ledger = human
     ? {
@@ -762,7 +1058,7 @@ function filterStream(detail, win, human) {
     // 未闭合的 turn：只要它在窗口里**还有行**就记一笔 —— 哪怕一条 assistant 都还没来
     // （那正是"她正回着话"的形状）。账上写明，别让它静默消失。
     const openTurns = new Map()
-    for (let i = 0; i < starts.length; i += 1) {
+    for (let i = 0; i < lineCount; i += 1) {
       const ti = turnOfLine[i]
       if (ti < 0 || turns[ti].closed === true || !insideAt(i)) continue
       const acc = openTurns.get(ti) ?? { lines: 0, assistant_lines: 0 }
@@ -779,29 +1075,35 @@ function filterStream(detail, win, human) {
     }))
   }
 
-  // ── 第二遍：定去留（先判窗口、再判人话）─────────────────────────────────────
-  const keptChunks = []
+  // ── 第二遍：定去留（先判窗口、再判人话）—— 留下来的行**写进 sink**，不攒在内存里 ──────────
   const untimedSamples = []
   let keptEvents = 0
   let droppedEvents = 0
   let untimedLines = 0
+  let keptLines = 0
   let firstKeptFrame = -1
   let firstFrameCharsTotal = 0
   const framesKept = new Set()
-  for (let i = 0; i < starts.length; i += 1) {
+  let index = 0
+  let framePtr2 = 0
+  eachLineOfFile(srcFile, (line, at) => {
+    while (framePtr2 + 1 < frames.length && at >= frameStart[framePtr2 + 1]) framePtr2 += 1
+    const lineFrame = framePtr2
+    const i = index
+    index += 1
     if (!insideAt(i)) {
       droppedEvents += 1
       if (times[i] === null) {
         untimedLines += 1
         if (untimedSamples.length < 3) {
-          untimedSamples.push({ frame: lineFrames[i], head: buf.subarray(starts[i], ends[i]).toString('utf8').slice(0, 80) })
+          untimedSamples.push({ frame: lineFrame, head: line.toString('utf8').slice(0, 80) })
         }
       }
-      continue
+      return
     }
     keptEvents += 1
     if (human) ledger.scanned_lines += 1
-    let chunk = buf.subarray(starts[i], ends[i])
+    let chunk = line
     if (human) {
       const kind = kinds[i]
       let keep = true
@@ -842,19 +1144,19 @@ function filterStream(detail, win, human) {
           ledger.non_message_lines += 1
         }
       }
-      if (!keep) continue
+      if (!keep) return
     }
-    keptChunks.push(chunk)
-    framesKept.add(lineFrames[i])
-    if (firstKeptFrame === -1) firstKeptFrame = lineFrames[i]
-    if (lineFrames[i] === firstKeptFrame) firstFrameCharsTotal += charCountOf(chunk.toString('utf8'))
-  }
+    sink.write(chunk)
+    keptLines += 1
+    framesKept.add(lineFrame)
+    if (firstKeptFrame === -1) firstKeptFrame = lineFrame
+    if (lineFrame === firstKeptFrame) firstFrameCharsTotal += charCountOf(chunk.toString('utf8'))
+  })
 
   let bytesOfKeptFrames = 0
-  for (const index of framesKept) bytesOfKeptFrames += frames[index].bytes
-  if (human) ledger.kept_lines = keptChunks.length
+  for (const frameIndex of framesKept) bytesOfKeptFrames += frames[frameIndex].bytes
+  if (human) ledger.kept_lines = keptLines
   return {
-    text: Buffer.concat(keptChunks).toString('utf8'),
     count: framesKept.size,
     bytes: bytesOfKeptFrames,
     first_frame_chars: firstFrameCharsTotal,
@@ -862,7 +1164,7 @@ function filterStream(detail, win, human) {
     dropped_events: droppedEvents,
     untimed_lines: untimedLines,
     untimed_samples: untimedSamples,
-    kept_lines: keptChunks.length,
+    kept_lines: keptLines,
     human: ledger,
   }
 }
@@ -991,6 +1293,11 @@ function removeTempDir(dir, parent) {
  * `<outDir>/.packet-tmp-<id>/frames/`；**包本体**恒暂存在 `<outDir>/.packet-tmp-<id>/packet/` 再改名
  * （`rename` 同卷 ⇒ 原子）。两处都在 `finally` 里清掉 —— **源流所在目录一个字节都不写**。
  *
+ * 🔴 **全程流式（F-144）**：整条流一次都不拼成一个 `Buffer` / 一个字符串 ——
+ * ① 先分类（排除项一个字节都不解压）→ ② 逐源跑现成帧工具、按"逐帧实解 N B"累加 `out_bytes`
+ * （解出来的文本落在临时格上）→ ③ 超上限就整份拒 → ④ 逐块写 `content.jsonl`。
+ * ⇒ 处理 121 MB 的流时，峰值内存不随总文本量线性增长。
+ *
  * @param {{project:string, outDir:string, statusRoot:string, now?:string|Date,
  *          sources:Array<{session_id:string,project:string,file:string,last_event_at:string,
  *                          window?:{from?:string|null, to?:string}, human?:boolean}>,
@@ -998,9 +1305,12 @@ function removeTempDir(dir, parent) {
  *   ⚠️ `sources[].window` 是 v1.7 的**可选裁剪窗口**（见文件头）；不给 ⇒ 行为与 v1.6 逐字相同。
  *   ⚠️ `sources[].human` 是 v1.8 的**可选人话过滤**（见文件头）；不给 / `false` ⇒ 行为与 v1.7 逐字相同。
  *      两个键**正交**：可以只给一个、也可以都给。
+ *   ⚠️ 解压总量上限只从环境变量 `AGENIA_PACKET_MAX_BYTES` 来（F-144 · 契约 §9.1 ②③④）。
  * @returns {{ok:true, packet_id:string, dir:string, manifest_path:string,
  *            content_sha256:string, frames:object, excluded:Array<{session_id:string,reason:string}>,
+ *            packet_bytes:{session_count:number, out_bytes:number, limit:number|null},
  *            cropped:Array<object>, human:object|null}}
+ *   `packet_bytes` = 这一次**生效**的上限与量出来的解压总量（`limit === null` = 闸关掉了）。
  *   `cropped` = 裁剪的账（每源：生效窗口 / 留了几条 / 丢了几条 / 没有时间戳的几行 / 有贡献的帧数）。
  *   `human` = 人话过滤的账（v1.8）：`{projection, sources[], totals}` —— `projection` 里带着
  *   **"保证降级"那句话**（manifest 十个字段不许动 ⇒ 降级声明挂在账上）；**一条源都没开 ⇒ `null`**。
@@ -1013,6 +1323,8 @@ export function buildSessionPacket(options = {}) {
   if (!Array.isArray(sources)) {
     throw packetError('E_ARG_SCHEMA', 'buildSessionPacket：sources 必填数组（v1.6 ②；空源请显式给 []）')
   }
+  // F-144：解压总量上限先读 —— 形状不合（负数 / `1KB` …）⇒ **当场** `E_ARG_SCHEMA`，解压一个字节之前就拒。
+  const limit = packetMaxBytesOf()
   const excludeIds = new Set((Array.isArray(excludeSessionIds) ? excludeSessionIds : []).map((v) => String(v)))
   const at = isoOf(now)
   const window = packetWindow({ statusRoot, now: at })
@@ -1036,68 +1348,110 @@ export function buildSessionPacket(options = {}) {
   const tokenDir = path.join(base, token)
   const bodyTmp = path.join(tokenDir, 'packet')
   const framesParent = scratchRoot === null ? path.join(tokenDir, 'frames') : scratchRoot
+  // 本次建的每一个帧临时格都记着：帧工具的输出在"量"那一遍就落盘，打包那一遍还要用它 ⇒ 不能当场删，
+  // 统一在 `finally` 里按各自的父目录校验落点再清（清理前仍走 `assertDeletableTempDir`）。
+  const tempDirs = []
+  const newTempDir = (parent) => {
+    const dir = makeTempDir(parent)
+    tempDirs.push({ dir, parent: path.resolve(String(parent)) })
+    return dir
+  }
 
   try {
     mkdirSync(base, { recursive: true }) // 父是文件 ⇒ 这里就抛（一个包目录都不会留）
-
-    // ② 只解 included（每条源：全帧拼接文本 + 帧读数）—— 临时件只落 `framesParent` 那一格
-    //    v1.7：带裁剪窗口的源走**逐行裁**（同一次解压，只是把窗口外的行留下不拼）；
-    //    v1.8：`human` 开的源在同一次逐行过滤里**多筛一道**（窗口 → 人话，次序钉死）；
-    //    **两个键都没给的源走的老路一个字没动** ⇒ 旧包的字节读数不受影响。
     const tool = findZstdTool()
-    const pieces = []
+
+    // ② 量：逐源跑现成帧工具，按它报的**逐帧"实解 N B"**累加 `out_bytes`。
+    //    🔴 这一步**不拼任何整份文本**（F-144 的本体）：解出来的文本落在临时格（磁盘）上，
+    //       内存里只有帧读数。量的是"读进来多少"（`included` 的那些源），不是"最后留下多少" ——
+    //       窗口裁剪 / 人话筛改的是留下哪些行，不改这个数。
+    const measured = []
+    let outBytes = 0
+    for (const source of included) {
+      const srcFile = path.resolve(String(source.file))
+      if (!existsSync(srcFile)) throw packetError(PACKET_CODES.FRAMES, `会话流文件不在：${srcFile}`)
+      if (tool === null) {
+        throw packetError(PACKET_CODES.FRAMES, `现成帧工具不在（沿模块目录往上找 ${ZSTD_TOOL_REL}）—— 帧边界没法定，不许自造解压器`)
+      }
+      const stem = newTempDir(framesParent)
+      const r = runFramesTool(tool, srcFile, path.join(stem, 'frames.txt'))
+      const first = r.frames.length > 1 ? firstFrameChars(tool, srcFile, stem, r.frames[0]) : countCharsOfFile(r.out_file)
+      outBytes += r.out_bytes
+      measured.push({ source, frameCount: r.count, framesBytes: r.bytes, frames: r.frames, outFile: r.out_file, firstFrameChars: first })
+    }
+
+    // ③ 闸：**先量完所有进包源，再一次比**（§9.1 ⑦：拒的时候 `out_bytes` 必须是全量，
+    //    不是"读到被顶住那一刻的前缀和"）。`>` 才拒，`=== limit` 过。
+    if (limit !== null && outBytes > limit) {
+      throw packetError(
+        PACKET_CODES.TOO_LARGE,
+        `解压总量 ${outBytes} B 超过生效上限 ${limit} B（进包 ${included.length} 条源）—— ` +
+          '只能整份拒；不许少读几帧凑出一份包（少读的帧与"读不到"在包里长得一样）',
+        { session_count: included.length, out_bytes: outBytes, limit },
+      )
+    }
+
+    // ④ 打包：逐源把留下来的行**逐块**写进 content.jsonl —— 与"总文本量"脱钩的就是这一步
+    //    （写一块算一块：字节 sha256 + §B3.4 字符数都是流式累加，见 `createContentSink`）。
+    mkdirSync(tokenDir, { recursive: true })
+    mkdirSync(bodyTmp) // 独占建：撞名即炸，绝不覆盖
+    const sink = createContentSink(path.join(bodyTmp, 'content.jsonl'))
     const sourceIds = []
     const croppedReport = []
     const humanReport = []
     let frameCount = 0
     let streamBytes = 0
     let firstFrameCharsTotal = 0
-    for (const source of included) {
-      const detail = readStreamDetail(source.file, tool, framesParent)
-      const human = source.human === true
-      const cropped = source.crop === null || source.crop === undefined ? null : source.crop
-      if (cropped === null && !human) {
-        // v1.7 原路（不裁不筛）：一个字节都不碰
-        pieces.push(detail.text)
+    try {
+      for (const item of measured) {
+        const source = item.source
+        const human = source.human === true
+        const cropped = source.crop === null || source.crop === undefined ? null : source.crop
+        if (cropped === null && !human) {
+          // v1.7 原路（不裁不筛）：整条流按块搬过去，一个字节都不改
+          eachChunkOfFile(item.outFile, (chunk) => sink.write(chunk))
+          sourceIds.push(source.session_id)
+          frameCount += item.frameCount
+          streamBytes += item.framesBytes
+          firstFrameCharsTotal += item.firstFrameChars
+          continue
+        }
+        // 这条源一条都没留下时，刚写下去的那些字节与账要一起退回去（`mark` / `rewind`）。
+        const mark = sink.mark()
+        const filtered = filterFileInto(item.outFile, item.frames, cropped, human, sink)
+        if (filtered.kept_lines === 0) sink.rewind(mark)
+        if (cropped !== null) {
+          croppedReport.push({
+            session_id: source.session_id,
+            window: { from: cropped.from, to: cropped.to },
+            kept_events: filtered.kept_events,
+            dropped_events: filtered.dropped_events,
+            untimed_lines: filtered.untimed_lines,
+            untimed_samples: filtered.untimed_samples,
+            frames: filtered.count,
+            bytes: filtered.bytes,
+          })
+        }
+        // 人话那把账**先记**（哪怕这条源最后一条都没留下 —— 账要能解释"为什么它没进包"）
+        if (human) humanReport.push({ session_id: source.session_id, ...filtered.human })
+        // 一条事件都没留下（窗口裁）或一条人话都没有（v1.8 筛完）⇒ 这条源对包没有任何贡献：
+        // **不写进 `source_ids`**（写了就是谎报"它在包里"）。`kept_lines` 对这一条负全责。
+        if (filtered.kept_lines === 0) continue
         sourceIds.push(source.session_id)
-        frameCount += detail.count
-        streamBytes += detail.bytes
-        firstFrameCharsTotal += detail.first_frame_chars
-        continue
+        frameCount += filtered.count
+        streamBytes += filtered.bytes
+        firstFrameCharsTotal += filtered.first_frame_chars
       }
-      const filtered = filterStream(detail, cropped === null ? null : cropped, human)
-      if (cropped !== null) {
-        croppedReport.push({
-          session_id: source.session_id,
-          window: { from: cropped.from, to: cropped.to },
-          kept_events: filtered.kept_events,
-          dropped_events: filtered.dropped_events,
-          untimed_lines: filtered.untimed_lines,
-          untimed_samples: filtered.untimed_samples,
-          frames: filtered.count,
-          bytes: filtered.bytes,
-        })
-      }
-      // 人话那把账**先记**（哪怕这条源最后一条都没留下 —— 账要能解释"为什么它没进包"）
-      if (human) humanReport.push({ session_id: source.session_id, ...filtered.human })
-      // 一条事件都没留下（窗口裁）或一条人话都没有（v1.8 筛完）⇒ 这条源对包没有任何贡献：
-      // **不写进 `source_ids`**（写了就是谎报"它在包里"）。`kept_lines` 对这一条负全责。
-      if (filtered.kept_lines === 0) continue
-      pieces.push(filtered.text)
-      sourceIds.push(source.session_id)
-      frameCount += filtered.count
-      streamBytes += filtered.bytes
-      firstFrameCharsTotal += filtered.first_frame_chars
+    } finally {
+      sink.close()
     }
-
-    const contentText = pieces.join('')
-    const contentBuf = Buffer.from(contentText, 'utf8')
-    const contentSha = sha256Of(contentBuf)
+    // content.jsonl 的字节与字符读数：全是写的时候一块一块攒出来的，收口只取一次。
+    const content = sink.result()
     const frames = Object.freeze({
       count: frameCount,
       bytes: streamBytes,
       first_frame_chars: firstFrameCharsTotal,
-      all_chars: charCountOf(contentText),
+      all_chars: content.all_chars,
     })
 
     const manifest = {
@@ -1109,16 +1463,14 @@ export function buildSessionPacket(options = {}) {
       source_ids: sourceIds,
       excluded,
       frames,
-      content_sha256: contentSha,
+      content_sha256: content.sha256,
       // 空包（`sources: []`）没有解压任何 source ⇒ 如实写"没用到工具"，不编一个像样的路径。
       tool: { path: tool ?? `${ZSTD_TOOL_REL}（未找到；空包没有解压任何 source）` },
     }
 
-    mkdirSync(tokenDir, { recursive: true })
-    mkdirSync(bodyTmp) // 独占建：撞名即炸，绝不覆盖
-    writeFileSync(path.join(bodyTmp, 'content.jsonl'), contentBuf)
     writeFileSync(path.join(bodyTmp, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
     // 自校验：自己产的包先过一遍自己的校验器，**改名之前**判 —— 不过就清临时目录、当场抛
+    // （校验器自己也走流式：整份 content 不读进内存 —— 大包在这一步同样会被打崩）
     const check = validateSessionPacket(bodyTmp)
     if (check.ok !== true) {
       throw packetError('E_INTERNAL', `自产的包没过自己的校验（${check.code}）：${JSON.stringify(check.problems).slice(0, 240)}`)
@@ -1130,9 +1482,12 @@ export function buildSessionPacket(options = {}) {
       packet_id: packetId,
       dir: finalDir,
       manifest_path: path.join(finalDir, 'manifest.json'),
-      content_sha256: contentSha,
+      content_sha256: content.sha256,
       frames,
       excluded,
+      // F-144（契约 §9.1 ⑤）：这一跑生效的那个上限与量出来的解压总量 —— **成功路上也要有读数**，
+      // 否则"闸在不在"在跑得通的那一跑里读不到。`manifest` 的十个顶层字段不动（账走返回值与 audit）。
+      packet_bytes: { session_count: included.length, out_bytes: outBytes, limit },
       // v1.7：裁剪的账**不进 manifest**（那十个顶层字段不能动）⇒ 从这里回去，由调用方记账。
       // 没给任何裁剪窗口时它恒为空数组（旧调用方拿到的东西一个字段都没变，只是多了一把空账）。
       cropped: croppedReport,
@@ -1149,7 +1504,8 @@ export function buildSessionPacket(options = {}) {
     if (err?.code !== undefined && String(err.code).startsWith('E_')) throw err
     throw packetError('E_TXN_IO', `打包失败（${err?.code ?? 'UNKNOWN'}）：${String(err?.message ?? err)}`)
   } finally {
-    // 成功 / 失败都清掉这一格（包本体暂存 + 没给 SCRATCH 时的帧临时件）；清理前先校验落点。
+    // 成功 / 失败都清掉：每条源那一格帧临时件 + token 那一格（包本体暂存）；清理前先校验落点。
+    for (const item of tempDirs) removeTempDir(item.dir, item.parent)
     removeTempDir(tokenDir, base)
   }
 }
@@ -1263,17 +1619,20 @@ export function validateSessionPacket(packetDir) {
     if (problems.length > 0) return { ok: false, code, manifest: man, problems, content_sha256: null }
   }
 
-  let contentBuf = null
+  // content.jsonl：**按块**量字节 sha256 与字符数（F-144）—— 整份读进内存这一步在 121 MB 的包上
+  // 会把进程打崩，而"自校验"正是每次打包都会走的那一步。
+  let contentIsFile = false
   try {
-    contentBuf = readFileSync(contentPath)
+    contentIsFile = statSync(contentPath).isFile()
   } catch {
-    contentBuf = null
+    contentIsFile = false
   }
-  if (contentBuf === null) {
+  if (contentIsFile !== true) {
     return { ok: false, code: PACKET_CODES.FRAMES, manifest: man, problems: [problemOf(PACKET_CODES.FRAMES, `content.jsonl 读不到：${contentPath}`)], content_sha256: null }
   }
 
-  const contentSha = sha256Of(contentBuf)
+  const measuredContent = measureTextFile(contentPath)
+  const contentSha = measuredContent.sha256
   if (contentSha !== man.content_sha256) {
     return {
       ok: false,
@@ -1284,7 +1643,7 @@ export function validateSessionPacket(packetDir) {
     }
   }
 
-  const allChars = charCountOf(contentBuf.toString('utf8'))
+  const allChars = measuredContent.all_chars
   if (man.frames.all_chars !== allChars) {
     return {
       ok: false,
