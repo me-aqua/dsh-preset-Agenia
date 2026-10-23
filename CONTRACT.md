@@ -331,6 +331,7 @@ $env:AGENIA_PROBE_TMP=$env:TEMP
 | 2026-10-22（登记落盘 2026-10-23 凌晨） | 登记 `F-135`：探针新增 **`I18`** —— **真那份 `presets/agenia/.runtime/common-sense.md` 在盘上、且不是空壳**（期望 `{在盘上:'是', 正文:'非空'}`；「非空」的口径同 `SURF-03`：**去掉空白后还得有字**，不是 `bytes >= 2`；红因「不在 / 是个目录 / 空壳」三句各说各的）；落到 §1.2 判据行 + §4 `I18` 行（**探针分母 221 → 222**）。读数：全量 `222/222 · 0 红 · 0 挂起 · exit 0`（2026-10-22 `23:43` 那一跑）；反向三种因各 1 红、同跑 `I3` 仍 `ok`。§6.5 / §7.4 / §8.3 的 `TOTAL`（70 / 73 / 76）是**套件**那本账的分母，与探针不同轴 —— 没动 | 测试岗，`F-135` 第 4 关复审的**唯一阻塞**（`CONTRACT.md` 没登记 `I18`）。读数出处：`.team/test/2026-10-22/_runs/f135-fix/`（`log-section.md` §四 / §六 / §七 · `probe-pos.log`；探针那一版 `D8583409…` / 288,775 B / 4,043 行） |
 | 2026-10-23 | 追加 §9：会话包的解压总量**有上限**（`AGENIA_PACKET_MAX_BYTES`，缺省 **536870912** B）+ 超限码 **`E_PACKET_TOO_LARGE`**（exit 5，payload `{session_count, out_bytes, limit}` 落在 `error.details`）+ **失败形状**（exit 非 0 且 stdout 是 JSON，不许 134）+ **不许截断**。判据并进 `REV-01` 的 ⑦ 那一组 ⇒ **分母仍 76**（一格没加）。⚠️ 定形里"建议 `100_000_000`"两个约束都过不了（< 30 源的 100,531,323 < 崩溃点 121,000,000），本节按算术取 512 MiB | 测试岗，门 2 第 2 关（定形 `.team/leader/2026-10-23/spec-F-144.md`；红基线 `.team/test/2026-10-23/log.md`） |
 | 2026-10-23 | 追加 §3.3 **板子告警的三态**（三种现场、三句互斥的话：叫过开发没叫过测试 / **从没叫过测试但文件动过**（新句，不许出现「最后一次测试之后」「那次测试作废」）/ 叫过测试之后又动了）—— §1.1 的正文样张同步补上第三句（它原来只画了两句 ⇒ 会与 §3.3 打架）。**同批记进 §3.3 的优先级（组长 2026-10-23 拍板）：「从没叫过测试」赢过「测试之后又动了」**（测试计数 0 ⇒ 不管叫没叫过开发，都不许说那两句；`BRD-01` 的 B 格因此有两条输入：外聘 / 开发）。追加 §1.4 **提到 ≠ 声明**（命中处紧邻否定 ⇒ 这一处不算承诺；真承诺仍算；`forms` 表不动；「没写五关」这类不在否定词表里的写法、双重否定的假阴性都写明）。同批新增判据组 `board-states`（1 条：`BRD-01`，**分母 80 → 81**）；`DOC-01` 加**两格**新自控（不加用例号：只写空缺 ⇒ 恰好一条 `DOC-INJECTED-UNSAID`；同一份面补一句真承诺 ⇒ 绿）+ 一把刀（删"剔掉否定出现"那一步 ⇒ 只有"只写空缺"翻绿） | 测试岗，门 2 第 2 关（定形 `.team/leader/2026-10-23/spec-F-152.md`；读数 `.team/test/2026-10-23/log.md` 第八节 · 全量 `_runs/test-f152b`：分母 **81**（B 格加一条输入**不加分母**）· `RED 2 / GREEN 79`（`BRD-01` + `DOC-01` —— 两条都是**预期的红**：行为 / 判据还没落地，见那一节逐条红因）· 体检 117/117 · 探针 222/222） |
+| 2026-10-23 | 追加 §11 **每日状态的两端与署名**（`F-155`）：`daily\<day>.json` 的字段表补五个键（`first_session_id` / `first_at` / `last_session_id` / `last_seen_at` / `seen_count`）并写死 **"它仍是派生副本、不另立权威"**；`daily-start` 变成**幂等**（`first_*` 永不覆盖、旧形状读得懂并升级、不带 `session_id` 的调用也算一次）；`health-read` 的 `daily` 在 / `local` 不在那一支 **`status` 与 reason 码一个都不动**，只让 `detail` 说真话（三种话 + 三个机读锚点：`刚开工` / `本会话不是` / HOLD 那句保持），并新增**一个加性可选 payload 键 `session_id`**。同批新增判据组 `daily-state`（2 条：`DLY-01` 写面四格 + 阳性对照 + 四把刀 / `DLY-02` 读面五格 + 阳性对照），**分母 81 → 83** | 测试岗，门 2 第 2 关（定形 `.team/leader/2026-10-23/spec-F-155.md`；读数 `.team/test/2026-10-23/log.md` 第十节：`_runs/test-f155b` 分母 **83** · `RED 4 / GREEN 79`（`BRD-01` / `DOC-01` 是 `F-152` 那两条预期的红；`DLY-01` / `DLY-02` 是本票预期的红）· 体检 117/117 · 探针 222/222） |
 
 ---
 
@@ -1250,3 +1251,115 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 - 登记：`support/registry.mjs` 的 `BATCH_L` + `ROWS` + `GROUP_COUNTS['reasoning-filter'] = 3`
   （以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_L`，否则冻结清单与表当场分家）；
 - 分母：`TOTAL` 由盘上扫出 = **80**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；76 + 这 3 条，中间那一格 78 是 14:1x 的读数）。
+
+---
+
+## §11 · `F-155` · 每日状态的两端与署名（谁开的这一天，卡片说得出来）
+
+> 定形：`.team/leader/2026-10-23/spec-F-155.md`。这一节是它的技术契约。
+> 判据：`tests/agenia-upgrade/integration/dly01-daily-state.test.mjs` 的 `DLY-01` / `DLY-02`（组 `daily-state`）。
+
+### §11.0 一句话，两张脸
+
+**病根一句话：「今天开过工」这件事既没有载体、也没有署名** ——
+`daily-start` 每次调用都**覆盖** `session_id`（第二个会话一写，就再也看不出谁开的这一天），
+而卡片那一支只会说一句通用的「今天开过工（每日状态在），但本地状态还没有」，读的人不知道是不是**本会话**开的。
+
+| 票 | 那一面 | 现场（2026-10-23 现量） |
+| --- | --- | --- |
+| `F-155` A | 写面 `--op daily-start`（`presets/agenia/bin/agenia-brain.mjs::opDailyStart`） | `daily\<day>.json` 里只有**一个** `session_id` 单值键，且每次调用覆盖 ⇒ 分不清首次与后续 |
+| `F-155` B | 读面 `--op health-read`（`presets/agenia/lib/health.mjs::healthVerdict` 的 `local === null && daily !== null` 那一支） | `RED` + `E_DATA_MISSING` 成立，但 `detail` 只有一句通用话：**没有** opener、**没有** `first_at`、**没有**"是不是本会话" |
+
+### §11.1 `daily\<day>.json` 的字段表（它**仍是派生副本，不另立权威**）
+
+| 键 | 来源 / 语义 | 什么时候变 |
+| --- | --- | --- |
+| `schema` | 1 | 不变 |
+| `day` | 这一次调用的 `day` | 每次调用（同一天 = 同一个值） |
+| `project` | `payload.project`（没给 ⇒ `null`） | 每次调用 |
+| `workspace` | 解析后的工作区绝对路径 | 每次调用 |
+| `session_id` | **旧的那个单值键**：最后一次调用带的 `session_id`（没带 ⇒ `null`）。⚠️ 键还在，但**不再承重** —— 读的人看下面那五个 | 每次调用 |
+| `snapshot` | 当前快照版本（没有 ⇒ `null`） | 每次调用 |
+| `distribution` / `totals` / `char_metric` | 从报告 / 快照抄一份（§B3.4 的四类分布与字符口径） | 每次调用（内容随库变） |
+| `first_session_id` | **第一次**调用带的 `session_id`；第一次调用没带 ⇒ `null` | **永不覆盖** |
+| `first_at` | **第一次调用**时的时间（ISO8601，`lib/clock.mjs`）；**不带 `session_id` 也照写**（它记的是"第一次调用"这件事） | **永不覆盖** |
+| `last_session_id` | **最后一次**调用带的 `session_id`（那一次没带 ⇒ `null`） | 每次调用 |
+| `last_seen_at` | **最后一次调用**时的时间 | 每次调用 |
+| `seen_count` | 累计被调用几次（整数；第一次调用 ⇒ `1`） | 每次调用（+1） |
+| `updated_at` | 本次调用的时间（与 `last_seen_at` 同一个时刻） | 每次调用 |
+
+**一句话：这份文件是"今天开过工"的派生副本 —— 四类分布与快照版本都是从记忆库抄来的一份投影，
+不另立权威；唯一"只有它知道"的事实是「谁在什么时候第一次开了这一天」。**
+记忆库那本账仍以 `<dataRoot>/reports/memory-update/<day>.json` 与快照为准（§B3.4）；这里只是它的读者。
+
+### §11.2 `daily-start` 的调用规矩（幂等，一天可以调很多次）
+
+1. **第一次调用** ⇒ 建这份文件；`first_session_id` / `first_at` = 这一次的；`last_*` / `seen_count = 1`。
+2. **之后每次调用** ⇒ 只更新 `last_*` / `updated_at` / `seen_count`，并**重抄**那几份派生字段；
+   **`first_session_id` / `first_at` 一个字节都不许动**。
+3. **旧形状**（盘上那份只有 `session_id` + `updated_at`，没有 `first_*`）⇒ **读得懂**，并升级成新形状：
+   老 `session_id` ⇒ `first_session_id`、老 `updated_at` ⇒ `first_at`（比的是**同一个时刻**，不要求同一个写法）；
+   这一次调用算第 **1** 次（老文件没有 `seen_count`，不许凭空 +1）。
+4. **调用没带 `session_id`** ⇒ 照样算一次（`seen_count` +1、`last_seen_at` 前进）；`first_session_id`
+   **保持原样**（从来没有过 ⇒ `null`）；`last_session_id` = `null`（字段名说的就是"最后一次调用的那个"）。
+5. **其余键照旧**：`project` / `workspace` / `snapshot` / `distribution` / `totals` / `char_metric` / `updated_at`
+   的行为与今天**一模一样**；文件的目标形状 = 今天那十个键 **+** 这五个键，**一个不多一个不少**。
+6. 判形状不判原子写的实现方式：读旧文件 → 合并 → 原子写（`writeJsonAtomic`）是**怎么做到**的事，
+   判据只判"盘上那份文件是什么样"。
+
+### §11.3 卡片那一支：`daily` 在、`local` 不在（`status` 与 reason 码**一个都不动**）
+
+| payload 有没有 `session_id` | `daily.first_session_id` 与它的关系 | `status` / 码（**不变**） | `detail` 必须 |
+| --- | --- | --- | --- |
+| —（没有 `daily`、也没有 `local`） | — | `HOLD` + `E_NO_UPDATE_TODAY` | 仍是「今天还没有开工痕迹…」这句（**逐字保持**），不许出现「刚开工」 |
+| 带了 | **≠** | `RED` + `E_DATA_MISSING` | 点名 `first_session_id` 与 `first_at`（**逐字**照盘上那个字符串），并说**本会话不是**开这一天的人；不许说「刚开工」 |
+| 带了 | **=** | `RED` + `E_DATA_MISSING` | 说本会话**刚开工**；不许说「本会话不是」 |
+| **没带** | 判不了 | `RED` + `E_DATA_MISSING` | 仍点名 `first_session_id` / `first_at`，但**不冒充知道是谁**（「刚开工」与「本会话不是」**两句都不许说**） |
+
+- **一个加性可选 payload 键**：`health-read` 收 `payload.session_id`（缺省 = 没给）。它只参与上面那张表，
+  不改其它任何分支；与 `open_adopted_tickets` / `anchor_problems` 同一类——**加性可选，缺了照样能判**。
+- **三个机读锚点**（实现照这三个词说话即可，其余措辞自由；判据只认这三个）：
+  ① 本会话开的 ⇒ detail 里含 **`刚开工`**；
+  ② 别人开的 ⇒ detail 里含 **`本会话不是`**；
+  ③ 没带 `session_id` ⇒ 上面两个**都不能**出现。
+  ⚠️ ②那句话有**两种语序**：`本会话不是…` / `…不是本会话…`。**判据认第一种**（要写的就写这种）；
+  而 ① / ③ 那两格**两种语序都在禁**（不然一句"不是本会话开的"就能在"判不了是谁"的那格里悄悄变成一句断言）。
+- **这一支今天恰好一条 reason**：这一票只许改 `detail`，不许加码、不许加条、不许换支。
+  ⇒ 「今天开工了吗」与「记忆更新做了吗」仍是两件事，`HOLD` 也不因为这条变得更多或更少。
+
+### §11.4 判据索引（照这个跑）
+
+```powershell
+# 临时件落项目所在那个盘（C 盘一个字节都不许写）
+$env:TEMP='E:\Harness\.team\test\2026-10-23\_tmp'; $env:TMP=$env:TEMP
+# 这一票两格同住一个文件：**一跑一根、别复用运行根**
+node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-23\_runs\<RUN_ID> --glob="tests/agenia-upgrade/integration/dly01-daily-state.test.mjs"
+# 全量：去掉 --glob，再给一个全新的运行根（分母 83）
+```
+
+| 格 | 守的是 | 现在（2026-10-23 21:2x · 门 2 第 2 关） |
+| --- | --- | --- |
+| `DLY-01` | §11.1 + §11.2：A1 两次调用 / A2 旧形状升级 / A3 没带 `session_id`（从来没有 ⇒ `null`）/ A4 没带 `session_id`（先由别人开的 ⇒ `first_*` 保持）；另判目标形状的键集与"其余键照旧"；阳性对照（照本节写的最小实现四格全成立）+ 四把刀（① 老形状不升级 ⇒ 只翻 A2 · ② 完全不合并 ⇒ A1/A2/A4 · ③ 每次都覆盖 ⇒ A1/A2/A4（算术上必然连带 A2）· ④ 覆盖的窄形状 ⇒ A1/A4） | 🔴 **RED**（四格各自点名缺的那五个字段：`first_session_id` / `first_at` / `last_session_id` / `last_seen_at` / `seen_count` 全部 `undefined`）—— 阳性对照四格全绿；四把刀的向量与本节推出来的一致 |
+| `DLY-02` | §11.3：B1 无 `daily`/`local`（`HOLD` 那句保持）/ B2 别人开的（点名 + 「本会话不是」）/ B3 本会话开的（「刚开工」）/ B4 没带 `session_id`（点名但两句身份话都不许说）/ B5 端到端（真 `daily-start` 写下的那份读得出两次）；另判落盘卡与 stdout 同一句、这一支恰好一条 reason、`status`/码一个都不动；阳性对照（同一份最小实现四格全成立） | 🔴 **RED**（B2/B3/B4 的 `detail` 还是那句通用的；B5 里 `daily-start` 压根没写 `first_*`）—— B1 是**绿的**（那一支没变）；阳性对照四格全绿 |
+
+> 这一列是**门 2 第 2 关**的读数；实现关落地之后由测试岗重跑并改写这一列（与 §9.3 / §10.6 同一规矩）。
+> ⚠️ **夹具里那个旧单值键故意不等于 `first_session_id`**：`session_id`（= 最后一次调用的人）与
+> `first_session_id`（= 开这一天的人）在 B2–B4 的夹具里是**两个不同的人** —— 谁去读旧那个键，B2/B3 当场翻面。
+
+### §11.5 边界（这一节不覆盖什么）
+
+- **不改** `status` 的四个值与任何 reason 码；**不改** `E_NO_UPDATE_TODAY` 这个码名（外面有引用）。
+- **不管** `local\<day>.json` 谁写（那是两场每日评审的事，定形明写"另开票"）；`DLY-02` 五格全部是"`local` 不在"的现场。
+- **不把 `HOLD` 改成 `GREEN`**：卡上"今天开工了吗"与"记忆更新做了吗"仍是两件事。
+- **不加 CLI 新 op**：`daily-start` 已经存在，这一节只改它的行为。
+- **不判** audit 行、不判原子写的实现方式（`§B3.7` / `STO-*` 的事）。
+- `daily` 夹具里的 `distribution` / `totals` / `char_metric` 是照今天的形状抄的常量，**不参与任何判据**
+  （卡片不读它们；它们只让"其余键照旧"那一条能在阳性对照臂上成立）。
+
+### §11.6 登记面（三处同批，缺一处就是"跑了但不进分母"）
+
+- 盘上：`tests/agenia-upgrade/integration/dly01-daily-state.test.mjs`（`DLY-01` + `DLY-02` —— 两格同住一个文件：
+  写面与读面是同一句话的两头，红的时候一眼看得出是哪一头）；
+- 登记：`support/registry.mjs` 的 `BATCH_N` + `ROWS` + `GROUP_COUNTS['daily-state'] = 2`
+  （以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_N`，否则冻结清单与表当场分家）；
+- 分母：`TOTAL` 由盘上扫出 = **83**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；81 + 这 2 条）。

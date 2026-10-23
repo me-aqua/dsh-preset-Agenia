@@ -52,13 +52,41 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const isFilledString = (v) => typeof v === 'string' && v.trim() !== ''
 
 /**
+ * `daily` 在、`local` 不在那一支的 detail：**谁开的这一天**（契约 §11.3）。
+ *
+ * 只看两样东西：盘上有没有 `first_session_id`、载荷里有没有 `session_id`。
+ *   · 带了、且**就是** opener ⇒ 说「本会话刚开工」；
+ *   · 带了、且**不是** opener ⇒ 点名 opener 与 `first_at`，说「本会话不是」；
+ *   · 没带 ⇒ 只报"谁开的"，**不冒充**知道本会话是谁（两句身份话都不说）；
+ *   · 盘上根本没有 opener ⇒ 同样不冒充（本会话是不是它，判不了）。
+ * `first_at` 照**盘上那个字符串**逐字带出来（时间怎么写以盘上为准，这里不重新格式化）。
+ */
+function dailyOnlyDetail(daily, sessionId) {
+  const doc = isObject(daily) ? daily : {}
+  const opener = isFilledString(doc.first_session_id) ? doc.first_session_id : null
+  const firstAt = isFilledString(doc.first_at) ? doc.first_at : null
+  const openerText = opener === null
+    ? (firstAt === null ? '首次开工的会话与时间都没有记下来' : `首次开工的会话没有记下来（${firstAt}）`)
+    : `首次开工是 ${opener}${firstAt === null ? '' : `（${firstAt}）`}`
+  const tail = '，但本地状态还没有 —— 本地双评审没启动'
+  if (!isFilledString(sessionId)) {
+    return `今天开过工（每日状态在，${openerText}）${tail}；本次调用没有带 session_id，判不了是谁开的`
+  }
+  if (opener === null) return `今天开过工（每日状态在，${openerText}）${tail}`
+  if (opener.trim() === sessionId.trim()) return `今天开过工（每日状态在，本会话刚开工：${openerText}）${tail}`
+  return `今天开过工（每日状态在，${openerText}）${tail}；本会话不是开这一天的人`
+}
+
+/**
  * 一份脑健康的判定（**C-1 冻结的入参与返回**）。
  *
  * @param {object} input
  *   `project` · `day` · `now` · `leases:{update,local}` · `state` · `snapshot` · `report` ·
  *   `local` · `receipt` · `daily` · `route` · `reads`（7 份各自的 `{ok,code,path}`）。
  *   缺的键按"这一份还没读到"处理（`null`），**不许**因此抛错 —— 卡读不出来比卡判错更糟。
- *   加性可选键：`open_adopted_tickets`（未关闭的采纳票，B3.3）· `anchor_problems`（锚点核对结果）。
+ *   加性可选键：`open_adopted_tickets`（未关闭的采纳票，B3.3）· `anchor_problems`（锚点核对结果）·
+ *   `session_id`（调用方的会话身份，只用来让「`daily` 在、`local` 不在」那一支说清是谁开的这一天；
+ *   缺了照样能判 —— 只是卡片不点名"本会话"）。
  * @returns {{status:'GREEN'|'RED'|'RUNNING'|'HOLD', reasons:Array<{code:string,detail:string,source_path:string|null}>,
  *            progress:{done:number,total:number,receipt:boolean}}}
  *   `progress` = 「今天到哪一步了」：`done` = 三节点里 `state === 'done'` 的个数（与判定链同一个数组）·
@@ -86,7 +114,7 @@ export function healthVerdict(input = {}) {
   //    这一支还没算出 `done` 数组（`nodes` 是空的）⇒ `done` 就是 0，用空数组过 `progressOf`。
   if (local === null) {
     if (input?.daily !== null && input?.daily !== undefined) {
-      push(HEALTH_REASON_CODES.DATA_MISSING, '今天开过工（每日状态在），但本地状态还没有 —— 本地双评审没启动', localReadPath)
+      push(HEALTH_REASON_CODES.DATA_MISSING, dailyOnlyDetail(input.daily, input?.session_id), localReadPath)
       return { status: 'RED', reasons, progress: progressOf([]) }
     }
     return {

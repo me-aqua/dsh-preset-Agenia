@@ -63,7 +63,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from 'node:
 import path from 'node:path'
 import { CODES } from '../lib/error-codes.mjs'
 import { dataRootVerdict, realInitVerdict, realModeVerdict, realRootsFor, TEST_ROOT_MARKER, testModeOf, workspaceWriteVerdict } from '../lib/paths.mjs'
-import { acquireLock, releaseLock, writeJsonAtomic } from '../lib/atomic.mjs'
+import { acquireLock, readJsonFile, releaseLock, writeJsonAtomic } from '../lib/atomic.mjs'
 import { capacityVerdict, isCullEligible } from '../lib/memory.mjs'
 import { LEASES } from '../lib/liveness.mjs'
 import { validateRedoEvidence } from '../lib/evidence.mjs'
@@ -464,9 +464,19 @@ function opReportRead({ root, payload }) {
 }
 
 // ── op：写面（每日状态 / 派工 / 判决）──────────────────────────────────────
+/** 一份"状态"的形状：`null` / 数组都不算（读到的 JSON 不是对象 ⇒ 当成没有上一份）。 */
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
+
 /**
  * `daily-start`：每一天一行"今天开工了"（`<WS>\state\daily\<day>.json`）。
  * 它是**派生副本**（§B3.4：不另立权威）—— 四类分布从当前快照抄一份，方便人读。
+ *
+ * 同一天可以调很多次（契约 §11.2）：这一天的**两端**都记下来 ——
+ *   · `first_session_id` / `first_at`：谁在什么时候**开的这一天**（永不覆盖）；
+ *   · `last_session_id` / `last_seen_at` / `seen_count`：最后一次见到谁、一共见到几次。
+ * 旧形状（只有 `session_id` + `updated_at`）读得懂并就地升级 —— 盘上老那一对就是"第一次"。
+ * 旧的单值键 `session_id` 仍然写（键不许删），但它**不再承重**：读的人看 `first_*` / `last_*`。
+ * 坏文件 / 读不到 ⇒ 当"没有上一份"（继续记这一次），不许让开工这一步失败。
  */
 function opDailyStart({ root, args, payload }) {
   const ws = resolveWorkspace(args, payload)
@@ -476,6 +486,20 @@ function opDailyStart({ root, args, payload }) {
   const current = SNAP.readCurrentSnapshot(root)
   const report = SNAP.readReport(root, day)
   const file = path.join(ws, '.team', 'state', 'daily', `${day}.json`)
+
+  // 上一份状态（`readJsonFile`：缺与坏分得开）。读不到 / 读坏 ⇒ 合并时一律当"没有上一份"；
+  // 两者的差别只留在返回值的 `previous_state` 里（给操作者看），合并规矩完全一样。
+  const prevRead = readJsonFile(file)
+  const prevDoc = prevRead.ok && isPlainObject(prevRead.value) ? prevRead.value : null
+  const previousState = prevDoc !== null ? 'read' : (prevRead.code === 'E_DATA_MISSING' ? 'absent' : 'corrupt')
+  // 分界只看**盘上有没有 `first_session_id` 这个键**：
+  //   新形状 ⇒ `first_*` 原样活过每一次调用；旧形状 ⇒ 老 `session_id` / `updated_at` 才是"第一次那一对"。
+  const hasFirstPair = prevDoc !== null && Object.prototype.hasOwnProperty.call(prevDoc, 'first_session_id')
+  const firstSessionId = prevDoc === null ? sessionId : (hasFirstPair ? (prevDoc.first_session_id ?? null) : (prevDoc.session_id ?? null))
+  const firstAt = prevDoc === null ? at : (hasFirstPair ? (prevDoc.first_at ?? null) : (prevDoc.updated_at ?? null))
+  // 老文件没有 `seen_count` ⇒ 这一次就是第 1 次（累计口径不许凭空 +1）。
+  const seenBefore = prevDoc !== null && Number.isInteger(prevDoc.seen_count) ? prevDoc.seen_count : 0
+
   mkdirSync(path.dirname(file), { recursive: true })
   const written = writeJsonAtomic(file, {
     schema: 1,
@@ -487,11 +511,16 @@ function opDailyStart({ root, args, payload }) {
     distribution: report.ok ? report.report.distribution : SNAP.reportOf(null, { day }).distribution,
     totals: report.ok ? report.report.totals : SNAP.reportOf(null, { day }).totals,
     char_metric: { ...SNAP.CHAR_METRIC },
+    first_session_id: firstSessionId ?? null,
+    first_at: firstAt ?? null,
+    last_session_id: sessionId,
+    last_seen_at: at,
+    seen_count: seenBefore + 1,
     updated_at: at,
   })
   if (!written.ok) throw cliError(written.code, `每日状态写入失败：${written.message}`, { path: file })
   S.appendAudit(root, { kind: 'daily-start', detail: { day, workspace: ws, session_id: sessionId }, at })
-  return { status_path: file, at, day }
+  return { status_path: file, at, day, seen_count: seenBefore + 1, previous_state: previousState }
 }
 
 /**
@@ -1238,6 +1267,7 @@ const opMaintenanceImport = (ctx) => importOp({ ...ctx, kind: 'maintenance' })
  *   receipt,  // <WS>/leader/<day>/技术复盘回执.json           缺 ⇒ null
  *   daily,    // <WS>/state/daily/<day>.json                  缺 ⇒ null
  *   route,    // <WS>/route/current.json                      缺 ⇒ null
+ *   session_id, // payload.session_id（**加性可选**）—— 只用来让卡片说清"本会话是不是开这一天的人"；没给 ⇒ null
  *   reads }   // 每个来源的 {ok, code, path} —— 判红要给得出处
  * ```
  *
@@ -1248,6 +1278,7 @@ function opHealthRead({ root, args, payload }) {
   const ws = resolveWorkspace(args, payload)
   const { day } = S.resolveDay(root, payload?.day)
   const project = typeof payload?.project === 'string' && payload.project.trim() !== '' ? payload.project : null
+  const sessionId = typeof payload?.session_id === 'string' && payload.session_id.trim() !== '' ? payload.session_id : null
   const at = S.nowIso()
 
   const readJsonAt = (file) => {
@@ -1291,6 +1322,7 @@ function opHealthRead({ root, args, payload }) {
       route: { ok: routeRead.ok, code: routeRead.code, path: routeRead.path },
     },
     open_adopted_tickets: openTickets,
+    session_id: sessionId,
   }
   const verdict = healthVerdict(input)
   const healthFile = path.join(ws, '.team', 'brain', day, 'health.json')
