@@ -183,14 +183,36 @@ export const BATCH_M = ['BRD-01']
 export const BATCH_N = ['DLY-01', 'DLY-02']
 
 /**
- * 已落笔的十四批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
+ * 批次 O 的 1 条 —— **门 2 · `F-156`**（三个本地节点没有写者，卡上永远说「本地双评审没启动」，2026-10-23）。
+ *
+ * 一张脸：**`local-claim` / `local-mark` / `local-fail` / `local-read` 四个 op 的行为**（不是"谁来调"）。
+ *   · `LOC-01` 四格（真子进程 + 每格一个带 marker 的临时工作区）：
+ *     `L1` `claim → mark` ⇒ 节点 `done` + 产物锚点（`report_sha256` **必须等于报告盘上字节**）+ claim 痕迹保留；
+ *     `L2` `claim → fail` ⇒ 节点 `failed` 且 `failure_reason` **逐字**留住；
+ *     `L3` **两个节点真并发 claim**（`conversation` + `technical` 两个真子进程）⇒ 谁都不许覆盖谁；
+ *     `L4` **任何 claim 之前** `local-read` ⇒ `E_DATA_MISSING` + exit 7（缺 ≠ 坏 ≠ 空），
+ *     且首个 claim 之后没被 claim 的两个节点以**文档里的空形状**（`unclaimed` + 15 个必填键）出现。
+ *     外加阳性对照（照 `CONTRACT.md` §12 写的最小实现四格全成立）与**四把刀**
+ *     （① `claim` 丢掉按节点合并 ⇒ **只有 `L3`** 翻面；② `fail` 丢掉 `reason` ⇒ **只有 `L2`** 翻面；
+ *     ③④ 是量具自证：③ `mark` 不记锚点 ⇒ 只有 `L1`；④ `emptyNode()` 丢键 ⇒ 四格一起翻）。
+ *   · 🔴 **今天这四个 op 的行为本身已经是对的**（2026-10-23 门 2 现量）⇒ 这一格**不是首跑红**，
+ *     它今天 **RED 0**，是"已写入契约的三态语义"的**回归锁**；红只可能是有人把语义改坏了。
+ *     这一票缺的是**调用者**（写者 = 组长，`CONTRACT.md` §12），那一半是流程，测试判不了。
+ * 契约在 `CONTRACT.md` §12（本批与契约同批落盘）；定形在 `.team/leader/2026-10-23/spec-F-156.md`。
+ * ⚠️ 它**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G / H / I / J / K / L / M / N 的规矩。
+ * ⚠️ **分母 83 → 84**（一格四格：四个 op 的四条腿同住一个文件 —— 它们判的是**同一份文件**的三态）。
+ */
+export const BATCH_O = ['LOC-01']
+
+/**
+ * 已落笔的十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
  * 批次 L 是 `F-148` 思考链过滤（同日 · 紧急票），批次 M 是 `F-152` 板子三态（同日），
- * 批次 N 是 `F-155` 每日状态的两端与署名（同日）。
+ * 批次 N 是 `F-155` 每日状态的两端与署名（同日），批次 O 是 `F-156` 三个本地节点的三态（同日）。
  * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -206,7 +228,8 @@ const BATCH_OF = (id) =>
                         : BATCH_L.includes(id) ? 'L'
                           : BATCH_M.includes(id) ? 'M'
                             : BATCH_N.includes(id) ? 'N'
-                              : null
+                              : BATCH_O.includes(id) ? 'O'
+                                : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -259,6 +282,10 @@ const F = {
   /** 门 2 · `F-155` 每日状态的两端与署名（批次 N）—— **两格同住一个文件**：写面（`daily-start` 幂等）
    *  与读面（卡片点名"谁开的这一天"）是同一句话的两头，红的时候一眼看得出是哪一头。 */
   dly: 'integration/dly01-daily-state.test.mjs',
+  /** 门 2 · `F-156` 三个本地节点的三态（批次 O）—— **一格四格同住一个文件**：`local-claim` / `local-mark` /
+   *  `local-fail` / `local-read` 判的是**同一份** `state/local/<day>.json` 的四个腿，
+   *  红的时候一眼看得出是"哪条腿"（节点没落 / 原因丢了 / 并行吞掉一个 / 读面把"缺"当成"空"）。 */
+  loc: 'integration/loc01-local-state.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -388,6 +415,9 @@ const ROWS = [
   // ── 门 2 · `F-155` 开工痕迹的两端与署名（2）：写面记不下来、读面说不出是谁（2026-10-23）──────
   ['DLY-01', 'daily-state', F.dly, 'F-155 **写面** `--op daily-start`（真子进程 + 每格一个带 marker 的临时工作区）：A1 两次调用（两个不同 `session_id`）⇒ `first_*` 保第一次、`last_*` 是第二次、`seen_count === 2`，其余键（`project`/`workspace`/`snapshot`/`distribution`/`totals`/`char_metric`）照旧且**键集恰为目标形状**；A2 旧形状（只有 `session_id` + `updated_at`）被调一次 ⇒ 仍读得懂，老 `session_id` ⇒ `first_session_id`、老 `updated_at` ⇒ `first_at`（同一个**时刻**即可）、`seen_count === 1`；A3 第一次调用就**没带** `session_id` ⇒ `first_session_id === null`、`first_at` 照写、`last_session_id === null`、`seen_count === 1`；A4 先由 session-1 开过、再一次没带 `session_id` ⇒ `first_*` 保持原样、`last_session_id === null`、`seen_count === 2`（规则 3 的"stays whatever it was"）—— 外加阳性对照（照契约 §11 写的最小实现四格全成立）与**四把刀**（① 老形状不升级 ⇒ 只翻 A2；② 完全不合并 ⇒ 翻 A1/A2/A4；③ 每次都覆盖 ⇒ 翻 A1/A2/A4（**算术上必然连带 A2**）；④ 覆盖的窄形状 ⇒ 翻 A1/A4），每刀实测向量与契约推出的对不上 ⇒ `KNIFE-WRONG-VECTOR`', '批次 N'],
   ['DLY-02', 'daily-state', F.dly, 'F-155 **读面** `--op health-read`（`daily` 在、`local` 不在那一支；五格 + 阳性对照）：B1 没有 `daily`、也没有 `local` ⇒ `HOLD` + `E_NO_UPDATE_TODAY`，detail 仍是「今天还没有开工痕迹」（保持）；B2 `first_session_id` **≠** payload 的 `session_id` ⇒ `RED` + `E_DATA_MISSING`，detail 点名 `first_session_id` 与 `first_at`（逐字）且说**本会话不是**开这一天的人（锚点「本会话不是」）、不许说「刚开工」；B3 两者**相同** ⇒ `RED` + `E_DATA_MISSING`，detail 说本会话**刚开工**（锚点「刚开工」）、不许说「本会话不是」（两种语序「本会话不是…」/「…不是本会话…」都算禁）；B4 payload **没有** `session_id` ⇒ `RED` + `E_DATA_MISSING`，detail 仍点名 opener 与 `first_at`，但两句身份话**都不许说**（「刚开工」+「本会话不是」的两种语序 —— 不许冒充知道是谁）；B5 端到端：真 `daily-start` 写下的那份（`first_*` 在盘上）被卡片读两次（本会话 / 别人）各说各的话 —— 另判**落盘那张卡**与 stdout 同一句、这一支今天**恰好一条** reason、status/码一个都不动；⚠️ 夹具里旧单值键 `session_id`（= 最后一次调用的人）与 `first_session_id`（= 开这一天的人）**故意不同**：谁去读旧键，B2/B3 当场翻面', '批次 N'],
+
+  // ── 门 2 · `F-156` 三个本地节点的三态（1）：写者是组长，不是作业（2026-10-23）──────────
+  ['LOC-01', 'local-state', F.loc, 'F-156 三个本地节点（`memory_review` / `conversation` / `technical`）的三态契约（真子进程 + 每格一个带 marker 的临时工作区；判**盘上** `state/local/<day>.json` 与 `local-read` 的 `state`/`summary` 两处，不只判 stdout）：`L1` `claim → mark` ⇒ 节点 `done` + 产物锚点逐项记下（`report_sha256` **必须等于报告盘上字节的 SHA256**；`findings_set_sha256` / `findings_count` / `artifact_paths` 原样）+ `claim`/`job_id` 仍指得出是哪一次派工 + `liveness_at` = 落地那一刻 + 兄弟两节点一个字不动；`L2` `claim → fail` ⇒ 节点 `failed` 且 `failure_reason` **逐字**留住（换成「(没给原因)」就是这一格翻面）+ claim 痕迹保留；`L3` **两个节点真并发 claim**（`conversation` + `technical` 两个真子进程同时起）⇒ 两节点各自 `running`、各自 `job_id`/`attempt`，**谁都不许覆盖谁**，第三个节点仍空；`L4` **任何 claim 之前** `local-read` ⇒ `E_DATA_MISSING` + exit 7 + 报错点名那个路径（缺 ≠ 坏 ≠ 空；读面零写入），首个 claim 之后没被 claim 的两个节点以**文档里的空形状**出现（`unclaimed` + `lib/local-state.mjs::emptyNode()` 的 15 个必填键、该 null 的 null、该 `[]` 的 `[]`；加性键不判名字）—— 外加阳性对照（照 `CONTRACT.md` §12 写的最小实现四格全成立）与**四把刀**（① `claim` 丢掉按节点合并 ⇒ **只有 `L3`** 翻面；② `fail` 丢掉 `reason` ⇒ **只有 `L2`** 翻面；③ `mark` 不记锚点 ⇒ **只有 `L1`**；④ `emptyNode()` 丢那 9 个键 ⇒ 四格一起翻 —— ③④ 是量具自证：这一格今天全绿，"绿"只有在每一格都能红时才算读数），每刀实测向量与契约推出的对不上 ⇒ `KNIFE-WRONG-VECTOR`。⚠️ 四个 op 的行为**今天就是对的** ⇒ 本格今天 **RED 0**，是回归锁不是首跑红（缺的是**调用者**：写者 = 组长，§12）', '批次 O'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -457,6 +487,8 @@ export const GROUP_COUNTS = {
   'board-states': 1,
   /** 门 2 · `F-155` 每日状态的两端与署名（写面 `DLY-01` / 读面 `DLY-02`）—— 契约见 `CONTRACT.md` §11。 */
   'daily-state': 2,
+  /** 门 2 · `F-156` 三个本地节点的三态（`LOC-01` 一格四格）—— 契约见 `CONTRACT.md` §12。 */
+  'local-state': 1,
 }
 
 /**
@@ -474,11 +506,11 @@ export function registryProblems() {
   // 发现器自己报的问题（没有 ID 的 test() / 重复 ID）。
   for (const p of DISCOVERY.problems) problems.push(p.message)
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
-  // ⚠️ G / H / I / J / K / L / M / N 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
+  // ⚠️ G / H / I / J / K / L / M / N / O 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -505,6 +537,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
