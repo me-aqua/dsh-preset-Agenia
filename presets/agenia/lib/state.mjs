@@ -26,6 +26,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { readJsonFile, writeJsonAtomic, writeFileAtomic } from './atomic.mjs'
 import { now as clockNow } from './clock.mjs'
+import { dayKeyOf } from './route.mjs'
 import { LEASES } from './liveness.mjs'
 
 /** 状态 schema 版本（B3.6 第一行就是它）。 */
@@ -98,17 +99,38 @@ export function stableStringify(value) {
   return walk(value)
 }
 
-/** **本地日历日**（老板看到的"今天"；与 `lib/memory.mjs` 的今日口径同一形状）。 */
+/**
+ * **本地日历日**（`YYYY-MM-DD`）—— 老板看到的"今天"。
+ *
+ * 契约 `CONTRACT.md` §13.1（`F-158`）：一天的切点在**本地 04:00**（00:00–03:59 归前一天），
+ * 所以这里整份委托给 `lib/route.mjs::dayKeyOf` —— **唯一**一处算。别在这儿再写一遍
+ * `getFullYear()+getMonth()+getDate()`：那样切点就有第二份，两处各算各的。
+ */
 export function dayOf(date = clockNow()) {
-  const d = date instanceof Date ? date : new Date(date)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+  return dayKeyOf(date)
 }
 
+/**
+ * 一个**日子键**（`YYYY-MM-DD`）—— 形状**和日历**都必须对。
+ *
+ * 只验形状不够：`2026-13-40` / `2026-02-30` / `2026-02-29` 形状全合法，日历上没有那一天。
+ * 收下它们，一次拼错的日子就会落到一个永远不会有人读的文件里（`state/update/2026-13-40.json`），
+ * 而调用方以为自己写成功了（契约 `CONTRACT.md` §13.3）。
+ *
+ * 日历那一关交给 `Date` 的 UTC 往返：写进去再读回来，年 / 月 / 日三个字段都得原样。
+ * 闰年规则（`2024-02-29` 收、`2026-02-29` 不收）不在这里再手写一份 —— 手写的第二份迟早和
+ * 平台分叉。`setUTCFullYear` 而不是 `Date.UTC`：后者把 0–99 年当 1900+，往返就对不上了。
+ */
 export function isDayKey(value) {
-  return typeof value === 'string' && DAY_KEY_RE.test(value.trim())
+  if (typeof value !== 'string') return false
+  const hit = DAY_KEY_RE.exec(value.trim())
+  if (hit === null) return false
+  const year = Number(hit[1])
+  const month = Number(hit[2])
+  const day = Number(hit[3])
+  const at = new Date(0)
+  at.setUTCFullYear(year, month - 1, day)
+  return at.getUTCFullYear() === year && at.getUTCMonth() === month - 1 && at.getUTCDate() === day
 }
 
 export function isSnapshotVersion(value) {
@@ -323,9 +345,13 @@ export function writeUpdateState(root, day, state, options = {}) {
 
 // ── 当前生效的那一天（指针）───────────────────────────────────────────────
 /**
- * 读"当前那一天"。**调用方给的 day > 指针 > 时钟**（三级，顺序冻结）。
+ * 读"当前那一天"—— 指针记的是"**正在进行的这一天**"，不是"今天"。
+ *
+ * 谁用它：只有**中途 op**（`state-read` / `report-read` / `judge-*` / 导入 …）在 `resolveDay` 里
+ * 传了 `{ pointer: true }` 才读它（契约 §13.2）。**写入口不读**：`claim-update` / `daily-start` 的缺省
+ * 是 `dayKeyOf(clockNow())` —— 这个 op 自己会写指针，缺省跟指针走就会永远回到上一次 claim 的那一天。
  * 为什么要有这个指针：`judge-*` / `state-read` / 导入的 payload 里**没有** `day`，
- * 而 STO/JOB 批都是先 `claim-update {day:'2026-10-14'}` 再调它们 —— 没有指针就只能去猜"今天"。
+ * 而 STO/JOB 批都是先 `claim-update {day:'2026-10-14'}` 再调它们 —— 指针就是"这一批是哪一天"的答案。
  */
 export function readCurrentDay(root) {
   const read = readJsonFile(currentDayPath(root))
@@ -341,12 +367,46 @@ export function writeCurrentDay(root, day, options = {}) {
   return { ok: true, path: written.path }
 }
 
-/** 三级解析：显式 day → 指针 → 时钟。返回 `{day, source}`。 */
-export function resolveDay(root, explicit = null) {
-  if (isDayKey(explicit)) return { day: String(explicit).trim(), source: 'explicit' }
-  const pointer = readCurrentDay(root)
-  if (pointer.ok) return { day: pointer.day, source: 'pointer' }
-  return { day: dayOf(clockNow()), source: 'clock' }
+/**
+ * `day` 输入的唯一一条规矩（契约 `CONTRACT.md` §13.3）：**没给 ⇒ `null`**；
+ * **给了就必须是 day key** —— `""` / 全空白 / `2026-13-40` 一律 `E_ARG_SCHEMA`。
+ *
+ * 🔴 "给了但坏"**绝不**吞成"没给"：吞掉的后果是"一次拼错的日子静默落到别的日子上"——
+ * 而它看起来和"没拼错"一模一样（2026-10-24 门 4 评审 F3：同一次 `{"day": ""}`，四个消费方三种行为）。
+ * `resolveDay` 与本地 CLI 的 `dayOfPayload` 都只从这一支进 —— 规则只有一条。
+ */
+export function dayInputOf(explicit) {
+  if (explicit === undefined || explicit === null) return null
+  if (!isDayKey(explicit)) {
+    throw brainError('E_ARG_SCHEMA', `day 给了就必须是日历上真实存在的一天（YYYY-MM-DD），实得 ${JSON.stringify(explicit)}`)
+  }
+  return explicit.trim()
+}
+
+/**
+ * 解析"这一票是哪一天" —— **唯一**一处（契约 §13.2 / §13.3）。返回 `{day, source}`。
+ *
+ * 三条，都在这一个函数里：
+ *   ① `day` 给了（`dayInputOf` 那一支）⇒ 照抄；给坏 ⇒ `E_ARG_SCHEMA`（不吞）。
+ *   ② `options.pointer === true` ⇒ 没给时先读 `current-day` 指针（**中途 op** 要的"正在进行的这一天"）。
+ *   ③ 其余 ⇒ `dayKeyOf(clockNow())`：**本地 04:00 切**的今天（时钟那一支的切点与别处同口径）。
+ *
+ * 🔴 **缺省的"今天"不是指针**（2026-10-24 组长裁定 F4-b）：`claim-update` 自己会写指针，
+ *    所以"缺省 = 指针"在已经 claim 过的根上永远回到上一次 claim 的那一天 —— 过了 04:00 也不前进，
+ *    切点**静默失效**。⇒ 写入口（`claim-update` / `daily-start`）**不传 `pointer`**；
+ *    指针留给 `state-read` / `report-read` / `judge-*` 这些"读正在进行的这一天"的中途 op。
+ */
+export function resolveDay(root, explicit = null, options = {}) {
+  const input = dayInputOf(explicit)
+  if (input !== null) return { day: input, source: 'explicit' }
+  if (options.pointer === true) {
+    if (root === null || root === undefined) {
+      throw brainError('E_INTERNAL', 'resolveDay：要读 current-day 指针就必须给 root（本地 CLI 没有脑根 ⇒ 不传 pointer）')
+    }
+    const pointer = readCurrentDay(root)
+    if (pointer.ok) return { day: pointer.day, source: 'pointer' }
+  }
+  return { day: dayKeyOf(clockNow()), source: 'clock' }
 }
 
 // ── token ─────────────────────────────────────────────────────────────────

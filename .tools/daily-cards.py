@@ -46,6 +46,26 @@ BOLD = Font(bold=True); WRAP = Alignment(wrap_text=True, vertical="top")
 #    时钟是 `lib/clock.mjs` 的 `AGENIA_NOW_FILE`（这里读同一个变量，不另造第二套）。
 DAY_CUT_HOURS = 4
 ISO_WITH_OFFSET = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$")
+DAY_KEY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def is_day_key(value):
+    """`YYYY-MM-DD` 且**日历上真有这一天** —— 与 `lib/state.mjs::isDayKey` 同一口径（契约 §13.3）。
+
+    只验形状不够：`2026-13-40` / `2026-02-30` 形状全合法、日历上没有那一天，收下它们就会把
+    卡落进一个永远不会有人读的抽屉（`<WS>/.team/leader/2026-13-40/`）。日历那一关交给
+    `datetime.strptime`：闰年规则不在这里再手写一份。
+    """
+    if not isinstance(value, str):
+        return False
+    s = value.strip()
+    if not DAY_KEY_RE.match(s):
+        return False
+    try:
+        datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
 
 def now_instant():
     """现在几点 —— 与 `lib/clock.mjs::now()` 同一套：没设变量 / 文件不在 ⇒ 真实时钟；在但内容坏 ⇒ 当场停。"""
@@ -114,7 +134,15 @@ def main():
                     help="工作区根（必填·不许猜：写死会让别的会话把卡落进你的抽屉）")
     ap.add_argument("--data-root", default=None,
                     help="数据根（预设级·所有工作区共用）。不给就按 --workspace 推；推出来的不存在会当场停")
-    a = ap.parse_args(); day = a.day if a.day else default_day()
+    a = ap.parse_args()
+    # 契约 §13.3：`--day` **给了就必须是 day key** —— `""` / 全空白 / `2026-13-40` 一律当场拒，
+    # **绝不**吞成"没给"（那会让一次拼错的 --day 静默落到"今天"的抽屉上）。只有**没给**才走缺省。
+    if a.day is None:
+        day = default_day()
+    elif is_day_key(a.day):
+        day = a.day.strip()
+    else:
+        sys.exit("E_ARG_SCHEMA: --day 给了就必须是日历上真实存在的一天（YYYY-MM-DD），实得 %r" % a.day)
     WS = os.path.abspath(a.workspace)
     # 🔴 2026-10-20（`F-111` ⑤）：`DR` 原来**只按 WS 推**，新工作区里那个路径根本不存在
     #    而 `jload` 读不到就返回 `{}` ⇒ 一路空到底 ⇒ **出一张零值卡，还 exit 0**。

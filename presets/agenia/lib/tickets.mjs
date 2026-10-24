@@ -22,6 +22,7 @@
 // 字符尺子**只有一把**：`lib/memory.mjs` 的 code point 口径（§B3.4）。
 // void 理由那 10 字的下限与"记忆条目多少字符"必须是同一把尺子 —— 两处各写一份迟早分叉。
 import { charCountOf } from './memory.mjs'
+import { dayDigitsOfKey } from './route.mjs'
 
 /** 票的四个状态（v5 §8.3 原样 + B3.3 的 `void`）。 */
 export const TICKET_STATUSES = Object.freeze(['open', 'in_progress', 'done', 'void'])
@@ -67,10 +68,16 @@ export function sourceVerdict(source) {
   return { ok: true, code: null, message: '', report_sha256: m[1].toLowerCase(), finding_id: m[2] }
 }
 
-/** 票的 id 形状：`ticket-<YYYYMMDD>-<NN>`（B3.3 的示例；生成见 `nextTicketId`）。 */
+/**
+ * 票的 id 形状：`ticket-<YYYYMMDD>-<NN>`（B3.3 的示例；生成见 `nextTicketId`）。
+ *
+ * 🔴 `dayKey` 可以是日子的**主形**（`2026-10-23`，即 `lib/route.mjs::dayKeyOf` 的返回），
+ *    也可以是已经派生好的 8 位 —— 8 位那一段**从日子派生**（`dayDigitsOfKey`），所以票号形状
+ *    永远是 `ticket-<8 位>-<NN>`：已经发出去的号不重编（契约 `CONTRACT.md` §13.1 末两条 / §13.4 第 2 条）。
+ */
 export function nextTicketId(tickets, dayKey) {
   const taken = new Set((tickets ?? []).map((t) => t?.id))
-  const prefix = `ticket-${dayKey}-`
+  const prefix = `ticket-${dayDigitsOfKey(dayKey)}-`
   let seq = (tickets ?? []).filter((t) => typeof t?.id === 'string' && t.id.startsWith(prefix)).length + 1
   // 撞名就往下挪（re-init / 手工补票都可能让"个数"对不上"序号"）。
   while (taken.has(`${prefix}${String(seq).padStart(2, '0')}`)) seq += 1

@@ -441,7 +441,9 @@ function opStageEnter(ctx) {
   if (!openTasks.ok) throw cliError(openTasks.code, openTasks.message)
 
   // ⑦ 落盘：先补出 transition_id（**调用方不预填** —— A6），再写阶段证据、再改路线。
-  const dayKey = R.dayKeyOf(at)
+  // `transition_id` 里的日子是**那 8 位**：它从 `dayKeyOf` 派生（`dayDigitsOf`），
+  // 不是把带连字符的整串塞进去 —— 已经发出去的 `tr-<YYYYMMDD>-<NN>` 不许换形状（契约 §13.1 末两条）。
+  const dayKey = R.dayDigitsOf(at)
   const transitionId = R.transitionIdOf(dayKey, audit.records.filter((r) => r.op === 'stage-enter' || r.kind === 'stage-enter').length + 1)
   const evidencePath = path.join(paths.evidenceDir, `${transitionId}.json`)
   if (evidence !== null) {
@@ -521,7 +523,8 @@ function opTicketOpen(ctx) {
   const { currentSha } = assertChain(paths, audit.records)
 
   const tickets = current.tickets ?? []
-  const id = typeof payload?.id === 'string' && payload.id.trim() !== '' ? payload.id.trim() : T.nextTicketId(tickets, R.dayKeyOf(at))
+  // 票号那 8 位**从 `dayKeyOf` 派生**（契约 §13.1：带连字符的日子是那个函数的结果，`ticket-<8 位>-<NN>` 不跟着换形状）。
+  const id = typeof payload?.id === 'string' && payload.id.trim() !== '' ? payload.id.trim() : T.nextTicketId(tickets, R.dayDigitsOf(at))
   const record = T.newTicketRecord({
     id,
     title: payload?.title,

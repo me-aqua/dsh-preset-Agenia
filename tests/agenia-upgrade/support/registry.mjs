@@ -205,14 +205,52 @@ export const BATCH_N = ['DLY-01', 'DLY-02']
 export const BATCH_O = ['LOC-01']
 
 /**
- * 已落笔的十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
+ * 批次 P 的 6 条 —— **`F-158`**（"今天"从本地 **04:00** 切，不从 0 点切，2026-10-24）。
+ *
+ * 六格是同一句话的六张脸：**一天的边界在本地 04:00 —— `dayKeyOf(instant) = 本地日期(instant − 4h)`，一处算、处处用。**
+ *   · `DBY-01` **切点下方** `2026-10-24T03:59:59+08:00` ⇒ `2026-10-23`：那一处算（`lib/route.mjs::dayKeyOf`，
+ *     定形落点 3 点名"它本身就是那个函数"）+ **四个消费方的缺省日**（`daily-start` / `claim-update` /
+ *     `daily-cards.py` / `local-claim`）+ `report-read`（**体检那条红走的同一条路**）+ **票号那 8 位**的形状（§13.4）。
+ *     另配一把**切点刀**：把 `.tools/daily-cards.py` 的 `DAY_CUT_HOURS` 改成 3（跑的是运行根里的副本）⇒ 这一刻
+ *     必须翻到 `10-24` —— 证明"Python 那份切点被钉在 4 小时"这条腿**能翻面**
+ *   · `DBY-02` **切点上方** `04:00:01` ⇒ `2026-10-24`：同一批消费方，方向相反；切点刀改成 5 小时 ⇒ 翻回 `10-23`。
+ *     ⚠️ 这一侧在**两种尺子下同值** ⇒ 它证明的是"别把切点上方也挪走"；纯函数那一格要红得用 `K2`（切点搬到 05:00）
+ *   · `DBY-03` **四处入口同一个 01:30**（老板那张现场：凌晨一点半还在干前一天的活）：
+ *     `claim-update` / `daily-start` / `daily-cards.py` / `local-claim` 的**缺省日**必须都落到 `2026-10-23`，
+ *     而且**互相同值**（各自对 + 彼此相同是两层判据 —— 一起错也是一种同值）；另判**量具自证**
+ *     `cardsKindOf`（`resolved` 之前必须 `exit_code === 0`，四行合成读数）
+ *   · `DBY-04` **显式 day 的两种形态**：① 好值照抄（两个方向）；② **给了但坏 ⇒ `E_ARG_SCHEMA`**（`""` / 全空白 /
+ *     `2026-13-40` / `2026-02-30` × 五个消费方 —— 裁定："给了就必须是 day key，不许吞成没给"）。
+ *     `2026-13-40` 这类"形状合规、日历上不存在"的值与空串走**同一条**规则（`isDayKey` 连日历往返一起验）；
+ *     边界：形状合规**且**日历合法、只是没人会写的日子（如 `1999-01-01`）仍然被收下 —— 那不是校验能管的事
+ *   · `DBY-05` **体检那条红**（`.tools/check-notes.mjs` 的「今天的记忆更新报告在」）：注入 01:30 ⇒ 那一行必须点名
+ *     `2026-10-23`；注入 `2027-01-02T04:30`（那一天盘上必然没有报告）⇒ 必须点名那一天**且是红的**。
+ *     ✅ 这个工具**走同一把尺子**（`:241` 是 `dayKeyOf(clockNow())`，`:23-24` 从 `lib/clock.mjs` / `lib/route.mjs` 取）
+ *     ⇒ 这一格守的是"别退回去"
+ *   · `DBY-06` **根上有过期的 `current-day` 指针**（裁定 F4-b）：指针 `10-23`、时钟 `11:00`、
+ *     不给 `day` ⇒ `claim-update` / `daily-start` 的缺省日必须落到 `2026-10-24`（另两个消费方只记读数）。
+ *     两条腿**各有各的脑根**、各自种一次过期指针（`claim-update` 会把指针写成 10-24，共用根就等于
+ *     把后一条腿的现场抹掉 —— 门 4 复审 R1），开跑前从盘上读回指针当见证。
+ *     指针留着给**中途** op（`P2` 那一格）
+ *
+ * 契约在 `CONTRACT.md` §13（本批与契约同批落盘）；定形在 `.team/leader/2026-10-23/spec-F-158.md`。
+ * ⚠️ 它们**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G / H / I / J / K / L / M / N / O 的规矩。
+ * ⚠️ **分母 84 → 90**（六格，不是一格加五条输入）：六处**不同的红因** —— 切点下方算错 / 切点上方被挪 /
+ *    四处各算各的 / 显式好值被吞或又被换算一次、坏值被吞 / 体检那条红不听时钟 / 缺省日被过期指针拐走。
+ *     一把刀只能落在其中一处，所以它们不能合成一格。
+ */
+export const BATCH_P = ['DBY-01', 'DBY-02', 'DBY-03', 'DBY-04', 'DBY-05', 'DBY-06']
+
+/**
+ * 已落笔的十六批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
  * 批次 L 是 `F-148` 思考链过滤（同日 · 紧急票），批次 M 是 `F-152` 板子三态（同日），
- * 批次 N 是 `F-155` 每日状态的两端与署名（同日），批次 O 是 `F-156` 三个本地节点的三态（同日）。
+ * 批次 N 是 `F-155` 每日状态的两端与署名（同日），批次 O 是 `F-156` 三个本地节点的三态（同日），
+ * 批次 P 是 `F-158` 一天从 04:00 切（2026-10-24）。
  * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -229,7 +267,8 @@ const BATCH_OF = (id) =>
                           : BATCH_M.includes(id) ? 'M'
                             : BATCH_N.includes(id) ? 'N'
                               : BATCH_O.includes(id) ? 'O'
-                                : null
+                                : BATCH_P.includes(id) ? 'P'
+                                  : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -286,6 +325,14 @@ const F = {
    *  `local-fail` / `local-read` 判的是**同一份** `state/local/<day>.json` 的四个腿，
    *  红的时候一眼看得出是"哪条腿"（节点没落 / 原因丢了 / 并行吞掉一个 / 读面把"缺"当成"空"）。 */
   loc: 'integration/loc01-local-state.test.mjs',
+  /** 门 2 · `F-158` 一天从本地 04:00 切（批次 P）—— **切点两侧各一个文件行、外加四格**：
+   *  `DBY-01` / `DBY-02` 同住 `dby01-day-boundary.test.mjs`（同一批**四个消费方**、两个方向 —— 红的时候一眼看得出
+   *  是"切点下方算错"还是"切点上方被挪走"）；`DBY-03` / `DBY-04` / `DBY-06` 同住
+   *  `dby02-day-cut-agreement.test.mjs`（四处入口同值 / 显式 day 的两种形态 / 过期指针 —— 判的是同一批入口的三件事）；
+   *  `DBY-05` 单独一个文件（它驱的是 `.tools/check-notes.mjs`，一个**只读**的真子进程）。 */
+  dby: 'integration/dby01-day-boundary.test.mjs',
+  dbyAgreement: 'integration/dby02-day-cut-agreement.test.mjs',
+  dbyCheckNotes: 'integration/dby03-check-notes-day-cut.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -418,6 +465,14 @@ const ROWS = [
 
   // ── 门 2 · `F-156` 三个本地节点的三态（1）：写者是组长，不是作业（2026-10-23）──────────
   ['LOC-01', 'local-state', F.loc, 'F-156 三个本地节点（`memory_review` / `conversation` / `technical`）的三态契约（真子进程 + 每格一个带 marker 的临时工作区；判**盘上** `state/local/<day>.json` 与 `local-read` 的 `state`/`summary` 两处，不只判 stdout）：`L1` `claim → mark` ⇒ 节点 `done` + 产物锚点逐项记下（`report_sha256` **必须等于报告盘上字节的 SHA256**；`findings_set_sha256` / `findings_count` / `artifact_paths` 原样）+ `claim`/`job_id` 仍指得出是哪一次派工 + `liveness_at` = 落地那一刻 + 兄弟两节点一个字不动；`L2` `claim → fail` ⇒ 节点 `failed` 且 `failure_reason` **逐字**留住（换成「(没给原因)」就是这一格翻面）+ claim 痕迹保留；`L3` **两个节点真并发 claim**（`conversation` + `technical` 两个真子进程同时起）⇒ 两节点各自 `running`、各自 `job_id`/`attempt`，**谁都不许覆盖谁**，第三个节点仍空；`L4` **任何 claim 之前** `local-read` ⇒ `E_DATA_MISSING` + exit 7 + 报错点名那个路径（缺 ≠ 坏 ≠ 空；读面零写入），首个 claim 之后没被 claim 的两个节点以**文档里的空形状**出现（`unclaimed` + `lib/local-state.mjs::emptyNode()` 的 15 个必填键、该 null 的 null、该 `[]` 的 `[]`；加性键不判名字）—— 外加阳性对照（照 `CONTRACT.md` §12 写的最小实现四格全成立）与**四把刀**（① `claim` 丢掉按节点合并 ⇒ **只有 `L3`** 翻面；② `fail` 丢掉 `reason` ⇒ **只有 `L2`** 翻面；③ `mark` 不记锚点 ⇒ **只有 `L1`**；④ `emptyNode()` 丢那 9 个键 ⇒ 四格一起翻 —— ③④ 是量具自证：这一格今天全绿，"绿"只有在每一格都能红时才算读数），每刀实测向量与契约推出的对不上 ⇒ `KNIFE-WRONG-VECTOR`。⚠️ 四个 op 的行为**今天就是对的** ⇒ 本格今天 **RED 0**，是回归锁不是首跑红（缺的是**调用者**：写者 = 组长，§12）', '批次 O'],
+
+  // ── 门 2 · `F-158` 一天从本地 04:00 切（6）：一处算、处处用（2026-10-24）──────────────────
+  ['DBY-01', 'day-boundary', F.dby, 'F-158 切点**下方** `2026-10-24T03:59:59+08:00` ⇒ `2026-10-23`：① 那一处算 `lib/route.mjs::dayKeyOf`（定形落点 3：它本身就是那个函数）返回的必须是**带连字符的日子**（返回 `20261024` 这种"票号 8 位"⇒ 红因 `DBY-PURE-SHAPE`，形状错与切点错分开报）且是前一天；②③④⑤ **四个消费方的缺省日**（真子进程 + 注入时钟 + payload/命令行里没有 `day`）：`daily-start`（信封 `day` + `.team/state/daily/<day>.json`）· `claim-update`（信封 `day` + `state/update/<day>.json`）· `daily-cards.py`（`.team/leader/<day>/` 那个**目录名** + `exit_code === 0`）· `local-claim`（信封 `state.day` + `.team/state/local/<day>.json`）四处都必须落到 `2026-10-23`；⑥ `report-read` 的**缺省日**（**体检那条红走的同一条路**）信封 `day` 与 `path` 都要以 `reports/memory-update/2026-10-23.json` 收尾；⑦ **票号那 8 位**：`nextTicketId([], dayKeyOf(instant))` 仍须是 `ticket-<8 位>-<NN>`（§13.4）；⑧ 阳性对照 + 刀 `K1`（去掉 −4h）实测向量 `[B1,A1,A2,A3,A4]`；⑨ **切点刀**：`.tools/daily-cards.py` 的 `DAY_CUT_HOURS = 4` 改成 3（跑**运行根里的副本**，`.tools/**` 零字节）⇒ 这一刻必须翻到 `10-24`（红因 `DBY-CARDS-KNIFE-NO-BITE`）—— 门 4 评审 F1：切点不被钉住时，改成 3/5/10/20 五个格全绿', '批次 P'],
+  ['DBY-02', 'day-boundary', F.dby, 'F-158 切点**上方** `2026-10-24T04:00:01+08:00` ⇒ `2026-10-24`（同一批**四个消费方**，方向相反）：① `dayKeyOf` 的形状与前缀同上、日子必须是当天；②③④⑤ 四个消费方的缺省日同 `DBY-01`；⑥ `report-read` 的缺省日与 `path` 收尾；⑦ 阳性对照 + 刀 `K2`（切点搬到 05:00）实测向量 `[B2]`；⑧ **切点刀**：`DAY_CUT_HOURS` 改成 5 ⇒ 这一刻必须翻回 `10-23`。⚠️ 这一侧在**两种尺子下同值**（零点尺子也是 10-24）⇒ 它证的是"别把切点上方也挪走"；纯函数那一格 `K1` **翻不动**它（算术），所以让它红的那把刀必须是 `K2` —— 没有 `K2` 这一格就是装饰。两向一夹（`03:59:59 ⇒ 10-23` 且 `04:00:01 ⇒ 10-24`）整数小时的切点只能等于 4', '批次 P'],
+  ['DBY-03', 'day-boundary', F.dbyAgreement, 'F-158 **四处入口同一个 01:30**（老板那张现场：凌晨一点半还在干前一天的活）：`claim-update`（信封 `day` + `state/update/<day>.json`）· `daily-start`（信封 `day` + `.team/state/daily/<day>.json`）· `daily-cards.py`（把两张卡落进的**目录名** `.team/leader/<day>/`，真 python 子进程）· `local-claim`（信封 `state.day` + `.team/state/local/<day>.json`）四处**都不给 day**，四处都必须落到 `2026-10-23`，**且互相同值**（各自对 + 彼此相同是两层判据：一起错也是一种同值 ⇒ 红因 `DBY-CONSUMERS-WRONG-DAY` / `DBY-CONSUMERS-DISAGREE`）；阳性对照 + 刀 `K3`（**一个**入口绕开那一处算）实测向量 `[A3]`；另判**量具自证** `cardsKindOf` 四行（`exit 0`+一个目录 ⇒ resolved · 无目录 ⇒ failed · **`exit 1`+目录已建 ⇒ failed** · argparse 缺必填 ⇒ no-default）：门 4 评审 F2 —— `daily-cards.py:140` 在读数据之前就 `makedirs`，只按目录名判绿就分不出"卡出了"与"崩在目录建好之后"', '批次 P'],
+  ['DBY-04', 'day-boundary', F.dbyAgreement, 'F-158 **显式 day 的两种形态**（判的是同一批入口收不收、怎么收）：① **好值照抄**，两个方向 —— 显式 `2026-10-23` @ `04:00:01`（那一刻缺省会算成 `2026-10-24`）⇒ 四处都必须仍是 `2026-10-23`；显式 `2026-10-24` @ `01:30`（那一刻缺省会算成 `2026-10-23`）⇒ 四处都必须仍是 `2026-10-24`（只给一个方向的话"把显式值也过一遍 −4h"这种半修 `2026-10-23 ⇒ 2026-10-22` 看不出来）；② **给了但坏 ⇒ 当场拒**：`day` 给 `""` / 全空白 / `2026-13-40` / `2026-02-30`（`BAD_DAYS` 四个值）时 `claim-update` / `daily-start` / `daily-cards` / `local-claim` / `report-read` **五处都必须是 `E_ARG_SCHEMA`**（红因 `DBY-BAD-DAY-ACCEPTED-*` 吞成没给、`DBY-BAD-DAY-CODE-*` 拒得对但码不对）—— `2026-13-40` 这类"形状合规、日历上不存在"的值与空串走**同一条**规则（`isDayKey` 连日历往返一起验），边界是"形状合规**且**日历合法、只是没人会写"的日子（如 `1999-01-01`）仍被收下。阳性对照 + 两把刀：`K4`（显式被吞）实测向量 `[E1,E2]` · `K5`（空串被吞）实测向量 `[D1,D2]`', '批次 P'],
+  ['DBY-05', 'day-boundary', F.dbyCheckNotes, 'F-158 **体检那条红的两向格**（`.tools/check-notes.mjs` 的「今天的记忆更新报告在（reports/memory-update/<day>.json）」那一行；判那一行点名的**日子**与**态**，不判绿不绿）：注入 `2026-10-24T01:30:00+08:00` ⇒ 那一行必须点名 `2026-10-23`（凌晨一点半属于前一天，不许嚷）；注入 `2027-01-02T04:30:00+08:00`（那一天盘上**必然**没有报告）⇒ 必须点名 `2027-01-02` **且是 `RED`**（该报就报）；外加"两向必须是同一把尺子"（两向读到同一个日子 ⇒ 红因 `DBY-CN-CLOCK-IGNORED`）。✅ 这个工具**走同一把尺子**（`:241` 是 `const today = dayKeyOf(clockNow())`，`:23-24` 从 `presets/agenia/lib/clock.mjs` / `route.mjs` 取 ⇒ 注入时钟生效）⇒ 这一格守的是"别退回真时钟 / 零点切"。`.tools/**` 不在测试岗的可写范围里：这一格**只判、不改**', '批次 P'],
+  ['DBY-06', 'day-boundary', F.dbyAgreement, 'F-158 **根上有过期的 `current-day` 指针**（裁定 F4-b、门 4 评审 F4 的落点）：脑根上 `state/current-day.json` = `2026-10-23`、时钟 `2026-10-24T11:00:00+08:00`、payload **不给** `day` ⇒ `claim-update` / `daily-start` 的缺省日必须落到 **`2026-10-24`**（`daily-cards` / `local-claim` 同现场只记读数）。两条腿**各有各的脑根**、各自种一次过期指针，开跑前从盘上读回指针当见证（`pointer_witness[].at_start` 必须都是 `10-23`）—— `claim-update` 成功会写指针，共用一副根时后跑的 `daily-start` 已经看不见过期指针，退回指针的实现照样绿（门 4 复审 R1）。为什么：在一个已经 claim 过、新的一天还没开始的根上，缺省日若跟着指针走就永远回到上一次 claim 的那一天 —— 04:00 的切点**静默失效**（`DBY-03` 用全新脑根，结构上看不见这一支）；指针**没被废掉**，它留给**中途** op（`P2` 那一格：中途 op 跟指针、不跟时钟）。阳性对照 + 刀 `K6`（缺省日跟指针走）实测向量 `[P1]`', '批次 P'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -489,6 +544,9 @@ export const GROUP_COUNTS = {
   'daily-state': 2,
   /** 门 2 · `F-156` 三个本地节点的三态（`LOC-01` 一格四格）—— 契约见 `CONTRACT.md` §12。 */
   'local-state': 1,
+  /** 门 2 · `F-158` 一天从本地 04:00 切（`DBY-01` 切点下方 / `DBY-02` 切点上方 / `DBY-03` 四处入口同值 /
+   *  `DBY-04` 显式 day 的两种形态 / `DBY-05` 体检那条红 / `DBY-06` 过期指针）—— 契约见 `CONTRACT.md` §13。 */
+  'day-boundary': 6,
 }
 
 /**
@@ -506,11 +564,11 @@ export function registryProblems() {
   // 发现器自己报的问题（没有 ID 的 test() / 重复 ID）。
   for (const p of DISCOVERY.problems) problems.push(p.message)
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
-  // ⚠️ G / H / I / J / K / L / M / N / O 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
+  // ⚠️ G / H / I / J / K / L / M / N / O / P 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -537,6 +595,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }

@@ -27,6 +27,7 @@
  *      分布只是维护信号，进不了容量签名。
  */
 import { now } from './clock.mjs'
+import { dayKeyOf } from './route.mjs'
 
 /** 四类类型（机读用英文 id；中文只作呈现名，拍板 Q9）。 */
 export const TYPE_IDS = Object.freeze(['general', 'boss', 'machine', 'project'])
@@ -109,12 +110,13 @@ function dateKeyToMs(key) {
   return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
 }
 
-/** `YYYY-MM-DD`（**本地日历日**：老板看到的"今天"）。 */
+/**
+ * `YYYY-MM-DD`（**本地日历日**：老板看到的"今天"）。
+ * 契约 `CONTRACT.md` §13.1（`F-158`）：切点在**本地 04:00**（00:00–03:59 归前一天）⇒
+ * 整份委托给 `lib/route.mjs::dayKeyOf`（**唯一**一处算；这里不许再写一份日期格式化）。
+ */
 function todayKey(date) {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
+  return dayKeyOf(date)
 }
 
 function resolveToday(options) {

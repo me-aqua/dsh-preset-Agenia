@@ -394,7 +394,10 @@ function opInitReal({ root }) {
 
 // ── op：读面 ───────────────────────────────────────────────────────────────
 function opStateRead({ root, payload }) {
-  const { day, source } = S.resolveDay(root, payload?.day)
+  // 中途 op（读面）：缺省日**跟 `current-day` 指针** —— "正在进行的这一天"，不是"今天"。
+  // 写入口（`claim-update` / `daily-start`）反过来：缺省只看时钟（契约 §13.2 · 组长裁定 F4-b）。
+  // 下面每一个 `S.resolveDay(…, { pointer: true })` 都是这一族；不传 `pointer` 的就是写入口。
+  const { day, source } = S.resolveDay(root, payload?.day, { pointer: true })
   const read = S.readUpdateState(root, day)
   if (!read.ok) throw cliError(read.code, read.message, { path: read.path, day })
   return { state: read.state, state_path: read.path, day, day_source: source }
@@ -457,7 +460,7 @@ function opEntryCount({ root }) {
 }
 
 function opReportRead({ root, payload }) {
-  const { day } = S.resolveDay(root, payload?.day)
+  const { day } = S.resolveDay(root, payload?.day, { pointer: true })
   const read = SNAP.readReport(root, day)
   if (!read.ok) throw cliError(read.code, read.message, { path: read.path, day })
   return { report: read.report, path: read.path, day, derived: read.report?.derived === true, note: read.message || null }
@@ -481,6 +484,8 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 function opDailyStart({ root, args, payload }) {
   const ws = resolveWorkspace(args, payload)
   const at = S.nowIso()
+  // 缺省日 **只按时钟**（本地 04:00 切），不跟 `current-day` 指针 —— 与 `claim-update` 同一条口径
+  // （契约 §13.2 / 组长裁定 F4-b：指针留给中途 op，`DBY-06` 判这一格）。
   const { day } = S.resolveDay(root, payload?.day)
   const sessionId = typeof payload?.session_id === 'string' && payload.session_id.trim() !== '' ? payload.session_id : null
   const current = SNAP.readCurrentSnapshot(root)
@@ -539,8 +544,13 @@ function opDailyStart({ root, args, payload }) {
  */
 function opClaimUpdate({ root, args, payload }) {
   const at = S.nowIso()
-  const day = requireString(payload?.day, 'day')
-  if (!S.isDayKey(day)) throw cliError('E_ARG_SCHEMA', `day 必须是 YYYY-MM-DD，实得 ${JSON.stringify(day)}`)
+  // 契约 `CONTRACT.md` §13.1/§13.2/§13.3（`F-158`）：`day` **可选**。
+  //   · 给了 ⇒ **照抄**（§13.3 显式优先：不许再被 −4h 换算一次）；给了但坏（`""` / 全空白 /
+  //     `2026-13-40`）⇒ `S.resolveDay` 那一支当场 `E_ARG_SCHEMA`，**不**在这里另判一份
+  //     （两处判同一件事，就会两边各说各话 —— 2026-10-24 门 4 评审 F3）。
+  //   · 没给 ⇒ **只按时钟**（`dayKeyOf(clockNow())`，本地 04:00 切）。⚠️ **不跟 `current-day` 指针**：
+  //     这个 op 自己会写那个指针，跟它走就等于"永远回到上一次 claim 的那一天"（组长裁定 F4-b）。
+  const { day } = S.resolveDay(root, payload?.day)
   const ownerProject = requireString(payload?.owner_project, 'owner_project')
   const ownerSession = requireString(payload?.owner_session, 'owner_session')
   const forceRecover = args.forceRecover === true
@@ -612,7 +622,7 @@ function opClaimUpdate({ root, args, payload }) {
 /** `candidates-freeze`：把这一轮的输入清单冻下来（CAS：generation 不符 ⇒ `E_CAS_STALE`）。 */
 function opCandidatesFreeze({ root, payload }) {
   const at = S.nowIso()
-  const { day } = S.resolveDay(root, payload?.day)
+  const { day } = S.resolveDay(root, payload?.day, { pointer: true })
   const state = mustState(root, day)
   const generation = payload?.generation
   if (!Number.isInteger(generation)) throw cliError('E_ARG_SCHEMA', `generation 必须是整数，实得 ${JSON.stringify(generation)}`)
@@ -633,7 +643,7 @@ function opCandidatesFreeze({ root, payload }) {
  */
 function opJudgeStart({ root, payload }) {
   const at = S.nowIso()
-  const { day } = S.resolveDay(root, payload?.day)
+  const { day } = S.resolveDay(root, payload?.day, { pointer: true })
   const state = mustState(root, day)
   if (!Number.isInteger(payload?.generation)) throw cliError('E_ARG_SCHEMA', 'generation 必须是整数')
   if (payload.generation !== state.generation) throw cliError('E_CAS_STALE', `generation=${payload.generation} 与当前那一轮（${state.generation}）不符`)
@@ -685,7 +695,7 @@ function opJudgeStart({ root, payload }) {
  */
 function opJudgeCommit({ root, payload }) {
   const at = S.nowIso()
-  const { day } = S.resolveDay(root, payload?.day)
+  const { day } = S.resolveDay(root, payload?.day, { pointer: true })
   const state = mustState(root, day)
 
   // ① 旧 attempt 的 token **第一个**被挡住（不然会以"版本不对"报错，把真正的根因藏起来）
@@ -1091,7 +1101,7 @@ function opJudgePending({ root }) {
  */
 function opReviewStart({ root, payload }) {
   const at = S.nowIso()
-  const { day } = S.resolveDay(root, payload?.day)
+  const { day } = S.resolveDay(root, payload?.day, { pointer: true })
   const state = mustState(root, day)
   if (payload?.generation !== undefined && payload.generation !== state.generation) {
     throw cliError('E_CAS_STALE', `generation=${payload.generation} 与当前那一轮（${state.generation}）不符`)
@@ -1152,7 +1162,7 @@ function opJobMark({ root, payload }) {
   }
   S.writeJob(root, nextJob)
 
-  const { day } = S.resolveDay(root, payload?.day)
+  const { day } = S.resolveDay(root, payload?.day, { pointer: true })
   const stateRead = S.readUpdateState(root, day)
   if (stateRead.ok) {
     const state = stateRead.state
@@ -1219,7 +1229,7 @@ function opCsConfirm({ root, payload }) {
 // ── op：候选导入 ───────────────────────────────────────────────────────────
 function importOp({ root, payload, kind }) {
   const at = S.nowIso()
-  const { day } = S.resolveDay(root, payload?.day)
+  const { day } = S.resolveDay(root, payload?.day, { pointer: true })
   const stateRead = S.readUpdateState(root, day)
   if (!stateRead.ok && stateRead.code !== 'E_DATA_MISSING') throw cliError(stateRead.code, stateRead.message, { path: stateRead.path })
   const state = stateRead.ok ? stateRead.state : null
@@ -1276,7 +1286,7 @@ const opMaintenanceImport = (ctx) => importOp({ ...ctx, kind: 'maintenance' })
  */
 function opHealthRead({ root, args, payload }) {
   const ws = resolveWorkspace(args, payload)
-  const { day } = S.resolveDay(root, payload?.day)
+  const { day } = S.resolveDay(root, payload?.day, { pointer: true })
   const project = typeof payload?.project === 'string' && payload.project.trim() !== '' ? payload.project : null
   const sessionId = typeof payload?.session_id === 'string' && payload.session_id.trim() !== '' ? payload.session_id : null
   const at = S.nowIso()
@@ -1401,8 +1411,12 @@ function opHealthRead({ root, args, payload }) {
  *    判的是"**我会写到哪里**"，不是"我在哪儿开工" —— 理由见那个函数上面的 🔴（工作区包住真实库是设计如此）。
  */
 function opSessionPacket({ root, args, payload }) {
-  const day = requireString(payload?.day, 'day')
-  if (!S.isDayKey(day)) throw cliError('E_ARG_SCHEMA', `day 必须是 YYYY-MM-DD，实得 ${JSON.stringify(day)}`)
+  // 契约 `CONTRACT.md` §13.3：`day` **必填**，而且与别处**同一支**（`S.dayInputOf`）——
+  // 给了必须合法（形状 + 日历），坏值 ⇒ `E_ARG_SCHEMA`；合法值照抄（并去掉首尾空白，与 `resolveDay` 同口径，
+  // 否则 `retro/ 2026-10-23 /` 会多出一层带空格的抽屉）。本 op **不吃** `current-day` 指针：
+  // 包落哪一格由调用方点名（它没有缺省日）。
+  const day = S.dayInputOf(payload?.day)
+  if (day === null) throw cliError('E_ARG_SCHEMA', `day 必填（YYYY-MM-DD），实得 ${JSON.stringify(payload?.day)}`)
   // `sources` 是**必填数组**（v1.6 ②）：本 op 不替调用方去会话目录里"猜有哪些流" ——
   // 猜出来的源 id 与评审报告里写的那个必须逐字相同，猜错就是"评了别的会话还以为评了这一段"。
   const sources = payload?.sources

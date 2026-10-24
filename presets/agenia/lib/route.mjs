@@ -54,13 +54,52 @@ const bad = (code, message) => ({ ok: false, code, message })
 /** 阶段 / 任务的 id 形状：字母数字开头，允许 `.` `_` `-`。 */
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
-/** 一天的键（`YYYYMMDD`）—— 票号与 `transition_id` 都用它（**本地日期**，与人对表的那一天一致）。 */
-export function dayKeyOf(date) {
-  const d = date instanceof Date ? date : new Date(date)
+/**
+ * **一天的切点**（本地小时）—— 00:00–03:59 归**前一天**。
+ *
+ * 契约 `CONTRACT.md` §13.1（`F-158`）。老板原话（2026-10-24 01:07 记进定形）：
+ * 「改成从凌晨4点切分，不要在半夜一点我正在干活的时候嚷嚷"新的一天了，得先派记忆更新呀"」。
+ */
+export const DAY_CUT_HOURS = 4
+
+/** 本地日历日 `YYYY-MM-DD` —— **纯格式化**，不做切点换算（只有 `dayKeyOf` 该减那 4 小时）。 */
+function localDateOf(instant) {
+  const d = instant instanceof Date ? instant : new Date(instant)
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
-  return `${y}${m}${day}`
+  return `${y}-${m}-${day}`
+}
+
+/**
+ * 契约 `CONTRACT.md` §13.1：**唯一**一处算"这一天是哪一天"。
+ *
+ * `dayKeyOf(instant) = 本地日期(instant − 4h)`，返回 `YYYY-MM-DD`（带连字符）——
+ * 状态文件 `state/update/<day>.json`、报告 `reports/memory-update/<day>.json`、
+ * `daily/<day>.json`、`local/<day>.json` 与 `isDayKey` 用的都是这一种形状。
+ * 例：`2026-10-24T01:30+08:00` ⇒ `"2026-10-23"`（凌晨一点半还在干前一天的活）。
+ *
+ * 🔴 **谁派生谁**：带连字符的日子是**这个函数的结果**；票号 / `transition_id` 里那 8 位**从它派生**
+ * （`dayDigitsOf`），不是反过来 —— 反过来的话这次收敛会改写**已经发出去**的号（§13.4 第 2 条）。
+ * 🔴 凡是"今天 / 某天"的派生都走这里，别处不许再写一份 `getFullYear()+getMonth()+getDate()`。
+ */
+export function dayKeyOf(instant) {
+  const d = instant instanceof Date ? instant : new Date(instant)
+  return localDateOf(new Date(d.getTime() - DAY_CUT_HOURS * 3600 * 1000))
+}
+
+/**
+ * 一个**日子键** → 票号 / `transition_id` 里那 8 位（`2026-10-23` ⇒ `20261023`）。
+ * 这是"谁派生谁"的**唯一**一份实现：带连字符的日子是主形，8 位是它的派生（契约 §13.1 末两条）。
+ * 入参已经是 8 位时原样返回（老调用方不受影响）。
+ */
+export function dayDigitsOfKey(dayKey) {
+  return String(dayKey ?? '').trim().replaceAll('-', '')
+}
+
+/** 某一时刻的 8 位（票号 / `transition_id` 用）—— `dayKeyOf` 之后再派生，不是另算一遍日期。 */
+export function dayDigitsOf(instant) {
+  return dayDigitsOfKey(dayKeyOf(instant))
 }
 
 /**
@@ -288,9 +327,13 @@ export function openTasksVerdict(route) {
   return bad('E_TASKS_OPEN', `当前大阶段还有 ${open.length} 个没做完的任务：${open.map((t) => `${t.id}(${t.status})`).join(' / ')} —— 切阶段前先收清`)
 }
 
-/** `transition_id` 的形状（§B3.5：`tr-<YYYYMMDD>-<seq>`）。 */
+/**
+ * `transition_id` 的形状（§B3.5：`tr-<YYYYMMDD>-<seq>`）。
+ * 日子那一段**一律走 `dayDigitsOfKey`**：传进来的是带连字符的主形也照样得到 8 位 ——
+ * 已经发出去的 `tr-<8 位>-<NN>` 不许因为日子换了形状而跟着变（契约 §13.1 末两条）。
+ */
 export function transitionIdOf(dayKey, seq) {
-  return `tr-${dayKey}-${String(seq).padStart(2, '0')}`
+  return `tr-${dayDigitsOfKey(dayKey)}-${String(seq).padStart(2, '0')}`
 }
 
 /** 新建一份路线对象（`init` 与"空路线重来"共用）。`version` 由调用方给 —— **重来也不回退**。 */

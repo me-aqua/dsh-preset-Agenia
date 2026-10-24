@@ -1486,3 +1486,215 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 - 登记：`support/registry.mjs` 的 `BATCH_O` + `ROWS` + `GROUP_COUNTS['local-state'] = 1`
   （以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_O`，否则冻结清单与表当场分家）；
 - 分母：`TOTAL` 由盘上扫出 = **84**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；83 + 这 1 条）。
+
+## §13 · `F-158` · 「一天」从**本地 04:00** 切，不从 0 点切（一处算，处处用）
+
+> 定形：`.team/leader/2026-10-23/spec-F-158.md`。这一节是它的技术契约。
+> 判据（六条，组 `day-boundary`）：`tests/agenia-upgrade/integration/dby01-day-boundary.test.mjs` 的 `DBY-01` / `DBY-02`、
+> `dby02-day-cut-agreement.test.mjs` 的 `DBY-03` / `DBY-04` / `DBY-06`、`dby03-check-notes-day-cut.test.mjs` 的 `DBY-05`。
+> 量具：`tests/agenia-upgrade/support/day-cut.mjs`（注入时钟 + 参考实现 + 六把刀 + 四处的驱动 + `check-notes` 的那一行）。
+
+### §13.0 一句话，五张脸
+
+**病根一句话：所有"今天"都从本地零点切，于是凌晨一点还在干前一天的活时，体检就嚷"新的一天了"。**
+
+老板原话（逐字，2026-10-24 01:07 记进定形）：
+「**现在的"每天"是从0点算起的吧，改成从凌晨4点切分，不要在半夜一点我正在干活的时候嚷嚷"新的一天了，得先派记忆更新呀"**」
+
+现场（那一晚 01:02 现量）：体检当场红 ——
+`RED  今天的记忆更新报告在（reports/memory-update/2026-10-24.json）· 缺`，而那一刻整组还在干 10-23 的账。
+
+| 票 | 那一面 | 这一节写死什么 |
+| --- | --- | --- |
+| `F-158` A | **一处算** | `dayKeyOf(instant) = 本地日期(instant − 4h)`，返回 `YYYY-MM-DD`（§13.1） |
+| `F-158` B | **处处用** | 四处入口的"今天"都过它，而且**彼此同值**（两支各一格：无指针那一支 / 有指针那一支 —— §13.2 规矩 1） |
+| `F-158` C | **显式优先** | 显式 `day` 照抄，**不许被 −4h 再换算一次**（§13.3） |
+| `F-158` D | **不许动** | 已写盘的历史 day · 已发出的票 / 候选 id · `snapshot` 那套（§13.4） |
+| `F-158` E | **体检那条红** | 「今天的记忆更新报告在」那一行跟着**同一个切点**走（§13.5） |
+
+### §13.1 那一处算（唯一一份口径，别处不许再写一遍）
+
+```
+dayKeyOf(instant) = 本地日期(instant − 4h)      // 例：2026-10-24T01:30+08:00 → "2026-10-23"
+```
+
+- **落点**：`presets/agenia/lib/route.mjs::dayKeyOf`。定形落点表第 3 条逐字写明：
+  「**它本身就是那个函数**（收敛到它，别再造第三个）」。
+  ⇒ `lib/state.mjs::resolveDay` 的**缺省分支**、`lib/memory.mjs::todayKey` 那条"今天"、
+  以及一切 `toISOString().slice(0,10)` / `date.today()` 的自造版本，**都改成过它**。
+- **返回形状 = `YYYY-MM-DD`**（带连字符）。理由不是审美：`lib/state.mjs::isDayKey`、状态文件
+  `state/update/<day>.json`、报告路径 `reports/memory-update/<day>.json`、`daily/<day>.json`、
+  `local/<day>.json` **全是这一种**；今天 `route.mjs::dayKeyOf` 返回的是 **`YYYYMMDD`**（票号那 8 位）。
+- 🔴 **谁派生谁写死**：**带连字符的日子是那个函数的结果**；票号那 8 位**从它派生**
+  （`dayKeyOf(at).replaceAll('-', '')`），不是反过来。
+  反过来的话，这次收敛会**改写票号的形状**（`ticket-2026-10-23-01`），而票号是**已发出的号**（§13.4）。
+  `DBY-01` 有这一条判据（`nextTicketId([], dayKeyOf(instant))` 仍须匹配 `ticket-<8 位>-<NN>`）。
+- **边界读数**（两个方向都要有格，否则"边界"这个词没有落点）：
+  `2026-10-24T03:59:59+08:00` ⇒ `2026-10-23` · `2026-10-24T04:00:01+08:00` ⇒ `2026-10-24`。
+  ⚠️ **切点上方那一格在两种尺子下同值**（零点尺子也是 `10-24`）—— 它证明的是"别把切点上方也挪走"，
+  **不是**"切点搬过家"；切点搬没搬家只由**切点下方**那一格证。
+
+### §13.2 四处入口的"今天"必须**同值**（这一节最承重的一张表）
+
+| 入口 | 缺省日落在哪 | 盘上落点（判据看这里） |
+| --- | --- | --- |
+| `--op claim-update`（脑 CLI，`bin/agenia-brain.mjs:553`） | **时钟分支**：`dayKeyOf(clockNow())`（**不跟指针**） | `<dataRoot>/state/update/<day>.json` |
+| `--op daily-start`（脑 CLI，`:489`） | 同上 | `<WS>/.team/state/daily/<day>.json` |
+| `.tools/daily-cards.py`（python 固定生成器，`--day` 在 `:130-132`） | `(now − 4h).date()`；读**同一份**注入时钟（`AGENIA_NOW_FILE`）：文件不在 ⇒ 真实时钟；在但内容坏 ⇒ `E_CLOCK_FILE` **当场停**（与 `lib/clock.mjs` 同口径） | `<WS>/.team/leader/<day>/` 那两个 xlsx 的**目录名** |
+| `--op local-claim` / `local-mark` / `local-fail` / `local-read` / `health` / `receipt-check`（本地 CLI，`bin/agenia-local.mjs::dayOfPayload`） | 同上（本地 CLI 没有脑根 ⇒ 只有时钟这一支） | `<WS>/.team/state/local/<day>.json` |
+
+🔴 **缺省的"今天"是时钟，不是 `current-day` 指针**（2026-10-24 组长裁定 F4-b）。
+
+- **写入口**（上表四处）**不读指针**：`claim-update` / `daily-start` 调 `S.resolveDay(root, day)`（不带 `{ pointer: true }`）。
+  为什么：`claim-update` 成功之后**自己会写**那个指针 ⇒ 缺省若跟着指针走，在一个已经 claim 过、新的一天还没开始的根上
+  就永远回到上一次 claim 的那一天，过了 04:00 也不会前进 —— **本地 04:00 的切点静默失效**。
+- **指针没被废掉**，它留给"**正在进行的这一天**"那些**中途 op**：`state-read` · `report-read` ·
+  `candidates-freeze` · `judge-start` · `judge-commit` · `review-start` · `job-mark` · `cs-confirm` · `health-read`
+  （代码里就是带 `{ pointer: true }` 的那一族；`state-read` 的 `day_source` 仍会报 `pointer` —— `data-root` 那一格在守）。
+
+三条规矩，逐条可判：
+
+1. **一个时刻，四处同值** —— 分**两支**说，每支各有一格（一支的绿不能当另一支的绿）：
+   - **无指针那一支**（每格一副**全新**脑根）：`DBY-03` 在 `2026-10-24T01:30:00+08:00`（老板那张现场）判四处都不给 `day`
+     ⇒ 都落 **`2026-10-23`**；`DBY-01` / `DBY-02` 在切点两侧各再走一遍（四个消费方 + `report-read` 的路径）。
+   - **有指针那一支**（根上有**过期**的 `current-day`）：`DBY-06` 把指针摆在 `2026-10-23`、时钟摆在
+     `2026-10-24T11:00:00+08:00`，判两个**写入口**的缺省仍落 **`2026-10-24`**；`daily-cards` / `local-claim`
+     在同一现场只记读数（它们的缺省口根本不吃指针）。
+   ⇒ "四处同值"这句话的落点 = **两支合起来**；只说"四处同值"、不说是哪一支，就是一句没有判据的话。
+2. **"各自对"** 与 **"彼此相同"** 是**两层**判据。只判同值，四处一起错也会通过。
+3. **显式 `day` 仍然优先**（§13.3）：任何一处都不许因为"改了缺省分支"把显式值吞掉。
+
+四处都已有缺省（2026-10-24 门 3 落地；门 2 时这三处还是必填 —— 落点表见下面的"落地前 → 现在"）：
+
+| 位置 | 落地前（门 2） | 现在 |
+| --- | --- | --- |
+| `bin/agenia-brain.mjs::opClaimUpdate`（`:553`） | `requireString(payload?.day, 'day')` ⇒ **必填** | `day` 可选：给了照抄、坏值 `E_ARG_SCHEMA`；没给 = `dayKeyOf(clockNow())`（不跟指针） |
+| `bin/agenia-local.mjs::dayOfPayload`（`:144-157`） | 六个 op 全用它，`day` **必填** | `day` 可选；与脑侧**同一支**（`lib/state.mjs::resolveDay`），坏值同一支拒 |
+| `.tools/daily-cards.py`（`--day` 在 `:130-132`） | `--day` 是 argparse `required=True` | `--day` 可选；没给 `(now − 4h).date()`；给了但坏 ⇒ `E_ARG_SCHEMA:` 当场停 |
+
+> ⚠️ `resolveDay` 的缺省**不是**"显式 → 指针 → 时钟"三级了：`{ pointer: true }` 是**显式点名**要"正在进行的这一天"，
+> 不传就是时钟那一支（写入口）。判据里 `DBY-01` / `DBY-02` / `DBY-03` / `DBY-04` 每格用全新脑根（没有指针），
+> 量到的是**无指针那一支**；**有指针那一支**由 `DBY-06` 单独判 —— 别把一支的绿读成两支都对。
+
+### §13.3 显式 `day` **仍然优先**（两个方向都要判）
+
+- 显式 `2026-10-23` @ `04:00:01`（那一刻缺省会算成 `10-24`）⇒ 必须仍是 `2026-10-23`；
+- 显式 `2026-10-24` @ `01:30`（那一刻缺省会算成 `10-23`）⇒ 必须仍是 `2026-10-24`。
+
+🔴 **只给一个方向不够**：`2026-10-23` 那一条同时抓两种半修 ——
+「显式被吞掉、退回缺省」（得到 `10-24`）与「显式值又被 `−4h` 换算了一次」（得到 `10-22`）。
+后一种是这次收敛**最可能造出来**的 bug（把显式字符串也扔进 `dayKeyOf` 就有了）。
+
+🔴 **`day` 只要给了就必须是 day key**（2026-10-24 组长裁定 F3）：给了 —— 包括 `""`、全空白、
+`2026-13-40` 这种"形状合法、日历上没有"的值 —— 就必须是 `YYYY-MM-DD` 且日历上真有这一天，否则 `E_ARG_SCHEMA`；
+**绝不**静默吞成"没给"（吞掉的后果是一次拼错的日子落到别的日子上，而且看起来和"没拼错"一模一样）。
+
+- **一支**：`lib/state.mjs::dayInputOf`（`resolveDay` 的第一段）。脑侧**十二个收 `day` 的 op 都从这一支进**：
+  十一个经 `resolveDay`（两个写入口 `claim-update` / `daily-start` + 九个中途 op），`session-packet`
+  （`bin/agenia-brain.mjs:1414-1419`）**直接调 `dayInputOf`** —— 它的 `day` **必填**、不吃指针，
+  所以不需要 `resolveDay` 的缺省分支；合法值同样照抄（去掉首尾空白）。
+  本地 CLI 的 `dayOfPayload` 走 `resolveDay(null, day)` ⇒ **一个说法、一个码**（`E_ARG_SCHEMA`）。
+- **`isDayKey` 连日历一起验**（`lib/state.mjs:113-134`）：`Date` 的 UTC 往返，闰年不另写一份
+  （`2024-02-29` 收 · `2026-02-29` / `2026-02-30` / `2026-13-40` 拒）。它同时守着状态文件
+  （`newUpdateState` / `validateUpdateState`）与 `current-day` 指针的读数 —— 那些地方收到的都是
+  `dayKeyOf` 的返回值或已经发出去的号，**没有被这条收严误伤的值**。
+- **跨语言那份副本同一条规矩**：`.tools/daily-cards.py::is_day_key`（`:52-68`）拒坏值时
+  `sys.exit("E_ARG_SCHEMA: …")`（退出码非 0）—— 套件从 stderr 的码前缀读它（与 `E_CLOCK_FILE` 同一个约定）。
+
+### §13.4 不许动的三样（收敛的边界）
+
+1. **已写盘的历史 day 一个字节都不改**：`state/update/<day>.json` · `reports/memory-update/<day>.json` ·
+   `daily/<day>.json` · `local/<day>.json` · 快照版本号 —— 它们记的是**当时**的账，不是今天的口径。
+   ⇒ 不许"迁移"、不许"补写一份到前一天"、不许重算历史报告。
+2. **已经发出去的票号 / 候选 id 不重编**。新号的**形状**也不许跟着日子一起变（§13.1 末两条）。
+3. **「一天之内多场怎么分」不变**：`snapshot` 那一套（`lib/local-state.mjs` 的 `snapshot` 绑定）
+   与本节无关 —— 本节只回答"这一天是哪一天"。
+
+### §13.5 体检那条红：同一把尺子，两个方向
+
+`.tools/check-notes.mjs:1464` 那一条断言的名字里带着日子：
+`今天的记忆更新报告在（reports/memory-update/<today>.json）`。
+
+- **方向一（不许嚷）**：注入 `2026-10-24T01:30:00+08:00` ⇒ 那一行必须点名 **`2026-10-23`**。
+- **方向二（该报就报）**：注入一个**盘上必然没有报告**的日子（判据取 `2027-01-02T04:30:00+08:00`）
+  ⇒ 那一行必须点名 **`2027-01-02`**，而且**必须是 `RED`**。
+  ⚠️ 用"今天 + 04:30"是**判不了**这一向的：今天的报告在盘上 ⇒ 它本来就该绿 ⇒ 那会是一条**恒绿**的假判据。
+- 🔴 **那一处现在是**（gate 3 已落地）：`.tools/check-notes.mjs:241` 是 `const today = dayKeyOf(clockNow())` ——
+  时钟走 `lib/clock.mjs` 的 `now()`（`:23` 是 `import { now as clockNow }` ⇒ 读的就是 `AGENIA_NOW_FILE` 那一份），
+  切点走 `lib/route.mjs::dayKeyOf`（`:24` 是它的 import）。原来那份 `stamp(new Date())` 已删，
+  `pad` / `stamp` 两个函数一并消失 ⇒ 注入时钟对它**生效**，两个方向读到两行。
+
+> ⚠️ 判据只判**那一行点名的日子与态**，不判体检绿不绿、不判其余 116 条、不判"昨天 / 前日"那几行。
+> ⚠️ `.tools/**` 是 gate 3 的地盘（派工约束）⇒ `DBY-05` **只判、不改**；也不许为了让这一格变绿去改工具。
+
+### §13.6 判据索引（照这个跑）
+
+```powershell
+# 临时件落项目所在那个盘（C 盘一个字节都不许写）
+$env:TEMP='E:\Harness\.team\test\2026-10-24\_tmp'; $env:TMP=$env:TEMP
+# 这一批六条、三个文件；**一跑一根、别复用运行根**
+node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-24\_runs\<RUN_ID> --glob="tests/agenia-upgrade/integration/dby*.test.mjs"
+# 全量：去掉 --glob，再给一个全新的运行根（分母 90）
+```
+
+| 格 | 守的是 | 现在（2026-10-24 12:2x · 门 3 落地 + 门 4 打回后第二轮） |
+| --- | --- | --- |
+| `DBY-01` | §13.1 切点下方 + §13.4 票号那 8 位 + 四个消费方 + `report-read` 的缺省日 + `daily-cards` 的切点刀 | 🟢 **GREEN**（`03:59:59 ⇒ 2026-10-23`，四处同值；`DAY_CUT_HOURS = 4 → 3` 那一刀当场翻到 `10-24`） |
+| `DBY-02` | §13.1 切点上方（同一批入口，方向相反）+ 切点刀 `5h` | 🟢 **GREEN**（`04:00:01 ⇒ 2026-10-24`；`5h` 那一刀翻回 `10-23`） |
+| `DBY-03` | §13.2 四处入口同一个 `01:30`（**无指针那一支**） | 🟢 **GREEN**（四处全落 `2026-10-23`） |
+| `DBY-04` | §13.3 显式优先（两个方向 × 四个入口 = 8 条腿）+ **给了但坏**（`""` / 全空白 / `2026-13-40`） | 🟢 **GREEN**（8 条腿全成立；坏值五条腿全 `E_ARG_SCHEMA`） |
+| `DBY-05` | §13.5 体检那条红的两向 | 🟢 **GREEN**（`01:30 ⇒ 2026-10-23` 绿；`2027-01-02T04:30 ⇒ 点名 2027-01-02` 且 `RED`） |
+| `DBY-06` | §13.2 **有指针那一支**：过期 `current-day = 2026-10-23` + 时钟 `2026-10-24T11:00` + 不给 `day` | 🟢 **GREEN**（`claim-update` / `daily-start` 都落 `2026-10-24`；`daily-cards` / `local-claim` 同现场只记读数，也读 `2026-10-24`） |
+
+**六把刀**（`K1`–`K4` 打在**照本节写的最小实现**的字节上；`K5` / `K6` 打在**规矩那份最小实现**上；
+生产臂是不是红由上面六格自己回答，刀不碰 `presets/**`）：
+
+| 刀 | 切什么 | 实测向量 | 归谁 |
+| --- | --- | --- | --- |
+| `K1-NO-OFFSET` | 去掉 `−4h`（等于回到零点切） | `[B1, A1, A2, A3, A4]` | `DBY-01` |
+| `K2-CUT-TOO-LATE` | 切点搬到 `05:00` | `[B2]` | `DBY-02` |
+| `K3-ONE-CONSUMER-BYPASS` | **一个**入口绕开那一处算（`daily-cards` 用不换算的本地日期） | `[A3]` | `DBY-03` |
+| `K4-EXPLICIT-IGNORED` | 显式日子被吞掉 | `[E1, E2]` | `DBY-04` |
+| `K5-EMPTY-SWALLOWED` | 把"给了但坏"吞成"没给"（空串 / 全空白走缺省） | `[D1, D2]` | `DBY-04` |
+| `K6-POINTER-WINS` | 写入口的缺省日**跟指针走**（过期指针 = 今天） | `[P1]` | `DBY-06` |
+
+> 🔴 **`K1` 翻不动 `DBY-02`**（04:00:01 在两种尺子下都是 `10-24`）—— 要让切点上方那一格红，得用 `K2`。
+> 这不是判据弱，是算术：**两格合起来**才证得出"切点在哪"（`K1` 之后两个边界时刻**落在同一天**，
+> 读数记在 `readings.cut_collapse`）。反过来 `K2` 也翻不动 `DBY-01`（`03:59:59 − 5h` 仍落在 `10-23`）。
+
+### §13.7 边界（这一节不覆盖什么）
+
+- **不判** `inject.js` 的时间行（`timeLineOf` 贴的是"现在几点"，与"哪一天"无关 —— 那是 `F-104` 的范围）。
+- **不判** `inject.js::startOfWork` 的**开工抽屉日期**（`:1854` 的 `localDateOf(at)`，`:1875` 拿它拼
+  `.team/leader/<date>/log.md`）—— 这是全项目**第八处**"算今天"（其余七处见 §13.1 / §13.2 / §13.5），
+  它同样会把"凌晨一点"算成日历上的今天。**不属本票的落点**（属 `F-104` 的范围；组长 2026-10-24 裁定），
+  写在这里是为了让下一个读的人知道它**没有被漏掉**，而是**刻意留在本票之外**。
+- **不判**"一天的真实长度"（`04:00 → 次日 03:59:59`）：那要把时钟**连续**走一遍才看得见；判据只量切点两侧各一个点。
+- **不判** `daily-start` 的其余字段（`first_*` / `seen_count` 归 `DLY-01`）、不判 `daily-cards.py` 的 xlsx 内容。
+- **不判** `resolveDay` 的**指针那一支**本身（`current-day` 的写者 / 读数 / 锁归 `STO-*` / `RT-*` 与 `data-root`；
+  本票只判"写入口的缺省**不**跟它走"）。
+- 🔴 **指针坏值是"静默落时钟"，这是刻意的**：`current-day.json` 里的 `day` 不是合法 day key 时
+  `readCurrentDay` 返回 `{ok:false, code:'E_DATA_CORRUPT'}`，`resolveDay` 在 `state.mjs:402-408` 只判
+  `pointer.ok` ⇒ **不报错、直接走时钟那一支**。理由：一个用不了的指针不许把"今天是哪一天"这件事整个卡死
+  （中途 op 读不到指针时，宁可拿时钟那一天的账，也不要当场失败）。想吃掉这条静默，就得在 `resolveDay`
+  里把指针的 `code` 往外抛 —— 那会让"指针坏了"变成"所有中途 op 全红"，**本票不做**。
+- **两份口径在第 0 年分叉（没有正当值落在那里）**：`lib/state.mjs::isDayKey` 收 `0000-01-01`
+  （`Date` 的 UTC 往返接受 0 年），`.tools/daily-cards.py::is_day_key` 拒它（`datetime.strptime` 的年份从 1 起）。
+  两边只在 `0000-*` 上不一致，而日子键只有 `dayKeyOf` 能产出、它出的永远是四位真年份 ⇒ **不修**。
+- **`presets/agenia/tools/proposal-file.mjs:215` 存 `opts.day` 时一个形状都不验**（非空即照收）——
+  它是组员交候选那条路的入参，**不属本票**（`F-158` 只管四处缺省日 + 读面）。写在这里是为了让下一个读的人
+  **不要以为它被 `isDayKey` 收严覆盖了**：那条路今天仍然可以收下一个 `2026-13-40`。
+- **不判** `lib/leader.md` 的"每天开工第一步"（**冻结文件**：改它要老板一句话，定形明写本票不动它）。
+- **不判**"谁来调 `claim-update` / `daily-start`"（那是流程，不是测试能判的东西）。
+
+### §13.8 登记面（三处同批，缺一处就是"跑了但不进分母"）
+
+- 盘上：`tests/agenia-upgrade/integration/dby01-day-boundary.test.mjs`（`DBY-01` / `DBY-02` ——
+  同一批入口的两个方向，红的时候一眼看得出是"切点下方算错"还是"切点上方被挪走"）·
+  `dby02-day-cut-agreement.test.mjs`（`DBY-03` / `DBY-04` / `DBY-06` —— 四处同值（无指针那一支）/
+  显式优先 + 给了但坏 / 有指针那一支）·
+  `dby03-check-notes-day-cut.test.mjs`（`DBY-05` —— 驱的是 `.tools/check-notes.mjs` 这个**只读**真子进程）；
+  量具在 `tests/agenia-upgrade/support/day-cut.mjs`（**不进分母**：它是工具，不是用例）。
+- 登记：`support/registry.mjs` 的 `BATCH_P` + `ROWS` + `GROUP_COUNTS['day-boundary'] = 6`
+  （以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_P`，否则冻结清单与表当场分家）。
+- 分母：`TOTAL` 由盘上扫出 = **90**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；84 + 这 6 条）。

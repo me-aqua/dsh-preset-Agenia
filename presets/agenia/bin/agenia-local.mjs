@@ -27,6 +27,7 @@ import { CODES } from '../lib/error-codes.mjs'
 import { dataRootVerdict, resolveWithin, TEST_ROOT_MARKER, testModeOf } from '../lib/paths.mjs'
 import { writeJsonAtomic } from '../lib/atomic.mjs'
 import { now as clockNow } from '../lib/clock.mjs'
+import * as S from '../lib/state.mjs'
 import { LEASES } from '../lib/liveness.mjs'
 import { openAdoptedTicketIds } from '../lib/tickets.mjs'
 import * as R from '../lib/receipt.mjs'
@@ -140,12 +141,19 @@ function resolveUnder(base, rel, { label }) {
   return verdict.path
 }
 
+/**
+ * 这一票"哪一天"（六个 op 全用它）—— 与脑侧**同一支**（`lib/state.mjs::resolveDay`）。
+ *
+ * 契约 `CONTRACT.md` §13.2 / §13.3（`F-158`）：`day` **可选**。
+ *   · 给了 ⇒ 必须是 day key（形状**和**日历），否则 `E_ARG_SCHEMA`；`""` / 全空白也算"给了"，
+ *     **不许**吞成"没给"（那会让一次拼错的日子落到别的日子上）；
+ *   · 没给 ⇒ 时钟那一支：`dayKeyOf`（本地 04:00 切，00:00–03:59 归前一天），时钟走 `lib/clock.mjs`
+ *     那一份（`AGENIA_NOW_FILE` 可注入）—— 别在这里另造一份。
+ * 本地 CLI 没有脑根、没有 `current-day` 指针 ⇒ **不传 `{ pointer: true }`**，所以第一参给 `null`：
+ * 缺省只有"时钟"这一支（指针那一支只活在脑侧的中途 op 里，见 `resolveDay` 的注释）。
+ */
 function dayOfPayload(payload) {
-  const day = payload?.day
-  if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day.trim())) {
-    throw cliError('E_ARG_SCHEMA', `day 必填且形如 YYYY-MM-DD，实得 ${JSON.stringify(day)}`)
-  }
-  return day.trim()
+  return S.resolveDay(null, payload?.day).day
 }
 
 function projectOfPayload(payload, fallback = null) {

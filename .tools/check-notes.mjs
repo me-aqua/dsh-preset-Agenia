@@ -18,6 +18,10 @@ import { execFileSync } from 'node:child_process'
 // 🔴 F-56 的判据本体住在 lib/ 里（**不 import 测试岗那一份**：它住在 `.team/`，那份目录不进 git，
 //    发出去之后就不存在了）。⚠️ 抄本与参照实现的**口径必须同批改**。
 import { analyzeTree as analyzeF56Forwards, describeReading as describeF56Reading } from './lib/f56-forward.mjs'
+// 🔴 `F-158`：这一份体检的"今天"必须与预设同一把尺子 —— 时钟与切点都从 `presets/agenia/lib/` 来，
+//    **不许**在这里再写一份 `stamp(new Date())`（那样注入时钟对它无效，凌晨一点就会嚷"新的一天"）。
+import { now as clockNow } from '../presets/agenia/lib/clock.mjs'
+import { dayKeyOf } from '../presets/agenia/lib/route.mjs'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const PRESET = join(REPO, 'presets', 'agenia')
@@ -223,10 +227,18 @@ function delegationToolsOf(block) {
   return table.size === 0 ? null : table
 }
 
-/** 今天 / 昨天，按本机时区算。 */
-const pad = (n) => String(n).padStart(2, '0')
-const stamp = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-const today = stamp(new Date())
+/**
+ * 今天 / 昨天，按本机时区算。
+ *
+ * 🔴 `F-158`（契约 `CONTRACT.md` §13.1 / §13.5）：一天的切点在**本地 04:00** ——
+ *    00:00–03:59 归**前一天**。老板原话（2026-10-24 01:07）：
+ *    「改成从凌晨4点切分，不要在半夜一点我正在干活的时候嚷嚷"新的一天了，得先派记忆更新呀"」。
+ *    两样都**不在这里自造**：
+ *      · 时钟 —— `lib/clock.mjs::now()`（同一份 `AGENIA_NOW_FILE`，可注入；套件靠它驱两个方向）；
+ *      · 切点 —— `lib/route.mjs::dayKeyOf`（**唯一**一处算，Python 侧 `daily-cards.py` 同口径）。
+ *    ⇒ 凌晨一点半跑这一份体检时，"今天"还是前一天的账，那条红不许嚷。
+ */
+const today = dayKeyOf(clockNow())
 /** `YYYY-MM-DD` 到今天差几天。算不出来返回 undefined。 */
 const ageDays = (ymd) => {
   const d = Date.parse(`${ymd}T00:00:00`)
