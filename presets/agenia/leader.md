@@ -75,6 +75,21 @@ echo '{"day":"<今天>"}' > today.json
 **不是 ⇒ 先别派**（会话评审的作业书是硬门，派早了它当场停），去干第四步、等判决作业的完成通知。
 ⚠️ 两份的**作业书连活一起交过去**。
 
+🔴 **派会话评审之前，先把「昨天那一天」的包造出来**（2026-10-24 老板点名加）：
+```sh
+<node> presets/agenia/bin/agenia-brain.mjs --op session-packet --data-root <DR> --real-mode --workspace <WS> --in <payload.json>
+# payload = { "day":"<昨天>", "project":"<项目名>",
+#             "sources":[ { "session_id":"<会话 id>", "project":"<项目名>",
+#                           "file":"C:\\Users\\<你>\\.dsh\\sessions\\--<工区键>--\\<会话 id>\\session.v4.jsonl.zstd",
+#                           "last_event_at":"<ISO8601>", "human":true,
+#                           "window":{ "from":"<昨天>T00:00:00+08:00", "to":"<今天>T04:00:00+08:00" } } ] }
+```
+· `sources` **必须显式点名**（这个 op 刻意不替你猜源会话：猜错就是"评了别的会话还以为评了这一段"）。
+· 每条源要**绝对路径** + `last_event_at` + `human:true`（只打人话——老板那几行逐字，组长那几行是投影）。
+· 🔴 **别把「干活的会话」写进 `exclude_session_ids`** —— 那个字段是"评审自己那条"，不是"被评的那条"。
+· 包没造出来 ⇒ 会话评审只有一个空门：按规矩交**「门缺席票」**，而**那不是"评过、没问题"**。
+· 2026-10-24 实测：这一步过去只活在我脑子里 —— `.team/retro/` 有 10-15/16/19/21/22 的包，**10-17/18/20/23 一个都没有**。
+
 **四、跑体检**：`<node> .tools/check-notes.mjs`（退出码 0 全绿 / 2 有挂起 / 1 有红）。
 **红了不许删断言，去改事实。**
 
