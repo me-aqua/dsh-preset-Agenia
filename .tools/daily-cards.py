@@ -8,6 +8,7 @@
 
 用法：
     E:\\Anaconda\\python.exe .tools\\daily-cards.py --day 2026-10-17
+    E:\\Anaconda\\python.exe .tools\\daily-cards.py            # 不给 --day ⇒ 本地 04:00 切之下的"今天"
 
 读什么（全部只读）：
     <DR>/state/update/<day>.json              这一轮的相位 / 快照 / owner
@@ -24,6 +25,7 @@
     <WS>/.team/leader/<day>/技术评审回执-<day>.xlsx
 """
 import argparse, json, os, re, sys, glob
+from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
@@ -36,6 +38,40 @@ DR = None
 HDR = Font(bold=True, color="FFFFFF"); HDR_FILL = PatternFill("solid", fgColor="4472C4")
 TITLE = Font(bold=True, size=13); NOTE = Font(italic=True, color="808080")
 BOLD = Font(bold=True); WRAP = Alignment(wrap_text=True, vertical="top")
+
+# ── "今天"是哪一天：本地 04:00 切（契约 CONTRACT.md §13.1 · F-158）────────────
+# 一天的边界在**本地 04:00** —— 00:00–03:59 归**前一天**。老板原话（2026-10-24）：
+# 「改成从凌晨4点切分，不要在半夜一点我正在干活的时候嚷嚷"新的一天了，得先派记忆更新呀"」。
+# 🔴 与 JS 侧同口径、**同一份**注入时钟：切点是 `lib/route.mjs::dayKeyOf`，
+#    时钟是 `lib/clock.mjs` 的 `AGENIA_NOW_FILE`（这里读同一个变量，不另造第二套）。
+DAY_CUT_HOURS = 4
+ISO_WITH_OFFSET = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$")
+
+def now_instant():
+    """现在几点 —— 与 `lib/clock.mjs::now()` 同一套：没设变量 / 文件不在 ⇒ 真实时钟；在但内容坏 ⇒ 当场停。"""
+    raw = os.environ.get("AGENIA_NOW_FILE", "")
+    if not raw.strip():
+        return datetime.now()
+    try:
+        with open(raw, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return datetime.now()
+    except OSError as e:
+        sys.exit("E_CLOCK_FILE: 可注入时钟文件读不到：%s（%s）" % (raw, e))
+    line = next((s.strip() for s in text.splitlines() if s.strip()), "")
+    if not line:
+        sys.exit("E_CLOCK_FILE: 可注入时钟文件是空的：%s" % raw)
+    if not ISO_WITH_OFFSET.match(line):
+        sys.exit("E_CLOCK_FILE: 可注入时钟文件必须是 ISO8601 带时区偏移的一行，实得 %r" % line[:60])
+    try:
+        return datetime.fromisoformat(line)
+    except ValueError:
+        sys.exit("E_CLOCK_FILE: 可注入时钟文件里的时间解析不了：%r" % line)
+
+def default_day():
+    """`(now − 4h)` 的本地日期 —— 与 `lib/route.mjs::dayKeyOf` 逐字同一口径（形如 YYYY-MM-DD）。"""
+    return datetime.fromtimestamp(now_instant().timestamp() - DAY_CUT_HOURS * 3600).strftime("%Y-%m-%d")
 
 def jload(p, default=None):
     try:
@@ -71,12 +107,14 @@ def sheet(ws, title, sub, cols, rows, ws_widths, freeze="A5"):
 def main():
     global WS, DR
     ap = argparse.ArgumentParser()
-    ap.add_argument("--day", required=True)
+    ap.add_argument("--day", default=None,
+                    help="哪一天（YYYY-MM-DD）。不给 = 本地 04:00 切之下的\"今天\""
+                         "（00:00–03:59 归前一天 · 契约 CONTRACT.md §13.1）")
     ap.add_argument("--workspace", required=True,
                     help="工作区根（必填·不许猜：写死会让别的会话把卡落进你的抽屉）")
     ap.add_argument("--data-root", default=None,
                     help="数据根（预设级·所有工作区共用）。不给就按 --workspace 推；推出来的不存在会当场停")
-    a = ap.parse_args(); day = a.day
+    a = ap.parse_args(); day = a.day if a.day else default_day()
     WS = os.path.abspath(a.workspace)
     # 🔴 2026-10-20（`F-111` ⑤）：`DR` 原来**只按 WS 推**，新工作区里那个路径根本不存在
     #    而 `jload` 读不到就返回 `{}` ⇒ 一路空到底 ⇒ **出一张零值卡，还 exit 0**。
@@ -189,8 +227,15 @@ def main():
                           (e.get("text") or "（取不到）") + src))
     for p in maint_pool:
         pl = p.get("payload") or {}
-        md = pl.get("maintenance_decision") or {}
-        act = pl.get("maintenance") or md.get("action") or "?"
+        # `maintenance_decision` 有两种合法形状：对象（评审岗草稿：action/target_id/source_ids）
+        # 或者一个动作字符串（组长批量退休案：payload.maintenance 才是权威动作）。
+        # 只认对象 ⇒ 池子里混进一条字符串就把整张卡打成 AttributeError —— 那不是"数据错"，是这里太窄。
+        raw_md = pl.get("maintenance_decision")
+        md = raw_md if isinstance(raw_md, dict) else {}
+        if not isinstance(raw_md, dict) and isinstance(raw_md, str) and raw_md.strip():
+            act = pl.get("maintenance") or raw_md.strip()
+        else:
+            act = pl.get("maintenance") or md.get("action") or "?"
         tid = pl.get("target_entry_id") or md.get("target_id") or "?"
         for t in [tid] + list(pl.get("source_entry_ids") or md.get("source_ids") or []):
             e, src = find_entry(t)
