@@ -1086,7 +1086,7 @@ function insideTeam(teamRoot, abs) {
  *
  * 认这几种写法（老板 2026-10-24 的裁定）：\`.team/a/b.md\` · \`a/b.md\`（\`.team\` 相对）· \`./.team/a/b.md\` ·
  * \`.team\\a\\b.md\`（反斜杠）· \`<工作区绝对路径>\\\\.team\\\\a\\\\b.md\` · **大小写不同**的 \`.TEAM/a/b.md\`
- * （Windows 不分大小写 ⇒ 同一个文件）。\`canonical\` 一律是 \`.team/<…>/<file>\`（**小写**、正斜杠）——
+ * （Windows 不分大小写 ⇒ 同一个文件）。\`canonical\` 一律是 \`.team/<…>/<file>\`（**首段 .team 小写、其余段按磁盘真名**、正斜杠）——
  * 落盘只记这一个形状，调用方怎么写（含 \`.TEAM\`）都不改变它。
  * 解析不到（文件不在 / 落在 \`.team/\` 外 / \`..\` 穿出去）⇒ \`null\`（调用方报 \`E_DATA_MISSING\`）。
  */

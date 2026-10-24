@@ -10,6 +10,8 @@
  *     有没有 `tools.guard`、`run_in_background`、`delegationTools` 这些**平台事实**；
  *   · **平台包**：`app.asar!dsh/node_modules/@deepseek-ai/dsh/package.json` —— 与上面那份并列。
  *     两份**同版**时只印一个数；**不同版**本身就是一条要人看的读数（升级到一半的样子）。
+ *   · 条目按目录头的 `size` **多读 16 B**：`size` 是声明值，不保证等于 JSON 文本长度
+ *     （`0.2.1-rc.3` 的两份 package.json 都比声明长）；解析失败才截到最后一个 `}`（`parseAsarJson`）。
  *
  * ⚠️ 这两样都**不是**它：
  *   · `AGENIA_ORACLE_VERSION`（`run-all.mjs` 的 ENV）—— 那是冻结的 **0.2.0 桌面 oracle**，
@@ -50,6 +52,17 @@ const FALLBACK_ASAR = 'E:\\HarnessCLI\\resources\\app.asar'
 /** asar 里那两份 package.json（`dsh/` 下那个包才是平台本体）。 */
 const APP_PKG = 'package.json'
 const DSH_PKG = 'dsh/node_modules/@deepseek-ai/dsh/package.json'
+/**
+ * 读条目时在目录头声明的 `size` 之外**多读**的字节数。
+ *
+ * asar 头里的 `size` 是**声明值**，它不保证等于 JSON 文本的真实长度：`0.2.1-rc.3` 这一包的
+ * 声明比**源文件**短 2 B（797 / 7989 vs 799 / 7991：结尾的 `}` 与一个尾换行）；asar 数据区里
+ * 能解析的 JSON 文本是 798 / 7990 —— 结尾的 `}` 恰好在声明边界之外 1 B。
+ * 只读 `size` 字节会把结尾的 `}` 切掉 ⇒ `JSON.parse` 抛；多读一个小窗，截到最后一个 `}` 就够。
+ */
+const ASAR_READ_WINDOW = 16
+/** 失败报文里回看多少个字符（"它到底读到了什么"要看得见）。 */
+const TAIL_CHARS = 40
 
 /** `\\?\E:\…` ⇒ `E:\…`（`VIPSHOME` 这类值带 Windows 长路径前缀）。 */
 const stripLongPrefix = (p) => String(p).replace(/^\\\\\?\\/, '')
@@ -94,34 +107,78 @@ function asarHeader(asar) {
   return entry
 }
 
+/**
+ * 把一次条目读取按 JSON 解析 —— **唯一的容错**：窗口里截到最后一个 `}` 再试一次。
+ *
+ * 两种写法都收：
+ *   · 先按**整个窗口**解析（真实长度 == 声明长度的条目走这一支，多读的 16 B 只是垃圾尾巴时也会失败）；
+ *   · 失败 ⇒ 截到窗口里**最后一个** `}`（`0.2.1-rc.3` 的 `package.json` 走这一支）；
+ * 头部的 `\uFEFF` 先剥掉（BOM 不是 JSON 的一部分）。
+ *
+ * 🔴 **不补括号、不猜内容**：两支都失败 ⇒ 返回 `problem`，里面必须能读到
+ *    「哪一份文件 / 读了多少字节的窗口 / 最后 40 个字符」—— 真的坏文件要**当场出声**，
+ *    不能被"看起来像 JSON"糊过去。
+ *
+ * @param {string} text 从 asar 里读出来的窗口（可能是声明长度 + `ASAR_READ_WINDOW`）
+ * @param {{inner?: string, declared?: number|null, windowBytes?: number|null}} meta
+ * @returns {{value: any, problem: string|null, repaired: boolean, declared: number|null, windowBytes: number|null, cut_at: number|null}}
+ */
+export function parseAsarJson(text, { inner = '(asar 条目)', declared = null, windowBytes = null } = {}) {
+  const raw = String(text ?? '')
+  const doc = raw.startsWith('\uFEFF') ? raw.slice(1) : raw
+  const declaredLabel = Number.isFinite(declared) ? `${declared} B` : '(未知)'
+  const windowLabel = Number.isFinite(windowBytes) ? `${windowBytes} B` : '(未知)'
+  const tail = doc.length > TAIL_CHARS ? doc.slice(-TAIL_CHARS) : doc
+  const where = `${inner} 不是合法 JSON：声明 ${declaredLabel}、读了 ${windowLabel} 的窗口；`
+    + `最后 ${TAIL_CHARS} 个字符：${JSON.stringify(tail)}`
+  const result = (value, problem, repaired, cutAt = null) => ({
+    value, problem, repaired, declared, windowBytes, cut_at: cutAt,
+  })
+  if (doc.trim() === '') return result(null, `${where} —— 窗口是空的`, false)
+  try {
+    return result(JSON.parse(doc), null, false)
+  } catch (e) {
+    const cut = doc.lastIndexOf('}')
+    if (cut < 0) return result(null, `${where} —— JSON.parse 失败（${e.message}）；窗口里没有 \`}\` 可截`, false)
+    try {
+      return result(JSON.parse(doc.slice(0, cut + 1)), null, true, cut + 1)
+    } catch (e2) {
+      return result(null, `${where} —— JSON.parse 到窗口末尾失败（${e.message}）；`
+        + `截到最后一个 \`}\`（第 ${cut + 1} 个字符）仍失败（${e2.message}）—— 没有补括号`, false, cut + 1)
+    }
+  }
+}
+
 /** 从 asar 里取一份文件的内容（按 asar 目录树走；`unpacked` 的真身在旁边的目录里）。 */
 function readAsarFile(asar, inner) {
   const { header, dataOffset, problem } = asarHeader(asar)
-  if (header === null) return { text: null, problem }
+  if (header === null) return { text: null, declared: null, windowBytes: null, problem }
   let node = header
   for (const part of inner.split('/').filter(Boolean)) {
     node = node?.files?.[part]
-    if (node === undefined) return { text: null, problem: `asar 里没有 ${inner}` }
+    if (node === undefined) return { text: null, declared: null, windowBytes: null, problem: `asar 里没有 ${inner}` }
   }
-  if (node.files !== undefined) return { text: null, problem: `${inner} 在 asar 里是个目录` }
+  if (node.files !== undefined) return { text: null, declared: null, windowBytes: null, problem: `${inner} 在 asar 里是个目录` }
   if (node.unpacked === true) {
     const unpacked = `${asar}.unpacked\\${inner.split('/').join('\\')}`
-    if (!existsSync(unpacked)) return { text: null, problem: `unpacked 真身不在盘上：${unpacked}` }
+    if (!existsSync(unpacked)) return { text: null, declared: null, windowBytes: null, problem: `unpacked 真身不在盘上：${unpacked}` }
     try {
-      return { text: readFileSync(unpacked, 'utf8'), problem: null }
+      return { text: readFileSync(unpacked, 'utf8'), declared: null, windowBytes: null, problem: null }
     } catch (e) {
-      return { text: null, problem: `读 unpacked 真身失败：${e.code ?? e.message}` }
+      return { text: null, declared: null, windowBytes: null, problem: `读 unpacked 真身失败：${e.code ?? e.message}` }
     }
   }
   let fd
   try {
     fd = openSync(asar, 'r')
-    const size = Number(node.size ?? 0)
-    const buf = Buffer.alloc(size)
-    if (size > 0) readSync(fd, buf, 0, size, dataOffset + Number(node.offset ?? 0))
-    return { text: buf.toString('utf8'), problem: null }
+    const declared = Number(node.size ?? 0)
+    // 0 字节条目不多读：读出来的"窗口"就只是下一份文件的开头，按 JSON 解析会读别人的东西。
+    const wanted = declared > 0 ? declared + ASAR_READ_WINDOW : 0
+    const buf = Buffer.alloc(wanted)
+    const windowBytes = wanted > 0 ? readSync(fd, buf, 0, wanted, dataOffset + Number(node.offset ?? 0)) : 0
+    return { text: buf.subarray(0, windowBytes).toString('utf8'), declared, windowBytes, problem: null }
   } catch (e) {
-    return { text: null, problem: `读 ${inner} 失败：${e.code ?? e.message}` }
+    return { text: null, declared: null, windowBytes: null, problem: `读 ${inner} 失败：${e.code ?? e.message}` }
   } finally {
     if (fd !== undefined) closeSync(fd)
   }
@@ -129,17 +186,15 @@ function readAsarFile(asar, inner) {
 
 /** 那份 package.json 的 `name@version`（读不出来 ⇒ null + 一条原因）。 */
 function nameVersionOf(asar, inner) {
-  const { text, problem } = readAsarFile(asar, inner)
-  if (text === null) return { name: null, version: null, problem }
-  try {
-    const pkg = JSON.parse(text)
-    if (typeof pkg.version !== 'string' || pkg.version === '') {
-      return { name: pkg.name ?? null, version: null, problem: `${inner} 里没有 version` }
-    }
-    return { name: pkg.name ?? null, version: pkg.version, problem: null }
-  } catch (e) {
-    return { name: null, version: null, problem: `${inner} 不是合法 JSON：${e.message}` }
+  const read = readAsarFile(asar, inner)
+  if (read.text === null) return { name: null, version: null, problem: read.problem }
+  const parsed = parseAsarJson(read.text, { inner, declared: read.declared, windowBytes: read.windowBytes })
+  if (parsed.problem !== null) return { name: null, version: null, problem: parsed.problem }
+  const pkg = parsed.value
+  if (typeof pkg?.version !== 'string' || pkg.version === '') {
+    return { name: pkg?.name ?? null, version: null, problem: `${inner} 里没有 version` }
   }
+  return { name: pkg.name ?? null, version: pkg.version, problem: null }
 }
 
 /**

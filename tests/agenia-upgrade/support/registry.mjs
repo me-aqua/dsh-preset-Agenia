@@ -195,7 +195,7 @@ export const BATCH_N = ['DLY-01', 'DLY-02']
  *     外加阳性对照（照 `CONTRACT.md` §12 写的最小实现四格全成立）与**五把刀**
  *     （① `claim` 丢掉按节点合并 ⇒ **只有 `L3`** 翻面；② `fail` 丢掉 `reason` ⇒ **只有 `L2`** 翻面；
  *     ③④ 是量具自证：③ `mark` 不记锚点 ⇒ 只有 `L1:A`；④ `mark` 不核锚点 ⇒ 只有 `L1:B`；⑤ `emptyNode()` 丢那 10 个键 ⇒ 五条一起翻）。
- *     ⚠️ 这五把的 id 是 `K1`–`K5`（批次 **Q** 那五把是 **`KQ1`–`KQ5`** —— 两套同名会让"`K4` 翻了哪几格"查串）。
+ *     ⚠️ 这五把的 id 是 `K1`–`K5`（批次 **Q** 那**六**把是 **`KQ1`–`KQ6`** —— 两套同名会让"`K4` 翻了哪几格"查串）。
  *   · 🔴 **今天这四个 op 的行为本身已经是对的**（2026-10-23 门 2 现量）⇒ 这一格**不是首跑红**，
  *     它今天 **RED 0**，是"已写入契约的三态语义"的**回归锁**；红只可能是有人把语义改坏了。
  *     这一票缺的是**调用者**（写者 = 组长，`CONTRACT.md` §12），那一半是流程，测试判不了。
@@ -279,15 +279,39 @@ export const BATCH_P = ['DBY-01', 'DBY-02', 'DBY-03', 'DBY-04', 'DBY-05', 'DBY-0
 export const BATCH_Q = ['LOC-02', 'LOC-03', 'LOC-04']
 
 /**
- * 已落笔的十七批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
+ * 批次 R 的 1 条 —— **`F-163`**（平台版本那条读数自己得先证明"读的是哪一版"，2026-10-24）。
+ *
+ * 病根：asar 目录头里的 `size` 是**声明值**。`0.2.1-rc.3` 这一包把
+ * `package.json` / `dsh/node_modules/@deepseek-ai/dsh/package.json` 的声明长度写得比源文件短 2 B
+ * （声明 797 / 7989；源文件 799 / 7991；asar 里能解析的 JSON 文本 798 / 7990，结尾的 `}` 在声明边界外 1 B）
+ * ⇒ 按 `size` 精确读会把结尾的 `}` 切掉 ⇒
+ * `JSON.parse` 抛 ⇒ 套件印 `[平台] 🔴 判不了`，而**没有任何一条用例证明过它读的是哪一版**。
+ *
+ * 一格五条腿（合成 asar 造在运行根里；真实 asar / `presets/**` 一个字节都不写）：
+ *   · `A SHORT-2`：头里的 `size` 比真身短 2 B，两份 package.json 都必须读出**夹具里那个版本**；
+ *   · `B BOM`：同一形状 + 文件头 `\uFEFF`，版本换成**另一个值** ⇒ 证"读的是这一份"（不是常量）；
+ *   · `C TRUNCATED`：短 24 B（> 16 B 读窗）⇒ `ok:false`、版本 `null`，报文点名**文件 / 窗口 / 最后 40 字**，
+ *     **不许补括号**把它"修"成 JSON；同一 asar 里没被截断的那一份照读；
+ *   · `D PURE`：把容错解析当纯函数再喂两串文本（短 2 B / 截断），与 A/C 是同一条腿的两种入口；
+ *   · `E LIVE`：这一跑真实 asar 上的 `[平台]` 行（**读数**，不写死版本；没有安装包时如实记 `asar_present:false`）。
+ *
+ * 契约：`tests/agenia-upgrade/support/platform.mjs::parseAsarJson` 的报文口径（文件 / 窗口 / 最后 40 字）。
+ * 证据：`.team/test/2026-10-24/log.md` 第七节。⚠️ 它**不进** `FROZEN_IDS`（历史冻结的 A–F 55 条）。
+ * ⚠️ **分母 93 → 94**（一条读数自己的阳性/阴性对照：读对了、读错了、坏文件必须出声，一把刀落在其中一处）。
+ */
+export const BATCH_R = ['PLT-01']
+
+/**
+ * 已落笔的十八批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
  * 批次 L 是 `F-148` 思考链过滤（同日 · 紧急票），批次 M 是 `F-152` 板子三态（同日），
  * 批次 N 是 `F-155` 每日状态的两端与署名（同日），批次 O 是 `F-156` 三个本地节点的三态（同日），
- * 批次 P 是 `F-158` 一天从 04:00 切（2026-10-24），批次 Q 是 `F-156` 第二轮锚点闸的三条规则（同日）。
+ * 批次 P 是 `F-158` 一天从 04:00 切（2026-10-24），批次 Q 是 `F-156` 第二轮锚点闸的三条规则（同日），
+ * 批次 R 是 `F-163` 平台版本读数的自证（同日）。
  * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -306,7 +330,8 @@ const BATCH_OF = (id) =>
                               : BATCH_O.includes(id) ? 'O'
                                 : BATCH_P.includes(id) ? 'P'
                                   : BATCH_Q.includes(id) ? 'Q'
-                                    : null
+                                    : BATCH_R.includes(id) ? 'R'
+                                      : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -375,6 +400,10 @@ const F = {
    *  对账 / `.team/` 前缀判的是**同一次 mark**的三条规则，三格共用同一份产物与同一个 REF + 刀架；
    *  红的时候报的那一行就带着 `格:输入`（哪条规则、哪种写法）。 */
   locAnchors: 'integration/loc02-per-field-anchors.test.mjs',
+  /** 门 2 · `F-163` 平台版本读数的自证（批次 R）—— **一格五条腿同住一个文件**：
+   *  合成 asar 的短 2 B / BOM / 截断（> 16 B 读窗）/ 纯函数入口，外加真实 asar 的 `[平台]` 读数。
+   *  判的是"这个量具读的是哪一版、读不到时说不说得出来"——不是某一版平台该不该存在。 */
+  plt: 'unit/plt01-platform-asar.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -520,6 +549,9 @@ const ROWS = [
   ['LOC-02', 'local-state', F.locAnchors, 'F-156 第二轮 **按字段的必填**（老板 2026-10-24 选项 1；证据 `.team/retro/2026-10-24/技术评审.md` 的 `F1`）：真子进程 + 每格一个带 marker 的临时工作区，**六条输入**判的是同一次 `local-mark` 的**两面**：① `memory-review` **只交报告**（真路径 + 盘上字节的 SHA256、**不带 findings**）⇒ `done`，盘上节点 `report_path`/`report_sha256` 是真锚点、`findings_path`/`findings_set_sha256`/`findings_count` **三个都必须是 `null`**（不许为了过闸编一份）；② `conversation` **只交报告** ⇒ 同 ①；③ `technical` **不带 findings** ⇒ 拒 `E_ARG_SCHEMA` · exit 2 · 节点停在 `running`（claim 痕迹保留）· 五个锚点一个都不落 · **状态文件的字节一个都不许变**；④ `technical` 带一份**真** findings 产物（三条发现 + 真实的 Q10 集合摘要）⇒ `done`，五个锚点逐项记下；⑤ `memory-review` **只给 `findings_count`**（三件套缺 path 与 set）⇒ 拒；⑥ `conversation` 给了 path + set 却**没给 count** ⇒ 拒 —— ⑤⑥ 都是 `E_ARG_SCHEMA` · exit 2 · **零写入**（"要么三件都给、要么都不给"）。两把刀：`KQ1` 三个字段都要 findings（退回到"一视同仁"的形状）⇒ 只翻 ①/②；`KQ2` 三个字段谁都不要 ⇒ 只翻 ③（没有它，③④"technical 仍要 findings"那条腿是**翻不了面的绿**）。刀在**全部二十三个输入**上量 ⇒ 向量里看得见"只翻本格"', '批次 Q'],
   ['LOC-03', 'local-state', F.locAnchors, 'F-156 第二轮 **`findings_count` 与产物条数对账**（评审 `F2`：这个字段只写不读，`0` 最容易被读成"查过了、没问题"）：**六条输入**全是 `technical` + 一份 findings 文件（三条 / 零条发现）：① 盘上 3 条 + `findings_count: 0`（少报）⇒ 拒；② 盘上 3 条 + `findings_count: 9`（多报）⇒ 拒 —— **两个方向都要**：只挡"多报"的半修在 ① 上会漏；③ 3 条 + `3`（诚实计数）⇒ `done`，节点 `findings_count` 正是 3；④ 空 findings（0 条）+ `0` ⇒ `done`（"零条发现"是合法产物，不许被"非空才算数"挡掉）；⑤ 文件**在盘上、是合法 JSON、但没有 `findings` 数组** ⇒ 拒；⑥ 文件**是半截 JSON**（读不出来）⇒ 拒 —— ⑤⑥ 都是 `E_DATA_CORRUPT` · exit 7 · **零写入**（与"文件不在"的 `E_DATA_MISSING` 是两个诊断）。条数不符的拒绝码 `E_ARG_SCHEMA`（这个字段的形状错误就是它）。刀 `KQ3` 收下 count、不与条数对账 ⇒ 只翻 ①/②', '批次 Q'],
   ['LOC-04', 'local-state', F.locAnchors, 'F-156 第二轮 **锚点必须落到 `.team/` 里的真文件、落盘记规范形**（评审 `F3` + 老板 2026-10-24 的改判"收 + 归一化"）：同一次 `local-mark`、**同一个文件的十一种写法**（findings 一侧与 `artifact_paths` 全部规范形 ⇒ 只让 `report_path` 变）：① 规范形 `.team/retro/2026-10-24/技术评审.md` ⇒ `done`；② `README.md`（工作区根下存在的无关文件，SHA256 也是真的 ⇒ 解析后落在 `.team/` **外**）⇒ 拒；③ `./.team/…`（同一个文件、多一个 `./`）⇒ **收 + 记规范形**；④ `retro/…`（**`.team` 相对**写法 —— `RCP-03` / `VRF-02` 的正例用的就是这一种）⇒ **收 + 记规范形**；⑤ 反斜杠写法（同一个文件）⇒ **收 + 记规范形**；⑥ `.team/…/不存在.md`（文件不在）⇒ 拒；⑦ `<工作区绝对路径>\\.team\\…`（绝对路径、在 `.team/` 里）⇒ **收 + 记规范形**；⑧ `<运行根>/outside-loc04/技术评审.md`（绝对路径、包外）⇒ 拒；⑨ `.team/../README.md`（`..` 穿出 `.team/`，目标文件存在）⇒ 拒；⑩ `retro/…/不存在.md`（`.team` 相对、文件不在）⇒ 拒；⑪ **`.TEAM/retro/…`（同一个文件、前缀换大小写）** ⇒ **收 + 记规范形**（首段 `.TEAM` 落盘成小写 `.team/`、其余段按磁盘真名；Windows 不分大小写：位置判定跟平台路径语义走，不是字符串前缀比较 —— 第 4 关复审 round 2 的 `F3`）。🔴 五个"拒"必须是**同一个诊断** `E_DATA_MISSING` · exit 7（缺 / 在外 / 穿出去 / 拼错，读的人不必猜是哪一种）；🔴 **六个"收"**必须把节点上的 `report_path` 记成**规范形**（**首段固定小写 `.team/`、其余段按磁盘真名**、正斜杠）—— `readings.canonical_store` 与 `readings.case_folding` 逐行给出 `fed ≠ stored` 而 `stored === canonical` 的读数（只归一化不落盘的那种半修，只有这一条抓得到）。刀 `KQ4` 去掉"必须落在 `.team/` 下"⇒ 只翻 ②/⑧/⑨；`KQ5` 验的时候归一化、**落盘却记调用方怎么写** ⇒ 只翻 ③/④/⑤/⑦/⑪（① 本来就是规范形 ⇒ 不翻；⑥/⑩ 根本没落地）；`KQ6` 把位置判定退回大小写敏感的前缀比较 ⇒ 只翻 ⑪', '批次 Q'],
+
+  // ── 门 2 · `F-163` 平台版本读数的自证（1）：量具先证明它读的是哪一版（2026-10-24）──────────
+  ['PLT-01', 'platform-reading', F.plt, 'F-163 平台版本读数（`support/platform.mjs`：asar 头的 `size` 是**声明值**，`0.2.1-rc.3` 的两份 package.json 的声明都比真身短 2 B；asar 里可解析的 JSON 文本比声明长 1 B）：**合成 asar 造在运行根里**，五条腿 —— A `SHORT-2` 头里的 `size` 比真身短 2 B，两份 package.json 都必须读出**夹具里那个版本**；B `BOM` 同形状 + 文件头 `\\uFEFF`、版本换成**另一个值** ⇒ 证"读的是这一份"（写死常量过不了）；C `TRUNCATED` 短 24 B（> 16 B 读窗）⇒ `ok:false`、版本 `null`，报文点名**文件 / 读了多少字节的窗口 / 最后 40 个字符**且**不许补括号**"修"成 JSON，同一 asar 里没被截断的那一份照读；D `PURE` 容错解析当纯函数再喂两串文本（短 2 B / 截断），与 A/C 是同一条腿的两种入口；E `LIVE` 这一跑真实 asar 上的 `[平台]` 行（读数，不写死版本；没有安装包时记 `asar_present:false`，不把"没装上"当"读对了"）', '批次 R'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -596,6 +628,8 @@ export const GROUP_COUNTS = {
   /** 门 2 · `F-158` 一天从本地 04:00 切（`DBY-01` 切点下方 / `DBY-02` 切点上方 / `DBY-03` 四处入口同值 /
    *  `DBY-04` 显式 day 的两种形态 / `DBY-05` 体检那条红 / `DBY-06` 过期指针）—— 契约见 `CONTRACT.md` §13。 */
   'day-boundary': 6,
+  /** 门 2 · `F-163` 平台版本读数的自证（`PLT-01`：短 2 B / BOM / 截断 / 纯函数 / 真实 asar 读数）。 */
+  'platform-reading': 1,
 }
 
 /**
@@ -613,11 +647,11 @@ export function registryProblems() {
   // 发现器自己报的问题（没有 ID 的 test() / 重复 ID）。
   for (const p of DISCOVERY.problems) problems.push(p.message)
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
-  // ⚠️ G / H / I / J / K / L / M / N / O / P / Q 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
+  // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -644,6 +678,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
