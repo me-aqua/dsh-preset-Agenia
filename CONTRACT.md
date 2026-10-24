@@ -1523,17 +1523,17 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 ```powershell
 # 临时件落项目所在那个盘（C 盘一个字节都不许写）
 $env:TEMP='E:\Harness\.team\test\2026-10-24\_tmp'; $env:TMP=$env:TEMP
-# 这一票两组：LOC-01 一格四格六条输入（loc01 那个文件）；锚点三条规则 LOC-02/03/04 同住 loc02 那个文件
+# 这一票两组：LOC-01 一格四格六条输入（loc01 那个文件）；锚点三条规则 LOC-02/03/04 同住 loc02 那个文件（23 条输入 · 6 把刀 `KQ1`–`KQ6`）
 node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-24\_runs\<RUN_ID> --glob="tests/agenia-upgrade/integration/loc0*.test.mjs"
 # 全量：去掉 --glob，再给一个全新的运行根（分母 93）
 ```
 
-| 格 | 守的是 | 现在（2026-10-24 · 门 2 第二轮 + 实现落地之后） |
+| 格 | 守的是 | 现在（2026-10-24 · `F-156` 第三轮：实现落地 + 评审 round 2 返修之后） |
 | --- | --- | --- |
 | `LOC-01` | §12.1–§12.3，四格**六条输入**（键写作 `格:输入`）：`L1:A` `claim → mark` 成功（`done` + 产物锚点 + claim 痕迹 + `liveness_at` = 落地那一刻 + 兄弟节点不动）/ `L1:B` **坏锚点反例**（`report_sha256` 与报告盘上字节不符 ⇒ 拒 `E_ARG_HASH` · exit 2 · **状态文件一个字节没动**（比调用前后的 SHA256）· 节点仍 `running` · 六个锚点一个都不落）/ `L2:A` `claim → fail`（`failed` + `reason` 原文）/ `L2:B` **带首尾空白的 reason**（存下来的是 `.trim()` 之后那一段，长度也对）/ `L3:A` **两个节点真并发 claim**（两个真子进程：谁都不许覆盖谁）/ `L4:A` **任何 claim 之前** `local-read`（`E_DATA_MISSING` + exit 7 + 点名路径；首个 claim 之后兄弟节点是**文档里的空形状**）；另判 `local-read` 与盘上那份文件**说同一件事** | 🟢 **GREEN**（六条输入全成立 · 阳性对照六条全绿 · 五把刀向量见下） |
-| `LOC-02` | §12.2.1 的**按字段表**（四条输入）：`A` `memory_review` 只交报告 ⇒ `done`，`findings_path` / `findings_set_sha256` / `findings_count` 三个都是 `null`；`B` `conversation` 同上；`C` `technical` 不带 findings ⇒ `E_ARG_SCHEMA` · exit 2 · 节点停在 `running` · **状态文件零写入**；`D` `technical` 带真 findings ⇒ `done`，五个锚点逐项记下 | 🟢 **GREEN**（实测：`A`/`B` exit 0 · 节点 `done`；`C` exit 2 / `E_ARG_SCHEMA` / `state_written=false`；`D` exit 0 / `findings_count=3`）· 刀 `K1`（三字段都要 findings）⇒ `[LOC-02:A, LOC-02:B]` · 刀 `K2`（三字段谁都不要）⇒ `[LOC-02:C]` |
-| `LOC-03` | §12.2.1 的**条数对账**（四条输入，全是 `technical` + 真的 findings 文件）：`3 条 + 0`（少报）与 `3 条 + 9`（多报）⇒ `E_ARG_SCHEMA` · exit 2 · 零写入；`3 条 + 3` 与 `空数组 + 0` ⇒ `done` | 🟢 **GREEN**（实测：`A`/`B` exit 2 / `E_ARG_SCHEMA` / `state_written=false`；`C` `findings_count=3`；`D` `findings_count=0`）· 刀 `K3`（收下不与条数对账）⇒ `[LOC-03:A, LOC-03:B]` |
-| `LOC-04` | §12.2.2 的**落点规则**（十条输入，findings 一侧全合法 ⇒ 只让 `report_path` 变）：`A` canonical / `C` `./.team/…` / `D` `.team` 相对 / `E` 反斜杠 / `G` 绝对路径（在 `.team/` 里）⇒ **收 + 节点里记规范形**；`B` `README.md` / `I` `.team/../README.md` / `H` 绝对（包外） / `F`、`J` 文件不在 ⇒ **同一个** `E_DATA_MISSING` · exit 7 · 零写入 | 🟢 **GREEN**（实测 `diagnosis_set = ["E_DATA_MISSING"]`；`A`/`C`/`D`/`E`/`G` exit 0 / `done` / 节点里 `report_path` **五个都等于** `.team/retro/2026-10-24/技术评审.md`；`B`/`F`/`H`/`I`/`J` exit 7 / `E_DATA_MISSING` / `state_written=false` / 停在 `running`）· 刀 `K4`（不再要求落在 `.team/` 下）⇒ `[LOC-04:B, LOC-04:H, LOC-04:I]` · 刀 `K5`（验的时候归一化、**落盘却记调用方怎么写**）⇒ `[LOC-04:C, LOC-04:D, LOC-04:E, LOC-04:G]` |
+| `LOC-02` | §12.2.1 的**按字段表**（**六条输入**）：`A` `memory_review` 只交报告 ⇒ `done`，`findings_path` / `findings_set_sha256` / `findings_count` 三个都是 `null`；`B` `conversation` 同上；`C` `technical` 不带 findings ⇒ `E_ARG_SCHEMA` · exit 2 · 节点停在 `running` · **状态文件零写入**；`D` `technical` 带真 findings ⇒ `done`，五个锚点逐项记下；`E` `memory_review` **只给 `findings_count`**（三件套缺两件）⇒ `E_ARG_SCHEMA` · exit 2 · 零写入；`F` `conversation` **给了 `findings_path` + `findings_set_sha256`、没给 `findings_count`**（半套的另一种切法）⇒ 同一个 `E_ARG_SCHEMA` · exit 2 · 零写入 | 🟢 **GREEN**（`dev-f156-r3f`：六条全成立 —— `A`/`B`/`D` exit 0；`C`/`E`/`F` exit 2 + `E_ARG_SCHEMA` + `state_written=false`；`D` 的 `findings_count=3`）· 刀 `KQ1`（三字段都要 findings）⇒ `[LOC-02:A, LOC-02:B]` · 刀 `KQ2`（三字段谁都不要）⇒ `[LOC-02:C]` |
+| `LOC-03` | §12.2.1 的**条数对账 + 产物读不出来**（**六条输入**，全是 `technical` + 真的 findings 文件）：`A` `3 条 + 0`（少报）与 `B` `3 条 + 9`（多报）⇒ `E_ARG_SCHEMA` · exit 2 · 零写入；`C` `3 条 + 3` 与 `D` `空数组 + 0` ⇒ `done`（"零条发现"是合法产物）；`E` findings 文件是**合法 JSON、但没有 `findings` 数组**、`F` 是**半截 JSON**（读不出来）⇒ 同一个 `E_DATA_CORRUPT` · exit 7 · 零写入 ——"文件在盘上"与"读得出来"是两件事 | 🟢 **GREEN**（`dev-f156-r3f`：`A`/`B` exit 2 / `E_ARG_SCHEMA` / `state_written=false`；`E`/`F` exit 7 / `E_DATA_CORRUPT` / `state_written=false`；`C` `findings_count=3`、`D` `findings_count=0`）· 刀 `KQ3`（收下不与条数对账）⇒ `[LOC-03:A, LOC-03:B]` |
+| `LOC-04` | §12.2.2 的**落点规则**（**十一条输入** = 同一个文件的**十一种写法**，findings 一侧全合法 ⇒ 只让 `report_path` 变；**六收 / 五拒**）：**收** —— `A` canonical / `C` `./.team/…` / `D` `.team` 相对 / `E` 反斜杠 / `G` 绝对路径（在 `.team/` 里）/ `K` `.TEAM/…`（**前缀**换大小写）；**拒** —— `B` `README.md`（工作区根下**存在**）/ `F` `.team/…/不存在.md`（缺）/ `H` 绝对（包外）/ `I` `.team/../README.md`（`..` 穿出去）/ `J` `retro/…/不存在.md`（`.team` 相对、缺）⇒ **同一个** `E_DATA_MISSING` · exit 7 · 零写入 | 🟢 **GREEN**（`dev-f156-r3f`：`diagnosis_set = ["E_DATA_MISSING"]`；六条收下的 exit 0 / `done` / 节点里 `report_path` **六个都等于** `.team/retro/2026-10-24/技术评审.md`；五条拒 exit 7 / `E_DATA_MISSING` / `state_written=false` / 停在 `running`）· 刀 `KQ4`（不再要求落在 `.team/` 下）⇒ `[LOC-04:B, LOC-04:H, LOC-04:I]` · 刀 `KQ5`（验的时候归一化、**落盘却记调用方怎么写**）⇒ `[LOC-04:C, LOC-04:D, LOC-04:E, LOC-04:G, LOC-04:K]` · 刀 `KQ6`（包含判定退回**大小写敏感的字符串前缀**）⇒ `[LOC-04:K]` |
 
 > ⚠️ **这一格今天该绿，而且它红不了"因为没人调"**：四个 op 的行为本来就是对（10-23 现量）；
 > 这一票缺的是**调用者**（§12.2 那三步写进组长的开工 / 收工口径），那不是测试能判的东西。
@@ -1545,7 +1545,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 > | `K2` | `fail` 丢掉 `reason` | `[L2:A, L2:B]` |
 > | `K3` | `mark` 不记锚点 | `[L1:A]` |
 > | `K4` | `mark` **不核锚点** | `[L1:B]` |
-> | `K5` | `emptyNode()` 丢掉那 9 个键 | `[L1:A, L1:B, L2:A, L3:A, L4:A]` |
+> | `K5` | `emptyNode()` 丢掉那 **10** 个键（`report_path`…`artifact_paths` 整段） | `[L1:A, L1:B, L2:A, L3:A, L4:A]` |
 >
 > ⇒ **不是"一刀一腿"**：`K5` 一次翻五条（它切的是所有节点共用的空形状骨架，没有更窄的切法）；
 > `K2` 一次翻两条（`L2` 的两条输入同住失败那一支）。其余三把各只翻一条。
@@ -1553,6 +1553,16 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 > 它的**非恒真性**由同一跑里的两条**断言**合起来成立：`L4:A` 的 absent（exit 7 / 码 / 点名路径 / 盘上没有文件）
 > 与 `L1:A` 的 present（`readAgrees` 里断言 `read.ok === true`）。
 > `readings.absent_vs_present` 只是那两条的读数，**不是第三条证据**。
+
+📌 **两套刀不许同名**（评审 `F5` 的收口）：同一份索引里一个字母只指一把刀 ——
+`LOC-01` 的五把是 `K1`–`K5`（上面那张表）；`LOC-02`/`LOC-03`/`LOC-04` 的六把是 `KQ1`–`KQ6`
+（向量写在上面三格的"刀"那一列，刀本体在 `loc02` 的 `KNIVES`：`KQ1` 三字段都要 findings · `KQ2` 三字段谁都不要 ·
+`KQ3` 收下不与条数对账 · `KQ4` 不再要求落在 `.team/` 下 · `KQ5` 验的时候归一化、落盘却记调用方怎么写 ·
+`KQ6` 包含判定退回大小写敏感的字符串前缀）。按 `K4` 去查只会查到 `LOC-01` 那一把。
+
+📌 **`LOC-04:K` 收下之后存的是什么**（别把它读成"整串都小写"）：**第一段**由实现固定成 `.team`（调用方写 `.TEAM`
+也一样）；其余各段沿用**调用方那一读**的写法 —— 本平台不分大小写，两种写法指向同一个文件。
+所以 `K` 这一格存下来正好是 `.team/retro/2026-10-24/技术评审.md`：它的内段本来就是盘上那个名字。
 
 ### §12.5 边界（这一节不覆盖什么）
 
@@ -1585,7 +1595,9 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 - 盘上两份文件四格：`tests/agenia-upgrade/integration/loc01-local-state.test.mjs`（`LOC-01` —— 四格**六条输入**，
   四个 op 判的是**同一份文件**的六条腿：红的时候一眼看得出是哪条腿）+
   `loc02-per-field-anchors.test.mjs`（`LOC-02` / `LOC-03` / `LOC-04` —— 锚点三条规则，三格同住一个文件、
-  十六条输入、四把刀在**全部十六个输入**上量）；
+  **23 条输入**（`LOC-02` 六 · `LOC-03` 六 · `LOC-04` 十一）、**六把刀** `KQ1`–`KQ6` 在**全部 23 条输入**上量；
+  `LOC-04` 那十一条是**同一个文件的十一种写法**：**六收**（`A`/`C`/`D`/`E`/`G`/`K`）· **五拒**（`B`/`F`/`H`/`I`/`J`），
+  五个"拒"是**同一个** `E_DATA_MISSING` · exit 7）；
 - 登记：`support/registry.mjs` 的 `BATCH_O`（`LOC-01`）+ `BATCH_Q`（`LOC-02`/`LOC-03`/`LOC-04`）+ `ROWS` +
   `GROUP_COUNTS['local-state'] = 4`（以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_O` **和** `BATCH_Q`，
   否则冻结清单与表当场分家）；
