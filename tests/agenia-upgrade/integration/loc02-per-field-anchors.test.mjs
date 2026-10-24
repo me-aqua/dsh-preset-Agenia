@@ -442,12 +442,18 @@ function rejectedProblems(where, doc, read, { field, jobId, claimAt }) {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /** mark 的 payload（`day` / `project` / `field` 由跑的人补；这里只放这一条输入自己的锚点）。 */
-function markPayload({ reportPath, reportSha, findingsPath = null, findingsSetSha = null, findingsCount = null, artifactPaths }) {
+function markPayload({ reportPath, reportSha, findingsPath = null, findingsSetSha = null, findingsCount = null, artifactPaths, receipt = null }) {
   const payload = { report_path: reportPath, report_sha256: reportSha }
   if (findingsPath !== null) {
     payload.findings_path = findingsPath
     payload.findings_set_sha256 = findingsSetSha
     payload.findings_count = findingsCount
+  }
+  // 回执三件套（`F-162`）：`technical` 有 claim 就必交 —— 只有断言成功的 `technical` 输入会传。
+  if (receipt !== null) {
+    payload.receipt_path = receipt.path
+    payload.receipt_sha256 = receipt.sha
+    payload.receipt_version = receipt.version
   }
   payload.artifact_paths = artifactPaths
   return payload
@@ -455,6 +461,72 @@ function markPayload({ reportPath, reportSha, findingsPath = null, findingsSetSh
 
 /** 一份 `technical` 的**合法** findings 一侧（`LOC-04` 用它把"只变 report_path"这件事钉住）。 */
 const LEGAL_FINDINGS = { path: FINDINGS_REL, setSha: SET_SHA_3, count: ENTRIES_3.length, text: FINDINGS3_TEXT }
+
+/**
+ * **回执夹具**（`F-162` · 老板 2026-10-24 删掉条件①、留住②`claim.job_id`）：
+ * `technical` 只要**先 claim 过**就必交回执三件套 ⇒ 凡是 `technical` 且断言成功的输入
+ * （`LOC-02:D` · `LOC-03:C`/`D` · `LOC-04` 六个"收"）都得在盘上有一份**真回执**并交出三件套，
+ * 否则它们会先撞"回执三件套必交"那条 `E_ARG_SCHEMA` —— 那量到的就是另一条规则了。
+ *
+ * 本文件里回执**只有一个版本**（`version: 2`，与现场那份 `.team/leader/2026-10-24/技术复盘回执.json` 同版），
+ * 字节由 `receiptText()` 现拼、摘要由 `sha256Text` 现算 —— 没有手写当锚的 64 hex。
+ * 节点里该存的是 **`.team` 相对**那一种（`leader/<day>/技术复盘回执.json`，§12.2.4）。
+ */
+const RECEIPT_REL_TEAM = `leader/${DAY}/技术复盘回执.json`
+const RECEIPT_REL_FED = `.team/${RECEIPT_REL_TEAM}`
+const RECEIPT_VERSION = 2
+const RECEIPT_TEXT = `${JSON.stringify({
+  schema: 1,
+  version: RECEIPT_VERSION,
+  day: DAY,
+  project: PROJECT,
+  generated_at: '2026-10-24T13:55:00+08:00',
+  handover: { mode: 'fresh' },
+  report: { path: REPORT_REL, sha256: REPORT_SHA, findings_path: LEGAL_FINDINGS.path },
+  findings_set_sha256: LEGAL_FINDINGS.setSha,
+  findings_count: LEGAL_FINDINGS.count,
+  findings: [],
+}, null, 2)}\n`
+const RECEIPT_SHA = sha256Text(RECEIPT_TEXT)
+
+/** 把回执真的写进 `ws` 的 `.team/leader/<day>/` 下，返回喂 payload 的那三样 + 盘上读数。 */
+function receiptFor(ws) {
+  const abs = writeUnder(ws, RECEIPT_REL_FED, RECEIPT_TEXT)
+  return { path: RECEIPT_REL_FED, sha: RECEIPT_SHA, version: RECEIPT_VERSION, abs, sha256_on_disk: sha256File(abs) }
+}
+
+/**
+ * 给 `technical` 的输入补上**回执三件套**（盘上真文件 + payload 三格）。
+ * 为什么在**两条臂**（生产臂 / REF 臂）都做同一件事：两条臂必须吃**同一份** payload，否则量到的不是同一条规则。
+ *
+ * 范围：本文件里**每一条** `technical` 输入（19 条 —— `LOC-02` 2 · `LOC-03` 6 · `LOC-04` 11）。
+ * `memory_review` / `conversation` 的输入**不补**（它们的档位是 `forbidden`，交了就拒）。
+ * 其中**必须有它才绿**的是评审点名的那 9 条（`LOC-02:D` · `LOC-03:C`/`D` · `LOC-04` 六个"收"）——
+ * 不补的话它们会先撞"回执三件套必交"那条 `E_ARG_SCHEMA`，量到的就不是本格这条规则了。
+ * 另 10 条是**拒**（findings 缺失 / 计数不符 / 文件读不出来 / 报告落在 `.team` 外 / 文件不在）：
+ * 它们的首个问题排在回执那一支**之前**，所以回执补不补，码都不变 —— 补它是为了让夹具**一致**
+ * （换一次档位就不必再逐条排查"这条为什么被回执挡住"）。**实测**：这 19 条的码与本格断言逐条相同（全绿）。
+ *
+ * ⚠️ 这三格**不在**本文件的判据里（`doneProblems` / `rejectedProblems` 都不判 receipt_*）：
+ * 回执三件套自己是**另一格** `RCP-05` 的事。
+ */
+function withReceipt(input, ws, prepared) {
+  if (input.field !== 'technical') return prepared
+  const receipt = receiptFor(ws)
+  prepared.payload.receipt_path = receipt.path
+  prepared.payload.receipt_sha256 = receipt.sha
+  prepared.payload.receipt_version = receipt.version
+  prepared.artifacts = {
+    ...(prepared.artifacts ?? {}),
+    receipt: receipt.abs,
+    receipt_sha256_on_disk: receipt.sha256_on_disk,
+    receipt_sha256_fed: receipt.sha,
+    receipt_version_fed: receipt.version,
+    receipt_path_fed: receipt.path,
+    receipt_path_expected_in_node: RECEIPT_REL_TEAM,
+  }
+  return prepared
+}
 
 const INPUTS = [
   // ── `LOC-02` · 按字段的必填（A 只报告 ⇒ done / C 不带 findings ⇒ 拒）────────────────────
@@ -1247,7 +1319,7 @@ function runInputProduction(input) {
   row.steps.push({ kind: 'claim', at: input.claimAt, expect: 'ok', exit: res.exit, code: res.code, ok: res.ok, stderr_head: res.stderr_head, state_sha_after: fileShaOrNull(statePathOf(ws)) })
   row.problems.push(...judgeStep({ where: `${where}/claim`, step: { kind: 'claim', expect: 'ok' }, got: res, wrote: null }))
 
-  const prepared = input.prepare(ws)
+  const prepared = withReceipt(input, ws, input.prepare(ws))
   row.artifacts = prepared.artifacts
   row.payload = prepared.payload
   const before = fileShaOrNull(statePathOf(ws))
@@ -1284,7 +1356,7 @@ function runInputOnRef(mod, input) {
   steps.push({ kind: 'claim', ok: got.ok === true, code: got.code ?? null })
   problems.push(...judgeStep({ where: `${where}/claim`, step: { kind: 'claim', expect: 'ok' }, got: { ok: got.ok === true, code: got.code ?? null, stderr_head: '' }, wrote: null }))
 
-  const prepared = input.prepare(ws)
+  const prepared = withReceipt(input, ws, input.prepare(ws))
   const before = doc === null ? null : JSON.stringify(doc)
   got = mod.markDoc(doc, { field: input.field, at: input.markAt, payload: { day: DAY, project: PROJECT, ...prepared.payload }, workspace: ws })
   if (got.ok) doc = got.doc
@@ -1373,6 +1445,10 @@ async function commonReadings(rec, push) {
     push('LOC-SET-DIGEST-SELFCHECK', `测试侧算出的 findings_set_sha256=${SET_SHA_3} ≠ 仓库 lib/receipt.mjs::findingsSetSha256=${stagedSet3} —— 两套 Q10 实现不一致，喂进去的那个摘要不能代表那三条发现`)
   }
   rec.readings.boundary = {
+    receipt_trio_feeds_but_not_judged: '`technical` 的**每一条**输入（19 条）都补了一份**真回执**并交出三件套（`withReceipt()`）：老板 2026-10-24 删掉了"回执已落盘"那条条件①、留住②`claim.job_id` ⇒ 有 claim 的 `technical` 必交。'
+      + '其中**必须有它才绿**的是 9 条（`LOC-02:D` · `LOC-03:C`/`D` · `LOC-04` 六个"收"）；另 10 条是"拒"，首个问题排在回执那一支之前 ⇒ 码不变（实测逐条相同）。'
+      + '三件套本身的规则**不在**这三格的判据里（它们归 `RCP-05`）；这里补它只是为了不挡路。'
+      + '另：`memory_review` / `conversation` 的输入**不补**（它们的档位是 `forbidden`，交了就拒）。',
     findings_path_prefix_not_judged: '`findings_path` 的 `.team/` 前缀**不在本票判据里**（老板那句裁定只点名 `report_path`）：三格的 findings 产物一律落在 `.team/` 下 ⇒ 那一条没量，别把绿读成"它也管 findings"。',
     findings_set_content_not_recomputed: '`findings_set_sha256` 的**内容复算**归 `receipt-check` / `VRF-02`：本文件喂的值是**真的**（三条发现按 Q10 算出来），但闸今天不做内容复算，本格也没判它。',
     count_semantics_not_judged: '`findings_count` 只判"与产物条数一致"，**不判**"那三条发现值不值得看"。',

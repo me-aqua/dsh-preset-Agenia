@@ -304,12 +304,18 @@ function opLocalClaim(ctx) {
  * `local-mark` —— 落地：节点 `done` + 产物锚点（§12.2）。
  *
  * 锚点闸**按字段**（`field` 一路传给 `lib/local-state.mjs::artifactAnchorVerdict`：
- * `technical` 要 findings 三件套，另外两个字段只要报告），而且它跑在事务**之前** ——
- * 被拒的 mark 一个字节都不写（状态文件保持 claim 写完的那一份）。
+ * `technical` 要 findings 三件套**与**回执三件套，另外两个字段只要报告、且**不收回执**），
+ * 而且它跑在事务**之前** —— 被拒的 mark 一个字节都不写（状态文件保持 claim 写完的那一份）。
  *
  * 落进节点的路径是**闸归一之后**的规范拼法（`.team/<…>/<file>`，正斜杠）——
  * 调用方用 `.team/a.md` / `a.md` / `./.team/a.md` / `.team\a.md` 哪一种写法都行，
- * 状态文件里只有一种（§12.2.2）。
+ * 状态文件里只有一种（§12.2.2）。**回执那一格是例外里的一句明话**：节点里存的是 `.team` 相对
+ * （`leader/<day>/技术复盘回执.json`），因为 `lib/health.mjs` 与 `opReceiptCheck` 只认那一种（§12.2.4）。
+ *
+ * 写回哪些键由 `lib/local-state.mjs::MARK_WRITE_KEYS` 那张白名单说；payload 里**不在白名单也不在
+ * 只读表**（`MARK_READ_KEYS`）的键，会原样进返回信封的 `ignored_keys` 并在 stderr 报一行 —— 不静默丢掉。
+ * 白名单里**衍生的那一格**（`MARK_DERIVED_KEYS`，今天只有 `receipt_versions`）同样进 `ignored_keys`：
+ * 它在白名单里是"这一格会被写"，不等于"这一格由 payload 给"。
  */
 function opLocalMark(ctx) {
   const { payload, teamDir, workspace, at } = ctx
@@ -317,12 +323,35 @@ function opLocalMark(ctx) {
   const field = L.fieldKeyOf(payload?.field)
   if (field === null) throw cliError('E_ARG_SCHEMA', `field 必须是 memory-review | conversation | technical，实得 ${JSON.stringify(payload?.field)}`)
   const project = projectOfPayload(payload)
-  const anchors = L.artifactAnchorVerdict(workspace, payload, field)
-  if (!anchors.ok) throw cliError(anchors.code, anchors.message, { problems: anchors.problems })
+  // 回执三件套要不要（§12.2.4）：只读面那一份状态、只为拿"这一场是不是被派出去的那一场"（`claim.job_id`）。
+  // 读面零写入、不持锁 —— 事务里会再读一次；这里只是把档位算在**闸**那一侧（判定不许分叉）。
+  const before = L.readLocalState(teamDir, day)
+  const receiptPolicy = L.receiptPolicyOf(field, { node: before.ok ? before.state?.[field] ?? null : null })
+  const anchors = L.artifactAnchorVerdict(workspace, payload, field, { receiptPolicy })
+  if (!anchors.ok) throw cliError(anchors.code, anchors.message, { problems: anchors.problems, receipt_policy: receiptPolicy })
   // 规范化后的锚点（闸给的），不是调用方给的那一串字面量。
   const markSpec = { ...payload, report_path: anchors.report_rel }
   if (typeof payload?.findings_path === 'string' && payload.findings_path.trim() !== '') markSpec.findings_path = anchors.findings_rel
   if (Array.isArray(payload?.artifact_paths)) markSpec.artifact_paths = anchors.artifact_rels
+  // 回执三件套写回的是**闸核过**的那一份：路径换成节点里那一种拼法、摘要换成**盘上字节**的 SHA256
+  // （调用方自报的那一份只在闸里做对账，落盘永远是盘上那一份；§12.2.4）。
+  if (anchors.receipt_rel_team !== null) {
+    markSpec.receipt_path = anchors.receipt_rel_team
+    markSpec.receipt_sha256 = anchors.actual_receipt_sha256
+  }
+  const ignoredKeys = Object.keys(payload ?? {})
+    .filter((key) => (!L.MARK_WRITE_KEYS.includes(key) || L.MARK_DERIVED_KEYS.includes(key)) && !L.MARK_READ_KEYS.includes(key))
+    .sort()
+  // 两种"没落盘的输入"分开报：表外的键 / 表里但由别格派生的键（今天只有 `receipt_versions`）——
+  // 后者的原因不是"白名单里没有"，说错原因比不说更坏。
+  const foreignKeys = ignoredKeys.filter((key) => !L.MARK_DERIVED_KEYS.includes(key))
+  const derivedKeys = ignoredKeys.filter((key) => L.MARK_DERIVED_KEYS.includes(key))
+  if (foreignKeys.length > 0) {
+    process.stderr.write(`[${CLI_NAME}] WARN local-mark 不写这些键（不在 MARK_WRITE_KEYS 白名单里）：${foreignKeys.join(', ')}\n`)
+  }
+  if (derivedKeys.length > 0) {
+    process.stderr.write(`[${CLI_NAME}] WARN local-mark 不收这些键（在白名单里，但由同一张表里别格派生）：${derivedKeys.join(', ')}\n`)
+  }
 
   const result = L.localTransaction(teamDir, { day, field, at, sessionId: ctx.sessionId, forceRecover: ctx.args.forceRecover, waitMs: ctx.waitMs }, (current) => {
     const snapshot = typeof payload.snapshot === 'string' && payload.snapshot.trim() !== '' ? payload.snapshot.trim() : (current?.snapshot ?? 'v0')
@@ -338,11 +367,14 @@ function opLocalMark(ctx) {
     state_path: result.path,
     field,
     node_state: node.state,
+    receipt_policy: receiptPolicy,
     anchors: {
       report_path: node.report_path, report_sha256: node.report_sha256,
       findings_path: node.findings_path, findings_set_sha256: node.findings_set_sha256, findings_count: node.findings_count,
+      receipt_path: node.receipt_path, receipt_sha256: node.receipt_sha256, receipt_version: node.receipt_version,
     },
     artifact_paths: node.artifact_paths,
+    ignored_keys: ignoredKeys,
   }
 }
 

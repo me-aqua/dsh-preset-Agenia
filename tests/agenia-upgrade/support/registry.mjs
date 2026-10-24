@@ -302,6 +302,31 @@ export const BATCH_Q = ['LOC-02', 'LOC-03', 'LOC-04']
 export const BATCH_R = ['PLT-01']
 
 /**
+ * 批次 S 的 2 条 —— **门 2 · `F-162` 的两半**（`local-mark` 存回执三件套 + 卡的第二半，2026-10-24）。
+ *
+ * 两格是同一句话的两头：**收下的锚点要落盘，落不了的锚点卡上要红**。
+ *   · `RCP-05` **回执三件套进 `local-mark`**（`CONTRACT.md` §12.2.4）：真子进程 + 每条输入一个带 marker 的
+ *     临时工作区，**十三种输入**全部走"必交"那一支（先 `claim` + 回执真的落在 `.team/leader/<day>/` 下）：
+ *     `A` 三件齐全且正确 ⇒ `done`（节点三格 = **盘上字节**的 SHA256 / `.team` 相对路径 / 回执声明的版本，
+ *     `local-read` 读得到，且摘要 **≠** 回执自报的那个值）· `B0` 必交却没给 ⇒ `E_ARG_SCHEMA` ·
+ *     `B1`/`B2`/`B3` 半套（各缺一件）⇒ 同一个 `E_ARG_SCHEMA` · `C` 摘要与字节不符 ⇒ `E_ARG_HASH` ·
+ *     `D1`/`D2`/`D3` 回执没声明整数 `version`（缺 / 字符串 / `0`）⇒ `E_DATA_CORRUPT` ·
+ *     `E1`/`E2` `memory_review` / `conversation` 交任一件回执锚点 ⇒ `E_ARG_SCHEMA` ·
+ *     `F` 回执在 `.team` 外 ⇒ `E_DATA_MISSING` · `G` 版本不符 ⇒ `E_ARG_SCHEMA`；
+ *     被拒的每一步**零写入**（比状态文件 SHA256）+ 节点仍 `running`。另加阳性对照（照裁定写的最小实现
+ *     十三条全成立）与三把刀：`KR1` 删掉三行写回 ⇒ 只翻 `A` · `KR2` 档位恒 `optional` ⇒ 只翻 `B0` ·
+ *     `KR3` 摘要不与字节对账 ⇒ 只翻 `C`（三把刀都在**全部十三种输入**上量）。
+ *   · `HLT-03` **卡的第二半**：`technical` 已 `done`、回执在盘上、三个锚点只齐 1–2 个 ⇒ `RED E_RECEIPT_ANCHOR`；
+ *     回执**不在盘上** ⇒ `RED E_RECEIPT_MISSING`；三个锚点全齐 + 回执在盘上 ⇒ `GREEN`（阳性对照）。
+ *     判的是**真实卡那一扇门**（`agenia-local.mjs --op health` → `healthVerdict` → `buildHealthCard` →
+ *     `<工作区>/.team/brain/<day>/health.json`），不是脑侧 `health-read`（那一扇对真实根会 `E_ROOT_REAL_BRAIN`）。
+ *     证据：`.team/review/2026-10-24/F-162-第4关-评审.md` §7（这一族**一条判据都没有**，连票面那个红因
+ *     `E_RECEIPT_ANCHOR` 在整棵测试树里都零命中）。⚠️ 它们**不进** `FROZEN_IDS`（历史冻结的 A–F 55 条）。
+ * ⚠️ **分母 94 → 96**（两格各一条 `test()`）。
+ */
+export const BATCH_S = ['RCP-05', 'HLT-03']
+
+/**
  * 已落笔的十八批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -309,9 +334,10 @@ export const BATCH_R = ['PLT-01']
  * 批次 N 是 `F-155` 每日状态的两端与署名（同日），批次 O 是 `F-156` 三个本地节点的三态（同日），
  * 批次 P 是 `F-158` 一天从 04:00 切（2026-10-24），批次 Q 是 `F-156` 第二轮锚点闸的三条规则（同日），
  * 批次 R 是 `F-163` 平台版本读数的自证（同日）。
+ * 批次 S 是 `F-162` 的两半（`RCP-05` 回执三件套进 `local-mark` / `HLT-03` 卡的第二半，同日）。
  * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -331,7 +357,8 @@ const BATCH_OF = (id) =>
                                 : BATCH_P.includes(id) ? 'P'
                                   : BATCH_Q.includes(id) ? 'Q'
                                     : BATCH_R.includes(id) ? 'R'
-                                      : null
+                                      : BATCH_S.includes(id) ? 'S'
+                                        : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -404,6 +431,10 @@ const F = {
    *  合成 asar 的短 2 B / BOM / 截断（> 16 B 读窗）/ 纯函数入口，外加真实 asar 的 `[平台]` 读数。
    *  判的是"这个量具读的是哪一版、读不到时说不说得出来"——不是某一版平台该不该存在。 */
   plt: 'unit/plt01-platform-asar.test.mjs',
+  /** 门 2 · `F-162` 的两半（批次 S）—— 一格一个文件：写面（回执三件套落盘）与读面（卡的两个红分支）
+   *  是同一句话的两头，红的时候一眼看得出是哪一头。 */
+  rcp05: 'integration/rcp05-receipt-trio.test.mjs',
+  hlt03: 'report/hlt03-receipt-anchor.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -468,10 +499,12 @@ const ROWS = [
   ['RCP-03', 'receipt', F.technicalReview, 'health 以作业产物为锚（改报告一字即红），不以回执自报 SHA 为锚', '下一批',
     '裁定 A3 已确认归一：RCP-03 归 integration/technical-review.test.mjs（依赖技术作业真实产物与锚点），unit/receipts.test.mjs 不再登记该 ID。来历：契约 §10.2 与提案 §B1.4 的同一张表把 RCP-03 同时列在两行'],
   ['RCP-04', 'receipt', F.receipts, '接手：先查已有产物、只补差、回执版本化不静默覆盖、不得伪造“原组长已处置”（父死窗口 PENDING）', '批次 C'],
+  ['RCP-05', 'receipt', F.rcp05, 'F-162 回执三件套进 `local-mark`（真子进程 + 每格一个带 marker 的临时工作区，**十三种输入**全部走"必交"那一支）：A 三件齐全且正确 ⇒ `done`，节点三格 = **回执盘上字节**的 SHA256 / **`.team` 相对**路径（`leader/<day>/技术复盘回执.json`）/ 回执声明的整数版本，`local-read` 三格同值，且摘要 **≠** 回执自报的那个值（自报不算锚）· B0 必交却没给 ⇒ `E_ARG_SCHEMA` · B1/B2/B3 半套（各缺一件）⇒ 同一个 `E_ARG_SCHEMA` · C 摘要与盘上字节不符 ⇒ `E_ARG_HASH` · D1/D2/D3 回执没声明整数 `version`（缺 / `"2"` 字符串 / `0`）⇒ `E_DATA_CORRUPT` · E1/E2 `memory_review` / `conversation` 交任一件回执锚点 ⇒ `E_ARG_SCHEMA` · F 回执在 `.team` 外 ⇒ `E_DATA_MISSING` · G 版本不符 ⇒ `E_ARG_SCHEMA`；被拒的每一步 exit 码对得上 FROZEN.exitCodes、**零写入**（比状态文件 SHA256）、节点仍 `running`、六个锚点一个不落 —— 外加阳性对照（照裁定写的最小实现十三条全成立）与三把刀 `KR1` 三行写回删掉 ⇒ 只翻 A · `KR2` 档位恒 `optional` ⇒ 只翻 B0 · `KR3` 摘要不与字节对账 ⇒ 只翻 C（三把刀在全部十三种输入上量）', '批次 S'],
 
   // ── Health / 每日状态（2）───────────────────────────────────────────────
   ['HLT-01', 'health', F.health, 'health 六场景矩阵：没开工 HOLD、运行中非绿、缺本地双评审红、完整绿', '批次 C'],
   ['HLT-02', 'health', F.health, '失败/父死不丢原因；staleVerdict 边界按 update 90 / local 45 分列且无 60', '批次 C'],
+  ['HLT-03', 'health', F.hlt03, 'F-162 **卡的第二半**（判真实卡那一扇门 `agenia-local.mjs --op health` → `healthVerdict` → `buildHealthCard` → `<工作区>/.team/brain/<day>/health.json`，**不是**脑侧 `health-read`）：A `technical` 已 `done` + 回执在盘上、三个锚点缺一个（`receipt_sha256` 是 null）⇒ `RED E_RECEIPT_ANCHOR`（**不许**报 `E_RECEIPT_MISSING`）· B 只齐一个锚点 ⇒ 同一个 `E_RECEIPT_ANCHOR`（"1–2 个"两个方向都量）· C 盘上没有回执 ⇒ `RED E_RECEIPT_MISSING` · D 三个锚点全齐 + 回执在盘上 ⇒ `GREEN`（阳性对照）—— 四条另判 `progress` 3/3 与 `receipt:true/false`、盘上那张卡与 stdout 同一句话（status + reasons）、`paths.local`/`paths.receipt` 给出处、读面零写入（状态文件 SHA256 前后相同）；另判两个分支**不许合并**（`E_RECEIPT_ANCHOR` ≠ `E_RECEIPT_MISSING`）', '批次 S'],
 
   // ── data-root 隔离（3）──────────────────────────────────────────────────
   ['DR-01', 'data-root', F.dataRoot, '命令清单 × 姿势矩阵：省略/空/相对/真根变体/C 盘/UNC/越界/合法根；非法一律非零退出零写入', '批次 C'],
@@ -604,7 +637,9 @@ export function batchB() {
 /** 契约 §9.1 的每组红用例数（分母的第二个口径，两处必须对上）。 */
 export const GROUP_COUNTS = {
   'static-doc': 6, route: 8, store: 4, memory: 12, guard: 3, job: 4,
-  review: 3, receipt: 4, health: 2, 'data-root': 3, install: 3, env: 2, read: 1,
+  /** `receipt` 4 → 5 / `health` 2 → 3：`F-162` 的两半（`RCP-05` 回执三件套进 `local-mark` ·
+   *  `HLT-03` 卡的第二半 = `E_RECEIPT_ANCHOR` 那一支）各自归到它守的那一族。契约见 `CONTRACT.md` §12.2.4 / §12.5。 */
+  review: 3, receipt: 5, health: 3, 'data-root': 3, install: 3, env: 2, read: 1,
   'proposal-file': 11,
   /** 门 1 回执链路四票（`F-120`～`F-123`）—— 契约见 `CONTRACT.md` §6。 */
   'verify-recompute': 4,
@@ -647,11 +682,11 @@ export function registryProblems() {
   // 发现器自己报的问题（没有 ID 的 test() / 重复 ID）。
   for (const p of DISCOVERY.problems) problems.push(p.message)
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
-  // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
+  // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -678,6 +713,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }

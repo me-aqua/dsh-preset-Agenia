@@ -19,7 +19,7 @@
  */
 import { before, describe, test } from 'node:test'
 import path from 'node:path'
-import { caseFail, preflight, problem, runCase, sha256Text } from '../support/evidence.mjs'
+import { caseFail, preflight, problem, runCase, sha256File, sha256Text } from '../support/evidence.mjs'
 import { loadStagedModule, runLocal, stagingExists } from '../support/sut.mjs'
 import { q10Digest, writeUnder } from '../support/verify-recompute.mjs'
 
@@ -196,8 +196,14 @@ describe('integration · verify-recompute (VRF) · F-121 findings 复算', () =>
       // `retro/<day>/…`，`local-mark` 收下之后节点里记的是规范形 `.team/retro/<day>/…`）。
       writeUnder(path.join(ws, '.team'), REPORT_REL, REPORT_TEXT)
       writeUnder(path.join(ws, '.team'), FINDINGS_REL, `${JSON.stringify(findingsFile(), null, 2)}\n`)
-      writeUnder(path.join(ws, '.team'), RECEIPT_REL, `${JSON.stringify(receiptOf(), null, 2)}\n`)
+      const receiptAbs = writeUnder(path.join(ws, '.team'), RECEIPT_REL, `${JSON.stringify(receiptOf(), null, 2)}\n`)
 
+      /**
+       * 🔴 **回执三件套**（`F-162`）：这一格**不 claim** ⇒ 按裁定（留住②`claim.job_id`）落在 `optional`，
+       * 三件套不是必交。仍然交，只为一件事：**夹具稳定** —— 档位若将来被收成"无条件必交"，
+       * 这一格不该因为夹具没放回执而翻红。回执真的先在盘上（上面那一行）、摘要取它**盘上字节**。
+       * 三件套本身的规则归 `RCP-05`，本格一个字都不判它。
+       */
       const mark = runLocal('VRF-02', 'local-mark', {
         project: 'harness',
         day: DAY,
@@ -208,8 +214,20 @@ describe('integration · verify-recompute (VRF) · F-121 findings 复算', () =>
         findings_path: FINDINGS_REL,
         findings_set_sha256: SET_SHA,
         findings_count: FINDINGS.length,
+        receipt_path: RECEIPT_REL,
+        receipt_sha256: sha256File(receiptAbs),
+        receipt_version: 1,
       }, { workspace: ws })
       rec.readings.local_mark = { exit_code: mark.exit_code, code: mark.json?.error?.code ?? null }
+      // 读数（不是断言）：这一格**不 claim** ⇒ 档位是 `optional`（留住②`claim.job_id` 救的就是这一类格）；
+      // 三件套仍然交，只为一件事 —— 夹具稳定（规则本身归 `RCP-05`）。
+      rec.readings.receipt_trio_fed = {
+        claimed: false,
+        path_fed: RECEIPT_REL,
+        sha_fed: sha256File(receiptAbs),
+        sha_on_disk: sha256File(receiptAbs),
+        version_fed: 1,
+      }
       if (mark.exit_code !== 0) {
         push('LOCAL-MARK', `摆锚点失败（local-mark exit=${mark.exit_code} / ${mark.json?.error?.code ?? '(无码)'}）—— 这一格判不了回执门：${String(mark.json?.error?.message ?? mark.stderr).slice(0, 240)}`)
       }

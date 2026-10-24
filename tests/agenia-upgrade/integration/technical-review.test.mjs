@@ -245,13 +245,34 @@ describe('integration · technical-review (REV-03 / RCP-03)', () => {
       const art = writeArtifacts(ws)
 
       // ① 组长把作业产物的三个锚点登记进本地状态（`local-mark`，提案 §B1.4 的冻结 op）
+      /**
+       * 🔴 **回执三件套**（`F-162`）：这一格**不 claim**（`local-mark` 是直接调用的 —— 那是本格要量的形状），
+       * 所以按裁定（留住②`claim.job_id`）它落在 `optional` 那一支，三件套不是必交。
+       * 这里仍然把回执**移到 mark 之前**并交出三件套，理由只有一条：**夹具要稳定** ——
+       * 万一同一天又把档位收成"无条件必交"，这一格不该因为夹具没放回执而翻红（那时翻红的该是别的格）。
+       * 三件套本身的规则归 `RCP-05`；本格一个字都不判它。
+       */
+      const receiptPath = path.join(ws, '.team', 'leader', DAY, '技术复盘回执.json')
+      writeJson(receiptPath, receipt({ report: { path: 'retro/2026-10-14/技术评审.md', sha256: art.reportSha }, findings_set_sha256: art.findingsSetSha }))
+      const receiptSha = sha256File(receiptPath)
       const mark = runLocalSoft('RCP-03', 'local-mark', {
         project: 'harness', day: DAY, field: 'technical',
         report_path: 'retro/2026-10-14/技术评审.md', report_sha256: art.reportSha,
         findings_path: 'retro/2026-10-14/技术评审.findings.json', findings_set_sha256: art.findingsSetSha, findings_count: 2,
+        receipt_path: `leader/${DAY}/技术复盘回执.json`, receipt_sha256: receiptSha, receipt_version: 1,
         artifact_paths: ['retro/2026-10-14/技术评审.md', 'retro/2026-10-14/技术评审.findings.json'],
       }, ws)
       rec.readings.local_mark = { exit_code: mark.exit_code, code: mark.json?.error?.code ?? null }
+      // 读数（不是断言）：这一格**不 claim** ⇒ 档位是 `optional`，三件套不是必交；仍然交，只为一件事 ——
+      // 档位若被收成"无条件必交"，这一格不该因为夹具没放回执而翻红。三件套的规则归 `RCP-05`。
+      rec.readings.receipt_trio_fed = {
+        claimed: false,
+        why: '不 claim ⇒ receiptPolicyOf() 给 optional（留住②claim.job_id 救的就是这一类格：RCP-03 / VRF-02 两处）；三件套仍然交，是为了夹具稳定',
+        path_fed: `leader/${DAY}/技术复盘回执.json`,
+        sha_fed: receiptSha,
+        sha_on_disk: sha256File(receiptPath),
+        version_fed: 1,
+      }
       if (mark.exit_code !== 0) push('RCP03-MARK', `local-mark 登记作业产物必须成功（正例），实得 exit=${mark.exit_code} / ${mark.json?.error?.code ?? '(无码)'}`)
 
       const read = runLocalSoft('RCP-03', 'local-read', { project: 'harness', day: DAY }, ws)

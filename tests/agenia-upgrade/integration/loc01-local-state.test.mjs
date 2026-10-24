@@ -186,11 +186,35 @@ const FINDINGS_TEXT = `${JSON.stringify({
 }, null, 2)}\n`
 /** `L1:B` 的坏锚点：64 hex，且**故意不等于**报告盘上字节的 SHA256（这一腿要喂的**就是**一个错锚点）。 */
 const BAD_REPORT_SHA = '0badc0de'.repeat(8)
+/**
+ * `L1` 的**回执**（`F-162` 落地之后 `technical` 有 `claim` 就要交回执三件套；老板 2026-10-24 删掉条件①、
+ * 留住②`claim.job_id`）。回执真的写在 `.team/leader/<day>/` 下、字节就是下面这一份；
+ * `receipt_sha256` 喂的是**它盘上字节**的 SHA256，`receipt_version` 是它声明的 `version`。
+ * ⚠️ 节点里存的是 **`.team` 相对**那一种（`leader/<day>/技术复盘回执.json`）—— 两扇读者只认它（§12.2.4）。
+ */
+const RECEIPT_REL_TEAM = `leader/${DAY}/技术复盘回执.json`
+const RECEIPT_VERSION = 1
+const RECEIPT_TEXT = `${JSON.stringify({
+  schema: 1,
+  version: RECEIPT_VERSION,
+  day: DAY,
+  project: 'harness',
+  generated_at: '2026-10-23T21:05:00+08:00',
+  handover: { mode: 'fresh' },
+  report: { path: REPORT_REL, sha256: sha256Text(REPORT_TEXT), findings_path: FINDINGS_REL },
+  findings_set_sha256: null,
+  findings_count: null,
+  findings: [],
+}, null, 2)}\n`
+const EXPECT_RECEIPT_SHA = sha256Text(RECEIPT_TEXT)
 const ART_TECH = {
   report_path: REPORT_REL,
   findings_path: FINDINGS_REL,
   findings_set_sha256: EXPECT_SET_SHA,
   findings_count: FINDINGS_ENTRIES.length,
+  receipt_path: `.team/${RECEIPT_REL_TEAM}`,
+  receipt_sha256: EXPECT_RECEIPT_SHA,
+  receipt_version: RECEIPT_VERSION,
   artifact_paths: [REPORT_REL, FINDINGS_REL],
 }
 
@@ -299,10 +323,13 @@ async function importSource(dir, name, source) {
 function writeArtifacts(ws) {
   const reportAbs = path.join(ws, REPORT_REL.split('/').join(path.sep))
   const findingsAbs = path.join(ws, FINDINGS_REL.split('/').join(path.sep))
+  const receiptAbs = path.join(ws, '.team', ...RECEIPT_REL_TEAM.split('/'))
   mkdirSync(path.dirname(reportAbs), { recursive: true })
+  mkdirSync(path.dirname(receiptAbs), { recursive: true })
   writeFileSync(reportAbs, REPORT_TEXT, 'utf8')
   writeFileSync(findingsAbs, FINDINGS_TEXT, 'utf8')
-  return { reportAbs, findingsAbs }
+  writeFileSync(receiptAbs, RECEIPT_TEXT, 'utf8')
+  return { reportAbs, findingsAbs, receiptAbs }
 }
 
 // ── 真 CLI 调用 ────────────────────────────────────────────────────────────
@@ -804,6 +831,10 @@ function payloadOf(step) {
       findings_path: step.payload.findings_path,
       findings_set_sha256: step.payload.findings_set_sha256,
       findings_count: step.payload.findings_count,
+      // 回执三件套（`F-162`）：有 `claim` 的 `technical` 必交（老板 2026-10-24 删掉了条件①）。
+      receipt_path: step.payload.receipt_path,
+      receipt_sha256: step.payload.receipt_sha256,
+      receipt_version: step.payload.receipt_version,
       artifact_paths: step.payload.artifact_paths,
     }
   }
@@ -837,7 +868,15 @@ async function runInputProduction(cellKey, input) {
         findings_set_sha256_fed: step.payload.findings_set_sha256,
         findings_count_fed: step.payload.findings_count,
         fed_sha256: step.reportSha ?? EXPECT_REPORT_SHA,
-        note: '喂给 `local-mark` 的 `findings_set_sha256` 是**那三条发现的 Q10 摘要**，与 findings 文件字节的 SHA256 不是同一个值（两个都记在这儿，别互相冒充）',
+        // 回执（`F-162`）：喂的是**盘上字节**的 SHA256；节点里该存 `.team` 相对那一种路径。
+        receipt: files.receiptAbs,
+        receipt_bytes: readFileSync(files.receiptAbs).length,
+        receipt_sha256_on_disk: sha256File(files.receiptAbs),
+        receipt_sha256_fed: step.payload.receipt_sha256,
+        receipt_version_fed: step.payload.receipt_version,
+        receipt_path_fed: step.payload.receipt_path,
+        receipt_path_expected_in_node: RECEIPT_REL_TEAM,
+        note: '喂给 `local-mark` 的 `findings_set_sha256` 是**那三条发现的 Q10 摘要**，与 findings 文件字节的 SHA256 不是同一个值（两个都记在这儿，别互相冒充）；`receipt_sha256` 则是**回执盘上字节**的 SHA256（§12.2.4）。',
       }
     }
     if (step.kind === 'claim-parallel') {
