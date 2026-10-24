@@ -36,6 +36,8 @@ before(() => {
  */
 const DAY = '2026-10-08'
 const REPORT_REL = `retro/${DAY}/技术评审.md`
+/** 产物里**声明**的报告落点 = 规范形（`job-briefs/technical-review.md:28`：必须带 `.team/` 那一层）。 */
+const REPORT_DECLARED = `.team/${REPORT_REL}`
 const FINDINGS_REL = `retro/${DAY}/技术评审.findings.json`
 const RECEIPT_REL = `leader/${DAY}/技术复盘回执.json`
 const REPORT_TEXT = '# 技术评审（夹具）\n\n## F1\n夹具报告正文。\n'
@@ -58,7 +60,7 @@ const SET_SHA = q10Digest(FINDINGS)
 const findingsFile = (list = FINDINGS, over = {}) => ({
   schema: 1,
   day: DAY,
-  report_path: REPORT_REL,
+  report_path: REPORT_DECLARED,
   report_sha256: REPORT_SHA,
   generated_at: `${DAY}T11:00:00+08:00`,
   code_fingerprint: { before_sha256: 'c'.repeat(64), after_sha256: 'c'.repeat(64), equal: true },
@@ -190,8 +192,10 @@ describe('integration · verify-recompute (VRF) · F-121 findings 复算', () =>
         push('ENV-MISSING', 'AGENIA_TEST_WORKSPACE 没给 —— receipt-check 的落点无从摆（runner 必须先导出它）')
         caseFail(problems)
       }
-      writeUnder(ws, REPORT_REL, REPORT_TEXT)
-      writeUnder(ws, FINDINGS_REL, `${JSON.stringify(findingsFile(), null, 2)}\n`)
+      // 作业产物写在 `.team/` 下（`job-briefs/technical-review.md:13` 的落点；`report_path` 用 `.team` 相对的
+      // `retro/<day>/…`，`local-mark` 收下之后节点里记的是规范形 `.team/retro/<day>/…`）。
+      writeUnder(path.join(ws, '.team'), REPORT_REL, REPORT_TEXT)
+      writeUnder(path.join(ws, '.team'), FINDINGS_REL, `${JSON.stringify(findingsFile(), null, 2)}\n`)
       writeUnder(path.join(ws, '.team'), RECEIPT_REL, `${JSON.stringify(receiptOf(), null, 2)}\n`)
 
       const mark = runLocal('VRF-02', 'local-mark', {
@@ -217,7 +221,8 @@ describe('integration · verify-recompute (VRF) · F-121 findings 复算', () =>
         push('CLI-POSITIVE', `正例 receipt-check 必须 exit 0（否则"改一个字要拒"这一格量的是别的东西），实得 exit=${positive.exit_code} / ${positive.json?.error?.code ?? '(无码)'}；${String(positive.json?.error?.message ?? positive.stderr).slice(0, 240)}`)
       }
 
-      writeUnder(ws, FINDINGS_REL, `${JSON.stringify(findingsFile(TAMPERED), null, 2)}\n`)
+      // 改的是**同一份** findings 文件（`.team/` 下那一份）：改一个字，声明的集合摘要不动。
+      writeUnder(path.join(ws, '.team'), FINDINGS_REL, `${JSON.stringify(findingsFile(TAMPERED), null, 2)}\n`)
       const negative = runLocal('VRF-02', 'receipt-check', checkPayload, { workspace: ws })
       rec.readings.cli_negative = { exit_code: negative.exit_code, code: negative.json?.error?.code ?? null }
       if (negative.exit_code === 0) {

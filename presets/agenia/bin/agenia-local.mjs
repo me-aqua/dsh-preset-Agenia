@@ -300,20 +300,35 @@ function opLocalClaim(ctx) {
   }
 }
 
+/**
+ * `local-mark` —— 落地：节点 `done` + 产物锚点（§12.2）。
+ *
+ * 锚点闸**按字段**（`field` 一路传给 `lib/local-state.mjs::artifactAnchorVerdict`：
+ * `technical` 要 findings 三件套，另外两个字段只要报告），而且它跑在事务**之前** ——
+ * 被拒的 mark 一个字节都不写（状态文件保持 claim 写完的那一份）。
+ *
+ * 落进节点的路径是**闸归一之后**的规范拼法（`.team/<…>/<file>`，正斜杠）——
+ * 调用方用 `.team/a.md` / `a.md` / `./.team/a.md` / `.team\a.md` 哪一种写法都行，
+ * 状态文件里只有一种（§12.2.2）。
+ */
 function opLocalMark(ctx) {
   const { payload, teamDir, workspace, at } = ctx
   const day = dayOfPayload(payload)
   const field = L.fieldKeyOf(payload?.field)
   if (field === null) throw cliError('E_ARG_SCHEMA', `field 必须是 memory-review | conversation | technical，实得 ${JSON.stringify(payload?.field)}`)
   const project = projectOfPayload(payload)
-  const anchors = L.artifactAnchorVerdict(workspace, payload)
+  const anchors = L.artifactAnchorVerdict(workspace, payload, field)
   if (!anchors.ok) throw cliError(anchors.code, anchors.message, { problems: anchors.problems })
+  // 规范化后的锚点（闸给的），不是调用方给的那一串字面量。
+  const markSpec = { ...payload, report_path: anchors.report_rel }
+  if (typeof payload?.findings_path === 'string' && payload.findings_path.trim() !== '') markSpec.findings_path = anchors.findings_rel
+  if (Array.isArray(payload?.artifact_paths)) markSpec.artifact_paths = anchors.artifact_rels
 
   const result = L.localTransaction(teamDir, { day, field, at, sessionId: ctx.sessionId, forceRecover: ctx.args.forceRecover, waitMs: ctx.waitMs }, (current) => {
     const snapshot = typeof payload.snapshot === 'string' && payload.snapshot.trim() !== '' ? payload.snapshot.trim() : (current?.snapshot ?? 'v0')
     const state = current ?? L.emptyLocalState({ project, day, snapshot, at })
     const next = { ...state, updated_at: at }
-    next[field] = L.applyMark(state[field], payload, at)
+    next[field] = L.applyMark(state[field], markSpec, at)
     return { ok: true, state: next }
   })
   if (!result.ok) throw cliError(result.code, result.message, { path: result.path })

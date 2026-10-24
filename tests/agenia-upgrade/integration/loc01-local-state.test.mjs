@@ -24,8 +24,15 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════
  * 四格 **六条输入**（`want` 照契约 §12 手写，**不从实现反推**）—— 每一条守一条腿：
  *
- *   `L1:A` `claim → mark`（`conversation`）：
- *        `state: 'done'` · 产物锚点逐项落在节点上（`report_sha256` **必须等于报告盘上字节的 SHA256**，
+ * 🔴 **`L1` 的两个节点是 `technical`**（三个节点里**唯一**需要 findings 产物的那一个）：
+ *    报告与 findings 都是**真的写在盘上的两份文件**，`report_sha256` / `findings_set_sha256` 都由它们算出来
+ *    （后者走 `support/verify-recompute.mjs::q10Digest` —— 测试侧**第二份**实现，不经被测模块）。
+ *    本格**不喂任何手写摘要**：一个伪造的 64 hex 能过今天的闸，那正是这条腿本来会被骗的地方。
+ *    `conversation` / `memory_review` 那两个"只交报告"的字段归 `LOC-02`（同一批，按字段的必填规则）。
+ *
+ *   `L1:A` `claim → mark`（`technical`）：
+ *        `state: 'done'` · 五个产物锚点逐项落在节点上（`report_sha256` **必须等于报告盘上字节的 SHA256**，
+ *        `findings_set_sha256` 必须等于那三条发现算出来的值，`findings_count` 必须是**真条数**，
  *        锚点来自产物、不来自回执自报 —— B3.1）· `claim` / `job_id` 仍指得出是哪一次派工 ·
  *        `liveness_at` 前进到**落地那一刻** · 兄弟两个节点一个字都不动 · `local-read` 说同一件事。
  *   `L1:B` **坏锚点反例**（同一个节点，换一个**与盘上字节不符**的 `report_sha256`）：
@@ -56,7 +63,7 @@
  *       ② `fail` 里丢掉 `reason`（写成固定的 `(没给原因)`）⇒ `L2:A` + `L2:B`（两条同住失败那一支）；
  *       ③ `mark` 不记锚点 ⇒ 只该 `L1:A` 翻面；
  *       ④ `mark` **不核锚点**（调用方说什么就是什么）⇒ 只该 `L1:B` 翻面；
- *       ⑤ `emptyNode()` 丢掉那 9 个键 ⇒ 五条输入一起翻（它切的是**所有节点共用的骨架**，没有更窄的切法）。
+ *       ⑤ `emptyNode()` 丢掉那 10 个键 ⇒ 五条输入一起翻（它切的是**所有节点共用的骨架**，没有更窄的切法）。
  *     向量是**先按契约推、跑完再对**；实测与期望不一致 ⇒ `KNIFE-WRONG-VECTOR`
  *     （一个变异体只证一格：多翻说明那一支与别的输入共用判据，少翻说明这刀没切到它）。
  *   · `STATE`：每条输入先核对**前置**（工作区是新的、状态文件**不在**）—— 前置不成立的话，
@@ -74,7 +81,8 @@
  *      ⚠️ `L2:A` 里 `report_path === null` 那一格是"**从没 mark 过**的空形状读数"，
  *      不是"失败必清锚点"的判据 —— 别把它的绿读成后者（评审 `P8`：这条断言在它自己的步骤里恒真）。
  *   4. **`artifact_paths` 不是锚点**（只是一串自报路径）：锚点只认 `report_sha256` 与**盘上字节**的比对；
- *      `findings_set_sha256` 的**内容语义**归 `receipt-check` / `VRF-02`，本格只判"原样记下"。
+ *      `findings_set_sha256` 的**内容语义**归 `receipt-check` / `VRF-02`；本格判的是"抄下来的值 =
+ *      那三条发现按 Q10 算出来的值"（喂进去的不是手写常量，见 `readings.fed_digests`）。
  *   5. **不判** `local-receipt-set`（回执登记那一支）、不判 `health` / `receipt-check` 的判词。
  *   6. **不判**锁的实现与原子写方式（`E_LOCK_*` / `wx` / `rename` 是 `STO-*` 的事）：
  *      `L3:A` 只判"两个真子进程同时 claim 之后**盘上那份文件**是什么样"。
@@ -84,6 +92,8 @@
  *      它的**非恒真性**由同一跑里的两条断言合起来成立 —— `L4:A` 的 absent（exit 7 / 码 / 点名路径 / 盘上没有文件）
  *      与 `L1:A` 的 present（`readAgrees` 里的 `read.ok`）。`readings.absent_vs_present` 是这两条的读数，
  *      不是独立证据（评审 `P5` 点过：别把它当第三条）。
+ *   9. **按字段的必填规则不在本格**（`technical` 要 findings、`memory_review` / `conversation` 只要报告）：
+ *      那一面归同一批的 `LOC-02`；本格把 `L1` 的节点放在 `technical` 上，正是因为它要 findings 产物。
  */
 import { before, describe, test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -93,8 +103,8 @@ import { pathToFileURL } from 'node:url'
 import { ENV, FROZEN } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, sha256File, sha256Text, stagingReadings } from '../support/evidence.mjs'
 import { canonical, ensureMarkedDir } from '../support/root-guard.mjs'
-import { fixtureDir } from '../support/verify-recompute.mjs'
-import { runCliAsync, runLocal, stagingExists, stagingPath, writeFixture } from '../support/sut.mjs'
+import { fixtureDir, q10Digest } from '../support/verify-recompute.mjs'
+import { loadStagedModule, runCliAsync, runLocal, stagingExists, stagingPath, writeFixture } from '../support/sut.mjs'
 
 before(() => {
   preflight()
@@ -118,9 +128,10 @@ const T_FAIL_PADDED = '2026-10-23T21:33:00+08:00'
 /** 六条输入各自的派工 id（**互不相同** —— `L3:A` 那两条要能证明"各自指得出哪次派工"）。 */
 const JOB_CONV = 'job-loc01-conv-0001'
 const JOB_TECH = 'job-loc01-tech-0002'
+const JOB_TECH_MARK = 'job-loc01-tech-0003'
 const JOB_CONV2 = 'job-loc01-conv-0004'
 const JOB_TECH2 = 'job-loc01-tech-0005'
-const JOB_CONV_B = 'job-loc01-conv-0006'
+const JOB_TECH_BAD = 'job-loc01-tech-0006'
 const JOB_TECH_B = 'job-loc01-tech-0007'
 
 /** 失败原因（**原文**判它是"被留住"还是"被换成别的话"）。 */
@@ -129,21 +140,57 @@ const REASON_TECH = '子进程退出 1：抓不到会话包（attempt 1，10:5x 
 const REASON_PADDED = '   子进程退出 1：抓不到会话包（attempt 2）\n  '
 const REASON_PADDED_TRIMMED = REASON_PADDED.trim()
 
-/** `L1` 的产物（相对**工作区**；`report_sha256` 由本文件自己从常量正文算出来 —— 不经被测对象）。 */
-const REPORT_TEXT = '# 会话评审报告（LOC-01 的产物）\n\n窗口：2026-10-22 00:00 – 24:00。\n三行正文。\n'
-const REPORT_REL = '.team/retro/2026-10-23/会话评审.md'
-const FINDINGS_REL = '.team/retro/2026-10-23/会话评审发现.json'
+/**
+ * `L1` 的产物（相对**工作区**）：**真的写到盘上的两份文件**。
+ * `report_sha256` = 报告正文的 SHA256；`findings_set_sha256` = 三条发现按 Q10 算出来的值
+ * （`support/verify-recompute.mjs::q10Digest`）—— 两个都由本文件自己算，不经被测对象、也不是手写常量。
+ */
+const REPORT_TEXT = '# 技术评审报告（LOC-01 的产物）\n\n窗口：2026-10-22 00:00 – 24:00。\n三行正文。\n'
+const REPORT_REL = '.team/retro/2026-10-23/技术评审.md'
+const FINDINGS_REL = '.team/retro/2026-10-23/技术评审.findings.json'
 const EXPECT_REPORT_SHA = sha256Text(REPORT_TEXT)
-/** `L1:B` 的坏锚点：64 hex，且**故意不等于**报告盘上字节的 SHA256。 */
+/** 三条**真的**发现（形状照 `lib/receipt.mjs::parseFindings` 吃的那个产物）。 */
+const FINDINGS_ENTRIES = [
+  {
+    id: 'LOC1-1',
+    title: '报告窗口与节点绑的日子对不上',
+    severity: 'P2',
+    evidence: [{ kind: 'file', ref: REPORT_REL }],
+    summary: '窗口写的是 10-22，本地节点绑的是 10-23。',
+  },
+  {
+    id: 'LOC1-2',
+    title: '产物路径混用两种写法',
+    severity: 'P3',
+    evidence: [{ kind: 'cmd', ref: 'agenia-local.mjs --op local-mark --field technical' }],
+    summary: '同一份产物在文档里写过反斜杠，落盘用的是正斜杠。',
+  },
+  {
+    id: 'LOC1-3',
+    title: '重试没有换 attempt',
+    severity: 'P3',
+    evidence: [{ kind: 'log', ref: 'state/local/2026-10-23.json' }],
+    summary: '第二次派工仍写成 attempt 1，claim 痕迹指不出是第几次。',
+  },
+]
+const EXPECT_SET_SHA = q10Digest(FINDINGS_ENTRIES)
+/** findings 产物的盘上字节（它自己声明 `report_sha256` 与 `findings_set_sha256`，与真实作业产物同形）。 */
+const FINDINGS_TEXT = `${JSON.stringify({
+  schema: 1,
+  day: DAY,
+  report_path: REPORT_REL,
+  report_sha256: EXPECT_REPORT_SHA,
+  generated_at: '2026-10-23T21:05:00+08:00',
+  findings: FINDINGS_ENTRIES,
+  findings_set_sha256: EXPECT_SET_SHA,
+}, null, 2)}\n`
+/** `L1:B` 的坏锚点：64 hex，且**故意不等于**报告盘上字节的 SHA256（这一腿要喂的**就是**一个错锚点）。 */
 const BAD_REPORT_SHA = '0badc0de'.repeat(8)
-/** `findings_set_sha256` 的**内容语义**不在这一格（那是 `receipt-check` / `VRF-02` 的事）；
- *  这里只判"它被原样记下来" ⇒ 用一个显式常量，别拿文件字节的哈希去冒充发现集哈希。 */
-const FIXED_SET_SHA = '7f'.repeat(32)
-const ART_CONV = {
+const ART_TECH = {
   report_path: REPORT_REL,
   findings_path: FINDINGS_REL,
-  findings_set_sha256: FIXED_SET_SHA,
-  findings_count: 0,
+  findings_set_sha256: EXPECT_SET_SHA,
+  findings_count: FINDINGS_ENTRIES.length,
   artifact_paths: [REPORT_REL, FINDINGS_REL],
 }
 
@@ -254,7 +301,7 @@ function writeArtifacts(ws) {
   const findingsAbs = path.join(ws, FINDINGS_REL.split('/').join(path.sep))
   mkdirSync(path.dirname(reportAbs), { recursive: true })
   writeFileSync(reportAbs, REPORT_TEXT, 'utf8')
-  writeFileSync(findingsAbs, `${JSON.stringify({ findings: [], note: 'LOC-01 的产物（零条发现）' }, null, 2)}\n`, 'utf8')
+  writeFileSync(findingsAbs, FINDINGS_TEXT, 'utf8')
   return { reportAbs, findingsAbs }
 }
 
@@ -483,8 +530,8 @@ export function readOutputOf(doc, statePath) {
  * ②「fail 丢掉 reason」：只有失败那一支判 `failure_reason` 的取值 ⇒ `L2:A` + `L2:B`（两条同住一格的输入一起翻）。
  * ③「mark 不记锚点」：只有 `L1:A` 判 mark 的产物；`L1:B` 的 mark 在**核锚点那一步就被拒**，走不到赋值 ⇒ 只翻 `L1:A`。
  * ④「mark 不核锚点」：只有 `L1:B` 喂坏 hash ⇒ 只翻 `L1:B`（`L1:A` 的 hash 是对的，核了也过）。
- * ⑤「`emptyNode()` 丢掉那 9 个键」：它切的是**所有节点共用的骨架** ⇒ 每一条读节点键的输入都会翻
- *    （`L1:A`/`L1:B`/`L2:A`/`L3:A`/`L4:A`）；`L2:B` 只读 `state` / `failure_reason` / claim 痕迹，不看那 9 个键 ⇒ 它是唯一幸存的那条。
+ * ⑤「`emptyNode()` 丢掉那 10 个键」：它切的是**所有节点共用的骨架** ⇒ 每一条读节点键的输入都会翻
+ *    （`L1:A`/`L1:B`/`L2:A`/`L3:A`/`L4:A`）；`L2:B` 只读 `state` / `failure_reason` / claim 痕迹，不看那 10 个键 ⇒ 它是唯一幸存的那条。
  */
 const KNIVES = [
   {
@@ -532,10 +579,10 @@ const KNIVES = [
   },
   {
     id: 'K5-EMPTY-NODE-SKELETON',
-    title: '刀⑤ 空节点丢掉那 9 个键（`emptyNode()` 只剩 claim/state/job_id/liveness_at/failure_reason 五个）',
+    title: '刀⑤ 空节点丢掉那 10 个键（`emptyNode()` 只剩 claim/state/job_id/liveness_at/failure_reason 五个）',
     find: `    report_path: null, report_sha256: null, findings_path: null, findings_set_sha256: null, findings_count: null,
     receipt_path: null, receipt_sha256: null, receipt_version: null, ticket_ids: [], artifact_paths: [],`,
-    replace: `    // 刀⑤：剩下那 9 个键整段不写（空节点退回"只有 5 个键"的形状）`,
+    replace: `    // 刀⑤：剩下那 10 个键整段不写（空节点退回"只有 5 个键"的形状）`,
     want: ['L1:A', 'L1:B', 'L2:A', 'L3:A', 'L4:A'],
   },
 ]
@@ -546,37 +593,37 @@ const KNIVES = [
 const CELLS = [
   {
     key: 'L1',
-    title: 'claim → mark（成功一腿 + 坏锚点一腿）',
+    title: 'claim → mark（成功一腿 + 坏锚点一腿；节点是 `technical` —— 唯一要 findings 产物的字段）',
     inputs: [
       {
         id: 'A',
-        title: 'claim → mark：节点落到 done，产物锚点原样记下',
+        title: 'claim → mark：节点落到 done，五个产物锚点原样记下（报告与 findings 都是盘上真文件）',
         steps: [
-          { kind: 'claim', field: 'conversation', attempt: 1, jobId: JOB_CONV, at: T_CLAIM },
-          { kind: 'mark', field: 'conversation', at: T_MARK, payload: ART_CONV, reportSha: EXPECT_REPORT_SHA, writeArtifacts: true },
+          { kind: 'claim', field: 'technical', attempt: 1, jobId: JOB_TECH_MARK, at: T_CLAIM },
+          { kind: 'mark', field: 'technical', at: T_MARK, payload: ART_TECH, reportSha: EXPECT_REPORT_SHA, writeArtifacts: true },
         ],
         check(doc, read) {
-          const node = doc?.conversation
+          const node = doc?.technical
           return compacts([
             doc === null ? { code: 'LOC-NO-FILE', message: 'claim → mark 之后读不到状态文件 —— 写面没落盘' } : null,
             eq('LOC-STATE-SHAPE', doc?.schema, 1, 'schema'),
             eq('LOC-STATE-SHAPE', doc?.day, DAY, 'day'),
             eq('LOC-STATE-SHAPE', doc?.project, PROJECT, 'project'),
-            isObject(node) ? eq('LOC-RUNNING', node.state, 'done', 'claim → mark 之后该节点必须是 done') : { code: 'LOC-NODE-SHAPE', message: 'conversation 节点不是一个对象' },
-            isObject(node) ? eq('LOC-DONE-ANCHOR', node.report_path, ART_CONV.report_path, 'done 节点必须记下报告路径（相对工作区）') : null,
+            isObject(node) ? eq('LOC-RUNNING', node.state, 'done', 'claim → mark 之后该节点必须是 done') : { code: 'LOC-NODE-SHAPE', message: 'technical 节点不是一个对象' },
+            isObject(node) ? eq('LOC-DONE-ANCHOR', node.report_path, ART_TECH.report_path, 'done 节点必须记下报告路径（相对工作区）') : null,
             isObject(node) ? eq('LOC-DONE-ANCHOR', node.report_sha256, EXPECT_REPORT_SHA, 'report_sha256 必须等于**报告盘上字节**的 SHA256（锚点来自作业产物，不来自回执自报）') : null,
-            isObject(node) ? eq('LOC-DONE-ANCHOR', node.findings_path, ART_CONV.findings_path, 'done 节点必须记下 findings 路径') : null,
-            isObject(node) ? eq('LOC-DONE-ANCHOR', node.findings_set_sha256, ART_CONV.findings_set_sha256, 'findings_set_sha256 必须原样记下') : null,
-            isObject(node) ? eq('LOC-DONE-ANCHOR', node.findings_count, ART_CONV.findings_count, 'findings_count 必须原样记下（这里是 0，不是"没给"）') : null,
-            isObject(node) ? eq('LOC-DONE-ANCHOR', node.artifact_paths, ART_CONV.artifact_paths, 'artifact_paths 必须原样记下（那是**抄写**，不是锚点核对）') : null,
+            isObject(node) ? eq('LOC-DONE-ANCHOR', node.findings_path, ART_TECH.findings_path, 'done 节点必须记下 findings 路径') : null,
+            isObject(node) ? eq('LOC-DONE-ANCHOR', node.findings_set_sha256, EXPECT_SET_SHA, 'findings_set_sha256 必须等于**那三条发现按 Q10 算出来**的值（不是手写常量、不是文件字节哈希）') : null,
+            isObject(node) ? eq('LOC-DONE-ANCHOR', node.findings_count, FINDINGS_ENTRIES.length, 'findings_count 必须是**真条数**（三条发现 ⇒ 3）') : null,
+            isObject(node) ? eq('LOC-DONE-ANCHOR', node.artifact_paths, ART_TECH.artifact_paths, 'artifact_paths 必须原样记下（那是**抄写**，不是锚点核对）') : null,
             isObject(node) ? eq('LOC-DONE-ANCHOR', node.failure_reason, null, 'done 的节点不许留着失败原因') : null,
             isObject(node) ? instant('LOC-DONE-ANCHOR', node.liveness_at, T_MARK, 'done 的 liveness_at 必须是**落地那一刻**（不是 claim 那一刻）') : null,
-            ...claimTraceProblems('conversation.claim', node, { jobId: JOB_CONV, attempt: 1, at: T_CLAIM }),
-            ...emptyNodeProblems('technical', doc?.technical),
+            ...claimTraceProblems('technical.claim', node, { jobId: JOB_TECH_MARK, attempt: 1, at: T_CLAIM }),
+            ...emptyNodeProblems('conversation', doc?.conversation),
             ...emptyNodeProblems('memory_review', doc?.memory_review),
             ...readAgrees('L1:A', doc, read),
-            eq('LOC-READ', read?.summary?.nodes?.conversation?.state, 'done', 'local-read 的摘要里 conversation 也必须是 done'),
-            eq('LOC-READ', read?.summary?.nodes?.conversation?.job_id, JOB_CONV, 'local-read 的摘要里 conversation 的 job_id'),
+            eq('LOC-READ', read?.summary?.nodes?.technical?.state, 'done', 'local-read 的摘要里 technical 也必须是 done'),
+            eq('LOC-READ', read?.summary?.nodes?.technical?.job_id, JOB_TECH_MARK, 'local-read 的摘要里 technical 的 job_id'),
           ])
         },
       },
@@ -584,14 +631,14 @@ const CELLS = [
         id: 'B',
         title: '坏锚点反例：report_sha256 与报告盘上字节不符 ⇒ 拒 E_ARG_HASH，节点不许变 done',
         steps: [
-          { kind: 'claim', field: 'conversation', attempt: 1, jobId: JOB_CONV_B, at: T_CLAIM_B },
-          { kind: 'mark', field: 'conversation', at: T_BADMARK, payload: ART_CONV, reportSha: BAD_REPORT_SHA, writeArtifacts: true, expect: 'reject', rejectCode: 'E_ARG_HASH' },
+          { kind: 'claim', field: 'technical', attempt: 1, jobId: JOB_TECH_BAD, at: T_CLAIM_B },
+          { kind: 'mark', field: 'technical', at: T_BADMARK, payload: ART_TECH, reportSha: BAD_REPORT_SHA, writeArtifacts: true, expect: 'reject', rejectCode: 'E_ARG_HASH' },
         ],
         check(doc, read) {
-          const node = doc?.conversation
+          const node = doc?.technical
           return compacts([
             doc === null ? { code: 'LOC-NO-FILE', message: '坏锚点被拒之后状态文件不见了 —— 它该保持 claim 写完的那一份' } : null,
-            isObject(node) ? eq('LOC-BAD-HASH', node.state, 'running', '坏锚点被拒之后，节点必须仍是 running（不许变成 done）') : { code: 'LOC-NODE-SHAPE', message: 'conversation 节点不是一个对象' },
+            isObject(node) ? eq('LOC-BAD-HASH', node.state, 'running', '坏锚点被拒之后，节点必须仍是 running（不许变成 done）') : { code: 'LOC-NODE-SHAPE', message: 'technical 节点不是一个对象' },
             isObject(node) ? eq('LOC-BAD-HASH', node.report_path, null, '被拒的 mark 不许在节点上留下报告路径') : null,
             isObject(node) ? eq('LOC-BAD-HASH', node.report_sha256, null, '被拒的 mark 不许在节点上留下 report_sha256（更不许留下**错的那个**）') : null,
             isObject(node) ? eq('LOC-BAD-HASH', node.findings_path, null, '被拒的 mark 不许在节点上留下 findings 路径') : null,
@@ -599,9 +646,9 @@ const CELLS = [
             isObject(node) ? eq('LOC-BAD-HASH', node.findings_count, null, '被拒的 mark 不许在节点上留下 findings_count（连 0 都不许写 —— 那是落地的痕迹）') : null,
             isObject(node) ? eq('LOC-BAD-HASH', node.artifact_paths, [], '被拒的 mark 不许写 artifact_paths') : null,
             isObject(node) ? instant('LOC-BAD-HASH', node.liveness_at, T_CLAIM_B, '被拒之后 liveness_at 必须还是 claim 那一刻（拒绝不是落地）') : null,
-            ...claimTraceProblems('conversation.claim', node, { jobId: JOB_CONV_B, attempt: 1, at: T_CLAIM_B }),
+            ...claimTraceProblems('technical.claim', node, { jobId: JOB_TECH_BAD, attempt: 1, at: T_CLAIM_B }),
             ...readAgrees('L1:B', doc, read),
-            eq('LOC-BAD-HASH', read?.summary?.nodes?.conversation?.state, 'running', 'local-read 的摘要里也必须是 running'),
+            eq('LOC-BAD-HASH', read?.summary?.nodes?.technical?.state, 'running', 'local-read 的摘要里也必须是 running'),
           ])
         },
       },
@@ -779,7 +826,19 @@ async function runInputProduction(cellKey, input) {
   for (const step of input.steps) {
     if (step.kind === 'mark' && step.writeArtifacts) {
       const files = writeArtifacts(ws)
-      row.artifacts = { report: files.reportAbs, report_bytes: readFileSync(files.reportAbs).length, report_sha256_on_disk: sha256File(files.reportAbs), findings: files.findingsAbs, fed_sha256: step.reportSha ?? EXPECT_REPORT_SHA }
+      row.artifacts = {
+        report: files.reportAbs,
+        report_bytes: readFileSync(files.reportAbs).length,
+        report_sha256_on_disk: sha256File(files.reportAbs),
+        findings: files.findingsAbs,
+        findings_bytes: readFileSync(files.findingsAbs).length,
+        findings_sha256_on_disk: sha256File(files.findingsAbs),
+        findings_entries: FINDINGS_ENTRIES.length,
+        findings_set_sha256_fed: step.payload.findings_set_sha256,
+        findings_count_fed: step.payload.findings_count,
+        fed_sha256: step.reportSha ?? EXPECT_REPORT_SHA,
+        note: '喂给 `local-mark` 的 `findings_set_sha256` 是**那三条发现的 Q10 摘要**，与 findings 文件字节的 SHA256 不是同一个值（两个都记在这儿，别互相冒充）',
+      }
     }
     if (step.kind === 'claim-parallel') {
       const before = fileShaOrNull(statePathOf(ws))
@@ -871,6 +930,38 @@ describe('integration · local state (LOC) · F-156 三个本地节点有确定�
       }
       if (!process.env[ENV.NOW_FILE]) {
         push('LOC-CLOCK', 'AGENIA_NOW_FILE 没设置 —— 这一票的时间读数全靠注入式时钟（运行根会写一行）')
+      }
+
+      // ── ⓪' 喂给 `local-mark` 的两个 64 hex 是**算出来的**，不是手写的 ─────────────────
+      /**
+       * `report_sha256` = 报告正文的 SHA256（`sha256Text`）；`findings_set_sha256` = 三条发现的 Q10 摘要
+       * （`support/verify-recompute.mjs::q10Digest`，测试侧**第二份**实现）。
+       * 这里再拿**仓库里那把尺子**（`lib/receipt.mjs::findingsSetSha256`）核一次：
+       * 两个值不同 ⇒ 我造的 findings 产物在 `VRF-02` / `receipt-check` 眼里不是同一份，这一格的读数就没有意义。
+       */
+      {
+        const receipt = await loadStagedModule('lib/receipt.mjs', ['findingsSetSha256'])
+        const stagedValue = typeof receipt.mod?.findingsSetSha256 === 'function'
+          ? receipt.mod.findingsSetSha256(FINDINGS_ENTRIES)
+          : null
+        rec.readings.fed_digests = {
+          report_sha256: { value: EXPECT_REPORT_SHA, from: 'sha256Text(REPORT_TEXT)', text_bytes: Buffer.byteLength(REPORT_TEXT, 'utf8') },
+          findings_set_sha256: {
+            value: EXPECT_SET_SHA,
+            from: 'q10Digest(FINDINGS_ENTRIES)（`support/verify-recompute.mjs`，测试侧第二份实现）',
+            entries: FINDINGS_ENTRIES.length,
+            findings_file_bytes_sha256: sha256Text(FINDINGS_TEXT),
+            staged_lib_value: stagedValue,
+            staged_lib_file: receipt.mod === null ? null : stagingPath('lib/receipt.mjs'),
+            staged_lib_note: stagedValue === null
+              ? `判不了（${[...(receipt.missing ?? []), ...(receipt.errors ?? [])].join(' | ')}）：只记测试侧那个值`
+              : '两个独立实现逐字相同',
+          },
+          why: '本格**没有任何手写摘要**：两个值都由真实内容算出来（一个伪造的 64 hex 照样能让旧版这一格全绿 —— 那正是这一条的来历）',
+        }
+        if (stagedValue !== null && stagedValue !== EXPECT_SET_SHA) {
+          push('LOC-SET-DIGEST-SELFCHECK', `测试侧算出的 findings_set_sha256=${EXPECT_SET_SHA} ≠ 仓库 lib/receipt.mjs::findingsSetSha256=${stagedValue} —— 两套 Q10 实现不一致，喂进去的那个摘要不能代表这三条发现`)
+        }
       }
 
       // ── ① 生产臂：六条输入，每条一个**新**工作区；L3:A 那一条是真并发 ──────────────
@@ -1014,7 +1105,10 @@ describe('integration · local state (LOC) · F-156 三个本地节点有确定�
         failure_does_not_clear_anchors: '**不判"失败会不会清掉上一轮的锚点"**（评审 `P8`）：`applyFailure` 今天只写 state / failure_reason / liveness_at，'
           + '所以 `done → claim → fail` 会把旧 report_path 带进 failed；本格没走那条路径。`L2:A` 里 `report_path === null` 是"**从没 mark 过**的空形状读数"，不是"失败必清锚点"的判据。',
         additive_keys: '加性键（`receipt_versions` / `failure_history`）**不判名字**（`lib/local-state.mjs:105` 明写"测试不许断言名字"）—— 空节点只判 15 个必填键。',
-        artifact_paths: '`artifact_paths` 不是锚点（只是自报路径）：锚点只认 `report_sha256` 与**盘上字节**的比对；`findings_set_sha256` 的**内容语义**归 `receipt-check` / `VRF-02`，本格只判"原样记下"。',
+        artifact_paths: '`artifact_paths` 不是锚点（只是自报路径）：锚点只认 `report_sha256` 与**盘上字节**的比对；`findings_set_sha256` 的**内容语义**归 `receipt-check` / `VRF-02`，本格只判"抄下来的值 = 那三条发现算出来的值"。',
+        fed_digests: '本格喂的两个 64 hex **都是算出来的**：`report_sha256` 来自报告正文、`findings_set_sha256` 来自三条真实发现的 Q10 摘要（测试侧第二份实现，另用 `lib/receipt.mjs` 复核一次）。**没有任何手写摘要** —— 伪造的 64 hex 能过闸，那正是这条腿的来历。',
+        per_field_rule_not_here: '**按字段的必填规则不在本格**（老板 2026-10-24 的裁定：`technical` 要 findings，`memory_review` / `conversation` 只要报告）：'
+          + '本格把 `L1` 的节点放在 `technical` 上，是因为它是唯一需要 findings 产物的字段；另外两个字段的"只交报告 ⇒ `done`"归同一批的 `LOC-02`。',
         anchor_verification: '`L1:B` 锁的是**核对**（喂一个与盘上字节不符的 hash ⇒ 必须拒 + 零写入），`L1:A` 锁的是**抄写**（记下的值等于盘上字节的 hash）—— 两条合起来才等于 §12.2 那半句。',
         reason_trim: '`failure_reason` 的口径 = **去掉首尾空白后逐字**（`lib/local-state.mjs:444` 的 `.trim()`）：`L2:B` 喂带首尾空白的原文，判存下来的是 trim 之后那一段（长度也要对）。',
         clock: '时间全部取**注入式时钟**（`AGENIA_NOW_FILE`），比的是**同一个时刻**（`Date.parse`），不是同一个写法。',

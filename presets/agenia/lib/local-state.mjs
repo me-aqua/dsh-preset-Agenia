@@ -359,40 +359,185 @@ function sha256File(file) {
 }
 
 /**
- * 作业产物的锚点判定（`local-mark` 用）。
+ * 哪几个字段**必须**交 findings 三件套（§12.2 的按字段表；老板 2026-10-24 的裁定"选项 1"）。
  *
- * 判据：`report_path` / `findings_path` **必须在工作区里真的存在**，且 `report_sha256`
- * 与报告**盘上字节**的哈希逐字相同 —— 锚点来自产物，不来自回执自报（B3.1 的反例就是"改报告一字"）。
- *
- * @param {string} workspace 工作区根（报告是**相对工作区**的路径）
- * @param {{report_path?:string, report_sha256?:string, findings_path?:string, findings_set_sha256?:string, findings_count?:unknown, artifact_paths?:unknown}} spec
- * @returns {{ok:boolean, code:string|null, message:string, report_abs:string|null, findings_abs:string|null,
- *            actual_report_sha256:string|null, problems:Array<{code:string,detail:string}>}}
+ * 只有 `technical` 有发现集产物（`job-briefs/technical-review.md:13`）；会话评审与记忆复核的
+ * 作业书里 `findings` 零处出现 ⇒ 逼它们交，等于逼人编一份桩文件加一个 64 位摘要。
  */
-export function artifactAnchorVerdict(workspace, spec = {}) {
+export const FIELD_REQUIRES_FINDINGS = Object.freeze({
+  memory_review: false,
+  conversation: false,
+  technical: true,
+})
+
+/** 节点里存的那**一种**拼法：工作区相对、正斜杠、带 `.team/` 那一层。 */
+const TEAM_PREFIX = '.team/'
+
+/** `abs` 是不是落在 `<工作区>/.team/` **里面**（本平台不分大小写：Windows 上 `.TEAM` 与 `.team` 是同一个目录）。 */
+function insideTeam(teamRoot, abs) {
+  const delta = path.relative(teamRoot, abs)
+  if (delta === '' || path.isAbsolute(delta)) return false
+  return delta !== '..' && !delta.startsWith(`..${path.sep}`)
+}
+
+/**
+ * 一个锚点（**任何拼法**）→ `{abs, rel, reason, elsewhere}`。
+ *
+ * 🔴 判的是**位置**，不是拼法（老板 2026-10-24 修正裁定）：只要解析之后落在 `<工作区>/.team/` 里就收，
+ * 存进节点的永远是规范拼法 `.team/<…>/<file>`（正斜杠）—— 状态文件里只有一种写法，哪怕调用方用另一种。
+ *
+ * 两种相对基准**都试**（工作区相对优先，`.team` 相对兜底）：同一串 `retro/x.md` 既可能是
+ * `<WS>/retro/x.md`，也可能是 `<WS>/.team/retro/x.md` —— 哪一读落在 `.team/` 里，就用哪一读。
+ * 两读**都**落在 `.team/` 里时（`.team/…` 这种拼法：工作区相对那一读是 `<WS>/.team/…`，`.team` 相对那一读
+ * 是 `<WS>/.team/.team/…`）**由存在性消歧** —— 盘上真有那一份赢；两读都不在盘上 ⇒ `E_DATA_MISSING`。
+ *
+ * 🔴 「在不在 `.team/` 里」在**本平台**（Windows）**不分大小写**：`e:\harness\.team\x.md` 与
+ * `E:\Harness\.team\x.md` 是同一个文件 ⇒ 同一格收下、存同一个规范形（`insideTeam()` 用 `path.relative`，
+ * 跟着平台的路径语义走，不是字符串前缀比较）。
+ *
+ * · `reason === null` ⇒ 收（`abs` 是盘上那一份，`rel` 是规范拼法）；
+ * · `reason === 'outside_team'` ⇒ 两读都落不进 `.team/`（`README.md` 在**工作区根**、`../…`、工作区外的绝对路径）；
+ * · `reason === 'missing'` ⇒ 落点算得出来（`abs` 是第一读），但盘上没有这个文件。
+ *   两件都报 `E_DATA_MISSING` —— "在外 / 缺"是同一个诊断；`reason` 只用来把话说清。
+ * · `elsewhere` = **另一读在盘上真的那一份**（有才给）：用来把"文件在，但不在 `.team/` 里"这句话说出来 ——
+ *   否则读的人只会看到"不在盘上"，而那份文件明明就在工作区根上（`RCP-03` / `VRF-02` 那种现场）。
+ */
+function anchorResolution(workspace, rel) {
+  if (!isFilledString(rel)) return { abs: null, rel: null, reason: 'empty', elsewhere: null }
+  const root = path.resolve(workspace)
+  const teamRoot = path.join(root, '.team')
+  const text = String(rel).trim().replace(/\\/g, path.sep)
+  const candidates = []
+  const outside = []
+  for (const base of [root, teamRoot]) {
+    const abs = path.resolve(base, text)
+    if (candidates.includes(abs) || outside.includes(abs)) continue
+    if (insideTeam(teamRoot, abs)) candidates.push(abs)
+    else outside.push(abs)
+  }
+  const onDisk = (list) => list.find((abs) => existsSync(abs) && statSync(abs).isFile()) ?? null
+  if (candidates.length === 0) {
+    const hit = onDisk(outside)
+    return { abs: hit ?? outside[0] ?? null, rel: null, reason: 'outside_team', elsewhere: hit }
+  }
+  const hit = onDisk(candidates)
+  if (hit === null) return { abs: candidates[0], rel: null, reason: 'missing', elsewhere: onDisk(outside) }
+  // 规范形由 `.team` 根拼出来（不从调用方那串字里截）：第一段永远是 `.team`，写 `.TEAM/…` 也存成 `.team/…`。
+  const canonical = `${TEAM_PREFIX}${path.relative(teamRoot, hit).split(path.sep).join('/')}`
+  return { abs: hit, rel: canonical, reason: null, elsewhere: null }
+}
+
+/** findings 文件里 `findings` 数组的条数；读不出来或没有那个数组 ⇒ `null`（调用方报 `E_DATA_CORRUPT`）。 */
+function findingsCountInFile(file) {
+  let doc = null
+  try {
+    doc = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+  return Array.isArray(doc?.findings) ? doc.findings.length : null
+}
+
+/**
+ * 作业产物的锚点判定（`local-mark` 用）。**按字段**（§12.2），三条规则：
+ *
+ * ① `report_path` / `report_sha256` —— 三个字段都要。`report_path` **任何拼法都收**，只要它落在
+ *    `<工作区>/.team/` 里（见 `anchorResolution`）；落不进去、或者盘上没有 ⇒ **同一个** `E_DATA_MISSING`。
+ *    收下之后节点里存的是**规范拼法** `.team/<…>/<file>`（`report_rel`）。
+ * ② findings 三件套（`findings_path` / `findings_set_sha256` / `findings_count`）——
+ *    `technical` **必填**（缺 ⇒ `E_ARG_SCHEMA`）；`memory_review` / `conversation` **可选**：
+ *    不给 ⇒ 三个锚点留 `null`；给了 ⇒ 按同一套规则验（"要么三件都给、要么都不给"）。
+ * ③ `findings_count` 必须**等于产物里 `findings` 数组的条数** —— 只写不读的计数会让
+ *    `0` 变成"查过了、没发现问题"，而 `0` 恰好是最容易被这么读的那个数。
+ *
+ * `artifact_paths` **不是锚点**（没有摘要、落地之后没有任何一扇门再读它），但**每一格都必须是
+ * `<WS>/.team/` 里一个真文件** —— 落点在外、或者盘上没有这个文件，都是**同一个** `E_DATA_MISSING`；
+ * 收下之后同样按规范拼法写回（`artifact_rels`）—— 一串锚点里混进第二种写法，等于把"锚点长什么样"又开一个口子。
+ *
+ * ⚠️ 这里**不**复算 `findings_set_sha256` 的内容（Q10 摘要归 `receipt-check` / `VRF-02`）——
+ * 本函数只判形状与条数，以及报告锚点与报告**盘上字节**是否逐字相同。
+ *
+ * @param {string} workspace 工作区根（锚点最终都落在它下面的 `.team/`）
+ * @param {{report_path?:string, report_sha256?:string, findings_path?:string, findings_set_sha256?:string, findings_count?:unknown, artifact_paths?:unknown}} spec
+ * @param {string|null} field 节点键名（`memory_review` / `conversation` / `technical`）—— 它决定 findings 是不是必填
+ * @returns {{ok:boolean, code:string|null, message:string, report_abs:string|null, findings_abs:string|null,
+ *            report_rel:string|null, findings_rel:string|null, artifact_rels:string[]|null,
+ *            actual_report_sha256:string|null, findings_count_in_artifact:number|null, problems:Array<{code:string,detail:string}>}}
+ */
+export function artifactAnchorVerdict(workspace, spec = {}, field = null) {
   const problems = []
   const bad = (code, detail) => problems.push({ code, detail })
-  const resolve = (rel) => {
-    if (!isFilledString(rel)) return null
-    const abs = path.resolve(workspace, String(rel).replace(/\//g, path.sep))
-    const root = path.resolve(workspace)
-    if (abs !== root && !abs.startsWith(`${root}${path.sep}`)) return null
-    return abs
+  // 没给字段名 / 不认识的字段名 ⇒ 按**最严**的那一档判（findings 必填）：宁可多要一样，
+  // 也不许因为少传一个参数就把 technical 的发现集漏过去。
+  const requiresFindings = FIELD_REQUIRES_FINDINGS[String(field ?? '')] !== false
+
+  // ── report_path：落点必须在 <工作区>/.team/ 里，且盘上真的有 ──
+  const report = anchorResolution(workspace, spec.report_path)
+  if (!isFilledString(spec.report_path)) {
+    bad('E_ARG_SCHEMA', `report_path 必填（报告路径是非空字符串），实得 ${JSON.stringify(spec.report_path)}`)
+  } else if (report.reason === 'outside_team') {
+    bad('E_DATA_MISSING', `report_path 必须解析到工作区的 .team/ 里面（收到的是 ${JSON.stringify(spec.report_path)}；工作区根下的文件、../… 与工作区外的绝对路径都不行）`)
+  } else if (report.reason === 'missing') {
+    const hint = report.elsewhere === null ? '' : `（盘上有一份同名文件 ${report.elsewhere}，但它在 .team/ 外面 —— 锚点必须落在 .team/ 里）`
+    bad('E_DATA_MISSING', `报告不在 .team/ 里：${report.abs}${hint}`)
   }
-  const reportAbs = resolve(spec.report_path)
-  const findingsAbs = resolve(spec.findings_path)
 
-  if (reportAbs === null) bad('E_ARG_SCHEMA', `report_path 必填且必须在工作区里（相对工作区、正斜杠），实得 ${JSON.stringify(spec.report_path)}`)
-  else if (!existsSync(reportAbs) || !statSync(reportAbs).isFile()) bad('E_DATA_MISSING', `报告不在盘上：${reportAbs}`)
-  if (findingsAbs === null) bad('E_ARG_SCHEMA', `findings_path 必填且必须在工作区里，实得 ${JSON.stringify(spec.findings_path)}`)
-  else if (!existsSync(findingsAbs) || !statSync(findingsAbs).isFile()) bad('E_DATA_MISSING', `findings 文件不在盘上：${findingsAbs}`)
+  // ── findings 三件套：按字段（technical 必填；另两个字段给了就同一套规则）──
+  const findingsGiven = isFilledString(spec.findings_path)
+  const setShaGiven = spec.findings_set_sha256 !== undefined && spec.findings_set_sha256 !== null
+  const countGiven = spec.findings_count !== undefined && spec.findings_count !== null
+  const findings = findingsGiven ? anchorResolution(workspace, spec.findings_path) : { abs: null, rel: null, reason: 'empty' }
+  let countInArtifact = null
+  if (!findingsGiven) {
+    if (requiresFindings) {
+      bad('E_ARG_SCHEMA', `${field ?? '这一场'} 必须交 findings 产物：findings_path / findings_set_sha256 / findings_count 三个都要（三个字段里只有 technical 有发现集）`)
+    } else if (setShaGiven || countGiven) {
+      const extra = [setShaGiven ? 'findings_set_sha256' : null, countGiven ? 'findings_count' : null].filter((k) => k !== null)
+      bad('E_ARG_SCHEMA', `findings 三个锚点要么都给、要么都不给（findings_path 没给，却给了 ${extra.join(' + ')}）—— 只给一半会在节点上留下一个没有产物的锚点`)
+    }
+  } else {
+    if (findings.reason === 'outside_team') {
+      bad('E_DATA_MISSING', `findings_path 必须解析到工作区的 .team/ 里面（收到的是 ${JSON.stringify(spec.findings_path)}）`)
+    } else if (findings.reason === 'missing') {
+      const hint = findings.elsewhere === null ? '' : `（盘上有一份同名文件 ${findings.elsewhere}，但它在 .team/ 外面 —— 锚点必须落在 .team/ 里）`
+      bad('E_DATA_MISSING', `findings 文件不在 .team/ 里：${findings.abs}${hint}`)
+    } else {
+      countInArtifact = findingsCountInFile(findings.abs)
+      if (countInArtifact === null) bad('E_DATA_CORRUPT', `findings 文件里没有 findings 数组（读不出来或形状不对）：${findings.abs}`)
+    }
+    if (!isSha(spec.findings_set_sha256)) bad('E_ARG_HASH', `findings_set_sha256 必须是 64 hex，实得 ${JSON.stringify(spec.findings_set_sha256)}`)
+    if (!Number.isInteger(spec.findings_count) || spec.findings_count < 0) {
+      bad('E_ARG_SCHEMA', `findings_count 必须是 ≥0 的整数，实得 ${JSON.stringify(spec.findings_count)}`)
+    } else if (countInArtifact !== null && spec.findings_count !== countInArtifact) {
+      bad('E_ARG_SCHEMA', `findings_count=${spec.findings_count} 与 findings 文件里的条数 ${countInArtifact} 对不上：${findings.abs}`)
+    }
+  }
+
+  // ── 报告摘要的形状 ──
   if (!isSha(spec.report_sha256)) bad('E_ARG_HASH', `report_sha256 必须是 64 hex，实得 ${JSON.stringify(spec.report_sha256)}`)
-  if (!isSha(spec.findings_set_sha256)) bad('E_ARG_HASH', `findings_set_sha256 必须是 64 hex，实得 ${JSON.stringify(spec.findings_set_sha256)}`)
-  if (!Number.isInteger(spec.findings_count) || spec.findings_count < 0) bad('E_ARG_SCHEMA', `findings_count 必须是 ≥0 的整数，实得 ${JSON.stringify(spec.findings_count)}`)
 
+  // ── artifact_paths：不是锚点（没有摘要、之后没有读者），但每一格都必须是 .team/ 里一个真文件（并按规范拼法写回）──
+  if (spec.artifact_paths !== undefined && spec.artifact_paths !== null && !Array.isArray(spec.artifact_paths)) {
+    bad('E_ARG_SCHEMA', `artifact_paths 必须是数组，实得 ${JSON.stringify(spec.artifact_paths)}`)
+  }
+  const artifactRels = []
+  for (const [i, rel] of (Array.isArray(spec.artifact_paths) ? spec.artifact_paths : []).entries()) {
+    if (!isFilledString(rel)) {
+      bad('E_ARG_SCHEMA', `artifact_paths[${i}] 必须是非空字符串路径，实得 ${JSON.stringify(rel)}`)
+      continue
+    }
+    const resolved = anchorResolution(workspace, rel)
+    if (resolved.rel === null) {
+      bad('E_DATA_MISSING', `artifact_paths[${i}] 必须解析到工作区的 .team/ 里面并且真的存在（这一格解析到 ${resolved.abs}），实得 ${JSON.stringify(rel)}`)
+      continue
+    }
+    artifactRels.push(resolved.rel)
+  }
+
+  // ── 最后才动盘上的字节：形状都对了，报告摘要必须与盘上字节逐字相同 ──
   let actual = null
   if (problems.length === 0) {
-    actual = sha256File(reportAbs)
+    actual = sha256File(report.abs)
     if (actual.toLowerCase() !== String(spec.report_sha256).trim().toLowerCase()) {
       bad('E_ARG_HASH', `report_sha256 与报告盘上字节对不上（登记 ${String(spec.report_sha256).slice(0, 12)}…，盘上 ${actual.slice(0, 12)}…）—— 锚点必须来自作业产物`)
     }
@@ -402,9 +547,13 @@ export function artifactAnchorVerdict(workspace, spec = {}) {
     ok: problems.length === 0,
     code: first?.code ?? null,
     message: first?.detail ?? '',
-    report_abs: reportAbs,
-    findings_abs: findingsAbs,
+    report_abs: report.abs,
+    findings_abs: findings.abs,
+    report_rel: report.rel,
+    findings_rel: findings.rel,
+    artifact_rels: artifactRels,
     actual_report_sha256: actual,
+    findings_count_in_artifact: countInArtifact,
     problems,
   }
 }

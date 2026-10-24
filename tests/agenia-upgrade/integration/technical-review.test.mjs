@@ -61,7 +61,8 @@ const finding = (id, over = {}) => ({
 const findingsFile = (over = {}) => ({
   schema: 1,
   day: DAY,
-  report_path: 'retro/2026-10-14/技术评审.md',
+  // 产物里声明的报告落点用**规范形**（`job-briefs/technical-review.md:28` 的例：必须带 `.team/` 那一层）。
+  report_path: '.team/retro/2026-10-14/技术评审.md',
   report_sha256: REPORT_SHA,
   generated_at: '2026-10-14T11:00:00+08:00',
   code_fingerprint: { before_sha256: 'c'.repeat(64), after_sha256: 'c'.repeat(64), equal: true },
@@ -108,13 +109,13 @@ const ticket = (reportSha = REPORT_SHA) => ({
   closed_at: null,
 })
 
-/** 把作业产物（报告 + findings）真写进测试工作区，并返回它们的真实哈希。 */
+/** 把作业产物（报告 + findings）真写进测试工作区的 `.team/` 下，并返回它们的真实哈希。 */
 function writeArtifacts(ws) {
-  const reportPath = path.join(ws, 'retro', DAY, '技术评审.md')
+  const reportPath = path.join(ws, '.team', 'retro', DAY, '技术评审.md')
   writeJson(path.join(path.dirname(reportPath), '.keep.json'), { note: 'mkdir 占位' })
   writeFileSync(reportPath, '# 技术评审（夹具）\n\n- F1：（夹具）一条发现\n- F2：（夹具）另一条发现\n', 'utf8')
   const reportSha = sha256File(reportPath)
-  const findingsPath = path.join(ws, 'retro', DAY, '技术评审.findings.json')
+  const findingsPath = path.join(ws, '.team', 'retro', DAY, '技术评审.findings.json')
   // 🔴 作业产物写的声明值必须是 **Q10 复算值**（`SET_SHA`，那份 2 条 finding 内容的真值）。
   //    以前这里写的是 `sha256Text(JSON.stringify(…))` —— 键没排序，是"自报值与内容不符"的一个形状，
   //    正是 `F-121` 要拒的（`receipt-check` 会读这份文件并自己复算）。

@@ -192,9 +192,10 @@ export const BATCH_N = ['DLY-01', 'DLY-02']
  *     `L3` **两个节点真并发 claim**（`conversation` + `technical` 两个真子进程）⇒ 谁都不许覆盖谁；
  *     `L4` **任何 claim 之前** `local-read` ⇒ `E_DATA_MISSING` + exit 7（缺 ≠ 坏 ≠ 空），
  *     且首个 claim 之后没被 claim 的两个节点以**文档里的空形状**（`unclaimed` + 15 个必填键）出现。
- *     外加阳性对照（照 `CONTRACT.md` §12 写的最小实现四格全成立）与**四把刀**
+ *     外加阳性对照（照 `CONTRACT.md` §12 写的最小实现四格全成立）与**五把刀**
  *     （① `claim` 丢掉按节点合并 ⇒ **只有 `L3`** 翻面；② `fail` 丢掉 `reason` ⇒ **只有 `L2`** 翻面；
- *     ③④ 是量具自证：③ `mark` 不记锚点 ⇒ 只有 `L1`；④ `emptyNode()` 丢键 ⇒ 四格一起翻）。
+ *     ③④ 是量具自证：③ `mark` 不记锚点 ⇒ 只有 `L1:A`；④ `mark` 不核锚点 ⇒ 只有 `L1:B`；⑤ `emptyNode()` 丢那 10 个键 ⇒ 五条一起翻）。
+ *     ⚠️ 这五把的 id 是 `K1`–`K5`（批次 **Q** 那五把是 **`KQ1`–`KQ5`** —— 两套同名会让"`K4` 翻了哪几格"查串）。
  *   · 🔴 **今天这四个 op 的行为本身已经是对的**（2026-10-23 门 2 现量）⇒ 这一格**不是首跑红**，
  *     它今天 **RED 0**，是"已写入契约的三态语义"的**回归锁**；红只可能是有人把语义改坏了。
  *     这一票缺的是**调用者**（写者 = 组长，`CONTRACT.md` §12），那一半是流程，测试判不了。
@@ -242,15 +243,51 @@ export const BATCH_O = ['LOC-01']
 export const BATCH_P = ['DBY-01', 'DBY-02', 'DBY-03', 'DBY-04', 'DBY-05', 'DBY-06']
 
 /**
- * 已落笔的十六批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
+ * 批次 Q 的 3 条 —— **门 2 第二轮 · `F-156`**（`local-mark` 的产物锚点闸三条规则，2026-10-24）。
+ *
+ * 证据：`.team/retro/2026-10-24/技术评审.md` 的 `F1`–`F3`（两次复现）；裁定：老板 2026-10-24 选项 1（**要求按字段**）。
+ * 三格是三条规则，一格一条（红的时候一眼看得出是哪一条）：
+ *   · `LOC-02` **按字段的必填 + 三件套要么都给**：`memory-review` / `conversation` **只交报告**（真路径 + 真 SHA256、
+ *     不带 findings）⇒ `done`，盘上节点 `report_path` / `report_sha256` 是真锚点、`findings_*` 三个留 `null`；
+ *     `technical` **不带 findings** ⇒ 拒 `E_ARG_SCHEMA` · exit 2 · 节点停在 `running` · **状态文件零写入**；
+ *     `technical` 带真 findings 产物 ⇒ `done`（五个锚点逐项记下）；**半套三件套两个方向都拒** —— ① `memory-review`
+ *     只给 `findings_count`、② `conversation` 给 path + set 却不给 count ⇒ 都是 `E_ARG_SCHEMA` · 零写入。
+ *     刀 `KQ1` 三个字段都要 findings ⇒ 只翻 `A`/`B`；`KQ2` 三个字段谁都不要 ⇒ 只翻 `C`
+ *     （"technical 仍然要交"那条腿翻面的唯一办法）
+ *   · `LOC-03` **`findings_count` 与产物条数对账 + 产物读不出来**：盘上 3 条 + `0` ⇒ 拒、3 条 + `9` ⇒ 拒（**两个方向**：
+ *     只挡"多报"的半修在 `0` 上会漏，而 `0` 恰好最容易被读成"查过了、没问题"）；3 条 + `3` ⇒ `done`；空 findings + `0`
+ *     ⇒ `done`（零条发现是合法产物）；**文件在盘上却读不出 `findings` 数组**（合法 JSON 但没有那个数组 / 半截 JSON）⇒
+ *     `E_DATA_CORRUPT` · exit 7 · 零写入（与"文件不在"的 `E_DATA_MISSING` 是两个诊断）。刀 `KQ3` 收下不对账 ⇒ 只翻 `A`/`B`
+ *   · `LOC-04` **锚点必须落到 `.team/` 里的真文件，落盘记小写规范形**（老板 2026-10-24 的改判：收 + 归一化，不再"只收
+ *     canonical"）：同一个文件的**十一种**写法 —— `A` 规范形 ⇒ `done`；`B` `README.md`（落在 `.team/` **外**）⇒ 拒；
+ *     `C` `./.team/…` · `D` `retro/…`（**`.team` 相对**，`RCP-03`/`VRF-02` 用的就是这一种）· `E` 反斜杠 ·
+ *     `G` 工作区内绝对路径 ⇒ **收 + 节点上记 `.team/<…>`（正斜杠）**；`K` **`.TEAM/…`（前缀换大小写）** ⇒ **收 + 记小写规范形**
+ *     （本平台 Windows 不分大小写：位置判定跟平台路径语义走，不是字符串前缀比较 —— 第 4 关复审 round 2 的 `F3`）；
+ *     `F` 文件不在 · `J` `.team` 相对但文件不在 · `I` `.team/../…`（`..` 穿出 `.team/`）· `H` 工作区外绝对路径
+ *     ⇒ **同一个诊断** `E_DATA_MISSING` · exit 7。
+ *     刀 `KQ4` 去掉"必须落在 `.team/` 下"⇒ 只翻 `B`/`H`/`I`；`KQ5` 验的时候归一化、**落盘却记调用方写法** ⇒
+ *     只翻 `C`/`D`/`E`/`G`/`K`（"验对了但记错了"那种半修，只有它抓得到）；`KQ6` 把位置判定退回**大小写敏感的前缀比较**
+ *     ⇒ 只翻 `K`（这一条将来全绿时**也能翻面**）
+ *
+ * 契约在 `CONTRACT.md` §12（`F-156` 那一节，按字段的句子由实现岗落）；证据与红向量在
+ * `.team/test/2026-10-24/log.md` 第三节。三格同住一个文件（`loc02-per-field-anchors.test.mjs`）：
+ * 三个规则共用同一份产物与同一个 REF / 刀架，红的时候报的那一行就带着 `格:输入`。
+ * ⚠️ 它们**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G / H / I / J / K / L / M / N / O / P 的规矩。
+ * ⚠️ **分母 90 → 93**（三条规则各有自己的红因：被逼着编摘要 / 计数不对账 / 锚点落点与规范形 ——
+ *    一把刀只能落在其中一处，所以它们不能合成一格）。
+ */
+export const BATCH_Q = ['LOC-02', 'LOC-03', 'LOC-04']
+
+/**
+ * 已落笔的十七批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
  * 批次 L 是 `F-148` 思考链过滤（同日 · 紧急票），批次 M 是 `F-152` 板子三态（同日），
  * 批次 N 是 `F-155` 每日状态的两端与署名（同日），批次 O 是 `F-156` 三个本地节点的三态（同日），
- * 批次 P 是 `F-158` 一天从 04:00 切（2026-10-24）。
+ * 批次 P 是 `F-158` 一天从 04:00 切（2026-10-24），批次 Q 是 `F-156` 第二轮锚点闸的三条规则（同日）。
  * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -268,7 +305,8 @@ const BATCH_OF = (id) =>
                             : BATCH_N.includes(id) ? 'N'
                               : BATCH_O.includes(id) ? 'O'
                                 : BATCH_P.includes(id) ? 'P'
-                                  : null
+                                  : BATCH_Q.includes(id) ? 'Q'
+                                    : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -333,6 +371,10 @@ const F = {
   dby: 'integration/dby01-day-boundary.test.mjs',
   dbyAgreement: 'integration/dby02-day-cut-agreement.test.mjs',
   dbyCheckNotes: 'integration/dby03-check-notes-day-cut.test.mjs',
+  /** 门 2 第二轮 · `F-156` 锚点闸三条规则（批次 Q）—— **三格同住一个文件**：按字段的必填 / `findings_count`
+   *  对账 / `.team/` 前缀判的是**同一次 mark**的三条规则，三格共用同一份产物与同一个 REF + 刀架；
+   *  红的时候报的那一行就带着 `格:输入`（哪条规则、哪种写法）。 */
+  locAnchors: 'integration/loc02-per-field-anchors.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -473,6 +515,11 @@ const ROWS = [
   ['DBY-04', 'day-boundary', F.dbyAgreement, 'F-158 **显式 day 的两种形态**（判的是同一批入口收不收、怎么收）：① **好值照抄**，两个方向 —— 显式 `2026-10-23` @ `04:00:01`（那一刻缺省会算成 `2026-10-24`）⇒ 四处都必须仍是 `2026-10-23`；显式 `2026-10-24` @ `01:30`（那一刻缺省会算成 `2026-10-23`）⇒ 四处都必须仍是 `2026-10-24`（只给一个方向的话"把显式值也过一遍 −4h"这种半修 `2026-10-23 ⇒ 2026-10-22` 看不出来）；② **给了但坏 ⇒ 当场拒**：`day` 给 `""` / 全空白 / `2026-13-40` / `2026-02-30`（`BAD_DAYS` 四个值）时 `claim-update` / `daily-start` / `daily-cards` / `local-claim` / `report-read` **五处都必须是 `E_ARG_SCHEMA`**（红因 `DBY-BAD-DAY-ACCEPTED-*` 吞成没给、`DBY-BAD-DAY-CODE-*` 拒得对但码不对）—— `2026-13-40` 这类"形状合规、日历上不存在"的值与空串走**同一条**规则（`isDayKey` 连日历往返一起验），边界是"形状合规**且**日历合法、只是没人会写"的日子（如 `1999-01-01`）仍被收下。阳性对照 + 两把刀：`K4`（显式被吞）实测向量 `[E1,E2]` · `K5`（空串被吞）实测向量 `[D1,D2]`', '批次 P'],
   ['DBY-05', 'day-boundary', F.dbyCheckNotes, 'F-158 **体检那条红的两向格**（`.tools/check-notes.mjs` 的「今天的记忆更新报告在（reports/memory-update/<day>.json）」那一行；判那一行点名的**日子**与**态**，不判绿不绿）：注入 `2026-10-24T01:30:00+08:00` ⇒ 那一行必须点名 `2026-10-23`（凌晨一点半属于前一天，不许嚷）；注入 `2027-01-02T04:30:00+08:00`（那一天盘上**必然**没有报告）⇒ 必须点名 `2027-01-02` **且是 `RED`**（该报就报）；外加"两向必须是同一把尺子"（两向读到同一个日子 ⇒ 红因 `DBY-CN-CLOCK-IGNORED`）。✅ 这个工具**走同一把尺子**（`:241` 是 `const today = dayKeyOf(clockNow())`，`:23-24` 从 `presets/agenia/lib/clock.mjs` / `route.mjs` 取 ⇒ 注入时钟生效）⇒ 这一格守的是"别退回真时钟 / 零点切"。`.tools/**` 不在测试岗的可写范围里：这一格**只判、不改**', '批次 P'],
   ['DBY-06', 'day-boundary', F.dbyAgreement, 'F-158 **根上有过期的 `current-day` 指针**（裁定 F4-b、门 4 评审 F4 的落点）：脑根上 `state/current-day.json` = `2026-10-23`、时钟 `2026-10-24T11:00:00+08:00`、payload **不给** `day` ⇒ `claim-update` / `daily-start` 的缺省日必须落到 **`2026-10-24`**（`daily-cards` / `local-claim` 同现场只记读数）。两条腿**各有各的脑根**、各自种一次过期指针，开跑前从盘上读回指针当见证（`pointer_witness[].at_start` 必须都是 `10-23`）—— `claim-update` 成功会写指针，共用一副根时后跑的 `daily-start` 已经看不见过期指针，退回指针的实现照样绿（门 4 复审 R1）。为什么：在一个已经 claim 过、新的一天还没开始的根上，缺省日若跟着指针走就永远回到上一次 claim 的那一天 —— 04:00 的切点**静默失效**（`DBY-03` 用全新脑根，结构上看不见这一支）；指针**没被废掉**，它留给**中途** op（`P2` 那一格：中途 op 跟指针、不跟时钟）。阳性对照 + 刀 `K6`（缺省日跟指针走）实测向量 `[P1]`', '批次 P'],
+
+  // ── 门 2 第二轮 · `F-156` 锚点闸三条规则（3）：按字段 / count 对账 / `.team/` 前缀（2026-10-24）──
+  ['LOC-02', 'local-state', F.locAnchors, 'F-156 第二轮 **按字段的必填**（老板 2026-10-24 选项 1；证据 `.team/retro/2026-10-24/技术评审.md` 的 `F1`）：真子进程 + 每格一个带 marker 的临时工作区，四条输入判的是同一次 `local-mark` 的**两面**：① `memory-review` **只交报告**（真路径 + 盘上字节的 SHA256、**不带 findings**）⇒ `done`，盘上节点 `report_path`/`report_sha256` 是真锚点、`findings_path`/`findings_set_sha256`/`findings_count` **三个都必须是 `null`**（不许为了过闸编一份）；② `conversation` **只交报告** ⇒ 同 ①；③ `technical` **不带 findings** ⇒ 拒 `E_ARG_SCHEMA` · exit 2 · 节点停在 `running`（claim 痕迹保留）· 五个锚点一个都不落 · **状态文件的字节一个都不许变**；④ `technical` 带一份**真** findings 产物（三条发现 + 真实的 Q10 集合摘要）⇒ `done`，五个锚点逐项记下；⑤ `memory-review` **只给 `findings_count`**（三件套缺 path 与 set）⇒ 拒；⑥ `conversation` 给了 path + set 却**没给 count** ⇒ 拒 —— ⑤⑥ 都是 `E_ARG_SCHEMA` · exit 2 · **零写入**（"要么三件都给、要么都不给"）。两把刀：`KQ1` 三个字段都要 findings（退回到"一视同仁"的形状）⇒ 只翻 ①/②；`KQ2` 三个字段谁都不要 ⇒ 只翻 ③（没有它，③④"technical 仍要 findings"那条腿是**翻不了面的绿**）。刀在**全部二十二个输入**上量 ⇒ 向量里看得见"只翻本格"', '批次 Q'],
+  ['LOC-03', 'local-state', F.locAnchors, 'F-156 第二轮 **`findings_count` 与产物条数对账**（评审 `F2`：这个字段只写不读，`0` 最容易被读成"查过了、没问题"）：四条输入全是 `technical` + 一份**真的** findings 文件（三条 / 零条发现）：① 盘上 3 条 + `findings_count: 0`（少报）⇒ 拒；② 盘上 3 条 + `findings_count: 9`（多报）⇒ 拒 —— **两个方向都要**：只挡"多报"的半修在 ① 上会漏；③ 3 条 + `3`（诚实计数）⇒ `done`，节点 `findings_count` 正是 3；④ 空 findings（0 条）+ `0` ⇒ `done`（"零条发现"是合法产物，不许被"非空才算数"挡掉）；⑤ 文件**在盘上、是合法 JSON、但没有 `findings` 数组** ⇒ 拒；⑥ 文件**是半截 JSON**（读不出来）⇒ 拒 —— ⑤⑥ 都是 `E_DATA_CORRUPT` · exit 7 · **零写入**（与"文件不在"的 `E_DATA_MISSING` 是两个诊断）。条数不符的拒绝码 `E_ARG_SCHEMA`（这个字段的形状错误就是它）。刀 `KQ3` 收下 count、不与条数对账 ⇒ 只翻 ①/②', '批次 Q'],
+  ['LOC-04', 'local-state', F.locAnchors, 'F-156 第二轮 **锚点必须落到 `.team/` 里的真文件、落盘记规范形**（评审 `F3` + 老板 2026-10-24 的改判"收 + 归一化"）：同一次 `local-mark`、**同一个文件的十种写法**（findings 一侧与 `artifact_paths` 全部规范形 ⇒ 只让 `report_path` 变）：① 规范形 `.team/retro/2026-10-24/技术评审.md` ⇒ `done`；② `README.md`（工作区根下存在的无关文件，SHA256 也是真的 ⇒ 解析后落在 `.team/` **外**）⇒ 拒；③ `./.team/…`（同一个文件、多一个 `./`）⇒ **收 + 记规范形**；④ `retro/…`（**`.team` 相对**写法 —— `RCP-03` / `VRF-02` 的正例用的就是这一种）⇒ **收 + 记规范形**；⑤ 反斜杠写法（同一个文件）⇒ **收 + 记规范形**；⑥ `.team/…/不存在.md`（文件不在）⇒ 拒；⑦ `<工作区绝对路径>\\.team\\…`（绝对路径、在 `.team/` 里）⇒ **收 + 记规范形**；⑧ `<运行根>/outside-loc04/技术评审.md`（绝对路径、包外）⇒ 拒；⑨ `.team/../README.md`（`..` 穿出 `.team/`，目标文件存在）⇒ 拒；⑩ `retro/…/不存在.md`（`.team` 相对、文件不在）⇒ 拒；⑪ **`.TEAM/retro/…`（同一个文件、前缀换大小写）** ⇒ **收 + 记小写规范形**（Windows 不分大小写：位置判定跟平台路径语义走，不是字符串前缀比较 —— 第 4 关复审 round 2 的 `F3`）。🔴 五个"拒"必须是**同一个诊断** `E_DATA_MISSING` · exit 7（缺 / 在外 / 穿出去 / 拼错，读的人不必猜是哪一种）；🔴 **五个"收"**必须把节点上的 `report_path` 记成**小写规范形** `.team/<…>/<file>`（正斜杠）—— `readings.canonical_store` 与 `readings.case_folding` 逐行给出 `fed ≠ stored` 而 `stored === canonical` 的读数（只归一化不落盘的那种半修，只有这一条抓得到）。刀 `KQ4` 去掉"必须落在 `.team/` 下"⇒ 只翻 ②/⑧/⑨；`KQ5` 验的时候归一化、**落盘却记调用方怎么写** ⇒ 只翻 ③/④/⑤/⑦/⑪（① 本来就是小写规范形 ⇒ 不翻；⑥/⑩ 根本没落地）；`KQ6` 把位置判定退回大小写敏感的前缀比较 ⇒ 只翻 ⑪', '批次 Q'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -542,8 +589,10 @@ export const GROUP_COUNTS = {
   'board-states': 1,
   /** 门 2 · `F-155` 每日状态的两端与署名（写面 `DLY-01` / 读面 `DLY-02`）—— 契约见 `CONTRACT.md` §11。 */
   'daily-state': 2,
-  /** 门 2 · `F-156` 三个本地节点的三态（`LOC-01` 一格四格）—— 契约见 `CONTRACT.md` §12。 */
-  'local-state': 1,
+  /** 门 2 · `F-156` 三个本地节点的三态（`LOC-01` 一格四格）+ 第二轮锚点闸三条规则
+   *  （`LOC-02` 按字段 / `LOC-03` count 对账 / `LOC-04` `.team/` 前缀，三格同住 `locAnchors` 那个文件）
+   *  —— 契约见 `CONTRACT.md` §12。 */
+  'local-state': 4,
   /** 门 2 · `F-158` 一天从本地 04:00 切（`DBY-01` 切点下方 / `DBY-02` 切点上方 / `DBY-03` 四处入口同值 /
    *  `DBY-04` 显式 day 的两种形态 / `DBY-05` 体检那条红 / `DBY-06` 过期指针）—— 契约见 `CONTRACT.md` §13。 */
   'day-boundary': 6,
@@ -564,11 +613,11 @@ export function registryProblems() {
   // 发现器自己报的问题（没有 ID 的 test() / 重复 ID）。
   for (const p of DISCOVERY.problems) problems.push(p.message)
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
-  // ⚠️ G / H / I / J / K / L / M / N / O / P 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
+  // ⚠️ G / H / I / J / K / L / M / N / O / P / Q 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -595,6 +644,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }

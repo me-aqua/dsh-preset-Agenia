@@ -333,7 +333,8 @@ $env:AGENIA_PROBE_TMP=$env:TEMP
 | 2026-10-23 | 追加 §3.3 **板子告警的三态**（三种现场、三句互斥的话：叫过开发没叫过测试 / **从没叫过测试但文件动过**（新句，不许出现「最后一次测试之后」「那次测试作废」）/ 叫过测试之后又动了）—— §1.1 的正文样张同步补上第三句（它原来只画了两句 ⇒ 会与 §3.3 打架）。**同批记进 §3.3 的优先级（组长 2026-10-23 拍板）：「从没叫过测试」赢过「测试之后又动了」**（测试计数 0 ⇒ 不管叫没叫过开发，都不许说那两句；`BRD-01` 的 B 格因此有两条输入：外聘 / 开发）。追加 §1.4 **提到 ≠ 声明**（命中处紧邻否定 ⇒ 这一处不算承诺；真承诺仍算；`forms` 表不动；「没写五关」这类不在否定词表里的写法、双重否定的假阴性都写明）。同批新增判据组 `board-states`（1 条：`BRD-01`，**分母 80 → 81**）；`DOC-01` 加**两格**新自控（不加用例号：只写空缺 ⇒ 恰好一条 `DOC-INJECTED-UNSAID`；同一份面补一句真承诺 ⇒ 绿）+ 一把刀（删"剔掉否定出现"那一步 ⇒ 只有"只写空缺"翻绿） | 测试岗，门 2 第 2 关（定形 `.team/leader/2026-10-23/spec-F-152.md`；读数 `.team/test/2026-10-23/log.md` 第八节 · 全量 `_runs/test-f152b`：分母 **81**（B 格加一条输入**不加分母**）· `RED 2 / GREEN 79`（`BRD-01` + `DOC-01` —— 两条都是**预期的红**：行为 / 判据还没落地，见那一节逐条红因）· 体检 117/117 · 探针 222/222） |
 | 2026-10-23 | 追加 §11 **每日状态的两端与署名**（`F-155`）：`daily\<day>.json` 的字段表补五个键（`first_session_id` / `first_at` / `last_session_id` / `last_seen_at` / `seen_count`）并写死 **"它仍是派生副本、不另立权威"**；`daily-start` 变成**幂等**（`first_*` 永不覆盖、旧形状读得懂并升级、不带 `session_id` 的调用也算一次）；`health-read` 的 `daily` 在 / `local` 不在那一支 **`status` 与 reason 码一个都不动**，只让 `detail` 说真话（三种话 + 三个机读锚点：`刚开工` / `本会话不是` / HOLD 那句保持），并新增**一个加性可选 payload 键 `session_id`**。同批新增判据组 `daily-state`（2 条：`DLY-01` 写面四格 + 阳性对照 + 四把刀 / `DLY-02` 读面五格 + 阳性对照），**分母 81 → 83** | 测试岗，门 2 第 2 关（定形 `.team/leader/2026-10-23/spec-F-155.md`；读数 `.team/test/2026-10-23/log.md` 第十节：`_runs/test-f155b` 分母 **83** · `RED 4 / GREEN 79`（`BRD-01` / `DOC-01` 是 `F-152` 那两条预期的红；`DLY-01` / `DLY-02` 是本票预期的红）· 体检 117/117 · 探针 222/222） |
 | 2026-10-23 | 追加 §12 **三个本地节点有确定的写者**（`F-156`）：`memory_review` / `conversation` / `technical` 三节点 + **五值枚举**（三种写后状态 `running` / `done` / `failed` + 两个边界值 `unclaimed` / `stale`）；**写者是组长、不是作业**（派工 ⇒ `local-claim`、落地 ⇒ `local-mark`、失败 ⇒ `local-fail`），**"派了没落地"留在 `running`（过期即 `stale`）、不许静默**；三份作业书末尾各加一句「这个本地节点由组长记，不归你」。同批新增判据组 `local-state`（1 条：`LOC-01` 一格四格 —— `claim → mark` / `claim → fail` / **两个节点真并发 claim** / **任何 claim 之前 `local-read`**）+ 阳性对照 + 四把刀，**分母 83 → 84**。⚠️ 这一格**不是首跑红**：四个 op 的行为今天就是对的（现量），它锁的是语义，红只可能是"有人把它改坏了" | 测试岗，门 2 第 2 关（定形 `.team/leader/2026-10-23/spec-F-156.md`；读数 `.team/test/2026-10-23/log.md` 第十一节：`_runs/test-f156` 分母 **84** · `RED 0 / GREEN 84` · 四把刀向量 `[L3] / [L2] / [L1] / [L1,L2,L3,L4]` · 体检 117/117 · 探针 222/222） |
-| 2026-10-23（第 4 关 🟠 有条件复审后返修） | **§12 三角收口**：① **三份作业书那句改对时刻** —— claim 在**派出去的那一刻**、mark / fail 在**交活之后**（原来把两个时刻压成"交活之后"，真按那句做，跑到一半崩掉的作业从来没有 `running` 节点，§12.3 正好在它要堵的洞上失效）；② `LOC-01` 补 **`L1:B` 坏锚点反例**（`report_sha256` 与盘上字节不符 ⇒ 拒 `E_ARG_HASH` · exit 2 · 状态文件零写入 · 节点仍 `running`）+ 刀④，与 `L1:A` 合起来才等于 §12.2 的"先核再落盘"；③ 补 **`L2:B` 带首尾空白的 reason**（口径 = 去掉首尾空白后逐字，与 `local-state.mjs:444` 的 `.trim()` 对齐）；④ §12.0 的病根证据改成**今天的事实**（"零命中"是定形时的读数；今天作业书里那三个词是"作业不调"的声明，缺的仍是**执行**调用者）；⑤ §12.3 点名 `stale` 是**健康卡上**算的、`local-read` 仍返回 `running`；⑥ §12.5 补 `artifact_paths` 不当锚点 · `findings_set_sha256` 内容不在本节 · 失败不清旧锚点（`P8`）；⑦ §12.4 的"各证一条"改成**实测向量表**并写明 L4 的 CLI 半没有刀。**分母仍 84**（一格，加的是输入不是用例 ID） | 测试岗，`F-156` 第 4 关复审（评审 `.team/review/2026-10-23/F-156-第4关-评审.md` 的 `P1` / `P2` / `P4` / `P5` / `P6` / `P7` / `P8`）；读数 `.team/test/2026-10-23/log.md` 第十二节：`_runs/test-f156b` 分母 **84** · `RED 0 / GREEN 84` · 测试树 `cababda80c9d7776…` · 五把刀向量 `[L3:A] / [L2:A,L2:B] / [L1:A] / [L1:B] / [L1:A,L1:B,L2:A,L3:A,L4:A]` · 体检 117/117 · 探针 222/222） |
+| 2026-10-24（门 2 第二轮 · 实现落地） | **§12 锚点闸按字段 + 两条补洞**：① §12.2.1 **按字段**（老板 2026-10-24 裁定"选项 1"）—— `technical` 要 findings 三件套，`memory_review` / `conversation` 只要报告、findings 三个锚点留 `null` 照样 `done`（给了就同一套规则，不许只给一半）；② §12.2.1 后段 **`findings_count` 与产物条数对账**（技术评审 `F2`：`3 条 + 0` / `3 条 + 9` 都拒 `E_ARG_SCHEMA`，`3 + 3` 与 `空 + 0` 都收）；③ §12.2.2 **锚点按位置收、按规范存** —— 只要解析之后落在 `<工作区>/.team/` 里就收（`.team/a.md` · `a.md`（`.team` 相对）· `./.team/a.md` · `.team\a.md` · 绝对路径都算），节点里**只记规范拼法** `.team/<…>/<file>`；落点在外（`README.md` 在工作区根、`.team/../…`、工作区外绝对路径）与"文件不在"共**同一个** `E_DATA_MISSING` · exit 7（技术评审 `F3` + 老板当天"按位置收"的修正裁定），并把**两种基准**首次写在纸上（锚点 = 落点在 `<WS>/.team/`、节点里存工作区相对带 `.team/`；`receipt_path` = `.team` 相对）；④ §12.2.3 病根 → 今天的行号与"没有读者"那句逐条改正；⑤ §12.4 判据表补 `LOC-02` / `LOC-03` / `LOC-04` 三行（含实测刀向量）· §12.5 边界重写 · §12.6 登记面与分母跟到 **93**（`local-state` 组 1 → 4 条）。读数：全量 `_runs/dev-f156-r4` 分母 **93** · `RED 0 / GREEN 93 / HOLD 0` · `node --test exit 0` · `F57-OK`（14:21:15 → 14:22:4x）· 四格 `loc0*` 那一跑 `RED 0 / GREEN 4` | 实现岗，`F-156` 门 3（`presets/agenia/lib/local-state.mjs` + `bin/agenia-local.mjs`）；判据由测试岗在门 2 第二轮落地（`LOC-02`/`LOC-03`/`LOC-04`） |
+| 2026-10-23（第 4 关 🟠 有条件复审后返修） | **§12 三角收口**：① **三份作业书那句改对时刻** —— claim 在**派出去的那一刻**、mark / fail 在**交活之后**（原来把两个时刻压成"交活之后"，真按那句做，跑到一半崩掉的作业从来没有 `running` 节点，§12.3 正好在它要堵的洞上失效）；② `LOC-01` 补 **`L1:B` 坏锚点反例**（`report_sha256` 与盘上字节不符 ⇒ 拒 `E_ARG_HASH` · exit 2 · 状态文件零写入 · 节点仍 `running`）+ 刀④，与 `L1:A` 合起来才等于 §12.2 的"先核再落盘"；③ 补 **`L2:B` 带首尾空白的 reason**（口径 = 去掉首尾空白后逐字，与 `local-state.mjs:593` 的 `.trim()` 对齐）；④ §12.0 的病根证据改成**今天的事实**（"零命中"是定形时的读数；今天作业书里那三个词是"作业不调"的声明，缺的仍是**执行**调用者）；⑤ §12.3 点名 `stale` 是**健康卡上**算的、`local-read` 仍返回 `running`；⑥ §12.5 补 `artifact_paths` 不当锚点 · `findings_set_sha256` 内容不在本节 · 失败不清旧锚点（`P8`）；⑦ §12.4 的"各证一条"改成**实测向量表**并写明 L4 的 CLI 半没有刀。**分母仍 84**（一格，加的是输入不是用例 ID） | 测试岗，`F-156` 第 4 关复审（评审 `.team/review/2026-10-23/F-156-第4关-评审.md` 的 `P1` / `P2` / `P4` / `P5` / `P6` / `P7` / `P8`）；读数 `.team/test/2026-10-23/log.md` 第十二节：`_runs/test-f156b` 分母 **84** · `RED 0 / GREEN 84` · 测试树 `cababda80c9d7776…` · 五把刀向量 `[L3:A] / [L2:A,L2:B] / [L1:A] / [L1:B] / [L1:A,L1:B,L2:A,L3:A,L4:A]` · 体检 117/117 · 探针 222/222） |
 
 ---
 
@@ -349,7 +350,7 @@ $env:AGENIA_PROBE_TMP=$env:TEMP
 | 票 | 自报的是什么 | 现场（2026-10-22 盘的） |
 | --- | --- | --- |
 | `F-120` | 指纹口径 —— "这根树上的代码有没有动过" | `.tools/fingerprint.mjs` 的排除项 `presets/agenia/.runtime/` 是**仓库根相对**写法；`--root E:\Harness\presets\agenia` 时收录的相对路径是 `.runtime/…` ⇒ **永不匹配**，脑数据混进 CODE |
-| `F-121` | `findings_set_sha256` | `presets/agenia/lib/receipt.mjs:184` 算过 `computed_set_sha256`，**全树零消费点**；`lib/local-state.mjs:388,390` 只验"存在 / 64 hex" |
+| `F-121` | `findings_set_sha256` | `presets/agenia/lib/receipt.mjs:184` 算过 `computed_set_sha256`，**全树零消费点**；`lib/local-state.mjs:465,471` 只验"存在 / 64 hex"（锚点那一层的形状判据，内容复算不在这里 —— §12.5） |
 | `F-122` | `code_fingerprint.equal`（"这一票作废不作废"由它说了算） | `lib/receipt.mjs:131-133,266-274`：只要求它是一个 boolean；校验方从不复量 |
 | `F-123` | "打的是哪棵树" | `tests/agenia-upgrade/support/env.mjs:190` `watchedFiles: ['inject.js']` —— 48 份代码里只盯 1 份 |
 
@@ -1409,16 +1410,104 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 | 时刻 | 调什么 | 节点写成什么 |
 | --- | --- | --- |
 | 派出去的那一刻（`job_conversation_review` 等） | `--op local-claim`（带 `attempt` / `job_id`） | `running` + `claim` / `job_id` / `liveness_at` |
-| 落地、判词到手之后 | `--op local-mark`（`state` 缺省 `done` + 产物锚点） | `done` + `report_path` / `report_sha256` / `findings_*` / `artifact_paths` |
-| 明确失败 | `--op local-fail`（带 `failure_reason`） | `failed` + `failure_reason`（**原文留住**：去掉首尾空白后逐字 —— 实现在 `lib/local-state.mjs:444` 做 `.trim()`） |
+| 落地、判词到手之后 | `--op local-mark`（`state` 缺省 `done` + 产物锚点） | `done` + 报告锚点 + **按字段**的 findings 锚点 + `artifact_paths` |
+| 明确失败 | `--op local-fail`（带 `failure_reason`） | `failed` + `failure_reason`（**原文留住**：去掉首尾空白后逐字 —— 实现在 `lib/local-state.mjs:593` 做 `.trim()`） |
 
-- **锚点来自作业产物**：`report_sha256` 必须是报告**盘上字节**的 SHA256（B3.1 的反例就是"改报告一字"）；
-  `local-mark` 先核这个再落盘 —— **核不上 ⇒ 拒（`E_ARG_HASH` · exit 2），状态文件一个字节都不动**。
+#### §12.2.1 锚点**按字段**：只有 `technical` 要 findings（老板 2026-10-24 裁定"选项 1"）
+
+三个字段里只有技术评审核交发现集（`job-briefs/technical-review.md:13`）；另外两份作业书里 `findings` 零处出现
+⇒ 逼它们交，等于逼人编一份桩文件加一个 64 位摘要。按字段表住在**一处**：
+`lib/local-state.mjs:367` 的 `FIELD_REQUIRES_FINDINGS`；闸本体是
+`lib/local-state.mjs:467` 的 `artifactAnchorVerdict(workspace, spec, field)`，
+`bin/agenia-local.mjs:320` 把 `field` 一路传进去 —— **分支在闸里**，CLI 不留第二份判断。
+
+| `--field`（落盘键名） | 报告锚点 `report_path` + `report_sha256` | findings 三件套 `findings_path` + `findings_set_sha256` + `findings_count` |
+| --- | --- | --- |
+| `technical` | **必填** | **必填** —— 缺 `findings_path` ⇒ `E_ARG_SCHEMA` · exit 2（`lib/local-state.mjs:493`） |
+| `memory-review`（`memory_review`） | **必填** | **可选** —— 不给 ⇒ 三个锚点在节点上留 `null`，节点照样 `done` |
+| `conversation` | **必填** | **可选** —— 同上 |
+
+- **给了就同一套规则**：另外两个字段一旦交了 findings，就与 `technical` 走同一条路（落点 / 64 hex / 条数对账，
+  `lib/local-state.mjs:498-514`）。"反正不必填就随便收"是这条按字段规则的反面，不是它的例外。
+- **不许只给一半**：`findings_path` 没给、却给了 `findings_set_sha256` 或 `findings_count` ⇒ `E_ARG_SCHEMA`
+  （只给一半会在节点上留下一个**没有产物**的锚点；判在 `lib/local-state.mjs:494-496`）。三个都给，或者一个都不给。
+- **`findings_count` 必须与产物对账**（技术评审 `F2`）：它必须**等于 findings 文件里 `findings` 数组的条数**
+  （读条数在 `lib/local-state.mjs:431`、对账在 `:511-512`）⇒ 不符 ⇒ `E_ARG_SCHEMA` · exit 2。
+  `3 条 + 3`（诚实计数）与 `空数组 + 0`（"零条发现"是合法产物）都**收**。
+  这一条是**双向**的：只挡"多报"的半修会在 `0` 上漏，而 `0` 恰好是最容易被读成"查过了、没发现问题"的那个数。
+- **产物读不出来**（findings 文件不是 JSON / 没有 `findings` 数组）⇒ `E_DATA_CORRUPT` · exit 7（`:506`）——
+  那是数据坏了，不是参数错。
+- ⚠️ **不在这里复算** `findings_set_sha256` 的内容（Q10 摘要归 `receipt-check` / `VRF-02`，见 §12.5）。
+
+#### §12.2.2 锚点**按位置收、按规范存**（技术评审 `F3` + 老板 2026-10-24 的修正裁定）
+
+判的**不是拼法，是落点**：`report_path` / `findings_path` / `artifact_paths[]` 只要解析之后落在
+**`<工作区>/.team/` 里面**就收；收下之后节点里存的是**规范拼法** `.team/<…>/<file>`（正斜杠）——
+状态文件里因此**永远只有一种写法**，哪怕调用方用的是另一种。判据唯一一处：
+`lib/local-state.mjs:383-427` 的 `anchorResolution()`（两种相对基准都试：工作区相对优先、`.team` 相对兜底）。
+⚠️ 「落点算得出来」还不够：那一读必须**真的在盘上** —— 下面表里那两行"不存在"说的就是这一条。
+
+| 喂进去的写法 | 结果 | 节点里存的 |
+| --- | --- | --- |
+| `.team/retro/2026-10-24/技术评审.md`（工作区相对） | ✅ 收 | `.team/retro/2026-10-24/技术评审.md` |
+| `./.team/retro/…`（多一个 `./`） | ✅ 收 | `.team/retro/…`（同一个） |
+| `.team\retro\…`（反斜杠） | ✅ 收 | `.team/retro/…`（同一个） |
+| `retro/2026-10-24/技术评审.md`（`.team` 相对；那一读**在盘上**） | ✅ 收 | `.team/retro/2026-10-24/技术评审.md` |
+| `<工作区绝对路径>\.team\retro\…`（绝对路径、落在 `.team/` 里） | ✅ 收 | `.team/retro/…`（同一个） |
+| `README.md`（工作区根下的文件 ⇒ 两读都不在 `.team/` 里） | ❌ `E_DATA_MISSING` | —— |
+| `.team/../README.md`（`..` 穿出 `.team/`，目标文件**存在**） | ❌ `E_DATA_MISSING` | —— |
+| `<运行根>\…`（绝对路径、包外） | ❌ `E_DATA_MISSING` | —— |
+| `.team/…/不存在.md`（落点对、文件不在盘上） | ❌ `E_DATA_MISSING` | —— |
+| `retro/…/不存在.md`（`.team` 相对、文件不在盘上） | ❌ `E_DATA_MISSING` | —— |
+
+- 🔴 **"在外"与"缺"是同一个码**（`E_DATA_MISSING` · exit 7）：读的人不该靠码去猜是哪一种；报文里会说清
+  （"在 `.team/` 外面"那一支还会点名**盘上那份同名文件在哪** —— `RCP-03` / `VRF-02` 那种现场靠这句话才看得懂）。
+- 🔴 **`README.md` 与 `retro/<day>/x.md` 不是一个待遇**，但那不是例外规则：前者两读都落在 `.team/` **外面**，
+  后者有一读（`.team` 相对）落在里面 —— 判的是**落点**，一个规则管两行。
+- 🔴 **归一化不许凭空造出文件**：收下的前提永远是"那一读**真的在盘上**"（`retro/…/不存在.md` 与
+  `.team/…/不存在.md` 一样拒）。
+- 🔴 **两读都落在 `.team/` 里时，由存在性消歧**：`.team/…` 这种拼法的两读是 `<WS>/.team/…`（工作区相对）
+  与 `<WS>/.team/.team/…`（`.team` 相对）—— **盘上真有那一份赢**，两读都不在盘上就是 `E_DATA_MISSING`。
+  这不是第二种规则，只是上面那条的补话：唯一的判据仍然是"解析之后落在 `.team/` 里、**且真的在盘上**"。
+- 🔴 **这个比较在本平台（Windows）上不分大小写**：`e:\harness\.team\x.md` 与 `E:\Harness\.team\x.md`
+  是**同一个文件** ⇒ 同一格收下；存下来的形状仍是 `.team/<…>/<file>`（第一段固定 `.team`，与调用方怎么写无关）。
+  判据是 `lib/local-state.mjs:376-381` 的 `insideTeam()`（用 `path.relative`，跟着平台的路径语义走），
+  不是字符串前缀比较。
+- **`artifact_paths` 不是锚点，但每一格也必须是 `.team/` 里一个真文件**：它不带摘要、落地之后没有任何一扇门
+  再读它（`done` 的判据是报告锚点 + **按字段**的 findings 锚点，§12.2.1）；可它也不是"随便一串自报路径"—— 一条 `artifact_paths`
+  说的是"这个文件存在、并且属于这个节点"。落点不在 `<WS>\.team\` 里、或者盘上**没有**那个文件 ⇒ **同一个**
+  `E_DATA_MISSING` · exit 7，收下之后按同一规范拼法写回（`lib/local-state.mjs:519-535`）——
+  一串锚点里混进第二种写法，等于把"锚点长什么样"又开一个口子。
+- 🔴 **两种基准，写清别再混**（同一把 CLI 里本来就有两套，这不是笔误，是现状）：
+
+| 字段 | 基准 | 例 |
+| --- | --- | --- |
+| `report_path` / `findings_path` / `artifact_paths[]`（`local-mark`） | 落点 = **工作区下的 `.team/`**；节点里存**工作区相对、带 `.team/`** 的规范拼法 | `.team/retro/2026-10-24/技术评审.md` |
+| `receipt_path`（`local-receipt-set` / `receipt-check`） | **`.team` 相对、不带 `.team/`**（只认这一种） | `leader/2026-10-24/技术复盘回执.json` |
+
+  ⇒ `receipt_path` 那一支走 `resolveUnder(teamDir, …)`（`bin/agenia-local.mjs:205` / `:365`），越界的码是
+  `E_PATH_ESCAPE`（exit 3）；**它不是锚点那一条规则**，两者的边界都在 §12.5。
+- **先核再落盘，核不上零写入**：整段判定跑在事务**之前**（`bin/agenia-local.mjs:320` → `:327`）——
+  被拒的 `local-mark` 连一个字节都不写，状态文件保持 claim 写完的那一份，节点停在 `running`。
 - **落地动作不许抹掉 claim 痕迹**：`done` / `failed` 之后节点仍要指得出是哪一次派工（`claim` / `job_id` 保留）。
 - **三份作业书各有一句**（`job-briefs/{memory-review,conversation-review,technical-review}.md` 的「交活」末尾，逐字）：
   「这个本地节点由组长记，不归你」—— 同一句把三个时刻也写全了：**派出去的那一刻** claim（`running`）、
   **交活之后** mark（`done`，带产物路径）或 fail（带原因）。写清是为了让下一个班知道这条线归谁；
   **作业自己不调那三个 op**。
+
+#### §12.2.3 病根 → 今天（技术评审 2026-10-24 的三条，逐条收口）
+
+`.team/retro/2026-10-24/技术评审.md` 的 `F1` / `F2` / `F3`（那份报告是本节的病根证据）：
+
+| 病根（报告里的原话） | 今天 |
+| --- | --- |
+| `F1` 三个字段**一视同仁**要 findings；闸那时在 `bin/agenia-local.mjs:301`（交活时 `:312`），而两份作业书里 `findings` 零命中 ⇒ 那两个节点只能靠编一份桩文件落地 | 按字段（§12.2.1）—— 闸现在在 `bin/agenia-local.mjs:320`，分支在 `lib/local-state.mjs:367` / `:491` |
+| `F2` `findings_count` **只写不读**（"`lib/local-state.mjs:459-467` 的 `localSummary()` … ⇒ 没有任何读者"），契约全文零处出现这个字段 | 有读者了：`lib/local-state.mjs:431` 读产物条数、`:511-512` 与它对账；字段定义与规则就在 §12.2.1 |
+| `F3` `report_path` 只判"在工作区里 + 存在"⇒ `README.md` 也能当报告锚点（同一条路径三种写法三种下场） | 落点必须在 `.team/` 里、缺/在外同一个 `E_DATA_MISSING`（§12.2.2），节点里只存规范拼法 |
+
+> ⚠️ 这三条是**收口记录**，不是现量指针：`F1` 那格里的 `:301` / `:312` 是那份报告开工 / 交活时的行号，
+> 已作废；要指今天的位置，看本表右列（2026-10-24 现量）。
+
 
 ### §12.3 「派了没落地」⇒ 留在 `running`（过期即 `stale`），**不许静默**
 
@@ -1433,15 +1522,18 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 
 ```powershell
 # 临时件落项目所在那个盘（C 盘一个字节都不许写）
-$env:TEMP='E:\Harness\.team\test\2026-10-23\_tmp'; $env:TMP=$env:TEMP
-# 这一票一格（四格 · 六条输入）同住一个文件：**一跑一根、别复用运行根**
-node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-23\_runs\<RUN_ID> --glob="tests/agenia-upgrade/integration/loc01-local-state.test.mjs"
-# 全量：去掉 --glob，再给一个全新的运行根（分母 84）
+$env:TEMP='E:\Harness\.team\test\2026-10-24\_tmp'; $env:TMP=$env:TEMP
+# 这一票两组：LOC-01 一格四格六条输入（loc01 那个文件）；锚点三条规则 LOC-02/03/04 同住 loc02 那个文件
+node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-24\_runs\<RUN_ID> --glob="tests/agenia-upgrade/integration/loc0*.test.mjs"
+# 全量：去掉 --glob，再给一个全新的运行根（分母 93）
 ```
 
-| 格 | 守的是 | 现在（2026-10-23 22:3x · 门 2 第 2 关 + 第 4 关复审后返修） |
+| 格 | 守的是 | 现在（2026-10-24 · 门 2 第二轮 + 实现落地之后） |
 | --- | --- | --- |
 | `LOC-01` | §12.1–§12.3，四格**六条输入**（键写作 `格:输入`）：`L1:A` `claim → mark` 成功（`done` + 产物锚点 + claim 痕迹 + `liveness_at` = 落地那一刻 + 兄弟节点不动）/ `L1:B` **坏锚点反例**（`report_sha256` 与报告盘上字节不符 ⇒ 拒 `E_ARG_HASH` · exit 2 · **状态文件一个字节没动**（比调用前后的 SHA256）· 节点仍 `running` · 六个锚点一个都不落）/ `L2:A` `claim → fail`（`failed` + `reason` 原文）/ `L2:B` **带首尾空白的 reason**（存下来的是 `.trim()` 之后那一段，长度也对）/ `L3:A` **两个节点真并发 claim**（两个真子进程：谁都不许覆盖谁）/ `L4:A` **任何 claim 之前** `local-read`（`E_DATA_MISSING` + exit 7 + 点名路径；首个 claim 之后兄弟节点是**文档里的空形状**）；另判 `local-read` 与盘上那份文件**说同一件事** | 🟢 **GREEN**（六条输入全成立 · 阳性对照六条全绿 · 五把刀向量见下） |
+| `LOC-02` | §12.2.1 的**按字段表**（四条输入）：`A` `memory_review` 只交报告 ⇒ `done`，`findings_path` / `findings_set_sha256` / `findings_count` 三个都是 `null`；`B` `conversation` 同上；`C` `technical` 不带 findings ⇒ `E_ARG_SCHEMA` · exit 2 · 节点停在 `running` · **状态文件零写入**；`D` `technical` 带真 findings ⇒ `done`，五个锚点逐项记下 | 🟢 **GREEN**（实测：`A`/`B` exit 0 · 节点 `done`；`C` exit 2 / `E_ARG_SCHEMA` / `state_written=false`；`D` exit 0 / `findings_count=3`）· 刀 `K1`（三字段都要 findings）⇒ `[LOC-02:A, LOC-02:B]` · 刀 `K2`（三字段谁都不要）⇒ `[LOC-02:C]` |
+| `LOC-03` | §12.2.1 的**条数对账**（四条输入，全是 `technical` + 真的 findings 文件）：`3 条 + 0`（少报）与 `3 条 + 9`（多报）⇒ `E_ARG_SCHEMA` · exit 2 · 零写入；`3 条 + 3` 与 `空数组 + 0` ⇒ `done` | 🟢 **GREEN**（实测：`A`/`B` exit 2 / `E_ARG_SCHEMA` / `state_written=false`；`C` `findings_count=3`；`D` `findings_count=0`）· 刀 `K3`（收下不与条数对账）⇒ `[LOC-03:A, LOC-03:B]` |
+| `LOC-04` | §12.2.2 的**落点规则**（十条输入，findings 一侧全合法 ⇒ 只让 `report_path` 变）：`A` canonical / `C` `./.team/…` / `D` `.team` 相对 / `E` 反斜杠 / `G` 绝对路径（在 `.team/` 里）⇒ **收 + 节点里记规范形**；`B` `README.md` / `I` `.team/../README.md` / `H` 绝对（包外） / `F`、`J` 文件不在 ⇒ **同一个** `E_DATA_MISSING` · exit 7 · 零写入 | 🟢 **GREEN**（实测 `diagnosis_set = ["E_DATA_MISSING"]`；`A`/`C`/`D`/`E`/`G` exit 0 / `done` / 节点里 `report_path` **五个都等于** `.team/retro/2026-10-24/技术评审.md`；`B`/`F`/`H`/`I`/`J` exit 7 / `E_DATA_MISSING` / `state_written=false` / 停在 `running`）· 刀 `K4`（不再要求落在 `.team/` 下）⇒ `[LOC-04:B, LOC-04:H, LOC-04:I]` · 刀 `K5`（验的时候归一化、**落盘却记调用方怎么写**）⇒ `[LOC-04:C, LOC-04:D, LOC-04:E, LOC-04:G]` |
 
 > ⚠️ **这一格今天该绿，而且它红不了"因为没人调"**：四个 op 的行为本来就是对（10-23 现量）；
 > 这一票缺的是**调用者**（§12.2 那三步写进组长的开工 / 收工口径），那不是测试能判的东西。
@@ -1467,25 +1559,38 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 - **不判"谁来调"**：写者是组长（§12.2），那是**流程**；测试只判"调了之后盘上那份文件对不对"。
 - **不判 `stale` 的推导**：`age >= 45` 分钟变 `stale` 是**健康卡读的时候算出来的**（`lib/liveness.mjs` + `lib/health.mjs`），
   那一格归 `HLT-02` / 租约那一族；本节只钉"`running` 不许被后一个 `claim` 吞掉"。
-- **`artifact_paths` 不是锚点**：它只是一串**自报路径**；锚点只认 `report_sha256` 与报告**盘上字节**的比对。
-  `L1:A` 断言它"原样记下"，那是**抄写**，不是核对（§12.2 那张表里它与 `findings_*` 并列，只是说"这一行会写哪几个键"）。
+- **`artifact_paths` 不是锚点，但**：它不带摘要、落地之后没有任何一扇门再读它
+  （`L1:A` 断言它"原样记下"，那是**抄写**，不是核对）；`done` 的判据是报告锚点 + **按字段**的 findings 锚点（§12.2.1）。
+  可它也不是"随便一串自报路径"：**每一格都得是 `<WS>\.team\` 里一个真文件** —— 落点在外、或者盘上没有
+  那个文件，都是**同一个** `E_DATA_MISSING`；收下之后按规范拼法 `".team/<…>/<file>"` 写回（§12.2.2）——
+  不是锚点，但不许在锚点旁边夹带第二种写法。
 - **`findings_set_sha256` 的内容语义不在本节**：那个值（Q10 发现集摘要）归 `receipt-check` / `VRF-02`；
-  本节只判它被原样记下（`L1:A` 的 `LOC-DONE-ANCHOR`）。
+  `local-mark` 只判它"是 64 hex"并原样记下（`lib/local-state.mjs:508`）。`F-121` 的复算义务在 §6，不在这里。
+- **`findings_count` 只判"与产物条数一致"**：不判"那几条发现值不值得看"（那是评审的判断，不是闸的）。
+- **`findings_path` 的规范拼法有判据、但三格没量它**：`LOC-02`/`LOC-03`/`LOC-04` 的 findings 产物
+  **一律落在 `.team/` 下** ⇒ 那一条在套件里**没有翻面输入**（`LOC-02` 的 `readings.boundary` 逐字写了这件事）。
+  闸对它与 `report_path` 用同一个 `anchorResolution()`（`lib/local-state.mjs:383-427`）；**别把三格的绿读成"它被量过"**。
 - **不判"失败会不会清掉上一轮的锚点"**：`applyFailure` 今天只写 `state` / `failure_reason` / `liveness_at`
-  （`lib/local-state.mjs:442-449`），所以 `done → claim → fail` 会把旧 `report_path` 带进 `failed`；
+  （`lib/local-state.mjs:591-598`），所以 `done → claim → fail` 会把旧 `report_path` 带进 `failed`；
   本节不判这条。⚠️ `L2:A` 里那一格 `report_path === null` 是"**从没 mark 过**的空形状读数"，
   不是"失败必清锚点"的判据 —— 别把它的绿读成后者。
+- **`receipt_path` 不在这条规则里**：它是 **`.team` 相对**、走 `resolveUnder(teamDir, …)`、越界码 `E_PATH_ESCAPE`
+  （§12.2.2 那张两基准表）；改变锚点拼法**没有**改变它的基准，反过来也一样。
 - **不判** `local-receipt-set`（回执登记那一支）· 不判 `health` / `receipt-check` 的判词。
 - **不判**锁与原子写的实现（`E_LOCK_*` / `wx` / `rename` 是 `STO-*` 的事）。
 - **不判**加性键的名字（`receipt_versions` / `failure_history` 是实现内部，`lib/local-state.mjs:105` 明写"测试不许断言名字"）。
 
 ### §12.6 登记面（三处同批，缺一处就是"跑了但不进分母"）
 
-- 盘上：`tests/agenia-upgrade/integration/loc01-local-state.test.mjs`（`LOC-01` —— 四格**六条输入**同住一个文件：
-  四个 op 判的是**同一份文件**的六条腿，红的时候一眼看得出是哪条腿）；
-- 登记：`support/registry.mjs` 的 `BATCH_O` + `ROWS` + `GROUP_COUNTS['local-state'] = 1`
-  （以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_O`，否则冻结清单与表当场分家）；
-- 分母：`TOTAL` 由盘上扫出 = **84**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；83 + 这 1 条）。
+- 盘上两份文件四格：`tests/agenia-upgrade/integration/loc01-local-state.test.mjs`（`LOC-01` —— 四格**六条输入**，
+  四个 op 判的是**同一份文件**的六条腿：红的时候一眼看得出是哪条腿）+
+  `loc02-per-field-anchors.test.mjs`（`LOC-02` / `LOC-03` / `LOC-04` —— 锚点三条规则，三格同住一个文件、
+  十六条输入、四把刀在**全部十六个输入**上量）；
+- 登记：`support/registry.mjs` 的 `BATCH_O`（`LOC-01`）+ `BATCH_Q`（`LOC-02`/`LOC-03`/`LOC-04`）+ `ROWS` +
+  `GROUP_COUNTS['local-state'] = 4`（以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_O` **和** `BATCH_Q`，
+  否则冻结清单与表当场分家）；
+- 分母：`TOTAL` 由盘上扫出 = **93**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；90 + 这 3 条。
+  `local-state` 组从 1 条长到 4 条，是 `F-156` 第二轮的三条锚点规则）。
 
 ## §13 · `F-158` · 「一天」从**本地 04:00** 切，不从 0 点切（一处算，处处用）
 
@@ -1697,4 +1802,4 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
   量具在 `tests/agenia-upgrade/support/day-cut.mjs`（**不进分母**：它是工具，不是用例）。
 - 登记：`support/registry.mjs` 的 `BATCH_P` + `ROWS` + `GROUP_COUNTS['day-boundary'] = 6`
   （以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_P`，否则冻结清单与表当场分家）。
-- 分母：`TOTAL` 由盘上扫出 = **90**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；84 + 这 6 条）。
+- 分母：`TOTAL` 由盘上扫出 = **93**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；84 + 这 6 条，`F-156` 第二轮又 +3）。
