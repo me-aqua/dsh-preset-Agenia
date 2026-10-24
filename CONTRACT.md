@@ -1538,11 +1538,11 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 | `artifact_paths` | payload，每一格归一后的规范拼法 | 可选；给了就得是 `.team/` 里的真文件（§12.2.2） |
 
 - **不在表里的键一个都不写 —— 而且不静默**：CLI 把它们收进返回信封的 `ignored_keys`（排序后的键名数组）
-  并在 stderr 报一行 `WARN local-mark 不写这些键（不在 MARK_WRITE_KEYS 白名单里）：…`。两个例外是
-  **只读不写**的地址键与别名：`day` / `project` / `field` / `snapshot` / `session_id` / `workspace` /
-  `findings_sha256`（`lib/local-state.mjs:747` 的 `MARK_READ_KEYS`）。
-  **表里但派生的那一格同样进 `ignored_keys`**（`MARK_DERIVED_KEYS`，今天只有 `receipt_versions`）：
-  它照旧被点名、只是另报一行 `WARN local-mark 不收这些键（在白名单里，但由同一张表里别格派生）：…` ——
+  并在 stderr 报一行 `WARN local-mark 不写这些键（不在 MARK_WRITE_KEYS 白名单里）：…`。**不报的两类**：
+  ① **只读不写**的地址键与别名：`day` / `project` / `field` / `snapshot` / `session_id` / `workspace` /
+  `findings_sha256`（`lib/local-state.mjs:747` 的 `MARK_READ_KEYS`）；
+  ② **表里但派生**的那一格（`MARK_DERIVED_KEYS`，今天只有 `receipt_versions`）—— 它照样进 `ignored_keys`，
+  只是另报一行 `WARN local-mark 不收这些键（在白名单里，但由同一张表里别格派生）：…` ——
   一次 `local-mark` 会推进登记台账这件事因此读得出来，不靠猜。
   两格**永远不读 payload**：`liveness_at`（落地那一刻，时钟给）与 `failure_reason`（`state === 'done'` 时清空）。
 - **回执三件套按字段**（档位表一处：`lib/local-state.mjs:406-410` 的 `FIELD_RECEIPT_POLICY`；
@@ -1600,7 +1600,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 # 全量：去掉 --glob，再给一个全新的运行根（分母 96）
 ```
 
-| 格 | 守的是 | 现在（2026-10-24 `F-162` 门 4 返修之后复跑：`_runs/dev-f162b-r4` 分母 96 · 这四格全绿） |
+| 格 | 守的是 | 现在（2026-10-24 `F-162` 门 4 返修之后复跑：`_runs/dev-f162b-r5` 分母 96 · 这四格全绿） |
 | --- | --- | --- |
 | `LOC-01` | §12.1–§12.3，四格**六条输入**（键写作 `格:输入`）：`L1:A` `claim → mark` 成功（`done` + 产物锚点 + claim 痕迹 + `liveness_at` = 落地那一刻 + 兄弟节点不动）/ `L1:B` **坏锚点反例**（`report_sha256` 与报告盘上字节不符 ⇒ 拒 `E_ARG_HASH` · exit 2 · **状态文件一个字节没动**（比调用前后的 SHA256）· 节点仍 `running` · 六个锚点一个都不落）/ `L2:A` `claim → fail`（`failed` + `reason` 原文）/ `L2:B` **带首尾空白的 reason**（存下来的是 `.trim()` 之后那一段，长度也对）/ `L3:A` **两个节点真并发 claim**（两个真子进程：谁都不许覆盖谁）/ `L4:A` **任何 claim 之前** `local-read`（`E_DATA_MISSING` + exit 7 + 点名路径；首个 claim 之后兄弟节点是**文档里的空形状**）；另判 `local-read` 与盘上那份文件**说同一件事** | 🟢 **GREEN**（六条输入全成立 · 阳性对照六条全绿 · 五把刀向量见下） |
 | `LOC-02` | §12.2.1 的**按字段表**（**六条输入**）：`A` `memory_review` 只交报告 ⇒ `done`，`findings_path` / `findings_set_sha256` / `findings_count` 三个都是 `null`；`B` `conversation` 同上；`C` `technical` 不带 findings ⇒ `E_ARG_SCHEMA` · exit 2 · 节点停在 `running` · **状态文件零写入**；`D` `technical` 带真 findings ⇒ `done`，五个锚点逐项记下；`E` `memory_review` **只给 `findings_count`**（三件套缺两件）⇒ `E_ARG_SCHEMA` · exit 2 · 零写入；`F` `conversation` **给了 `findings_path` + `findings_set_sha256`、没给 `findings_count`**（半套的另一种切法）⇒ 同一个 `E_ARG_SCHEMA` · exit 2 · 零写入 | 🟢 **GREEN**（`dev-f156-r3f`：六条全成立 —— `A`/`B`/`D` exit 0；`C`/`E`/`F` exit 2 + `E_ARG_SCHEMA` + `state_written=false`；`D` 的 `findings_count=3`）· 刀 `KQ1`（三字段都要 findings）⇒ `[LOC-02:A, LOC-02:B]` · 刀 `KQ2`（三字段谁都不要）⇒ `[LOC-02:C]` |
@@ -1707,8 +1707,9 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
   否则冻结清单与表当场分家）；
 - 分母：`TOTAL` 由盘上扫出 = **96**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；94 + §12.2.4 的两格 `RCP-05` / `HLT-03`
   （批次 S）。`local-state` 组从 1 条长到 4 条，是 `F-156` 第二轮的三条锚点规则；`PLT-01` 是 `F-163` 的批次 R）。
-  ⚠️ 2026-10-24 **00:11** 现量：`RED 0 / GREEN 96 / HOLD 0` · `F57-OK`（`_runs/dev-f162b-r3` —— 那一跑测试树
-  开 ≠ 收，只作"这一族现在绿着"的读数，不作收口证据；收口那一跑的号写在 `.team/dev/2026-10-24/log.md` §七）。
+  ⚠️ 现量（`2026-10-24` 这一天 · 时钟读数 `2026-10-25 00:24:59`）：`RED 0 / GREEN 96 / HOLD 0` · `F57-OK`
+  （`_runs/dev-f162b-r5` —— 收口那一跑：测试树 `da407746d6d84d58` · 62 份 · **开 == 收**，跑的就是 `sources` 里那版；
+  提交之前那一跑 `dev-f162b-r4` 同值）。
 
 ## §13 · `F-158` · 「一天」从**本地 04:00** 切，不从 0 点切（一处算，处处用）
 
