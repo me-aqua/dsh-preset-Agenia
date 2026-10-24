@@ -337,6 +337,7 @@ $env:AGENIA_PROBE_TMP=$env:TEMP
 | 2026-10-23（第 4 关 🟠 有条件复审后返修） | **§12 三角收口**：① **三份作业书那句改对时刻** —— claim 在**派出去的那一刻**、mark / fail 在**交活之后**（原来把两个时刻压成"交活之后"，真按那句做，跑到一半崩掉的作业从来没有 `running` 节点，§12.3 正好在它要堵的洞上失效）；② `LOC-01` 补 **`L1:B` 坏锚点反例**（`report_sha256` 与盘上字节不符 ⇒ 拒 `E_ARG_HASH` · exit 2 · 状态文件零写入 · 节点仍 `running`）+ 刀④，与 `L1:A` 合起来才等于 §12.2 的"先核再落盘"；③ 补 **`L2:B` 带首尾空白的 reason**（口径 = 去掉首尾空白后逐字，与 `local-state.mjs:593` 的 `.trim()` 对齐）；④ §12.0 的病根证据改成**今天的事实**（"零命中"是定形时的读数；今天作业书里那三个词是"作业不调"的声明，缺的仍是**执行**调用者）；⑤ §12.3 点名 `stale` 是**健康卡上**算的、`local-read` 仍返回 `running`；⑥ §12.5 补 `artifact_paths` 不当锚点 · `findings_set_sha256` 内容不在本节 · 失败不清旧锚点（`P8`）；⑦ §12.4 的"各证一条"改成**实测向量表**并写明 L4 的 CLI 半没有刀。**分母仍 84**（一格，加的是输入不是用例 ID） | 测试岗，`F-156` 第 4 关复审（评审 `.team/review/2026-10-23/F-156-第4关-评审.md` 的 `P1` / `P2` / `P4` / `P5` / `P6` / `P7` / `P8`）；读数 `.team/test/2026-10-23/log.md` 第十二节：`_runs/test-f156b` 分母 **84** · `RED 0 / GREEN 84` · 测试树 `cababda80c9d7776…` · 五把刀向量 `[L3:A] / [L2:A,L2:B] / [L1:A] / [L1:B] / [L1:A,L1:B,L2:A,L3:A,L4:A]` · 体检 117/117 · 探针 222/222） |
 | 2026-10-24（`F-162` 门 3 · 实现落地） | **§12.2.4 回执三件套进 `local-mark` + 写回变成一张白名单**：① `applyMark` 以前**静默丢掉** payload 里不认识的键 —— 现在写回哪些键只由 **`MARK_WRITE_KEYS`**（= `lib/local-state.mjs::MARK_WRITERS` 的键）说，不在表里也不在只读表（`MARK_READ_KEYS`）的键由 CLI 点名进返回信封的 `ignored_keys` 并在 stderr 报一行；② 回执三件套 `receipt_path` / `receipt_sha256` / `receipt_version` **落盘**（`F-162` 的病根：收下 → `ok:true` → 三格全是 `null` ⇒ 卡常驻 `RED E_RECEIPT_ANCHOR`）；③ 档位在**一处**（`FIELD_RECEIPT_POLICY` + `receiptPolicyOf()`）：`memory_review` / `conversation` **交了就拒**（`E_ARG_SCHEMA`），`technical` 在"这一天回执已落盘 **且** 这一场有 claim"时**必交**、否则降成可选；④ **半套一律拒**（任给一件 ⇒ 三件都要，`E_ARG_SCHEMA` · exit 2 · 零写入）；⑤ `receipt_sha256` 必须等于**回执盘上字节**（自报不算锚，`E_ARG_HASH` · exit 2）、`receipt_version` 是 ≥1 的整数且与回执声明的 `version` 一致（`E_ARG_SCHEMA`）；⑥ 节点里 `receipt_path` 存 **`.team` 相对**那一种（`leader/<day>/技术复盘回执.json`）—— 两扇读者（`lib/health.mjs` / `receipt-check`）只认它；⑦ §12.5 补这一族的边界。读数：全量 `_runs/dev-f162-r1` 分母 **94** · `RED 0 / GREEN 94 / HOLD 0` · `F57-OK` · 体检 117/117 · 探针 222/222 · 目标 49 份逐字节相同 · 真实卡 `RED E_RECEIPT_ANCHOR` → `GREEN` | 实现岗，`F-162` 门 3（`presets/agenia/lib/local-state.mjs` + `bin/agenia-local.mjs`）；⚠️ 回执三件套**还没有自己的判据格**（测试岗 `F-162` 门 2 的部分），刀向量写在 §12.4 那一行 |
 | 2026-10-24（`F-162` 门 4 返修 · 评审 🟡 + 裁定） | **必交改判 + 三格契约说真话**（评审 `.team/review/2026-10-24/F-162-第4关-评审.md` 的 `R3` / `R6` / `R9` + 老板裁定）：① **拆掉条件①**（"这一天的回执已落盘"）—— `technical` 有 `claim.job_id` ⇒ **无条件必交**，没有 claim ⇒ 可选，另两个字段仍 `forbidden`（裁定理由：拿"被要求的东西在不在"决定"要不要要求它"，闸会在回执缺席那一刻自动降档）；② `receipt_versions` 进 `MARK_WRITERS`（白名单 **10 → 11** 键；它是派生格：payload 直接给的那一串不收，照样进 `ignored_keys` 并另报一行 `WARN local-mark 不收这些键…`）⇒ §12.2.4 那句"`local-mark` **只写**这些键"对实现成立；③ **回执里读不出整数 `version` ⇒ `E_DATA_CORRUPT` · exit 7 · 零写入**（以前静默跳过对账，那个没被核过的数会并进登记台账、把那一版"占掉"）；④ §12.2.2 两基准表的 `local-receipt-set` 那一行改成现状（只走 `resolveUnder`、**不归一**、照调用方原样存）；⑤ §12.2.4 补两句话（claim ⇒ 必有 trio / 无 claim ⇒ 不必交）、§12.5 的降档口改成"只有没有 claim 那一支"、§12.4 的 📌 改成"这一族现在有格"（`RCP-05` + `HLT-03`）、§12.6 分母 94 → **96**。读数：全量 `_runs/dev-f162b-r4` 分母 **96** · `RED 0 / GREEN 96 / HOLD 0` · `F57-OK` · 体检 117/117 · 探针 222/222 · 目标 49 份逐字节相同 · 真实卡 `GREEN`（三格仍在） | 实现岗，`F-162` 门 4 返修（`presets/agenia/lib/local-state.mjs` + `bin/agenia-local.mjs` + `CONTRACT.md`）；判据格 `RCP-05` / `HLT-03` 由测试岗同批落地（批次 S） |
+| 2026-10-24（`F-160` 门 3 · 实现落地） | 追加 §14 **技术评审的有效性量在提交上，不量在工作树**：`before_sha256` / `after_sha256` 改量"派工那一刻 `HEAD` 的一份只读副本"（`.tools/tree-at-commit.mjs`：导出 + 校验；副本的 CODE 指纹**只由** `.tools/fingerprint.mjs` 算，不另立排除表）；三个数分开报 —— `equal`（副本还是不是那一份）· `is_that_commit`（副本是不是那个提交）· `live.moved`（派工后活树动了几处；没基线 ⇒ `null` + 一句说法，不是 0）；活树在窗口里动了**不在本轮效力范围内**（并行是常态），但报告必须报"动了几处"。作业书 `job-briefs/technical-review.md` 的「代码根」那一行 + 「地基」一节同批改口。⚠️ `presets/agenia/leader.md` 的派工卡那一行**没动**（老板冻结）⇒ `REV-04` 的 `CARD-*` 三针还红着 | 实现岗，`F-160` 门 3（`.tools/tree-at-commit.mjs` 新增 + `presets/agenia/job-briefs/technical-review.md` + 本节）；判据 `REV-04` / `REV-05` 由测试岗同批落地（批次 T，分母 96 → 98） |
 
 ---
 
@@ -1922,3 +1923,57 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 - 登记：`support/registry.mjs` 的 `BATCH_P` + `ROWS` + `GROUP_COUNTS['day-boundary'] = 6`
   （以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_P`，否则冻结清单与表当场分家）。
 - 分母：`TOTAL` 由盘上扫出 = **93**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；84 + 这 6 条，`F-156` 第二轮又 +3）。
+
+---
+
+## §14 · `F-160` · 技术评审评的是**提交**，不是工作树
+
+> 定形：`.team/leader/2026-10-24/spec-F-160.md`。判断形状（测试岗定的下界）：
+> `.team/test/2026-10-24/契约-F-160-判断形状.md`。
+> 判据：`REV-04`（活树在窗口里动了 ⇒ 本轮有效）/ `REV-05`（评审自己动了副本 ⇒ 本轮作废），组 `review`，批次 `T`。
+
+### §14.0 一句话，三张脸
+
+**技术评审这一轮的有效性，量在「派工那一刻的 git 提交（`HEAD`）」的一份只读副本上 —— 口径是提交，不是工作树。**
+
+| 面 | 现在是什么 | 谁写 |
+| --- | --- | --- |
+| 对象 | 派工那一刻 `git rev-parse HEAD` 的**完整 40 hex**；评审的代码根 = 它的一份只读副本（纯树，里面没有 `.git`） | 组长（导出器 + 派工卡） |
+| `equal` | `before_sha256` / `after_sha256` 都量在**副本**上 ⇒ 只因**副本**被动过而翻面 | 评审 / 校验方自己算 |
+| 活树 | 窗口里的活树变动**不在本轮效力范围内**（并行是常态），但报告必须写一句"派工后活树有 N 处变动" | 校验方（由派工那一刻的基线比出来） |
+
+### §14.1 一处实现：`.tools/tree-at-commit.mjs`
+
+```sh
+# 派工时（组长）：导出一份只读副本 + 留一份活树基线
+<node> .tools/tree-at-commit.mjs --repo <WS> --commit <40hex> \
+       --out <WS>\.team\<角色>\<day>\tree-at-<commit> \
+       --live-baseline <WS>\.team\<角色>\<day>\live-before.json --json
+# 交活时（评审 / 任何第三方）：自己复算 + 逐份核 blob + 报活树动了几处
+<node> .tools/tree-at-commit.mjs --verify <副本> --repo <WS> --commit <40hex> \
+       --expect <before_sha256> [--live-baseline <file>] [--live-root <WS>] --json
+```
+
+副本的 CODE 指纹**只由 `.tools/fingerprint.mjs` 算**（本工具不实现第二张排除表：一张手抄的表就是第二份真相，
+分叉以后没人判得了"哪个数对"）；`--out` 已存在且非空 ⇒ **拒**（`REFUSE-OVERWRITE`，拒在写之前 —— 读数不许原地覆盖）；
+没给活树基线 ⇒ `live.moved: null` + 一句说法（**不许读成 0**）。
+作业书 `presets/agenia/job-briefs/technical-review.md` 的「地基」一节按这一节改口。
+
+### §14.2 三个数不许混
+
+- `equal`：副本**还是不是**派工那一刻那份（副本自己的前后比）。
+- `is_that_commit`：副本**是不是那个提交**（逐份 `git blob` SHA-1 + 路径集合 + 不许有 `.git`）。
+  它与 `equal` **互相独立**：拿一份干净的提交 A 副本 + `--commit B` 去核 ⇒ `equal:true` 且 `is_that_commit.ok:false`
+  （只比一个总哈希的实现会在这里"绿得看不出来"）。
+- `live.moved`：活树**从派工那一刻起**动了几处（按基线逐份比）。它**不是**"副本 vs 活树的**分歧**" ——
+  分歧里装着从来没进过提交的文件（2026-10-24 现量：提交 135 份 / 活树 192 份），拿它当变动数会把
+  "派工后动了 0 处"报成几十处。
+
+### §14.3 边界（这一节不覆盖什么）
+
+- **不判**"组长有没有照 §14.1 派工"：派工卡那一行在 `presets/agenia/leader.md`（**冻结文件**，改它要老板一句话）。
+  `REV-04` 的 `CARD-*` 三针因此还红着（2026-10-24 现量）—— 红的是那一行还没写，不是这一节的口径。
+- **不改** CODE 的排除表（`.team/` / `.runtime/` / `_staging/` 都排对了；改它只会把真代码藏起来）。
+- **不改成"评审与实现串行"**：并行是常态，把口径对准不可变对象才是解。
+- **不覆盖**共享脑（`<DR>` 下的一切）：评审对记忆库仍然只读。
+

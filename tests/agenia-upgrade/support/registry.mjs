@@ -327,6 +327,34 @@ export const BATCH_R = ['PLT-01']
 export const BATCH_S = ['RCP-05', 'HLT-03']
 
 /**
+ * 批次 T 的 2 条 —— **门 2 · `F-160`**（技术评审评的是**派工那一刻的提交**，不是活树，2026-10-24）。
+ *
+ * 病根是今天 11:05–11:35 量出来的：前后 CODE 指纹一直量在**活树**上，而活树里装着"别的岗位此刻正在写的文件"
+ * ⇒ `equal:true` 在派出那一刻就注定失败（25 分钟翻了 7 次、`changed[]` 4 → 18；
+ * 四份 findings 内容可用、**效力作废**）。根因不是排除表，是**对象选错了**：要钉在不可变对象上。
+ *
+ * 两格是**同一把尺子的两个方向**（少任何一个方向，新口径都是只会往"有效"那一边倒的判据）：
+ *   · `REV-04` **活树在窗口里动了 ⇒ 本轮仍然有效**：夹具仓库（两次提交、钉住哈希）+ 导出器落只读副本，
+ *     副本逐份 `git blob` SHA-1 = 该提交、CODE 指纹 = 卡片上的 `before_sha256`（提交侧从 git 对象独立算出来）；
+ *     窗口里动活树两处（改一份 + 加一份，都进 CODE 名单）⇒ **副本前后 equal:true（有效）**，
+ *     而**活树前后 equal:false**（旧口径会作废这轮好评审 —— 今天红的就是这条）。
+ *     校验模式必须自己复算：`equal:true` · `is_that_commit.ok:true` · 活树动了 **2** 处
+ *     （**不是**"副本 vs 活树的分歧"：今天真仓库是 135 份提交 vs 192 份活树，分歧 57 —— 按分歧报就是读数撒谎）；
+ *     没给活树基线 ⇒ 变动数必须**判不了**（`null` + 一句说法），不许读成 0；同一个 `--out` 再导一次必须拒（读数不许原地覆盖）。
+ *     另加真仓库里**钉住的一个提交**（`8b7cea6…`）那一段：副本仍必须是它、CODE 指纹仍必须对得上。
+ *   · `REV-05` **评审自己动了副本 ⇒ 本轮作废**：单因（活树一个字节不动），改副本里一份 CODE 文件
+ *     ⇒ 副本前后 `equal:false`、`changed[]` 恰好那一份、活树前后 `equal:true`；
+ *     校验必须自己复算 ⇒ `equal:false`（**不许照抄卡上的值**）+ `is_that_commit.ok:false` 并**点名**哪一份文件；
+ *     再拿**另一个提交**去核一份干净的副本 ⇒ `equal:true`（副本确实没动）但 `is_that_commit.ok:false`
+ *     —— 两条腿互相独立，只比哈希的实现会在这一格上"绿得看不出来"。
+ *
+ * 契约（判断形状、CLI、JSON 字段、三份文档的针）在 `.team/test/2026-10-24/契约-F-160-判断形状.md`；
+ * 定形在 `.team/leader/2026-10-24/spec-F-160.md`。⚠️ 它们**不进** `FROZEN_IDS`（历史冻结的 A–F 55 条）。
+ * ⚠️ **分母 96 → 98**（两格各一条 `test()`；两格是两处**不同的红因**：副本有效 / 副本被动过）。
+ */
+export const BATCH_T = ['REV-04', 'REV-05']
+
+/**
  * 已落笔的十八批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -335,9 +363,10 @@ export const BATCH_S = ['RCP-05', 'HLT-03']
  * 批次 P 是 `F-158` 一天从 04:00 切（2026-10-24），批次 Q 是 `F-156` 第二轮锚点闸的三条规则（同日），
  * 批次 R 是 `F-163` 平台版本读数的自证（同日）。
  * 批次 S 是 `F-162` 的两半（`RCP-05` 回执三件套进 `local-mark` / `HLT-03` 卡的第二半，同日）。
+ * 批次 T 是 `F-160` 评审对象是**派工那一刻的提交**（`REV-04` 副本有效 / `REV-05` 副本被动过就作废，同日）。
  * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -358,7 +387,8 @@ const BATCH_OF = (id) =>
                                   : BATCH_Q.includes(id) ? 'Q'
                                     : BATCH_R.includes(id) ? 'R'
                                       : BATCH_S.includes(id) ? 'S'
-                                        : null
+                                        : BATCH_T.includes(id) ? 'T'
+                                          : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -435,6 +465,12 @@ const F = {
    *  是同一句话的两头，红的时候一眼看得出是哪一头。 */
   rcp05: 'integration/rcp05-receipt-trio.test.mjs',
   hlt03: 'report/hlt03-receipt-anchor.test.mjs',
+  /** 门 2 · `F-160` 评审对象是提交（批次 T）—— **两格各一个文件**：活树动了它仍然有效（`rev04`）与
+   *  副本被动过就作废（`rev05`）是同一把尺子的两个方向，红的时候一眼看得出是哪一头。
+   *  夹具仓库造在运行根里（两次提交、钉住哈希）；导出器是 `.tools/tree-at-commit.mjs`（实现岗的文件，
+   *  不在就用 `AGENIA_TREE_AT_COMMIT` 指过来 —— 它今天**还不存在**，所以这两格今天是红的）。 */
+  rev04: 'integration/rev04-review-copy-valid.test.mjs',
+  rev05: 'integration/rev05-copy-touched-void.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -505,6 +541,10 @@ const ROWS = [
   ['HLT-01', 'health', F.health, 'health 六场景矩阵：没开工 HOLD、运行中非绿、缺本地双评审红、完整绿', '批次 C'],
   ['HLT-02', 'health', F.health, '失败/父死不丢原因；staleVerdict 边界按 update 90 / local 45 分列且无 60', '批次 C'],
   ['HLT-03', 'health', F.hlt03, 'F-162 **卡的第二半**（判真实卡那一扇门 `agenia-local.mjs --op health` → `healthVerdict` → `buildHealthCard` → `<工作区>/.team/brain/<day>/health.json`，**不是**脑侧 `health-read`）：A `technical` 已 `done` + 回执在盘上、三个锚点缺一个（`receipt_sha256` 是 null）⇒ `RED E_RECEIPT_ANCHOR`（**不许**报 `E_RECEIPT_MISSING`）· B 只齐一个锚点 ⇒ 同一个 `E_RECEIPT_ANCHOR`（"1–2 个"两个方向都量）· C 盘上没有回执 ⇒ `RED E_RECEIPT_MISSING` · D 三个锚点全齐 + 回执在盘上 ⇒ `GREEN`（阳性对照）—— 四条另判 `progress` 3/3 与 `receipt:true/false`、盘上那张卡与 stdout 同一句话（status + reasons）、`paths.local`/`paths.receipt` 给出处、读面零写入（状态文件 SHA256 前后相同）；另判两个分支**不许合并**（`E_RECEIPT_ANCHOR` ≠ `E_RECEIPT_MISSING`）', '批次 S'],
+
+  // ── 门 2 · `F-160` 评审对象是提交（2）：活树动了不算你的事 / 副本动了就是（2026-10-24）──────────
+  ['REV-04', 'review', F.rev04, 'F-160 **评审对象 = 派工那一刻的提交**（活树在窗口里动了 ⇒ 本轮仍然有效）：夹具仓库（两次提交、钉住哈希）+ 导出器落只读副本 —— 副本逐份 `git blob` SHA-1 = 该提交、路径集合一致、里面没有 `.git`，副本的 CODE 指纹 = 卡片上的 `before_sha256`（提交侧从 git 对象独立算出来的那个数，两条路必须同一个）；窗口里动**活树**两处（改 `lib/alpha.mjs` + 加 `lib/added-by-other-role.mjs`，都进 CODE 名单）⇒ **副本前后 `equal:true`（本轮有效）**、活树前后 `equal:false`（**旧口径会作废这轮好评审** —— 今天红的就是这条）；校验模式自己复算 ⇒ `equal:true` · `is_that_commit.ok:true` · 活树动了 **2** 处（**不是**"副本 vs 活树的分歧"：真仓库今天 135 份提交 vs 192 份活树，分歧 57 ⇒ 按分歧报 = 读数撒谎）；没给活树基线 ⇒ 变动数**判不了**（`null` + 一句说法，不许读成 0）；同一个 `--out` 再导一次必须拒（读数不许原地覆盖）；另加真仓库里钉住的提交 `8b7cea6…` 那一段（副本仍必须是它、CODE 指纹仍必须对得上）；外加三份载体上的针：作业书「必读输入清单」的代码根那一行 + 「地基」一节（副本 / 活树不在本轮 / 你得报一句）+ `leader.md` 第三步（`rev-parse` / 副本 / `before_sha256`）+ `CONTRACT.md` 的 `F-160` 那一句', '批次 T'],
+  ['REV-05', 'review', F.rev05, 'F-160 **同一把尺子的反方向：评审自己动了副本 ⇒ 本轮作废**（单因：活树一个字节不动）：改副本里一份 CODE 文件 ⇒ 副本前后 `equal:false`、`changed[]` 恰好那一份、活树前后 `equal:true`（证明翻面只来自副本）；校验必须自己复算 ⇒ `equal:false`（**不许照抄卡上的值**——卡上还写着派工那一刻的数）+ `is_that_commit.ok:false` 并**点名**那一份文件；再拿**另一个提交**去核一份干净的副本 ⇒ `equal:true`（副本确实没动）但 `is_that_commit.ok:false` —— 两条腿互相独立，只比哈希的实现会在这一格上"绿得看不出来"；外加量具自证（副本上"盘上那一条路"与 `.tools/fingerprint.mjs` 必须是同一个数）', '批次 T'],
 
   // ── data-root 隔离（3）──────────────────────────────────────────────────
   ['DR-01', 'data-root', F.dataRoot, '命令清单 × 姿势矩阵：省略/空/相对/真根变体/C 盘/UNC/越界/合法根；非法一律非零退出零写入', '批次 C'],
@@ -639,7 +679,9 @@ export const GROUP_COUNTS = {
   'static-doc': 6, route: 8, store: 4, memory: 12, guard: 3, job: 4,
   /** `receipt` 4 → 5 / `health` 2 → 3：`F-162` 的两半（`RCP-05` 回执三件套进 `local-mark` ·
    *  `HLT-03` 卡的第二半 = `E_RECEIPT_ANCHOR` 那一支）各自归到它守的那一族。契约见 `CONTRACT.md` §12.2.4 / §12.5。 */
-  review: 3, receipt: 5, health: 3, 'data-root': 3, install: 3, env: 2, read: 1,
+  /** `review` 3 → 5：`F-160` 的两格（`REV-04` 活树动了仍然有效 · `REV-05` 副本被动过就作废）——
+   *  它们守的是**技术评审这一票的效力口径**（提交 / 副本），所以归 `review` 这一族。 */
+  review: 5, receipt: 5, health: 3, 'data-root': 3, install: 3, env: 2, read: 1,
   'proposal-file': 11,
   /** 门 1 回执链路四票（`F-120`～`F-123`）—— 契约见 `CONTRACT.md` §6。 */
   'verify-recompute': 4,
@@ -682,11 +724,11 @@ export function registryProblems() {
   // 发现器自己报的问题（没有 ID 的 test() / 重复 ID）。
   for (const p of DISCOVERY.problems) problems.push(p.message)
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
-  // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
+  // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))

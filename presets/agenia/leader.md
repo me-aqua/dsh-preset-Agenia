@@ -75,6 +75,16 @@ echo '{"day":"<今天>"}' > today.json
 **不是 ⇒ 先别派**（会话评审的作业书是硬门，派早了它当场停），去干第四步、等判决作业的完成通知。
 ⚠️ 两份的**作业书连活一起交过去**。
 
+🔴 **派技术评审时，派工卡要钉死三样（评审的对象是"提交"，不是活树）**：
+```sh
+git rev-parse HEAD                      # ① 派工那一刻的完整 40 hex
+<node> .tools/tree-at-commit.mjs --repo <WS> --commit <40hex> --out <WS>/.team/retro/<今天>/tree-at-<短哈希> --live-baseline <WS>/.team/retro/<今天>/live-baseline.json --json
+                                        # ② 只读副本（纯树、不带 .git）；它同时量出副本的 CODE 指纹
+# ③ 把 ① 的提交、② 的副本路径、② 量出的 before_sha256 三样写进派工卡
+```
+· 评审读**副本**，`equal` 量**副本**（副本被动过 ⇒ 作废；活树在窗口里动 ⇒ 与本轮无关，但报告要点名"活树动了 N 处"）。
+· 没有这三样 ⇒ 派工卡不合格：这一轮评的是"正在被别的岗位写的树"，`equal` 只是概率。
+
 🔴 **派会话评审之前，先把「昨天那一天」的包造出来**（老板点名加的）：
 ```sh
 <node> presets/agenia/bin/agenia-brain.mjs --op session-packet --data-root <DR> --real-mode --workspace <WS> --in <payload.json>
