@@ -76,6 +76,21 @@ echo '{"day":"<今天>"}' > today.json
 🔴 **链的尾巴**：判完 ⇒ **清池归档**（判过的搬 `proposals/archive/`，池子只留未判的；判据 = 拼回去逐字节相同）。
 
 **三、派两份「每日评审」**（各一份 · 后台）：`job_technical_review`（看代码）+ `job_conversation_review`（看人）。
+🔴 **先造「昨天那一天」的会话包，再派**（老板点名加的）—— 那是 `job_conversation_review` **唯一的输入**；**没有包，那份评审按规矩只能交「门缺席票」，而那不是"评过、没问题"**。
+```sh
+<node> presets/agenia/bin/agenia-brain.mjs --op session-packet --data-root <DR> --real-mode --workspace <WS> --in <payload.json>
+# payload = { "day":"<昨天>", "project":"<项目名>",
+#             "sources":[ { "session_id":"<会话 id>", "project":"<项目名>",
+#                           "file":"C:\\Users\\<你>\\.dsh\\sessions\\--<工区键>--\\<会话 id>\\session.v4.jsonl.zstd",
+#                           "last_event_at":"<ISO8601>", "human":true,
+#                           "window":{ "from":"<昨天>T00:00:00+08:00", "to":"<今天>T04:00:00+08:00" } } ] }
+```
+· `sources` **必须显式点名**（这个 op 刻意不替你猜源会话：猜错就是"评了别的会话还以为评了这一段"）。
+· 🔴 **列源按「会话流文件的 mtime」挑，不是按会话目录的 mtime** —— 实测：两天前开始的会话，目录时间是旧的、流文件却一直写到当天 14:00 ⇒ 按目录挑就漏掉了那一天的前 14 小时，而包里 `window.from=null`，读的人**看不出有个洞**。
+· 每条源要**绝对路径** + `last_event_at` + `human:true`（只打人话——老板那几行逐字，组长那几行是投影）。
+· 🔴 **别把「干活的会话」写进 `exclude_session_ids`** —— 那个字段是"评审自己那条"，不是"被评的那条"。
+· 实测：这一步过去只活在组长脑子里 —— 有些天有包、有些天没有；**没有包的那天，评审只有一个空门。**
+
 产物落 `.team/retro/<今天>/`。🔴 **派之前先看** `snapshot_available === true`（= 判决已 `judge-commit`）——
 **不是 ⇒ 先别派**（会话评审的作业书是硬门，派早了它当场停），去干第四步、等判决作业的完成通知。
 ⚠️ 两份的**作业书连活一起交过去**。
@@ -90,22 +105,6 @@ git rev-parse HEAD                      # ① 派工那一刻的完整 40 hex
 · 评审读**副本**，`equal` 量**副本**（副本被动过 ⇒ 作废；活树在窗口里动 ⇒ 与本轮无关，但报告要点名"活树动了 N 处"）。
 · 没有这三样 ⇒ 派工卡不合格：这一轮评的是"正在被别的岗位写的树"，`equal` 只是概率。
 ⚠️ **这条不只管每日评审**：**五道关的第 4 关（独立评审）派工也一样** —— 同样钉这三样，副本落 `.team\review\<今天>\tree-at-<短哈希>`（别写进 `retro/`，那是每日评审的抽屉）。
-
-🔴 **派会话评审之前，先把「昨天那一天」的包造出来**（老板点名加的）：
-```sh
-<node> presets/agenia/bin/agenia-brain.mjs --op session-packet --data-root <DR> --real-mode --workspace <WS> --in <payload.json>
-# payload = { "day":"<昨天>", "project":"<项目名>",
-#             "sources":[ { "session_id":"<会话 id>", "project":"<项目名>",
-#                           "file":"C:\\Users\\<你>\\.dsh\\sessions\\--<工区键>--\\<会话 id>\\session.v4.jsonl.zstd",
-#                           "last_event_at":"<ISO8601>", "human":true,
-#                           "window":{ "from":"<昨天>T00:00:00+08:00", "to":"<今天>T04:00:00+08:00" } } ] }
-```
-· `sources` **必须显式点名**（这个 op 刻意不替你猜源会话：猜错就是"评了别的会话还以为评了这一段"）。
-· 🔴 **列源按「会话流文件的 mtime」挑，不是按会话目录的 mtime** —— 实测：两天前开始的会话，目录时间是旧的、流文件却一直写到当天 14:00 ⇒ 按目录挑就漏掉了那一天的前 14 小时，而包里 `window.from=null`，读的人**看不出有个洞**。
-· 每条源要**绝对路径** + `last_event_at` + `human:true`（只打人话——老板那几行逐字，组长那几行是投影）。
-· 🔴 **别把「干活的会话」写进 `exclude_session_ids`** —— 那个字段是"评审自己那条"，不是"被评的那条"。
-· 包没造出来 ⇒ 会话评审只有一个空门：按规矩交**「门缺席票」**，而**那不是"评过、没问题"**。
-· 实测：这一步过去只活在组长脑子里 —— 有些天有包、有些天没有；**没有包的那天，评审只有一个空门。**
 
 **四、跑体检**：`<node> .tools/check-notes.mjs`（退出码 0 全绿 / 2 有挂起 / 1 有红）。
 **红了不许删断言，去改事实。**

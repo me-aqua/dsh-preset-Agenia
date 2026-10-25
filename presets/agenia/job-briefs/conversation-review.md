@@ -21,7 +21,7 @@
 
 | # | 输入 | 路径 | 读哪一版 | 核对什么 |
 |---|---|---|---|---|
-| 1 | **冻结会话包** | `<WS>\.team\retro\<日期>\conversation-packet\` | 任务书点名的那一个包 | 包清单里的**源会话 id / 窗口 / 排除项 / 内容 SHA256** —— 逐项核 |
+| 1 | **冻结会话包** | `<WS>\.team\retro\<日期>\conversation-packet\` | 任务书点名的那一个包 | 包清单里的**源会话 id / 窗口 / 排除项 / 内容 SHA256** —— 逐项核。🔴 **上游（组长）**：包由他「开工第一步 · 第三件 · 先造包」产出（`--op session-packet`）；**包不在 ⇒ 交「门缺席票」，不许自己造、不许拿猜的顶上** |
 | 2 | 常识 | `<DR>\common-sense.md` | 任务书点名的那个 SHA256 | **必核 SHA256**：与共享状态里的 `common_sense_sha256` 逐字一致 |
 | 3 | 快照 | `<DR>\memory\snapshots\<vN>.json` | 任务书点名的**版本** `vN` | `version` / `totals` 与 `distribution` —— 用来对"当时队伍以为知道什么" |
 | 4 | 共享状态 | `<DR>\state\update\<day>.json` | 任务书点名的 `generation` | `snapshot_available === true` 才动；记下你读到的 `common_sense_sha256` |

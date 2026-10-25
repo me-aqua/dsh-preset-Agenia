@@ -1224,6 +1224,33 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     !/跑在哪份预设/.test(leaderText) && !/报出当前生效预设/.test(leaderText),
     '老板 2026-10-04 定：菜单上自己看得见，不需要她报一句。要长回来先改这条断言和 说明.md')
 
+  // 🆕 2026-10-25（`F-159`）：开工第一步里「先造昨天的会话包」必须是**清单里的一条义务**，而且排在派评审之前。
+  //    来历（实测）：造包这一步过去只活在组长脑子里 —— 有些天有包、有些天没有；
+  //    **没有包的那天，会话评审只有一个空门**（按规矩交「门缺席票」，而那不是"评过、没问题"）。
+  //    钉三样，每一样都是一种"丢掉它"的形状：
+  //      ① 第三步里有一条**成文义务**（"先造…包，再派"），不是散在别处的一句话；
+  //      ② 它的行号在**派评审那道闸**（`snapshot_available === true`）**之前** —— 顺序是这条规矩的全部内容；
+  //      ③ 造包那条命令还在（`--op session-packet`）。
+  //    ⚠️ 不查词汇"会话包"：作业书 / 说明书里到处都有它，查词汇会把"提到"读成"清单里的一条"。
+  //    ⚠️ 第三步的**标题**不能改（`REV-04` 钉着 `/^\*\*三、\s*派两份/`）⇒ 造包是标题下面的第一行。
+  const firstSteps = (() => {
+    const lines = leaderText.split('\n')
+    const start = lines.findIndex((ln) => /^##\s*每天开工第一步/.test(ln))
+    if (start < 0) return null
+    const rest = lines.slice(start + 1)
+    const end = rest.findIndex((ln) => /^##\s/.test(ln))
+    return (end < 0 ? rest : rest.slice(0, end)).map((ln, i) => ({ text: ln, no: start + 2 + i }))
+  })()
+  const packetDuty = firstSteps?.find((x) => /先造[^\n]{0,40}包[^\n]{0,6}再派/.test(x.text)) ?? null
+  const dispatchGate = firstSteps?.find((x) => /snapshot_available/.test(x.text)) ?? null
+  const packetCmd = (firstSteps ?? []).some((x) => /--op session-packet/.test(x.text))
+  yes('injector', '开工第一步写着「先造昨天的会话包，再派评审」（没包 ⇒ 那份评审只是个空门）',
+    packetDuty !== null && dispatchGate !== null && packetDuty.no < dispatchGate.no && packetCmd,
+    `造包义务：${packetDuty === null ? '**没了**（第三步里找不到"先造…包，再派"那一行）' : `第 ${packetDuty.no} 行`}`
+    + ` · 派评审那道闸（snapshot_available）：${dispatchGate === null ? '**没了**' : `第 ${dispatchGate.no} 行`}`
+    + ` · 造包命令：${packetCmd ? '在' : '**没了**（--op session-packet）'}`
+    + ' —— 三样里少一样，会话评审就可能只有一个空门（`F-159`：造包排在派评审之前）')
+
   // ── 2026-09-26 加的两条：情绪模块的**代码那一半**（口径 10 / 14）─────────────
   // 口径 10：`moodOf` 必须是**导出的**——不导出，探针就只能隔着整条尾巴路测它，
   //          喂假信号、验单调性这些事全部做不了（那就退化成"读代码觉得对"）。
