@@ -773,20 +773,35 @@ function opJudgeCommit({ root, payload }) {
 
   // ⑦ 发布（事务）
   const archived = [...(base.snapshot.archived ?? [])]
+  /** 这一轮**真的离库**的条目 id（与 `archived` 同一份来路，见下面 `acceptedMaintenanceIds`）。 */
+  const disposedIds = []
   for (const op of ops) {
-    if (op.kind === 'retire' || op.kind === 'cull') archived.push({ entry_id: op.id, disposition: op.kind === 'cull' ? 'culled' : 'retired', to: null })
-    if (op.kind === 'merge') for (const id of op.ids ?? []) archived.push({ entry_id: id, disposition: 'merged', to: op.entry?.id ?? null })
+    if (op.kind === 'retire' || op.kind === 'cull') {
+      archived.push({ entry_id: op.id, disposition: op.kind === 'cull' ? 'culled' : 'retired', to: null })
+      disposedIds.push(op.id)
+    }
+    if (op.kind === 'merge') {
+      for (const id of op.ids ?? []) {
+        archived.push({ entry_id: id, disposition: 'merged', to: op.entry?.id ?? null })
+        disposedIds.push(id)
+      }
+    }
   }
   const version = SNAP.nextVersion(current.ok ? current.version : 'v0')
   for (const row of archived) if (row.to === null && row.disposition !== 'merged') row.to = version
 
-  // `accepted_maintenance_ids` = **真的被处置过的**那些条目（快照里 `archived` 的来路就是它）。
-  // `action: null` 的裁决什么都没动 ⇒ 它的 `target_id` 不是"被维护过的条目"，不许记进来
-  // （记了就与 `archived` 对不上：那一条既没被改、也没被退休/合并，却出现在"被处置"清单里）。
-  const acceptedMaintenanceIds = decisions
-    .filter((d) => d?.action !== null && d?.action !== undefined)
-    .map((d) => d?.target_id)
-    .filter((id) => typeof id === 'string')
+  // `accepted_maintenance_ids` = **真的离库的那些条目**，与 `archived` 同一份来路（`F-154`）。
+  // 🔴 以前记的是裁决的 `target_id`：**合并案里 target 是活下来的那一条，源才是被处置的** ——
+  //    于是 6 条真离库的没记、6 条还活着的被记（2026-10-25 复核点名的 6/6）。
+  //    改成从 op 落地时收集的 `disposedIds` 取：retire/cull 记目标（它确实离库了）、
+  //    merge 记**源**（`op.ids`）；`modify` / `retag` 不产生离库条目 ⇒ 不在这里（它们的痕迹在
+  //    报告的 `maintenance_decisions` 与 `archived` 之外，不需要第二份）。
+  // `action: null` 的裁决没有 op ⇒ 自然一个 id 都不进；形状 `add` 也不进（它不是维护处置）。
+  const acceptedMaintenanceIds = [...new Set(disposedIds)]
+  // `accepted_proposal_ids` 原样抄 `payload.accepted`。⚠️ 它可以装维护案 id（2026-10-18 的形状，
+  //    `V9-MAINT-ACCEPTED-SHAPE` 钉着：那是判决行 verdict 的来源，**别在这里剔**）。`F-154` 的
+  //    `maintenance-20261025-0372` 属于**判决方把一条有裁决的维护案也写进了 accepted** —— 那一侧的账，
+  //    这里不改口径（剔了就会把 10-18 那个形状下对的实现判红）。
   const snapshot = SNAP.buildSnapshot({
     version,
     parentVersion: baseVersion,

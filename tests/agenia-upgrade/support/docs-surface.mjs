@@ -94,7 +94,8 @@ export function leaderInjectionSurface(compositionText) {
 /**
  * 「**注入面里说了没有**」这一族的义务表。
  *
- * `forms` 里每一格都是"这件事"的一种**合法写法**；命中任意一格就算说了。
+ * `forms` 里每一格都是"这件事"的一种**合法写法**；但**命中任意一格不等于承诺** ——
+ * 那一处还必须是**不紧邻否定**的（`F-152` 起；口径见 `promisedIn` 与 `CONTRACT.md` §1.4）。
  * `sample` 是一个必须被 `forms` 命中的字面样本（用例拿它自控，见文件头）。
  */
 export const INJECTED_OBLIGATIONS = [
@@ -169,6 +170,17 @@ function promisedIn(text, ob) {
 }
 
 /**
+ * 读数用的同一把尺子（`F-154` F1）：**这份文本里这条义务被承诺了吗**。
+ *
+ * 为什么要有这个导出：`static/docs.test.mjs` 的读数 `said_in` 原来自己抄了一遍
+ * `ob.forms.some((re) => re.test(text))` —— 那是"这条义务的第二份实现"（旧的"命中即承诺"）。
+ * 今天两边读数一样，但靶子一变（注入面里真的出现一句诚实的空缺）就会分叉：判据红、
+ * 报文说「0 处承诺」，同一份证据的读数行却写着 `said_in: ["leader.md"]`。
+ * ⇒ 读数一律走这里，**别在外面再抄一遍否定逻辑**。
+ */
+export const committedIn = (text, ob) => typeof text === 'string' && promisedIn(text, ob)
+
+/**
  * 逐条判「注入面里说了没有」。
  *
  * 「说了」= 至少有一处命中**不紧邻否定**（`NEGATIONS` 那五个；中间最多一个空格或标点）——
@@ -199,7 +211,7 @@ export function injectedSurfaceProblems({ docs, surface, obligations = INJECTED_
     if (hits.length === 0) {
       problems.push({
         code: CODES.injectedUnsaid,
-        message: `注入面里没有任何一份说到「${ob.name}」—— 模型根本看不到这件事。`
+        message: `注入面里没有任何一份承诺「${ob.name}」—— 模型根本看不到这件事。`
           + `搜索范围（组合的 \`leaderOrder\` 那几份）：${surface.map((rel) => `${rel}=${typeof docs?.[rel] === 'string' ? '0 处承诺（否定形态不算）' : '不在'}`).join('、')}。`
           + `为什么是这里：${ob.why}`,
         detail: { obligation: ob.id, surface, forms: ob.forms.map((re) => String(re)) },

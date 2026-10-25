@@ -4,7 +4,7 @@
  * 测的**不是** `inject.js` 的源码长得像什么，而是**那一步真的被塞进请求里的那条消息**写了什么：
  *   ① 在假 ctx 上跑 staged `inject.js` 的 `apply()`（唯一入口：`reasoning-seam.mjs` 的
  *      `loadAppliedSurface()` —— 与 `RFG-02`/`RFG-03` 共用同一套假 ctx，别处不许再建一套会话）；
- *   ② 按真 harness 的次序喂**插件事** `tools/result`（板子的账本只听这个口 —— 见 `.tools/inject-probe.mjs:657-668`）；
+ *   ② 按真 harness 的次序喂**插件事** `tools/result`（板子的账本只听这个口 —— 见 `.tools/inject-probe.mjs` 里喂 `tools/result` 的那一段）；
  *   ③ 走一次 `agent/pre-step` 瀑布（基态 `{ kind: 'enter', messages: [] }`），把返回的
  *      `decision.messages` 里**新加的那一条**正文取出来 —— 那就是"这一步送出去的请求里多出来的话"。
  *
@@ -19,7 +19,7 @@
  *   **一个字节都不写**。所以这一格证明的是"板子怎么记账"，不是"写入工具真的写成功了"。
  *
  * ⚠️ **不跑 `system-prompt/assemble`**：那一步的作用是把"这次开口的是哪个岗位"记进 `roleOfAgent`，
- *   组员才因此整条不贴（`inject.js:2085`）。这一格造的是**组长那条路**（没有组员标记 ⇒ 不是组员），
+ *   组员才因此整条不贴（`inject.js` 里 `roleOfAgent.has(id)` 那条早退）。这一格造的是**组长那条路**（没有组员标记 ⇒ 不是组员），
  *   所以不登记、也不读那几份 `.md`。真 harness 里装配排在 pre-step 之前（`dsh-agent-loop` L889→L894）。
  */
 import { loadAppliedSurface } from './reasoning-seam.mjs'
@@ -36,7 +36,7 @@ const FIXTURE_DELEGATION = { subagent: 'one-shot', team_dev: 'one-shot', team_te
  * 开一次**假的组长会话**（每个会话一份账本）。
  *
  * 每次调用都是一次新的 `apply()` —— `ledgers` / `lastBoardPosted` / `moods` 都是 `apply()` 内部的闭包状态
- * （`inject.js:1252` 起），所以三个格子互不串账。
+ * （`apply()` 内部的闭包状态，按这三个名字找：`ledgers` / `lastBoardPosted` / `moods`），所以三个格子互不串账。
  *
  * @param {{id: string, cwd: string}} args  `id` = 会话 id（会写进 `agent.id`）；`cwd` = 项目根（判"写的是不是 `.team/` 之外的路径"）
  * @returns {Promise<{
@@ -56,7 +56,7 @@ export async function openBoardSession({ id, cwd }) {
 
   const agent = { id, session: { id, header: { cwd }, appending: false } }
 
-  /** 一条**插件事**结果。板子的账本只在 `ctx.on('tools/result')` 上（`inject.js:1438`）。 */
+  /** 一条**插件事**结果。板子的账本只在 `ctx.on('tools/result')` 上（按这行事件名找，别钉行号）。 */
   const toolResult = async (name, args = {}) => {
     for (const handler of surface.handlers.get('tools/result') ?? []) {
       await handler({ name, arguments: args, agent }, undefined)

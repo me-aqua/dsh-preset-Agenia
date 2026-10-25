@@ -32,7 +32,7 @@ import { pathToFileURL } from 'node:url'
 import { FROZEN, PATHS } from '../support/env.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, sha256Text, sha256File, stagingReadings, oracleReadings } from '../support/evidence.mjs'
 import { readStagedText, stagingExists } from '../support/sut.mjs'
-import { CODES as SURFACE_CODES, INJECTED_OBLIGATIONS, injectedSurfaceProblems, jobRowProblems, leaderInjectionSurface, syntheticComposition } from '../support/docs-surface.mjs'
+import { CODES as SURFACE_CODES, INJECTED_OBLIGATIONS, committedIn, injectedSurfaceProblems, jobRowProblems, leaderInjectionSurface, syntheticComposition } from '../support/docs-surface.mjs'
 import { fixtureDir } from '../support/verify-recompute.mjs'
 
 before(() => {
@@ -182,7 +182,8 @@ function nowFormProblems(text) {
  *   b **同一份面 + 一句真承诺** ⇒ **绿**（证明这刀只切否定，不切正经句子）。
  * 反向刀：把最小实现里"剔掉否定出现"那一步删掉 ⇒ **只有 a 格翻绿**（假绿回来）。
  *
- * ⚠️ 三条老自控**不在这里**（它们住在 `STAT-04` 那一格里、读的是真注入面：`static/docs.test.mjs:300-345`）——
+ * ⚠️ 三条老自控**不在这里**（它们住在 `STAT-04` 那一格里，读的是真注入面：同一份文件里
+ *    `DOC-SURFACE-CONTROL` 那三条合成注入面自控 —— 行号会漂，按这个码名找，别钉行号）——
  *    本节只加两格新的，`forms` / `INJECTED_OBLIGATIONS` / 那三格一个字没动。
  */
 const SURFACE_FILE = 'leader.md'
@@ -416,7 +417,10 @@ describe('static · docs', () => {
           id: ob.id,
           name: ob.name,
           forms: ob.forms.map((re) => String(re)),
-          said_in: surfaceInfo.surface.filter((rel) => typeof surfaceDocs[rel] === 'string' && ob.forms.some((re) => re.test(surfaceDocs[rel]))),
+          // 🔴 `F-154` F1：读数与判据走**同一把尺子**（`committedIn` = 「命中那处不紧邻否定」）。
+          //    原来这里自己抄了一遍 `ob.forms.some(re.test)` ⇒ 旧口径（命中即承诺）的第二份实现；
+          //    靶子一变它就和判据打脸（判据说 0 处承诺、这一行说 leader.md 说了）。
+          said_in: surfaceInfo.surface.filter((rel) => committedIn(surfaceDocs[rel], ob)),
         })),
         note: '搜索范围 = 组合 `leaderOrder` 里那几份 .md（`memory`/`roster`/`board` 是算出来的，不是文件）；'
           + '**不是全仓任意处** —— 说明.md / README.md / 代码里的同名字样都不算。',
@@ -738,7 +742,7 @@ describe('static · docs', () => {
           not_in_table: '否定词表就是定形那五个（`不` / `没` / `不是` / `不写` / `没有`），只剔**紧邻**（中间最多一个空格或标点）。'
             + '「没写五关」「未写五关」「无五关」「并非五关」**不在表里** ⇒ 今天仍会被读成"说了"（已知的假绿，要扩就扩这张表，别在用例里各写一遍）。'
             + '双重否定（「不能不写五关」）同理：紧邻的「不写」会被当成否定 ⇒ 读成"没说"（已知的假阴性）。',
-          where: '真注入面的读数与三条老自控住在 `STAT-04` 那一格（`static/docs.test.mjs:300-345`）；这里只加 `DOC-01` 的两格，不加用例号。',
+          where: '真注入面的读数与三条老自控住在 `STAT-04` 那一格（同一份文件里的 `DOC-SURFACE-CONTROL` 合成注入面自控 —— 按码名找，别钉行号）；这里只加 `DOC-01` 的两格，不加用例号。',
           honest_gap: '2026-10-19 记的那半句「写一句诚实的空缺反而红」实测**不成立**：今天诚实的空缺**不红**（命中即说了 ⇒ 假绿 0 条）；'
             + '真成立的是「提到被当成声明 ⇒ 诚实的空缺被读成说了」。修完之后它只该造成**它自己那一条** `DOC-INJECTED-UNSAID`（上面 a 格断言的"恰好一条"就是这一半）。',
         }
