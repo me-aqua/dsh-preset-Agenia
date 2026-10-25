@@ -41,7 +41,8 @@
 **活树在窗口里动了 ⇒ 不在本轮的效力范围内**（并行是常态），但报告里必须报一句"活树动了 N 处"——
 N 由派工那一刻的活树基线算（没基线就写"判不了"，不许写 0）。
 **评审期间你别改副本** —— 改了 ⇒ 作废（唯一成因）。
-工具：`.tools/tree-at-commit.mjs`（`--out` 导出副本 + `--live-baseline` 记活树基线；`--verify … --expect <before_sha256>` 在副本上复算）。
+**量什么**：指纹量的是**字节**，比的是字节（不是行数、不是时间）；判"代码"只看 `CODE` 那一套（排除表在 `.tools/fingerprint.mjs` 的文件头，副本的摘要是**同一套** CODE 集）。
+**用什么量**：`.tools/tree-at-commit.mjs`（`--out` 导出副本 + `--live-baseline` 记活树基线；`--verify … --expect <before_sha256>` 在副本上复算字节指纹）。
 ⇒ 判据与现场（"冻结从量基线那一刻算起"）见共享记忆：`freeze-from-baseline`。
 
 ## 每天开工第一步（顺序固定，四件事）
