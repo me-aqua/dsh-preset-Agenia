@@ -97,7 +97,7 @@ function healthCall(ws, label) {
 }
 
 describe('report · health (HLT)', () => {
-  test('HLT-01 health 输入矩阵：没开工 HOLD、运行中非绿、缺本地双评审红、完整绿', async () => {
+  test('HLT-01 health 输入矩阵：没开工 HOLD、运行中非绿、缺本地双评审红、完整绿（`F-157`：`--op health` 必须带 session_id）', async () => {
     await runCase('HLT-01', async (rec) => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -223,6 +223,60 @@ describe('report · health (HLT)', () => {
       }
       rec.readings.matrix = results
       if (!stagingExists('bin/agenia-local.mjs')) push('SUT-SURFACE-MISSING', 'staged/bin/agenia-local.mjs 不在 ⇒ 六场景矩阵跑不起来（预期的首跑红）')
+
+      // ── 🔴 `F-157`：`--op health` 必须把 `session_id` 带进判定（同一份盘上现场，只改那一格）──────
+      // 现场 = 「`daily` 在、`local` 不在」那一支：detail 要说清"这一天是谁开的"。
+      // 病（`82c23ad` 之前）：这一扇门**丢 `session_id`** ⇒ 卡片永远说「判不了是谁开的」，
+      //   而脑侧 `agenia-brain --op health-read` 说得出来 —— 两扇门对同一件事给两个读数。
+      // 判据：**同一份盘上现场**跑两次，只改载荷里那一格：
+      //   · 带（= opener）⇒ detail 必须**不**出现「判不了是谁开的」，且点明「本会话刚开工」；
+      //   · 不带 ⇒ detail 必须出现「判不了是谁开的」（不许冒充知道是谁）。
+      //   两次的 `status` 与 reason 码必须**同值**（否则比的不是同一支）；两句话还必须**不同**。
+      {
+        const dailyOnlyOf = (tag) => {
+          const ws = scenarioWorkspace('HLT-01', tag)
+          writeJson(path.join(ws, '.team', 'state', 'daily', `${DAY}.json`), {
+            schema: 1, day: DAY, project: PROJECT, distribution: [],
+            first_session_id: 'sess-opener-1', first_at: '2026-10-14T09:00:00+08:00',
+            last_session_id: 'sess-opener-1', last_seen_at: '2026-10-14T09:00:00+08:00', seen_count: 1,
+          })
+          return ws
+        }
+        const callHealth = (ws, sessionId) => runLocal('HLT', 'health', {
+          project: PROJECT, day: DAY, ...(sessionId === undefined ? {} : { session_id: sessionId }),
+        }, { workspace: ws })
+        const detailOf = (res) => (res.json?.health?.reasons ?? []).map((r) => String(r?.detail ?? '')).join(' | ')
+        const codesOf = (res) => (res.json?.health?.reasons ?? []).map((r) => r?.code ?? null)
+        const withId = callHealth(dailyOnlyOf('f157-with-session'), 'sess-opener-1')
+        const withoutId = callHealth(dailyOnlyOf('f157-without-session'), undefined)
+        const withText = detailOf(withId)
+        const withoutText = detailOf(withoutId)
+        rec.readings.f157 = {
+          with_session: { exit_code: withId.exit_code, status: withId.json?.health?.status ?? null, codes: codesOf(withId), detail: withText.slice(0, 400) },
+          without_session: { exit_code: withoutId.exit_code, status: withoutId.json?.health?.status ?? null, codes: codesOf(withoutId), detail: withoutText.slice(0, 400) },
+        }
+        const blind = '判不了是谁开的'
+        if (withId.exit_code !== 0 || withoutId.exit_code !== 0) {
+          push('F157-CLI', `--op health 两次都必须可用，实得 exit=${withId.exit_code} / ${withoutId.exit_code}`)
+        } else {
+          if (withText.includes(blind)) {
+            push('F157-SESSION-DROPPED', `带了 \`session_id\` 还说「${blind}」—— 这一扇门把那一格丢了`
+              + '（脑侧 `health-read` 说得出来 ⇒ 两扇门两个读数）')
+          }
+          if (!withText.includes('本会话刚开工')) {
+            push('F157-SESSION-BRANCH', `带 \`session_id\`（= opener）时 detail 应点明「本会话刚开工」，实得 ${JSON.stringify(withText.slice(0, 240))}`)
+          }
+          if (!withoutText.includes(blind)) {
+            push('F157-SESSION-BLIND', `没带 \`session_id\` 时 detail 必须说「${blind}」，实得 ${JSON.stringify(withoutText.slice(0, 240))}`)
+          }
+          const st1 = withId.json?.health?.status
+          const st2 = withoutId.json?.health?.status
+          if (st1 !== st2 || JSON.stringify(codesOf(withId)) !== JSON.stringify(codesOf(withoutId))) {
+            push('F157-BRANCH-MOVED', `两次比的不是同一支：status ${st1} vs ${st2}、码 ${JSON.stringify(codesOf(withId))} vs ${JSON.stringify(codesOf(withoutId))}`)
+          }
+          if (withText === withoutText) push('F157-IDENTICAL', '带上与不带 `session_id` 得到一模一样的话 —— 那一格根本没人读')
+        }
+      }
 
       // ③ 重查点：契约要求"快照迟到 ⇒ 下一次老板开口/下一关前重查，补启动两场"
       rec.readings.recheck_note = {

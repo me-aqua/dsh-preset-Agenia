@@ -33,9 +33,11 @@
  *
  * 🔴 这一批打的是**现役** `presets/agenia`（不是 staged 靶子）：定形的范围写的就是那两个文件
  *    （`presets/agenia/lib/proposals.mjs` + `lib/error-codes.mjs`），与 `PFL-01…11` 同一口径。
- *    两个环境变量只给**反向量测**用（把 `git show HEAD:` 的副本指进来跑同一份用例）：
+ *    三个环境变量只给**反向量测**用（把 `git show HEAD:` 的副本指进来跑同一份用例）：
  *    合法值只有两种 —— **现役那个路径**，或**运行根之下的副本**；别处一律在用例里报红
- *    （`AGENIA_F125_SUT_PROPOSALS` / `AGENIA_F125_SUT_BRAIN`，读数记在 `readings.sut`）。
+ *    （`AGENIA_F125_SUT_PROPOSALS` / `AGENIA_F125_SUT_BRAIN` / `AGENIA_F125_SUT_TOOL`，读数记在 `readings.sut`）。
+ *    🔴 第三个（`..._TOOL`）是 `F-134` 加的：那一票的刀要"把工具那一侧退回只剥一个 BOM"，
+ *    而工具那侧是**生产代码** —— 没有这个指针，刀就只能改活体（禁止）。
  */
 import { before, test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -62,8 +64,10 @@ const LIVE = {
 /** 400 = 可以，401 = 不行（定形逐字：不改 400 这个数）。 */
 const CAP = 400
 const DAY = '2026-10-22'
-/** 反向量测用的两个指针（见文件头；合法值只有"现役路径"与"运行根下的副本"）。 */
-const SUT_ENV = { proposals: 'AGENIA_F125_SUT_PROPOSALS', brain: 'AGENIA_F125_SUT_BRAIN' }
+/** 反向量测用的两个指针（见文件头；合法值只有"现役路径"与"运行根下的副本"）。
+ *  `tool` 那一格是 `F-134` 加的：刀要"把工具那一侧退回只剥一个 BOM"，而那一侧是**生产代码** ——
+ *  没有这个指针，那把刀只能改活体（禁止）。与上面两个**同一套**合法性检查（现役 / 运行根副本）。 */
+const SUT_ENV = { proposals: 'AGENIA_F125_SUT_PROPOSALS', brain: 'AGENIA_F125_SUT_BRAIN', tool: 'AGENIA_F125_SUT_TOOL' }
 
 // ── 小工具 ───────────────────────────────────────────────────────────────────
 const sha256Text = (s) => createHash('sha256').update(s, 'utf8').digest('hex')
@@ -582,15 +586,19 @@ test('MTC-02 维护案 engine_ops[].entry.text：401 字必拒 · 400 字必过�
 // ═════════════════════════════════════════════════════════════════════════════
 // MTC-03 · 阳性对照：普通候选 401 字**仍然**被 `proposal_file` 拒（两把闸不互相顶掉）
 // ═════════════════════════════════════════════════════════════════════════════
-test('MTC-03 阳性对照：普通候选 401 字仍被 proposal_file 拒（400 过 · 同一把尺子 · 拒=零写入）', async () => {
+test('MTC-03 阳性对照：普通候选 401 字仍被 proposal_file 拒（400 过 · 同一把尺子 · 拒=零写入 · `F-134` 两个开头 BOM 两个入口同数）', async () => {
   await runCase('MTC-03', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
 
     // 🔴 这一条量的是**旧闸**（`tools/proposal-file.mjs`，2026-10-18 就装上的那道）。
     //    它的绿是 `MTC-01/02` 那些红的合法性来源：同一台机器、同一把尺子、同一个 401 —— 旧的拒、新的不拒。
-    const tool = path.resolve(LIVE.tool)
-    rec.readings.sut = { tool, tool_sha256: existsSync(tool) ? sha256File(tool) : null }
+    //    `tool` 走 `sutPath('tool')`（缺省 = 现役；`F-134` 那把刀靠 `AGENIA_F125_SUT_TOOL` 指到运行根里的副本）。
+    const tool = sutPath('tool')
+    rec.readings.sut = { tool, tool_sha256: existsSync(tool) ? sha256File(tool) : null, legal: sutLegal(tool) }
+    if (!rec.readings.sut.legal) {
+      push('SUT-NOT-LEGAL', `被测的 \`tools/proposal-file.mjs\` 指到了现役与运行根之外：${tool} —— "这一跑打的是哪一版"说不清`)
+    }
     if (!existsSync(tool)) { push('SUT-SURFACE-MISSING', `读不到 ${tool}`); return caseFail(problems) }
     const mod = await importFresh(tool)
     if (typeof mod.proposalFileVerdict !== 'function' || typeof mod.proposalFileRun !== 'function') {
@@ -647,6 +655,48 @@ test('MTC-03 阳性对照：普通候选 401 字仍被 proposal_file 拒（400 �
     // ── 2. 同一把尺子：BOM / CRLF 归一后都是 400 ⇒ 也必须收（与 MTC-01 同口径）────
     verify('cand_bom400', BOM400, 'accept')
     verify('cand_crlf400', CRLF400, 'accept')
+
+    // ── 2b. 🔴 `F-134`：**两个入口对同一段（两个开头 BOM）必须报同一个字数** ─────────────
+    // 病（`82c23ad` 之前）：`tools/proposal-file.mjs::charCountOfText` 只剥**一个**开头 BOM，
+    //   而 `lib/memory.mjs::charCountOf` 剥**全部** ⇒ 同一段正文，两把尺子差 1 字：
+    //   400 字那一段在工具侧算成 401（**拒**），进库那一侧算 400（**收**）——
+    //   这正是"卡上 400、工具里 380"那个病（两个判据算不同的数）。
+    // 判据：同一段正文各喂两个入口，**报出来的字数必须是同一个数**（不是"都通过"就完事）：
+    //   · `BOM2_400`（两个 BOM + 400 字）⇒ 内存侧 400，工具侧必须**收**（剥一个的实现会算 401 ⇒ 拒）；
+    //   · `BOM2_401`（两个 BOM + 401 字）⇒ 内存侧 401，工具侧必须**拒**，且报文里那个字数必须 **= 401**（不是 402）。
+    const BOM2_400 = `\uFEFF\uFEFF${cjk(400)}`
+    const BOM2_401 = `\uFEFF\uFEFF${cjk(401)}`
+    const n400 = count(BOM2_400)
+    const n401 = count(BOM2_401)
+    const verdictOf = (text) => {
+      try {
+        return mod.proposalFileVerdict({ args: { text, source: '（F-134·MTC-03）两个开头 BOM' }, poolEntries: [] })
+      } catch (error) {
+        push('F134-THROWN', `纯函数抛了（${error?.code}: ${error?.message}）`)
+        return null
+      }
+    }
+    const vBom2a = verdictOf(BOM2_400)
+    const vBom2b = verdictOf(BOM2_401)
+    const claimed401 = vBom2b === null ? null : Number((/(\d+)\s*字/.exec(String(vBom2b.message ?? '')) ?? [])[1])
+    rec.readings.f134 = {
+      criterion: '同一段正文（两个开头 BOM）分别喂 lib/memory.mjs::charCountOf 与 tool 的 charCountOfText，报出来的字数必须相等',
+      bom2_400: { memory_chars: n400, tool_ok: vBom2a?.ok ?? null, tool_code: vBom2a?.code ?? null },
+      bom2_401: { memory_chars: n401, tool_ok: vBom2b?.ok ?? null, tool_code: vBom2b?.code ?? null, tool_reported_chars: Number.isFinite(claimed401) ? claimed401 : null },
+    }
+    if (n400 !== 400 || n401 !== 401) {
+      push('F134-RULER', `内存侧那把尺子对两个开头 BOM 的数不对：400 段=${n400}（应 400）· 401 段=${n401}（应 401）`)
+    }
+    if (vBom2a !== null && vBom2a.ok !== true) {
+      push('F134-BOM2-400-REJECTED', `两个开头 BOM 的 **400 字**正文被拒了（${JSON.stringify(vBom2a.code)}）—— `
+        + `工具那一侧只剥了一个 BOM（它算成 401），与内存侧的 ${n400} 不是同一个数：同一段正文两把尺子差 1 字`)
+    }
+    if (vBom2b !== null && vBom2b.ok !== false) {
+      push('F134-BOM2-401-ACCEPTED', `两个开头 BOM 的 **401 字**正文被收下了 —— 那是"少剥一个 BOM"的另一半（把 401 算成 400）`)
+    } else if (vBom2b !== null && Number.isFinite(claimed401) && claimed401 !== n401) {
+      push('F134-BOM2-COUNT-MISMATCH', `同一段正文两个入口报的字数不同：内存侧 **${n401}**，工具报文中是 **${claimed401}**`
+        + '（工具那一侧剥的 BOM 个数与 `lib/memory.mjs::charCountOf` 不一致 —— `F-134` 的病）')
+    }
 
     // ── 3. 主路那一面：401 被拒且**零写入**（不是只有纯函数在拒）───────────────
     const root401 = freshDir('MTC-03', 'run-401')
