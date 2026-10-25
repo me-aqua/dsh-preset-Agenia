@@ -238,33 +238,55 @@ export function fenceVerdict(payload, state, existingVersions) {
  *   ③ **尺子只有一把**：`lib/memory.mjs::charCountOf`（去开头 BOM → `\r\n`/`\r` 归一成 `\n` → 数 code point）。
  *      用它而不是 `String.length`，所以 `"\uFEFF" + 400 字` 与 `300 字 + 100 个 \r\n` 都算 400（该收）。
  *
- * ⚠️ **只判字符串**：`entry.text` / `engine_ops[].entry.text` **不是字符串**（数字 / 数组 / 对象）时，
- *    这一关**跳过、不报一句**；形状层也不查内层 `payload` 长什么样（`shapeVerdict` 只查信封那六样）
- *    ⇒ **非字符串的正文今天不受这 400 字约束**，`importOp` 照样把 `payload.payload` 写进池子。
- *    真治它（形状层拒"`text` 在、但不是字符串"）归 `F-150`；这里只把实情写下来，行为不动。
+ * ⚠️ **`text` 在、但不是字符串**（数字 / 数组 / 对象 / `null`）⇒ **拒** `E_ARG_SCHEMA`（exit 2），
+ *    不跳过、不硬数。`F-150`：这一关量的是**正文**有多长；跳过等于把"没法量"读成"量过、合格"，
+ *    而 `importOp` 随后照样把 `payload.payload` 写进池子（静默收下一段没被量过的正文）。
+ *    也**不**改用 JSON 长度硬数：那把尺子（`charCountOf`）量的是正文，JSON 长度量的是编码 ——
+ *    同一个 400 会长出第二个意思（同一个数不许担两个意思）。⇒ 数不了就拒，并点名是哪一处。
  *
  * 只卡入口、不扫存量（F-72）：已被收进库的长条目靠复核重写，不靠拒收。
  * @param {object} payload 导入信封（`{source, sha256, payload: {entry?, engine_ops?}, …}`）
  * @param {string} kind `maintenance` / `proposal`（只影响报文怎么称呼这份案，不决定闸开不开）
- * @returns {{ok:true, code:null, message:string}|{ok:false, code:'E_PROPOSAL_TOO_LONG', message:string}}
+ * @returns {{ok:true, code:null, message:string}
+ *          |{ok:false, code:'E_PROPOSAL_TOO_LONG', message:string}
+ *          |{ok:false, code:'E_ARG_SCHEMA', message:string}}
  */
 function bodyCapVerdict(payload, kind) {
   const inner = payload?.payload ?? {}
   const label = kind === 'maintenance' ? '维护案' : '普通提案'
   const overlong = []
-  // ⚠️ 下面两处都只判**字符串**：不是字符串（数字 / 数组 / 对象）⇒ 静默跳过，一个字都不数。
-  //    所以"进了库"不等于"过了这把尺子"；真治它归 `F-150`（见本函数文档注释末段）。
+  /** `text` 给了、但不是字符串 —— 这一关数不了它的字数（`F-150`）。 */
+  const notText = []
+  const noteText = (at, value) => {
+    if (value === undefined || typeof value === 'string') return
+    const shape = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value
+    notText.push({ at, shape })
+  }
+  // ⚠️ 两处都**先看类型**：不是字符串就记下来，绝不静默跳过（这一格原来就是那么漏的）。
+  noteText('payload.entry.text', inner?.entry?.text)
+  const ops = Array.isArray(inner?.engine_ops) ? inner.engine_ops : []
+  for (let i = 0; i < ops.length; i += 1) {
+    const text = ops[i]?.entry?.text
+    noteText(`payload.engine_ops[${i}].entry.text`, text)
+    if (typeof text !== 'string') continue
+    const n = charCountOf(text)
+    if (n > BODY_MAX_CHARS) overlong.push({ at: `payload.engine_ops[${i}].entry`, chars: n })
+  }
   const entryText = inner?.entry?.text
   if (typeof entryText === 'string') {
     const n = charCountOf(entryText)
     if (n > BODY_MAX_CHARS) overlong.push({ at: 'payload.entry', chars: n })
   }
-  const ops = Array.isArray(inner?.engine_ops) ? inner.engine_ops : []
-  for (let i = 0; i < ops.length; i += 1) {
-    const text = ops[i]?.entry?.text
-    if (typeof text !== 'string') continue
-    const n = charCountOf(text)
-    if (n > BODY_MAX_CHARS) overlong.push({ at: `payload.engine_ops[${i}].entry`, chars: n })
+  // 形状先于长度：数不了的东西不参与"超没超"的排序，先按入参 schema 拒。
+  if (notText.length > 0) {
+    const spots = notText.map((s) => `${s.at}（${s.shape}）`).join(' / ')
+    return {
+      ok: false,
+      code: 'E_ARG_SCHEMA',
+      message: `${label}正文的 \`text\` 必须是字符串，实得：${spots} —— 这一关量的是正文字数，`
+        + '数不了一段的长度，就不能把它当"没写正文"放过去（`F-150`）。'
+        + '修法：把正文写成字符串再导（对象 / 数组不是正文，它们也不受这 400 字尺子管）。',
+    }
   }
   if (overlong.length === 0) return { ok: true, code: null, message: '' }
   const spots = overlong.map((o) => `${o.at}（${o.chars} 字）`).join(' / ')
