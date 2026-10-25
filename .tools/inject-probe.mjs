@@ -1656,7 +1656,7 @@ try {
     const i3Sense = typeof i3SenseRaw === 'string' && i3SenseRaw.trim().length > 0
       ? `## 共享记忆 · 常识\n\n${i3SenseRaw.trim()}`
       : undefined
-    check('I3', '§产物', '真产物贴出来的**尾巴段** === 真 `style.md` 切完那一段 + 常识块 + 一行时间行'
+    check('I3', '§产物', '真产物贴出来的**`【情绪板】` 之前那一段** === 真 `style.md` 切完那一段 + 常识块 + 一行时间行'
       + '（style 与常识逐字、次序钉死；时间行只认形状）',
       normalizeTimeLines(stylePartOf(text)),
       [cut, ...(i3Sense === undefined ? [] : [i3Sense]), TIME_LINE_TOKEN].join('\n\n'))

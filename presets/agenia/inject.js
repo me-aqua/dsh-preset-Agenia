@@ -16,8 +16,10 @@
  *   ⑤ 尾巴提醒 + 情绪板 —— 两条机制**同一个落点**：`agent/pre-step` 里往**本步的
  *      `decision.messages`** 塞一条。机制①（每 n 个工具结果）在 `session/event` 里
  *      **只记账**，到下一个 pre-step 才落地；机制②（老板开口之后、我第一次开口之前）
- *      看这一步领到的 messages。贴出去的是「`style.md` 的尾巴那一段」+「情绪板」
- *      （分数行 + 命中的场景例子），两条机制都带。
+ *      看这一步领到的 messages。贴出去的是一条**完整的包**：style 段（`style.md` 的尾巴那一段；
+ *      读不到 / 剥注释为空 ⇒ 兜底正文，**恒在**）+ 时间行（恒在）+ 按条件拼的三块
+ *      （`## 共享记忆 · 常识` / `【这一票的进度】` / 情绪段），次序 `style → 常识 → 时间 → 板子 → 情绪`；
+ *      两条机制都带（细节在 `tailBodyOf` 的头注释）。
  *
  * ⚠️ ① 是**快照**，不是"每轮重发"（2026-09-24 实测）：DSH 只在快照文本变了才发新的一条
  * （`dsh-agent-loop` 的 `RuntimeContextProjection.project()`：`retained.text === snapshot` 就 return）。
