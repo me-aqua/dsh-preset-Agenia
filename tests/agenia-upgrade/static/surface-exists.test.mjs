@@ -44,14 +44,34 @@
  *   （那棵树由 `STAT-01` 的「staged vs 活体」漂移判据守）。
  * · `SURF-03` 不判"正文写得对不对 / 有没有被截断成半份" —— 它只回答「有没有字」。
  *   `bytes` 与"非空白字符数"只当读数落盘（用来一眼看出"1 字节"），不是判据。
+ *
+ * ## 🔴 `F-135` 那一格（2026-10-25）：真那份常识在不在 / 空不空
+ *
+ * 病：`presets/agenia/.runtime/common-sense.md`（常识正文）**没有任何一条套件判据**问过它在不在。
+ * 注入器读不到 / 读到空文件时只**出声一次、这一节不注入** ⇒ 包静默薄成「style + 时间行」，
+ * 全套照旧绿 —— 老板 2026-10-22 报的那个毛病可以原样回来而没人知道。
+ * 为什么不并进上面那张 13 份名单：**根不同**（那张是内容根 `*.md` + `team/*.md`，这一份在 `.runtime/` 数据段），
+ * 混在一起就把"同一张表"的口径弄坏了（探针 `I18` 的注释里写着同一条判断）。
+ *
+ * 这一格钉三样（`SURF-COMMON-SENSE-*` 四个码各说各的）：
+ * 1. **活体那份在盘上 + 去掉空白后非空**（口径与 `SURF-03` 同一把尺子）—— 不在 / 空壳 / 读不出是三句话；
+ * 2. **抽走对照**：运行根里放一份**活体正文的逐字节副本**，把副本改名搬开 ⇒ 必须报 `-MISSING` 并点名那个路径，
+ *    搬回来 ⇒ 重新绿且逐字节相同（老板那份正文一个字节不碰 —— 只读它的字节）；
+ * 3. **注入器得出声**：读不到 / 空文件两条分支都必须说清"这一节不注入"（`-SILENT`）。
+ *   ⚠️ 第 3 样是**文本针**（证"字在"），不是行为证明 —— 行为那一半归探针的 `I3` / `I18`。
  */
 import { before, describe, test } from 'node:test'
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { FROZEN } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
-import { stagingExists, stagingPath, stagingRoot } from '../support/sut.mjs'
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import { FROZEN, PATHS } from '../support/env.mjs'
+import { caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
+import { readStagedText, stagingExists, stagingPath, stagingRoot } from '../support/sut.mjs'
 import {
   CODES,
+  COMMON_SENSE_CODES,
+  commonSenseControls,
+  commonSenseFileProblems,
+  commonSenseSayNeedles,
   declaredFilesControls,
   declaredFilesNonemptyProblems,
   declaredFilesProblems,
@@ -115,6 +135,21 @@ function stagingLane() {
     return { judgeable: false, root, problems }
   }
   return { judgeable: true, root, problems }
+}
+
+/**
+ * 一份**绝对路径**文件的事实（与 `inspect` 同形，只是不经过 staging 根）——
+ * `F-135` 那一格要读的是**活体** `.runtime/common-sense.md` 与运行根里的夹具副本。
+ */
+function inspectAbs(abs) {
+  try {
+    if (!existsSync(abs)) return { status: 'missing' }
+    const st = statSync(abs)
+    if (!st.isFile()) return { status: 'unreadable', error: st.isDirectory() ? '它是个目录（不是文件）' : '它不是普通文件', bytes: st.size }
+    return { status: 'ok', text: readFileSync(abs, 'utf8'), bytes: st.size }
+  } catch (err) {
+    return { status: 'unreadable', error: String(err?.message ?? err) }
+  }
 }
 
 describe('static · surface-declared', () => {
@@ -204,6 +239,79 @@ describe('static · surface-declared', () => {
         rec.readings.summary = verdict.readings
       } else {
         rec.readings.summary = { judged: false, why: '被测 staging 不在盘上（见上面那条问题）' }
+      }
+
+      // ── 🔴 `F-135` 格：**真那份 `.runtime/common-sense.md`（常识）在不在 / 空不空** ────────────
+      // 【为什么单列在这里】它是**数据段**里的一份正文，不在那张 13 份名单里（根不同：见
+      //   `declared-surface.mjs::COMMON_SENSE_CODES` 上面那段）。而注入器对它只做"读不到 / 空文件 ⇒
+      //   这一节不注入 + 一条 warn" ⇒ 悄悄薄成「style + 时间行」，套件全绿 —— 老板 2026-10-22 报的就是这个。
+      // 【钉什么】① 活体那份**在盘上 + 去掉空白后非空**（与 `SURF-03` 同一把尺子）；
+      //   ② **拿掉它 ⇒ 红并点名**（在运行根里对一份**夹具副本**做抽走/还原 —— 老板那份正文一个字节不碰）；
+      //   ③ 注入器那一侧**得出声**（读不到 / 空文件两句都点名"这一节不注入"）。
+      // 【怎么翻面】把 `presets/agenia/.runtime/common-sense.md` 删掉/清空 ⇒ ① 红
+      //   （`SURF-COMMON-SENSE-MISSING` / `-EMPTY`，报文点名那份文件）；放回去 ⇒ 绿。
+      //   ② ③ 每次跑都重新证一遍（抽走对照与文本针）。
+      {
+        const csPath = path.join(PATHS.finalPreset, '.runtime', 'common-sense.md')
+        const where = '真那份常识（presets/agenia/.runtime/common-sense.md）'
+
+        // ② 量具自证：五组合成事实（有正文 / 不在 / 1 字节 / 只剩空白 / 读不出）
+        const csControls = commonSenseControls()
+        rec.readings.common_sense_controls = csControls.controls
+        for (const f of csControls.failures) push(COMMON_SENSE_CODES.control, f)
+
+        // ① 主判据：活体那份
+        const live = commonSenseFileProblems({ read: () => inspectAbs(csPath), path: csPath, where })
+        for (const p of live.problems) push(p.code, p.message, p.detail)
+        rec.readings.common_sense = live.readings
+
+        // ② 抽走 / 还原对照（夹具副本，落在**运行根**里）：证明"这份文件没了 ⇒ 这一格真的红"。
+        //    副本正文 = **活体那份的逐字节副本**（读它的字节，绝不改它）；活体那份已经坏了就用合成正文，
+        //    否则"抽走还不红"这句话就证不了。**老板那份正文一个字节都不碰**（只读 + 另存一份在运行根）。
+        const fixtureDir = path.join(runRoot(), 'ws-surf-03-common-sense')
+        mkdirSync(fixtureDir, { recursive: true })
+        const fixtureFile = path.join(fixtureDir, 'common-sense.md')
+        const liveFact = inspectAbs(csPath)
+        const liveUsable = liveFact.status === 'ok' && nonWhitespaceLength(liveFact.text) > 0
+        const fixtureText = liveUsable
+          ? liveFact.text
+          : '# 常识（SURF-03 夹具 · 不是老板那份）\n\n- 这条只用来证明"抽走那份文件 ⇒ 这一格会红"。\n'
+        writeFileSync(fixtureFile, fixtureText, 'utf8')
+        const codesOf = () => commonSenseFileProblems({ read: () => inspectAbs(fixtureFile), path: fixtureFile, where: '<抽走对照>' })
+          .problems.map((p) => p.code)
+        const fresh = codesOf()
+        renameSync(fixtureFile, `${fixtureFile}.off`) // 只改名搬开，**从不删除**
+        const gone = codesOf()
+        renameSync(`${fixtureFile}.off`, fixtureFile)
+        const back = codesOf()
+        const restoredSame = existsSync(fixtureFile) && readFileSync(fixtureFile, 'utf8') === fixtureText
+        rec.readings.common_sense_ablation = {
+          fixture: fixtureFile,
+          fresh,
+          without_file: gone,
+          restored: back,
+          restored_byte_identical: restoredSame,
+        }
+        if (fresh.length !== 0) {
+          push(COMMON_SENSE_CODES.control, `抽走对照的**起点**不绿（${JSON.stringify(fresh)}）—— 那个夹具副本本应有正文，`
+            + '所以"抽走它 ⇒ 红"这句话不能成立')
+        }
+        if (JSON.stringify(gone) !== JSON.stringify([COMMON_SENSE_CODES.missing])) {
+          push(COMMON_SENSE_CODES.control, `把常识**抽走**之后这一格必须报 \`${COMMON_SENSE_CODES.missing}\`，实得 ${JSON.stringify(gone)}`
+            + ' —— 抽走还不红，说明"文件没了"这件事根本没人判（`F-135` 的病）')
+        }
+        if (back.length !== 0 || !restoredSame) {
+          push(COMMON_SENSE_CODES.control, `把常识**放回原位**之后必须重新绿且逐字节相同，实得 ${JSON.stringify(back)} / 逐字节相同=${restoredSame}`)
+        }
+
+        // ③ 注入器那一侧：读不到 / 空文件都得**出声**（"不拼 + 说一句"那半）
+        try {
+          const say = commonSenseSayNeedles(readStagedText('inject.js'))
+          rec.readings.common_sense_say = say.readings
+          for (const p of say.problems) push(p.code, p.message, p.detail)
+        } catch (err) {
+          push(err?.code ?? 'SUT-SURFACE-MISSING', `读不到 staged 的 \`inject.js\`，常识那一侧的"出声"判不了：${String(err?.message ?? err)}`)
+        }
       }
 
       caseFail(problems)

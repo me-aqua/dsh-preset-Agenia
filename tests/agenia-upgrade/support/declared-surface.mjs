@@ -338,6 +338,193 @@ export function nonemptyControls(declared = ['a.md', 'b.md', 'c.md']) {
   return { controls, failures }
 }
 
+// ── ①c 真那份「常识」在不在 / 空不空（`F-135` · 2026-10-25）────────────────────
+/**
+ * **为什么这半件事需要单独一格**（`F-135`，老板 2026-10-22 报的那个毛病）：
+ *
+ * `presets/agenia/.runtime/common-sense.md` 是**常识**那一份正文（老板直写、Agenia 只读）。
+ * 注入器读它两次：`memory` 快照那一节（`say('memory-common-sense', …)`）与尾巴那一刀
+ * （`commonSenseOf()`）。**读不到 / 空文件**时它的行为是"这一节不注入 + 出声一次"——
+ * 也就是**静默降级**成"style + 时间"那一份更薄的包：没有报错、只有一条 warn，套件全绿。
+ *
+ * 为什么 `SURF-01` / `SURF-03` 那张 **13 份名单**盖不住它（**不是"漏了"，是根不同**）：
+ *   · 那张名单的根是**内容根**（`presets/agenia/*.md` + `team/<角色>.md`），
+ *     `.runtime/` 是**数据段**（`FROZEN.targetLag.dataSegments` 同一口径：它本来就不该同步进靶子）；
+ *   · 混进同一张表 ⇒ "同一张表"的口径当场坏掉（staging 里没有 `.runtime`，那 13 份却都在）。
+ * ⇒ 这一格**单列**：判的是那份**数据文件**本身在不在、空不空。口径与 `SURF-03` 同一把尺子
+ *   （`nonWhitespaceLength`：去掉空白后还得有字 —— 不是 `bytes >= 2`）。
+ * ⚠️ 它**不判**"贴出来的那一段对不对"（那是探针的 `I3`）—— 它只回答「盘上还有常识要贴吗」。
+ */
+export const COMMON_SENSE_CODES = {
+  /** 那份文件不在盘上（被删 / 被挪走 / 路径换了）。 */
+  missing: 'SURF-COMMON-SENSE-MISSING',
+  /** 在盘上、但去掉空白后 0 个字符（1 字节占位 / 只剩空白 / 只有一个 BOM）。 */
+  empty: 'SURF-COMMON-SENSE-EMPTY',
+  /** 在盘上、但读不出正文（权限 / 是目录 / 不是文本）—— "非空"证明不了，**不许当没事**。 */
+  unreadable: 'SURF-COMMON-SENSE-UNREADABLE',
+  /** 注入器那一侧**不出声**（读不到 / 空文件时不警告）—— 见 `commonSenseSayNeedles`。 */
+  silent: 'SURF-COMMON-SENSE-SILENT',
+  /** 量具自证（合成事实那一组对不上）。 */
+  control: 'SURF-COMMON-SENSE-CONTROL',
+}
+
+/**
+ * 真那份常识：**在盘上 + 去掉空白后非空**。
+ *
+ * @param {{read: () => ({status:'ok', text:string, bytes?:number}
+ *                    | {status:'missing'} | {status:'unreadable', error?:string}),
+ *          where?: string, path?: string}} args
+ *   `read` 是**注进来的**（真跑时读活体那份 `.runtime/common-sense.md`；控制面/抽走对照喂合成事实）
+ *   —— 判据不自己摸盘，否则"删掉它"这一格只能靠删真的那一份来造。
+ * @returns {{problems: Array<{code:string,message:string,detail:object|null}>,
+ *            readings: {status:string|null, bytes:number|null, chars:number|null, path:string|null}}}
+ */
+export function commonSenseFileProblems({ read, where = '真那份常识文件', path: filePath = null }) {
+  const problems = []
+  const readings = { status: null, bytes: null, chars: null, path: filePath }
+  let r
+  try {
+    r = read()
+  } catch (err) {
+    r = { status: 'unreadable', error: String(err?.message ?? err) }
+  }
+  const status = r?.status
+  readings.status = typeof status === 'string' ? status : null
+  readings.bytes = typeof r?.bytes === 'number' ? r.bytes : null
+  const whereText = filePath === null ? where : `\`${filePath}\``
+  if (status === 'missing') {
+    problems.push({
+      code: COMMON_SENSE_CODES.missing,
+      message: `${whereText} **不在盘上**。它是常识那一份正文（老板直写、Agenia 只读）：`
+        + '注入器读不到它就**只出声一次、这一节不注入** —— 于是每一份包都静默薄成「style + 时间行」，'
+        + '没有红、没有停，只有一条 warn（老板 2026-10-22 报的就是这个毛病）。'
+        + '`SURF-01` / `SURF-03` 那张 13 份名单**盖不住它**：那张名单的根是内容根（`*.md` + `team/*.md`），'
+        + '这一份在 `.runtime/` 下（数据段），路径根不同 —— 所以它必须自己有一格。'
+        + '修法：把那份正文放回去（它是数据，不是期望值；判据不替它写内容）',
+      detail: { path: filePath, where },
+    })
+  } else if (status !== 'ok' || typeof r.text !== 'string') {
+    const error = status === 'ok' ? 'read 没给 text（读到的不是文本）' : (r?.error ?? `read 给了未知状态 ${JSON.stringify(status)}`)
+    problems.push({
+      code: COMMON_SENSE_CODES.unreadable,
+      message: `${whereText} **读不出正文**（${error}）—— 它在盘上，但拿不到内容。`
+        + '"有常识可贴"这件事证明不了 ⇒ 判红：这一格不许把"读不到"读成"没事"，'
+        + '也不许把它与"文件不在"混成同一句话（那是两种坏法、两种修法）',
+      detail: { path: filePath, where, error },
+    })
+  } else {
+    const chars = nonWhitespaceLength(r.text)
+    readings.chars = chars
+    if (chars === 0) {
+      problems.push({
+        code: COMMON_SENSE_CODES.empty,
+        message: `${whereText} 是**空壳**：${readings.bytes === null ? '' : `${readings.bytes} 字节、`}去掉空白后 **0 个字符**。`
+          + '文件在盘上、内容等于没有：注入器读到空正文 ⇒ 这一节不注入（同样只有一条 warn）。'
+          + '口径与 `SURF-03` 同一把尺子：**去掉空白后非空**，不是 `bytes >= 2`'
+          + '（Windows 上 `\\r\\n` 恰好 2 字节、一个 BOM 3 字节，都会被 `bytes >= 2` 放过）',
+        detail: { path: filePath, where, bytes: readings.bytes, chars },
+      })
+    }
+  }
+  return { problems, readings }
+}
+
+/**
+ * ①c 的控制面：**五组**合成事实（每组只改"那份文件怎么了"这一件事）。
+ *
+ * 为什么这五组：这一格最可能的半修形态有四种 ——
+ *   ① 只判"文件存在"（空壳静默放行）；② 把口径写成 `bytes >= 2`（CRLF / BOM 会假绿）；
+ *   ③ 把"读不出来"当成"没事"；④ 把"不在"与"读不出"说成同一句话（两种修法被糊成一句）。
+ * 第 2 / 3 组钉 ①，第 4 组钉 ②，第 5 组钉 ③ 与 ④。
+ *
+ * @returns {{controls: Array<{name:string, want:string[], got:string[], ok:boolean}>, failures: string[]}}
+ */
+export function commonSenseControls() {
+  const run = (fact) => commonSenseFileProblems({ read: () => fact, where: '<control>' }).problems.map((p) => p.code)
+  const cases = [
+    ['有正文 ⇒ 0 问题（绿的那一头）', { status: 'ok', text: '# 常识\n\n- 测试和实现最好分开。\n' }, []],
+    ['不在盘上 ⇒ 一条 `SURF-COMMON-SENSE-MISSING`', { status: 'missing' }, [COMMON_SENSE_CODES.missing]],
+    ['1 字节 `\\n` ⇒ 一条 `SURF-COMMON-SENSE-EMPTY`', { status: 'ok', text: '\n', bytes: 1 }, [COMMON_SENSE_CODES.empty]],
+    ['只有空白（空格 / 制表 / 全角空格 / 一个 BOM）⇒ 一条 `SURF-COMMON-SENSE-EMPTY`',
+      { status: 'ok', text: ' \t\u3000\uFEFF\r\n', bytes: 9 }, [COMMON_SENSE_CODES.empty]],
+    ['读不出正文（EACCES）⇒ 一条 `SURF-COMMON-SENSE-UNREADABLE`（**不许与"不在"混成一句**）',
+      { status: 'unreadable', error: '<EACCES>' }, [COMMON_SENSE_CODES.unreadable]],
+  ]
+  const controls = []
+  const failures = []
+  for (const [name, fact, wantCodes] of cases) {
+    const got = run(fact)
+    const ok = JSON.stringify(got) === JSON.stringify(wantCodes)
+    controls.push({ name, want: wantCodes, got, ok })
+    if (!ok) {
+      failures.push(`${COMMON_SENSE_CODES.control}：控制面「${name}」期望码 ${JSON.stringify(wantCodes)}，实得 ${JSON.stringify(got)}`
+        + ' —— 判据翻不了面，这一跑的红绿都不算数')
+    }
+  }
+  return { controls, failures }
+}
+
+/**
+ * 去掉注释之后的源码（**文本针必须先过这一道**：`F-133` ① 的教训 ——
+ * 一句被注释掉的代码，在原文里和活代码长得一模一样）。
+ *
+ * 口径：`/* … *\/` 整块删掉，`// …` 删到行尾。⚠️ 这份文件（`inject.js`）里**没有**哪个字符串字面量
+ * 含 `//`（2026-10-25 现量：391 处 `//` 全在注释里），所以这个粗剥在这里是安全的；
+ * 换一份源码用它之前先量一下这件事。
+ */
+export function stripComments(src) {
+  return String(src ?? '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+}
+
+/**
+ * 注入器那一侧**必须出声**（`F-135` 的"读不到 / 空文件 ⇒ 不拼 + 说一句"那一半）。
+ *
+ * 判的是**被测 staging 树里那份 `inject.js` 的正文**（两处读常识的入口各一句），
+ * 而且是在**去掉注释之后**的正文里判：注释掉一句警告不算"出声"（`F-133` ① 的教训）。
+ *   · `say('memory-common-sense', …)` —— `memory` 快照那一节的读失败分支；
+ *   · `warnOnce('tail-common-sense', …)` —— 尾巴那一刀（`commonSenseOf()`）。
+ * 两句都必须同时说清两件事：**读不到**（或空文件）与**这一节不注入**。
+ *
+ * ⚠️ **它证明的是"字在代码里"**，不是"那句话在可达的分支上"（后者归探针 `I3` / `I18` 与
+ * `BRD-01` 那种真跑注入文字的判据）。写清这一条，免得把文本针读成行为证明。
+ *
+ * @returns {{problems: Array<{code:string,message:string,detail:object|null}>, readings: object}}
+ */
+export function commonSenseSayNeedles(src) {
+  const text = stripComments(src)
+  const problems = []
+  const readings = {}
+  const needles = [
+    ['memory', /say\(\s*'memory-common-sense'\s*,[\s\S]{0,400}?不注入/],
+    ['tail', /warnOnce\(\s*'tail-common-sense'\s*,[\s\S]{0,400}?读不到/],
+  ]
+  for (const [site, re] of needles) {
+    const hit = re.exec(text)
+    readings[site] = hit === null ? null : hit[0].replace(/\s+/g, ' ').slice(0, 200)
+    if (hit === null) {
+      problems.push({
+        code: COMMON_SENSE_CODES.silent,
+        message: `\`inject.js\` 的 ${site === 'memory' ? '`memory` 快照那一节（`say(\'memory-common-sense\', …)`）' : '尾巴那一刀（`warnOnce(\'tail-common-sense\', …)`）'} `
+          + '**读不到常识时不出声了** —— 那一节静默不注入，而这一跑仍然全绿：'
+          + '老板 2026-10-22 报的"常识没了没人知道"就是这个形状（`F-135`）',
+        detail: { site },
+      })
+    }
+  }
+  // 空文件那一支也要出声（不许只守"读不到"）
+  const emptyWarn = /空文件[\s\S]{0,300}?不注入/.exec(text)
+  readings.empty_branch = emptyWarn === null ? null : emptyWarn[0].replace(/\s+/g, ' ').slice(0, 200)
+  if (emptyWarn === null) {
+    problems.push({
+      code: COMMON_SENSE_CODES.silent,
+      message: '`inject.js` 里**"常识是空文件 ⇒ 这一节不注入"那一句出声不见了** —— 空壳与"不在"是两种坏法，'
+        + '少了这一句，空壳就只剩静默降级（`F-135`）',
+      detail: { site: 'empty' },
+    })
+  }
+  return { problems, readings }
+}
+
 // ── ② 兜底名单的注释 ↔ 常量 ─────────────────────────────────────────────────
 /** 注释行（`//` / `/*` / 一片 `*`）。与项目里其余静态判据同口径。 */
 const isCommentLine = (line) => /^\s*(\/\/|\/\*|\*)/.test(line)
