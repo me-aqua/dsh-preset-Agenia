@@ -356,11 +356,14 @@ export async function runCase(id, fn) {
  *   两棵树都得能指到一根临时根上，否则"两侧都读得到、但都是 0 份文件"那一格造不出来（`F-141`）。
  *
  * @param {object} [env]  `AGENIA_STAGING_PRESET` 从哪儿读（缺省 `process.env`）
- * @param {{liveRoot?: string}} [options]
+ * @param {{liveRoot?: string, minFiles?: number|null}} [options]
+ *   `minFiles`（`F-140`）：**份数下限**，由**调用方**给（它知道两棵树本该有多少份文件）。
+ *   不给 ⇒ 这一关不判（`floor: null`，读数里看得出来）。
  * @returns {{staged:string|null, live:string, staged_files:number, live_files:number,
- *            only_staged:string[], only_live:string[], different:string[], same:boolean, note:string}}
+ *            only_staged:string[], only_live:string[], different:string[], same:boolean,
+ *            floor:{min_files:number,staged_ok:boolean,live_ok:boolean}|null, note:string}}
  */
-export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPreset } = {}) {
+export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPreset, minFiles = null } = {}) {
   const SKIP = new Set(['.runtime'])
   const live = canonical(liveRoot)
   const stagedRaw = optionalEnv(ENV.STAGING_PRESET, env)
@@ -398,6 +401,16 @@ export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPre
    * `staged === null`（`AGENIA_STAGING_PRESET` 没设）也是 false —— 判不了不是相同。
    */
   const haveSamples = a.size > 0 && b.size > 0
+  /**
+   * 🔴 `F-140`：`haveSamples` 只挡住"0 份"，挡不住"一起变短" —— 48 份缩成 3 份、内容还对得上时，
+   * 三张差集同样全空 ⇒ 只看差集/样本就会判 `same: true`，等于替一棵**缩水过的树**背书。
+   * 下限由调用方给（它知道本该有多少份）；本函数不编常数。`null` = 这一关不判，
+   * 读数里明写 `floor: null`（"没判"不许长得像"判过"）。
+   */
+  const floor = Number.isFinite(minFiles)
+    ? { min_files: minFiles, staged_ok: a.size >= minFiles, live_ok: b.size >= minFiles }
+    : null
+  const floorOk = floor === null || (floor.staged_ok && floor.live_ok)
   return {
     staged,
     live,
@@ -406,9 +419,11 @@ export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPre
     only_staged: onlyStaged,
     only_live: onlyLive,
     different,
-    same: staged !== null && haveSamples && onlyStaged.length === 0 && onlyLive.length === 0 && different.length === 0,
+    same: staged !== null && haveSamples && floorOk && onlyStaged.length === 0 && onlyLive.length === 0 && different.length === 0,
+    floor,
     note: '比的是**两棵树**（跳过 `.runtime/` = 数据，不是代码）；差一个字节就算漂移；'
-      + '**两侧都得有样本**（任一侧 0 份文件 ⇒ `same: false` —— 零样本不是"相同"）',
+      + '**两侧都得有样本**（任一侧 0 份文件 ⇒ `same: false` —— 零样本不是"相同"）；'
+      + '**给了份数下限时两侧都得够**（`F-140`：一起缩水不是"相同"；`floor: null` = 这一关没判）',
   }
 }
 

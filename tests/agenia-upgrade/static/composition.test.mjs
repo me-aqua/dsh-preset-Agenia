@@ -81,6 +81,17 @@ function stagedLiveDriftProblems(drift) {
       + ' ⇒ 三张差集空着的意思是"什么都没比"，不是"相同"：这一跑的绿**不能**用来给活体背书。'
       + '修法：确认 `AGENIA_STAGING_PRESET` 指到一棵真有文件的树，且活体预设没被清空。')]
   }
+  /**
+   * 🔴 `F-140`：**缩水**（两棵树一起变短）—— 差集全空、样本也有，可份数比调用方给的下限还少。
+   * 这一支必须自己说出来：只说"不是同一棵树"会把读的人引去同步两棵树，而真正的问题是
+   * "这一对树被截短了，它俩一样并不能保证它们还是那棵树"。
+   */
+  if (drift.floor !== null && drift.floor !== undefined && !(drift.floor.staged_ok && drift.floor.live_ok)) {
+    return [problem('STAGED-LIVE-DRIFT',
+      `**缩水**（STAGED-LIVE-FLOOR）：两棵树的内容对得上，但份数少于调用方给的份数下限 ${drift.floor.min_files} 份`
+      + `（staged ${drift.staged_files} 文件 ${drift.staged} · 活体 ${drift.live_files} 文件 ${drift.live}）`
+      + ' ⇒ 差集全空不等于"同一棵树"：整棵被截短时差集也是空的，这一跑的绿**不能**替一棵缩水过的树背书。')]
+  }
   if (!drift.same) {
     const parts = []
     if (drift.only_staged.length > 0) parts.push(`只在 staged：${drift.only_staged.join(', ')}`)
@@ -88,7 +99,8 @@ function stagedLiveDriftProblems(drift) {
     if (drift.different.length > 0) parts.push(`同名而内容不同：${drift.different.join(', ')}`)
     return [problem('STAGED-LIVE-DRIFT',
       '**staged 与活体不是同一棵树**（测试的靶子 ≠ 生产）⇒ 这一跑的绿**不能**用来给活体背书：'
-      + `${parts.join(' · ')}（staged ${drift.staged_files} 文件 ${drift.staged} · 活体 ${drift.live_files} 文件 ${drift.live}）`
+      + `${parts.length > 0 ? parts.join(' · ') : '（三张差集全空，可 `same` 仍说 false —— 这一支没有可指认的差异）'}`
+      + `（staged ${drift.staged_files} 文件 ${drift.staged} · 活体 ${drift.live_files} 文件 ${drift.live}）`
       + '。修法：把改过的文件同步进 staging（**各人同步自己改的**），别靠人记得。')]
   }
   return []
@@ -105,6 +117,7 @@ function driftShape(drift, driftProblems) {
     only_staged: drift.only_staged.length,
     only_live: drift.only_live.length,
     different: drift.different.length,
+    floor: drift.floor ?? null,
     problems: driftProblems,
   }
 }
@@ -288,6 +301,39 @@ describe('static · composition', () => {
           rec.readings.staged_live_drift_fixtures.identical = driftShape(identical, identicalProblems)
           if (identical.same !== true || identicalProblems.length > 0) {
             push('STAGED-LIVE-NEVER-SAME', `两棵树各 1 份、逐字节相同 ⇒ 必须 same:true 且零红因，实得 same=${identical.same} / 红因 ${JSON.stringify(identicalProblems.map((p) => p.code))} —— 这一格红了说明"要求有样本"那条把判据改成了"永远不 same"`)
+          }
+
+          // ── 🔴 `F-140`：**同一对树**，调用方给了份数下限 ⇒ 必须 `same:false` 且红因点名"缩水" ──
+          // 【钉什么】`haveSamples` 只挡"0 份"，挡不住"48 份一起缩成 1 份"：差集全空、样本也有，
+          //   旧判据照样 `same:true` —— 等于替一棵**被截短的树**背书。
+          // 【怎么翻面】下限由**调用方**给（这一格知道它只写了 1 份，而这一对树本该有 48 份）；
+          //   把 `minFiles` 这一支删掉 ⇒ 下面 `same !== false` 当场红。
+          // 【为什么同一对树跑两次】上面那次（不给下限）是阳性对照：`same` 不许被改成"永远 false"；
+          //   这一次（给下限）是阴性：缩水必须翻面。两次一起才证明"下限"是**独立的、只多这一格**。
+          // 缩水夹具按票面的形状造：**3 份、两边逐字节相同**（同一份内容的三个路径）。
+          const shrunkStaged = fixtureDir('STAT-01', 'drift-shrunk-3-staged')
+          const shrunkLive = fixtureDir('STAT-01', 'drift-shrunk-3-live')
+          for (const rel of ['inject.js', 'leader.md', 'lib/receipt.mjs']) {
+            writeUnder(shrunkStaged, rel, '// shrunk fixture\n')
+            writeUnder(shrunkLive, rel, '// shrunk fixture\n')
+          }
+          const FLOOR = 48
+          const shrunk = stagedVsLiveDrift({ ...process.env, AGENIA_STAGING_PRESET: shrunkStaged }, { liveRoot: shrunkLive, minFiles: FLOOR })
+          const shrunkProblems = stagedLiveDriftProblems(shrunk)
+          rec.readings.staged_live_drift_fixtures.shrunk_below_floor = { floor: FLOOR, ...driftShape(shrunk, shrunkProblems) }
+          if (shrunk.staged_files !== 3 || shrunk.live_files !== 3) {
+            push('STAGED-LIVE-SHRINK-FIXTURE', `缩水夹具本该两棵树各 3 份，实测 staged ${shrunk.staged_files} / 活体 ${shrunk.live_files} —— 这一格测不到"一起变短"`)
+          } else if (shrunk.only_staged.length !== 0 || shrunk.only_live.length !== 0 || shrunk.different.length !== 0) {
+            push('STAGED-LIVE-SHRINK-FIXTURE', `缩水夹具的三张差集本该全空（内容逐字节相同），实测 only_staged=${shrunk.only_staged.length} / only_live=${shrunk.only_live.length} / different=${shrunk.different.length} —— 这一格就不是"只有份数不够"那条了`)
+          }
+          if (shrunk.same !== false) {
+            push('STAGED-LIVE-SHRINK-GREEN', `🔴 两棵树各 3 份、内容相同（差集全空），但调用方给的下限是 ${FLOOR} 份 ⇒ \`same\` 必须是 false（缩水 ≠ 相同），实得 same=${shrunk.same} —— 这一格绿了就等于替一棵被截短的树背书（48 → 3 也报"相同"）`)
+          }
+          if (shrunkProblems.length !== 1 || !String(shrunkProblems[0].message).includes('缩水')) {
+            push('STAGED-LIVE-SHRINK-UNNAMED', `缩水 ⇒ 红因必须恰有一条且**点名"缩水"**，实得 ${JSON.stringify(shrunkProblems.map((p) => p.message)).slice(0, 400)} —— 只说"不是同一棵树"会把人引去同步两棵树`)
+          }
+          if (shrunk.floor === null || shrunk.floor === undefined || shrunk.floor.min_files !== FLOOR || shrunk.floor.staged_ok !== false || shrunk.floor.live_ok !== false) {
+            push('STAGED-LIVE-SHRINK-FLOOR-SHAPE', `缩水那次读数里的 \`floor\` 必须是 {min_files:${FLOOR}, staged_ok:false, live_ok:false}（"这一关判没判"要看得见），实得 ${JSON.stringify(shrunk.floor)}`)
           }
         }
       }

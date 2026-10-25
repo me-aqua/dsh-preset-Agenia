@@ -28,11 +28,19 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { FROZEN, PATHS } from './env.mjs'
 
-/** 判据自己的问题码（每个码一句话，测试与入口共用同一份）。 */
+/**
+ * 判据自己的问题码（每个码一句话，测试与入口共用同一份）。
+ *
+ * 🔴 **这张表有第二个读者**（`F-140`）：`targetCodeTableProblems()` 把表里每一条与
+ * 「这份文件里真正 push 出去的码」逐条对账 —— 表里有、代码里不 push（登记了没人用）会红；
+ * 代码里 push、表里没有（用了没登记）也会红。两个方向都是为了同一件事：**加码 / 删码不许悄悄发生**。
+ */
 export const TARGET_CODES = [
   'TARGET-ZERO-SAMPLE',
+  'TARGET-COUNT-FLOOR',
   'TARGET-SURFACE-MISSING',
   'TARGET-LAG-UNDECLARED',
   'TARGET-LAG-STALE-DECLARATION',
@@ -42,7 +50,66 @@ export const TARGET_CODES = [
   'TARGET-MARKER-UNDERCLAIM',
   'TARGET-MARKER-OVERCLAIM',
   'TARGET-MARKER-UNKNOWN',
+  'TARGET-CODE-TABLE-DRIFT',
 ]
+
+/**
+ * **名字表的第二个读者**（`F-140`）：`TARGET_CODES` ↔ 本文件里真正 push 出去的码，双向对账。
+ *
+ * 为什么钉在这里：这张表以前**没有任何读者** —— 往表里加一个码、或者从表里删一个码，
+ * 判据、入口、体检全都不响（`cand-20261021-0107` 的同族）。现在 `targetVerdict()` 每次被调用
+ * （`F57-TARGET` 那一行 · `VRF-04` · `self-check` 的 T 表）都会把这份对账并进 `problems`。
+ *
+ * 读的是**本文件自己的源码**（`import.meta.url`），一次进程只读一次。
+ * 读不动 ⇒ 也算一条问题（"这一轮没对账"不许长得像"对上了"）。
+ *
+ * @returns {{code:string,message:string}[]}
+ */
+let codeTableCache = null
+export function targetCodeTableProblems() {
+  if (codeTableCache !== null) return codeTableCache
+  const selfPath = fileURLToPath(import.meta.url)
+  let src
+  try {
+    src = readFileSync(selfPath, 'utf8')
+  } catch (err) {
+    codeTableCache = [{
+      code: 'TARGET-CODE-TABLE-DRIFT',
+      message: `读不到判据自己的源码（${selfPath}：${err.code ?? err.message}）⇒ 这一轮 \`TARGET_CODES\` 没对账 —— 没对账不算对上`,
+    }]
+    return codeTableCache
+  }
+  // 只认**写进 problems 的两种字面量**：`push('TARGET-…', …)`（本文件的主形状）与
+  // `{ code: 'TARGET-…' }`（`targetCodeTableProblems()` 自己那一支）。别的一律不算
+  // —— 尤其 `p.code === '…'` 那种**比较**不是"用了这个码"。
+  const used = new Set()
+  for (const m of src.matchAll(/push\(\s*'([A-Z][A-Z0-9-]+)'/g)) {
+    if (m[1].startsWith('TARGET-')) used.add(m[1])
+  }
+  for (const m of src.matchAll(/code:\s*'([A-Z][A-Z0-9-]+)'/g)) {
+    if (m[1].startsWith('TARGET-')) used.add(m[1])
+  }
+  const declared = new Set(TARGET_CODES)
+  const onlyInTable = [...declared].filter((c) => !used.has(c)).sort()
+  const onlyInCode = [...used].filter((c) => !declared.has(c)).sort()
+  const problems = []
+  if (onlyInTable.length > 0) {
+    problems.push({
+      code: 'TARGET-CODE-TABLE-DRIFT',
+      message: `\`TARGET_CODES\` 里登记了 ${onlyInTable.length} 个码，判据却从不 push：${onlyInTable.join(' / ')}`
+        + ' —— 表里那一条是死的（读表的人会以为有这个红因），删掉它或者把它用起来',
+    })
+  }
+  if (onlyInCode.length > 0) {
+    problems.push({
+      code: 'TARGET-CODE-TABLE-DRIFT',
+      message: `判据 push 了 ${onlyInCode.length} 个码，\`TARGET_CODES\` 里没有：${onlyInCode.join(' / ')}`
+        + ' —— 用了没登记（机器读表的人看不见它们）',
+    })
+  }
+  codeTableCache = problems
+  return codeTableCache
+}
 
 /** 声明里每一行必须写满的散文字段（空字符串 = 没写）。 */
 export const DECLARATION_TEXT_FIELDS = ['reason', 'approved_by', 'approved_on', 'closes_when']
@@ -195,6 +262,9 @@ export function describeActual(a) {
  * @param {{path?:string,present:boolean,error?:string|null,value:object|null}} [input.declaration]
  * @param {string[]} [input.markers]
  * @param {number} [input.schema]
+ * @param {number|null} [input.minFiles] **份数下限**（`F-140`）—— 由**调用方**给：它知道这一对树本该
+ *   有多少份文件。本模块不发明一个全局常数（`FROZEN` 里没有"预设一共几份文件"这个数，
+ *   编一个出来就是第二份真相）。不给 ⇒ 这一关不判（如实写在读数里，不假装判过）。
  * @returns {{ok:boolean,state:'equal'|'declared'|'stale',line:string,actuals:object[],problems:{code:string,message:string}[]}}
  */
 export function targetVerdict({
@@ -202,6 +272,7 @@ export function targetVerdict({
   declaration = { path: PATHS.targetLagDeclaration, present: false, error: null, value: null },
   markers = FROZEN.targetLag.markers,
   schema = FROZEN.targetLag.schema,
+  minFiles = null,
 } = {}) {
   const problems = []
   const push = (code, message) => problems.push({ code, message })
@@ -279,6 +350,17 @@ export function targetVerdict({
     push('TARGET-ZERO-SAMPLE', `判据没盯任何文件（零样本）：两棵树都枚举不出普通文件（靶子 ${staged} · 现役 ${baseline}）—— 逐文件对账一圈都没跑，所以"逐字节相同"这句话在这里没有过样本`)
   }
 
+  // ── ③′ 份数下限（`F-140`）：零样本只抓"一份都没有"，抓不住"一起变短" ──────────
+  // 两棵树**同时**缩水（48 份 → 1 份、内容还一样）时，三张差集全是空的 ⇒ 只看差集会报 `equal`。
+  // 下限由**调用方**给（它知道这一对树本该有多少份）；本模块不编一个全局常数。
+  // 不给下限 ⇒ 这一关不判 —— 但"不判"必须在读数里看得出来，不能长得像"判过、没问题"。
+  const floorHit = Number.isFinite(minFiles) && actuals.length < minFiles
+  if (floorHit) {
+    push('TARGET-COUNT-FLOOR', `逐树枚举只到 ${actuals.length} 份，少于调用方给的份数下限 ${minFiles} 份`
+      + `（靶子 ${measured?.staged_files ?? '?'} 份 · 现役 ${measured?.baseline_files ?? '?'} 份）`
+      + ' —— 两棵树一起变短时差集是全空的，只看差集就会把"缩水"报成"逐字节相同"；这一跑不许当绿')
+  }
+
   // ── ④ 逐文件对账：差一点都要点名 ────────────────────────────────────────
   for (const a of actuals) {
     const e = byFile.get(a.file)
@@ -317,10 +399,15 @@ export function targetVerdict({
     }
   }
 
+  // ── ⑤ 名字表自己对账（`F-140`）：`TARGET_CODES` ↔ 真正 push 出去的码 ──────────
+  // 这一格不判靶子，判**判据自己那张表**：加一个码 / 删一个码都要有人在。它每次调用都跑，
+  // 所以 `F57-TARGET`、`VRF-04`、`self-check` 的 T 表都是它的读者。
+  for (const p of targetCodeTableProblems()) problems.push(p)
+
   const ok = problems.length === 0
   const state = !ok ? 'stale' : entries.length > 0 ? 'declared' : 'equal'
-  const line = describeLine(state, actuals, dpath, measured)
-  return { ok, state, line, actuals, problems }
+  const line = describeLine(state, actuals, dpath, measured, problems, { minFiles })
+  return { ok, state, line, actuals, problems, min_files: Number.isFinite(minFiles) ? minFiles : null }
 }
 
 /**
@@ -329,8 +416,21 @@ export function targetVerdict({
  *
  * 零样本（`F-128`）是这一行唯一**不能**按 `state` 说话的地方：`actuals` 空 ⇒ 一行对账都没做，
  * 报 "靶子=现役" 就是把"我没看见"写成"我看见它们一样"。这一行必须跟着判据一起红。
+ *
+ * `F-140` 之后另有两种红**不能**套 `state` 的话：
+ *   · `TARGET-COUNT-FLOOR`（一起缩水）—— 差集是空的，说"落后"或"对不上"都是错的，得说"份数不够"；
+ *   · `TARGET-CODE-TABLE-DRIFT`（名字表没对上账）—— 这一跑的问题不在靶子上。
  */
-function describeLine(state, actuals, dpath, measured = null) {
+function describeLine(state, actuals, dpath, measured = null, problems = [], extra = {}) {
+  const floor = problems.find((p) => p.code === 'TARGET-COUNT-FLOOR') ?? null
+  if (floor !== null) {
+    return `F57-TARGET 🔴 份数下限（TARGET-COUNT-FLOOR）：枚举到 ${actuals.length} 份，`
+      + `少于调用方给的 ${extra.minFiles ?? '?'} 份 —— 缩水不是"逐字节相同"，这一跑判红`
+  }
+  const drift = problems.find((p) => p.code === 'TARGET-CODE-TABLE-DRIFT') ?? null
+  if (drift !== null) {
+    return `F57-TARGET 🔴 名字表没对上账（TARGET-CODE-TABLE-DRIFT）：${drift.message}`
+  }
   if (actuals.length === 0) {
     const staged = measured?.stagedRoot ?? '<未给>'
     const baseline = measured?.baselineRoot ?? '<未给>'
@@ -348,14 +448,15 @@ function describeLine(state, actuals, dpath, measured = null) {
   return `F57-TARGET 靶子落后（未声明或不符）· ${summary} · 声明应在 ${dpath}`
 }
 
-/** 一次跑完（入口与用例共用）：量测 → 读声明 → 判定。 */
+/** 一次跑完（入口与用例共用）：量测 → 读声明 → 判定。`minFiles` 见 `targetVerdict`（`F-140`）。 */
 export function targetReport({
   stagedRoot = PATHS.stagedPreset,
   baselineRoot = PATHS.finalPreset,
   declarationPath = PATHS.targetLagDeclaration,
+  minFiles = null,
 } = {}) {
   const measured = measureTarget({ stagedRoot, baselineRoot })
   const declaration = readDeclaration(declarationPath)
-  const verdict = targetVerdict({ measured, declaration })
+  const verdict = targetVerdict({ measured, declaration, minFiles })
   return { ...verdict, measured, declaration }
 }

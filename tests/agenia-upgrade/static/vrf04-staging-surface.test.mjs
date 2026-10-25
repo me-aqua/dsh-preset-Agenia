@@ -189,6 +189,49 @@ describe('static · verify-recompute (VRF) · F-123 staging 树覆盖面', () =>
         push('TARGET-EMPTY-INDISTINCT', `D6：双侧空与单侧空的红因码一模一样（${JSON.stringify(d5Codes)}）—— 读的人分不出"判据没样本"和"某一侧那份文件量不到"`)
       }
 
+      // ── D7 🔴 `F-140`：**缩水**（两棵树一起变短）⇒ 给了份数下限就必须红 ──────────
+      //    零样本只挡"一份都没有"。两棵树**同时**缩成 1 份、内容还对得上时，差集全空 ⇒ 旧判据
+      //    照样 `state=equal` / `ok=true`（48 份缩成 1 份也报"逐字节相同"）。
+      //    下限由**调用方**给（这一格知道它只写了 1 份，而这一对树本该有 48 份）；
+      //    同一对树跑两次：不给下限 ⇒ 必须 equal（阳性对照：下限不许多翻一格）；给下限 ⇒ 必须红。
+      const shrunkStagedRoot = fixtureDir('VRF-04', 'shrunk-both-sides-staged')
+      const shrunkBaselineRoot = fixtureDir('VRF-04', 'shrunk-both-sides-baseline')
+      // 直接造"只剩一份、两边一样"的两棵树（不删东西：`ENV-02` 的 DELETE-NO-MARKER 盯着裸删）
+      writeUnder(shrunkStagedRoot, 'inject.js', PAIR['inject.js'])
+      writeUnder(shrunkBaselineRoot, 'inject.js', PAIR['inject.js'])
+      const FLOOR = 48
+      const d7Measured = measureTarget({ stagedRoot: shrunkStagedRoot, baselineRoot: shrunkBaselineRoot })
+      const d7NoFloor = targetVerdict({ measured: d7Measured, declaration: NO_DECLARATION })
+      const d7Floor = targetVerdict({ measured: d7Measured, declaration: NO_DECLARATION, minFiles: FLOOR })
+      rec.readings.d7_shrunk = {
+        fixture_files: [d7Measured.staged_files, d7Measured.baseline_files],
+        floor: FLOOR,
+        no_floor: { ok: d7NoFloor.ok, state: d7NoFloor.state, line: d7NoFloor.line },
+        with_floor: {
+          ok: d7Floor.ok, state: d7Floor.state, line: d7Floor.line,
+          codes: [...new Set(d7Floor.problems.map((p) => p.code))],
+          min_files: d7Floor.min_files,
+        },
+      }
+      // 夹具自证：这一格之所以值得判，必须是因为"两棵树都只剩 1 份、且内容相同"。
+      if (d7Measured.staged_files !== 1 || d7Measured.baseline_files !== 1) {
+        push('TARGET-FIXTURE-NOT-EMPTY', `D7 的缩水夹具本该两棵树各 1 份，实测 staged ${d7Measured.staged_files} / 现役 ${d7Measured.baseline_files} 份 —— 这一格测不到"一起变短"`)
+      } else if (d7NoFloor.ok !== true || d7NoFloor.state !== 'equal') {
+        push('TARGET-FIXTURE-NOT-EMPTY', `D7 的阳性对照（不给下限）本该 state=equal / ok=true（两棵 1 份的树逐字节相同），实得 state=${d7NoFloor.state} / ok=${d7NoFloor.ok} —— 对照不成立，下面那条红了也说明不了是"下限"在起作用`)
+      }
+      if (d7Floor.ok !== false) {
+        push('TARGET-COUNT-FLOOR-GREEN', `🔴 D7：两棵树各 1 份、内容相同，但调用方给的下限是 ${FLOOR} 份 ⇒ 判据必须报红，实得 ok=${d7Floor.ok} / state=${d7Floor.state} —— 绿了就等于把"48 份缩成 1 份"报成"逐字节相同"`)
+      }
+      if (!d7Floor.problems.some((p) => p.code === 'TARGET-COUNT-FLOOR')) {
+        push('TARGET-COUNT-FLOOR-UNNAMED', `D7：红因里必须有一条 \`TARGET-COUNT-FLOOR\`（份数不够），实得 ${JSON.stringify(d7Floor.problems.map((p) => p.code))}`)
+      }
+      if (!d7Floor.line.includes('份数下限') || !d7Floor.line.includes('TARGET-COUNT-FLOOR')) {
+        push('TARGET-COUNT-FLOOR-LINE', `D7：入口那一行必须**自己**说出"份数下限"与 \`TARGET-COUNT-FLOOR\`（否则读的人会以为靶子落后或名字表歪了），实得 line=${JSON.stringify(d7Floor.line)}`)
+      }
+      if (d7Floor.min_files !== FLOOR) {
+        push('TARGET-COUNT-FLOOR-READING', `D7：判词里必须带回调用方给的下限（\`min_files\` = ${FLOOR}），实得 ${JSON.stringify(d7Floor.min_files)} —— "这一关判没判"要看得见`)
+      }
+
       // ── 读数：现役那两棵真树"今天差多少"（只读，一个字节都不动）────────
       try {
         const real = targetVerdict({ measured: measureTarget({ stagedRoot: undefined, baselineRoot: undefined }), declaration: NO_DECLARATION })
