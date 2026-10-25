@@ -204,6 +204,26 @@ describe('static · read-obligations (READ-01)', () => {
           for (const key of ['persona', 'me-aqua', 'leader', 'style']) {
             if (memberOrder.includes(key)) push('MEMBER-ORDER', `memberOrder 里不许有 ${key}（那是**只给组长**的：她是谁 / 老板是谁 / 怎么带队 / 怎么说话 —— 上给组员等于把组长的身份与老板的画像发下去）`)
           }
+
+          // 🔴 `F-132`：**兜底名单必须与这一份逐项一致**（配置里没写 `memberOrder` 时，组员拿到的就是兜底）。
+          //    病根：兜底里没有 `memory` ⇒ 组员**静默**少掉常识与 `general` 索引 —— 没有报错、没有读数，
+          //    只是那一份注入面变薄了。两份名单各自都"自洽"（yml 由上面那条白名单管，
+          //    `inject.js` 那一份的注释由 `SURF-02` 的 `@roster` 管）⇒ 两个读者都看不见这次分叉。
+          //    这一格只回答一件事：**两份常量是不是同一份**（顺序就是注入次序，所以比序列、不只比集合）。
+          if (!stagingExists('inject.js')) {
+            push('MEMBER-ORDER-FALLBACK', '读不到 staged/inject.js ⇒ 兜底名单 `DEFAULT_MEMBER_ORDER` 没法与 yml 的 `memberOrder` 对账（判不了，按红记）')
+          } else {
+            const fallbackFound = /const\s+DEFAULT_MEMBER_ORDER\s*=\s*\[([^\]]*)\]/.exec(readStagedText('inject.js'))
+            const fallback = fallbackFound === null
+              ? null
+              : [...fallbackFound[1].matchAll(/'([^']*)'|"([^"]*)"/g)].map((m) => m[1] ?? m[2])
+            rec.readings.member_order_fallback = fallback
+            if (fallback === null) {
+              push('MEMBER-ORDER-FALLBACK', 'staged/inject.js 里找不到 `const DEFAULT_MEMBER_ORDER = [...]` —— 兜底名单没有落点（改名 / 删掉都要同批改这一格）')
+            } else if (JSON.stringify(fallback) !== JSON.stringify(memberOrder)) {
+              push('MEMBER-ORDER-FALLBACK', `兜底名单与配置不是同一份：inject.js 的 \`DEFAULT_MEMBER_ORDER\` = ${JSON.stringify(fallback)} · agent.cordis.yml 的 \`memberOrder\` = ${JSON.stringify(memberOrder)} —— 配置没写名单时组员拿到的就是兜底那一份；两边分叉 = 少掉的那几项没有报错（\`F-132\`：兜底里没有 memory ⇒ 常识与 general 索引静默缺席）`)
+            }
+          }
         }
       }
 

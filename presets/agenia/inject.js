@@ -60,11 +60,17 @@ const DEFAULT_LEADER_ORDER = ['leader', 'work-guidelines', 'memory', 'leader', '
 /**
  * 组员默认收到哪些。名单以下方常量本身为准；组员线不贴尾巴（⑤ 只贴组长），没写名单时注入面就是这一份。
  *
- * @roster memory=absent work-guidelines=present charter=present
+ * `memory` 必须在这份兜底里：给组员的那一半是**常识 + 长期记忆里 `general` 的索引**
+ * （见上方 `MEMORY_KEY` 那段受众口径）。配置没写名单时它要是不在，组员会**静默**少掉
+ * 常识与索引 —— 没有报错、没有任何读数，只是那一份注入面变薄了（`F-132`）。
+ * ⇒ 这一份与 `agent.cordis.yml` 的 `memberOrder` **逐项一致**；`READ-01` 有一格对账，
+ *    两边分叉会当场红（`MEMBER-ORDER-FALLBACK`）。
+ *
+ * @roster memory=present work-guidelines=present charter=present
  *
  * 成员语义见 `CONTRACT.md §7`。
  */
-const DEFAULT_MEMBER_ORDER = ['work-guidelines', 'charter']
+const DEFAULT_MEMBER_ORDER = ['work-guidelines', 'memory', 'charter']
 
 /**
  * 受限岗位默认是哪几个。
