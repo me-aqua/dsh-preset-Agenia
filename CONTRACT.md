@@ -15,6 +15,23 @@
 
 ---
 
+## §0 · 自动用例总数（分母）的唯一真源
+
+**一个数，一个出口。** 自动用例总数**只在**入口那一行里读：`node tests/agenia-upgrade/run-all.mjs …`
+打出的 `F57-SETTLE 分母 N` —— `N` 由 `support/discover.mjs` 从盘上 `test('<ID> …')` 的条数数出来，
+并与 `support/registry.mjs` 的登记面双向对账。**本文件不抄这个数**：
+
+- 各节的「登记面」只登记**这一批加了（或没加）哪几条用例 ID**，不写总数；
+- 各节「判据索引」的命令注释不写数（要今天的数就跑那条命令，读 `F57-SETTLE` 那一行）；
+- `§5 变更记录` 里的「分母 66 → 70」是**当时的台账行**（记录那一刻），不是今天的读数；
+  带运行根的读数（例：`_runs/xxx` 分母 96）同理：它说的是**那一次跑**。
+
+为什么：每一节抄一遍总数，等于每一节都存了一张会过期的快照 —— 今天读哪一节都可能读到旧数
+（2026-10-23 `F-136` 撞过一次：§9 同一页同时写着 80 和 76）。要今天的数，跑一次入口；
+要那一批的口径，看登记面点名的用例 ID。
+
+---
+
 ## §1 · 尾巴里贴什么、什么时候贴（已上线的三件行为）
 
 **共同前提。** 组长那条尾巴由 `presets/agenia/inject.js` 的 `agent/pre-step` 钩子拼出来，
@@ -338,6 +355,7 @@ $env:AGENIA_PROBE_TMP=$env:TEMP
 | 2026-10-24（`F-162` 门 3 · 实现落地） | **§12.2.4 回执三件套进 `local-mark` + 写回变成一张白名单**：① `applyMark` 以前**静默丢掉** payload 里不认识的键 —— 现在写回哪些键只由 **`MARK_WRITE_KEYS`**（= `lib/local-state.mjs::MARK_WRITERS` 的键）说，不在表里也不在只读表（`MARK_READ_KEYS`）的键由 CLI 点名进返回信封的 `ignored_keys` 并在 stderr 报一行；② 回执三件套 `receipt_path` / `receipt_sha256` / `receipt_version` **落盘**（`F-162` 的病根：收下 → `ok:true` → 三格全是 `null` ⇒ 卡常驻 `RED E_RECEIPT_ANCHOR`）；③ 档位在**一处**（`FIELD_RECEIPT_POLICY` + `receiptPolicyOf()`）：`memory_review` / `conversation` **交了就拒**（`E_ARG_SCHEMA`），`technical` 在"这一天回执已落盘 **且** 这一场有 claim"时**必交**、否则降成可选；④ **半套一律拒**（任给一件 ⇒ 三件都要，`E_ARG_SCHEMA` · exit 2 · 零写入）；⑤ `receipt_sha256` 必须等于**回执盘上字节**（自报不算锚，`E_ARG_HASH` · exit 2）、`receipt_version` 是 ≥1 的整数且与回执声明的 `version` 一致（`E_ARG_SCHEMA`）；⑥ 节点里 `receipt_path` 存 **`.team` 相对**那一种（`leader/<day>/技术复盘回执.json`）—— 两扇读者（`lib/health.mjs` / `receipt-check`）只认它；⑦ §12.5 补这一族的边界。读数：全量 `_runs/dev-f162-r1` 分母 **94** · `RED 0 / GREEN 94 / HOLD 0` · `F57-OK` · 体检 117/117 · 探针 222/222 · 目标 49 份逐字节相同 · 真实卡 `RED E_RECEIPT_ANCHOR` → `GREEN` | 实现岗，`F-162` 门 3（`presets/agenia/lib/local-state.mjs` + `bin/agenia-local.mjs`）；⚠️ 回执三件套**还没有自己的判据格**（测试岗 `F-162` 门 2 的部分），刀向量写在 §12.4 那一行 |
 | 2026-10-24（`F-162` 门 4 返修 · 评审 🟡 + 裁定） | **必交改判 + 三格契约说真话**（评审 `.team/review/2026-10-24/F-162-第4关-评审.md` 的 `R3` / `R6` / `R9` + 老板裁定）：① **拆掉条件①**（"这一天的回执已落盘"）—— `technical` 有 `claim.job_id` ⇒ **无条件必交**，没有 claim ⇒ 可选，另两个字段仍 `forbidden`（裁定理由：拿"被要求的东西在不在"决定"要不要要求它"，闸会在回执缺席那一刻自动降档）；② `receipt_versions` 进 `MARK_WRITERS`（白名单 **10 → 11** 键；它是派生格：payload 直接给的那一串不收，照样进 `ignored_keys` 并另报一行 `WARN local-mark 不收这些键…`）⇒ §12.2.4 那句"`local-mark` **只写**这些键"对实现成立；③ **回执里读不出整数 `version` ⇒ `E_DATA_CORRUPT` · exit 7 · 零写入**（以前静默跳过对账，那个没被核过的数会并进登记台账、把那一版"占掉"）；④ §12.2.2 两基准表的 `local-receipt-set` 那一行改成现状（只走 `resolveUnder`、**不归一**、照调用方原样存）；⑤ §12.2.4 补两句话（claim ⇒ 必有 trio / 无 claim ⇒ 不必交）、§12.5 的降档口改成"只有没有 claim 那一支"、§12.4 的 📌 改成"这一族现在有格"（`RCP-05` + `HLT-03`）、§12.6 分母 94 → **96**。读数：全量 `_runs/dev-f162b-r4` 分母 **96** · `RED 0 / GREEN 96 / HOLD 0` · `F57-OK` · 体检 117/117 · 探针 222/222 · 目标 49 份逐字节相同 · 真实卡 `GREEN`（三格仍在） | 实现岗，`F-162` 门 4 返修（`presets/agenia/lib/local-state.mjs` + `bin/agenia-local.mjs` + `CONTRACT.md`）；判据格 `RCP-05` / `HLT-03` 由测试岗同批落地（批次 S） |
 | 2026-10-24（`F-160` 门 3 · 实现落地） | 追加 §14 **技术评审的有效性量在提交上，不量在工作树**：`before_sha256` / `after_sha256` 改量"派工那一刻 `HEAD` 的一份只读副本"（`.tools/tree-at-commit.mjs`：导出 + 校验；副本的 CODE 指纹**只由** `.tools/fingerprint.mjs` 算，不另立排除表）；三个数分开报 —— `equal`（副本还是不是那一份）· `is_that_commit`（副本是不是那个提交）· `live.moved`（派工后活树动了几处；没基线 ⇒ `null` + 一句说法，不是 0）；活树在窗口里动了**不在本轮效力范围内**（并行是常态），但报告必须报"动了几处"。作业书 `job-briefs/technical-review.md` 的「代码根」那一行 + 「地基」一节同批改口。⚠️ `presets/agenia/leader.md` 的派工卡那一行**没动**（老板冻结）⇒ `REV-04` 的 `CARD-*` 三针还红着 | 实现岗，`F-160` 门 3（`.tools/tree-at-commit.mjs` 新增 + `presets/agenia/job-briefs/technical-review.md` + 本节）；判据 `REV-04` / `REV-05` 由测试岗同批落地（批次 T，分母 96 → 98） |
+| 2026-10-25 | 新增 **§0**：**自动用例总数只留一处真源**（入口那一行 `F57-SETTLE`）；各节「登记面」与四条「判据索引」里的快照数改成指针（`F-153`）。判据与行为零改动；`§5` 里的历史行与带运行根的读数照旧保留（它们是当时那一次的记录） | 实现岗，`F-153`（`CONTRACT.md` 记账：把每一节都抄一遍的快照数收成一处） |
 
 ---
 
@@ -539,7 +557,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 - 盘上：`integration/vrf01-fingerprint-root.test.mjs` · `integration/vrf02-findings-recompute.test.mjs` ·
   `unit/vrf03-fingerprint-equal.test.mjs` · `static/vrf04-staging-surface.test.mjs`；
 - 登记：`support/registry.mjs` 的 `BATCH_H` + `ROWS` + `GROUP_COUNTS['verify-recompute'] = 4`；
-- 分母：`TOTAL` 由盘上扫出 = **70**（历史冻结的 55 条 `FROZEN_IDS` 一条不少）。
+- 分母：**不抄数**（真源见 §0）。这一批加的是 4 条用例 ID（`VRF-01`…`VRF-04`）；历史冻结的 55 条 `FROZEN_IDS` 一条不少。
   ⇒ 以后**加判据组**走同一套：盘上 + 登记 + 本节各一条，三处同批。
 
 ---
@@ -741,7 +759,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 - 盘上：`static/surface-exists.test.mjs`（`SURF-01` + `SURF-03`）· `static/inject-roster.test.mjs`（`SURF-02`）；
   判据函数在 `support/declared-surface.mjs`；
 - 登记：`support/registry.mjs` 的 `BATCH_I` + `ROWS` + `GROUP_COUNTS['surface-declared'] = 3`；
-- 分母：`TOTAL` 由盘上扫出 = **73**（历史冻结的 55 条 `FROZEN_IDS` 一条不少）。
+- 分母：**不抄数**（真源见 §0）。这一批加的是 3 条用例 ID（`SURF-01` / `SURF-02` / `SURF-03`）；历史冻结的 55 条 `FROZEN_IDS` 一条不少。
 
 ---
 
@@ -821,7 +839,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 | `MTC-03` | §8.2 ④：阳性对照（旧**工具**面）—— 普通候选 401 仍被 `proposal_file` 拒、400 过、同一把尺子、拒=零写入 | 🟢 **绿**（旧闸在，行为没变） |
 | 反向 | 同一份用例跑**改动前**的 `importVerdict`（`git show HEAD:` 的副本，不回落项目文件） | 🔴 `RED 2 / GREEN 1`，红因里含新断言那两条（`MTC-PROP-401-ACCEPTED` + `MTC-CLI-PROP-401-EXIT`：401 被收下、exit 0）（读数 `.team/test/2026-10-22/log.md` 第二十八节） |
 | 翻面 | 同一份用例跑**照本节写的最小实现**（只在副本上；两条 `kind` 同一条闸） | 🟢 `RED 0 / GREEN 3` —— 证明这三格"该绿时绿"，红不是用例写歪了 |
-| 半修 | 同一份用例跑**只给 `--op maintenance-import` 装闸**的现役副本（= 定形原来那句 `kind === 'maintenance'`） | 🔴 **用例这一层**：`RED 1 格 / GREEN 2 格`（分母 = 3 条用例 `MTC-01`/`MTC-02`/`MTC-03`，红的是 `MTC-01`）· **问题码这一层**：红的那 1 格里 **2 条**（`MTC-PROP-401-ACCEPTED` / `MTC-CLI-PROP-401-EXIT`）—— `MTC-02`/`MTC-03` 仍绿，维护案那两格仍 `exit 2`：判据分得出"一条入口有闸"与"两条入口都有闸" |
+| 半修 | 同一份用例跑**只给 `--op maintenance-import` 装闸**的现役副本（= 定形原来那句 `kind === 'maintenance'`） | 🔴 **用例这一层**：`RED 1 格 / GREEN 2 格`（那一跑只跑那 3 条用例 `MTC-01`/`MTC-02`/`MTC-03`，红的是 `MTC-01`）· **问题码这一层**：红的那 1 格里 **2 条**（`MTC-PROP-401-ACCEPTED` / `MTC-CLI-PROP-401-EXIT`）—— `MTC-02`/`MTC-03` 仍绿，维护案那两格仍 `exit 2`：判据分得出"一条入口有闸"与"两条入口都有闸" |
 
 **边界（这一节不覆盖什么）。**
 
@@ -845,7 +863,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 - 盘上：`integration/maintenance-cap.test.mjs`（`MTC-01` + `MTC-02` + `MTC-03`，三条同住一个文件：
   两个入口面 + 一条旧闸的阳性对照）；
 - 登记：`support/registry.mjs` 的 `BATCH_J` + `ROWS` + `GROUP_COUNTS['maintenance-cap'] = 3`；
-- 分母：`TOTAL` 由盘上扫出 = **80**（历史冻结的 55 条 `FROZEN_IDS` 一条不少）。
+- 分母：**不抄数**（真源见 §0）。这一批加的是 3 条用例 ID（`MTC-01` / `MTC-02` / `MTC-03`）；历史冻结的 55 条 `FROZEN_IDS` 一条不少。
 
 ---
 
@@ -853,7 +871,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 
 > 定形：`.team/leader/2026-10-23/spec-F-144.md`。这一节是它的技术契约。
 > 判据：`tests/agenia-upgrade/integration/packet.test.mjs` 的 **`REV-01` 里 ⑦ 那一组**
-> （不加新用例 ID ⇒ 分母仍 **80**）。红基线：`.team/test/2026-10-23/log.md`。
+> （不加新用例 ID ⇒ 分母不动；真源见 §0）。红基线：`.team/test/2026-10-23/log.md`。
 
 ### §9.0 一句话，四张脸
 
@@ -1014,13 +1032,13 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
   真实 134 的证据在定形与 `.team/test/2026-10-23/log.md` 的现场读数里，出处写明。
 - **不改"读多少"以外的语义**：不重写 packer、不改 `manifest` 十个顶层字段、不改人话筛的判据、
   不改"turn 闭合必须在整条流上判"（`packet.mjs:630-633`）。
-- **不加新 op、不加新用例 ID**：闸挂在既有 `--op session-packet` 上，判据并进 `REV-01`（分母仍 80）。
+- **不加新 op、不加新用例 ID**：闸挂在既有 `--op session-packet` 上，判据并进 `REV-01`（没加用例 ID ⇒ 分母不动；真源见 §0）。
 
 ### §9.5 登记面
 
 - 盘上：`tests/agenia-upgrade/integration/packet.test.mjs` 的 `REV-01` 里 **⑦** 那一组；
 - 登记：**不动** `support/registry.mjs`（没加用例 ID）；
-- 分母：`TOTAL` 由盘上扫出 = **80**（本节一格没加：这 80 条全是继承来的）。
+- 分母：**不抄数**（真源见 §0）。本节**一格没加**（判据并进 `REV-01` 的 ⑦ 那一组）—— 这里只说"没加用例 ID"；历史冻结的 55 条 `FROZEN_IDS` 一条不少。
 
 ---
 
@@ -1227,7 +1245,7 @@ $env:TEMP='E:\Harness\.team\test\2026-10-23\tmp'; $env:TMP=$env:TEMP
 node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-23\_runs\<RUN_ID> --glob="tests/agenia-upgrade/unit/rfg01-reasoning-filter.test.mjs"
 node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-23\_runs\<RUN_ID2> --glob="tests/agenia-upgrade/integration/rfg02-reasoning-seam.test.mjs"
 node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-23\_runs\<RUN_ID3> --glob="tests/agenia-upgrade/integration/rfg03-reasoning-assembly.test.mjs"
-# 全量：去掉 --glob，再给一个全新的运行根（分母 80）
+# 全量：去掉 --glob，再给一个全新的运行根（总数读 `F57-SETTLE` 那一行；真源见 §0）
 ```
 
 | 格 | 守的是 | 现在（2026-10-23 14:5x · 第 2 关重开那一轮） |
@@ -1259,7 +1277,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
   `tests/agenia-upgrade/integration/rfg03-reasoning-assembly.test.mjs`（`RFG-03`）；
 - 登记：`support/registry.mjs` 的 `BATCH_L` + `ROWS` + `GROUP_COUNTS['reasoning-filter'] = 3`
   （以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_L`，否则冻结清单与表当场分家）；
-- 分母：`TOTAL` 由盘上扫出 = **80**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；76 + 这 3 条，中间那一格 78 是 14:1x 的读数）。
+- 分母：**不抄数**（真源见 §0）。这一批加的是 3 条用例 ID（`RFG-01` / `RFG-02` / `RFG-03`）；历史冻结的 55 条 `FROZEN_IDS` 一条不少（`ANC-01` 是前一票的批次 K，`§6.3` 那一节）。
 
 ---
 
@@ -1343,7 +1361,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 $env:TEMP='E:\Harness\.team\test\2026-10-23\_tmp'; $env:TMP=$env:TEMP
 # 这一票两格同住一个文件：**一跑一根、别复用运行根**
 node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-23\_runs\<RUN_ID> --glob="tests/agenia-upgrade/integration/dly01-daily-state.test.mjs"
-# 全量：去掉 --glob，再给一个全新的运行根（分母 83）
+# 全量：去掉 --glob，再给一个全新的运行根（总数读 `F57-SETTLE` 那一行；真源见 §0）
 ```
 
 | 格 | 守的是 | 现在（2026-10-23 21:2x · 门 2 第 2 关） |
@@ -1371,7 +1389,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
   写面与读面是同一句话的两头，红的时候一眼看得出是哪一头）；
 - 登记：`support/registry.mjs` 的 `BATCH_N` + `ROWS` + `GROUP_COUNTS['daily-state'] = 2`
   （以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_N`，否则冻结清单与表当场分家）；
-- 分母：`TOTAL` 由盘上扫出 = **83**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；81 + 这 2 条）。
+- 分母：**不抄数**（真源见 §0）。这一批加的是 2 条用例 ID（`DLY-01` / `DLY-02`）；历史冻结的 55 条 `FROZEN_IDS` 一条不少。
 
 ---
 
@@ -1601,7 +1619,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 $env:TEMP='E:\Harness\.team\test\2026-10-24\_tmp'; $env:TMP=$env:TEMP
 # 这一票两组：LOC-01 一格四格六条输入（loc01 那个文件）；锚点三条规则 LOC-02/03/04 同住 loc02 那个文件（23 条输入 · 6 把刀 `KQ1`–`KQ6`）
 node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-24\_runs\<RUN_ID> --glob="tests/agenia-upgrade/integration/loc0*.test.mjs"
-# 全量：去掉 --glob，再给一个全新的运行根（分母 96）
+# 全量：去掉 --glob，再给一个全新的运行根（总数读 `F57-SETTLE` 那一行；真源见 §0）
 ```
 
 | 格 | 守的是 | 现在（2026-10-24 `F-162` 门 4 返修之后复跑：`_runs/dev-f162b-r5` 分母 96 · 这四格全绿） |
@@ -1709,8 +1727,10 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
   `BATCH_S`（`RCP-05`/`HLT-03`）+ `ROWS` +
   `GROUP_COUNTS['local-state'] = 4`（以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_O` **和** `BATCH_Q`，
   否则冻结清单与表当场分家）；
-- 分母：`TOTAL` 由盘上扫出 = **96**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；94 + §12.2.4 的两格 `RCP-05` / `HLT-03`
-  （批次 S）。`local-state` 组从 1 条长到 4 条，是 `F-156` 第二轮的三条锚点规则；`PLT-01` 是 `F-163` 的批次 R）。
+- 分母：**不抄数**（真源见 §0）。这一节登记的是 **4 条**：`LOC-01`（`local-state` 组 1 条）+
+  §12.2.4 的回执三件套两格（`RCP-05` / `HLT-03`，批次 S）+ `PLT-01`（`F-163` 的批次 R）；
+  `local-state` 组从 1 条长到 4 条，是 `F-156` 第二轮的三条锚点规则（`LOC-02` / `LOC-03` / `LOC-04`）。
+  历史冻结的 55 条 `FROZEN_IDS` 一条不少。
   ⚠️ 现量（`2026-10-24` 这一天 · 时钟读数 `2026-10-25 00:24:59`）：`RED 0 / GREEN 96 / HOLD 0` · `F57-OK`
   （`_runs/dev-f162b-r5` —— 收口那一跑：测试树 `da407746d6d84d58` · 62 份 · **开 == 收**，跑的就是 `sources` 里那版；
   提交之前那一跑 `dev-f162b-r4` 同值）。
@@ -1862,7 +1882,7 @@ dayKeyOf(instant) = 本地日期(instant − 4h)      // 例：2026-10-24T01:30+
 $env:TEMP='E:\Harness\.team\test\2026-10-24\_tmp'; $env:TMP=$env:TEMP
 # 这一批六条、三个文件；**一跑一根、别复用运行根**
 node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-24\_runs\<RUN_ID> --glob="tests/agenia-upgrade/integration/dby*.test.mjs"
-# 全量：去掉 --glob，再给一个全新的运行根（分母 90）
+# 全量：去掉 --glob，再给一个全新的运行根（总数读 `F57-SETTLE` 那一行；真源见 §0）
 ```
 
 | 格 | 守的是 | 现在（2026-10-24 12:2x · 门 3 落地 + 门 4 打回后第二轮） |
@@ -1925,7 +1945,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
   量具在 `tests/agenia-upgrade/support/day-cut.mjs`（**不进分母**：它是工具，不是用例）。
 - 登记：`support/registry.mjs` 的 `BATCH_P` + `ROWS` + `GROUP_COUNTS['day-boundary'] = 6`
   （以及 `registryProblems()` 里 `POST_FROZEN` 要排掉 `BATCH_P`，否则冻结清单与表当场分家）。
-- 分母：`TOTAL` 由盘上扫出 = **93**（历史冻结的 55 条 `FROZEN_IDS` 一条不少；84 + 这 6 条，`F-156` 第二轮又 +3）。
+- 分母：**不抄数**（真源见 §0）。这一批加的是 6 条用例 ID（`DBY-01`…`DBY-06`）；历史冻结的 55 条 `FROZEN_IDS` 一条不少。
 
 ---
 
