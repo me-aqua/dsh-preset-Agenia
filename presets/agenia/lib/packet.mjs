@@ -681,22 +681,50 @@ function firstFrameChars(tool, src, stem, first) {
 }
 
 /**
+ * 解压总量的**唯一那道闸**（`F-144` 定的口径 · `F-147` 把它挪给两条路共用）。
+ *
+ * 口径三条（契约 §9.1 ③④）：
+ *   · `>` 才拒 —— `out_bytes === limit` **过**；
+ *   · `limit === null` = 闸关掉了（`AGENIA_PACKET_MAX_BYTES=0`），不判；
+ *   · `out_bytes` 必须是**全量**（不是"读到被顶住那一刻的前缀和"），`error.details` 给三个数。
+ *
+ * 🔴 `F-147`：这个函数有两个调用点 —— 打包那条路（全量总量）与**读流那一层**
+ * （`readStreamDetail`，单条流）。从前只有上面那一个：`readSessionStream()` 这条
+ * "一次读整份字符串"的路**根本没有闸**，一次调用就能把一份超大流整份读进内存。
+ *
+ * @param {{outBytes:number, limit:number|null, sessionCount:number, where:string}} input
+ */
+function assertPacketBytesFits({ outBytes, limit, sessionCount, where }) {
+  if (limit === null) return
+  if (outBytes <= limit) return
+  throw packetError(
+    PACKET_CODES.TOO_LARGE,
+    `解压总量 ${outBytes} B 超过生效上限 ${limit} B（${where}）—— `
+      + '只能整份拒；不许少读几帧凑出一份包（少读的帧与"读不到"在包里长得一样）',
+    { session_count: sessionCount, out_bytes: outBytes, limit },
+  )
+}
+
+/**
  * 读一条会话流，把帧这一层的读数一起带回来（`readSessionStream` 只是它的 `.text`）。
  *
  * 🔴 `scratchParent`（v1.10 ⑤）：**临时件只落调用方给的这一格**（打包路径给的是
  * `<outDir>/.packet-tmp-<id>/`，或 `AGENIA_SCRATCH_DIR` 那一格）；不给 ⇒ 自己按 `scratchRootFor()`
  * 找一格，并连格一起清掉 —— **源流所在目录一个字节都不写**。
  *
- * ⚠️ 这条是**要整份文本**的那条路（`readSessionStream`），所以它确实把文本读进内存；
- *    打包那条路由 `buildSessionPacket` 自己走流式，不经过这里。
+ * 🔴 `F-147`：**闸在 `readFileSync` 之前**。工具的逐帧读数（`r.out_bytes`，且已经与落盘文本
+ * 逐字节对过账）就是整份解压后的字节数 ⇒ 超限时**一个字符都还没读进内存**。从前这道闸只在
+ * `buildSessionPacket` 那一层（全量总量）⇒ 裸读这条路（`readSessionStream`）一次调用就能把
+ * 一份超大流整份读进内存（`F-144` 那次 OOM 的另一扇门）。
  *
  * @param {string} file 会话流（多帧 zstd）的路径
  * @param {string|null} [resolvedTool] 现成帧工具（打包路径解一次、每条源复用）
  * @param {string|null} [scratchParent] 临时件落点的父目录；`null` ⇒ 裸读路径自己找
+ * @param {number|null} [limit] 生效上限（`null` = 关掉）；缺省 = 现算 `packetMaxBytesOf()`
  * @returns {{text:string, buf:Buffer, frames:Array<{index:number,offset:number,bytes:number,outBytes:number,tail:string}>,
  *            count:number, bytes:number, first_frame_chars:number, tool:string}}
  */
-function readStreamDetail(file, resolvedTool = null, scratchParent = null) {
+function readStreamDetail(file, resolvedTool = null, scratchParent = null, limit = undefined) {
   const src = path.resolve(String(file ?? ''))
   if (file === undefined || file === null || String(file).trim() === '' || !existsSync(src)) {
     throw packetError(PACKET_CODES.FRAMES, `会话流文件不在：${src}`)
@@ -705,10 +733,18 @@ function readStreamDetail(file, resolvedTool = null, scratchParent = null) {
   if (tool === null) {
     throw packetError(PACKET_CODES.FRAMES, `现成帧工具不在（沿模块目录往上找 ${ZSTD_TOOL_REL}）—— 帧边界没法定，不许自造解压器`)
   }
+  const effectiveLimit = limit === undefined ? packetMaxBytesOf() : limit
   const parent = scratchParent === null ? scratchRootFor() : path.resolve(String(scratchParent))
   const stem = makeTempDir(parent)
   try {
     const r = runFramesTool(tool, src, path.join(stem, 'frames.txt'))
+    // 🔴 闸在**读进内存之前**（`F-147`）：`r.out_bytes` 是逐帧实解的合计，且已与落盘文本对过账。
+    assertPacketBytesFits({
+      outBytes: r.out_bytes,
+      limit: effectiveLimit,
+      sessionCount: 1,
+      where: `${src}（裸读那一份流）`,
+    })
     const buf = readFileSync(r.out_file)
     const first = r.frames.length > 1 ? firstFrameChars(tool, src, stem, r.frames[0]) : charCountOf(buf.toString('utf8'))
     return { text: buf.toString('utf8'), buf, frames: r.frames, count: r.count, bytes: r.bytes, first_frame_chars: first, tool }
@@ -1382,14 +1418,14 @@ export function buildSessionPacket(options = {}) {
 
     // ③ 闸：**先量完所有进包源，再一次比**（§9.1 ⑦：拒的时候 `out_bytes` 必须是全量，
     //    不是"读到被顶住那一刻的前缀和"）。`>` 才拒，`=== limit` 过。
-    if (limit !== null && outBytes > limit) {
-      throw packetError(
-        PACKET_CODES.TOO_LARGE,
-        `解压总量 ${outBytes} B 超过生效上限 ${limit} B（进包 ${included.length} 条源）—— ` +
-          '只能整份拒；不许少读几帧凑出一份包（少读的帧与"读不到"在包里长得一样）',
-        { session_count: included.length, out_bytes: outBytes, limit },
-      )
-    }
+    //    `F-147` 起这一道闸与读流那一层**同一个函数**（`assertPacketBytesFits`）——
+    //    两条路各按自己知道的那个量报数：这一条报全量总量；`readStreamDetail` 报单条流。
+    assertPacketBytesFits({
+      outBytes,
+      limit,
+      sessionCount: included.length,
+      where: `进包 ${included.length} 条源`,
+    })
 
     // ④ 打包：逐源把留下来的行**逐块**写进 content.jsonl —— 与"总文本量"脱钩的就是这一步
     //    （写一块算一块：字节 sha256 + §B3.4 字符数都是流式累加，见 `createContentSink`）。

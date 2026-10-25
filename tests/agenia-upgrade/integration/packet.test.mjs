@@ -1045,6 +1045,63 @@ describe('integration · packet (REV-01)', () => {
           push('CAP-FILTER-PATH', `\`human:true\` 那一跑的 out_bytes 也必须是解压总量 ${WANT.out_bytes}（不是筛完留下多少），实得 ${JSON.stringify(rHuman.json?.error?.details?.out_bytes)}`)
         }
 
+        // ── 🔴 `F-147`：**裸读那条路**（`readSessionStream`）也必须在同一道闸里 ────────────────
+        //    从前上限只挂在打包那一层（`buildSessionPacket` 的全量总量）⇒ 一次
+        //    `readSessionStream(file)` 就能把**一份超大流整份读进内存**（`F-144` 那次 OOM 的另一扇门：
+        //    打包那条路挡住了，裸读这条路没有）。
+        //    三格都用**这一条流自己**的解压后字节数当中枢（不碰 2 条源的总量那本账）：
+        //      · 上限 = 它 − 1 ⇒ 必须拒（`E_PACKET_TOO_LARGE`，三个数 `{session_count:1, out_bytes, limit}`）；
+        //      · 上限 = 它     ⇒ 必须**过**（口径是"超过才拒"）；
+        //      · 上限 = 0      ⇒ 必须**过**（0 = 关掉）。
+        {
+          const bareBytesA = Buffer.byteLength(capTextA, 'utf8')
+          const withCapEnv = (value, fn) => {
+            const saved = process.env[CAP_ENV]
+            process.env[CAP_ENV] = String(value)
+            try { return fn() } finally {
+              if (saved === undefined) delete process.env[CAP_ENV]
+              else process.env[CAP_ENV] = saved
+            }
+          }
+          const bareOver = withCapEnv(bareBytesA - 1, () => callSoft('readSessionStream(裸读超限)', pk.mod.readSessionStream, capFileA))
+          const bareExact = withCapEnv(bareBytesA, () => callSoft('readSessionStream(裸读恰好等于上限)', pk.mod.readSessionStream, capFileA))
+          const bareOff = withCapEnv(0, () => callSoft('readSessionStream(裸读关闸)', pk.mod.readSessionStream, capFileA))
+          const bareErr = bareOver.threw === null ? null : {
+            code: bareOver.threw.code ?? null,
+            details: bareOver.threw.details ?? bareOver.threw.detail ?? null,
+            message: String(bareOver.threw.message).slice(0, 200),
+          }
+          rec.readings.cap_bare_read = {
+            stream_bytes: bareBytesA,
+            over: bareErr,
+            exact_threw: bareExact.threw === null ? null : String(bareExact.threw.message).slice(0, 160),
+            off_threw: bareOff.threw === null ? null : String(bareOff.threw.message).slice(0, 160),
+          }
+          if (bareOver.threw === null) {
+            push('CAP-BARE-PATH', `🔴 裸读那条路（\`readSessionStream\`）**没有闸**：上限调到 ${bareBytesA - 1} B`
+              + `（< 这条流解压后 ${bareBytesA} B）仍然读出来了 ${String(bareOver.value ?? '').length} 字符 —— `
+              + '一次调用就能把一份超大流整份读进内存（`F-147`；`F-144` 挡的是打包那条路）')
+          } else {
+            if (bareErr.code !== 'E_PACKET_TOO_LARGE') {
+              push('CAP-BARE-PATH', `裸读超限的稳定码必须与打包那条路**同一个** \`E_PACKET_TOO_LARGE\`（同一道闸，不是第二个码），实得 ${JSON.stringify(bareErr.code)}`)
+            }
+            const d = bareErr.details
+            if (d === null || typeof d !== 'object') {
+              push('CAP-BARE-PATH', '裸读超限也必须给三个数 `{session_count, out_bytes, limit}`（明细在 `error.details`）')
+            } else {
+              if (d.session_count !== 1) push('CAP-BARE-PATH', `裸读的 session_count 应为 1（一次读**一条**流），实得 ${JSON.stringify(d.session_count)}`)
+              if (d.out_bytes !== bareBytesA) push('CAP-BARE-PATH', `裸读的 out_bytes 应为这条流解压后的 ${bareBytesA} B（全量，不是前缀和），实得 ${JSON.stringify(d.out_bytes)}`)
+              if (d.limit !== bareBytesA - 1) push('CAP-BARE-PATH', `裸读的 limit 应为这一次生效的 ${bareBytesA - 1}，实得 ${JSON.stringify(d.limit)}`)
+            }
+          }
+          if (bareExact.threw !== null) {
+            push('CAP-BARE-PATH', `裸读在 out_bytes === limit（${bareBytesA} B）时必须**过**（口径是"超过才拒"，同 §8.1 的 400/401）：实得抛了 ${String(bareExact.threw.message).slice(0, 160)}`)
+          }
+          if (bareOff.threw !== null) {
+            push('CAP-BARE-PATH', `裸读在上限 0（= 关掉闸）时不许抛：实得 ${String(bareOff.threw.message).slice(0, 160)}`)
+          }
+        }
+
         // ══ 「崩溃不许悄悄发生」：exit 非 0 ⇒ stdout 必须是可解析的 JSON；**绝不 134** ══════
         //  谓词先拿四种合成样本自证（该红时红、该绿时绿），再逐条量真实的路。
         const failShape = (r, wantCode) => {
