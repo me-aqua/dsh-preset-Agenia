@@ -342,6 +342,9 @@ export function nonemptyControls(declared = ['a.md', 'b.md', 'c.md']) {
 /** 注释行（`//` / `/*` / 一片 `*`）。与项目里其余静态判据同口径。 */
 const isCommentLine = (line) => /^\s*(\/\/|\/\*|\*)/.test(line)
 
+/** 去掉行尾的 `// …` 注释（名单里的名字都是引号字符串，不会含 `//`）。 */
+const stripLineComment = (line) => String(line).replace(/\s*\/\/.*$/, '')
+
 /**
  * **散文的语气词表** —— 只为一件事服务：抓"散文与 `@roster` 说反了"。
  *
@@ -364,17 +367,26 @@ const CLAUSE_SPLIT = /[，。；：、]/
 /**
  * 从 `src` 里取出 `const <name> = [ … ]` 那个常量。
  *
+ * 🔴 `F-133` ①（2026-10-25）：**只认真的那一行** —— 注释行里出现 `const <name> =` **不算声明**。
+ *   病：旧版用 `lines.findIndex(declRe)` 取**第一条命中的行**。在真常量上方留一行**注释掉的旧常量**
+ *   （`// const DEFAULT_LEADER_ORDER = [...旧的、对的那一份...]`），解析器就把那段注释当成事实来源：
+ *   判据量的是**注释里的名单**，而跑代码的人读的是**下面那一份**。实测（`_runs/f133-knife-*`）：
+ *   真常量删掉 `persona`、注释里那份留着 ⇒ 旧解析器读出"persona 在" ⇒ 整格**绿**。
+ *   ⇒ 修法两步：① 跳过注释行再找声明；② 取 `]` 与拼 body 时先剥行尾 `//` 注释
+ *     （否则 `'memory', // 见 F-132` 那种行会把 `// 见 …` 读成一个 key，同一族缺陷的第二种形状）。
+ *
  * @returns {{ok:false, why:string} | {ok:true, keys:string[], line:number}}
  */
 export function parseConstArray(src, name) {
   const lines = String(src ?? '').split(/\r?\n/)
   const declRe = new RegExp(`\\bconst\\s+${name}\\s*=`)
-  const idx = lines.findIndex((l) => declRe.test(l))
-  if (idx < 0) return { ok: false, why: `找不到 \`const ${name} = [ … ]\`（常量被改名 / 挪走 / 删掉了）` }
+  const idx = lines.findIndex((l) => !isCommentLine(l) && declRe.test(l))
+  if (idx < 0) return { ok: false, why: `找不到 \`const ${name} = [ … ]\`（常量被改名 / 挪走 / 删掉了 —— 只有注释里的旧常量也不算）` }
   let body = ''
   for (let i = idx; i < lines.length; i += 1) {
-    body += `${lines[i]}\n`
-    if (lines[i].includes(']')) break
+    const code = stripLineComment(lines[i])
+    body += `${code}\n`
+    if (code.includes(']')) break
   }
   const open = body.indexOf('[')
   const close = body.indexOf(']', open + 1)
@@ -582,10 +594,43 @@ export function fallbackRosterProblems(src, { rosters = FALLBACK_ROSTERS, vocabu
         })
       }
     }
-    // 2b. 散文可以留，但**不许说反**（散文不是声明，它只是不能与机读声明相反）
+    // 2b. 散文可以留，但**不许说反**（散文不是声明，它只是不能与事实相反）
+    //
+    // 🔴 `F-133` ②（2026-10-25）：散文说的是**常量里有没有这个 key** —— `@roster` 没提到的 key 也一样。
+    //   病：旧版这里是 `const claim = claims.get(p.key); if (claim === undefined || …) continue`
+    //   ⇒ 只要 `@roster` **不提**某个 key，散文对它说什么都没人管。实测（`_runs/f133-knife-*`）：
+    //   `@roster` 不提 `mood`、散文写「`mood` 不在这份兜底里」、而常量里**真有** `mood` ⇒ 整格**绿**
+    //   —— 读注释的人以为它不在，跑代码的人拿到它（同一个病的第三种形状）。
+    //   ⇒ 没有机读声明可比时，就拿**常量本身**当事实来源对账：散文说"不在"而常量里有 ⇒ 红；
+    //     散文说"在"而常量里没有 ⇒ 红（两个方向都判、点名到 key + 两处行号）。
+    //   ⚠️ 这不是"散文参与判定"（声明仍只有 `@roster` 一种写法）：这是"散文不许与盘上事实相反"。
     for (const p of prose) {
       const claim = claims.get(p.key)
-      if (claim === undefined || claim.polarity === p.polarity) continue
+      if (claim === undefined) {
+        const inConst = set.has(p.key)
+        if (p.polarity === 'absent' && inConst) {
+          problems.push({
+            code: CODES.rosterClaimViolated,
+            message: `\`${roster.name}\`（第 ${parsed.line} 行的常量）里**有** \`${p.key}\`，`
+              + `而第 ${p.line} 行的散文说它\`不在\`这份兜底里（那句 \`@roster\` **没有对 \`${p.key}\` 表态**，`
+              + '所以这一格以前读不出来）—— 读注释的人以为它不在，跑代码的人拿到它。'
+              + '两边只能有一个是真的：要么把常量里的它去掉，要么把那句散文改成事实，'
+              + `并在 \`@roster\` 里补上 \`${p.key}=present|absent\`（让判据能逐项对账）`,
+            detail: { const: roster.name, key: p.key, prose_line: p.line, const_line: parsed.line, keys: [...set], prose_only: true },
+          })
+        } else if (p.polarity === 'present' && !inConst) {
+          problems.push({
+            code: CODES.rosterClaimViolated,
+            message: `\`${roster.name}\`（第 ${parsed.line} 行的常量）里**没有** \`${p.key}\`，`
+              + `而第 ${p.line} 行的散文说它\`在\`这份兜底里（那句 \`@roster\` **没有对 \`${p.key}\` 表态**）`
+              + '—— 读注释的人以为它会注入，跑代码的人拿到的是少一项的兜底。'
+              + '修法：把常量补上它，或者把那句散文改成事实',
+            detail: { const: roster.name, key: p.key, prose_line: p.line, const_line: parsed.line, keys: [...set], prose_only: true },
+          })
+        }
+        continue
+      }
+      if (claim.polarity === p.polarity) continue
       problems.push({
         code: CODES.rosterClaimViolated,
         message: `\`${roster.name}\` 上方那段说明**自相矛盾**：第 ${p.line} 行的散文说 \`${p.key}\` `
@@ -634,7 +679,7 @@ export function fallbackRosterProblems(src, { rosters = FALLBACK_ROSTERS, vocabu
 }
 
 /**
- * ② 的控制面：**十四组**合成源码（每份都能跑通解析，只有"声明与事实"不同）。
+ * ② 的控制面：**十九组**合成源码（每份都能跑通解析，只有"声明与事实"不同）。
  *
  * 为什么必须这么造：收口之后最可能出现的半修形态有六种 ——
  *   ① **只写散文、把 `@roster` 删掉**（散文若还能救它，这一格就等于没收紧）；
@@ -644,6 +689,11 @@ export function fallbackRosterProblems(src, { rosters = FALLBACK_ROSTERS, vocabu
  *
  * 🔴 第 3 组是这一票**反向**在合成层的同形：散文还在、`@roster` 没了 ⇒ 必须红。
  *    它绿了，就说明"散文仍然算声明" —— 收口没落地，这一跑的红绿都不算数。
+ *
+ * 🔴 `F-133` 补的那五组（第 15–19 组）是**两条骗法各配一把刀 + 一条反刀**：
+ *   · ① 注释掉的旧常量顶替真常量（读的是注释、判据量错了对象）；
+ *   · ② `@roster` 没表态的 key，散文说反了没人管（读注释的人与跑代码的人又拿到两个答案）。
+ *   反刀守的是"别矫枉过正"：见到注释就红、或散文与事实一致也红，都是把判据钉在噪声上。
  */
 export function rosterControls() {
   /** 给人读的说明（**不含任何名单判断** —— 它参与不了判定，也不许撒谎）。 */
@@ -663,11 +713,15 @@ export function rosterControls() {
   const LEADER_ORDER_PRE = ['leader', 'work-guidelines', 'memory', 'leader', 'work-guidelines', 'persona']
   const LEADER_ORDER_FIXED = ['leader', 'work-guidelines', 'leader', 'work-guidelines', 'persona']
 
-  /** 拼一份源码：注释块 + 常量 + N 处读点（`uses` = 1 表示零读点）。 */
-  const srcOf = ({ leaderComment, leaderOrder, memberComment, memberOrder, leaderUses = 2, memberUses = 2 }) => [
+  /** 拼一份源码：注释块 + 常量 + N 处读点（`uses` = 1 表示零读点）。
+   *  `leaderGhost`：在**注释块与真常量之间**多一行**注释掉的旧常量**（`F-133` ① 的骗法）。 */
+  const srcOf = ({ leaderComment, leaderOrder, memberComment, memberOrder, leaderUses = 2, memberUses = 2, leaderGhost = null }) => [
     '/**',
     ...leaderComment.map((l) => ` * ${l}`),
     ' */',
+    ...(leaderGhost === null
+      ? []
+      : [`// const DEFAULT_LEADER_ORDER = ${JSON.stringify(leaderGhost).replace(/"/g, "'")}`]),
     `const DEFAULT_LEADER_ORDER = ${JSON.stringify(leaderOrder).replace(/"/g, "'")}`,
     ...Array.from({ length: Math.max(0, leaderUses - 1) }, (_, i) => `const leaderUse${i} = DEFAULT_LEADER_ORDER`),
     '',
@@ -703,8 +757,10 @@ export function rosterControls() {
     // ── 收口的核：`@roster` 必需、散文不算声明 ────────────────────────────────
     {
       name: '散文还在、`@roster` 那一行被删掉 ⇒ 红 `SURF-ROSTER-NO-CLAIM`（散文不算声明 —— **这一格就是收口**）',
+      // 常量用"确实没有 `memory`"那一份：于是那段审计散文（memory 不在）与**事实**一致，
+      // 这一组只剩"散文提供不了声明"这一条红因（`F-133` ② 那条规则在这儿不该抢戏）。
       src: srcOf({
-        leaderComment: LEADER_PROSE_AUDIT, leaderOrder: LEADER_ORDER_PRE,
+        leaderComment: LEADER_PROSE_AUDIT, leaderOrder: LEADER_ORDER_FIXED,
         memberComment: MEMBER_MARKER_OK, memberOrder: ['work-guidelines', 'charter'],
       }),
       wantCodes: [CODES.rosterNoClaim],
@@ -821,6 +877,69 @@ export function rosterControls() {
       name: '两个常量都不见了 ⇒ 两条 `SURF-ROSTER-CONST-MISSING`，各点名一个常量',
       src: '/** 什么都读不到 */\nconst SOMETHING_ELSE = []\n',
       wantCodes: [CODES.rosterConstMissing, CODES.rosterConstMissing],
+      wantKeys: [],
+      wantConst: null,
+    },
+    // ── 🔴 `F-133` ①：**注释掉的旧常量不许顶替真常量**（两把刀 + 一条反刀）──────────
+    // 骗法：真常量被改坏（删掉 `persona`），真常量上方留一行注释掉的**旧常量**（那一份是对的）。
+    //   旧解析器取"第一条命中的行"⇒ 读的是注释里那份 ⇒ `persona=present` 与"注释里那份"对得上 ⇒ **绿**。
+    //   现在 ⇒ 读真常量 ⇒ `@roster` 说 `persona` 在、常量里没有 ⇒ 红并点名 `persona`。
+    {
+      name: 'F-133① 注释里那一行旧常量不许顶替真常量：真常量删掉 `memory` + 上方留注释掉的旧常量（有 memory）⇒ 红并点名 `memory`',
+      src: srcOf({
+        leaderComment: LEADER_MARKER_OK, leaderOrder: LEADER_ORDER_FIXED,
+        memberComment: MEMBER_MARKER_OK, memberOrder: ['work-guidelines', 'charter'],
+        leaderGhost: LEADER_ORDER_PRE,
+      }),
+      wantCodes: [CODES.rosterClaimViolated],
+      wantKeys: ['memory'],
+      wantConst: 'DEFAULT_LEADER_ORDER',
+    },
+    {
+      name: 'F-133① 反刀（绿的那一头）：注释里的旧常量是**坏的**、真常量是好的 ⇒ 0 问题（读的是真常量，不是"见到注释就红"）',
+      src: srcOf({
+        leaderComment: LEADER_MARKER_OK, leaderOrder: LEADER_ORDER_PRE,
+        memberComment: MEMBER_MARKER_OK, memberOrder: ['work-guidelines', 'charter'],
+        leaderGhost: ['leader', 'work-guidelines', 'leader', 'work-guidelines'],
+      }),
+      wantCodes: [],
+      wantKeys: [],
+      wantConst: null,
+    },
+    // ── 🔴 `F-133` ②：`@roster` **没表态**的 key，散文说反了也要红（两把刀 + 一条反刀）──
+    // 骗法：`@roster` 不提 `mood`、散文写「`mood` 不在这份兜底里」、而常量里真有 `mood`。
+    //   旧版：没有机读声明可比 ⇒ `continue` ⇒ **绿**（读注释的人以为它不在，跑代码的人拿到它）。
+    {
+      name: 'F-133② 散文对 `@roster` 没表态的 key 说反（散文说 `mood` 不在、常量里有）⇒ 红并点名 `mood`',
+      src: srcOf({
+        leaderComment: [...LEADER_PROSE, '`mood` 不在这份兜底里。', '@roster memory=present style=absent leader=present work-guidelines=present persona=present'],
+        leaderOrder: [...LEADER_ORDER_PRE, 'mood'],
+        memberComment: MEMBER_MARKER_OK, memberOrder: ['work-guidelines', 'charter'],
+      }),
+      wantCodes: [CODES.rosterClaimViolated],
+      wantKeys: ['mood'],
+      wantConst: 'DEFAULT_LEADER_ORDER',
+    },
+    {
+      name: 'F-133② 另一个方向：散文说 `work-guidelines` 在、`@roster` 没表态、常量里没有 ⇒ 红并点名 `work-guidelines`',
+      src: srcOf({
+        leaderComment: [...LEADER_PROSE, '`work-guidelines` 在这份兜底里。', '@roster memory=present style=absent leader=present persona=present'],
+        leaderOrder: ['leader', 'memory', 'leader', 'persona'],
+        memberComment: MEMBER_MARKER_OK, memberOrder: ['work-guidelines', 'charter'],
+      }),
+      wantCodes: [CODES.rosterClaimViolated],
+      wantKeys: ['work-guidelines'],
+      wantConst: 'DEFAULT_LEADER_ORDER',
+    },
+    {
+      name: 'F-133② 反刀（绿的那一头）：同样的散文、常量里真的没有 `mood` ⇒ 0 问题（散文与事实一致就不算红）',
+      src: srcOf({
+        leaderComment: [...LEADER_PROSE, '`mood` 不在这份兜底里。', '@roster memory=present style=absent leader=present work-guidelines=present persona=present'],
+        leaderOrder: LEADER_ORDER_PRE,
+        // `mood` 放进**组员**那份常量：让它在词表里（否则那句散文根本不会被读，这一格就证不了"边界"）。
+        memberComment: MEMBER_MARKER_OK, memberOrder: ['work-guidelines', 'charter', 'mood'],
+      }),
+      wantCodes: [],
       wantKeys: [],
       wantConst: null,
     },
