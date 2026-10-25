@@ -19,6 +19,10 @@
  *   `S5 尾巴`     末段没有换行 ⇒ 靠流结束时的 `flush()` 吐出来
  *   `S6 不抛`     过滤时抛错 ⇒ 不冒到流上 · 出事的 chunk 原样吐出 · 后面的照旧过滤 · `console.error` **只一次**
  *
+ * 另有两格**只判被测面**（`F-149`；参考实现里没有这两条行为，所以不进上面那份共用表）：
+ *   `S7 块边界`   第 1 块在**没闭合的围栏**里结束 ⇒ 第 2 块照样按"围栏外"判（围栏状态不许跨块泄漏）
+ *   `S8 流结束`   `finish` 来过 ⇒ 尾巴排在它前面、**之后一条 chunk 都不许有**；没有 `finish` ⇒ 末段照样 flush
+ *
  * 三臂：`SUT`（今天没有监听器 ⇒ 红）· `REF`（照 §10.5 写的最小接缝 ⇒ 必须全绿）·
  * 刀（删掉 REF 里那对 `try`/`catch` ⇒ **只翻 `S6`**）。
  *
@@ -185,6 +189,74 @@ describe('integration · reasoning seam (RFG) · F-148 llm/stream 监听器', ()
           // `S0` 已经在上面按"注册了几条"报过了（`SEAM-NOT-REGISTERED`），别重复报同一件事
           if (r.key === 'S0') continue
           push(`RFG-${r.key}`, `[接缝] ${r.key}：want ${r.want}，实得 ${r.got} —— ${r.note}`, { cell: r.key, want: r.want, got: r.got })
+        }
+      }
+
+      // ── ①′ 两处**边界**（`F-149`，只判被测面 —— 参考实现里没有这两条，别拿它当对照）────
+      //    这两格判的都是"流里吐出来的"与"落盘那一份"对不对得上，以及流的**结束处**。
+      if (surfaceUsable && sutHandler !== null) {
+        /**
+         * `S7` 围栏状态**不许跨块泄漏**：第 1 块的 reasoning 在**没闭合的围栏**里结束，
+         * 第 2 块是两条围栏外的碎段（各 2 单元 ⇒ 该删）。
+         * 一块一份 filter ⇒ 第 2 块吐出来的必须是空串（与 `block-end` 载荷的重写同一口径）；
+         * 共用一份 ⇒ 第 2 块被当成"围栏里"，碎段被无条件放行（流里吐的与落盘的对着）。
+         */
+        const FENCE_CHUNKS = () => ([
+          { type: 'reasoning-delta', index: 0, text: '```js\n' },
+          { type: 'reasoning-delta', index: 0, text: '}\n' },
+          { type: 'block-end', index: 0, block: { type: 'reasoning', text: '```js\n}\n' } },
+          { type: 'reasoning-delta', index: 1, text: '好的\n' },
+          { type: 'reasoning-delta', index: 1, text: '是的\n' },
+          { type: 'block-end', index: 1, block: { type: 'reasoning', text: '好的\n是的\n' } },
+          { type: 'finish', reason: { kind: 'stop' } },
+        ])
+        const r7 = await drive(sutHandler, FENCE_CHUNKS())
+        const streamedOfBlock = (out, index) => out
+          .filter((chunk) => chunk?.type === 'reasoning-delta' && chunk.index === index)
+          .map((chunk) => chunk.text).join('')
+        const secondBlock = streamedOfBlock(r7.out, 1)
+        rec.readings.s7_block_boundary = { threw: r7.threw, second_block_streamed: secondBlock }
+        if (r7.threw !== null) {
+          push('RFG-S7', `[接缝·块边界] 喂两块（第一块的围栏没闭合）时监听器抛了：${r7.threw}`)
+        } else if (secondBlock !== '') {
+          push('RFG-S7', `[接缝·块边界] 第 1 块在**没闭合的围栏**里结束，第 2 块两条碎段（各 2 单元、围栏外）`
+            + `必须被删 —— 流里却吐出了 ${JSON.stringify(secondBlock)}：围栏状态跨块泄漏了，`
+            + `而第 2 块落盘的载荷是按"碎段删掉"重写的 ⇒ 流与盘对着（F-149）`)
+        }
+
+        /**
+         * `S8` 流末尾那次 `flush()` 必须是**有条件**的：`finish` 来过就不再吐。
+         * 两半都判（缺一半就会退化成"永远不 flush"）：
+         *   · 有 `finish`：尾巴排在 `finish` **之前**，`finish` 之后**一条 chunk 都不许有**；
+         *   · 没有 `finish`（delta-only）：末段照样靠 `flush()` 吐出来。
+         */
+        const TAIL_TEXT = '我们应该走这条路'
+        const r8a = await drive(sutHandler, [
+          { type: 'reasoning-delta', index: 3, text: TAIL_TEXT },
+          { type: 'finish', reason: { kind: 'stop' } },
+          { type: 'reasoning-delta', index: 3, text: '四个汉字啊' },   // finish 之后 —— 上游违约
+        ])
+        const finishAt = r8a.out.findIndex((chunk) => chunk?.type === 'finish')
+        const tailAt = r8a.out.findIndex((chunk) => chunk?.type === 'reasoning-delta' && chunk.text === TAIL_TEXT)
+        const afterFinish = finishAt < 0 ? null : r8a.out.slice(finishAt + 1).map((chunk) => chunk?.type)
+        const r8b = await drive(sutHandler, [{ type: 'reasoning-delta', index: 3, text: TAIL_TEXT }])
+        const noFinishTail = r8b.out.some((chunk) => chunk?.type === 'reasoning-delta' && chunk.text === TAIL_TEXT)
+        rec.readings.s8_finish_flush = {
+          threw: r8a.threw, finish_at: finishAt, tail_at: tailAt, chunks_after_finish: afterFinish,
+          no_finish_tail_emitted: noFinishTail,
+        }
+        if (r8a.threw !== null) {
+          push('RFG-S8', `[接缝·流结束] 带 \`finish\` 的那一跑监听器抛了：${r8a.threw}`)
+        } else if (finishAt < 0) {
+          push('RFG-S8', '[接缝·流结束] 喂了 `finish` 却在输出里找不到它 —— 这一格没量到"结束处"')
+        } else if ((afterFinish ?? []).length !== 0) {
+          push('RFG-S8', `[接缝·流结束] \`finish\` 之后又吐了 ${afterFinish.length} 条 chunk（${afterFinish.join(' / ')}）`
+            + ' —— 流末尾那次 `flush()` 是给"没有 finish 的协议"留的；无条件收会在 finish **之后**再吐一条尾巴（F-149）')
+        } else if (tailAt < 0 || tailAt > finishAt) {
+          push('RFG-S8', `[接缝·流结束] 末段「${TAIL_TEXT}」必须以一条 reasoning-delta 排在 \`finish\` **之前**（实得 tail_at=${tailAt} · finish_at=${finishAt}）`)
+        } else if (!noFinishTail) {
+          push('RFG-S8', '[接缝·流结束] 没有 `finish` 的流（delta-only）里，末段必须靠 `flush()` 吐出来 —— '
+            + '实得一条都没有：那说明"不许在 finish 之后收"被写成了"永远不收"（另一半退化）')
         }
       }
 

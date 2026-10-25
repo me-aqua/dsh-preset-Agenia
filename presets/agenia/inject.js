@@ -2320,11 +2320,25 @@ export async function apply(ctx, config = {}) {
       for await (const chunk of stream) yield chunk
       return
     }
-    const filter = module.createReasoningFilter()
+    const filter0 = module.createReasoningFilter()
+    /**
+     * 🔴 **一块一份状态**（`F-149`）：`filter` 每次 `block-end` 之后换一份新的。
+     * 围栏状态（`inFence`）与半行缓冲都是**块内**的事 —— 一块的 reasoning 在没闭合的围栏里
+     * 结束时，若继续用同一份 filter，下一块的碎段会被"围栏里 ⇒ 无条件保留"，而下一块落盘的
+     * 载荷是用 `stripShortParagraphs`（每块新判）算的 ⇒ **流里吐的与落盘的对着**。
+     */
+    let filter = filter0
     const stripShortParagraphs = module.stripShortParagraphs
     // 尾巴那条 chunk 的 index：delta 那条路用**最后见过**的 index；`block-end` 那条路用它**自己的** index
     // （载荷就是按这个 index 落的，尾巴排在它前面，两者同属这一块）。
     let lastIndex
+    /**
+     * 🔴 `F-149`：见过 `finish` 之后**不再替上游加工、也不再吐尾巴**。
+     * 流末尾那次 `flush()` 是给"没有 `finish` 的协议"（delta-only）留的；`finish` 已经来过
+     * 还收一次，就会在 `finish` **之后**再吐一条 `reasoning-delta`（客户端已经被告知流结束了）。
+     */
+    let finished = false
+    let afterFinish = 0
     let warned = false
     /** 一个 `llm/stream` 调用里不论出错几次，只喊一次（同一个问题刷满日志就等于没说）。 */
     const complain = (error) => {
@@ -2357,6 +2371,16 @@ export async function apply(ctx, config = {}) {
     }
 
     for await (const chunk of stream) {
+      // `finish` 之后：流已经结束了 —— **不再交付任何 chunk、也不再吐尾巴**（`F-149`）。
+      // 上游在此之后还给东西是违约；本层不替它编、也不替它转，只出声一次。
+      if (finished) {
+        afterFinish += 1
+        if (afterFinish === 1) {
+          console.error('[agenia] F-149 `llm/stream` 在 `finish` 之后还收到了 chunk —— 已丢弃（流已经结束，'
+            + '上游不该再给；这一条之后的同类不再逐条报）')
+        }
+        continue
+      }
       let out = chunk
       try {
         if (isObject(chunk) && chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') {
@@ -2367,10 +2391,13 @@ export async function apply(ctx, config = {}) {
           const tail = tailOf(chunk.index)
           if (tail !== null) yield tail
           out = { ...chunk, block: { ...chunk.block, text: stripShortParagraphs(chunk.block.text) } }
+          // 下一块从零开始算（围栏状态 / 半行缓冲都不许跨块 —— `F-149`）。
+          filter = module.createReasoningFilter()
         } else if (isObject(chunk) && chunk.type === 'finish') {
           // 尾巴排在 `finish` 之前 —— 它后面不会再有人来取 chunk。
           const tail = tailOf(lastIndex)
           if (tail !== null) yield tail
+          finished = true
         }
       } catch (error) {
         complain(error)
@@ -2380,8 +2407,11 @@ export async function apply(ctx, config = {}) {
     }
 
     // 没有 `finish` 的协议（delta-only）：到流末尾再收一次；已经收过就是空串，不会重复吐。
-    const tail = tailOf(lastIndex)
-    if (tail !== null) yield tail
+    // ⚠️ 只在**没见过 `finish`** 时才收（`F-149`：这是"条件收"，不是"无条件收"）。
+    if (!finished) {
+      const tail = tailOf(lastIndex)
+      if (tail !== null) yield tail
+    }
   })
 
   // ─────────────────────────────────────────────────────────────
