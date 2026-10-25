@@ -355,6 +355,7 @@ $env:AGENIA_PROBE_TMP=$env:TEMP
 | 2026-10-24（`F-162` 门 3 · 实现落地） | **§12.2.4 回执三件套进 `local-mark` + 写回变成一张白名单**：① `applyMark` 以前**静默丢掉** payload 里不认识的键 —— 现在写回哪些键只由 **`MARK_WRITE_KEYS`**（= `lib/local-state.mjs::MARK_WRITERS` 的键）说，不在表里也不在只读表（`MARK_READ_KEYS`）的键由 CLI 点名进返回信封的 `ignored_keys` 并在 stderr 报一行；② 回执三件套 `receipt_path` / `receipt_sha256` / `receipt_version` **落盘**（`F-162` 的病根：收下 → `ok:true` → 三格全是 `null` ⇒ 卡常驻 `RED E_RECEIPT_ANCHOR`）；③ 档位在**一处**（`FIELD_RECEIPT_POLICY` + `receiptPolicyOf()`）：`memory_review` / `conversation` **交了就拒**（`E_ARG_SCHEMA`），`technical` 在"这一天回执已落盘 **且** 这一场有 claim"时**必交**、否则降成可选；④ **半套一律拒**（任给一件 ⇒ 三件都要，`E_ARG_SCHEMA` · exit 2 · 零写入）；⑤ `receipt_sha256` 必须等于**回执盘上字节**（自报不算锚，`E_ARG_HASH` · exit 2）、`receipt_version` 是 ≥1 的整数且与回执声明的 `version` 一致（`E_ARG_SCHEMA`）；⑥ 节点里 `receipt_path` 存 **`.team` 相对**那一种（`leader/<day>/技术复盘回执.json`）—— 两扇读者（`lib/health.mjs` / `receipt-check`）只认它；⑦ §12.5 补这一族的边界。读数：全量 `_runs/dev-f162-r1` 分母 **94** · `RED 0 / GREEN 94 / HOLD 0` · `F57-OK` · 体检 117/117 · 探针 222/222 · 目标 49 份逐字节相同 · 真实卡 `RED E_RECEIPT_ANCHOR` → `GREEN` | 实现岗，`F-162` 门 3（`presets/agenia/lib/local-state.mjs` + `bin/agenia-local.mjs`）；⚠️ 回执三件套**还没有自己的判据格**（测试岗 `F-162` 门 2 的部分），刀向量写在 §12.4 那一行 |
 | 2026-10-24（`F-162` 门 4 返修 · 评审 🟡 + 裁定） | **必交改判 + 三格契约说真话**（评审 `.team/review/2026-10-24/F-162-第4关-评审.md` 的 `R3` / `R6` / `R9` + 老板裁定）：① **拆掉条件①**（"这一天的回执已落盘"）—— `technical` 有 `claim.job_id` ⇒ **无条件必交**，没有 claim ⇒ 可选，另两个字段仍 `forbidden`（裁定理由：拿"被要求的东西在不在"决定"要不要要求它"，闸会在回执缺席那一刻自动降档）；② `receipt_versions` 进 `MARK_WRITERS`（白名单 **10 → 11** 键；它是派生格：payload 直接给的那一串不收，照样进 `ignored_keys` 并另报一行 `WARN local-mark 不收这些键…`）⇒ §12.2.4 那句"`local-mark` **只写**这些键"对实现成立；③ **回执里读不出整数 `version` ⇒ `E_DATA_CORRUPT` · exit 7 · 零写入**（以前静默跳过对账，那个没被核过的数会并进登记台账、把那一版"占掉"）；④ §12.2.2 两基准表的 `local-receipt-set` 那一行改成现状（只走 `resolveUnder`、**不归一**、照调用方原样存）；⑤ §12.2.4 补两句话（claim ⇒ 必有 trio / 无 claim ⇒ 不必交）、§12.5 的降档口改成"只有没有 claim 那一支"、§12.4 的 📌 改成"这一族现在有格"（`RCP-05` + `HLT-03`）、§12.6 分母 94 → **96**。读数：全量 `_runs/dev-f162b-r4` 分母 **96** · `RED 0 / GREEN 96 / HOLD 0` · `F57-OK` · 体检 117/117 · 探针 222/222 · 目标 49 份逐字节相同 · 真实卡 `GREEN`（三格仍在） | 实现岗，`F-162` 门 4 返修（`presets/agenia/lib/local-state.mjs` + `bin/agenia-local.mjs` + `CONTRACT.md`）；判据格 `RCP-05` / `HLT-03` 由测试岗同批落地（批次 S） |
 | 2026-10-24（`F-160` 门 3 · 实现落地） | 追加 §14 **技术评审的有效性量在提交上，不量在工作树**：`before_sha256` / `after_sha256` 改量"派工那一刻 `HEAD` 的一份只读副本"（`.tools/tree-at-commit.mjs`：导出 + 校验；副本的 CODE 指纹**只由** `.tools/fingerprint.mjs` 算，不另立排除表）；三个数分开报 —— `equal`（副本还是不是那一份）· `is_that_commit`（副本是不是那个提交）· `live.moved`（派工后活树动了几处；没基线 ⇒ `null` + 一句说法，不是 0）；活树在窗口里动了**不在本轮效力范围内**（并行是常态），但报告必须报"动了几处"。作业书 `job-briefs/technical-review.md` 的「代码根」那一行 + 「地基」一节同批改口。⚠️ `presets/agenia/leader.md` 的派工卡那一行**没动**（老板冻结）⇒ `REV-04` 的 `CARD-*` 三针还红着 | 实现岗，`F-160` 门 3（`.tools/tree-at-commit.mjs` 新增 + `presets/agenia/job-briefs/technical-review.md` + 本节）；判据 `REV-04` / `REV-05` 由测试岗同批落地（批次 T，分母 96 → 98） |
+| 2026-10-25 | 追加 §15：**组长私有的「导入前闸门」（`.team/leader/2026-10-22/check-drafts.mjs`）退役** —— 它只查 `engine_ops[].entry.text`、造了引擎里不存在的码 `E_MERGED_TEXT_TOO_LONG`，而且不在 git 里。同一把尺子（400 字帽）只留引擎那一版（`lib/proposals.mjs::importVerdict` → `bodyCapVerdict`，两处正文都查、先看类型、码是登记的 `E_PROPOSAL_TOO_LONG`）。判据与分母零改动 | 实现岗，`F-137`（退役 + 四处读数；见 §15.1 / §15.3） |
 | 2026-10-25 | 新增 **§0**：**自动用例总数只留一处真源**（入口那一行 `F57-SETTLE`）；各节「登记面」与四条「判据索引」里的快照数改成指针（`F-153`）。判据与行为零改动；`§5` 里的历史行与带运行根的读数照旧保留（它们是当时那一次的记录） | 实现岗，`F-153`（`CONTRACT.md` 记账：把每一节都抄一遍的快照数收成一处） |
 
 ---
@@ -2000,3 +2001,61 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 - **不改成"评审与实现串行"**：并行是常态，把口径对准不可变对象才是解。
 - **不覆盖**共享脑（`<DR>` 下的一切）：评审对记忆库仍然只读。
 
+---
+
+## §15 · `F-137` · 一把尺子只有一个版本：组长私有的「导入前闸门」退役
+
+> 病根（2026-10-25 现读）：`.team\leader\2026-10-22\check-drafts.mjs` 是 2026-10-22 那批维护案
+> 导入前的一道**私有闸门**。它自己复量 400 字帽 —— 但只查 `engine_ops[].entry.text`
+> （**不查** `payload.entry.text`），用的码是 `E_MERGED_TEXT_TOO_LONG`，**引擎里没有这个码**
+> （`lib/error-codes.mjs` 里同一件事叫 `E_PROPOSAL_TOO_LONG`）。
+
+### §15.0 一句话
+
+**同一把尺子（正文 400 字）只允许有一个版本：引擎那一版。** 私有的那一份已退役，
+它的位置保留成墓碑（跑它会 exit 2 并指着引擎）；口径写在 `lib/proposals.mjs`。
+
+### §15.1 为什么是「退役」，不是「改成调 `lib/proposals.mjs`」
+
+1. **它不是引擎的输入形状。** 私有闸门读的是**草稿**（`draft_id` / `maintenance` / `target_entry_id` /
+   `engine_ops` / `maintenance_decision` …），而 `importVerdict` 的入参是**导入信封**
+   （`source` / `sha256` / `base_snapshot` / `update_generation` / `review_attempt` / `payload`）。
+   现读一份草稿（`MR-01-absorb-1-into-cand-20261020-0009.json`）：**没有** `payload`、**没有** `source`、
+   **没有** `sha256`。要"直接调判决"，就得先替它**编**这三个字段 —— 那判的不是引擎将要在导入时看到的那一份。
+2. **能共用的那一格没法直调。** 400 字帽住在 `bodyCapVerdict`（`payload.payload.entry.text` 与
+   `payload.payload.engine_ops[i].entry.text` 两处都查、都先看类型 —— `F-150`），它**没有导出**；
+   从外面够得着的只有 `importVerdict`，也就是第 1 条那条路。
+3. **它的载体不允许被维护。** `.team/` 被 `.gitignore` 挡着 ⇒ 这份脚本没有 diff、没有评审、没有判据；
+   它和引擎分叉以后**没有任何读数会说出来**（同族：`cand-20261019-0030` / `cand-20261021-0107`）。
+4. 它比引擎**多**的那几条（`base_snapshot` / 目标在快照里 / 一个 id 一天只处置一次 / 容量线）
+   是**草稿批次的记账**，不是信封有效性 —— 记账归组长，不该披着"闸门"的皮。
+
+### §15.2 现在走哪条路
+
+```sh
+# 维护案：逐份直接导；判词在 appendProposal **之前** ⇒ 被拒时池子一份都不写
+<node> presets/agenia/bin/agenia-brain.mjs --op maintenance-import --data-root <DR> --in <envelope.json>
+```
+· 正文超 400 字（`payload.entry` **与** `payload.engine_ops[].entry` 两处）⇒ `E_PROPOSAL_TOO_LONG`（exit 2）；
+· `text` 给了但不是字符串 ⇒ `E_ARG_SCHEMA`（exit 2，`F-150`）；
+· `retire` 这种没有 `entry` 的照旧过（不误伤）。
+
+**读数（2026-10-25 现跑，脚本 `.team\dev\2026-10-25\_tmp\check-f137.mjs`，真 CLI + 运行根）**：
+
+| 喂什么 | exit | 码 | 池子 |
+| --- | --- | --- | --- |
+| `engine_ops[0].entry.text` = 401 字 | 2 | `E_PROPOSAL_TOO_LONG`（报文点名 `payload.engine_ops[0].entry`） | 0 行 |
+| `entry.text` = 401 字 | 2 | `E_PROPOSAL_TOO_LONG`（点名 `payload.entry`） | 0 行 |
+| 两处都 400 字 | 0 | —— | 1 行 |
+| 纯 `retire`（无 `entry`） | 0 | —— | 1 行 |
+| 跑墓碑 `check-drafts.mjs` | 2 | —— | 未动 |
+
+· `E_MERGED_TEXT_TOO_LONG` 现读：`presets/` `tests/` `.tools/` `CONTRACT.md` **0 处**（本节的引用不算，它写的是"退役"）。
+
+### §15.3 边界（这一节不覆盖什么）
+
+- **不加判据、不动分母**：这一票是删掉一份第二真相，不是新增行为；`E_PROPOSAL_TOO_LONG`
+  两处都查这件事**早就有格**（`MTC-02`，§8.2 ③）。
+- **不建"批量草稿校验器"**：草稿批次那几条记账没有替代品 —— 组长自己核；
+  要把它变成引擎能力是另一张票（先定输入形状：草稿还是信封）。
+- **不删草稿**：`.team/review/2026-10-22/maintenance/*.json` 是那天的现场，原样留着。
