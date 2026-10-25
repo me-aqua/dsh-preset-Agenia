@@ -1537,28 +1537,31 @@ try {
   // 🔴 **挂起条数不手写**（`F-135` 第 4 关返修）：报数那一句读的是下面 `I_FAMILY_SKIPS` 的 `length`，
   //    和真正要挂起的那些编号**同一份数据** —— 手数的那一份这次跟对了、下次加格还会漏（评审原话）。
   //    这张表必须和下面真正判的那些编号一一对应（`Z9` 与"三种跑法分母对照"是它的守卫）。
+  // 🔴 **`F-146`：这张表以前**只有它自己**（18 个编号 + 每个的口径号全是手抄的）。
+  //    源里加一条 I 格 ⇒ 夹具那跑少挂一条（分母静默缩水）；删一条 ⇒ 挂一条不存在的；
+  //    改一个口径号 ⇒ 挂起行引错口径。现在把它**提到文件作用域**，由收尾的 `Z9` 拿
+  //    **本文件自己的源码**逐对核（id + 口径号），两个方向都会红。
+  const I_FAMILY_SKIPS = [
+    ['I1', 1, '`style.md` 第一行那个 `<!-- every: N -->` 就是实现**实际用的**刻度（第 N 个工具结果才贴）'],
+    ['I2', 1, '`every` 那枚注释在第一行'],
+    ['I6', 6, '真 `style.md` 里有切口标记'],
+    ['I7', 6, '真尾巴那一段 ≤ 400 字符'],
+    ['I3', '§产物', '真产物贴出来的尾巴段 === 真 `style.md` 切完那一段'],
+    ['I4', '§产物', '真产物尾巴段里不含 `<!--`'],
+    ['I5', '§产物', '真产物尾巴段不是兜底那两句'],
+    ['I10', 15, '真产物全长 = 情绪板之前那一段（style + 常识 + 时间行）+ 2 + 情绪段'],
+    ['I11', 15, '真产物全长 ≤ 1000 字符'],
+    ['I8', 2, '真 `mood.md` 解析得出恰好 3 条场景'],
+    ['I9', 2, '`inject.js` 里"场景数必须正好 N"那个 N = 3'],
+    ['I12', 13, '真 `mood.md` 的块里有那几档刻度（含亲密基线）、键名与值对'],
+    ['I13', '§正反词', '真产物那一行 = 新形状：词**逐字**来自真 `mood.md` 的 `words`、正在前反在后、维度次序钉死'],
+    ['I14', '§正反词', '真 `mood.md` 的 `words` **逐字** = 老板 2026-09-26 拍的那份表'],
+    ['I15', '§改名', '真产物那条尾巴里 `疲劳` / `亲近` **不作为维度名**出现'],
+    ['I16', 6, '真 `mood.md` 的「他久别归来」那道门还是 `.65`（没跟着基线一起抬）'],
+    ['I17', 6, '真产物那一路上：他第一次开口、没夸没骂 ⇒ 亲密恰好 .50（基线）'],
+    ['I18', '§产物', '真那份 `.runtime/common-sense.md` 在盘上、而且不是空壳（去掉空白后还有字）'],
+  ]
   if (!TESTING_PRODUCT) {
-    // ⚠️ 表先声明、后报数：下面那一句里的条数就是这张表的 `length`，不另写数字。
-    const I_FAMILY_SKIPS = [
-      ['I1', 1, '`style.md` 第一行那个 `<!-- every: N -->` 就是实现**实际用的**刻度（第 N 个工具结果才贴）'],
-      ['I2', 1, '`every` 那枚注释在第一行'],
-      ['I6', 6, '真 `style.md` 里有切口标记'],
-      ['I7', 6, '真尾巴那一段 ≤ 400 字符'],
-      ['I3', '§产物', '真产物贴出来的尾巴段 === 真 `style.md` 切完那一段'],
-      ['I4', '§产物', '真产物尾巴段里不含 `<!--`'],
-      ['I5', '§产物', '真产物尾巴段不是兜底那两句'],
-      ['I10', 15, '真产物全长 = 情绪板之前那一段（style + 常识 + 时间行）+ 2 + 情绪段'],
-      ['I11', 15, '真产物全长 ≤ 1000 字符'],
-      ['I8', 2, '真 `mood.md` 解析得出恰好 3 条场景'],
-      ['I9', 2, '`inject.js` 里"场景数必须正好 N"那个 N = 3'],
-      ['I12', 13, '真 `mood.md` 的块里有那几档刻度（含亲密基线）、键名与值对'],
-      ['I13', '§正反词', '真产物那一行 = 新形状：词**逐字**来自真 `mood.md` 的 `words`、正在前反在后、维度次序钉死'],
-      ['I14', '§正反词', '真 `mood.md` 的 `words` **逐字** = 老板 2026-09-26 拍的那份表'],
-      ['I15', '§改名', '真产物那条尾巴里 `疲劳` / `亲近` **不作为维度名**出现'],
-      ['I16', 6, '真 `mood.md` 的「他久别归来」那道门还是 `.65`（没跟着基线一起抬）'],
-      ['I17', 6, '真产物那一路上：他第一次开口、没夸没骂 ⇒ 亲密恰好 .50（基线）'],
-      ['I18', '§产物', '真那份 `.runtime/common-sense.md` 在盘上、而且不是空壳（去掉空白后还有字）'],
-    ]
     console.log(`（I 族：这次测的是夹具，不是产物 —— ${I_FAMILY_SKIPS.length} 条记挂起，分母不缩）`)
     // ⚠️ `O7`（"产物那个块解析得出 3 条场景"）也只在产物模式下判 —— 它同样必须进分母。
     skip('O7', 2, '产物的 `mood.md` 解析得出恰好 3 条场景：这次测的是夹具，不是产物 ⇒ **未验**')
@@ -4031,9 +4034,46 @@ try {
     const seen = new Map()
     for (const id of usedIds) seen.set(id, (seen.get(id) ?? 0) + 1)
     const dup = [...seen].filter(([, n]) => n > 1).map(([id, n]) => `${id} ×${n}`)
+    /**
+     * 🔴 `F-146`：`I_FAMILY_SKIPS` 的**第二个读者** —— 拿**本文件自己的源码**逐对核
+     * （id + 口径号）。它是手抄的一张表：源里加一条 I 格 ⇒ 夹具那跑少挂一条（分母静默缩水）；
+     * 删一条 ⇒ 挂一条不存在的；改一个口径号 ⇒ 挂起行引错口径。三种都不会有人发现。
+     * 读法：`check('I1', 1, …)` / `checkTrue('I2', 1, …)` 两种调用形状（`checkIf` 的编号在第二个实参）。
+     * 读不到源码 ⇒ 也算没对上账（"没核"不许长得像"核过了"）。
+     */
+    const iTableProblems = (() => {
+      let src
+      try {
+        src = readFileSync(fileURLToPath(import.meta.url), 'utf8')
+      } catch (err) {
+        return [`读不到探针自己的源码（${err.code ?? err.message}）⇒ I 族那张表这一轮没对账`]
+      }
+      const fromSource = new Map()
+      const take = (m) => {
+        if (m === null) return
+        const id = m[1]
+        const criterion = m[2] !== undefined ? m[2] : (/^\d+$/.test(m[3] ?? '') ? Number(m[3]) : m[3])
+        fromSource.set(id, criterion)
+      }
+      for (const m of src.matchAll(/(?:check|checkTrue)\(\s*'(I\d+)'\s*,\s*(?:'([^']+)'|(\d+))/g)) take(m)
+      for (const m of src.matchAll(/checkIf\([^,]+,\s*'(I\d+)'\s*,\s*(?:'([^']+)'|(\d+))/g)) take(m)
+      const problems = []
+      const table = new Map(I_FAMILY_SKIPS.map(([id, criterion]) => [id, criterion]))
+      const onlyTable = [...table.keys()].filter((id) => !fromSource.has(id)).sort()
+      const onlySource = [...fromSource.keys()].filter((id) => !table.has(id)).sort()
+      const criterionDiff = [...table.entries()]
+        .filter(([id, c]) => fromSource.has(id) && JSON.stringify(fromSource.get(id)) !== JSON.stringify(c))
+        .map(([id, c]) => `${id}（表 ${JSON.stringify(c)} / 源 ${JSON.stringify(fromSource.get(id))}）`)
+      if (onlyTable.length > 0) problems.push(`表里有、源里没有这些 I 格：${onlyTable.join('、')}（夹具模式会挂起一条不存在的）`)
+      if (onlySource.length > 0) problems.push(`源里有、表里没有这些 I 格：${onlySource.join('、')}（夹具模式少挂它们 ⇒ 分母静默缩水）`)
+      if (criterionDiff.length > 0) problems.push(`口径号对不上：${criterionDiff.join('、')}`)
+      return problems
+    })()
     checkTrue('Z9', '§形状',
-      `探针自己的编号全局唯一（这次判了 ${seen.size} 个编号；一个编号一个意思，否则照契约表引编号会引错）`,
-      dup.length === 0, dup.length === 0 ? '（没有重复）' : `重号：${dup.join('、')}`)
+      `探针自己的编号全局唯一，且 I 族那张挂起表与源里的 ${I_FAMILY_SKIPS.length} 条格一一对上（id + 口径号）`
+      + `（这次判了 ${seen.size} 个编号；一个编号一个意思，否则照契约表引编号会引错）`,
+      dup.length === 0 && iTableProblems.length === 0,
+      [dup.length > 0 ? `重号：${dup.join('、')}` : null, ...iTableProblems].filter((x) => x !== null).join('；'))
   }
 
   // ── 收尾 ───────────────────────────────────────────────────────────────────
