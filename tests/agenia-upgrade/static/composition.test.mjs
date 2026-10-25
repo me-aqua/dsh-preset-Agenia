@@ -292,6 +292,29 @@ describe('static · composition', () => {
         }
       }
 
+      // ── ③′ 的自守（`F-142`）：那一段判据自己也得有一个读者 ────────────────────
+      // ③′ 是 `runCase` 里的一个**裸块**：整段删掉时 `problems` 仍是 0，`caseFail` 直接返回 ⇒
+      //   全绿、分母不变（`F-141` 第 4 关抓到的就是这个形状）。所以这里给它第二个读者：
+      //   拿 ③′ 写进 `rec.readings` 的三份夹具读数，逐份要求"`same:false` 且恰好一条红因"。
+      //   · 删掉 ③′ ⇒ 三个键一起消失 ⇒ 这一格红；
+      //   · 把 ③′ 抽空到只剩一句 `rec.readings.… = {}` ⇒ 键在、值不对（`same` 缺 / 红因不是 1 条）⇒ 红；
+      //   · 恢复 ⇒ 绿。
+      // ⚠️ 边界（别把这一格读强）：它证的是"③′ 跑过，而且它造出来的读数说 not-same"。
+      //    **块里某一条 `push(...)` 被单独抽掉**不归它管（读数仍然成立）—— 那一层要源码对账，
+      //    会退化成"改一句实现就红"的变更探测器，本票不做（`F-142` 只要求"删掉整段 ⇒ 红"）。
+      {
+        const emptyShape = rec.readings.staged_live_drift_fixtures
+        const wanted = ['zero_sample', 'one_side_empty', 'unset']
+        const broken = wanted.filter((key) => {
+          const row = emptyShape?.[key]
+          return row?.same !== false || !Array.isArray(row.problems) || row.problems.length !== 1
+        })
+        if (broken.length > 0) {
+          push('STAGED-LIVE-EMPTY-SHAPE-UNGUARDED', `③′ 那一段判据不在、或没跑出读数：${broken.join(' / ')} 缺「same:false + 恰好一条红因」—— `
+            + '这一段原来整段删掉仍全绿（`F-142`）。它守的是"零样本 / 单侧空 / 没设"三种空必须两两不同、且都不许被读成"相同"')
+        }
+      }
+
       caseFail(problems)
     })
   })
