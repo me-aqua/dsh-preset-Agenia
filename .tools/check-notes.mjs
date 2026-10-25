@@ -967,11 +967,21 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       : `${office.join('、')} 才没有；${freeShell.join('、') || '（全部岗位）'} 本来就有`)
 
   // ② `.team/` 目录树：编制里的岗位一个都不许漏。漏掉的抽屉不会有人建 —— 组长是照这棵树建的。
-  const trees = docs.filter(([, t]) => (t.match(/```[\s\S]*?```/g) ?? []).some((b) => b.includes('.team/')))
+  //    🔴 **两种分隔符都认**（`F-160` `P11`）：把树改写成 `.team\leader\` 这种写法，不许让它整块躲过这条判据。
+  //    ⚠️ 什么算"树"一点没放宽：仍然只认**代码围栏里**出现的 `.team/` / `.team\` 段；
+  //       围栏标成命令行语言的那几块是**命令**不是树（`leader.md` 的派工卡就带着 `.team\retro\…`，
+  //       按"树"去要求它列全六个岗位是假红）。
+  const teamRef = (text) => text.includes('.team/') || text.includes('.team\\')
+  const roleRef = (text, role) => text.includes(`${role}/`) || text.includes(`${role}\\`)
+  const fencedBlocks = (text) => [...text.matchAll(/```([^\r\n`]*)\r?\n([\s\S]*?)```/g)].map((m) => ({ info: m[1].trim().toLowerCase(), body: m[2] }))
+  const treeBlocksOf = (text) => fencedBlocks(text)
+    .filter((b) => !['sh', 'bash', 'shell', 'console', 'powershell', 'ps1', 'pwsh', 'bat', 'cmd'].includes(b.info) && teamRef(b.body))
+    .map((b) => b.body)
+  const trees = docs.filter(([, t]) => treeBlocksOf(t).length > 0)
   const treeMiss = []
   for (const [f, t] of trees) {
-    const blocks = (t.match(/```[\s\S]*?```/g) ?? []).filter((b) => b.includes('.team/'))
-    const miss = fixed.filter((r) => !blocks.some((b) => b.includes(`${r}/`)))
+    const blocks = treeBlocksOf(t)
+    const miss = fixed.filter((r) => !blocks.some((b) => roleRef(b, r)))
     if (miss.length > 0) treeMiss.push(`${f} 缺 ${miss.join('、')}`)
   }
   yes('preset', '`.team/` 目录树把编制里的岗位都列了出来（漏一个就少建一个抽屉）',

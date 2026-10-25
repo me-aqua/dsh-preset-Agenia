@@ -29,6 +29,11 @@
  *                                        [--live-baseline <file>] [--live-root <活树>] --json
  *      · `equal` = **自己复算**副本的 CODE 指纹后与 `--expect` 比 —— 只回答"副本还是不是派工那一刻那份"，
  *        活树怎么动都不影响它（`REV-04`：活树动了 2 处、副本没动 ⇒ 仍然有效）。
+ *        **三个值**：`true` / `false` / `null`。`null` = **量不动**（副本的 CODE 指纹算不出来，原因在
+ *        `copy.problems`）—— 与 `live.moved` 同一个约定：`null` 是"判不了"，不是"没变"。
+ *      · `--expect` 的形状 = **64 位小写十六进制**（就是 `fingerprint.mjs` 印出来的 sha256）。不是这个形状 ⇒
+ *        拒（`E_EXPECT_SHAPE`，exit 2）：拿 40 位的提交号或截断的哈希来比，只会永远报"副本被动过"，
+ *        那不是读数，是给错了尺子。
  *      · `is_that_commit` = 逐份拿副本文件的 `git blob` SHA-1 与该提交里的 blob SHA-1 比（路径集合也要一致，
  *        `.git` 在副本里出现就算不成立）—— 只回答"这份副本是不是那个提交"。它与 `equal` **互相独立**：
  *        干净的提交 A 副本 + `--commit B` ⇒ `equal:true` + `is_that_commit.ok:false`（`REV-05/D`）。
@@ -50,6 +55,9 @@
  * ── 落点约束（写的人要当心）──────────────────────────────────────────────────
  * · `--out` 与 `--live-baseline` **别落在活树的 CODE 名单里**：那样导出自己写下的文件会被算成"派工后变动"。
  *   `.team/` 被排除表挡着，是合规落点（真现场就是 `--out <仓库>\.team\<角色>\<day>\tree-at-<commit>`）。
+ * · `--live-baseline` 这一条**由工具自己核**（`F-160` `P6`）：落点在被测根里 ⇒ 存完之后再量一次，
+ *   它进了 `sets.code.list` 就**拒**（`E_BASELINE_IN_CODE`）。判据用的是**同一把尺子的名单**，
+ *   本文件不另立排除表；拒的理由是"尺子自己写的文件不能进读数"，不是"这个路径不许用"。
  * · 历史只追加 ⇒ 钉住的 `<commit>` 永远导得出来；`--commit` 收完整 40 hex **或任何能解析到提交的 rev**
  *   （短哈希 / `HEAD` / 分支名都行），但**输出里永远是解析后的完整 40 hex**（短哈希不是读数）。
  */
@@ -63,6 +71,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 /** 同一把尺子：CODE 收录口径 / 基线 / 比对的**唯一实现**（见文件头「CODE 收录口径只有一份」）。 */
 const FINGERPRINT_TOOL = path.join(HERE, 'fingerprint.mjs')
 const MAX_BUFFER = 256 * 1024 * 1024
+/** `--expect` 的形状：**64 位小写十六进制**（`fingerprint.mjs` 印出来的 sha256 就是这个形状）。 */
+const EXPECT_SHAPE = /^[0-9a-f]{64}$/
 
 /** 读 git 时钉住的配置 —— 否则同一棵树会随**本机 git 配置**变（换行归一 / 中文路径转义 / 长路径）。 */
 const GIT_PINNED = ['-c', 'core.autocrlf=false', '-c', 'core.quotepath=false', '-c', 'core.safecrlf=false', '-c', 'core.longpaths=true']
@@ -75,6 +85,8 @@ const USAGE = [
   '        [--live-baseline <file>] [--live-root <活树>] [--json]',
   '',
   '  --out 已存在且非空 ⇒ 拒（exit 2，拒在写之前）· 没有活树基线 ⇒ live.moved = null（不是 0）',
+  '  --expect 必须是 64 位小写十六进制（sha256）· 副本量不动 ⇒ equal = null（不是 false）',
+  '  --live-baseline 落进被测的 CODE 名单 ⇒ 拒（E_BASELINE_IN_CODE）—— 挪到 .team/ 或被测根之外',
 ].join('\n')
 
 // ── 输出：stdout 只放那**一行** JSON（人话一律走 stderr）────────────────────────
@@ -187,7 +199,24 @@ function codeFingerprintOf(root) {
   return { ok: true, sha256: code.sha256, files: code.files, bytes: code.bytes, problems: [] }
 }
 
-/** 派工那一刻的**活树** CODE 基线（`.tools/fingerprint.mjs --save` 的形状）。 */
+/** 这棵树**现在**的 CODE 名单（`sets.code.list` 的 `rel` 那一列）；量不动 ⇒ `null`（不是空数组）。 */
+function codeListOf(root) {
+  const r = runFingerprint(['--root', root, '--set', 'code', '--json'])
+  const list = r.json?.sets?.code?.list
+  if (r.status !== 0 || !Array.isArray(list)) return null
+  return list.map((f) => (typeof f === 'string' ? f : f?.rel)).filter((x) => typeof x === 'string')
+}
+
+/**
+ * 派工那一刻的**活树** CODE 基线（`.tools/fingerprint.mjs --save` 的形状）。
+ *
+ * 🔴 基线文件**不许落进被测的那份 CODE 名单**：它会被算成"派工后变动"（`changed[]` 里一个 `added`，
+ * 而那一份是尺子自己刚写的）。判据用**同一把尺子的名单**，没有第二张排除表：
+ *   落点在被测根里 ⇒ 存完之后再量一次（这时基线文件已经在盘上）⇒ 它在 `sets.code.list` 里就**拒**
+ *   （`E_BASELINE_IN_CODE`），并说清能挪去哪（`.team/` 被排除表挡着，或者被测根之外）。
+ * ⚠️ 只有落点**确实在被测根里**才多走这一次；常见落点 `.team/<角色>/<day>/live-before.json` 不触发。
+ * 量不动（`fingerprint.mjs` 非 0）⇒ `E_LIVE_BASELINE` 那一支，不许把"判不了"写成"没变"。
+ */
 function saveLiveBaseline(liveRoot, file) {
   mkdirSync(path.dirname(file), { recursive: true })
   const r = runFingerprint(['--root', liveRoot, '--set', 'code', '--save', file, '--json'])
@@ -196,6 +225,28 @@ function saveLiveBaseline(liveRoot, file) {
   try { raw = JSON.parse(readFileSync(file, 'utf8')) } catch (err) { return { ok: false, problems: [`写出来的基线不是可解析 JSON：${String(err.message).slice(0, 160)}`] } }
   const list = raw?.sets?.code?.list
   if (!Array.isArray(list) || list.length === 0) return { ok: false, problems: ['基线的 sets.code.list 不是非空数组 —— 没有它就算不出 changed[]（"0 处"会是一个空读数）'] }
+
+  // P6：基线自己有没有混进名单。`--save` 的名单是在**写文件之前**走出来的 ⇒ 第一次跑时它不可能在名单里
+  //     ⇒ 落点在被测根里就再量一次（这一次文件已在盘上），由同一把尺子回答"它算不算 CODE"。
+  const rel = path.relative(liveRoot, file).replace(/\\/g, '/')
+  const insideRoot = rel !== '' && rel !== '..' && !rel.startsWith('../') && !path.isAbsolute(rel)
+  if (insideRoot) {
+    const now = codeListOf(liveRoot)
+    if (now === null) {
+      return { ok: false, problems: [`基线存下来了，但量不出 ${liveRoot} 现在的 CODE 名单 ⇒ 判不了"基线自己算不算 CODE"（不猜）`] }
+    }
+    if (now.includes(rel)) {
+      return {
+        ok: false,
+        code: 'E_BASELINE_IN_CODE',
+        problems: [
+          `活树基线落在被测的 CODE 名单里：${rel}（根 ${liveRoot}）—— 这一份是尺子自己写的文件，`
+            + '下一次 `--compare` 会把它算成"派工后变动"（一条假 `added`）。'
+            + '把 `--live-baseline` 挪到被测根之外，或者挪进 `.team/`（排除表挡着这个前缀）',
+        ],
+      }
+    }
+  }
   return { ok: true, problems: [], sha256: raw.sets.code.sha256, files: raw.sets.code.files }
 }
 
@@ -302,7 +353,12 @@ function doExport(args) {
   if (baselineFile !== null) {
     baseline = saveLiveBaseline(path.resolve(args.liveRoot ?? repo), baselineFile)
     if (!baseline.ok) {
-      return fail('E_LIVE_BASELINE', `活树基线存不下来：${baseline.problems.join('；')} —— 没有它，"派工后活树动了几处"就判不了（不许读成 0）`, { commit: resolved.sha, live_baseline: baselineFile })
+      return fail(
+        baseline.code ?? 'E_LIVE_BASELINE',
+        `活树基线这一步不成立：${baseline.problems.join('；')} —— 这一次不导出（\`--out\` 一个字节都没写）；`
+          + '没有一份不污染读数的基线，"派工后活树动了几处"就只能判不了（不许读成 0）',
+        { commit: resolved.sha, live_baseline: baselineFile },
+      )
     }
   }
 
@@ -368,9 +424,22 @@ function doVerify(args) {
   if (!resolved.ok) return fail('E_COMMIT_UNRESOLVED', resolved.problems[0], { commit: null })
 
   // ① 副本现在还是不是派工那一刻那份：**自己复算**（不读、不抄 --expect）。
+  //    `equal` 有三个值：`true` / `false` / **`null` = 量不动**（副本的 CODE 指纹算不出来，原因在
+  //    `copy.problems`）—— 与 `live.moved` 同一个约定：`null` 是"判不了"，不是"没变"。
   const code = codeFingerprintOf(copy)
-  const expect = String(args.expect).trim().toLowerCase()
-  const equal = code.ok && typeof code.sha256 === 'string' && code.sha256.toLowerCase() === expect
+  const expect = String(args.expect).trim()
+  // `--expect` 先过形状：拿 40 位的提交号（或截断的哈希）来比，只会永远报"副本被动过" ——
+  // 那不是读数，是给错了尺子（同一个毛病：判据钉在一个填错的输入上，红绿都不再说明任何事）。
+  if (!EXPECT_SHAPE.test(expect)) {
+    return fail(
+      'E_EXPECT_SHAPE',
+      `--expect 不是 64 位小写十六进制的 sha256：${JSON.stringify(expect.length > 80 ? `${expect.slice(0, 80)}…` : expect)}`
+        + `（实得 ${expect.length} 个字符）—— 派工卡上的 before_sha256 是 64 位（就是导出时 \`code.sha256\` 那一串）；`
+        + '40 位的提交号 / 截断的哈希 / 大写的副本都不是它，拿它们来比永远报"副本被动过"',
+      { commit: resolved.sha, equal: null },
+    )
+  }
+  const equal = !code.ok ? null : (typeof code.sha256 === 'string' && code.sha256.toLowerCase() === expect)
 
   // ② 副本是不是那个提交：逐份 blob SHA-1 + 路径集合（`.git` 在副本里出现也算不成立）。
   const tree = lsTree(repo, resolved.sha)

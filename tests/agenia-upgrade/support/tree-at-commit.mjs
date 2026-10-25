@@ -357,7 +357,8 @@ export function codeListDiff(aList, bList) {
  *   · `A`：CODE 5 份（`lib/alpha.mjs` / `lib/beta.mjs` / `presets/agenia/lib/gamma.mjs` / `README.md` / `notes/plan.md`）
  *     + 两份**进了提交但不进 CODE** 的文件（`notes/run.log` 后缀被排、`.env` 是 env 类）
  *     ⇒ 副本里 7 份文件、CODE 名单 5 份 —— 排除表在副本上一样要生效（"副本 = 目录"不算证据）。
- *   · `B`：改 `lib/alpha.mjs`、加 `lib/delta.mjs`（CODE 7 份）—— 用来证明"核对提交"这一腿真的在读提交。
+ *   · `B`：改 `lib/alpha.mjs`、加 `lib/delta.mjs`（CODE **6** 份 —— A 那 5 份 + `lib/delta.mjs`；
+ *     副本里 8 份）—— 用来证明"核对提交"这一腿真的在读提交。
  * 工作树里**另外**放一份**没进提交**的 `lib/work-in-progress.mjs`（真实现场：别的岗位刚落的文件）——
  * 它让"副本 vs 活树的分歧"从第一秒起就 **≠ 0**：谁把"分歧"当"变动"，读数就会多出来（`LIVE-COUNT-INFLATED`）。
  */
