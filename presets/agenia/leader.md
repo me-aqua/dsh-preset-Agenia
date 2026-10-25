@@ -78,7 +78,7 @@ echo '{"day":"<今天>"}' > today.json
 🔴 **派技术评审时，派工卡要钉死三样（评审的对象是"提交"，不是活树）**：
 ```sh
 git rev-parse HEAD                      # ① 派工那一刻的完整 40 hex
-<node> .tools/tree-at-commit.mjs --repo <WS> --commit <40hex> --out <WS>/.team/retro/<今天>/tree-at-<短哈希> --live-baseline <WS>/.team/retro/<今天>/live-baseline.json --json
+<node> .tools\tree-at-commit.mjs --repo <WS> --commit <40hex> --out <WS>\.team\retro\<今天>\tree-at-<短哈希> --live-baseline <WS>\.team\retro\<今天>\live-baseline.json --json
                                         # ② 只读副本（纯树、不带 .git）；它同时量出副本的 CODE 指纹
 # ③ 把 ① 的提交、② 的副本路径、② 量出的 before_sha256 三样写进派工卡
 ```
