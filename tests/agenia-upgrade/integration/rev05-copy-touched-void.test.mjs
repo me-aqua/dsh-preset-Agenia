@@ -10,7 +10,9 @@
  *   `B COPY-TOUCHED`（参照副本，阳性对照）改副本里**一份 CODE 文件** ⇒ 副本前后 `equal:false`、
  *                `changed[]` 恰好那一份；**同一时刻活树前后 `equal:true`（0 处）**
  *   `C EXPORT`   被测的那条路：导出后改副本 ⇒ 校验必须**自己复算**：`equal:false`（**不许照抄卡上的值**——
- *                卡上还写着派工那一刻的数）+ `is_that_commit.ok:false` 并**点名**那一份文件
+ *                卡上还写着派工那一刻的数）+ `is_that_commit.ok:false` 并**点名**那一份文件 ·
+ *                给了活树基线、活树没动 ⇒ `live.moved` 必须是 **0**；`null`（"判不了"）**不许**通过这条腿
+ *                （`LIVE-COUNT-UNMEASURED` —— 两种现场不许长得一模一样）
  *   `D WRONG-COMMIT` 拿**另一个提交**去核一份**干净**的副本 ⇒ `equal:true`（副本确实没动）但
  *                `is_that_commit.ok:false` —— 两条腿互相独立；只比哈希的实现会在这一格上"绿得看不出来"
  *
@@ -162,8 +164,22 @@ describe('integration · review (REV) · F-160 副本被动过 ⇒ 作废', () =
               }
             }
             const moved = v.live?.moved ?? v.live?.count ?? null
-            rec.readings.verify.live = { moved, detail: v.live?.detail ?? v.live?.note ?? null }
-            if (moved !== null && moved !== 0) {
+            const liveDetail = v.live?.detail ?? v.live?.note ?? null
+            rec.readings.verify.live = { moved, detail: liveDetail, baseline_given: existsSync(baselineFile) }
+            if (moved === null) {
+              /**
+               * 🔴 **这条腿要的是"必须是 0"，`null` 不许通过它**（`F-160` `P8`）。
+               * `null` 的约定是"判不了"（`CONTRACT.md` §14.2 第三个数），而这一格**给了**活树基线
+               * （导出刚写的那份）、活树一个字节没动 ⇒ 唯一正确的读数是 `0`。
+               * 放它过 = 把"校验没比基线 / 比不了"读成"活树没动" —— 两种完全不同的现场在这里长得一模一样。
+               * 为什么不在别处判：`REV-04` 的 `LIVE-NO-BASELINE-*` 判的是"没给基线"那一格；这一格反过来，
+               * **给了基线还报判不了**，归这里。
+               */
+              push('LIVE-COUNT-UNMEASURED',
+                `这一格**给了**活树基线（${baselineFile}${existsSync(baselineFile) ? '' : ' —— ⚠️ 这份基线不在盘上'}），活树又是一个字节都没动 ⇒ \`live.moved\` 必须是 0；`
+                + `实得 ${JSON.stringify(moved)}（判不了${liveDetail === null ? '，而且没有一句说法' : `：${String(liveDetail).slice(0, 200)}`}）—— `
+                + '"判不了"不许通过一条要求"必须是 0"的腿（那是把 `null` 当成 `0` 读）')
+            } else if (moved !== 0) {
               push('LIVE-COUNT-WRONG', `这一格活树一个字节都没动，校验报的 \`live.moved\` 却是 ${JSON.stringify(moved)} —— 变动数必须按活树基线算`)
             }
           }

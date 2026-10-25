@@ -15,6 +15,8 @@
  *   `C EXPORT`  被测的那条路（`.tools/tree-at-commit.mjs`）：导出 → 副本 = 提交 · `code.sha256` = 卡片上的 `before_sha256` ·
  *               留活树基线 · 校验自己复算（`equal:true` · `is_that_commit.ok:true` · 活树动了 **2** 处，**不是**"副本 vs 活树的分歧"）·
  *               没给基线 ⇒ 判不了（不许读成 0）· 同一个 `--out` 再导一次必须拒
+ *               · **夹具自检**（`LIVE-COUNT-FIXTURE`）：这段的"按分歧报"那条判据（`LIVE-COUNT-INFLATED`）
+ *                 只在「分歧 ≠ 变动」时有样本 ⇒ 夹具自己先量一次，两个数相等就当场红（改夹具不许悄悄把它弄哑）
  *   `D REAL`    真仓库里**钉住的一个提交**（`8b7cea6…`）：副本仍必须是它、CODE 指纹仍必须对得上；
  *               另记一条读数：活树 vs 提交的**分歧**（今天 192 vs 135）—— 它**不等于**"活树动了"，谁按分歧报就是读数撒谎
  *   `E SHAPES`  三份载体上的针：作业书「必读输入清单」代码根那一行 + 「地基」一节 +
@@ -44,6 +46,11 @@ const REAL_COMMIT = '8b7cea6ea2a5ca6c5ebcc1f4ddfa65d3ebae5bf6'
 /** 窗口里动活树的那两处（**都在 CODE 名单里** —— 不在的话"旧口径作废"那一格就演不出来）。 */
 const LIVE_MODIFIED = 'lib/alpha.mjs'
 const LIVE_ADDED = 'lib/added-by-other-role.mjs'
+/**
+ * 窗口里动的那几处 —— **一个来源**：`moved` 的期望值、`places` 的期望名单、夹具自检的期望数都从它取。
+ * （原来这三处各写一个 `2`；改窗口就得同时改三处，漏一处就是"同一个数两个意思"。）
+ */
+const WINDOW_MOVES = [LIVE_ADDED, LIVE_MODIFIED].sort()
 
 describe('integration · review (REV) · F-160 评审对象是提交', () => {
   test('REV-04 活树在窗口里动了 ⇒ 副本前后仍一致、本轮有效（旧口径必须作废）', async () => {
@@ -214,14 +221,29 @@ describe('integration · review (REV) · F-160 评审对象是提交', () => {
                 const places = Array.isArray(v.live?.places) ? v.live.places.map((p) => (typeof p === 'string' ? p : p?.rel)).filter((x) => typeof x === 'string').sort() : []
                 const divergence = codeListDiff(toolDigest.list, codeDigestOfDir(fxTool.repo).list)
                 rec.readings.verify.live = { moved, places, divergence: divergence.map((d) => `${d.rel}(${d.kind})`) }
-                if (moved !== 2) {
-                  if (moved !== null && moved === divergence.length && divergence.length !== 2) {
-                    push('LIVE-COUNT-INFLATED', `活树**变动**是 2 处，校验报的却是 ${moved} 处 = 副本与活树的**分歧**（${divergence.map((d) => d.rel).join(' · ')}）—— 分歧里装着"从来没进过提交"的文件，它不是"派工后动了"。读数必须按基线算变动，不按分歧`)
+                /**
+                 * **夹具自检**（与上面 `B SCENE` 那一段 `:131-133` 同形）——
+                 * 下面那条 `LIVE-COUNT-INFLATED` 的**样本**取决于「分歧」≠「变动」：一个"按分歧报 `moved`"
+                 * 的实现要能被它抓出来，就必须让 `divergence.length !== WINDOW_MOVES.length`。
+                 * 夹具一旦把两个数做成一样（把活树 reset 回提交 A、或者删掉那几份从没进过提交的文件），
+                 * `moved !== WINDOW_MOVES.length` 那一支就永远不会跑 ⇒ 那条判据**静默空转**：
+                 * 改夹具的人不该有"让它悄悄失效"的自由。
+                 */
+                if (divergence.length === WINDOW_MOVES.length) {
+                  push('LIVE-COUNT-FIXTURE',
+                    `C 段的夹具没能把"活树变动 ${WINDOW_MOVES.length} 处"与"副本 vs 活树的分歧"分开`
+                    + `（两者都是 ${divergence.length} 处：${divergence.map((d) => `${d.rel}(${d.kind})`).join(' · ') || '（空）'}）—— `
+                    + `一个"按分歧报 moved"的实现会刚好报 ${WINDOW_MOVES.length}，落进"正确"那一支，`
+                    + '`LIVE-COUNT-INFLATED` 就永远抓不到它（判据静默空转）；先在夹具里造出"从没进过提交的文件"再读下面的绿')
+                }
+                if (moved !== WINDOW_MOVES.length) {
+                  if (moved !== null && moved === divergence.length && divergence.length !== WINDOW_MOVES.length) {
+                    push('LIVE-COUNT-INFLATED', `活树**变动**是 ${WINDOW_MOVES.length} 处，校验报的却是 ${moved} 处 = 副本与活树的**分歧**（${divergence.map((d) => d.rel).join(' · ')}）—— 分歧里装着"从来没进过提交"的文件，它不是"派工后动了"。读数必须按基线算变动，不按分歧`)
                   } else {
-                    push('LIVE-COUNT-WRONG', `活树在窗口里动了 2 处（\`${LIVE_MODIFIED}\` 改 + \`${LIVE_ADDED}\` 加），校验报的 \`live.moved\` 是 ${JSON.stringify(moved)}（places：${places.join(' · ') || '（空）'}）`)
+                    push('LIVE-COUNT-WRONG', `活树在窗口里动了 ${WINDOW_MOVES.length} 处（\`${LIVE_MODIFIED}\` 改 + \`${LIVE_ADDED}\` 加），校验报的 \`live.moved\` 是 ${JSON.stringify(moved)}（places：${places.join(' · ') || '（空）'}）`)
                   }
                 } else if (places.length > 0) {
-                  const want = [LIVE_ADDED, LIVE_MODIFIED].sort()
+                  const want = WINDOW_MOVES
                   if (places.length !== want.length || places.some((r, i) => r !== want[i])) {
                     push('LIVE-PLACES-WRONG', `校验报的变动位置与现场对不上：报 ${places.join(' · ')}，实际动的是 ${want.join(' · ')}`)
                   }
