@@ -22,7 +22,9 @@ const headerSize = head.readUInt32LE(12);
 const headerBuf = Buffer.alloc(headerSize);
 fs.readSync(fd, headerBuf, 0, headerSize, 16);
 const header = JSON.parse(headerBuf.toString('utf8'));
-const dataOffset = 16 + headerSize;
+// 数据区起点 = 8 + 第二个 pickle 的总长（u32[4]）—— 不是 `16 + 头 JSON 长`：
+// 后者落在对齐填充字节上，会让每个条目都早读 1 字节（F-164 实测：4748103 vs 4748104）。
+const dataOffset = 8 + head.readUInt32LE(4);
 
 function lookup(inner) {
   const parts = inner.split('/').filter(Boolean);

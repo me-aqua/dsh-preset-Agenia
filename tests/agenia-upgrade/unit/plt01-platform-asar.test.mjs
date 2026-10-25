@@ -2,10 +2,11 @@
  * `PLT-01` · **`F-163`** —— 平台版本这条**读数**自己得先过一关：它读的是哪一版、读不到时说不说得出来。
  *
  * 病根（2026-10-24 客户端升到 `0.2.1-rc.3` 之后现量）：asar 目录头里的 `size` 是**声明值**，
- * 这一包把 `package.json` / `dsh/node_modules/@deepseek-ai/dsh/package.json` 的声明长度写得比源文件短 2 B
- * （声明 797 / 7989；源文件 799 / 7991；asar 里能解析的 JSON 文本 798 / 7990，结尾的 `}` 在声明边界外 1 B）。
- * 按 `size` 精确读 ⇒ 结尾的 `}` 被切掉 ⇒ `JSON.parse` 抛 ⇒ 套件印 `[平台] 🔴 判不了`，
+ * 读取方不能假设"`size` 一定覆盖整份 JSON"。当时按 `size` 精确读会抛 ⇒ 套件印 `[平台] 🔴 判不了`，
  * 而**这条读数没有任何一条用例证明过自己**。
+ * （那个抛的真正成因是 `dataOffset` 早读 1 字节，已由 `F-164` 修掉；真实包上按声明 `size`
+ * 精确解析的条目是 **1236 份里 1232 份**，仅剩的 4 份是 JSONC。本格的 A/B 仍然守"声明值偏小时
+ * 读具要容得下"，C 仍然守"真截断必须当场判不了"。）
  *
  * 这一格判四件事（合成 asar 造在运行根里，`presets/**`、真实 asar 一个字节都不写）：
  *   A `SHORT-2`  头里的 `size` 比真身短 2 B，两份 package.json 都要能读出**夹具里那个版本号**；
@@ -41,13 +42,15 @@ function appPkg(version, { engines = false } = {}) {
 const dshPkg = (version) => `{\n  "name": "${DSH}",\n  "version": "${version}",\n  "dshBuildDirty": false\n}\n`
 
 /**
- * 造一份**结构同形**的小 asar：16 B 前缀 + 目录头 JSON + 按 offset 顺序铺开的数据区。
+ * 造一份**结构同形**的小 asar：16 B 前缀 + 目录头 JSON（尾部补 0 到 4 对齐）+ 按 offset 顺序铺开的数据区。
  *
- * 前缀那四个 uint32 照真实 asar 的形状写（`4 / header+9 / header+5 / header`）——
- * 本读具只读第 12..15 字节（头长度），但夹具不因此长成"只有它会认"的形状。
+ * 前缀那四个 uint32 **按 Chromium Pickle 写实**：`4 / 第二个 pickle 总长 / 它的载荷长 / 头 JSON 长`。
+ * Pickle 的总长恒是 4 的倍数（载荷 = `4 + align4(JSON 长)`，外面再套一个 4 B 长度字段）⇒
+ * 数据区就从 `8 + u32[4]` 开始，与真包同一个几何（`F-164`：老夹具只写了 `JSON 长 + 9`、
+ * 却**没有**补那个对齐字节，于是按真几何读会晚 1 字节 —— 夹具当时的形状只有旧公式才认得）。
  *
  * `shortBy`：**目录头里声明的 `size` 比真身短几字节**。数据区永远写**完整**字节
- * （真实包就是这样：`size` 是声明值，真身比它长）。这就是被复现的那条几何。
+ * （这就是被复现的那条几何：`size` 是声明值，读取方要靠读窗容下它）。
  */
 function buildAsar(entries) {
   const tree = { files: {} }
@@ -66,12 +69,13 @@ function buildAsar(entries) {
     offset += bytes.length
   }
   const header = Buffer.from(JSON.stringify(tree), 'utf8')
+  const pad = (4 - (header.length % 4)) % 4
   const head = Buffer.alloc(16)
   head.writeUInt32LE(4, 0)
-  head.writeUInt32LE(header.length + 9, 4)
-  head.writeUInt32LE(header.length + 5, 8)
+  head.writeUInt32LE(header.length + pad + 8, 4)
+  head.writeUInt32LE(header.length + pad + 4, 8)
   head.writeUInt32LE(header.length, 12)
-  return Buffer.concat([head, header, ...chunks])
+  return Buffer.concat([head, header, Buffer.alloc(pad), ...chunks])
 }
 
 describe('unit · platform reading (PLT) · F-163 asar 头的 size 是声明值', () => {

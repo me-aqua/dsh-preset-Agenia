@@ -10,8 +10,8 @@
  *     有没有 `tools.guard`、`run_in_background`、`delegationTools` 这些**平台事实**；
  *   · **平台包**：`app.asar!dsh/node_modules/@deepseek-ai/dsh/package.json` —— 与上面那份并列。
  *     两份**同版**时只印一个数；**不同版**本身就是一条要人看的读数（升级到一半的样子）。
- *   · 条目按目录头的 `size` **多读 16 B**：`size` 是声明值，不保证等于 JSON 文本长度
- *     （`0.2.1-rc.3` 的两份 package.json 都比声明长）；解析失败才截到最后一个 `}`（`parseAsarJson`）。
+ *   · 条目按目录头的 `size` **多读 16 B**：`size` 是声明值，不保证等于条目的真实长度；
+ *     解析失败才截到最后一个 `}`（`parseAsarJson`）。真实包上依赖这个窗的条目是 **0**（`F-164` 实测）。
  *
  * ⚠️ 这两样都**不是**它：
  *   · `AGENIA_ORACLE_VERSION`（`run-all.mjs` 的 ENV）—— 那是冻结的 **0.2.0 桌面 oracle**，
@@ -55,10 +55,19 @@ const DSH_PKG = 'dsh/node_modules/@deepseek-ai/dsh/package.json'
 /**
  * 读条目时在目录头声明的 `size` 之外**多读**的字节数。
  *
- * asar 头里的 `size` 是**声明值**，它不保证等于 JSON 文本的真实长度：`0.2.1-rc.3` 这一包的
- * 声明比**源文件**短 2 B（797 / 7989 vs 799 / 7991：结尾的 `}` 与一个尾换行）；asar 数据区里
- * 能解析的 JSON 文本是 798 / 7990 —— 结尾的 `}` 恰好在声明边界之外 1 B。
- * 只读 `size` 字节会把结尾的 `}` 切掉 ⇒ `JSON.parse` 抛；多读一个小窗，截到最后一个 `}` 就够。
+ * asar 头里的 `size` 是**声明值**，不保证等于该条目真身的长度。真短了的话，只读 `size`
+ * 字节就会把结尾的 `}` 切掉 ⇒ `JSON.parse` 抛；多读一个小窗、再截到最后一个 `}` 就够。
+ *
+ * 实测（`F-164` · 2026-10-25 · `0.2.1-rc.3` 的 `app.asar` · 16605 个 packed 条目）：
+ * **依赖这个窗的条目 = 0** —— 1236 份 `.json` 里 1232 份按声明 `size` 精确解析得开（两份
+ * `package.json` 也在里面，797 / 7989 B 都精确），剩下 4 份是带 `//` 注释的 JSONC
+ * （`tsconfig.json` ×3 + `tsdoc-metadata.json`），跟长度无关。
+ * 早先记的"声明比真身短 2 B"是**上一版公式**（`16 + u32[12]`，早读 1 字节）量出来的假象。
+ *
+ * 那为什么还留着 16：`PLT-01` 的 A/B 两条腿喂的是**合成包**（头里 `size` 比真身短 2 B、
+ * 数据区写完整字节），那一格要求读具容得下"声明值偏小"。把这个数收到 0 会当场把 A/B 弄红，
+ * 收不收是测试岗那一格的事（账在 `.team/dev/2026-10-25/log.md`）。窗口**有上界**：
+ * 短过 16 B 的真截断（`PLT-01` C 的 24 B）必须判不了，不许靠截 `}` 糊过去。
  */
 const ASAR_READ_WINDOW = 16
 /** 失败报文里回看多少个字符（"它到底读到了什么"要看得见）。 */
@@ -83,9 +92,32 @@ function asarFromEnvValues(env) {
   return hits
 }
 
-/** 读一次 asar 的目录头（一次进程里只读一次 —— 这份头有大几 MB）。 */
+/**
+ * 读一次 asar 的目录头（一次进程里只读一次 —— 这份头有大几 MB）。
+ *
+ * ── 数据区起点（`F-164`）──────────────────────────────────────────────────
+ * asar 的开头是两个 Chromium Pickle 首尾相接，**四个 u32 各有各的意思**：
+ *
+ *   `[0..4)`   u32 = `4`                          ← 第一个 pickle 的载荷只有一个 u32
+ *   `[4..8)`   u32 = **第二个 pickle 的总长**（含它自己那 4 B 头）
+ *   `[8..12)`  u32 = 第二个 pickle 的**载荷**长（= `4 + align4(目录头 JSON 长)`）
+ *   `[12..16)` u32 = 目录头 JSON 的字节数
+ *   `[16..)`   目录头 JSON；尾部按 4 字节对齐补 `0`
+ *
+ * ⇒ **数据区从 `8 + u32[4]` 开始**。Pickle 的总长恒是 4 的倍数 ⇒ 这个起点天然 4 对齐，
+ *   不需要再补一次 align。
+ *
+ * ⚠️ 这里早先写的是 `16 + u32[12]`（= 头 JSON 末尾），它落在**对齐填充字节**上，
+ *   比真起点**早 1 字节**。`0.2.1-rc.3` 实测：`u32 = 4 / 4748096 / 4748092 / 4748087`，
+ *   `16 + 4748087 = 4748103` 那一位是 `0x00`，`8 + 4748096 = 4748104` 才是 `{`。
+ *   于是**每一个** packed 条目都从"上一份的尾巴"开始读 —— `F-163` 的读窗把症状盖住了，
+ *   根因在这里（`F-164` 全量扫描：老公式下 1236 份 `.json` 只有 575 份按声明长度解析得开）。
+ *
+ * 导出是给**全量扫描**用的：扫描必须用**读具自己算出来的那个** `dataOffset`，
+ * 旁边再算一遍就又有了第二份公式。
+ */
 const headerCache = new Map()
-function asarHeader(asar) {
+export function asarHeader(asar) {
   if (headerCache.has(asar)) return headerCache.get(asar)
   const entry = { header: null, dataOffset: 0, problem: null }
   let fd
@@ -97,7 +129,7 @@ function asarHeader(asar) {
     const buf = Buffer.alloc(headerSize)
     readSync(fd, buf, 0, headerSize, 16)
     entry.header = JSON.parse(buf.toString('utf8'))
-    entry.dataOffset = 16 + headerSize
+    entry.dataOffset = 8 + head.readUInt32LE(4)
   } catch (e) {
     entry.problem = `读 asar 目录头失败：${e.code ?? e.message}`
   } finally {
