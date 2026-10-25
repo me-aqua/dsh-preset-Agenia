@@ -15,7 +15,7 @@
  *          `messages`** 里有没有老板那条（`source.kind === 'user'`）—— 有就把 style
  *          **插进本步的 messages**，紧跟在他那句话后面（它是好的，这一批不许退化）。
  *   尾巴限长：`tailText()` 按 `style.md` 里的 `<!-- 尾巴到此为止 -->` 切；**标记缺失
- *          或切出来是空 ⇒ 退回全文**（口径 7）。P 族。
+ *          或切出来是空 ⇒ 退回全文**（`§切口`）。P 族。
  *   情绪模块：`moodOf(signals, constants)` **三维**打分（掌控 · 活力 · 亲密）+ 场景命中；
  *          分数行 + 例子拼在尾巴那条 style 后面；常数住在 `mood.md` 的 ```mood 块里
  *          （改它不用重启）。N / O / Q 族。
@@ -179,8 +179,8 @@ const CRITERION = {
   2: '场景库条数与 `moodConstants` 的校验**同步**（改一边没改另一边 ⇒ 整块不认）',
   3: '掌控：成功率是**滑动窗口**（最近 20 次结果，跨回合不清零）',
   4: '掌控：**上一回合的错，下一回合仍有影响**（治的是"上一回合的错被 `turn/start` 清零"那个毛病）',
-  5: '掌控：两个**不同的错**不算"同一个坑"（治 P4）',
-  6: '亲密：**重逢项在他开口那一刻不归零**（治 P5）',
+  5: '掌控：两个**不同的错**不算"同一个坑"（治的是把两个不同的坑并成一个坑的那次误扣）',
+  6: '亲密：**重逢项在他开口那一刻不归零**（治的是重逢项被开场清零）',
   7: '亲密：夸涨 / 骂跌 / 双命中骂赢 / 一句最多一档',
   8: '关键词 `der` **整词匹配**：`under`/`order`/`header` 不许命中',
   9: '关键词表住 `mood.md`；改词不用重启',
@@ -228,6 +228,14 @@ const CRITERION = {
     + '一条 plugin 的 user 消息 / 纯装配）**一条都不许贴**。'
     + '⚠️ 这是一张**黑名单**：它只钉这七种今天不触发，拦不住"明天在第八种事件上加一个"——'
     + '那半边由 `inject.js` 里 `agent/pre-step` 那个唯一出口 + 契约 §3.2 管。',
+  // 🆕 2026-10-25（`F-151`）：尾巴那两族格子挂的是**旧表的 6/7**（旧表 6 = 尾巴限长、7 = 标记缺失退回全文），
+  //    而这一版表的 6/7 已经是「亲密：重逢项在他开口那一刻不归零」与「亲密：夸涨 / 骂跌」——
+  //    一红就印一段**讲亲密**的原文，与它们真正量的东西无关。两族都与亲密无关 ⇒ 各单开一个字符串键。
+  '§限长': '尾巴的限长：`【情绪板】` 之前那一段（style 段 + 常识段 + 时间行）≤ 400 字符；'
+    + '整条注入（尾巴段 + 情绪段）≤ 1000 字符。两条都是**上限**，不是"内容来自哪几份源"的证据',
+  '§切口': '尾巴的切口：`style.md` 里的 `<!-- 尾巴到此为止 -->` 之后那一段**不许**贴出来；'
+    + '标记缺失 / 切出来是空 ⇒ **退回全文**（不许静默变空）。'
+    + '⚠️ 它只钉"切哪一段"与"退回"，证明不了退回的那份内容对不对',
 }
 
 /** `[A1 · 口径1]` / `[J6 · §形状]` */
@@ -1256,10 +1264,10 @@ try {
     const got = h.injected.map((x) => x.message)
     // ⚠️ 先把"确实贴了两条"钉死：不然 `[].every(...)` 恒真，
     //    一条都没贴的时候形状检查会**假绿** —— 那比红还坏。
-    check('G0', 6, '先确认这一组真的贴了 2 条（否则下面几条形状断言会因为空数组而恒真）', got.length, 2)
+    check('G0', '§形状', '先确认这一组真的贴了 2 条（否则下面几条形状断言会因为空数组而恒真）', got.length, 2)
     const twoTexts = (pick) => (got.length === 2 ? got.map(pick) : `只贴了 ${got.length} 条`)
-    check('G1', 6, '每条的 role 都是 user', twoTexts((m) => m.role), ['user', 'user'])
-    check('G2', 6, "content 是 [{type:'text', text}]", twoTexts((m) => m.content?.map((c) => c.type)), [['text'], ['text']])
+    check('G1', '§形状', '每条的 role 都是 user', twoTexts((m) => m.role), ['user', 'user'])
+    check('G2', '§形状', "content 是 [{type:'text', text}]", twoTexts((m) => m.content?.map((c) => c.type)), [['text'], ['text']])
     // 🔴 2026-10-01 改：**期望值过期，不是代码错。**
     //    老期望 `{kind:'plugin', plugin:'agenia'}` 是 **v4 之前的形状**；会话格式升到 v4 之后，
     //    `'plugin'` 这个笼统身份被框架**拒收**（报文原文：
@@ -1273,12 +1281,12 @@ try {
       const s = m?.source ?? {}
       return { kind: s.kind, form: s.form, 有summary: typeof s.summary === 'string' && s.summary.length > 0 }
     }
-    check('G3', 6, "source 是 {kind:'plugin:agenia', form:'notice', 带非空 summary}（v4 起 'plugin' 会被拒收）",
+    check('G3', '§形状', "source 是 {kind:'plugin:agenia', form:'notice', 带非空 summary}（v4 起 'plugin' 会被拒收）",
       twoTexts(sourceShape),
       [{ kind: 'plugin:agenia', form: 'notice', 有summary: true },
         { kind: 'plugin:agenia', form: 'notice', 有summary: true }])
     const ids = got.map((m) => m.id)
-    checkTrue('G4', 6, '每条一个 uuid，且互不相同',
+    checkTrue('G4', '§形状', '每条一个 uuid，且互不相同',
       ids.length === 2 && ids.every((x) => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x))
         && new Set(ids).size === ids.length,
       `拿到 ${ids.length} 条：${ids.join(', ')}`)
@@ -1297,9 +1305,9 @@ try {
     check('G5', '§形状', '**尾巴那一段**与 style.md 切口之前那一段逐字一致（剥掉全部 HTML 注释后 trim）'
       + '；其后**恰好**一行 F-102 时间行（只认形状、不认那几点的值；多一行少一行都红）',
       normalizeTimeLines(stylePartOf(got[0]?.content?.[0]?.text)), want)
-    checkTrue('G6', 6, '正文里不含任何 `<!--`（注释真被剥了，不是只剥第一行）',
+    checkTrue('G6', '§形状', '正文里不含任何 `<!--`（注释真被剥了，不是只剥第一行）',
       got.length === 2 && got.every((m) => !m.content[0].text.includes('<!--')), `拿到 ${got.length} 条`)
-    checkTrue('G7', 6, '正文没有外框（不许出现"自动提醒"这类护栏）',
+    checkTrue('G7', '§形状', '正文没有外框（不许出现"自动提醒"这类护栏）',
       got.length === 2 && got.every((m) => !/自动提醒|REMINDER_(HEAD|TAIL)|不是老板的消息/.test(m.content[0].text)),
       `拿到 ${got.length} 条`)
   }
@@ -1544,8 +1552,8 @@ try {
   const I_FAMILY_SKIPS = [
     ['I1', 1, '`style.md` 第一行那个 `<!-- every: N -->` 就是实现**实际用的**刻度（第 N 个工具结果才贴）'],
     ['I2', 1, '`every` 那枚注释在第一行'],
-    ['I6', 6, '真 `style.md` 里有切口标记'],
-    ['I7', 6, '真尾巴那一段 ≤ 400 字符'],
+    ['I6', '§切口', '真 `style.md` 里有切口标记'],
+    ['I7', '§限长', '真尾巴那一段 ≤ 400 字符'],
     ['I3', '§产物', '真产物贴出来的尾巴段 === 真 `style.md` 切完那一段'],
     ['I4', '§产物', '真产物尾巴段里不含 `<!--`'],
     ['I5', '§产物', '真产物尾巴段不是兜底那两句'],
@@ -1616,11 +1624,11 @@ try {
     checkTrue('I2', 1, '`every` 那枚注释在第一行，不在别处',
       /^\s*<!--\s*every:\s*\d+\s*-->/.test(head), JSON.stringify(head))
 
-    // 🔴 口径 6 的真判据在这儿：真 `style.md` **切完**那一段有多长。
+    // 🔴 `§切口` / `§限长` 的真判据在这儿：先看切口在不在，再看切完那一段有多长。
     const cut = cutTail(raw)
-    checkTrue('I6', 6, '真 `style.md` 里有 `<!-- 尾巴到此为止 -->` 这个切口',
-      TAIL_MARK.test(raw), '没有切口 ⇒ 尾巴贴的是全文（口径 7 允许，但口径 6 的长度就没救了）')
-    checkTrue('I7', 6, `真尾巴那一段 ≤ 400 字符（实测 ${cut.length}；切口之前那一段）`,
+    checkTrue('I6', '§切口', '真 `style.md` 里有 `<!-- 尾巴到此为止 -->` 这个切口',
+      TAIL_MARK.test(raw), '没有切口 ⇒ 尾巴贴的是全文（`§切口` 允许，但 `§限长` 的 400 就没救了）')
+    checkTrue('I7', '§限长', `真尾巴那一段 ≤ 400 字符（实测 ${cut.length}；切口之前那一段）`,
       cut.length <= 400, `实测 ${cut.length} 字符`)
 
     const h = await harness(PRODUCT_DIR)   // 真产物、真正文
@@ -2221,7 +2229,7 @@ try {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  console.log('\n═══ P · 尾巴限长 + 标记缺失退回全文（口径 6、7）═══')
+  console.log('\n═══ P · 尾巴限长 + 标记缺失退回全文（`§限长` / `§切口`）═══')
   // ═══════════════════════════════════════════════════════════════════════════
   {
     const h = await harness(fixture)
@@ -2234,10 +2242,10 @@ try {
       + '（切口之前、剥注释、trim；时间行只认形状）',
       normalizeTimeLines(stylePartOf(text)),
       [cutTail(fixtureStyleOnDisk(fixture)), TIME_LINE_TOKEN].join('\n\n'))
-    checkTrue('P2', 7, '切口**后面**那一大段不许出现在请求里（`## emoji` 表在切口后面）',
+    checkTrue('P2', '§切口', '切口**后面**那一大段不许出现在请求里（`## emoji` 表在切口后面）',
       typeof text === 'string' && !text.includes('## emoji'),
       `贴出来的正文里${typeof text === 'string' && text.includes('## emoji') ? '**有**' : '没有'}切口后面那一段`)
-    checkTrue('P3', 6, `夹具尾巴里**情绪板之前**那一段（style 段 + 一行时间行）≤ 400 字符（实测 ${String(stylePartOf(text)).length}）`,
+    checkTrue('P3', '§限长', `夹具尾巴里**情绪板之前**那一段（style 段 + 一行时间行）≤ 400 字符（实测 ${String(stylePartOf(text)).length}）`,
       typeof text === 'string' && stylePartOf(text).length <= 400,
       `实测 ${String(stylePartOf(text)).length} 字符（**不含**情绪段；整条注入的上限由 \`P7\` 的 1000 管）`)
   }
@@ -2250,10 +2258,10 @@ try {
       await bossThenStep(h)
       const got = stylePartOf(h.lastText())
       // 🔴 F-126：机制② 那一刀也带时间行（夹具无常识文件 ⇒ 只多这一行）。仍整段 `===`。
-      check('P4', 7, '没有 `<!-- 尾巴到此为止 -->` ⇒ **退回全文** + 一行时间行（逐字），而且不是空的',
+      check('P4', '§切口', '没有 `<!-- 尾巴到此为止 -->` ⇒ **退回全文** + 一行时间行（逐字），而且不是空的',
         normalizeTimeLines(got),
         [stripComments(FIXTURE_STYLE_NO_MARK(3)), TIME_LINE_TOKEN].join('\n\n'))
-      checkTrue('P5', 7, '退回的那一份**不许是空串**', typeof got === 'string' && got.trim().length > 0,
+      checkTrue('P5', '§切口', '退回的那一份**不许是空串**', typeof got === 'string' && got.trim().length > 0,
         `实测 ${brief(got)}`)
     } finally {
       rmSync(noMark, { recursive: true, force: true })
@@ -2267,7 +2275,7 @@ try {
       await h.turnStart(T0)
       await bossThenStep(h)
       // 🔴 F-126：同 `P4` —— 机制② 那一刀也带时间行；仍整段 `===`。
-      check('P6', 7, '标记在最前面（切口之前一个字都没有）⇒ 也退回全文 + 一行时间行，不是空串',
+      check('P6', '§切口', '标记在最前面（切口之前一个字都没有）⇒ 也退回全文 + 一行时间行，不是空串',
         normalizeTimeLines(stylePartOf(h.lastText())),
         [stripComments(FIXTURE_STYLE_EMPTY_CUT(3)), TIME_LINE_TOKEN].join('\n\n'))
     } finally {
@@ -2275,12 +2283,12 @@ try {
     }
   }
   {
-    // 【测试位代拍】整条注入（尾巴段 + 情绪段）≤ 1000 字符（口径 6 只管 style 段；这条是防情绪段自己失控的护栏）。
+    // 【测试位代拍】整条注入（尾巴段 + 情绪段）≤ 1000 字符（`§限长` 的 400 只管情绪板之前那一段；这条是防情绪段自己失控的护栏）。
     const h = await harness(fixture)
     await h.turnStart(T0)
     await bossThenStep(h)
     const text = h.lastText()
-    checkTrue('P7', 6, `整条注入（尾巴段 + 情绪段）≤ 1000 字符（实测 ${typeof text === 'string' ? text.length : '拿不到'}）`,
+    checkTrue('P7', '§限长', `整条注入（尾巴段 + 情绪段）≤ 1000 字符（实测 ${typeof text === 'string' ? text.length : '拿不到'}）`,
       typeof text === 'string' && text.length <= 1000, `实测 ${typeof text === 'string' ? text.length : '拿不到'} 字符`)
   }
 
@@ -2906,11 +2914,11 @@ try {
       ...NEUTRAL_SIGNALS, recentResults: ['fail', 'ok', 'ok', 'ok', 'ok', 'ok'],
       lastErrorAt: T0 - 6 * HOUR, roundsSinceError: 1,
     }))
-    checkTrue('D2-3', 4, '【治 P3·形态】同一组信号、只把那次失败挪到 6 小时前 + 隔了一个回合 ⇒ 掌控**不一样**（旧账被打折，没被抹掉）'
+    checkTrue('D2-3', 4, '【旧账打折·形态】同一组信号、只把那次失败挪到 6 小时前 + 隔了一个回合 ⇒ 掌控**不一样**（旧账被打折，没被抹掉）'
       + '（本格手算：rate .8333 ⇒ success .7222；本回合 −.5 ⇒ .2222 · 六小时前 −.5×e⁻¹⁸×.6 ≈ 0 ⇒ .7222）',
       near4(fresh?.control, 0.2222) && near4(stale?.control, 0.7222),
       `本回合 ${shown(fresh?.control)}（期望 .2222） · 六小时前 ${shown(stale?.control)}（期望 .7222）`)
-    checkTrue('D2-4', 4, '【治 P3·判据】那一维**不是被清零**：隔了一个回合的那次失败，掌控仍 < 0.95（老实现这里恒 1.00）',
+    checkTrue('D2-4', 4, '【旧账打折·判据】那一维**不是被清零**：隔了一个回合的那次失败，掌控仍 < 0.95（老实现这里恒 1.00）',
       typeof stale?.control === 'number' && stale.control < 0.95,
       `实测 ${stale?.control ?? '拿不到'}（老实现：errors 在 turn/start 被清 0 ⇒ 权重 0 ⇒ 恒 1.00）`)
 
@@ -2923,11 +2931,11 @@ try {
       ...NEUTRAL_SIGNALS, recentResults: ['fail', 'fail', 'ok', 'ok'],
       pitCounts: { 'pwsh|拒绝访问': 2 },
     }))
-    checkTrue('D2-5', 5, '【治 P4】**两个不同的坑**各一次 ⇒ 没有"同一个坑"的扣分（掌控 = 成功率那一档）',
+    checkTrue('D2-5', 5, '【不同的坑不互算】**两个不同的坑**各一次 ⇒ 没有"同一个坑"的扣分（掌控 = 成功率那一档）',
       typeof twoDiff?.control === 'number' && typeof sameTwice?.control === 'number'
       && twoDiff.control > sameTwice.control,
       `两个不同的坑 ${twoDiff?.control ?? '拿不到'} · 同一个坑两次 ${sameTwice?.control ?? '拿不到'}`)
-    check('D2-6', 5, '【治 P4·刻度】同一个坑第 2 次 ⇒ 只扣**一档**（`pitStep` = .08）',
+    check('D2-6', 5, '【同一个坑的刻度】同一个坑第 2 次 ⇒ 只扣**一档**（`pitStep` = .08）',
       typeof sameTwice?.control === 'number' && typeof twoDiff?.control === 'number'
         ? Number((sameTwice.control - twoDiff.control).toFixed(4)) : '拿不到', -0.08)
 
@@ -2972,9 +2980,9 @@ try {
     const halfWay = scoresOf(callMood({ ...NEUTRAL_SIGNALS, sincePreviousBossMinutes: 120 }))
     check('E2-2', 6, '【重逢项·线性区】他上一次开口在 2 小时前（量程 240 的一半）⇒ 亲密 .50 + .90×½ = **.95**',
       halfWay?.closeness, 0.95)
-    // ③ 治 P5 的**可判定形态**：同样"他刚开口"，隔了 8 小时之后的那一句 ⇒ 亲密 ≥ .65
+    // ③ 重逢项的**可判定形态**：同样"他刚开口"，隔了 8 小时之后的那一句 ⇒ 亲密 ≥ .65
     //    ⇒「他久别归来」那条场景**真的会被递出来**（这才是老板要看的那件事）。
-    checkTrue('E2-3', 6, '【治 P5】隔了 8 小时之后他再开口 ⇒ 亲密 1.00 ≥ .65 ⇒「他久别归来」**亮得起来**',
+    checkTrue('E2-3', 6, '【久别归来】隔了 8 小时之后他再开口 ⇒ 亲密 1.00 ≥ .65 ⇒「他久别归来」**亮得起来**',
       typeof goneLong?.closeness === 'number' && goneLong.closeness >= 0.65,
       `实测 ${goneLong?.closeness ?? '拿不到'}（老实现：\`sinceBoss\` 被刷成 0 ⇒ 0.00 ⇒ 永远亮不了）`)
     // ④ 🔴 **低重逢区间：重逢项 ≠ 互动项**（同一格上夸 / 骂能把读数挪开，三格各不相同）。
@@ -3184,7 +3192,7 @@ try {
       typeof justIn?.fatigue === 'number' && Math.abs(justIn.fatigue - 1) < 1e-6, `实测 ${justIn?.fatigue ?? '拿不到'}`)
 
     /**
-     * 🔴 **这一条才是治 P6 的**：老实现吃的是"本回合时长"，而回合被老板开口切成 2–4 分钟
+     * 🔴 **这一条才是"在场时长"那一版**：老实现吃的是"本回合时长"，而回合被老板开口切成 2–4 分钟
      * ⇒ 一整天只从 .10 动到 .11。判据必须**跨很多个回合**量，不能拿"一个长回合"冒充。
      * 这里喂 26 个回合（每个 14 分钟、中间他都开过口）⇒ 净工作时长该累到满量程。
      */
@@ -3196,7 +3204,7 @@ try {
       await hLong.stepBegin(startOfDay + (i + 1) * 14 * MIN)     // 机制② 出口 ⇒ 情绪段
     }
     const longRun = scoresFromText(hLong.lastText())
-    checkTrue('X3', 12, '【治 P6】26 个回合、每回 14 分钟、他一直在旁边 ⇒ 活力 ≤ .05（干了一整天；老实现吃"本回合时长" ⇒ 恒 .1x 的一条直线）',
+    checkTrue('X3', 12, '【在场时长 vs 回合时长】26 个回合、每回 14 分钟、他一直在旁边 ⇒ 活力 ≤ .05（干了一整天；老实现吃"本回合时长" ⇒ 恒 .1x 的一条直线）',
       typeof longRun?.fatigue === 'number' && longRun.fatigue <= 0.05,
       `实测活力 ${longRun?.fatigue ?? '拿不到'}（老实现：本回合 14 分钟 ⇒ 疲劳 .10 + .8×(14/300) ≈ .14）`)
 
@@ -3279,11 +3287,11 @@ try {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  console.log('\n═══ U · 尾巴全长：style 段 + 情绪段（口径 15 · 悬项 ⑧）═══')
+  console.log('\n═══ U · 尾巴全长：情绪板之前那一段 + 2 个字符 + 情绪段（口径 15 · 悬项 ⑧）═══')
   // ═══════════════════════════════════════════════════════════════════════════
-  // 🔴 **悬项 ⑧（`.team/leader/now.md`）**：`I7` 只卡 **style 段**（380 字符），
-  //    而真发出去的是 **549/564/566 字符** —— 情绪板那 ~170-186 字符**不在任何断言的量程里**。
-  //    口径 15 就是收它：**全长**（style 段 + 情绪段）必须有人守。
+  // 🔴 **悬项 ⑧（`.team/leader/now.md`）**：`I7` 只卡 **切口之前那一段**（今天 400 字符），
+  //    而 2026-09-26 那一批真发出去的是 **549/564/566 字符** —— 情绪板那 ~170-186 字符**不在 `I7` 的量程里**。
+  //    口径 15 就是收它：**全长**（情绪板之前那一段 + 一个空行 + 情绪段）必须有人守。
   {
     const h = await harness(fixture)
     await h.turnStart(T0)
@@ -3293,7 +3301,7 @@ try {
     check('Y1', 15, '【前提】这一步确实贴了一条尾巴（否则下面两条是空跑）', { 条数, 尾部字符数: 字符数 }, { 条数: 1, 尾部字符数: 字符数 })
     const styleLen = typeof text === 'string' ? stylePartOf(text).length : 0
     const moodLen = typeof text === 'string' ? (moodPartOf(text) ?? '').length : 0
-    checkTrue('Y2', 15, `【口径 15·全长】贴出去那一条 = style 段 + 情绪段，**逐字量出来**（style ${styleLen} + 情绪 ${moodLen} = ${typeof text === 'string' ? text.length : '拿不到'}）`,
+    checkTrue('Y2', 15, `【口径 15·全长】贴出去那一条 = 情绪板之前那一段 + 一个空行（2 个字符）+ 情绪段，**逐字量出来**（${styleLen} + 2 + ${moodLen} = ${typeof text === 'string' ? text.length : '拿不到'}）`,
       typeof text === 'string' && text.length === styleLen + moodLen + 2,
       `实测全长 ${typeof text === 'string' ? text.length : '拿不到'}（两段之间一个空行 = 2 个字符）`)
     checkTrue('Y3', 15, '【口径 15·上限】全长 ≤ 1000 字符【测试位代拍】（方案只说"顺手收悬项 ⑧"，没给数；这个数取自上一批 `P7`）',
@@ -3511,7 +3519,13 @@ try {
     const STAGED_ENTRY = join(REPO, '.tools', '_staging', 'agenia-upgrade', 'preset', 'inject.js')
     const GD_IDS = ['GD0', 'GD1', 'GD12', 'GD2', 'GD3', 'GD4', 'GD5', 'GD6', 'GD7', 'GD8', 'GD9', 'GD10', 'GD11']
     const skipRest = (why) => {
-      for (const id of GD_IDS) skip(id, '§硬门', `${id}：${why}`)
+      // 🔴 `F-151`：**只挂那些还没判过的**。`GD0` 在下面那条 `table === null` 的分支里是**判过**的
+      //    （它绿的），再挂一遍会让同一格既绿又挂起：分母虚增 1，`Z9` 还会报"重号 GD0"——
+      //    红文上看起来像判据坏了，其实是这句"跳过"说错了对象。
+      for (const id of GD_IDS) {
+        if (usedIds.includes(id)) continue
+        skip(id, '§硬门', `${id}：${why}`)
+      }
     }
     const hasGuard = async (p) => {
       if (!existsSync(p)) return false
@@ -4092,7 +4106,7 @@ try {
   }
   if (skips.length > 0) {
     console.log('\n挂起的（**未验**，别读成通过）：')
-    for (const s of skips) console.log(`  · [${s.id} · 口径${s.criterion}] ${s.label}`)
+    for (const s of skips) console.log(`  · ${tag(s.id, s.criterion)} ${s.label}`)
     console.log('  前提是阳性对照。对照绿了之后这几条会自己开始判。')
   }
 

@@ -865,7 +865,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 | `MTC-01` | §8.1/§8.2 ①②⑤：`payload.entry.text` 401 拒 · 400 过 · BOM/CRLF 归一后 400 也过；**两条导入 CLI 同两格** —— `--op maintenance-import` 与 `--op proposal-import` 各导一次：401 ⇒ exit 2 且零写入、400 ⇒ exit 0 且追加一行 | 🟢 **绿**（4 次真 CLI：两次 401 都 `exit 2` / `E_PROPOSAL_TOO_LONG` / 池子 `pool_exists=false`，两次 400 都 `exit 0` 且各追加 1 行、正文 400 字） |
 | `MTC-02` | §8.2 ③：`engine_ops[].entry.text` 401 拒 · 400 过 · 超长在第二位也抓 · retire 案不误伤 · 两处都超也拒；真 CLI 同两格 | 🟢 **绿** |
 | `MTC-03` | §8.2 ④：阳性对照（旧**工具**面）—— 普通候选 401 仍被 `proposal_file` 拒、400 过、同一把尺子、拒=零写入 | 🟢 **绿**（旧闸在，行为没变） |
-| 反向 | 同一份用例跑**改动前**的 `importVerdict`（`git show HEAD:` 的副本，不回落项目文件） | 🔴 `RED 2 / GREEN 1`，红因里含新断言那两条（`MTC-PROP-401-ACCEPTED` + `MTC-CLI-PROP-401-EXIT`：401 被收下、exit 0）（读数 `.team/test/2026-10-22/log.md` 第二十八节） |
+| 反向 | 同一份用例跑**改动前**的 `importVerdict`（`git show HEAD:` 的副本，不回落项目文件） | 🔴 **用例这一层**：`RED 2 格 / GREEN 1 格`（3 条用例里 `MTC-01` / `MTC-02` 红、`MTC-03` 绿）· **问题码这一层**：红的那 1 格 `MTC-01` 里 **4 条**，其中 **2 条**是新断言（`MTC-PROP-401-ACCEPTED` + `MTC-CLI-PROP-401-EXIT`：401 被收下、exit 0）；`MTC-02` 另有 4 条（读数 `.team/test/2026-10-22/log.md` 第二十八节 §28.4 `R-1`） |
 | 翻面 | 同一份用例跑**照本节写的最小实现**（只在副本上；两条 `kind` 同一条闸） | 🟢 `RED 0 / GREEN 3` —— 证明这三格"该绿时绿"，红不是用例写歪了 |
 | 半修 | 同一份用例跑**只给 `--op maintenance-import` 装闸**的现役副本（= 定形原来那句 `kind === 'maintenance'`） | 🔴 **用例这一层**：`RED 1 格 / GREEN 2 格`（那一跑只跑那 3 条用例 `MTC-01`/`MTC-02`/`MTC-03`，红的是 `MTC-01`）· **问题码这一层**：红的那 1 格里 **2 条**（`MTC-PROP-401-ACCEPTED` / `MTC-CLI-PROP-401-EXIT`）—— `MTC-02`/`MTC-03` 仍绿，维护案那两格仍 `exit 2`：判据分得出"一条入口有闸"与"两条入口都有闸" |
 
