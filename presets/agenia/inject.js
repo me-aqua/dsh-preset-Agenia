@@ -1434,8 +1434,12 @@ export async function apply(ctx, config = {}) {
     const lines = [`【这一票的进度】${head}`]
     const warning = boardWarningOf(ledger)
     if (warning !== '') lines.push(warning)
+    // 评审这一行只说**新改动没人看过**，不作废那轮评审：评审的有效性量在"派工时那个提交的只读副本"上
+    // （`CONTRACT.md` §14.0），活树在窗口里被别的岗位写是常态。`afterReview` 只数"最后一次 `team_review`
+    // 之后项目文件还动过几次"，它既不知道也没问过那轮评审读的是哪个提交 ⇒ 它没有资格说"作废 / 要重审"。
+    // 要覆盖这些新改动，动作是"在**现在的提交**上另派一轮"，不是"重审上一轮"。
     if (called('review') && ledger.afterReview > 0) {
-      lines.push(`⚠️ 最后一次评审之后，项目文件又动过 ${ledger.afterReview} 次 —— 那次评审作废，要重审。`)
+      lines.push(`⚠️ 最后一次评审之后，项目文件又动过 ${ledger.afterReview} 次 —— 有新改动，还没被评审过；那轮评审量的是派工时那个提交的副本，不因这些变动作废。要评新改动，就在现在的提交上另派一轮。`)
     }
     return lines.join('\n')
   }
