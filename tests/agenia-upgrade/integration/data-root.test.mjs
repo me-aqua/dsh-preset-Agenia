@@ -39,6 +39,10 @@
  *   靶子仍是副本**自己算出来的** `REAL_BRAIN_ROOT`，数据段由 `support/min-runtime.mjs` 摆在它上面。
  *   ⇒ 本节那条死命令（真实库只许跑只读 op）**一个字没松**：这条正例跑的三个 op 全是只读，
  *     而且它自己量前后树哈希；`presets/agenia` 与 `.tools/_staging` 都不在它的写面上。
+ *
+ * ★ **那份 `.runtime` 夹具是这条正例唯一的料**（`DR-01`，2026-10-25 配刀）：
+ *   拿掉 `support/min-runtime.mjs` ⇒ 只有 `DR-01` 红（`MIN-RUNTIME-FIXTURE-MISSING`，报文点名那份文件与它摆的 8 份数据段），
+ *   `DR-02` / `DR-03` 照旧绿、分母照旧 98；放回去 ⇒ 全绿（`_runs/dr01-*` 两跑）。
  * ══════════════════════════════════════════════════════════════════════════════════════════
  */
 import { before, describe, test } from 'node:test'
@@ -64,13 +68,41 @@ import { brainPaths, loadStagedModule, routePaths, runBrain, runCli, runRoute, s
 //   · `installed.mjs` —— 把 staged preset 拷成"装好的预设"（落在运行根里，staging 一个字节不动）
 //   · `min-runtime.mjs` —— 那份最小 `.runtime`（数据段）的声明 / 落盘 / 自洽校验 / 抽走与还原
 import { installedPreset, loadInstalledModule } from '../support/installed.mjs'
-import {
+
+/**
+ * 最小 `.runtime` 夹具（`support/min-runtime.mjs`）—— **端到端正例唯一的料**。
+ *
+ * 🔴 为什么是**动态** import，不是顶层 static import（`DR-01`，2026-10-25）：
+ *    static import 一旦解析不到，**整份文件**（`DR-01` / `DR-02` / `DR-03`）连一条 `test()` 都注册不上，
+ *    报出来的是 `ERR_MODULE_NOT_FOUND` + 结算"一条用例都没跑到"——
+ *    读的人看不出"是哪一格缺了哪份夹具"，而 `DR-02` / `DR-03` 与这份夹具**根本无关**。
+ *    ⇒ 现在：读得到就用；读不到就把 `MIN_RUNTIME_FIXTURE_MISSING` 这句话**点名到文件**
+ *      （红因 `MIN-RUNTIME-FIXTURE-MISSING`，写在 DR-01 那一格的 `problems` 里），另两格照旧跑。
+ *    「把这份文件拿掉 ⇒ DR-01 红、DR-02/03 仍绿、分母仍是 98；放回去 ⇒ 全绿」是这一票量过的刀。
+ */
+let MIN_RUNTIME_FIXTURE_MISSING = null
+let MIN_RUNTIME_FIXTURE = null
+try {
+  MIN_RUNTIME_FIXTURE = await import('../support/min-runtime.mjs')
+} catch (err) {
+  MIN_RUNTIME_FIXTURE_MISSING = `${err?.code ?? 'IMPORT-FAILED'}: ${String(err?.message ?? err).slice(0, 300)}`
+}
+/** 夹具的五件导出（缺一件 ⇒ 当成"夹具读不到"：半个模块比没有更难查）。 */
+const MIN_RUNTIME_EXPORTS = ['MIN_RUNTIME', 'materializeMinimalRuntime', 'verifyMinimalRuntime', 'quarantineRuntime', 'restoreQuarantinedRuntime']
+if (MIN_RUNTIME_FIXTURE !== null) {
+  const missingExports = MIN_RUNTIME_EXPORTS.filter((n) => typeof MIN_RUNTIME_FIXTURE[n] === 'undefined')
+  if (missingExports.length > 0) {
+    MIN_RUNTIME_FIXTURE_MISSING = `support/min-runtime.mjs 里少了导出：${missingExports.join(' / ')}`
+    MIN_RUNTIME_FIXTURE = null
+  }
+}
+const {
   MIN_RUNTIME,
   materializeMinimalRuntime,
   quarantineRuntime,
   restoreQuarantinedRuntime,
   verifyMinimalRuntime,
-} from '../support/min-runtime.mjs'
+} = MIN_RUNTIME_FIXTURE ?? {}
 
 before(() => {
   preflight()
@@ -754,6 +786,17 @@ describe('integration · data-root (DR)', () => {
           push('INSTALLED-REAL-ROOT', `副本里的真实脑根必须**跟着预设目录走**（F4 的不变量）：实得 ${installedRealBrain}，应为 ${expectRealBrain}`)
         } else if (!canonical(installedRealBrain).startsWith(canonical(installed.dir))) {
           push('INSTALLED-REAL-ROOT', `副本算出来的真实脑根跑出了运行根（${installedRealBrain} ⊄ ${installed.dir}）—— 夹具绝不许落在运行根之外`)
+        } else if (MIN_RUNTIME_FIXTURE === null) {
+          // 夹具读不到 ⇒ 这一格**点名红**（不是绿、也不是"命令坏了蒙对"）。把文件放回去就恢复。
+          push(
+            'MIN-RUNTIME-FIXTURE-MISSING',
+            `端到端正例要的那份**最小 \`.runtime\`**（数据段）读不到：\`tests/agenia-upgrade/support/min-runtime.mjs\`（${MIN_RUNTIME_FIXTURE_MISSING}）。`
+            + '装好的副本里那个 `.runtime` 的 8 份数据段（快照链 / 指针 / 当日状态 / 记忆更新报告 / 常识与它的三处哈希）'
+            + '与 5 个空目录全由它摆 —— 没有它，`entry-count` / `state-read` / `report-read` 一个都跑不起来，'
+            + '这一格就退化成"开关打开了却什么都没读"（`REAL-MODE-POSITIVE-VACUOUS` 那个第三态）。'
+            + '修法：把那份夹具放回去（它不是期望值，是数据段；`presets/agenia/.runtime` 与 staging 一个字节都不碰）',
+          )
+          realModeResults[label].fixture = { ok: false, missing: 'support/min-runtime.mjs', why: MIN_RUNTIME_FIXTURE_MISSING }
         } else {
           // ① 夹具落盘 + 自洽（盘上那棵树 vs 声明 vs 测试侧独立重算，三者对不上先在这里点名）
           const made = materializeMinimalRuntime(installedRealBrain, MIN_RUNTIME)
