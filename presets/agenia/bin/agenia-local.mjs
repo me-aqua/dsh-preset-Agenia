@@ -452,11 +452,15 @@ function opHealth(ctx) {
     : (typeof sources.local?.project === 'string' ? sources.local.project : null)
   const openTickets = openAdoptedTicketIds(sources.route?.tickets ?? [])
   const anchorProblems = H.receiptAnchorProblems(workspace, sources.local)
+  // 🔴 与 `agenia-brain --op health-read` 同一口径（F-157）：卡片要能说清"本会话是不是开这一天的人"，
+  //   两扇门对同一件事必须给同一个读数 —— 所以 `session_id` 从 payload 读，缺了就是 null（不猜、不回落）。
+  const sessionId = typeof payload?.session_id === 'string' && payload.session_id.trim() !== '' ? payload.session_id : null
   const notReadHere = (what) => ({ ok: false, code: 'E_ARG_USAGE', path: null, note: `agenia-local.mjs 不读脑根（${what} 归 --data-root 那一侧）` })
 
   const input = {
     project,
     day,
+    session_id: sessionId,
     now: at,
     leases: { update: LEASES.update, local: LEASES.local },
     state: null,

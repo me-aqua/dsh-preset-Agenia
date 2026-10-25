@@ -51,10 +51,10 @@ export const PROPOSAL_FILE_CODES = Object.freeze({
  *  否则「卡上 400、工具里 380」就会变成第二个「两个判据算不同的数」。 */
 export const PROPOSAL_MAX_CHARS = 400
 
-/** 与 `lib/memory.mjs::charCountOf` 同口径：去开头 BOM、`\r\n`/`\r` 归一成 `\n`、数 Unicode code point。 */
+/** 与 `lib/memory.mjs::charCountOf` 同口径：去开头 BOM（**全部**，不只一个）、`\r\n`/`\r` 归一成 `\n`、数 Unicode code point。 */
 function charCountOfText(t) {
   let s = String(t ?? '')
-  if (s.charCodeAt(0) === 0xfeff) s = s.slice(1)
+  s = s.replace(/^\uFEFF+/, '')
   s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   return [...s].length
 }
