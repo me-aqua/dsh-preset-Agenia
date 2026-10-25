@@ -557,7 +557,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 | --- | --- | --- |
 | `F-112` ① | **注入面清单**：这 13 份 `.md` 会被注入 | `support/env.mjs` 的 `injectedMarkdownFiles` 只与**组合**对账（`STAT-03`：声明 ↔ 声明），**全 `tests/` 零 `existsSync`** ⇒ 删掉 `persona.md` / `style.md`，整套 70 条一声不响。**补**：那条 `existsSync` 补上之后仍有一格假绿 —— 文件在、但只有 **1 字节**（`AGENTS.md` 就是这种占位），注入器读到空正文而判据全绿（见 §7.1.1） |
 | `F-112` ② | **`inject.js` 的兜底名单**：配置没写名单时会注入什么 | 审计现场：注释说 `memory` 刻意不在这份兜底里；常量里**它在**（`style` 两处都不在，那一半是对的）⇒ 把这两处摆在一起之后，实现岗把它改成了机读声明 `@roster`（现役：`@roster` 在 `:54`、常量在 `:58`；组员那张在 `:63-67`）。**行号会漂、以 `@roster` + 常量为准**（§7.2） |
-| `F-111` ③ | `env.mjs` 的 `FROZEN.docs` 里那个 `AGENTS.md` | 一个**零读点**的名字：`STAT-04.readings.docs` 只有 6 个键、从来没有它 |
+| `F-111` ③ | `env.mjs` 的 `FROZEN.docs` 里那个 `AGENTS.md`（整表已在 2026-10-25 按 `F-131` 删除，见 §7.3） | 当时是一个**零读点**的名字：`STAT-04.readings.docs` 只有 6 个键、从来没有它 |
 
 ### §7.1 声明即义务（`SURF-01`）
 
@@ -705,9 +705,12 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 
 **规则一句话：一个名字如果没有任何判据读它，它就不是"声明"，是假账**（与 §7.1 同一条病的另一种形态）。
 
-- 处置：把 `FROZEN.docs` 里那行 `{ rel: 'AGENTS.md', root: 'repo' }` 删掉（该表 7 → **6** 行，
-  与 `STAT-04` 真正读的 `DOC_SPECS` 6 份逐项同名）。
-- **"零读点"这件事是量出来的，不是推出来的**：删行前后各跑一次 `STAT-04`（`static/docs.test.mjs`）
+- **现状（2026-10-25 · `F-131`）**：`env.mjs` 的 `FROZEN.docs` **整表已删**。它不是"被修好"，
+  是被判成假账：那张表 6 行**零读点**，且与 `STAT-04` 真正读的 `DOC_SPECS` 逐项重复。
+  接成第二个读者也只会造出第二份声明 ⇒ **文档清单只有一处：`static/docs.test.mjs` 的 `DOC_SPECS`**
+  （要加/删一行改那里，它有 `must` / `mustNot` / `form` 三样）。
+- 收口过程（记录当时）：`F-111③` 先把 `FROZEN.docs` 里那行 `{ rel: 'AGENTS.md', root: 'repo' }` 删掉
+  （该表 7 → 6 行）；**"零读点"这件事是量出来的，不是推出来的** —— 删行前后各跑一次 `STAT-04`
   与 `.tools/check-notes.mjs`，两个读数**一模一样**（见 §7.4 表最后两行）。
 - 这一条的判据**不是新加一条用例**，而是 §7.2 第 4 样在源码里的同形（`SURF-ROSTER-UNUSED-CONST`）：
   "往里加名字之前先答一句：**谁会读它？**"

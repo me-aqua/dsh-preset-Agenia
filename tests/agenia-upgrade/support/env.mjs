@@ -631,23 +631,14 @@ export const FROZEN = {
   ],
 
   /**
-   * STAT-04 的文档清单（契约 §13.5 列的那批）。
+   * 文档清单里**路径没冻结**的几项 —— 只记录读数、不当失败（裁定 A7/A8）。
    *
-   * 🔴 **`STAT-04` 实际读的是 `static/docs.test.mjs` 的 `DOC_SPECS`，这张表零读点** ——
-   *    它只是给人对照的口径。所以往这里加一个名字之前先答一句：**谁会读它？**
-   *    答不出来就别加 —— 一个"声明了但零读点"的名字是假账：它让读者以为那份文件被管着，
-   *    而盘上它可能是 1 字节占位、甚至不在、整套判据一声不响。
-   *    这一栏现在与 `DOC_SPECS` 的 6 份逐项同名，多一处少一处都要先改那边。
+   * 🔴 文档清单本身**不在这里**：`STAT-04` 读的是 `static/docs.test.mjs` 的 `DOC_SPECS`，
+   *    那是唯一一份。这里原来还有一张 `docs` 表（6 行，与 `DOC_SPECS` 逐项同名），
+   *    **零读点**，2026-10-25 按 `F-131` 整表删除 —— 一张没人读、又长得像冻结契约的表是假账：
+   *    读者会以为那几份文件被管着，而它连"盘上有没有"都不判。
+   *    ⇒ 要加/删文档清单的行，改 `DOC_SPECS`（那里有 `must` / `mustNot` / `form` 三样）。
    */
-  docs: [
-    { rel: 'leader.md', root: 'staged' },
-    { rel: 'work-guidelines.md', root: 'staged' },
-    { rel: '说明.md', root: 'staged' },
-    { rel: 'README.md', root: 'repo' },
-    { rel: 'AGENTS.local.md', root: 'repo' },
-    { rel: '.team/leader/now.md', root: 'repo' },
-  ],
-  /** 文档清单里**路径没冻结**的几项 —— 只记录读数、不当失败（裁定 A7/A8）。 */
   docsUnresolved: ['报告模板', '名册说明'],
   /** 裁定 A7：`重启卡` 的路径**已有**（只记录、不判红）。 */
   restartCard: 'E:\\Harness\\.team\\leader\\2026-10-13\\agenia-upgrade-restart-card.md',
