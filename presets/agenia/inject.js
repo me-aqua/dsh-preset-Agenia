@@ -558,12 +558,12 @@ function bridgeTakeClaim(header, agentId, childPrompt) {
     const prompt = typeof childPrompt === 'string' ? childPrompt : ''
     let index = -1
     if (prompt !== '') {
-      index = fresh.findIndex((item) => {
-        const claimPrompt = typeof item.prompt === 'string' ? item.prompt : ''
-        return claimPrompt !== '' && (claimPrompt === prompt || prompt.includes(claimPrompt) || claimPrompt.includes(prompt))
-      })
+      // 只认**完整相等**：两份派工 prompt 可能共享开头，用 includes 会让短的那份被长的那份包含，
+      // 先命中错的一条（2026-11-02 live：team_test / team_review 又串了一次）。
+      // 对不上就**不取**（子会话落 row 5，安全），不退回排队顺序 —— 那个顺序在并行时本来就不成立。
+      index = fresh.findIndex((item) => typeof item.prompt === 'string' && item.prompt === prompt)
     }
-    const head = index >= 0 ? fresh.splice(index, 1)[0] : fresh.shift()
+    const head = index >= 0 ? fresh.splice(index, 1)[0] : (prompt === '' ? fresh.shift() : undefined)
     BRIDGE_CLAIMS.set(parent, fresh)
     if (head === undefined) {
       bridgeWarnMiss(header, parent, queue, agentId, at)
