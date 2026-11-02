@@ -39,6 +39,24 @@ HDR = Font(bold=True, color="FFFFFF"); HDR_FILL = PatternFill("solid", fgColor="
 TITLE = Font(bold=True, size=13); NOTE = Font(italic=True, color="808080")
 BOLD = Font(bold=True); WRAP = Alignment(wrap_text=True, vertical="top")
 
+
+def read_capacity():
+    """参考线只认一个真源：`presets/agenia/lib/memory.mjs` 的 `CAP_COUNT` / `CAP_CHARS`。
+
+    🔴 卡片里**不再写死** 200 / 60000 / 80000 —— 写死的那一份会漂（2026-11-02 实测：卡上还是
+    60,000，权威常量已是 80,000，虚报 20,000 字符）。读不到就当场停，不许回落到旧值。
+    """
+    path = os.path.join(WS, "presets", "agenia", "lib", "memory.mjs")
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError as exc:
+        raise SystemExit("E_CAP_SOURCE: 读不到 %s：%s" % (path, exc))
+    m_count = re.search(r"^const CAP_COUNT\s*=\s*(\d+)", text, re.M)
+    m_chars = re.search(r"^const CAP_CHARS\s*=\s*([\d_]+)", text, re.M)
+    if not (m_count and m_chars):
+        raise SystemExit("E_CAP_SOURCE: %s 里找不到 CAP_COUNT / CAP_CHARS" % path)
+    return int(m_count.group(1)), int(m_chars.group(1).replace("_", ""))
+
 # ── "今天"是哪一天：本地 04:00 切（契约 CONTRACT.md §13.1 · F-158）────────────
 # 一天的边界在**本地 04:00** —— 00:00–03:59 归**前一天**。老板原话（2026-10-24）：
 # 「改成从凌晨4点切分，不要在半夜一点我正在干活的时候嚷嚷"新的一天了，得先派记忆更新呀"」。
@@ -199,6 +217,7 @@ def main():
     rej = [j for j in frozen if j.get("verdict") != "accepted"]
     dist = rep.get("distribution") or snap.get("distribution") or []
     totals = rep.get("totals") or snap.get("totals") or {}
+    cap_count, cap_chars = read_capacity()
     maint_pool = [p for p in pool if p.get("kind") == "maintenance"]
     prop_pool  = [p for p in pool if p.get("kind") == "proposal"]
     decisions = rep.get("maintenance_decisions") or []
@@ -224,11 +243,11 @@ def main():
         ("相位", "phase=%s · snapshot_available=%s" % (st.get("phase", "?"), st.get("snapshot_available", "?"))),
         ("快照", "%s → %s" % (rep.get("base_snapshot", "?"), snap_name)),
         ("长期记忆", "%s 条 / %s 字符" % (totals.get("count", "?"), totals.get("chars", "?"))),
-        ("容量（只作读数）", "参考线 200 条 / 60,000 字符 —— 🔴 2026-10-18 起**不是闸**，超了照写"),
+        ("容量（只作读数）", "参考线 %d 条 / %s 字符 —— 🔴 2026-10-18 起**不是闸**，超了照写" % (cap_count, format(cap_chars, ","))),
         ("现量 vs 参考线", "%s 条 / %s 字符%s" % (
             totals.get("count", "?"), totals.get("chars", "?"),
             "" if not isinstance(totals.get("chars"), int) else (
-                "（超 %d 字符）" % (totals["chars"] - 60000) if totals["chars"] > 60000 else "（在参考线内）"))),
+                "（超 %d 字符）" % (totals["chars"] - cap_chars) if totals["chars"] > cap_chars else "（在参考线内）"))),
         ("本批裁定", "冻结 %d 条 ⇒ 接受 %d · 拒绝 %d" % (len(frozen), len(acc), len(rej))),
         ("🔴 斩杀 / 退休 / 吸收（今天生效）", "%d 条%s" % (len(decisions), "" if decisions else " —— **今天没有生效的处置**（下列 %d 条是草稿，明天判决才批）" % len(maint_pool))),
         ("常识哈希", rep.get("common_sense_sha256", "?")[:12] + "…"),
@@ -284,8 +303,8 @@ def main():
         ("池子（未判）", "%d 条（%d 普通提案 + %d 维护案）" % (len(pool), len(prop_pool), len(maint_pool))),
         ("清池归档", ("判过 %s 条 ⇒ archive/%s（无损：拼回去逐字节相同）" % (arch.get("archived", {}).get("lines", "?"), arch.get("archived", {}).get("file", "?"))) if arch else "（没有归档记录）"),
         ("上一轮归档时刻", arch.get("day", "—")),
-        ("容量（只作读数）", "参考线 200 条 / 60,000 字符 —— 2026-10-18 起不是闸；🔴 **实际到没到上限没人管**"),
-        ("超参考线多少", "%d 条 / %d 字符" % (max(0, totals.get("count", 0) - 200), max(0, totals.get("chars", 0) - 60000))),
+        ("容量（只作读数）", "参考线 %d 条 / %s 字符 —— 2026-10-18 起不是闸；🔴 **实际到没到上限没人管**" % (cap_count, format(cap_chars, ","))),
+        ("超参考线多少", "%d 条 / %d 字符" % (max(0, totals.get("count", 0) - cap_count), max(0, totals.get("chars", 0) - cap_chars))),
         ("票（账本里 ⬜ 的）", "%d 张：%s" % (len(tickets), " · ".join(sorted(ticket_ids)) if ticket_ids else "无")),
     ]
     sheet(ws3, "复核 · 池子 · 水位 · " + day, "复核报告与池子账 —— 全部现量（.runtime/proposals 与 state）",

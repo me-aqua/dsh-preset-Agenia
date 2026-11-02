@@ -1319,7 +1319,7 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    ⚠️ 和 `brain` 那次一模一样，它也是**被"补上一处缺口"当场带出来的**：
   //    在这天之前 `local-*` 一次都没跑过（`audit.jsonl` 里 `local-*` 零条）⇒ `.team/state/local/`
   //    从来没被建出来过 ⇒ `state` 这一格一直是绿的。补登记跑通之后，它当场红了。
-  const housework = ['_archive', 'brain', 'state', ...RETIRED_ROLES]
+  const housework = ['_archive', 'brain', 'state', 'route', 'bug', 'tickets', ...RETIRED_ROLES]
   const ghosts = roleDirs.filter((r) => !known.includes(r) && !housework.includes(r))
   add('office', '.team/ 下有没有预设之外的岗位目录（旧岗位留下的）',
     ghosts.length === 0, ghosts.length === 0 ? '干净' : `${ghosts.join(', ')} —— 改名成现在的岗位，或者归档掉`)
