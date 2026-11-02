@@ -17,7 +17,12 @@ import { calibrate } from './composition.mjs'
 import { CASES_BY_ID, TOTAL, countByStatus, REGISTRY, registryProblems, DISCOVERY } from './registry.mjs'
 import { platformReading, platformLine } from './platform.mjs'
 
-export const EVIDENCE_PARENT = 'E:\\Harness\\.team\\test'
+/**
+ * 证据根的白名单父目录（`….team\test`）—— 跟着 `PATHS.repo` 派生（2026-11-02 起）。
+ * ⚠️ 复核（2026-11-02）：**本模块与整套件都没有读点**（原来写死的 `E:\Harness\.team\test`
+ *    在 worktree 里是另一棵树）。留着是为了不悄悄改导出面；**别再加第二份**。
+ */
+export const EVIDENCE_PARENT = path.join(PATHS.repo, '.team', 'test')
 
 /** 运行根（缺失就抛 —— 调用方必须先跑守卫）。 */
 export function runRoot() {

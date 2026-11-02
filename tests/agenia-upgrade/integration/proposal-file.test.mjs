@@ -24,7 +24,7 @@ import { spawn } from 'node:child_process'
 import { caseFail, caseHold, problem, runCase, runRoot } from '../support/evidence.mjs'
 import { FROZEN } from '../support/env.mjs'
 import { DISCOVERY, FROZEN_IDS, REGISTRY } from '../support/registry.mjs'
-import { memberAnnotations, parseComposition, presetEntries } from '../support/composition.mjs'
+import { annotationLeaks, memberAnnotations, parseComposition, presetEntries, readPresetBaseline } from '../support/composition.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 /** 仓库根 = `integration/` 往上三层（`tests/agenia-upgrade/integration` ⇒ 仓库根）。 */
@@ -240,6 +240,18 @@ async function loadTool() {
     toolCache = { mod: null, error: String(error?.message ?? error) }
   }
   return toolCache
+}
+
+let injectorCache
+/** 动态取同树的 `inject.js`（`ROLE_TABLE` / `proposalVerdict` 的家；取不到 = 缺面，不是测试崩了）。 */
+async function loadInjector() {
+  if (injectorCache !== undefined) return injectorCache
+  try {
+    injectorCache = { mod: await importFresh(INJECT), error: null }
+  } catch (error) {
+    injectorCache = { mod: null, error: String(error?.message ?? error) }
+  }
+  return injectorCache
 }
 
 /** 跑主路并统一成 `{ok, value}` / `{ok:false, code, message}`（抛出也算一种结果，不许漏判）。 */
@@ -859,72 +871,84 @@ test('PFL-05 报文能指名：来源重了 / 内容哈希不符是两个码，�
 })
 
 // ═════════════════════════════════════════════════════════════════════════════
-// PFL-06 · 判决岗的工具集里没有它（配置层判据 + 阳性对照）
+// PFL-06 · 判决岗**看得见**它、**调用时**被拒（任务 A · 2026-11-01 翻面）
 // ═════════════════════════════════════════════════════════════════════════════
-test('PFL-06 判决岗看不见它：`# @member-deny proposal_file` + 补丁里那一份 `proposalFile: false`（阳性对照先过）', async () => {
+test('PFL-06 判决岗看得见它：工具注册在所有角色表里，拒绝落在 ROLE_TABLE 的 deny（旧的两句"看不见"必须消失）', async () => {
   await runCase('PFL-06', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
     const yml = readText(YML)
     if (yml === null) { push('SUT-SURFACE-MISSING', `读不到 ${YML}`); return caseFail(problems) }
-    // 🔴 2026-10-19（0.2.1 迁移）：`toolFilter` 不再是 `tool-subagent` 的配置键（写着它整行报迁移错），
-    //    "判决岗不能提候选"改由行**上方**那句注释表达：`# @member-deny proposal_file`
-    //    —— 生成器据此给**那一份**组员预设的注入器写 `proposalFile: false`（工具因此根本不注册）。
-    //    判据跟着义务的落点走，而且**加了一条更硬的**：读**装出去的那一份**（补丁）。
+    // 🔴 **口径翻面**（老板 2026-10-17 的「判决不能提候选」在 2026-11-01 换落法，`CONTRACT-A` §6）：
+    //   旧落法 = "工具集里**没有**它"：行上方 `# @member-deny proposal_file` ⇒ 生成器给那份预设写
+    //   `proposalFile: false` ⇒ 工具根本不注册（旧 PFL-06 钉的就是这两句）。
+    //   新落法 = **注册**了它、**调用时**被门禁拒（`ROLE_TABLE` 判决岗那一条 `deny: ['proposal']`，
+    //   行为判据 = `PRS-03`）。⇒ 这一例量的是"旧的两种表达都消失 + 新的唯一作者在位"。
     const blocks = rowBlocks(yml)
     rec.readings.rows = blocks.length
-    const ann = memberAnnotations(yml)
-    const judgeAnn = ann.get('tool-job-memory-judge')
-    if (judgeAnn === undefined) { push('ROW-MISSING', '找不到 `- id: tool-job-memory-judge` 那一行（或它上方没有组员注释）'); return caseFail(problems) }
-    rec.readings.judge_deny = judgeAnn.deny
-    rec.readings.judge_persona = (judgeAnn.persona ?? '').slice(0, 60)
-
-    // ① 阳性对照：**提取器读的是那一行**（那一行的人格标记必须认得出来）——
-    //    旧版的对照是"deny 里本来就该有 workflow/ralph"；0.2.1 里那两样结构性没有，
-    //    所以改用"这一行的人格标记必须对得上"（读错格子 ⇒ 不是被测对象红了，是提取器读错了）。
-    if (!/【组员:memory-judge】/.test(judgeAnn.persona ?? '')) {
-      push('PRECONDITION-CONTROL', `阳性对照失败：判决行上方的 \`# @member-persona\` 里本来就应该有 【组员:memory-judge】（现量 ${JSON.stringify(judgeAnn.persona)?.slice(0, 80)}）`
-        + ' —— 这不是被测对象红了，是提取器读错了格子')
+    const retired = annotationLeaks(yml)
+    rec.readings.retired_annotations_left = retired
+    // ① 阳性对照：退休注释的提取器**认得出**旧形状（样本 = 升级前冻结的组长块：9 条 persona + 1 条 deny）
+    {
+      const baseline = readPresetBaseline()
+      if (!baseline.ok) push('PRECONDITION-CONTROL', `基线夹具读不出来（${baseline.why}）—— 退休注释提取器没有阳性对照样本`)
+      else {
+        const leaderBase = (baseline.value.preset_blocks ?? []).find((b) => b.preset_id === FROZEN.patchPresets.leaderPresetId)
+        const sample = memberAnnotations(leaderBase === undefined ? '' : leaderBase.full_text)
+        const personas = [...sample.values()].filter((m) => typeof m.persona === 'string').length
+        const denies = [...sample.values()].filter((m) => m.deny.includes(TOOL_NAME)).length
+        rec.readings.annotation_detector_control = { personas, denies_for_tool: denies }
+        if (personas !== 9 || denies !== 1) {
+          push('PRECONDITION-CONTROL', `阳性对照失败：同一个提取器在升级前基线块上应读出 9 条 persona / 1 条 deny ${TOOL_NAME}，实得 ${personas} / ${denies}`
+            + ' —— 这不是被测对象红了，是提取器读错了格子（那么"组合里读到 0 条"就是空绿）')
+        }
+      }
     }
-    // ①b 反向对照：另外三行作业**必须读成空 deny**（同一份提取器；否则它就是对所有行吐同一坨）
-    const otherDenies = ['tool-job-memory-review', 'tool-job-conversation-review', 'tool-job-technical-review']
-      .map((id) => ({ id, deny: (ann.get(id) ?? {}).deny ?? null }))
-    rec.readings.other_job_denies = otherDenies
-    for (const o of otherDenies) {
-      if (o.deny === null) push('PRECONDITION-CONTROL', `阳性对照失败：读不到 ${o.id} 的组员注释（提取器坏了）`)
-      else if (o.deny.length > 0) push('DENY-LEAK', `${o.id} 的 \`# @member-deny\` 写了 ${JSON.stringify(o.deny)} —— 只有判决岗该被挡（多写 = 那个岗位提不了候选）`)
+    // ② 主判据（旧口径必须**消失**）：组合里没有任何一行再声明 deny（`# @member-deny`）
+    if (retired.length > 0) {
+      push('REGISTERED-BY-ABSENCE', `组合里还有 ${retired.length} 行带着退休的 \`# @member-persona\` / \`# @member-deny\` 注释：`
+        + `${JSON.stringify(retired.map((a) => ({ row: a.row_id, deny: a.deny })))} —— 任务 A 之后这两件事的唯一作者是 \`ROLE_TABLE\``)
     }
-
-    // ② 主判据：判决岗的否定项里有 proposal_file（结构性：它的工具集里根本没有这个工具）
-    if (!judgeAnn.deny.includes(TOOL_NAME)) {
-      push('DENY-MISSING', `判决行上方的 \`# @member-deny\` 里没有 ${TOOL_NAME}（现量 ${JSON.stringify(judgeAnn.deny)}）`
-        + ' —— 「判决岗不许提」在配置层根本没落：生成器不会给那一份写 proposalFile: false')
-    }
-
-    // ③ 反例：deny 里不许写"继承不到"的名字（那会让整行起不来，比漏挡更糟）
-    if (judgeAnn.deny.includes('pwsh') || judgeAnn.deny.includes('bash')) push('DENY-PLATFORM', 'deny 里不许写 pwsh/bash（平台二选一，写错那个整行启动失败）')
-    if (judgeAnn.deny.includes('subagent_fork')) push('DENY-DEAD-NAME', 'deny 里不许写已关掉的行里的工具名（subagent_fork 不再注册）')
-    for (const dead of FROZEN.memberPresetForbidden) {
-      if (judgeAnn.deny.includes(dead)) push('DENY-DEAD-NAME', `deny 里写了 ${dead} —— 它在组员预设里结构性不存在（委派组整个不搬），写它只会让整行启动失败`)
-    }
-
-    // ④ 落点（**装出去的那一份**）：补丁里 `preset-agenia-job-memory-judge` 的注入器写着 `proposalFile: false`，
-    //    而**其余九份一份都不许有** —— 这才是"它的工具集里根本没有这个工具"的结构性证明
-    //    （组合行上的注释只是**来源**；装出去的是补丁）。
+    // ③ 补丁里也不许再有生效的 `proposalFile: false`（旧口径的产物落点）；
+    //    只数**生效的配置行**：注释里提到它是在解释历史，不算"还在用"。
     const patchText = readText(PATCH)
     if (patchText === null) push('SUT-SURFACE-MISSING', `读不到 ${PATCH}`)
     else {
-      const entries = presetEntries(parseComposition(patchText, 'live-patch').rows)
-      const withFlag = entries.filter((e) => e.injector?.config?.proposalFile === false).map((e) => e.id)
-      rec.readings.preset_entries = entries.map((e) => e.id)
-      rec.readings.preset_proposalFile_false = withFlag
-      if (!withFlag.includes('agenia-job-memory-judge')) {
-        push('ARTIFACT-FLAG', `补丁里 agenia-job-memory-judge 那一份的注入器没有 \`proposalFile: false\`（实得带这一格的是 ${JSON.stringify(withFlag)}）—— 生成器没把 @member-deny 落成产物`)
+      const withFlag = patchText.split(/\r?\n/).filter((l) => /^\s+proposalFile:\s*false\s*$/.test(l)).length
+      rec.readings.proposalFile_false_count = withFlag
+      if (withFlag !== 0) {
+        push('REGISTERED-BY-ABSENCE', `补丁里还有 ${withFlag} 处生效的 \`proposalFile: false\` —— 判决岗的工具必须**注册**、靠门禁在调用时拒（旧的"根本不注册"已作废）`)
       }
-      const leaks = withFlag.filter((id) => id !== 'agenia-job-memory-judge')
-      if (leaks.length > 0) push('ARTIFACT-FLAG', `补丁里这些预设也写了 proposalFile: false：${JSON.stringify(leaks)} —— 只有判决岗该没有这个工具`)
-      if (entries.length === 0) push('ARTIFACT-FLAG', '补丁里一份预设入口都没读到 —— 判不了（不许当绿）')
+      const entries = presetEntries(parseComposition(patchText, 'live-patch').rows)
+      const withFlagConfig = entries.filter((e) => e.injector?.config?.proposalFile === false).map((e) => e.id)
+      rec.readings.preset_entries = entries.map((e) => e.id)
+      rec.readings.preset_proposalFile_false = withFlagConfig
+      if (withFlagConfig.length > 0) push('REGISTERED-BY-ABSENCE', `补丁里这些预设的注入器还写着 \`proposalFile: false\`：${JSON.stringify(withFlagConfig)}`)
+      if (entries.length === 0) push('REGISTERED-BY-ABSENCE', '补丁里一份预设入口都没读到 —— 判不了（不许当绿）')
     }
+    // ④ 新落点：`ROLE_TABLE` 里**每个角色**的 tools 都含它（注册面），而 deny 只在判决岗身上
+    const loaded = await loadInjector()
+    const table = loaded.mod !== null && Array.isArray(loaded.mod.ROLE_TABLE) ? loaded.mod.ROLE_TABLE : null
+    rec.readings.role_table_loaded = table !== null
+    if (table === null) {
+      push('DENY-MISSING', `现役 inject.js 拿不到 \`ROLE_TABLE\`（${loaded.error ?? '没有这个导出'}）—— 判决岗的 deny 没有落点，这一格判不了`)
+      return caseFail(problems)
+    }
+    const missingTool = table.filter((e) => !Array.isArray(e?.tools) || !e.tools.includes(TOOL_NAME)).map((e) => e?.role ?? '?')
+    rec.readings.roles_without_tool = missingTool
+    if (missingTool.length > 0) {
+      push('TOOL-NOT-IN-ROLE-TABLE', `这些角色的 \`ROLE_TABLE[].tools\` 里没有 ${TOOL_NAME}：${JSON.stringify(missingTool)}`
+        + ' —— 新口径是"工具在列表里、调用时拒"；列表里没有它 = 又回到"看不见"，而判决岗的 deny 也就没有宾语')
+    }
+    const denied = table.filter((e) => Array.isArray(e?.deny) && e.deny.length > 0).map((e) => ({ role: e.role, deny: [...e.deny] }))
+    rec.readings.role_table_deny = denied
+    if (denied.length !== 1 || denied[0].role !== 'memory-judge' || !denied[0].deny.includes('proposal')) {
+      push('DENY-MISSING', `\`ROLE_TABLE\` 里 deny 只许挂在判决岗那一条上、且值含 \`proposal\`（"注册与拒同源"），实得 ${JSON.stringify(denied)}`)
+    }
+    // 反向：其余八个角色**一个都不许**被挡（多挡一个 = 那个岗位提不了候选，而那不是它的活）
+    const overblocked = denied.filter((d) => d.role !== 'memory-judge')
+    rec.readings.deny_leak = overblocked
+    if (overblocked.length > 0) push('DENY-LEAK', `这些角色也 deny 了提案：${JSON.stringify(overblocked)} —— 只有判决岗该被挡`)
     caseFail(problems)
   })
 })
@@ -940,32 +964,60 @@ test('PFL-07 除判决岗外所有岗位都看得见它（含 review）；且它
     if (yml === null) { push('SUT-SURFACE-MISSING', `读不到 ${YML}`); return caseFail(problems) }
     const blocks = rowBlocks(yml)
 
-    // ① 除了判决那一行，任何一行都不许 deny 它
-    // 🔴 2026-10-19（0.2.1）：否定项从 `toolFilter.deny` 搬到行上方的 `# @member-deny` 注释 ——
-    //    旧写法（只读 YAML 的 deny 列表）在 0.2.1 上**对每一行都返回 null**，于是这条会**静默变空**
-    //    （"没读到"和"没有"长得一样）。所以改成读注释，并且**先自证提取器有读到东西**。
-    const ann = memberAnnotations(yml)
-    const leaking = []
-    for (const [id, mark] of ann) {
-      if (id === 'tool-job-memory-judge') continue
-      if (mark.deny.includes(TOOL_NAME)) leaking.push(id)
+    // ① 除了判决岗，任何一行都不许 deny 它
+    // 🔴 任务 A（2026-11-01）之后"否定项"不再是行上方的 `# @member-deny` 注释（那句已退休），
+    //    而是 `ROLE_TABLE` 里判决岗那一条的 `deny: ['proposal']`。所以这一格拆成两条腿：
+    //    · 组合里**一句** `# @member-deny` 都不该再读到（多写 = 又回到"两处载体"）；
+    //    · `ROLE_TABLE` 里 deny 非空的角色**恰为** `memory-judge`（多一个 = 那个岗位提不了候选）。
+    //    "读到 0 条"必须先证明提取器没哑：阳性对照样本 = 升级前基线块（9 persona + 1 deny）。
+    const retired = annotationLeaks(yml)
+    rec.readings.retired_annotations_left = retired
+    if (retired.length > 0) {
+      push('DENY-LEAK', `组合里还有 ${retired.length} 行带着退休的 \`# @member-deny\` / \`# @member-persona\`：`
+        + `${JSON.stringify(retired.map((a) => ({ row: a.row_id, deny: a.deny })))}（只有判决岗该被挡，而它的 deny 现在住在 ROLE_TABLE）`)
     }
-    rec.readings.deny_leak = leaking
-    rec.readings.annotated_rows = ann.size
-    if (leaking.length > 0) push('DENY-LEAK', `这些行 deny 了 ${TOOL_NAME}，它们就看不见工具了：${leaking.join(', ')}（只有判决岗该被挡）`)
-
-    // ② review 是唯一受限岗位 —— 这一格必须显式读出来（**先证明读到了那一行**，否则下面那条是空话）
-    const reviewMark = ann.get('team-review')
-    if (reviewMark === undefined || typeof reviewMark.persona !== 'string') {
-      push('ROW-MISSING', '读不到 `- id: team-review` 那一行的组员注释（`# @member-persona`）—— 这一格判不了，不许当绿')
-    } else {
-      rec.readings.review_deny = reviewMark.deny
-      if (reviewMark.deny.includes(TOOL_NAME)) {
-        push('REVIEW-BLOCKED', 'review 这一行 deny 了它 —— review 恰恰最需要这个工具（它没有命令行）')
+    {
+      const baseline = readPresetBaseline()
+      const leaderBase = baseline.ok
+        ? (baseline.value.preset_blocks ?? []).find((b) => b.preset_id === FROZEN.patchPresets.leaderPresetId)
+        : undefined
+      const sample = memberAnnotations(leaderBase === undefined ? '' : leaderBase.full_text)
+      const sampleDenies = [...sample.values()].filter((m) => m.deny.length > 0).length
+      rec.readings.annotation_detector_control = { denies: sampleDenies }
+      if (sampleDenies !== 1) {
+        push('PRECONDITION-CONTROL', `阳性对照失败：同一个提取器在升级前基线块上应读出 1 行 deny，实得 ${sampleDenies}`
+          + ' —— 上面那条"读到 0 条"就是空绿，不是通过')
       }
     }
-    // ②b 阳性对照：这份提取器**在活体组合上真的读到了行**（一行都没读到 ⇒ 上面两条全是空绿）
-    if (ann.size === 0) push('PRECONDITION-CONTROL', '提取器在活体组合上一行注释都没读到 —— 上面两条是空绿，不是通过')
+
+    const loaded = await loadInjector()
+    const table = loaded.mod !== null && Array.isArray(loaded.mod.ROLE_TABLE) ? loaded.mod.ROLE_TABLE : null
+    rec.readings.role_table_loaded = table !== null
+    if (table === null) {
+      push('ROW-MISSING', `现役 inject.js 拿不到 \`ROLE_TABLE\`（${loaded.error ?? '没有这个导出'}）—— 这一格判不了，不许当绿`)
+    } else {
+      const denied = table.filter((e) => Array.isArray(e?.deny) && e.deny.length > 0).map((e) => e.role)
+      rec.readings.role_table_denied_roles = denied
+      if (JSON.stringify(denied) !== JSON.stringify(['memory-judge'])) {
+        push('DENY-LEAK', `\`ROLE_TABLE\` 里有非空 deny 的角色应恰为 ["memory-judge"]，实得 ${JSON.stringify(denied)}`)
+      }
+      // ② review 是唯一受限岗位（officeBound）—— 它没有命令行，提候选是它**最需要**的那条路。
+      //    旧判据读它的 `# @member-persona`（证明"这一行读得到"）；现在读它的 `ROLE_TABLE[].tools`：
+      //    那一格里必须有 `proposal_file`，否则"看得见"是空话（工具集里没有 = 又有一个人提不了候选）。
+      const review = table.find((e) => e?.role === 'review')
+      rec.readings.review_tools = review === undefined ? null : review.tools
+      if (review === undefined) {
+        push('ROW-MISSING', '`ROLE_TABLE` 里没有 role=review 那一条 —— review 那一格判不了，不许当绿')
+      } else if (!Array.isArray(review.tools) || !review.tools.includes(TOOL_NAME)) {
+        push('REVIEW-BLOCKED', `review 的 \`ROLE_TABLE[].tools\` 里没有 ${TOOL_NAME}（实得 ${JSON.stringify(review.tools)}）—— review 恰恰最需要这个工具（它没有命令行）`)
+      }
+      // ②b 反向对照：判决岗的工具列表里**也有**它（注册面），被拒的是**调用**（`deny`），不是"列表里没有"
+      const judge = table.find((e) => e?.role === 'memory-judge')
+      rec.readings.judge_tools_has_tool = judge === undefined ? null : (Array.isArray(judge.tools) && judge.tools.includes(TOOL_NAME))
+      if (judge !== undefined && rec.readings.judge_tools_has_tool !== true) {
+        push('JUDGE-NOT-REGISTERED', `判决岗的 \`ROLE_TABLE[].tools\` 里没有 ${TOOL_NAME} —— 任务 A 的口径是"在列表里、调用被拒"；列表里没有 = 又回到"看不见"`)
+      }
+    }
 
     // ③ 它必须真的注册上了（两条落法之一；都没有 ⇒ 红）
     const injectSrc = readText(INJECT) ?? ''

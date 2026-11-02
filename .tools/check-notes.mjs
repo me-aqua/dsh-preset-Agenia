@@ -138,25 +138,31 @@ const JOB_ROWS = [
 const JOB_ROLES = JOB_ROWS.map((j) => j.role)
 
 /**
- * 每条作业行**额外** deny 的期望集（0.2.1 起：基线 `workflow`/`ralph` 不再是 deny ——
- * 那两行本来就住在 delegation 组里，而组员预设整个组都不搬过去 ⇒ **结构性没有**）。
- *
- * 额外：**判决岗还必须没有 `proposal_file`** —— 老板 2026-10-17 定：「判决应该不能提候选」。
- *   ⇒ 它判的是别人提的案子，自己再提一个就成了既当运动员又当裁判。
- *   0.2.1 的落法是 `# @member-deny proposal_file` ⇒ 生成器给那一份注入器写 `proposalFile: false`。
- *
- * ⚠️ 为什么做成"按行推导"而不是写死一句：
- *   `mig-test-whitelist-vs-blacklist-01` —— **加一个合法的项，它会不会红？**
- *   写死那一串时，判决岗加上额外项（合法且有据）**也会红** ⇒ 那是一条 change-detector，不是安全边界。
- *   现在这一条同时钉住两件事：**该有的必须有**（少了红）、**不该有的不许有**（多了红）。
+ * 预设 id（`inject.js` 的 `LEADER_PRESET_ID` / `MEMBER_PRESET_ID` 同值）：
+ *   · 组长一份 = `agenia`（菜单里的「Agenia 模式」）；
+ *   · **通用组员一份 = `agenia-member`** —— 九条委派行全指它（2026-11-01 并员）。
  */
-const JOB_DENY_EXTRA = Object.freeze({ 'tool-job-memory-judge': ['proposal_file'] })
-const expectedJobDeny = (rowId) => [...(JOB_DENY_EXTRA[rowId] ?? [])].sort().join(',')
+const LEADER_PRESET_ID = 'agenia'
+const MEMBER_PRESET_ID = 'agenia-member'
+
+/**
+ * 四条作业行的结构判据（0.2.1 + 2026-11-01 并员之后）。
+ *
+ * 🔴 **判决岗的 `proposal_file` deny 不在这里了**：它搬进了 `inject.js` 的 `ROLE_TABLE`
+ *    （判决岗那一条的 `deny: ['proposal']`，门禁 `proposalVerdict()` 在**调用时**拒）。
+ *    ⇒ 这里判的是"九行**同指一份**通用组员预设"，而 deny 的唯一作者由下面 `preset` 族里
+ *    那两条（「判决岗的提案 deny 只有一处作者」+「冻结接缝五个名字都在 inject.js 里」）盯（读 `inject.js`）。
+ * ⚠️ 为什么做成"按行推导"而不是写死一句：加一条委派行时，它自动被这条判据覆盖。
+ */
+const expectedAgentPreset = () => MEMBER_PRESET_ID
 
 /**
  * 从**原文**里读组员注释：`# @member-persona` 与 `# @member-deny`。
- * `effectiveYml` 把注释剔掉了，所以这两样只能从 raw 读 —— 它们是 0.2.1 迁移后
- * "人格 / 工具否定项"的**唯一来源**（生成器按它们建组员预设）。
+ * `effectiveYml` 把注释剔掉了，所以这两样只能从 raw 读。
+ *
+ * 🔴 2026-11-01（并员）：这两种注释**已退休** —— 人格 / deny 的唯一作者是 `inject.js` 的
+ *    `ROLE_TABLE`。这个函数现在只剩一个用途：**数残留**（`# @member-persona` 必须 0 处，
+ *    判决岗那一行也不许再有 `# @member-deny proposal_file`）。
  * @returns {Map<string, { persona?: string, deny: string[] }>}
  */
 function memberAnnotations(rawText) {
@@ -383,18 +389,15 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
         ? `声明 ${declared.length} 项，都在（实测多出 ${onlyAge.length} 项）`
         : `声明了却没多出来：${declaredMissing.join(', ')} —— 那一行被抄丢了，或者缩进 / 方言变了`)
 
-    // ── ④ 四条作业行（`tool-job-*`）的结构：0.2.1 起靠 `agentPreset` 指向组员预设 ──────────
+    // ── ④ 四条作业行（`tool-job-*`）的结构：`agentPreset` 指向**那一份**通用组员预设 ──────
     // 判据**按目标自身推导**：每一条 `tool-job-<角色>` 行都必须
-    //   · 工具名 = `job_<角色>`（`-` 换 `_`）· `agentPreset: agenia-job-<角色>`
-    //     （人格与工具集住在那一份组员预设里；`persona` / `toolFilter` / `backgroundMode` 都是旧键，
-    //      写了会让 `tool-subagent` 直接报迁移错 ⇒ 整份预设 broken）
+    //   · 工具名 = `job_<角色>`（`-` 换 `_`）
+    //   · `agentPreset: agenia-member` —— 与另外五条委派行**同一份**通用组员预设
+    //     （人格与工具集住在 `inject.js` 的 `ROLE_TABLE` 里，按 `toolName` 查；
+    //      `persona` / `toolFilter` / `backgroundMode` 都是旧键，写了会让整份预设 broken）
     //   · `maxDepth: 1`（作业自己不许再招人）
-    //   · `# @member-deny` = **这一行自己的额外否定项**（基线 `workflow`/`ralph` 是结构性的：
-    //     组员预设不搬 delegation 组；目前只有判决岗多一个 `proposal_file` —— 老板 2026-10-17 定）
-    //   · 开着 · 不写 `enableRunInBackground`（0.2.1 的 tool-subagent schema 里没有这个键 ——
-    //     写了是"不认识的键"，**不是**"把参数拿掉"；调用侧那个参数平台也已删 —— 拍板 I1）
-    // ⚠️ 活体现在**一条都没有**（装前）⇒ 这一条是**空集**；装完 4 条逐条判。
-    //    读数里必须写明"现在是空的" —— 空集不许读成"验过了"（公共记忆 §三）。
+    //   · 开着 · 不写 `enableRunInBackground`（0.2.1 的 tool-subagent schema 里没有这个键）
+    //   · **没有** `# @member-deny`（那一族的注释已退役；判决岗的 deny 在角色表里）
     const annotations = memberAnnotations(ageniaText)
     const jobBlocks = ymlBlocks.filter((b) => b.id.startsWith('tool-job-'))
     const jobProblems = []
@@ -412,21 +415,25 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
         jobProblems.push(`${b.id}：toolName 实得 ${JSON.stringify(toolName)}，蓝图写的是 ${blueprint.toolName}`)
       }
       if (!JOB_ROLES.includes(role)) jobProblems.push(`${b.id}：角色 ${role} 不在编制里`)
-      if (presetRef !== `agenia-job-${role}`) jobProblems.push(`${b.id}：agentPreset 实得 ${JSON.stringify(presetRef)}，应为 agenia-job-${role}`)
+      if (presetRef !== expectedAgentPreset()) {
+        jobProblems.push(`${b.id}：agentPreset 实得 ${JSON.stringify(presetRef)}，应为 ${expectedAgentPreset()}`
+          + '（九条委派行共用一份通用组员预设；各指各的 = 还是九份）')
+      }
       if (String(depth) !== '1') jobProblems.push(`${b.id}：maxDepth 实得 ${JSON.stringify(depth)}，应为 1`)
-      if (deny.join(',') !== expectedJobDeny(b.id)) {
-        jobProblems.push(`${b.id}：@member-deny 实得 [${deny.join(', ')}]，应恰为 [${expectedJobDeny(b.id).split(',').filter(Boolean).join(', ')}]`)
+      if (deny.length > 0) {
+        jobProblems.push(`${b.id}：还留着 \`# @member-deny ${deny.join(' ')}\` —— 那一族注释已退役，`
+          + '判决岗的提案 deny 住在 `inject.js` 的 `ROLE_TABLE` 里（调用时拒）')
       }
       if (/^\s*(persona|toolFilter|backgroundMode)\s*:/m.test(body)) {
         jobProblems.push(`${b.id}：还留着 0.2.1 已删的旧键（persona / toolFilter / backgroundMode）—— 那会让整份预设 broken`)
       }
       if (/^\s*enableRunInBackground\s*:/m.test(body)) {
         jobProblems.push(`${b.id}：写了 enableRunInBackground —— 0.2.1 的 tool-subagent schema 里没有这个键`
-          + `（写了是"不认识的键"），调用侧那个 run_in_background 参数平台也已删（拍板 I1）`)
+          + '（写了是"不认识的键"），调用侧那个 run_in_background 参数平台也已删（拍板 I1）')
       }
       if (/^\s*disabled:\s*true\s*$/m.test(body)) jobProblems.push(`${b.id}：作业行是关着的 —— 那四条都开着`)
     }
-    yes('composition', '四条作业行（tool-job-*）的结构 = agentPreset + maxDepth:1 + @member-deny（判决岗另加 proposal_file；workflow/ralph 结构性不搬）（装前是空集）',
+    yes('composition', '四条作业行（tool-job-*）的结构 = agentPreset: agenia-member + maxDepth:1 + 没有 @member-deny（装前是空集）',
       jobProblems.length === 0,
       jobProblems.length > 0
         ? jobProblems.join('；')
@@ -633,7 +640,12 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   yes('preset', '五条固定行的 toolName 都是 team_<岗位名>（进度板按它认人；作业走 job_*，不走 team_*）',
     teamTools.join(',') === wantTools.join(','),
     `${teamTools.join(', ') || '（无）'}  ↔  ${wantTools.join(', ')}`)
-  yes('preset', '外聘挂在 tool-subagent 那一行的 persona 标记上', /【组员:hire】/.test(yml))
+  // 外聘的身份：**不是**那枚标记，是 `toolName: subagent` ⇒ 角色 `hire`
+  // （`inject.js` 的 `ROLE_TABLE` 第 5 条）。`【组员】` 标记 2026-11-01 起退役：
+  // 注入器不读它，角色只由工具名决定（定形 §2.2）。
+  yes('preset', '外聘的身份 = `toolName: subagent` ⇒ 角色 hire（角色表那一条），且这一行也指同一份通用组员预设',
+    /- id: tool-subagent\n[\s\S]*?toolName: subagent\n[\s\S]*?agentPreset:\s*\S+/.test(yml)
+      && (/- id: tool-subagent\n[\s\S]*?agentPreset:\s*(\S+)/.exec(yml)?.[1] ?? '') === MEMBER_PRESET_ID)
   // ── 2026-09-24 加：两条路的分工，以及裸 subagent 那个洞 ──────────────────
   // 来历：老板问"team_* 还有必要吗"。查下来——五条行都开着、工具单里也都在，
   // 但 2026-09-24 那天组长 **42 次起人全走裸 subagent**（9/23 用 team_* 的 8 个子会话
@@ -650,36 +662,122 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   yes('preset', '裸 subagent（外聘通道）那一行有 maxDepth: 1',
     /maxDepth:\s*1(\s|$)/m.test(hireRow),
     '不写就是默认 3 —— 用完就散的人还能再招人')
-  // 四个在岗固定岗位行的两个键是**刻意不是默认值**的（老板 2026-09-20 拍板）：不许再招人、
-  // 而且要指到自己的组员预设上。
+  // 四个在岗固定岗位行要指到**那一份**通用组员预设上（2026-11-01 并员）。
   // 🔴 2026-10-19（0.2.1）：`backgroundMode: continuable` 已删（委派一律异步）；
-  //    "组员拿什么人格 / 工具集"改由 `agentPreset` 指向的那份组员预设决定。
-  //    为什么仍值得钉：把 `agentPreset` 抄丢 ⇒ 组员会**继承组长那一代**（拿到组长的人格和派工权）。
-  const teamRows = effective.split(/- id: team-/).slice(1)
-  const teamPresetRows = teamRows.filter((r) => /agentPreset:\s*agenia-team-[a-z0-9-]+\s*$/m.test(r))
-  const depthOne = teamRows.filter((r) => /maxDepth:\s*1(\s|$)/m.test(r)).length
+  //    "组员拿什么人格 / 工具集"改由 `agentPreset` 指向的那份预设决定，
+  //    而并员之后那份预设只有**一份**，人格 / 工具集住在 `inject.js` 的 `ROLE_TABLE` 里。
+  //    为什么仍值得钉：把 `agentPreset` 抄丢 ⇒ 组员会**继承组长那一代**（拿到组长的人格和派工权）；
+  //    写回 `agenia-team-<角色>` ⇒ 指到一份已经不存在的预设（那一行 never started）。
+  const presetYmlBlocks = rowBlocks(effective)
+  const teamRowBlocks = presetYmlBlocks.filter((b) => b.id.startsWith('team-'))
+  const teamPresetRows = teamRowBlocks.filter((b) => blockField(b, 'agentPreset') === MEMBER_PRESET_ID)
+  const depthOne = teamRowBlocks.filter((b) => String(blockField(b, 'maxDepth')) === '1').length
   // ⚠️ 分母含**已撤岗但保留的那一行**（关掉不删 ⇒ 它的键也在）⇒ agentPreset 只算在岗那四个。
-  yes('preset', '四个在岗 team-* 行都用 agentPreset 指向自己的组员预设（0.2.1：人格与工具集住在那一份里）',
+  yes('preset', `四个在岗 team-* 行都用 agentPreset 指向同一份通用组员预设（${MEMBER_PRESET_ID}）`,
     teamPresetRows.length === FIXED_ROLES.length,
-    `${teamPresetRows.length}/${FIXED_ROLES.length} 行（team-* 共 ${teamRows.length} 行，含已撤岗那一行）`)
+    `${teamPresetRows.length}/${FIXED_ROLES.length} 行（team-* 共 ${teamRowBlocks.length} 行，含已撤岗那一行）`)
   yes('preset', 'team-* 行都是 maxDepth: 1（组员不许再招人）',
-    teamRows.length === FIXED_ROLES.length + RETIRED_ROLES.length && depthOne === teamRows.length,
-    `${depthOne}/${teamRows.length} 行`)
-  // 每个固定岗位都要带自己的标记 —— 少了它，那个人会以为自己是组长。
-  // 🔴 2026-10-19（0.2.1）：标记从 `persona:` 配置值搬到了 **`# @member-persona` 注释**里
-  //    （那是生成组员预设的输入）；`effective` 剔掉了注释，所以这里必须读 **raw `yml`**。
-  // ⚠️ 2026-10-15（I15）：已撤岗那一行的 persona 标记**仍然在** yml 里（关掉不删），
-  //    所以期望 = team/ 里的 9 份说明书 + 撤岗的那 1 个 = 10 枚。
-  // 🔴 2026-10-19（0.2.1）：只认**真来源** —— `# @member-persona` 注释（在岗九行）
-  //    与还留在旧 `persona:` 配置里的那一行（撤岗的 team-retro）。
-  //    ⚠️ 别退回"扫全文所有【组员:…】"：说明性注释里也有这个词（``【组员:xxx】``、
-  //    "【组员:retro】不再是任何人的标记"），那样会多算两枚、假红。
+    teamRowBlocks.length === FIXED_ROLES.length + RETIRED_ROLES.length && depthOne === teamRowBlocks.length,
+    `${depthOne}/${teamRowBlocks.length} 行`)
+  // 🔴 2026-11-01（并员）：**`【组员:xx】` 标记退役**，替换它的判据是"身份只由 toolName 决定"：
+  //   · yml 里**不再有**按角色的人格标记（`# @member-persona` 已删）—— 人格住在 `ROLE_TABLE`；
+  //   · 剩下那一枚只可能在**已撤岗**那一行的旧 `persona:` 配置里（关掉不删，框架不读它）；
+  //   · 九个角色 ↔ 九个 toolName 的闭集由 `preset` 族下面那两条钉
+  //     （「判决岗的 deny 只有一处作者」+「冻结接缝五个名字都在 inject.js 里」，读 `inject.js`）——
+  //     **这里没有 `identity` 族**（R-12：注释里点一个不存在的族，下一个人会去找一条永远不会响的判据）。
+  //   ⚠️ 别退回"扫全文所有【组员:…】"：说明性注释里也有这个词，那样会多算、假红。
   const marks = [...yml.matchAll(/(?:@member-persona\s+|persona:\s*['"]?[^'"\n]*)【组员:([a-z0-9-]+)】/g)]
     .map((m) => m[1]).sort()
-  const wantMarks = [...roles, ...RETIRED_ROLES].sort()
-  yes('preset', '每个岗位文件都有对应的【组员:xx】标记',
-    marks.length === wantMarks.length && marks.every((m, i) => m === wantMarks[i]),
-    marks.join(', ') + '  ↔  ' + wantMarks.join(', '))
+  const memberPersonaAnnotations = (yml.match(/^\s*#\s*@member-persona\s+/gm) ?? []).length
+  yes('preset', '在岗行不再有【组员:xx】人格标记（身份只由 toolName 决定；剩下那一枚是撤岗行的旧配置）',
+    memberPersonaAnnotations === 0 && marks.join(',') === [...RETIRED_ROLES].sort().join(','),
+    `@member-persona 注释 ${memberPersonaAnnotations} 处 · 标记 ${marks.join(', ') || '（无）'}`
+      + ` ↔ 期望只剩撤岗行的 ${RETIRED_ROLES.join(', ')}`)
+
+  // ── 🔴 2026-11-01（并员）：**页面 = 恰好两条预设** ─────────────────────────
+  // 组长 `agenia` + 通用组员 `agenia-member`；九条委派行同指后者。
+  // 这一族替掉的两条旧口径：`agenia-team-*` / `agenia-job-*` / `agenia-hire` 逐行各一份，
+  // 以及 `# @member-deny`（判决岗靠"工具集里没有它"表达）。
+  const patchText = read(join(PRESET, 'cordis.patch.yml'))
+  const effectivePatch = patchText.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')
+  const presetEntryIds = [...patchText.matchAll(/^ {4}- id: preset-(\S+)/gm)].map((m) => m[1])
+  const wantentryIds = [LEADER_PRESET_ID, MEMBER_PRESET_ID].sort()
+  yes('preset', `交付补丁里恰好两条预设入口（${LEADER_PRESET_ID} + ${MEMBER_PRESET_ID}），没有第三条`,
+    presetEntryIds.length === 2 && presetEntryIds.slice().sort().join(',') === wantentryIds.join(','),
+    `${presetEntryIds.length} 条：${presetEntryIds.join(', ') || '（无）'} ↔ 期望 ${wantentryIds.join(', ')}`)
+  // 旧九份 per-role 预设**全部删除**（升级日）：生效行里不许再出现它们的 id。
+  const oldPresetIds = [...effectivePatch.matchAll(/agenia-(?:team|job)-[a-z0-9-]+|agenia-hire/g)].map((m) => m[0])
+  yes('preset', '旧九份 per-role 预设的 id 一个都不在补丁里（生效行）',
+    oldPresetIds.length === 0,
+    oldPresetIds.length === 0 ? '干净' : `还在：${[...new Set(oldPresetIds)].join(', ')}`)
+  // ── 🔴 2026-11-01 第 4 关返修：**每一份预设各自声明 `defaultRole`**（冗余校验值，不是身份来源）
+  // 来历：组长那一份原来没声明 ⇒ 每个组长会话都报一次「defaultRole 缺」，一条永远关不掉的报警
+  // 等于没有报警（定形 §6.1「组长不被锁」要求构建 + 体检两处出声）。
+  // 三档全红：**缺**（读不到值）/ **非法**（不在 leader|member 里）/ **与档不符**（组长那份写 member 之类）。
+  // 判据落在**产物**（补丁里那两块）与**源**（组合本体，生成器的输入）两侧 —— 只改生成器不改源 ⇒ 红。
+  const presetBlockOf = (id) => {
+    const hit = new RegExp(`^ {4}- id: preset-${id}(?:\\s*#.*)?$`, 'm').exec(patchText)
+    if (hit === null) return null
+    const rest = patchText.slice(hit.index)
+    const next = /^ {4}- id: preset-/m.exec(rest.slice(hit[0].length))
+    return next === null ? rest : rest.slice(0, hit[0].length + next.index)
+  }
+  /** 一块预设里注入器声明的档（`defaultRole: <值>`；读不到 ⇒ undefined）。 */
+  const declaredTierOf = (block) => {
+    if (block === null) return undefined
+    const hit = /^\s*defaultRole:\s*(\S+)\s*$/m.exec(block)
+    return hit === null ? undefined : hit[1]
+  }
+  const sourceTier = declaredTierOf(yml.slice(yml.indexOf('id: persona-injector')))
+  yes('preset', '组合本体（生成器的输入）声明 `defaultRole: leader`（缺 / 非法 / 与档不符 ⇒ 红）',
+    sourceTier === 'leader',
+    sourceTier === undefined
+      ? '读不到 `defaultRole` —— 组长预设会一直报"缺"'
+      : `实得 ${JSON.stringify(sourceTier)}（应恰为 leader）`)
+  const leaderTier = declaredTierOf(presetBlockOf(LEADER_PRESET_ID))
+  yes('preset', `组长预设（补丁里的 ${LEADER_PRESET_ID}）声明 defaultRole: leader（缺 / 非法 / 与档不符 ⇒ 红）`,
+    leaderTier === 'leader',
+    leaderTier === undefined ? '读不到 defaultRole（缺）' : `实得 ${JSON.stringify(leaderTier)}`)
+  const memberTier = declaredTierOf(presetBlockOf(MEMBER_PRESET_ID))
+  yes('preset', `通用组员预设（补丁里的 ${MEMBER_PRESET_ID}）声明 defaultRole: member（缺 / 非法 / 与档不符 ⇒ 红）`,
+    memberTier === 'member',
+    memberTier === undefined ? '读不到 defaultRole（缺）' : `实得 ${JSON.stringify(memberTier)}`)
+  // 九条委派行**同值**（读组合的生效行；各指各的 = 还是九份）。
+  const delegationRefs = [...effective.matchAll(/agentPreset:\s*(\S+)/g)].map((m) => m[1])
+  yes('preset', `九条委派行的 agentPreset 同值，且就是 ${MEMBER_PRESET_ID}`,
+    delegationRefs.length === 9 && delegationRefs.every((id) => id === MEMBER_PRESET_ID),
+    `${delegationRefs.length} 处：${[...new Set(delegationRefs)].join(', ') || '（无）'}`)
+  // 通用组员那一份**不声明** `model` / `tools`（任意深度）—— 那两个键只住在 `ROLE_TABLE` 里。
+  // 判据落在**产物**（补丁里那一份的生效行），不是生成器自己说的话。
+  const memberBlockStart = patchText.indexOf(`- id: preset-${MEMBER_PRESET_ID}`)
+  const memberBlock = memberBlockStart < 0 ? '' : patchText.slice(memberBlockStart).split(/^ {4}- id: preset-/m)[0]
+  const memberEffective = memberBlock.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')
+  const forbiddenMemberKeys = [...memberEffective.matchAll(/^\s*(model|tools):\s*\S/gm)].map((m) => m[1])
+  yes('preset', `通用组员预设不声明 model / tools（角色表是唯一作者），实得 ${forbiddenMemberKeys.length} 处`,
+    memberBlock !== '' && forbiddenMemberKeys.length === 0,
+    memberBlock === '' ? `补丁里找不到 preset-${MEMBER_PRESET_ID} 那一块` : (forbiddenMemberKeys.join(', ') || '干净'))
+  // 判决岗「调用时被拒」的**单一作者**在 `inject.js` 的 `ROLE_TABLE` 里，且旧的两条"不注册"表达已消失。
+  const identitySrc = read(join(PRESET, 'inject.js'))
+  const roleTableStart = identitySrc.indexOf('export const ROLE_TABLE')
+  const roleTableEnd = identitySrc.indexOf('const ROLE_ENTRY_BY_TOOL')
+  const roleTableSrc = roleTableStart < 0 || roleTableEnd < 0 ? '' : identitySrc.slice(roleTableStart, roleTableEnd)
+  const denyWritten = (identitySrc.match(/deny:\s*Object\.freeze\(\['proposal'\]\)/g) ?? []).length
+  const frozenSeams = ['export const ROLE_TABLE', 'export const NARROW_PERMISSION', 'export function identityVerdict',
+    'export function proposalVerdict', 'export function isLegacySession'].filter((s) => !identitySrc.includes(s))
+  yes('preset', '冻结接缝五个名字都在 inject.js 里（ROLE_TABLE / NARROW_PERMISSION / identityVerdict / proposalVerdict / isLegacySession）',
+    frozenSeams.length === 0,
+    frozenSeams.length === 0 ? '五个都在' : `缺：${frozenSeams.join(' / ')}`)
+  yes('preset', '判决岗的提案 deny 只有一处作者（ROLE_TABLE 那一条的 `deny: [proposal]`），别的角色都没有',
+    denyWritten === 1 && /toolName: 'job_memory_judge'/.test(roleTableSrc),
+    `deny: [proposal] 出现 ${denyWritten} 次（应为 1）· 角色表 ${(roleTableSrc.match(/toolName: '/g) ?? []).length} 条`)
+  // 旧的两条「工具集里根本没有它」的表达：`# @member-deny`（注释）与 `proposalFile: false`（配置）。
+  // ⚠️ 只扫**生效行**（yml / 补丁剔注释后的那些）：注释里解释"这个键已退休"不算还在用。
+  const oldDenyInYml = /@member-deny|^\s*proposalFile:\s*\S/m.test(effective + '\n' + effectivePatch)
+  const oldDenyInCode = /config\.proposalFile/.test(identitySrc)
+  yes('preset', '旧的"工具集里没有它"两种表达都不在了（@member-deny 注释 / proposalFile 配置分支）',
+    !oldDenyInYml && !oldDenyInCode,
+    oldDenyInYml ? 'yml / 补丁的有效行里还留着 @member-deny 或 proposalFile'
+      : (oldDenyInCode ? 'inject.js 里还留着 config.proposalFile 那条分支' : '干净'))
 
   // 旧结构的残留 —— 换预设时最容易留下半截。
   for (const gone of ['process.md', 'DESIGN.md', 'codebase-practices.md', 'persona-plugin']) {
@@ -1319,6 +1417,13 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    ⚠️ 和 `brain` 那次一模一样，它也是**被"补上一处缺口"当场带出来的**：
   //    在这天之前 `local-*` 一次都没跑过（`audit.jsonl` 里 `local-*` 零条）⇒ `.team/state/local/`
   //    从来没被建出来过 ⇒ `state` 这一格一直是绿的。补登记跑通之后，它当场红了。
+  // 🔴 2026-11-01 加 `route` / `bug` / `tickets`（任务 C1 · 契约 `.team/test/CONTRACT-C1.md` §12 第 5 条 +
+  //    组长 2026-11-01 的裁定 ②）：三个都是**账的落点，不是岗位** ——
+  //    · `route/` = 路线账本（`current.json` + `audit.jsonl` + `evidence/`）；
+  //    · `bug/`   = bug 台账（B 的那一本，另一本账）；
+  //    · `tickets/` = legacy 票店（C1a 的**输入**；迁完清空不删，所以它必须留着）。
+  //    ⚠️ 这一条是"补上一处缺口当场带出来的第二处"的第三次同形：这三个目录此前从没被真建出来过
+  //    （C1 之前路线账本只出现在测试工作区里），`tickets/` 是组长 2026-11-01 写 legacy 票店那一刻才出现的。
   const housework = ['_archive', 'brain', 'state', 'route', 'bug', 'tickets', ...RETIRED_ROLES]
   const ghosts = roleDirs.filter((r) => !known.includes(r) && !housework.includes(r))
   add('office', '.team/ 下有没有预设之外的岗位目录（旧岗位留下的）',

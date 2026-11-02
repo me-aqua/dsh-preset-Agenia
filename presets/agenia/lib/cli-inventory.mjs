@@ -66,6 +66,14 @@ const ROUTE_OPS = Object.freeze([
   { op: 'stage-graph-set', writes: true },
   { op: 'stage-enter', writes: true },
   { op: 'task-set', writes: true },
+  // ── 任务 C1 · 路线账本（2026-11-01）──────────────────────────────────────
+  // 三个新 op 落在**同一支 CLI**（契约 `.team/test/CONTRACT-C1.md` §9.1 的裁定：不新造 CLI）。
+  // 写面只有 `.team/route/`（`bootstrap` 另有一条窄例外：observation 迁移写 bug 台账）⇒ `writes: true`。
+  // 🔴 **同批**：测试侧 `support/env.mjs::FROZEN.ops['agenia-route.mjs']` 必须同批补这三条
+  //    （少一处 ⇒ `DR-01` 的 `CLI-INVENTORY` 常驻红；本批实现侧先落，测试侧随后补）。
+  { op: 'bootstrap', writes: true },
+  { op: 'route-mark', writes: true },
+  { op: 'headline-set', writes: true },
   { op: 'ticket-open', writes: true },
   { op: 'ticket-update', writes: true },
   { op: 'ticket-close', writes: true },
@@ -73,6 +81,23 @@ const ROUTE_OPS = Object.freeze([
   { op: 'read', writes: false },
   { op: 'verify', writes: false },
   { op: 'summarize', writes: false },
+  // ── 任务 B · bug 系统（2026-11-01）─────────────────────────────────────
+  // 九个 bug op 落在**同一支 CLI**（契约 `.team/test/CONTRACT-B.md` §9.1 的裁定：不新造
+  // `agenia-bug.mjs` —— 新 CLI 会连带 `install.mjs` / `release-scan` / `binFiles` /
+  // `surfaceInventory` 四张清单同批动）。它们写的是**另一本账**（`.team/bug/ledger.json`
+  // 与 `.team/routing.jsonl`，两本账不互串）—— 但"改的是权威状态"这一条不变 ⇒ `writes: true`；
+  // `bug-read` 是唯一只读的一条（零写入、不建目录），所以它 `writes: false`。
+  // 🔴 **同批**：测试侧 `support/env.mjs::FROZEN.ops['agenia-route.mjs']` 必须同批补这九条
+  //    （少一处 ⇒ `DR-01` 的 `CLI-INVENTORY` 常驻红）。`writes` 的取值以本表为准。
+  { op: 'bug-register', writes: true },
+  { op: 'bug-assess', writes: true },
+  { op: 'bug-dispose', writes: true },
+  { op: 'bug-batch-freeze', writes: true },
+  { op: 'bug-samples-register', writes: true },
+  { op: 'bug-archive', writes: true },
+  { op: 'bug-task-set', writes: true },
+  { op: 'bug-route', writes: true },
+  { op: 'bug-read', writes: false },
   { op: 'help', writes: false },
 ])
 

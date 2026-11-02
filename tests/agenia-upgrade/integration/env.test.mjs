@@ -17,6 +17,7 @@ import { before, describe, test } from 'node:test'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { ENV, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, stagingReadings } from '../support/evidence.mjs'
 import { canonical, ensureMarkedDir, driveOf, isUnc, runsParentOf, REAL_BRAIN_ROOT, TEST_ROOT_MARKER } from '../support/root-guard.mjs'
@@ -26,7 +27,15 @@ before(() => {
   preflight()
 })
 
-const GUARD_URL = 'file:///E:/Harness/tests/agenia-upgrade/support/root-guard.mjs'
+/**
+ * 守卫取**本工作区的**那一份（子进程 import 它、跑 `enforceOrExit()`）。
+ *
+ * 🔴 2026-11-02：原来是写死的 `file:///E:/Harness/tests/…`。在 worktree 里跑时，子进程量的是
+ *    **活树**那份守卫（按活树的根判白名单）⇒ 合法环境的正例必然 `E_ROOT_OUTSIDE`：
+ *    "正例失败"看起来像被测对象坏了，其实是量具指到了另一棵树。⇒ 按本文件的位置推。
+ *    判据一个字没改（还是"合法环境必须放行、非法环境必须拒"）。
+ */
+const GUARD_URL = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'support', 'root-guard.mjs')).href
 
 /** 起一个**只跑守卫**的子进程（`enforceOrExit()`），把环境变量按场景覆盖。 */
 function runGuardWith(envOverrides, { sink } = {}) {

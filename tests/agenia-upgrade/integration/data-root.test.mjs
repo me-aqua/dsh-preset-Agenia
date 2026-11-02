@@ -14,6 +14,10 @@
  *     ⚠️ 判据**不是**"它必须不存在"。旧断言 `existsSync(REAL_BRAIN_ROOT) ⇒ SECURITY-VIOLATION`
  *     的前提（"本轮真实根必须不存在"）**2026-10-15 已作废**：真实库那天起就是**真数据**。
  *     留着那条会变成"每天都红、而红的原因与有没有人写它无关"的假红。
+ *     ⚠️ **同一条口径在真实路线上第二次发生**（2026-11-01）：`DR-03` 原来还有一条
+ *     `existsSync(REAL_ROUTE_ROOT) ⇒ SECURITY-VIOLATION`，它的前提在组长 22:58 跑真 `bootstrap`
+ *     那一刻死亡（`.team/route/current.json` 成了真数据）⇒ 该条**已退役**，护着真实路线的判据只剩
+ *     「`DR-03` 期间前后同值」（本条 ④）。**不许把"它必须不存在"写回去。**
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════
  * 🔴🔴 **死命令 —— 想给这个文件加用例的人，先读完这一段再动手**
@@ -1116,12 +1120,17 @@ describe('integration · data-root (DR)', () => {
       }
 
       // ④ 真实路线前后不变
+      // 🔴 判据是「**前后同值**」，**不是**"它必须不存在"（与上面 ① 的脑根那条同一条口径）。
+      //    旧断言 `existsSync(REAL_ROUTE_ROOT) ⇒ SECURITY-VIOLATION` 的前提（"本轮真实路线必须不存在"）
+      //    **2026-11-01 22:58 已作废**：组长那天跑了真的 `bootstrap`，`.team/route/current.json`
+      //    就是**真数据**（7 张迁移票、`version:1`）。留着那条 = 每天都红，而红的原因与"有没有人写它"
+      //    无关 —— 假红比不红更坏（AGENTS.md §6；`data-root.test.mjs:14-16` 记的是同一类事故）。
+      //    ⇒ 退役（2026-11-01 第 4 关复审 `DR-03`），护着它的判据只剩下面这一条「前后同值」。
       const realRouteAfter = treeHash(REAL_ROUTE_ROOT)
       rec.readings.real_route = { before: realRouteBefore, after: realRouteAfter }
       if (realRouteBefore.exists !== realRouteAfter.exists || (realRouteBefore.exists && realRouteBefore.sha256 !== realRouteAfter.sha256)) {
         push('SECURITY-VIOLATION', `真实路线在 DR-03 期间被改动（${realRouteBefore.exists ? realRouteBefore.sha256 : '不存在'} → ${realRouteAfter.exists ? realRouteAfter.sha256 : '不存在'}）—— 立即停测`)
       }
-      if (existsSync(REAL_ROUTE_ROOT)) push('SECURITY-VIOLATION', `真实路线 ${REAL_ROUTE_ROOT} 竟然存在了 —— 本轮它必须是不存在的状态`)
 
       caseFail(problems)
     })

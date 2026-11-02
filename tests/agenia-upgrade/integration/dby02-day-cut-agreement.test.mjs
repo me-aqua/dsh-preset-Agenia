@@ -55,22 +55,24 @@
  *      （与 `route-updater` 的 `NOW-FILE-ABSENT` 同一条规矩：前置不成立要**出声**，不许静默跳过）。
  */
 import { before, describe, test } from 'node:test'
+import path from 'node:path'
 import { readFileSync } from 'node:fs'
 import { ENV, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, sha256File, stagingReadings } from '../support/evidence.mjs'
-import { stagingExists, stagingPath } from '../support/sut.mjs'
+import { loadLiveModule, stagingExists, stagingPath } from '../support/sut.mjs'
+import { pythonMirror } from '../support/card-surface.mjs'
 import {
   AGREEMENT_NOW, AGREEMENT_PREV, BAD_DAYS, DAY_ABOVE, DAY_NEXT, DAY_PREV, STALE_POINTER_AT, STALE_POINTER_DAY,
-  badDaySlug, badDayVerdict, cardsClassifierProblems, controlArm, legVerdict, makeRoots,
+  badDaySlug, badDayVerdict, cardsClassifierProblems, controlArm, instant, legVerdict, makeRoots,
   probeClaimUpdate, probeDailyCards, probeDailyStart, probeLocalClaim, probeReportRead, pythonBin,
-  readCurrentDayPointer, rulesControlArm, writeCurrentDayPointer,
+  readCurrentDayPointer, rulesControlArm, withClock, writeCurrentDayPointer,
 } from '../support/day-cut.mjs'
 
 before(() => {
   preflight()
 })
 
-const SUT_FILES = ['lib/route.mjs', 'lib/state.mjs', 'bin/agenia-brain.mjs', 'bin/agenia-local.mjs', '.tools/daily-cards.py']
+const SUT_FILES = ['lib/route.mjs', 'lib/state.mjs', 'lib/memory.mjs', 'bin/agenia-brain.mjs', 'bin/agenia-local.mjs', '.tools/daily-cards.py']
 
 function sutReadings() {
   const out = {}
@@ -185,6 +187,57 @@ describe('integration · day cut agreement (DBY) · F-158 四处入口同一把�
       const classifier = cardsClassifierProblems()
       rec.readings.cards_classifier = classifier.rows
       for (const p of classifier.problems) push(p.code, p.message)
+
+      // ── ⑤ 三份 4 小时切点副本：**03:59:59 / 04:00:00 两个时刻逐份同值**（`gate4-C2` F-11）──
+      /**
+       * 切点（`4`）在盘上有**三份载体**：
+       *   · `presets/agenia/lib/route.mjs::dayKeyOf`（权威；`DAY_CUT_HOURS = 4`）
+       *   · `presets/agenia/inject.js::identityDayKeyOf`（身份报警的 `<day>`）
+       *   · `.tools/daily-cards.py::default_day`（卡的缺省日）
+       * 三份漂一份，凌晨 0–4 点写下的报警会落进**另一天**的文件 ⇒ 卡上那两格读到"0 条"而绿
+       * （`cand-20261023-0275`：一个数有几份载体，改一处 = 没改）。
+       *
+       * 这一格判的是**同一时刻三份同值**，不是"某一处算得对"：03:59:59 必须落前一天、04:00:00 必须落当天 ——
+       * 两个方向都要，否则"三份都用同一个错的切点"也绿。
+       */
+      {
+        const liveRoute = await loadLiveModule(path.join('lib', 'route.mjs'), ['dayKeyOf', 'DAY_CUT_HOURS'])
+        const liveInject = await loadLiveModule('inject.js', ['identityDayKeyOf'])
+        const rows = []
+        const moments = [
+          ['2026-10-24T03:59:59+08:00', DAY_PREV],
+          ['2026-10-24T04:00:00+08:00', DAY_NEXT],
+        ]
+        for (const [iso, want] of moments) {
+          const routeDay = typeof liveRoute.mod?.dayKeyOf === 'function' ? liveRoute.mod.dayKeyOf(instant(iso)) : null
+          const injectDay = typeof liveInject.mod?.identityDayKeyOf === 'function' ? await liveInject.mod.identityDayKeyOf(Date.parse(iso)) : null
+          // python 那一份走**生成器自己的时钟**（`withClock` 摆的就是同一个 `AGENIA_NOW_FILE`）
+          const py = withClock(iso, () => pythonMirror('default-day'))
+          rows.push({ iso, want, route_mjs: routeDay, inject_js: injectDay, daily_cards_py: py.ok ? py.value : { error: py.error, ok: py.ok } })
+        }
+        rec.readings.three_cut_copies = {
+          files: { route_mjs: liveRoute.abs ?? null, inject_js: liveInject.abs ?? null, daily_cards_py: '.tools/daily-cards.py' },
+          missing: { route_mjs: liveRoute.missing, inject_js: liveInject.missing },
+          rows,
+        }
+        if (liveRoute.mod === null || liveInject.mod === null) {
+          push('DBY-CUT-SURFACE-MISSING',
+            `三份切点里有一份读不到（route.mjs: ${liveRoute.error ?? '缺面'}；inject.js: ${liveInject.error ?? '缺面'}）—— 这一格判不了`)
+        }
+        for (const row of rows) {
+          const got = {
+            route_mjs: row.route_mjs,
+            inject_js: row.inject_js,
+            daily_cards_py: typeof row.daily_cards_py === 'string' ? row.daily_cards_py : null,
+          }
+          for (const [name, value] of Object.entries(got)) {
+            if (value === row.want) continue
+            push('DBY-CUT-DISAGREE',
+              `切点三份副本不同值（${row.iso}）：\`${name}\` 给出 ${JSON.stringify(value)}，应当是 ${JSON.stringify(row.want)}`
+              + `（三份读数 ${JSON.stringify(row)}）—— 三份**必须同批移动**（` + '`gate4-C2` F-11）')
+          }
+        }
+      }
 
       rec.readings.boundary = {
         fresh_brain_per_leg: '每格一副**全新**脑根 ⇒ 没有 `current-day` 指针 ⇒ 量的是"时钟那一支"（指针那一支由 `DBY-06` 判）',

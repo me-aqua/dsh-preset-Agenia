@@ -14,18 +14,42 @@
  */
 import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-/** 仓库根 —— 本机固定值（同 `.git/hooks/post-commit` 里那只 node 的口径）。 */
-export const REPO_ROOT = 'E:\\Harness'
+/**
+ * 仓库根 —— **按本文件的位置推**（`<repo>/tests/agenia-upgrade/support/root-guard.mjs` ⇒ 上四级），
+ * 也认环境变量 `AGENIA_REPO_ROOT`（显式给了就用它，读数里 `ROOT_SOURCE` 会自报是哪一条）。
+ *
+ * 🔴 2026-11-02 改的（组长裁：worktree 也要能跑全量）：原来是硬编码的 `'E:\\Harness'`。
+ *    后果有两个，都不是"换个路径"这么轻：
+ *      · 在 `git worktree`（例如 `E:\Harness-upgrade`）里跑，**被测树**、**运行根白名单**、
+ *        `[尺子]`/`F57-TARGET` 那两行全部指向**另一棵树**（活树 = 旧 bundle）——
+ *        读数会以"逐字节相同"的样子撒谎（`mig-i16-staging-tree-01`）；
+ *      · 运行根只能落在活树的抽屉里 ⇒ 证据与工作区对不上（`cand-20261028-0461` 那一族）。
+ *    ⇒ 改成派生。**在 `E:\Harness` 里跑时派生值与旧字面量逐字符相同**（有探针复核，
+ *      见 `.team/test/2026-11-02/_probe/roots-probe.mjs`）⇒ 活树的行为一个字节没变。
+ *    ⚠️ `FROZEN.patchTargets`（补丁里那两处绝对路径）**不跟着派生**：那是**安装落点**，
+ *      不是"这个工作区在哪"——两份东西，别混（`env.mjs` 那一格写着为什么）。
+ */
+function repoRootOf() {
+  const fromEnv = typeof process.env.AGENIA_REPO_ROOT === 'string' ? process.env.AGENIA_REPO_ROOT.trim() : ''
+  if (fromEnv !== '') return { root: path.resolve(fromEnv), source: 'env:AGENIA_REPO_ROOT' }
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  return { root: path.resolve(here, '..', '..', '..'), source: 'derived:import.meta.url' }
+}
+const ROOT = repoRootOf()
+/** 这个根是从哪来的（`env:AGENIA_REPO_ROOT` / `derived:import.meta.url`）—— 读的人不必回推。 */
+export const ROOT_SOURCE = ROOT.source
+export const REPO_ROOT = ROOT.root
 
-/** 真实脑根（**任何测试都不许写**；当前不存在）。 */
-export const REAL_BRAIN_ROOT = 'E:\\Harness\\presets\\agenia\\.runtime'
+/** 真实脑根（**任何测试都不许写**；活树里当前不存在，worktree 里也不存在）。 */
+export const REAL_BRAIN_ROOT = path.join(REPO_ROOT, 'presets', 'agenia', '.runtime')
 
-/** 真实路线根（**任何测试都不许写**；当前不存在）。 */
-export const REAL_ROUTE_ROOT = 'E:\\Harness\\.team\\route'
+/** 真实路线根（**任何测试都不许写**）。 */
+export const REAL_ROUTE_ROOT = path.join(REPO_ROOT, '.team', 'route')
 
 /** 活体预设根 —— 只作"没被碰过"的见证，不许当被测对象。 */
-export const REAL_PRESET_ROOT = 'E:\\Harness\\presets\\agenia'
+export const REAL_PRESET_ROOT = path.join(REPO_ROOT, 'presets', 'agenia')
 
 /** 运行根 marker 的文件名（提案 §B1.7）。 */
 export const TEST_ROOT_MARKER = '.agenia-test-root'
@@ -36,10 +60,12 @@ export const TEST_ROOT_MARKER = '.agenia-test-root'
  *   · `.team\retro` —— 技术评审岗的格子（它的作业书要求产物只写 `.team/retro/<日期>/`）。
  * 🔴 这是**白名单**，不是"哪儿都行"：根守卫存在的理由是"运行根必须在一个**已知的、可清理的**格子里"。
  *    加一格 = 改这张表；判据在 `guardVerdict` 与 `assertDeletable`。
+ * 🔴 2026-11-02：两格跟着 `REPO_ROOT` 派生（活树里与旧字面量逐字符相同）——
+ *    白名单**没有放宽**：还是"每个工作区各两个抽屉"，只是抽屉跟着工作区走。
  */
 export const RUNS_PARENTS = [
-  'E:\\Harness\\.team\\test',
-  'E:\\Harness\\.team\\retro',
+  path.join(REPO_ROOT, '.team', 'test'),
+  path.join(REPO_ROOT, '.team', 'retro'),
 ]
 
 /** 测试岗那一格（用例/证据落点自己按它写的地方仍引这一个）。 */

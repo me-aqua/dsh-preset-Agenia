@@ -21,7 +21,7 @@ import path from 'node:path'
 import { FROZEN, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, stagingReadings } from '../support/evidence.mjs'
 import { importStaged, readStagedText, stagingExists, stagingPath } from '../support/sut.mjs'
-import { cfg, listMd, memberAnnotations, memberPresetIdFor, parseComposition } from '../support/composition.mjs'
+import { annotationLeaks, cfg, identityLanding, listMd, memberAnnotations, memberPresetShared, parseComposition, readPresetBaseline } from '../support/composition.mjs'
 import { optionalEnv } from '../support/env.mjs'
 
 before(() => {
@@ -134,47 +134,111 @@ describe('static · roles (REV-02)', () => {
             push('OFFICE-BOUND', `冻结表自相矛盾：${job.id}.officeBound=${job.officeBound}，而 officeBoundRoles=${JSON.stringify(FROZEN.staged.officeBoundRoles)} ${inFrozenList ? '含' : '不含'} ${job.role}`)
           }
         }
-        // 四条 job 行的 persona 标记、toolName、agentPreset、否定项
-        // 🔴 2026-10-19（0.2.1 迁移）：人格与否定项**不再是 config 里的键**（`persona` / `toolFilter`
-        //    写着它们整行报迁移错），改由行上方的两句注释表达：
-        //      `# @member-persona 【组员:<角色>】…` · `# @member-deny <名字>`
-        //    生成器按它们给那一份组员预设写 `persona.prefix` 与注入器的 `proposalFile: false`。
-        //    判据跟着"义务的落点"走，**没有放宽**：标记少了 ⇒ 作业会以为自己是组长，拿组长那份注入；
-        //    判决岗的 `proposal_file` 少了 ⇒ 判决岗就能自己提候选（老板 2026-10-17 明确不许）。
+        // 四条 job 行的身份 / 人格 / 预设 / 否定项
+        // 🔴 任务 A（2026-11-01 · 九份组员预设并成一份）把三样东西搬了落点，义务一件没少：
+        //   · **人格**：行上方 `# @member-persona 【组员:<角色>】…` 退休 ⇒ 现在住在
+        //     `inject.js` 的 `ROLE_TABLE[toolName].persona`（按角色一条），必须**逐字含**升级前那句
+        //     （夹具 `member_rows[].persona_body` —— 与 `PRS-04` 同一条底稿）；
+        //   · **否定项**：`# @member-deny proposal_file` 退休 ⇒ 判决岗的 `deny: ['proposal']` 在 `ROLE_TABLE` 里，
+        //     拒绝发生在**调用时**（`PRS-03` 钉行为；这里钉"唯一作者 + 只有它一条"）；
+        //   · **预设**：不再是 `agenia-<toolName>` 公式，而是九行**同指一份**通用组员预设
+        //     （角色由 `toolName` 决定 ⇒ 预设 id 里没有角色可读了）。
+        // 判据跟着"义务的落点"走：人格少了 ⇒ 作业会以为自己是别人；判决岗的 deny 少了 ⇒ 判决岗能自己提候选；
+        // 某一行指到别处 ⇒ 那个岗位起错人。
         const ann = memberAnnotations(compRaw)
+        const injectorMod = stagingExists('inject.js') ? await importStaged('inject.js') : null
+        const roleTable = injectorMod !== null && Array.isArray(injectorMod.ROLE_TABLE) ? injectorMod.ROLE_TABLE : null
+        if (roleTable === null) {
+          push('ROLE-MARK', 'staged/inject.js 没有导出 `ROLE_TABLE`（任务 A 冻的接缝）—— 四条 job 行的人格 / 否定项没有落点，这一格判不了')
+        }
+        const presetBaseline = readPresetBaseline()
+        if (!presetBaseline.ok) push('BASELINE-MISSING', presetBaseline.why)
+        const baselineBodyOf = (role) => (presetBaseline.ok
+          ? (presetBaseline.value.member_rows ?? []).find((r) => r.role === role)?.persona_body ?? null
+          : null)
+        const sharedMember = memberPresetShared(rows)
+        for (const p of sharedMember.problems) push('JOB-AGENTPRESET', p)
+        const landing = identityLanding(rows)
+        for (const p of landing.problems) push('ROLE-MARK', p)
+        // 退休注释：一句都不许再读到（人格/否定项若还留在注释里，就有两处载体，改哪一处都可能与装配分叉）
+        const retiredAnnotations = annotationLeaks(compRaw)
+        if (retiredAnnotations.length > 0) {
+          push('ROLE-MARK', `组合里还有 ${retiredAnnotations.length} 行带着退休的组员注释：${JSON.stringify(retiredAnnotations.map((a) => a.row_id))}`
+            + ' —— 人格 / 否定项的唯一作者是 `ROLE_TABLE`（按 toolName 查角色）')
+        }
+        // 阳性对照：退休注释的提取器在**升级前基线块**上必须认得出 9 条 persona + 1 条 deny
+        // （否则"组合里读到 0 条"在提取器哑掉时也成立 —— 静默恒真）
+        if (presetBaseline.ok) {
+          const leaderBase = (presetBaseline.value.preset_blocks ?? []).find((b) => b.preset_id === FROZEN.patchPresets.leaderPresetId)
+          const sample = memberAnnotations(leaderBase === undefined ? '' : leaderBase.full_text)
+          const samplePersonas = [...sample.values()].filter((m) => typeof m.persona === 'string').length
+          const sampleDenies = [...sample.values()].filter((m) => m.deny.length > 0).length
+          rec.readings.annotation_detector_control = { personas: samplePersonas, denies: sampleDenies }
+          if (samplePersonas !== 9 || sampleDenies !== 1) {
+            push('ROLE-MARK', `退休注释提取器在升级前基线块上应读出 9 / 1，实得 ${samplePersonas} / ${sampleDenies} —— "现在读到 0 条"不能当证据`)
+          }
+        }
+        const jobPersonas = []
         for (const job of FROZEN.jobs) {
           const row = byId.get(job.id)
           if (!row) { push('JOB-ROW', `缺 job 行 ${job.id}`); continue }
-          const mark = ann.get(job.id) ?? { persona: undefined, deny: [] }
-          if (typeof mark.persona !== 'string' || !mark.persona.startsWith(`【组员:${job.role}】`)) {
-            push('ROLE-MARK', `${job.id}: 行上方必须有 \`# @member-persona 【组员:${job.role}】…\`（0.2.1 的人格来源；实得 ${JSON.stringify(mark.persona)?.slice(0, 80)}）`)
+          // ① 身份落点：这个角色必须**恰好一行**（`toolName` 是身份；行 id 不参与判定）
+          const hits = landing.byRole.get(job.role)?.rows ?? []
+          if (hits.length === 0) {
+            push('ROLE-MARK', `${job.id}: 角色 ${job.role} 找不到带 toolName=${JSON.stringify(landing.byRole.get(job.role)?.toolName ?? null)} 的已启用行 —— 这个岗位起不来`)
+          }
+          // ② 人格：`ROLE_TABLE` 里那一句必须逐字含升级前那句
+          if (roleTable !== null) {
+            const entry = roleTable.find((e) => e?.role === job.role)
+            const wantBody = baselineBodyOf(job.role)
+            if (entry === undefined) {
+              push('ROLE-MARK', `${job.id}: \`ROLE_TABLE\` 里没有 role=${job.role} 那一条 —— 这个岗位没有自己的人格`)
+            } else if (typeof entry.persona !== 'string' || entry.persona.trim() === '') {
+              push('ROLE-MARK', `${job.id}: \`ROLE_TABLE\` 里 role=${job.role} 的 persona 是空的`)
+            } else {
+              jobPersonas.push(entry.persona)
+              if (wantBody === null) push('ROLE-MARK', `${job.id}: 基线夹具里读不到 role=${job.role} 的升级前人格 —— 这一格没有对照物`)
+              else if (!entry.persona.includes(wantBody)) {
+                push('ROLE-MARK', `${job.id}: \`ROLE_TABLE\` 里 role=${job.role} 的 persona 里没有升级前那句原文（应含 ${JSON.stringify(wantBody.slice(0, 48))}…）`)
+              }
+            }
           }
           if (cfg(row, 'toolName') !== job.toolName) push('JOB-TOOLNAME', `${job.id}: toolName 实得 ${JSON.stringify(cfg(row, 'toolName'))}`)
           if (cfg(row, 'maxDepth') !== FROZEN.jobMaxDepth) push('JOB-MAXDEPTH', `${job.id}: maxDepth 实得 ${JSON.stringify(cfg(row, 'maxDepth'))}，冻结 ${FROZEN.jobMaxDepth}`)
-          // 组员预设 id 的公式（生成器与组合必须同形）：`agenia-<toolName 下划线换横线>`。
-          // ⚠️ 公式**只有一份实现**（`support/composition.mjs::memberPresetIdFor`）——
-          //    `composition.test.mjs` 的 `TEAM-AGENTPRESET` / `SUBAGENT-AGENTPRESET` 也调它
-          //    （评审 `F-109` 第 4 关 `M-4`：同一件义务不许有两份算式）。
-          const wantPreset = memberPresetIdFor(job.toolName)
-          if (cfg(row, 'agentPreset') !== wantPreset) {
-            push('JOB-AGENTPRESET', `${job.id}: agentPreset 必须是 ${wantPreset}（生成器按公式算的组员预设 id），实得 ${JSON.stringify(cfg(row, 'agentPreset'))}`)
+          // ③ 预设：九行同指一份（算式只有一份：`support/composition.mjs::memberPresetShared`）
+          const jobPreset = cfg(row, 'agentPreset')
+          if (typeof jobPreset !== 'string' || jobPreset.trim() === '') {
+            push('JOB-AGENTPRESET', `${job.id}: 缺 agentPreset（子会话必须指那份通用组员预设）`)
+          } else if (sharedMember.id !== null && jobPreset !== sharedMember.id) {
+            push('JOB-AGENTPRESET', `${job.id}: agentPreset=${jobPreset}，九行共用的那一份是 ${sharedMember.id} —— 指到别处 = 这个岗位起错人`)
           }
-          // 否定项：判决岗 `proposal_file`，其余空表（旧口径"四行 deny 恰为 [workflow, ralph]"已随 0.2.1 作废 ——
-          // 那两样是**结构性没有**（组员预设整个 delegation 组不搬），不需要 deny 名单）
-          const wantDeny = [...(FROZEN.jobMemberDeny[job.id] ?? [])].sort()
-          const gotDeny = [...mark.deny].sort()
-          if (JSON.stringify(gotDeny) !== JSON.stringify(wantDeny)) {
-            push('JOB-MEMBER-DENY', `${job.id}: \`# @member-deny\` 的期望是 ${JSON.stringify(wantDeny)}，实得 ${JSON.stringify(gotDeny)}（只有判决岗该 deny proposal_file；其余三行多写 = 那个岗位提不了候选）`)
+          // ④ 否定项：判决岗 `deny: ['proposal']`（唯一作者）；其余三条必须为空
+          if (roleTable !== null) {
+            const entry = roleTable.find((e) => e?.role === job.role)
+            const deny = Array.isArray(entry?.deny) ? [...entry.deny] : []
+            const wantDeny = job.role === 'memory-judge' ? ['proposal'] : []
+            if (JSON.stringify([...deny].sort()) !== JSON.stringify([...wantDeny].sort())) {
+              push('JOB-MEMBER-DENY', `${job.id}: \`ROLE_TABLE\` 里 role=${job.role} 的 deny 期望 ${JSON.stringify(wantDeny)}，实得 ${JSON.stringify(deny)}`
+                + '（只有判决岗该拒绝提案 —— 而它拒的是 `proposal` 这个家族，调用 `proposal_file` 时由门禁拒绝）')
+            }
           }
           for (const dead of FROZEN.memberPresetForbidden) {
-            if (gotDeny.includes(dead)) push('JOB-MEMBER-DENY', `${job.id}: deny 里写了 ${dead} —— 它在组员预设里结构性不存在（委派组整个不搬），写它只会让整行启动失败`)
+            const deny = Array.isArray(roleTable?.find((e) => e?.role === job.role)?.deny) ? roleTable.find((e) => e?.role === job.role).deny : []
+            if (deny.includes(dead)) push('JOB-MEMBER-DENY', `${job.id}: deny 里写了 ${dead} —— 它在组员预设里结构性不存在（委派组整个不搬），写它只会让整行启动失败`)
           }
         }
-        // 阳性对照：这个提取器**分得清行**（4 条作业拿到 4 个不同的标记；否则上面那几条就是在瞎绿）
-        const marks = FROZEN.jobs.map((j) => (ann.get(j.id) ?? {}).persona ?? '').map((p) => /【组员:([^】]+)】/.exec(p)?.[1] ?? null)
-        rec.readings.job_role_marks = marks
-        if (new Set(marks.filter(Boolean)).size !== marks.filter(Boolean).length) {
-          push('ROLE-MARK', `提取器把不同的作业行读成了同一个人格标记（${JSON.stringify(marks)}）—— 判据会瞎绿`)
+        // 阳性对照：四条 job 角色在 `ROLE_TABLE` 里拿到**四句不同的**人格（提取器分得清人，否则上面那几条在瞎绿）
+        rec.readings.job_role_personas = jobPersonas.map((p) => p.slice(0, 40))
+        if (jobPersonas.length !== FROZEN.jobs.length || new Set(jobPersonas).size !== jobPersonas.length) {
+          push('ROLE-MARK', `四条 job 角色的人格不是四句不同的（读得 ${jobPersonas.length} 句 / ${new Set(jobPersonas).size} 个不同值）—— 人格提取器分不清人，上面几条会瞎绿`)
+        }
+        // 判决岗的 deny 唯一性：`ROLE_TABLE` 里只有 memory-judge 有非空 deny
+        if (roleTable !== null) {
+          const denied = roleTable.filter((e) => Array.isArray(e?.deny) && e.deny.length > 0).map((e) => e.role)
+          rec.readings.role_table_denied_roles = denied
+          if (JSON.stringify(denied) !== JSON.stringify(['memory-judge'])) {
+            push('JOB-MEMBER-DENY', `\`ROLE_TABLE\` 里有非空 deny 的角色应恰为 ["memory-judge"]（"注册与拒同源"），实得 ${JSON.stringify(denied)}`)
+          }
         }
       } else {
         push('SUT-SURFACE-MISSING', 'staged 还没有 agent.cordis.yml —— 角色矩阵无从对账（预期的首跑红）')

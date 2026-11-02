@@ -363,7 +363,143 @@ export const BATCH_S = ['RCP-05', 'HLT-03']
 export const BATCH_T = ['REV-04', 'REV-05']
 
 /**
- * 已落笔的十八批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
+ * 批次 U —— **任务 A**（拆账·并员·通电 的第一个任务，2026-11-01 第 2 关）。
+ *
+ * 四格各自一条红因，能拆开读：
+ *   · `PRS-01` 页面两条 / 一份通用组员预设 / 九行工具不变 / 旧九份删除（+ 升级前基线逐字留存）；
+ *   · `PRS-02` 身份判定表九行（toolName 定角色 · `defaultRole` 只报警 · 内部 worker / legacy 不窄 · 窄恰三条来源）；
+ *   · `PRS-03` 判决岗提案「工具在列表里、调用被拒」；
+ *   · `PRS-04` 角色表是 persona / charter / model / tools 的唯一作者（逐字 no-regression · 不串味）。
+ *
+ * ⚠️ 这四格**打现役** `presets/agenia`（其余用例打 staged 靶子）—— 理由写在
+ * `static/presets-two.test.mjs` 文件头：A 的交付物就是页面上的那两条，打 staging 会让
+ * "staging 改了、现役没改"变绿。两棵树是否同步仍由 `STAT-01` 与入口的 `F57-TARGET` 各管一次。
+ *
+ * 契约：`.team/test/CONTRACT-A.md`；定形：`.team/leader/2026-10-30/定形-拆账·并员·通电.md`（02:14 版）。
+ * ⚠️ 它们**不进** `FROZEN_IDS`（历史冻结的 A–F 55 条）。
+ */
+export const BATCH_U = ['PRS-01', 'PRS-02', 'PRS-03', 'PRS-04']
+
+/**
+ * 批次 V —— **任务 B**（bug 系统 = 登记簿 + bug 任务 + 严重三线，2026-11-01 第 2 关）。
+ *
+ * 四格各自一条红因，能拆开读（定形 §7 的 B1 / B2 / B3 三行）：
+ *   · `BUG-01` **登记簿**：九个 bug op 的面 · 登记**不建路线**（B1 的准入前提）· 现象+证据准入 ·
+ *     **open = 无 disposition**（评估不等于处置）· **50/30 两条边界**（49/50 · 30/31）·
+ *     `kind=observation` 不进数 · 封顶红**不动手** · 票不进这个数且路线账本一个字节不动；
+ *   · `BUG-02` **五分支分流表**：五行进位（含"环境相关但重复成功 ⇒ 不加 env 标签"那条反例）·
+ *     判不了（`repeat=failure` + 环境未知）不许猜 · **报表冻结**（核 SHA256、正文一个字节不变）·
+ *     老板报的 bug **不适用此表** · 裸工作区只落 `.team/routing.jsonl`（分流不需要账先存在）；
+ *   · `BUG-03` **bug 任务 + 批次 + 归档 + 准入**：批次 `{id, frozen_at, entry_ids[]}` 冻结一次逐字不变 ·
+ *     冻结之后登记的进下一批 · 归档只搬带结论的（`E_BUG_ARCHIVE_OPEN`，零写入）· 五关**共用** `FIVE_GATES`
+ *     （`方案` 这种并集同义词也必须收）· `admitTask` **16 格**准入矩阵 · 未建账只许登记；
+ *   · `BUG-04` **严重三线**：三条线 + `unclassified` 四出口闭集 · 「读数说假话」必须点名它掩盖了哪一条 ·
+ *     样本四个**事故前预注册**（时间序）· 改样本 = 版本 + 旧样本逐字留档 · **改后不许重判** ·
+ *     没被采样的线 `calibrated:false` · 两个作者（测试评估 / 组长拍线）· 判不了 ⇒ 升级 + 卡红。
+ *
+ * ⚠️ **两条依赖写在这里，别读成 B 的缺陷**（契约 `.team/test/CONTRACT-B.md` §11）：
+ *   · `BUG-03` 的 `admitTask` 16 格：函数的**作者是 C1**（定形 §6.2「两期互斥」那一路）⇒ 缺面记
+ *     `BLOCKED-ON-C1-ADMITTASK`（C1b 节点/headline + C1d 暂停集合），不是"B 没做"。
+ *   · `BUG-03` 的运行时准入（`maintain` / `build-paused` 两支）要真账本与暂停集合 ⇒ 归 C1，本批只钉
+ *     `uninitialized` 那一支（不依赖 C1）。
+ *
+ * 契约：`.team/test/CONTRACT-B.md`；定形：`.team/leader/2026-10-30/定形-拆账·并员·通电.md`（02:14 版）。
+ * ⚠️ 它们**不进** `FROZEN_IDS`（历史冻结的 A–F 55 条），同 G…U 的规矩。
+ */
+export const BATCH_V = ['BUG-01', 'BUG-02', 'BUG-03', 'BUG-04']
+
+/**
+ * 批次 W —— **任务 C1**（路线账本 = 建账 + 节点 + headline + 槽 + 暂停 + 一个准入函数，2026-11-01）。
+ *
+ * 五格各自一条红因，能拆开读（定形 §7 的 C1a / C1b / C1c / C1d 四行 + §2.3 的 `admitTask`）：
+ *   · `LED-01` **C1a 建账 + 迁移**：`bootstrap` 落一个 `kind=build` 的 bootstrap 阶段（**mode 已是 build**、
+ *     **不调 `stage-enter`**、审计链恰好一条）；7 张旧票从 **legacy 票店**（独立存储）搬进路线票段
+ *     （票号沿用 + `legacy_status` + **不存 `status`**），legacy 侧清空并记 `migrated_at`；
+ *     **半跑可续**（路线 3 + store 剩 4 ⇒ 补 4 不重复）、**坏了零写入**（`E_LEGACY_STORE_BAD`）；
+ *     老板说「进入维护」⇒ **直接建 maintain**（不先进 build）；没建 bug 台账就不许建 `.team/bug/`；
+ *   · `LED-02` **C1b 节点 + headline**：落 route 的三个节点（开工 / 交活 / 验收）只进**审计 detail.node**、
+ *     任务上没有 `node` 字段、`close`（收工）与怪值都拒；`headline` = 目标 · 大阶段名（**唯一载体**）、
+ *     只随 `stage-enter` / `headline-set` 变；**空 headline 拒实现任务**（`E_ADMIT_HEADLINE`）+ 补齐后收；
+ *     RT-08 的首行常量一格不动；
+ *   · `LED-03` **C1c 槽**：`slotBusy()` 一个谓词、四态闭集（busy / exited / crash / unknown）、
+ *     `stale` 严格大于 30 分钟、**`ref` 空 = busy 但它自己的第一次 spawn 放行**、`unknown` 按 busy 拒、
+ *     `fence` 的 paused 不算活、**`paused + 活会话` 非法**、**两本账一个写者**；`read.slot` 与纯函数同值；
+ *   · `LED-04` **C1d 暂停/恢复**：暂停必须停会话（没声明 ⇒ `E_PAUSE_SESSION_LIVE` + 零写入）、
+ *     写 `session_exit` 但**不清 `session_ref`**；**maintain 不许暂停**（`E_PAUSE_NOT_SUPPORTED`）；
+ *     扩大（同一 set 加 entry）vs 另开（新 set + 旧 set 关闭）；**旧 set 关闭不自动 free 在途修任务**；
+ *     resume 不顺手改任务；pause set 解析**读 live + archived 两段**；**切阶段要先停会话**；
+ *   · `LED-05` **`admitTask` 十六格 + 两个创建入口**：四种模式 × 三种工作种类 + 四格边界，
+ *     每格一个冻死的码；`task-set` 与 `bug-task-set` **同一份判据**（该收的收、该拒的拒、批外点名 entry）。
+ *
+ * ⚠️ **一条依赖写在这里，别读成 C1 的缺陷**：`LED-05` 与 `BUG-03` 的 D 段是**同一件事的两个读者**
+ *   （`lib/route.mjs::admitTask`；函数归 C1、判据归 B，契约 `.team/test/CONTRACT-B.md` §11）。
+ *   C1 落地之后 `BUG-03` 的 `BLOCKED-ON-C1-ADMITTASK` 必须**同批翻绿** —— 那不是一个用例变绿，
+ *   是两条判据对上了同一个事实。
+ *
+ * 契约：`.team/test/CONTRACT-C1.md`；定形：`.team/leader/2026-10-30/定形-拆账·并员·通电.md`（02:14 版）。
+ * ⚠️ 它们**不进** `FROZEN_IDS`（历史冻结的 A–F 55 条），同 G…V 的规矩。
+ */
+export const BATCH_W = ['LED-01', 'LED-02', 'LED-03', 'LED-04', 'LED-05']
+
+/**
+ * 批次 Y —— **任务 C2**（卡 = 记忆更新报告：三区 + 状态条 + 容量行 + 两张卡，2026-11-02 第 2 关）。
+ *
+ * 批次号是 **Y 不是 X**：`X` 已被 `toolName` 桥那六格（`BRG-01`…`BRG-06`）占了（第 4 关评审 `F-01`）。
+ *
+ * 六格各自一条红因，能拆开读（定形 §6.2 的那十行）：
+ *   · `CARD-01` **路线格**：第一行 = 目标 · 大阶段名；**未建账 = 只印那一行**；**headline 空 ⇒
+ *     「（目标未填）」+ 红条**；**暂停 = 第二行徽标**（第一行一字不动）；**加一条任务不改第一行**；
+ *     账本坏了**照样出卡**但要说"未填"+ 红；**正文「目标 · 大阶段」行 = `route.first_line`**（§2.2 同值，
+ *     负样本 = 只改正文一格 ⇒ 必红）+ `card.reasons` 闭集（`gate4-C2` F-05/F-08）；
+ *   · `CARD-02` **票区**：`open` / `in_progress` / `done` / `void` 四个数来自**路线票段投影**
+ *     （夹具里 `follow-ups.md` 故意写 9 张、票段 8 张 ⇒ 卡上必须是 8）；**第五个数 `tickets.legacy`**
+ *     = 迁移票张数（`legacy_status` 非空；今天 7）——**子集计数**，不进四数、不加进 `total`；
+ *     `void` 存下的终态；**0 不是错**；**负样本：`void` 票 + 在途任务 ⇒ 红并点名**；
+ *     **正文票区六个数的形状**（§2.2 同值，负样本 = 改一个数 ⇒ 必红）+ `card.reasons` 闭集；
+ *   · `CARD-03` **bug 开放数 + 50/30**：`kind=bug` + 无 disposition（observation / 票都不进）；
+ *     **与 50/30 同值同 source**（同一个查询的机械形态）+ 第三个读者（`bug-read`，**同一注入时钟**；
+ *     比计数 / **`oldest_age_days`** / `reasons` / 阈值 / 天数；不可用 ⇒ HOLD）；
+ *     49/50 · 30/31 四条边界；**封顶不动手**（卡前后台账 sha256 同值）+ `card.reasons` 闭集；
+ *   · `CARD-04` **严重度那一排**：三条线 + `unclassified` 四出口；样本四个；**只校准自己的线**
+ *     （未采样的 `function_broken_repro` ⇒ `calibrated:false`）；**判不了两向**（升级 ⇒ 卡红并点名 /
+ *     没升级 ⇒ 更要红）；`assessment:'unknown'` 是另一个词；**无 bug 台账 ⇒ `samples=[]` 且卡不红**
+ *     （组长 2026-11-02 裁定 · `gate4-C2` F-10；编样本 ⇒ 必红）+ `card.reasons` 闭集；
+ *   · `CARD-05` **状态条十二格**：`count===12` + key 逐字同序 + 至少六字段 + **`label`/`producer` 逐字**
+ *     （互换 producer ⇒ 必红）；**十二格全部接线**
+ *     （组长 2026-11-02 裁定第 1 条：`sla` / `carrier_missing` / `unknown_preset` / `preset_downgrade` /
+ *     `legacy_sessions` 五格全部接上，不留常驻红）+ 五格真读数两向；`wired:false ⇒ red` 保留为**负样本**
+ *     （合成输入证明它翻得动面；`wired` 今天是常量 true ⇒ 只守判据不守生产路径）；**红条格 = `card.red` 总闸**；
+ *     **SLA 判不了也算超期**（`assessment.verdict:'unknown'`）+ `bug-read.sla` 同注入时钟跨读者；
+ *     **槽谓词 JS/Python 同值**（`implement`+`bug-repair` 两个活持有人 ⇒ `SLOT_NOT_ENFORCED`；
+ *     `crash` 心跳 ⇒ `STALE_SLOT`；心跳缺 ⇒ 两格黄）+ **producer A/B 自己的写面** + `card.reasons` 闭集；
+ *   · `CARD-06` **容量行 + 两段回执 + 卡本身**：容量五读数（参考线读 `memory.mjs` 的**怪值**
+ *     ⇒ 写死 200/80000 当场翻红）+ 来源不许是路线 + 快照读不到 ⇒ 红不出 0；回执四态
+ *     （present / missing / expired / na）**逐段逐卡**（第一段在卡 1、第二段在卡 2 的 `C2 · 回执格`；
+ *     裁定第 5 条）+ **第二段 `report_path` = `.team/retro/<day>/会话评审.md`**；**生成失败四件套**
+ *     （非 0 · 没有卡 · append-only 失败标记 · stderr 🔴）+ **正文容量行同值**（负样本 = 首数印 0 ⇒ 必红）
+ *     + 两张卡的 `card.reasons` 闭集。
+ *
+ * 契约：`.team/test/CONTRACT-C2.md`；裁定：`.team/leader/2026-11-02/C2-rulings.md`；
+ * 定形：`.team/leader/2026-10-30/定形-拆账·并员·通电.md`（02:14 版）。
+ * ⚠️ 它们**不进** `FROZEN_IDS`（历史冻结的 A–F 55 条），同 G…X 的规矩。
+ */
+export const BATCH_Y = ['CARD-01', 'CARD-02', 'CARD-03', 'CARD-04', 'CARD-05', 'CARD-06']
+
+/**
+ * 批次 X 的 6 条 —— **`toolName` 插件桥**（2026-11-02 第 2 关 · 老板 11:33「不改客户端，走 `inject.js` 桥接」）。
+ * 契约：`.team/test/CONTRACT-A-bridge.md`。打的树 = **本工作区** `presets/agenia`（测试文件自己按位置推根，
+ * 不用硬编码 `E:\Harness` 的那几个 `PATHS`）。
+ * 六格同住 `integration/brg01-toolname-bridge.test.mjs`：一个机制六面（记录 / 消费 / 九名全表 / 队列 /
+ * 过期 / 边界），红的行自己带码（`BRG-*`），一眼看得出是哪一面。
+ * ⚠️ 这批**不是** C2 那六格（`CARD-01`…`CARD-06`，批次 **Y**，**已装**在
+ *    `tests/agenia-upgrade/report/card0*.test.mjs`）—— 两者都装上之后分母才是 111 + 6 + 6 = 123。
+ *    （2026-11-02 补：C2 六格在 `_deliver/apply.mjs` 跑完之后就已进盘；"仍在 `_deliver` 未装"那句是
+ *    装之前的读数 —— `gate4-C2` F-14 #5 点到为止，别再照旧话读。）
+ */
+export const BATCH_X = ['BRG-01', 'BRG-02', 'BRG-03', 'BRG-04', 'BRG-05', 'BRG-06']
+
+/**
+ * 已落笔的二十三批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
  * 批次 L 是 `F-148` 思考链过滤（同日 · 紧急票），批次 M 是 `F-152` 板子三态（同日），
@@ -372,9 +508,15 @@ export const BATCH_T = ['REV-04', 'REV-05']
  * 批次 R 是 `F-163` 平台版本读数的自证（同日）。
  * 批次 S 是 `F-162` 的两半（`RCP-05` 回执三件套进 `local-mark` / `HLT-03` 卡的第二半，同日）。
  * 批次 T 是 `F-160` 评审对象是**派工那一刻的提交**（`REV-04` 副本有效 / `REV-05` 副本被动过就作废，同日）。
+ * 批次 U 是**任务 A** 九份组员预设并成一份（`PRS-01`..`PRS-04`，2026-11-01 第 2 关；打的是**现役**树）。
+ * 批次 V 是**任务 B** bug 系统（`BUG-01`..`BUG-04`，2026-11-01 第 2 关；`BUG-03` 的准入矩阵有**一半依赖 C1**）。
+ * 批次 W 是**任务 C1** 路线账本（`LED-01`..`LED-05`，同日第 2 关；`LED-05` 与 `BUG-03` 的 D 段是同一件事的两个读者）。
  * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
+ * 批次 X 是**任务 A 的运行时绕行**（`toolName` 插件桥，2026-11-02 第 2 关；老板 11:33 拍板，
+ * 对应长期票 `ticket-20261102-01`）：`BRG-01` 记录面 / `BRG-02` 消费面 / `BRG-03` 九名全表 /
+ * `BRG-04` 队列 / `BRG-05` 过期 / `BRG-06` 边界。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -396,12 +538,17 @@ const BATCH_OF = (id) =>
                                     : BATCH_R.includes(id) ? 'R'
                                       : BATCH_S.includes(id) ? 'S'
                                         : BATCH_T.includes(id) ? 'T'
-                                          : null
+                                          : BATCH_U.includes(id) ? 'U'
+                                            : BATCH_V.includes(id) ? 'V'
+                                              : BATCH_W.includes(id) ? 'W'
+                                                : BATCH_X.includes(id) ? 'X' : BATCH_Y.includes(id) ? 'Y'
+                                                  : null
 
 const F = {
   composition: 'static/composition.test.mjs',
   docs: 'static/docs.test.mjs',
   roles: 'static/roles.test.mjs',
+  presetsTwo: 'static/presets-two.test.mjs',
   readObligations: 'static/read-obligations.test.mjs',
   envScan: 'static/env-scan.test.mjs',
   routeUpdater: 'integration/route-updater.test.mjs',
@@ -479,6 +626,33 @@ const F = {
    *  不在就用 `AGENIA_TREE_AT_COMMIT` 指过来 —— 它今天**还不存在**，所以这两格今天是红的）。 */
   rev04: 'integration/rev04-review-copy-valid.test.mjs',
   rev05: 'integration/rev05-copy-touched-void.test.mjs',
+  /** 任务 B · bug 系统（批次 V）—— **一格一个文件**：四格的红因互不重叠（登记簿 / 分流 / 任务与准入 /
+   *  严重线），合在一个文件里会让"哪一条坏了"只能靠码名去认。 */
+  bug01: 'integration/bug01-bug-entry.test.mjs',
+  bug02: 'integration/bug02-routing.test.mjs',
+  bug03: 'integration/bug03-bug-task.test.mjs',
+  bug04: 'integration/bug04-severity.test.mjs',
+  /** 任务 C1 · 路线账本（批次 W）—— **一格一个文件**：五格的红因互不重叠（建账+迁移 / 节点+headline /
+   *  槽 / 暂停 / 准入矩阵），合在一个文件里会让"哪一条坏了"只能靠码名去认。 */
+  led01: 'integration/c1a-bootstrap-migrate.test.mjs',
+  led02: 'integration/c1b-nodes-headline.test.mjs',
+  led03: 'integration/c1c-slot.test.mjs',
+  led04: 'integration/c1d-pause-resume.test.mjs',
+  led05: 'integration/c1e-admit-matrix.test.mjs',
+  /** 任务 A 的运行时绕行 · `toolName` 插件桥（批次 X）—— **六格同住一个文件**：
+   *  记录面 / 消费面 / 九名全表 / 队列 / 过期清理 / 边界是**同一个机制**的六个面，
+   *  红的行带 `BRG-*` 码，一眼看得出是哪一面；拆六个文件只会让"哪一面坏了"更贵。
+   *  ⚠️ 它打的是**本工作区**的 `presets/agenia`（文件自己按位置推根），不是 `PATHS.finalPreset`。 */
+  brg01: 'integration/brg01-toolname-bridge.test.mjs',
+  /** 任务 C2 · 卡（记忆更新报告，批次 Y）—— **一格一个文件**：六格的红因互不重叠
+   *  （路线格 / 票区 / bug 开放数与 50-30 / 严重度那一排 / 状态条十二格 / 容量与回执与卡本身），
+   *  合在一个文件里会让"哪一条坏了"只能靠码名去认。 */
+  card01: 'report/card01-route-grid.test.mjs',
+  card02: 'report/card02-ticket-area.test.mjs',
+  card03: 'report/card03-bug-open-cap.test.mjs',
+  card04: 'report/card04-severity-row.test.mjs',
+  card05: 'report/card05-status-bar.test.mjs',
+  card06: 'report/card06-capacity-receipts.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -633,6 +807,40 @@ const ROWS = [
 
   // ── 门 2 · `F-163` 平台版本读数的自证（1）：量具先证明它读的是哪一版（2026-10-24）──────────
   ['PLT-01', 'platform-reading', F.plt, 'F-163 平台版本读数（`support/platform.mjs`：asar 头的 `size` 是**声明值**，`0.2.1-rc.3` 的两份 package.json 的声明都比真身短 2 B；asar 里可解析的 JSON 文本比声明长 1 B）：**合成 asar 造在运行根里**，五条腿 —— A `SHORT-2` 头里的 `size` 比真身短 2 B，两份 package.json 都必须读出**夹具里那个版本**；B `BOM` 同形状 + 文件头 `\\uFEFF`、版本换成**另一个值** ⇒ 证"读的是这一份"（写死常量过不了）；C `TRUNCATED` 短 24 B（> 16 B 读窗）⇒ `ok:false`、版本 `null`，报文点名**文件 / 读了多少字节的窗口 / 最后 40 个字符**且**不许补括号**"修"成 JSON，同一 asar 里没被截断的那一份照读；D `PURE` 容错解析当纯函数再喂两串文本（短 2 B / 截断），与 A/C 是同一条腿的两种入口；E `LIVE` 这一跑真实 asar 上的 `[平台]` 行（读数，不写死版本；没有安装包时记 `asar_present:false`，不把"没装上"当"读对了"）', '批次 R'],
+
+  // ── 任务 A · 九份组员并成一份（2026-11-01 第 2 关）：页面两条 / toolName 定角色 / 判决岗调用被拒 ──────
+  ['PRS-01', 'preset-identity', F.presetsTwo, '任务 A 预设面（**打现役** `presets/agenia`，理由见文件头）：① 基线自证（升级前冻的 10 份预设块，逐块 `sha256 = sha256(full_text)`；改了夹具任意一个字符 ⇒ `BASELINE-SELFPROOF`）；② 不变量（今天就对）：九个 `toolName` 一个不多不少、`delegationTools` 九个键、9 条已启用委派行；③ **页面恰好 2 条**预设入口（组长 `agenia` + **恰一份**通用组员），第 3 条 ⇒ `PAGE-COUNT`；④ 九条委派行的 `agentPreset` **同值**且不悬空；⑤ 通用组员预设**不声明** `model` / `tools`（禁字段提取器另有阳性对照：塞了 model+tools 的合成块必须抓得到），组长那一份允许有 leader 级字段；⑥ 旧九份 per-role 预设**全部删除**、组长块与基线**逐字相同**（并员不许顺手改组长那份）', '批次 U'],
+  ['PRS-02', 'preset-identity', F.presetsTwo, '任务 A 身份判定表（定形 §2.2 九行按行序判；纯函数 `identityVerdict`）：① 角色表 9 对 `toolName↔role↔read/write` 逐条对（正向）+ 不许第十个（反向）；② 九行各喂一次：`row0` 内部 worker（workflow / ralph）⇒ 无角色 + 不窄 + **未受管**；`row0.5` legacy ⇒ 不窄 + 未受管；`row1` 组长+工具名 ⇒ 拒；`row2` 未知工具名（`team_retro` / `proposal_file`）⇒ 拒；`row3` 组长+无工具 ⇒ leader；`row4` 组员+工具 ⇒ 该角色；`row5` 组员+无工具 ⇒ 窄；`row6` 未知预设+有效工具 ⇒ **角色保留 + 窄**；`row7` 未知+无工具 ⇒ 窄；③ `defaultRole` **只报警**：缺 / 合法 / 与预设不符 / 非法串 四种输入下 `row`·`role`·`narrow` **一格不许动**，只有 `warnings` 变（合法的 0 条、其余 ≥1 且点名 `defaultRole`）；④ 窄权限**恰好** row 5/6/7（row 0/0.5 显式例外）+ 闭三元组 `NARROW_PERMISSION` 逐格对；⑤ `isLegacySession` 谓词：快照里 ⇒ true、之后同形 ⇒ false、**快照坏了 ⇒ false**（走向窄 = 安全方向）；⑥ **运行时执行者**（第 4 关第三轮 N-5）：`narrowVerdict` 读的就是 `NARROW_PERMISSION` —— 三个码各一格（`E_GUARD_NARROW_TOOL` / `_WRITE` / `_PROPOSAL`）+ 三个"该放行"的格子（拦过头也是错）+ 门禁五条判定的**次序**（文件序代理）+ 文字刀自证次序提取器会翻面 + 表值刀（白名单里加 `pwsh`，**证据根里的副本**）⇒ 同一个 `narrowVerdict("pwsh")` 从拒变成放行；⑦ **注入哪一侧**（第三轮 N-3）：**只有 row 3 是组长侧** —— row 0（内部 worker）/ 0.5（旧会话）/ 5（手动组员）/ 7（未知预设）都走组员侧（没有 `leader`/`persona`/`style`、没有开工四步、记忆 = 索引 + 常识、**没有** `boss`/`machine`/`project` 全条），工具侧**不跟着动**（0 / 0.5 仍不窄、5 / 7 窄）+ 刀（`isMemberSide = row >= 4` ⇒ row 0 / 0.5 变回组长侧，row 5 是"刀没切宽"的证人）', '批次 U'],
+  ['PRS-03', 'preset-identity', F.presetsTwo, '任务 A 判决岗：提案工具**在列表里、调用被拒**（不是"工具集里没有"）：① `ROLE_TABLE` 的 `deny` **只**挂在判决岗那一条、值含 `proposal`（注册与拒同源）；② `proposalVerdict(\u0027memory-judge\u0027,\u0027proposal_file\u0027)` 必须拒（码 `E_GUARD_JUDGE_PROPOSAL` + 非空报文）；③ 反向：其余八个角色调同一个工具**一个都不许被挡**，判决岗调 `read` 也不许被挡（拒的只是提案，不是这个人）；④ 注册面：判决行上方 `# @member-deny proposal_file` 与补丁里任何 `proposalFile: false` 都必须消失（那是"根本不注册"的旧口径）；⑤ `team/memory-judge.md` 要点出提案工具并写着「调用被拒 / 调用会被拒 / 调用时被拒」，且**不许**再写"没有这个工具"这一类', '批次 U'],
+  ['PRS-04', 'preset-identity', F.presetsTwo, '任务 A 角色表是 persona / charter / model / tools 的**唯一作者**（定形 §3.3 + §6.1 的 no-regression）：九份升级前人格**逐字**在角色表里（缺一句 ⇒ `PERSONA-MISSING` / `PERSONA-DRIFT`）、**不串味**（别人的那句出现在这个角色身上 ⇒ `PERSONA-CROSSTALK`，逐字比基线）；`charter` 是 team/ 下**自己那一份**真文件；`model` / `tools` 两个键都在（`model` 可为 null = 引擎默认）、`tools` 非空且**不含任何委派工具**（组员结构上不能再招人）；角色表恰 9 条；⑤ **工具的运行时执行者**（第 4 关第三轮 N-5）：`toolCatalogFor`（装配时裁目录）+ `roleToolVerdict`（调用时拒）都从 `ROLE_TABLE[role].tools` 读 —— review 的目录里**没有** `bash`/`pwsh`、dev 有；窄赢过角色目录（`toolCatalogFor("review", true, …)` = 闭三元组）；框架工具（`run_code` / 不认识的）**不误伤**；刀（把 review 那一格换成 base 全套，**证据根里的副本**）⇒ 目录里冒出 `bash`/`pwsh` **且** `roleToolVerdict("review","pwsh")` 变成放行；⑥ **人格真的被注入**：`agenia:role-persona` 紧挨 `agenia:charter:<role>` 之前、正文**逐字**是角色表那一格、全上下文里**只出现一次**；没有角色的会话两条都不吐；刀（换掉表里 `dev` 那一句）⇒ 注入的正文跟着换。`model` 这一版是**纯声明**（没有读者，见 `CONTRACT-A` §12.4）—— 本格不测"改 model 会话真用它"', '批次 U'],
+
+  // ── 任务 B · bug 系统（2026-11-01 第 2 关）：登记簿 / 五分支分流 / bug 任务与准入 / 严重三线 ──────
+  ['BUG-01', 'bug-system', F.bug01, '任务 B1 **登记簿**（契约 `.team/test/CONTRACT-B.md`）：`A` 九个 bug op 在 `--op help` 里（缺面 ⇒ `BUG-OPS-MISSING`，这是"功能没做"不是"输入被拒"）+ `lib/bug-ledger.mjs` 导出 `entryVerdict`/`openCounts`/`capVerdict`；`B` **登记不建路线**（裸工作区上 `bug-register` 成、`.team/route/` 不许被建出来）+ `bug-read` 没有台账 ⇒ `E_DATA_MISSING`/exit 7 且零写入（缺 ≠ 空）；`C` 条目准入 = 现象 + 证据（≥1 条）是硬门、`kind` 只认 `bug`/`observation`、**老板报的 bug 不要求配方**（recipe=null 必须收）、被拒的记录零写入（比台账 SHA256）；`D` **两个词不混**：assessment 四值闭集 · `bug_open` 数的是"无 disposition"（评估为 duplicate/true 都不算处置）· `observation_open` 单独一格；`E` **50/30**：49/50 与 30/31 四条边界各一格（`cap.threshold=50` · `cap.days=30` · `oldest_age_days` 按注入时钟算）· 49 条 @31 天必须因**年龄**翻红（单调性：条数多不许吞掉年龄预警）· 50 条 open observation 不许红 · 60 条已归档不许红 · **封顶红不动手**（不自动改任何 disposition）；`F` **两本账不互串**：路线票段里 7 张 open 票不许进 `bug_open`，且 `bug-read` 前后 `current.json` SHA256 相同（`counts` 恰四格，不许有 ticket 那一格）', '批次 V'],
+  ['BUG-02', 'bug-system', F.bug02, '任务 B1 **五分支分流表 + 独立 routing log**（定形 §2.3 那张表）：`A` 五行逐条判（`routingVerdict`）—— ①有配方+成功+环境相关 ⇒ **条目**且**不加** env 标签（"任意"那一格是反例位置）· ②有配方+失败+环境相关 ⇒ 条目+`env`+证据 · ③有配方+失败+与环境无关 ⇒ **票** · ④无配方 ⇒ 票+`one-off` · ⑤间歇 ⇒ 条目+`intermittent`；`B` 判不了不许猜（`repeat=failure` 而 `env_related` 没给 ⇒ 拒；配方词不在闭集 ⇒ 拒）；`C` **报表冻结**：`bug-route` 自己核声明的 `report_sha256`（不符 ⇒ `E_ARG_HASH`、零写入），相符时报告文件 SHA256/字节数前后不变；`D` 老板报的 bug 走这张表 ⇒ 拒 `E_BUG_ROUTE_NOT_APPLICABLE`（"不适用此表"）+ 裸工作区能写且只落 `.team/routing.jsonl`（`.team/route/` 与 `.team/bug/` 都不许被建出来）+ 记录字段 `{cycle, report_ref, report_sha256, finding_id, carrier, tags, by:"leader"}` + append-only（两次两条）+ 周期号是唯一时钟（缺/字符串/0 都拒）', '批次 V'],
+  ['BUG-03', 'bug-system', F.bug03, '任务 B2 **bug 任务 + 批次 + 归档 + 准入**：`A` 批次 `{id, frozen_at, entry_ids[]}`——`frozen_at` = 注入时钟那一刻、`entry_ids` 逐字、**再冻结只加一条且旧 batch 逐字不变**、**冻结之后登记的条目 batch=null（进下一批）**；`B` **归档 = 同一本账的 `archived` 段**：带结论的搬走（`disposition` 与 `archived_at` 留住）、没结论的拒 `E_BUG_ARCHIVE_OPEN` 且零写入、归档后 live 段只剩没结论的；`C` 任务形状（`bugTaskVerdict`）：三态闭集 + 五关**共用** `FIVE_GATES`（`方案` 这种并集同义词**必须收**，另抄 5 正名就翻面）+ `batch` 必须指向真 batch + `entry_ids` 非空（一个根因一个任务）；`D` **`admitTask` 16 格准入矩阵**（纯函数；**函数的作者是 C1**，缺面记 `BLOCKED-ON-C1-ADMITTASK` 不是 B 的缺陷）：未建账拒一切修 · build 收实现（headline 空则拒）与票的修、拒 bug 修 · maintain 只收批内（batch 外/无 batch 拒，且点名那条 entry）· build-paused 只收 pause set 内（**即使它在 batch 里也拒** —— 两个集合不混名）· 模式四值闭集 · bug 修必须点名 entry；`E` 运行时那一支（**不依赖 C1**）：没有路线账本 ⇒ `bug-task-set` 拒（只能登记）、码不许被折成 `E_INTERNAL`、台账零写入', '批次 V'],
+  ['BUG-04', 'bug-system', F.bug04, '任务 B3 **严重三线 / 四出口 / 样本**：`A` 出口是闭集（三条线 + `unclassified`；第五个值 ⇒ 拒）；`B` **第三线要有地基** —— `reading_lies` 必须点名它掩盖了前两条里的哪一条（没点名 ⇒ `E_BUG_SEVERITY_THIRD_LINE_UNGROUNDED`，纯函数与写面各一格）；`C` 样本：恰好四个（正/负/第三线正/第三线负，`sampleSetVerdict` 四格：少一个·重复·没有第三线那一对都拒）· `registered_by:"leader"` · `registered_at` = 注入时钟 · **事故前预注册**（样本 registered_at 晚于那次评估 ⇒ `E_BUG_SAMPLE_LATE`）· 改样本 = 版本 + **旧样本逐字留档** · **改后不许重判**（同一条 entry 在 v1 判过、v2 再判 ⇒ `E_BUG_SAMPLE_REJUDGE`）· 没被采样的第二条线 `calibrated:false`；`D` **两个作者**：测试岗写 `severity_line`/`severity_confidence`、组长写 `line_decision` 与 `disposition`，跨角色 ⇒ `E_BUG_WRITER_ROLE`（两格）；`E` **判不了不是静默**：`severity_confidence:"cannot"` 与 `unclassified` 不给升级 ⇒ 拒 `E_BUG_SEVERITY_ESCALATE_MISSING`，给了 ⇒ 收 + `bug-read` 的 `card_red.red:true` 且点名那两条 entry；而 bug 评估里的 `assessment:"unknown"` 是**另一个词**（保留 open、不升级，四条都还没 disposition ⇒ `bug_open=4`）', '批次 V'],
+
+  // ── 任务 C1 · 路线账本（2026-11-01 第 2 关）：建账+迁移 / 节点+headline / 槽 / 暂停 / 准入矩阵 ──────
+  ['LED-01', 'route-ledger', F.led01, '任务 C1a **建账 + bootstrap 阶段 + 7 张旧票迁移**（契约 `.team/test/CONTRACT-C1.md` §3/§4）：`A` 一次 `bootstrap` 落下 `kind=build` 的 bootstrap 阶段，**mode 立刻是 build**（`read.mode` + `modeOf(账本)`），`headline` = 目标 · 大阶段名（**唯一载体**），**`transitions` 空且审计链恰好一条 `bootstrap`**（证"用现有 ledger 代码"）；`mode` **不存值**（`current.json` 里没有 `mode` 键）+ 阶段类型是闭集（`kind:"weird"` ⇒ 拒）；`B` **迁移**：7 张旧票从 legacy 票店进路线票段（**票号沿用** `F-165`…`F-171`、`legacy_status` 留住、**不存 `status`**），legacy 侧清空 + `migrated_at`/`migrated_to`，**前后计数** 7/0 → 0/7；`C` **可重入**：半跑（route 3 + store 剩 4）再跑补 4 不重复；store 再脏一次（route 7 + store 7）加 0；`D` **回滚零写入**：重复票号 / status 越界 / schema 不对 ⇒ `E_LEGACY_STORE_BAD`，`current.json` 不出现、store sha256 不变；`E` **两期都能建**：老板说「进入维护」⇒ 直建 `maintain`（不先进 build），迁移照跑；没建 bug 台账的工作区 `bootstrap` 不许建 `.team/bug/`', '批次 W'],
+  ['LED-02', 'route-ledger', F.led02, '任务 C1b **节点留痕 + headline**：`A` `init` / `bootstrap` 都写第一行（stored = derived、empty:false、stale:false）；`B` 落 route 的三个节点（开工 / 交活 / 验收）只进**审计 `detail.node`**（实施附注 §4），任务对象上**没有** `node` 字段，`close`（收工只落当日日志）与怪值 ⇒ `E_ARG_SCHEMA`；`C` `stage-enter` 换第一行（新阶段名、stale:false、mode=maintain），**`task-set` 不许改它**，`summarize` 首行仍是「目标 · 当前大阶段」（RT-08 冻结）+ 新增 `headline` 字段；`D` **headline 空是真实形态**（C1 之前的老账本）：`read.headline.empty:true`、`stored:null`、`derived` 算得出，`task-set` 的实现任务 ⇒ 拒 `E_ADMIT_HEADLINE` + **零写入** + 任务段仍空；`E` **补齐**：`headline-set` 把 stored 重算成 derived（不接受自带一行字），补齐之后同一发就收', '批次 W'],
+  ['LED-03', 'route-ledger', F.led03, '任务 C1c **单写者 = `slotBusy()` 一个函数**（定形 §3.3 四态闭集）：**17** 格纯函数矩阵（`S01`…`S17`）—— 空槽 exited；活会话 busy；**`ref` 空 = busy 但它自己的第一次 spawn 放行**（换 `requester_task_id` 结论就翻面；别的任务看到 busy、**不是 unknown**）；空串 ref 同形；`session_exit` ⇒ exited/free；`paused + exit` ⇒ free；**`paused + 活会话` = 非法 ⇒ busy 拒**；`fence` 的 paused 不算活；心跳 > 30 分钟 ⇒ crash（回收前照样拒）；**整 30 分钟仍 busy**（边界）；心跳读不到 / 形状坏 ⇒ unknown（按 busy 拒）；done 不是持有者；**两本账一个写者**（路线已退 + bug 任务活着 ⇒ busy）；`kind` 缺省也算工作写；`stale_ms` 真的被读（调到 60 分钟 ⇒ 31 分钟前的心跳不 stale）；只读工作不占槽；`read.slot` 与纯函数同值、拒时点名 holders；`task-set` 不许写 `paused + 活会话`（非法态）', '批次 W'],
+  ['LED-04', 'route-ledger', F.led04, '任务 C1d **暂停 / 恢复**（`build-paused` 那条路）：`A` 暂停必须停会话 —— 有活会话且没声明 ⇒ 拒 `E_PAUSE_SESSION_LIVE` + **零写入** + mode 仍 build（不锁死、不静默放行）；声明了 ⇒ 任务写 `session_exit`（**不清 `session_ref`**）+ 标 `paused`，暂停记录 `{state:open, by:"leader", reason, opened_at=注入时钟, entry_ids}`，`transitions` 不许出现，mode = build-paused；`B` **maintain 不许暂停** ⇒ `E_PAUSE_NOT_SUPPORTED` + 零写入；`C` **扩大**（默认：同一个 `pause_id`、entry 并集）vs **另开**（`new_set:true`：旧 set closed + closed_at、新 set open、新 id）；**旧 set 关闭不自动 free 在途修任务**（bug 台账那条仍 in_progress、route 侧一个字节不动，`read.slot` 仍 busy）；`D` **resume** 关掉 open 的 set、mode 回 build、**不顺手改任务**；不在 build-paused 时 resume ⇒ `E_RESUME_NOT_PAUSED`；`E` `pauseSetOf` 只认 open（closed 不算）+ `pauseEntriesVerdict` **live + archived 两段都查**（已归档的条目仍解得出，找不到的 **点名**）；`F` **切阶段要先停会话**：有活会话没声明 ⇒ 拒 `E_STAGE_SESSION_LIVE` + 零写入；声明了 ⇒ 过 + 在途实现任务 `paused` + `session_exit`（`session_ref` 不变）+ mode=maintain', '批次 W'],
+  ['LED-05', 'route-ledger', F.led05, '任务 C1 **`admitTask` 十六格 + 两个创建入口**（定形 §2.3；函数归 C1、判据归 B）：`A` 十六格矩阵（四种模式 × 三种工作种类 + headline 空 / 集合外 / `paused` 不是模式 / `entry_id` 缺），每格**一个冻死的码**（`E_ADMIT_UNINITIALIZED` / `E_ADMIT_HEADLINE` / `E_ADMIT_KIND` / `E_ADMIT_SET` / `E_ADMIT_MODE` / `E_ADMIT_ENTRY`）+ 一句为什么；`A10`/`A13` **点名那条 entry**；收的时候不许带拒码；`B` **路线入口 `task-set`**：build 收实现（A03）与票的修（A05，**票号挂在任务上**、票投影 in_progress）、拒 bug 修（A06，不跨账）、build-paused 拒实现（A14）、maintain 拒实现与票的修（A07/A08）、`kind` 缺省 = implement（老调用方不破）、ticket-repair 缺票号 ⇒ `E_ARG_SCHEMA`；`C` **bug 入口 `bug-task-set`**：build 拒（A06）+ 零写入；maintain 收批内（A09）+ 落 bug 台账 tasks[]；批外 ⇒ `E_ADMIT_SET` + **点名** + 零写入；混装 entry_ids ⇒ 整条拒 + 点名集合外那条；空 batch（A11）；build-paused 收 pause set 内（A12）、**batch 内但 pause set 外也拒**（A13）+ 点名 + 零写入；未建账 ⇒ `E_ADMIT_UNINITIALIZED`（不许折成 `E_INTERNAL`）+ 零写入；`D` **判据一份（源码级）**：两个入口的函数体都调同一个导入的 `R.admitTask(`、`lib/route.mjs` 里 `admitTask` 只有一个定义（"同一个输入打两个入口"**造不出来** —— 两入口收的 `kind` 不相交）；`E`/`F`（票投影与 live-task void 不变量）之后另有**三段红先格**：`G` **迁移票的写路径**（`void` / `update` / `close` 的 from-state 读**投影**：迁移票不存 `status` 也动得动；**存着的 `status` 不许赢过 `legacy_status`** —— `ticket-update {status:"in_progress"}` 成功但投影仍 `open`、紧接着 `close` 照拒；迁移票要关走**任务**把投影变 `in_progress`；`legacy_status:"done"` 是终态）、`H` **`finding_refs` 载体**（`ticket-open` 收它、给了就 ≥1 条且 ids 唯一、读面查得到、legacy 票店与 observation 两条迁移路都逐字搬）、`I` **跨工作区负样本**（A 拿 B 的 `--status-root`/`--route-dir` 读或写 ⇒ `E_ROOT_OUTSIDE` + 两边零写入；显式写成自己的派生值 ⇒ 放行；同一个 stage id 在两区各一份不是缺陷）', '批次 W'],
+
+  // ── 任务 A 的运行时绕行 · `toolName` 插件桥（2026-11-02 第 2 关）：记录 / 消费 / 九名 / 队列 / 过期 / 边界 ──
+  ['BRG-01', 'toolname-bridge', F.brg01, '**记录面**：父会话的 `tools.guard` 把这次委派的工具名记下来（契约 `.team/test/CONTRACT-A-bridge.md` R1–R5）—— 两实例（组长那份 `apply()` 记 → 组员那份 `apply()` 取，生产拓扑：`cordis.patch.yml:81` / `:613` 各一行 `persona-injector` ⇒ 两套闭包 ⇒ store 必须模块级）；`team_test` 与 `job_technical_review` 两条正例都要让人设 + 说明书落到子会话；**串父会话**（p-other 记的 claim 被 p-stranger 的子会话吃）不许；**非角色名**（`workflow` / `subagent_fork`）一条都不许记；**被拒的委派**（`run_in_background:false`）不许记且判词照旧（不许改成"记了再说"）；放行那一侧判词必须是 `undefined`（记录是纯观察）；外加 `identityVerdict({preset:"member",toolName:"team_test"})` 仍是 row 4 / role=test / 不窄（角色表是唯一作者，桥不许自己算）', '批次 X'],
+  ['BRG-02', 'toolname-bridge', F.brg01, '**消费面一发到底**：子会话头 = `["cwd","agentPreset","origin","parentSession"]`（**没有** `toolName`）+ 父会话刚放行 `team_test` ⇒ 装配必须给出：`agenia:role-persona` 以「你是这个项目的测试与流水线负责人」开头 · `agenia:charter:test` 在 · **工具目录里有 `bash`/`pwsh`**（row 5 的闭三元组必须被换掉 —— 这正是这一票要修的那件事：子会话写不了 `tests/`、跑不了命令）；**A0a 一次性读数行**必须带 `toolName_source=parent-call` / `row=4` / `role="test"` / `toolName="team_test"` / `role_from_toolName=true`，**并且仍然印 `header_keys`**（且里面不许冒出 `toolName`）；两条自洽：说了「带 toolName」就必须真的在头里 · `parent-call` 是判定行，不许再叫人去等"带 toolName 的那一行"', '批次 X'],
+  ['BRG-03', 'toolname-bridge', F.brg01, '**角色表九个名字逐条映射**（`team_design` / `team_dev` / `team_test` / `team_review` / `subagent` / `job_memory_judge` / `job_memory_review` / `job_conversation_review` / `job_technical_review`）：每一发都必须只落 `agenia:charter:<自己的角色>`（多一份 = 角色算错 / 串味），三份取样人设**逐字开头**（test / dev / review），工具面按角色：**只有 `review` 没有 shell**（`NO_SHELL_TOOLS`），其余八个都有（row 5 的闭三元组与 review 的"少 shell"是两件事）；**未知名**（`team_retro`）不许被记 ⇒ 子会话照旧 row 5（没角色、目录仍是闭三元组）；**header 优先**：头里带 `toolName:"team_review"` ⇒ 走 review **且不消费** claim（紧随其后那个无 toolName 的子会话必须还拿得到 `team_test`）', '批次 X'],
+  ['BRG-04', 'toolname-bridge', F.brg01, '**队列语义**：一个父会话连派 `team_test` + `job_technical_review` ⇒ 两个子会话按**派工次序**各自拿到自己的角色（FIFO；次序错 = 名字配错人，契约 F1）；队列空了之后第三个子会话必须回到 row 5（无角色 + 闭三元组）—— **一条 claim 只消费一次**；**同一个子会话第二次装配**（下一轮对话）仍然是 test（名字必须钉在子会话上，R9/F7：角色、人设、工具目录不许中途消失）；**同一个工具连派两次** ⇒ 两条 claim，两个子会话各拿一份（队列是"一次一条"，不是"一个父会话一条"）', '批次 X'],
+  ['BRG-05', 'toolname-bridge', F.brg01, '**过期清理**（可注入时钟 = `node:test` 的 `mock.timers`，只遮 `Date`；量具先自证时钟真的被遮住，遮不住记 `BRG-CLOCK-NOT-DATE` 而不是记功能红）：`+30 s` 的 claim **必须**还能用（正常派工到装配的延迟，TTL 不许短过这个）· `+10 min` 的 claim **必须**不再用（父会话派了活、子会话没起来，留着就是给下一个子会话下毒）· 过期件之后**新的** claim 照常生效（清理不许把新的一起清，也不许让过期件把队列堵死）', '批次 X'],
+  ['BRG-06', 'toolname-bridge', F.brg01, '**边界（四格，全是"别切宽"那一侧）**：① **会话头一个字节都不动** —— 装配前后键集相同、JSON 逐字相同、**不许**冒出 `toolName`（老板明令；写了它 A0a 就永远判不出来）；② **`【组员:dev】` 标记不参与身份** —— claim 说 review、装配入参里塞着 dev 的标记 ⇒ 必须 review（人设 + 说明书两面都判；标记若赢 = 身份第二作者回来了）；③ **`origin` 门** —— `origin:"manual"` 的会话不许吃 claim，而且**claim 要留给**紧随其后的真子会话（不是"吃了也没关系"）；④ **组长预设的子会话不许抢** —— `agentPreset:"agenia"` + `origin:subagent` + 有 claim ⇒ 仍在**组长侧**（有 `agenia:leader`、没有组员说明书），**且不消费** claim（契约 R7/F8：`subagent_fork` 那一类不许把名额定走）', '批次 X'],
+  // ── 任务 C2 · 卡（记忆更新报告，2026-11-02 第 2 关）：路线格 / 票区 / bug 开放数与 50-30 / 严重度 / 状态条 / 容量与回执 ──
+  ['CARD-01', 'memory-update-card', F.card01, '任务 C2 **路线格**（契约 `.team/test/CONTRACT-C2.md` §3.1）：`A` 没有路线账本 ⇒ 第一行**逐字** `未建账`（不带目标 / 阶段 / 间隔号）+ `mode=uninitialized` + 徽标 `null` + `red_bar:false`（红由状态条「未建账」那一格说）+ `card.reasons` 有 `ROUTE_MISSING`；`B` 有账 ⇒ 第一行**逐字**等于账上 `headline`（唯一载体，C1 §6.1）+ `mode=build` + 没有徽标 / 红条；`C` `headline` **缺键** ⇒ `（目标未填）`（全角括号、四个字）+ `red_bar:true` + `HEADLINE_EMPTY`；`D` `headline` = `""` / 全空白 ⇒ 与 C 同形；`E` `pauses[]` 有一条 `state:open` ⇒ `mode=build-paused` + 徽标非空且含「暂停」+ **第一行与 B 逐字相同**（暂停写进第一行就翻面）；`F` 两版账本只差 `tasks[]` ⇒ 第一行**逐字不变**（定形 §6.2：「第一行只随 `stage-enter` 或 headline 补齐而变」）；`G` 账本在盘上但读不出来 ⇒ **卡照样出**、第一行 `（目标未填）`、`red_bar:true`、`ROUTE_UNREADABLE`（"读不出来"不是"没有"）；`H` 正文「目标 · 大阶段」行与 `route.first_line` **同值**（§2.2；负样本 = 只改正文一格 ⇒ 必红）；每一格的 `card.reasons` 都过 §5 闭集（`gate4-C2` F-05 / F-08）', '批次 Y'],
+  ['CARD-02', 'memory-update-card', F.card02, '任务 C2 **票区**（契约 §3.2）：`open` / `in_progress` / `done` / `void` 四个数 + `total` 来自**路线票段投影**（C1 §7.5 唯一一份口径），**不是** `.team/leader/follow-ups.md` —— 夹具里那张文件**故意写 9 张**、票段 8 张（7 迁移 + 1 新票）⇒ 卡上必须是 8 的组合，出现 9 ⇒ `C2-TICKETS-FROM-FOLLOWUPS`；**第五个数 `tickets.legacy`**（组长 2026-11-02 裁定第 4 条）= `legacy_status` 非空的张数（今天 7）——**子集计数**，不进四数、不加进 `total`，`legacy <= total`；`A` 7 张迁移票按 `legacy_status` 投成 5 open / 1 in_progress / 1 done；`C` 在途任务把票顶成 `in_progress`（存着的 `status` 不是权威）、任务 `done` ⇒ 票 `done`；`D` 票段空 ⇒ 五个数都是**数** `0`（不是 `—` / `无` / 空串）；`D2` `void` 来自组长关票（控制写）；`E` **负样本（必须红）**：一张 `void` 的票 + 一条挂在它上面的在途任务 ⇒ `card.red:true` + `card.reasons` 有 `VOID_WITH_LIVE_TASK` 并**点名那张票**；`F` 正文票区那一行的六个数（四数 + 迁移票 + 合计）逐个与其机器格**同值**（§2.2；负样本 = 正文改一个数 ⇒ 必红）+ 闭集', '批次 Y'],
+  ['CARD-03', 'memory-update-card', F.card03, '任务 C2 **bug 开放数 + 50/30**（契约 §3.3/§3.4）：`A` 口径 = `kind=bug` 且**无 disposition**（3 open bug + 1 已处置 + 2 observation ⇒ **3**；observation 不计、已处置不计）；`B` **票不漏进来**（票段 0 → 8 张，`bug.open` 一格不动）；`C` **同一个查询**：`bug.open.source` **逐字等于** `cap.bug_open.source` 且 `bug.open === cap.bug_open`，外加第三个读者 —— `--op bug-read` 的 `counts.bug_open` / `cap.bug_open` / `cap.red` 必须同值（op 不可用 / 拒了夹具 ⇒ **HOLD**，不记绿）；`D` 50 边界 49 不红 / **50 红**（`cap.reasons` 必须含 `count`）；`E` 30 边界（**日历天**、注入时钟）30 天不红 / **31 天红**（`reasons` 含 `age`）；`F` **封顶不动手**：卡前后 `ledger.json` 的 sha256 一字不变；跨读者用**同一注入时钟**并比 `oldest_age_days` / `reasons` / 阈值 / 天数（`gate4-C2` F-04）+ 闭集', '批次 Y'],
+  ['CARD-04', 'memory-update-card', F.card04, '任务 C2 **严重度那一排**（契约 §3.5）：`A` `severity.lines` **恰好四条**、顺序 = 三条线 + `unclassified`（出口是闭集，不是第五桶）；`B` `severity.samples` 恰好四个（正 / 负 / 第三线正 / 第三线负）；`C` **只校准自己的线**：`calibrated.function_broken_repro === false`（未采样）、`data_broken` / `reading_lies` 为 `true`、`unclassified` **不出现在** `calibrated` 里；`D` **判不了两向**：① `severity_confidence:cannot` + 已升级 ⇒ `severity.card_red:true` + `escalations` 点名；② 同形但 `escalated_at:null` ⇒ 卡**更要**红（`SEVERITY_CANNOT_UNESCALATED` + 点名）—— "判不了不许静默"；`E` `assessment:\'unknown\'` 是**另一个词**（保留 open、不升级、不让卡因此红）；`F` **无 bug 台账** ⇒ `severity.samples=[]`、`calibrated` 三条 false、卡**不因此红**，且**不许编样本**（组长 2026-11-02 裁定 · `gate4-C2` F-10）+ 闭集', '批次 Y'],
+  ['CARD-05', 'memory-update-card', F.card05, '任务 C2 **状态条十二格**（契约 §4 + 裁定第 1/2 条）：`A` 形状 —— `statusbar` 恰好 12 个对象、`key` 与 §4.2 **逐字同序**（50/30 · 未建账 · 记忆链红 · SLA 红 · carrier 缺 · observation 数 · 未知预设报警 · 预设降级 · legacy 会话数 · 单写者未执行 · stale 槽 · 红条）、每个对象**至少**六个键（`key/label/state/reading/producer/wired`）、`state` 在四值闭集、`statusbar.count===12`；`B` 🔴 **十二格全部接线**：主夹具（五种 producer 全给：路线 / bug 台账 / 数据根 / identity.<day>.json / 两份评审报告 / legacy 票店）里任何一格 `wired:false` ⇒ `C2-STATUSBAR-ANY-UNWIRED`；`C` 🔴 **未接线 = 红**（**负样本**，合成输入**六**份证明它翻得动面）：`wired:false` ⇒ `state:red` + `reading` 说"没接线" + `card.reasons` 有 `CARD_UNWIRED:<key>`（不许绿 / unknown / 黄），且"守规矩的未接线"只该剩 `ANY-UNWIRED` 一条（两条判据各有力）；`D` 🔴 **unknown / 黄只许探针降级的槽格**（`slot_not_enforced` / `stale_slot`，且必须 `wired:true` + `degraded_by ∈ {A0b,A0d}`）；`E` **五格真读数两向**：`sla`（当天开的不红 / 上一个开工周期仍未 `assessed` ⇒ 红 + `SLA_OVER_CYCLE`）、`carrier_missing`（两份评审报告都在 ⇒ 绿 / 缺一份 ⇒ 红）、`unknown_preset` + `preset_downgrade`（identity 文件两格都空 ⇒ 绿 / 有报警 ⇒ 红）、`legacy_sessions`（legacy 票店已迁空 ⇒ 绿 / 还剩 2 张 ⇒ 红）；`F` **红条格 = `card.red` 总闸**（定形：「卡红统一落状态条的「红条」格」）；`G` **SLA 判不了也算超期**（`assessment.verdict:\'unknown\'`）+ `bug-read.sla` 用**同一注入时钟**跨读者（不可用 ⇒ HOLD）· **槽谓词 JS/Python 同值**（`implement`+`bug-repair` 两个活持有者 ⇒ `SLOT_NOT_ENFORCED`；`crash` 心跳 ⇒ `STALE_SLOT`；心跳缺 ⇒ 两格黄 + `degraded_by`）· **`label`/`producer` 逐字**（互换 ⇒ 必红）· **producer A/B 自己的写面** · 闭集（`gate4-C2` F-01/F-02/F-03/F-06/F-07/F-09）', '批次 Y'],
+  ['CARD-06', 'memory-update-card', F.card06, '任务 C2 **容量行 + 两段回执 + 卡本身**（契约 §3.6/§3.7/§3.8/§2.4 + 裁定第 5 条）：`A` 容量五读数 —— `count/chars` = 快照 `totals`（73 / 4321）、`cap_count/cap_chars` = 夹具 `presets/agenia/lib/memory.mjs` 的**怪值**（137 / 12_345 ⇒ 写死 200/80000 当场翻红）、`source` 必须点名快照且**不许**含 `.team/route`（定形：「容量读记忆库快照，路线账本不存」）；`B` 卡本身 —— `card.name` 逐字 `记忆更新报告` · `card.generator` 含 `daily-cards.py` · `card.day` = `--day` · `card.as_of` 带偏移的 ISO8601；`C` **快照读不到 ⇒ 红不出 0**（`capacity.state:red` + `count:null` + `CAPACITY_UNREADABLE`）；`D` 回执四态**逐段逐卡** —— 第一段（技术评审）在卡 1 的 `C2 · 验收格`、第二段（会话评审）在**卡 2** 的 `C2 · 回执格`：`present`（本周期 done）/ `missing`（本周期没有）/ `expired`（只有上一周期，**超一个开工周期**）/ `na`（无路线无任务 ⇒ **不判红**），缺 / 过期 ⇒ **那张卡**的 `receipt.red:true` + 逐段点名，两卡 `required` 同值、两段的红不许串卡；`E` **生成失败四件套** —— 退出码非 0 · **两张卡都没有**（绝不绿兜底）· append-only 失败标记（`at` = **注入时钟**、`day`、`code`；第二次失败 ⇒ 2 行）· stderr 一行 `🔴` 带 `E_*` 码；`G` 第二段 `receipt.conversation.report_path` 逐字 `.team/retro/<day>/会话评审.md`（`gate4-C2` F-09）；`H` 正文容量行与 `capacity.count/chars` **同值**（负样本 = 首数印 0 ⇒ 必红）；两张卡的 `card.reasons` 都过 §5 闭集', '批次 Y'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -715,6 +923,21 @@ export const GROUP_COUNTS = {
   'day-boundary': 6,
   /** 门 2 · `F-163` 平台版本读数的自证（`PLT-01`：短 2 B / BOM / 截断 / 纯函数 / 真实 asar 读数）。 */
   'platform-reading': 1,
+  /** 任务 A · 九份组员并成一份（`PRS-01` 页面两条 / `PRS-02` 身份判定表 / `PRS-03` 判决岗调用被拒 /
+   *  `PRS-04` 角色表唯一作者）—— 契约见 `.team/test/CONTRACT-A.md`。 */
+  'preset-identity': 4,
+  /** 任务 B · bug 系统（`BUG-01` 登记簿与封顶 / `BUG-02` 五分支分流 / `BUG-03` bug 任务与准入 /
+   *  `BUG-04` 严重三线）—— 契约见 `.team/test/CONTRACT-B.md`。 */
+  'bug-system': 4,
+  /** 任务 C1 · 路线账本（`LED-01` C1a 建账+迁移 / `LED-02` C1b 节点+headline / `LED-03` C1c 槽 /
+   *  `LED-04` C1d 暂停 / `LED-05` `admitTask` 十六格与两个入口）—— 契约见 `.team/test/CONTRACT-C1.md`。 */
+  'route-ledger': 5,
+  /** 任务 A 的运行时绕行 · `toolName` 插件桥（`BRG-01` 记录面 / `BRG-02` 消费面 / `BRG-03` 九名全表 /
+   *  `BRG-04` 队列 / `BRG-05` 过期 / `BRG-06` 边界）—— 契约见 `.team/test/CONTRACT-A-bridge.md`。 */
+  'toolname-bridge': 6,
+  /** 任务 C2 · 卡（记忆更新报告）—— 六格：路线格 / 票区 / bug 开放数与 50-30 / 严重度那一排 /
+   *  状态条十二格 / 容量与回执与卡本身。契约见 `.team/test/CONTRACT-C2.md`。 */
+  'memory-update-card': 6,
 }
 
 /**
@@ -732,11 +955,11 @@ export function registryProblems() {
   // 发现器自己报的问题（没有 ID 的 test() / 重复 ID）。
   for (const p of DISCOVERY.problems) problems.push(p.message)
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
-  // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
+  // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -763,6 +986,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }

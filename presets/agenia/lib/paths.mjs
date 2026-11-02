@@ -23,6 +23,10 @@
  *    刻意不合并进 `dataRootVerdict` —— 合并等于在那张防误写的表上开条件分支，
  *    它会立刻不再是"无条件"。
  *
+ * 🔴 **`routeDirBindingVerdict` 也不是上面那几条的变体**（gate4 复审 BC-03b）：它判的是
+ *    "这个根**是不是这个工作区**的"（跨工作区读/写），而 `dataRootVerdict` 判的是"这个根危险吗"。
+ *    两个工作区各自都有合法的 `<ws>/.team` ⇒ 交叉那一格只能由这条判据挡。
+ *
  * 🔴 **第三条路也不是"开的后门"，是另一条判据（2026-10-15 组长裁）**：
  *    `workspaceWriteVerdict` ⇒ `--op session-packet`。它**不用** `REAL_ROOTS` 那张表，也**没碰**
  *    `dataRootVerdict` 一分一毫：那条判的是"这个**根**危险吗"（两个方向都拒），这条判的是
@@ -465,6 +469,53 @@ export function workspaceWriteVerdict(rawWorkspace, options = {}) {
   }
 
   return { ok: true, code: null, workspace, target, message: '' }
+}
+
+/**
+ * **路线目录只能由 `--workspace` 派生**（gate4 复审 BC-03b · 组长裁定：账本一个工作区一份）。
+ *
+ * 冻结口径：路线账本**永远**是 `<WS>/.team/route`。`--status-root`（指 `.team` 那一层）与
+ * `--route-dir`（指整格）只是同一条路的两个**显式写法**：写得跟派生值一样 ⇒ 放行（老调用方不破），
+ * 指到**别的工作区**（哪怕那本身是个合法根）⇒ 拒 `E_ROOT_OUTSIDE` + **零写入**。
+ *
+ * 🔴 为什么这要是一条判据而不是"调用方自觉"：`dataRootVerdict` 判的是"这个根危险吗"（C 盘 / 真实根），
+ *    它**天生不判**"这个根是不是**这个工作区**的"。两个工作区各自都有合法的 `<ws>/.team`，
+ *    A 拿 `--workspace A --status-root B/.team` 就能读/写 B 的路线账 —— 那条路以前是通的。
+ *    同一个 `stage id` 出现在两个工作区**不是**缺陷（每区一份阶段），跨区读/写才是。
+ *
+ * 判定顺序（同一输入每次同一个码）：`--status-root` 越界 → `--route-dir` 越界。
+ * 本函数只在**根都已经过 `dataRootVerdict`** 之后调用（C 盘 / 真实根 / marker 的码比它先出）。
+ *
+ * @param {{workspace:string, statusRoot?:string|null, routeDir?:string|null,
+ *          teamDirName?:string, routeDirName?:string}} input
+ * @returns {{ok:true, code:null, route_dir:string, message:string}
+ *          |{ok:false, code:'E_ROOT_OUTSIDE', route_dir:string, message:string}}
+ */
+export function routeDirBindingVerdict({
+  workspace, statusRoot = null, routeDir = null, teamDirName = '.team', routeDirName = 'route',
+} = {}) {
+  const ws = canonicalPath(workspace)
+  const expectedTeamDir = path.join(ws, teamDirName)
+  const expectedRouteDir = path.join(expectedTeamDir, routeDirName)
+  const hasStatusRoot = statusRoot !== null && statusRoot !== undefined && String(statusRoot).trim() !== ''
+  if (hasStatusRoot && normKey(statusRoot) !== normKey(expectedTeamDir)) {
+    return {
+      ok: false,
+      code: 'E_ROOT_OUTSIDE',
+      route_dir: expectedRouteDir,
+      message: `--status-root 必须是**这个工作区**的 .team（${canonicalPath(expectedTeamDir)}），实得 ${canonicalPath(statusRoot)} —— 路线账本一个工作区一份，不许指到别的工作区（要换工作区就换 --workspace）`,
+    }
+  }
+  const hasRouteDir = routeDir !== null && routeDir !== undefined && String(routeDir).trim() !== ''
+  if (hasRouteDir && normKey(routeDir) !== normKey(expectedRouteDir)) {
+    return {
+      ok: false,
+      code: 'E_ROOT_OUTSIDE',
+      route_dir: expectedRouteDir,
+      message: `--route-dir 必须等于由 --workspace 派生出来的 ${expectedRouteDir}，实得 ${canonicalPath(routeDir)} —— 路线目录不接受外部指定`,
+    }
+  }
+  return { ok: true, code: null, route_dir: expectedRouteDir, message: '' }
 }
 
 /**

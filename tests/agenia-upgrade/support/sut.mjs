@@ -63,6 +63,44 @@ export function stagingExists(rel, env = process.env) {
   }
 }
 
+// ── 现役 preset 那一棵（**任务 C2 的被测树**）────────────────────────────────
+/**
+ * `presets/agenia/<rel>` 的绝对落点（**现役**，不是 staged）。
+ *
+ * 🔴 为什么 C2 的跨读者读这一棵（`gate4-C2` F-03/F-04）：卡自己的 producer 树就是
+ *    `<WS>/presets/agenia`（`daily-cards.py::read_capacity()` 读的是 `<WS>/presets/agenia/lib/memory.mjs`），
+ *    所以"同一条事实的第二个读者"必须指**同一棵树**。拿 staged 那一份去比，
+ *    量的是**另一个目录里那份代码**（`mig-i16-staging-tree-01` / `cand-20261028-0461`：
+ *    一个把根定错的健康检查会静默改测另一棵树，红的那条没人查得动）。
+ *    staged 与现役的差由入口的 `F57-TARGET` 单独管，**不在这里混**。
+ */
+export function livePath(rel) {
+  const root = canonical(path.join(PATHS.repo, 'presets', 'agenia'))
+  const abs = canonical(path.resolve(root, rel))
+  if (!isUnder(abs, root)) {
+    const err = new Error(`E_PATH_ESCAPE: ${rel} 逃出了现役 preset 根 ${root}`)
+    err.code = 'E_PATH_ESCAPE'
+    throw err
+  }
+  return abs
+}
+
+/**
+ * 载入现役 preset 里的一个模块（C2 的跨读者 / producer 写面用）。
+ * 与 `loadStagedModule` 同形：**不抛**，把"缺面 / 缺导出 / import 失败"如实回报。
+ */
+export async function loadLiveModule(rel, names = []) {
+  const abs = livePath(rel)
+  if (!existsSync(abs)) return { rel, abs, surfaceMissing: true, mod: null, missing: [...names], error: `现役树里没有 presets/agenia/${rel}` }
+  try {
+    const url = new URL(`file:///${abs.replace(/\\/g, '/')}`).href
+    const mod = await import(url)
+    return { rel, abs, surfaceMissing: false, mod, missing: names.filter((n) => !(n in mod) || typeof mod[n] === 'undefined'), error: null }
+  } catch (err) {
+    return { rel, abs, surfaceMissing: false, mod: null, missing: [...names], error: `${err?.code ?? 'ERR'}: ${String(err?.message ?? err).slice(0, 240)}` }
+  }
+}
+
 /** 读 staged 文本；缺面 ⇒ `SUT-SURFACE-MISSING`（RED-SURFACE，就是预期的首跑红）。 */
 export function readStagedText(rel, env = process.env) {
   const abs = stagingPath(rel, env)

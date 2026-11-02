@@ -7,20 +7,25 @@
  * ── 2026-10-19（DSH 0.2.1）：一份预设 → 十份 ─────────────────────────────────
  * 0.2.1 的 `tool-subagent` **不再接受 `persona` / `toolFilter`**（见到就报迁移错，
  * 整份预设判 broken）。一个岗位的"人格 + 工具集"必须是一份**独立的 Agent Preset**，
- * 组长那一行只用 `agentPreset:` 指过去。
+ * 组长那一行只用 `agentPreset:` 指过去。那时生成的是 1 份组长 + 9 份组员。
  *
- * ⇒ 这个脚本现在生成 **1 份组长预设 + 9 份组员预设**，全部从同一份 `.yml` 派生：
- *   · 组员的**人格**来自组长那一行上面的 `# @member-persona …` 注释；
- *   · 组员的**工具集** = 组长的组合**去掉 delegation 组**（那两个 workflow 行本来就在组里，
- *     所以"不许 workflow / ralph"也一起是结构性的）；
- *   · `# @member-deny proposal_file` ⇒ 那一份组员预设的注入器写 `proposalFile: false`
- *     （判决岗"不能提候选"是结构性没有这个工具，不是调用被拒）。
+ * ── 2026-11-01（并员）：十份 → **两份** ───────────────────────────────────────
+ * 九条委派行现在指**同一份**通用组员预设 `agenia-member`（页面上只剩两条）。
+ * 角色（persona / charter / model / tools）不再住在预设里，而是住在 `inject.js` 的
+ * `ROLE_TABLE`（按 `toolName` 查，唯一作者）⇒ 这一份只负责"组员那一份组合长什么样"：
+ *
+ *   · **组长那一份** = 组合的全部行原样（`persona` / `persona-injector` 两行由这里改写）；
+ *   · **通用组员那一份** = 组合**去掉整个 delegation 组**（组员没有委派工具，
+ *     `workflow` / `ralph` 也一起结构性没有）+ **一份不扮演任何具体角色的通用人格**
+ *     + 注入器的 `defaultRole: leader` **改写成 `member`**（各份声明各档）；
+ *   · 组员那一份**不声明** `model` / `tools`（任意深度都没有这两个键）—— 那两个键只住在
+ *     角色表里。生成时**当场对账**，出现了就 throw（不是等到体检才发现）。
  *
  * 用法：<node> .tools/make-bundle-patch.mjs [--check]
  *   · 不带参数：写 `presets/agenia/cordis.patch.yml`
  *   · `--check`：只对账，不一致就退出 1（体检脚本调它）
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -38,8 +43,6 @@ const TARGET = join(PRESET, 'cordis.patch.yml')
  * （`presets/agenia/cordis.patch.yml` 只是 bundle 的入口，插入的行归 profile 的加载器管）。
  *
  * ⚠️ **这是整个仓库里唯一一处写死 E: 的地方** —— 换机器 / 换目录，改这一行。
- * （旧写法 `./inject.js` 依赖"补丁文件就在预设文件夹里"，那是 `cordis:include` 时代的性质，
- *   include 一去掉就不成立了 —— 见下面那段注释。）
  */
 const INJECTOR = 'file:///E:/Harness/presets/agenia/inject.js'
 
@@ -55,10 +58,22 @@ const INJECTOR = 'file:///E:/Harness/presets/agenia/inject.js'
  */
 const CONTENT_DIR = 'E:/Harness/presets/agenia'
 
-/** 组员人格的注释锚点（写在组长那一行上面）。 */
-const MEMBER_PERSONA = /^\s*#\s*@member-persona\s+(.+?)\s*$/m
-/** 组员工具集的否定项（目前只认 `proposal_file`）。 */
-const MEMBER_DENY = /^\s*#\s*@member-deny\s+(.+?)\s*$/m
+/** 组长那一份的预设 id（`inject.js` 的 `LEADER_PRESET_ID` 同值）。 */
+const LEADER_PRESET_ID = 'agenia'
+/** 通用组员那一份的预设 id（`inject.js` 的 `MEMBER_PRESET_ID` 同值）。九条委派行全指它。 */
+const MEMBER_PRESET_ID = 'agenia-member'
+
+/**
+ * 通用组员的人格正文 —— **不扮演任何具体角色**（角色那九句住在 `inject.js` 的
+ * `ROLE_TABLE` 里，按 `toolName` 给）。这里只交代"你是组员、先读说明书"。
+ *
+ * ⚠️ 别往这段里写 `【组员:<角色>】` 标记：标记已退役（`inject.js` 不再读它），
+ *    而这只是一份**通用**人格，写一个具体角色就是让九个岗位里八个认错自己。
+ */
+const MEMBER_PERSONA = '你是这个项目组的组员。你的岗位说明书（你是谁、这摊活怎么干）会随请求自动注入 —— 开工前先读它。'
+
+/** 组员那一份**不许**出现的两个键（任意深度）：它们只住在角色表里。 */
+const FORBIDDEN_IN_MEMBER = ['model', 'tools']
 
 /**
  * 把组合本体切成"顶格 `- ` 开头的行块"。
@@ -85,46 +100,17 @@ function splitRows(text) {
 const ids = (text) => (text.match(/^\s*- id: .+$/gm) ?? []).map((l) => l.trim().slice(6).trim())
 
 /**
- * 从 `toolName` 推岗位名：`team_design` → `design`、`job_memory_judge` → `memory-judge`、
- * `subagent` → `hire`。这三条是这份预设自己冻的约定（见 agent.cordis.yml「队伍」那一节）。
+ * 委派组里那些带 `agentPreset` 的行（= 真正会起子会话的九条）。
+ * @returns {{ id: string, toolName: string|undefined, presetId: string }[]}
  */
-function roleOf(toolName) {
-  if (toolName === 'subagent') return 'hire'
-  return toolName.replace(/^team_|^job_/, '').replace(/_/g, '-')
-}
-
-/** 组员预设 id：`team_design` → `agenia-team-design`、`subagent` → `agenia-hire`。 */
-function presetIdOf(toolName) {
-  if (toolName === 'subagent') return 'agenia-hire'
-  return `agenia-${toolName.replace(/_/g, '-')}`
-}
-
-/**
- * 解析 delegation 组里的组员行：每行要有 `agentPreset`，人格来自上面那行 `# @member-persona`。
- * @returns {{ id: string, toolName: string, presetId: string, persona: string, deny: string[] }[]}
- */
-function memberRows(delegationBlock) {
+function delegationRows(delegationBlock) {
   const rows = []
-  let pendingPersona
-  let pendingDeny
   let current = null
   for (const line of delegationBlock.split('\n')) {
-    const persona = MEMBER_PERSONA.exec(line)
-    if (persona !== null && /@member-persona/.test(line)) {
-      pendingPersona = persona[1]
-      continue
-    }
-    const deny = MEMBER_DENY.exec(line)
-    if (deny !== null && /@member-deny/.test(line)) {
-      pendingDeny = deny[1].split(/[\s,]+/).filter(Boolean)
-      continue
-    }
     const id = /^\s*- id: (\S+)\s*$/.exec(line)
     if (id !== null) {
-      current = { id: id[1], toolName: undefined, presetId: undefined, persona: pendingPersona, deny: pendingDeny ?? [] }
+      current = { id: id[1], toolName: undefined, presetId: undefined }
       rows.push(current)
-      pendingPersona = undefined
-      pendingDeny = undefined
       continue
     }
     if (current === null) continue
@@ -136,15 +122,7 @@ function memberRows(delegationBlock) {
   return rows.filter((row) => row.presetId !== undefined)
 }
 
-/** 岗位说明书第一行当菜单名（`# 莉薇（Liv）· 设计与美工` → `莉薇（Liv）· 设计与美工`）。 */
-function rosterName(role) {
-  const file = join(PRESET, 'team', `${role}.md`)
-  if (!existsSync(file)) return role
-  const first = readFileSync(file, 'utf8').split('\n')[0].trim()
-  return first.replace(/^#+\s*/, '') || role
-}
-
-/** 组员人格那一行（`persona` 行被整块换掉）。 */
+/** 组员的人格那一行（组合里的 `persona` 行被整块换掉）。 */
 function memberPersona(personaText, suffix) {
   return [
     '- id: persona',
@@ -171,8 +149,18 @@ export function build() {
 
   const delegation = blocks.find((block) => /^- id: delegation\s*$/m.test(block))
   if (delegation === undefined) throw new Error('agent.cordis.yml 里找不到 delegation 组 —— 组员行必须住在里面')
-  const members = memberRows(delegation)
+  const members = delegationRows(delegation)
   if (members.length === 0) throw new Error('delegation 组里一条带 agentPreset 的组员行都没有 —— 迁移没做？')
+
+  // 九条委派行必须**同指**那一份通用组员预设（并员的全部内容就是这一条）。
+  const wrongRef = members.filter((row) => row.presetId !== MEMBER_PRESET_ID)
+  if (wrongRef.length > 0) {
+    throw new Error(
+      `这些委派行的 agentPreset 不是 ${MEMBER_PRESET_ID}：`
+        + wrongRef.map((row) => `${row.id}=${row.presetId}`).join(', ')
+        + '（并员之后九行共用一份组员预设；各指各的 = 还是九份）',
+    )
+  }
 
   const personaBlock = blocks.find((block) => /^- id: persona\s*$/m.test(block))
   if (personaBlock === undefined) throw new Error('agent.cordis.yml 里找不到 persona 行')
@@ -181,6 +169,7 @@ export function build() {
   //    （`unknown prompt variable "{{cwd}}" in section "deployment:persona-suffix"`）。
   const suffix = /^\s*suffix:\s*(.+)$/m.exec(personaBlock)?.[1]?.trim() ?? '你在当前工作目录里干活。'
   const injectorBlock = blocks.find((block) => /^- id: persona-injector\s*$/m.test(block))
+  if (injectorBlock === undefined) throw new Error('agent.cordis.yml 里找不到 persona-injector 行')
 
   const INDENT = ' '.repeat(10) // 对齐到 `plugins:` 下面的 `- id:`（见下面模板）
   const indentBody = (text) => text
@@ -192,21 +181,46 @@ export function build() {
   const leaderBody = indentBody(blocks.join('\n\n'))
 
   /**
-   * 组员那一份：去掉整个 delegation 组（组员没有委派工具），换掉 persona，
-   * 判决岗再给注入器加 `proposalFile: false`（那个工具因此不注册）。
+   * 通用组员那一份：去掉整个 delegation 组（组员没有委派工具），换掉 persona，
+   * 并把注入器的 `defaultRole` **改写**成 `member`（这一份自己声明的档）。
+   *
+   * 🔴 2026-11-01 第 4 关返修：组合本体现在**声明了** `defaultRole: leader`（组长那一份的档）。
+   *    组员那一份不能原样抄过去（那就是"声明了 leader 的组员预设"，每个组员会话都报一次不符），
+   *    也不能**再插一行**（同一个键写两遍 ⇒ YAML 后一条赢，读的人不知道哪条算数）。
+   *    ⇒ 这一份是**改写那一行**；组合里没有这个键 ⇒ 生成失败（别静默产出一份不声明档的预设）。
    */
-  function memberBody(member) {
-    const inherit = member.deny.includes('proposal_file')
-    const picked = blocks
+  const memberBody = indentBody(
+    blocks
       .filter((block) => !/^- id: delegation\s*$/m.test(block))
       .map((block) => {
-        if (/^- id: persona\s*$/m.test(block)) return memberPersona(member.persona ?? roleOf(member.toolName ?? ''), suffix)
-        if (inherit && block === injectorBlock) {
-          return block.replace(/^(\s*)contentDir: .*$/m, (m, pad) => `${m}\n${pad}proposalFile: false`)
+        if (/^- id: persona\s*$/m.test(block)) return memberPersona(MEMBER_PERSONA, suffix)
+        if (block === injectorBlock) {
+          if (!/^\s*defaultRole:\s*\S+\s*$/m.test(block)) {
+            throw new Error('组合本体的 persona-injector 没声明 defaultRole（组长那一份该写 `defaultRole: leader`）——'
+              + ' 组员那一份无从改写，先生成一份"不声明档"的预设不是这里想要的形状')
+          }
+          return block.replace(/^(\s*)defaultRole:\s*\S+\s*$/m, '$1defaultRole: member')
         }
         return block
       })
-    return indentBody(picked.join('\n\n'))
+      .join('\n\n'),
+  )
+
+  /**
+   * 🔴 生成时当场对账：组员那一份里**不许**出现 `model` / `tools` 键（任意深度）。
+   *    这两个键只住在 `inject.js` 的 `ROLE_TABLE` 里；预设里再写一份 = 两个作者。
+   *    （扫的是**键**，不是"出现过这个词"：注释里的 `model` 字样不算。）
+   */
+  const forbidden = memberBody
+    .split('\n')
+    .map((line, i) => ({ line, no: i + 1 }))
+    .filter(({ line }) => FORBIDDEN_IN_MEMBER.some((key) => new RegExp(`^\\s*${key}:\\s*\\S`).test(line)))
+  if (forbidden.length > 0) {
+    throw new Error(
+      `通用组员预设里出现了 ${FORBIDDEN_IN_MEMBER.join(' / ')} 键：`
+        + forbidden.map(({ line, no }) => `第 ${no} 行「${line.trim()}」`).join('；')
+        + '（角色表是这两个键的唯一作者；预设里再写一份 = 第二个作者）',
+    )
   }
 
   const preset = (id, name, description, order, body) => [
@@ -221,25 +235,13 @@ export function build() {
     body,
   ].join('\n')
 
-  const memberPresets = members.map((member, index) => {
-    const role = roleOf(member.toolName ?? '')
-    const expected = presetIdOf(member.toolName ?? '')
-    if (member.toolName === undefined || member.persona === undefined) {
-      throw new Error(`组员行「${member.id}」缺 toolName 或 \`# @member-persona\` 注释 —— 0.2.1 迁移没做全`)
-    }
-    if (member.presetId !== expected) {
-      throw new Error(
-        `组员行「${member.id}」的 agentPreset 是 ${member.presetId}，但按 toolName=${member.toolName} 推出来应该是 ${expected}`,
-      )
-    }
-    return preset(
-      member.presetId,
-      `'Agenia 组员 · ${rosterName(role)}'`,
-      `'Agenia 的 ${role} 组合 —— 组长派工时自动使用，不要手动选。'`,
-      100 + index,
-      memberBody(member),
-    )
-  })
+  const memberPreset = preset(
+    MEMBER_PRESET_ID,
+    "'Agenia 通用组员'",
+    "'Agenia 的通用组员组合 —— 组长派工时自动使用，不要手动选。身份按 toolName 从角色表里取。'",
+    100,
+    memberBody,
+  )
 
   // 那一行仍然写相对路径：插入行的相对路径按**这份补丁所在目录**解析，
   // 而这份补丁就在预设文件夹里（profile 里那个 junction 指回 E:\Harness\presets\agenia）。
@@ -273,17 +275,15 @@ export function build() {
 #    出厂四份预设**没有一份**用 include，它们的 plugins 全是内联的。这一条在无头档里
 #    也同样复现（那里是 29 行全废）。⇒ **别再改回 include。**
 #
-# ── 🔴 2026-10-19（DSH 0.2.1）：一份预设变十份 ─────────────────────────────────
-# 0.2.1 的 \`tool-subagent\` 删掉了 \`persona\` / \`toolFilter\`：见到就抛
-#   tool-subagent: persona is no longer supported; configure persona and tool plugins
-#   in an Agent Preset and select it with agentPreset (spawn only)
-# ⇒ 组长那一份里九条委派行全部判 broken、整份预设被 UI 藏掉（症状：模式菜单里没有 Agenia，
-#    新会话回落到 standard）。现在每一条委派行用 \`agentPreset:\` 指向**一份独立的组员预设**，
-#    那十份全部由 \`.tools/make-bundle-patch.mjs\` 从同一个 \`agent.cordis.yml\` 派生：
-#      · 组员人格 ← 组长那一行上面的 \`# @member-persona\` 注释；
-#      · 组员工具集 = 组长组合**去掉 delegation 组**（workflow / ralph 本来就在那组里）；
-#      · \`# @member-deny proposal_file\` ⇒ 那一份注入器写 \`proposalFile: false\`。
-#    ⚠️ **别手动改这份文件** —— 改了 \`.yml\` 就跑一次生成器。
+# ── 🔴 2026-11-01（并员）：页面 = **两条**预设 ────────────────────────────────
+# 九条委派行（\`@deepseek-ai/dsh-tool-subagent\` 的九个命名实例）现在指**同一份**
+# 通用组员预设 \`${MEMBER_PRESET_ID}\`。所以这份补丁里只有两条
+# \`@deepseek-ai/dsh-agent-preset\` 入口：组长 \`${LEADER_PRESET_ID}\` + 通用组员 \`${MEMBER_PRESET_ID}\`。
+#
+#   · 角色（persona / charter / model / tools）的唯一作者是 \`inject.js\` 的 \`ROLE_TABLE\`，
+#     按 \`toolName\` 查 —— 预设里**没有** \`model\` / \`tools\` 两个键（生成器当场对账）；
+#   · 组员那一份 = 组合**去掉 delegation 组**（workflow / ralph 结构性没有，组员不能再招人）；
+#   · **别手动改这份文件** —— 改了 \`.yml\` 就跑一次生成器。
 #
 # ⚠️ 所以这份文件是 \`agent.cordis.yml\` 的**派生物**：
 #    那份仍是唯一来源，这份由 \`.tools/make-bundle-patch.mjs\` 生成 ——
@@ -295,11 +295,13 @@ export function build() {
 #      · 不写 contentDir   ⇒ 那些 .md 全读不到，**而且不报错**（静默注入 0 字符）
 #    ⇒ **换机器 / 换目录，改生成器里那两行，再跑一次生成器。**
 - insert:
-${preset('agenia', 'Agenia 模式', '带班子的工程组长。她自己分诊、派人、验收；手下四个固定岗位按次序干活，只审不改的岗位碰不到源码。', 10, leaderBody)}
-${memberPresets.join('\n')}
+${preset(LEADER_PRESET_ID, 'Agenia 模式', '带班子的工程组长。她自己分诊、派人、验收；手下四个固定岗位按次序干活，只审不改的岗位碰不到源码。', 10, leaderBody)}
+${memberPreset}
 `
-  // 对账：每一份 `plugins:` 里拷进来的 `- id:` 总数，必须等于"组长那一份 + 9 份组员"该有的量。
+  // 对账：每一份 `plugins:` 里拷进来的 `- id:` 总数，必须等于"组长那一份 + 组员那一份"该有的量。
   const copied = (text.match(/^ {10}- id: /gm) ?? []).length
+  const presetEntries = (text.match(/^ {4}- id: preset-/gm) ?? []).length
+  if (presetEntries !== 2) throw new Error(`补丁里应有 2 条预设入口（组长 + 通用组员），实得 ${presetEntries}`)
   return { text, sourceRows: ids(source).length, copied, blocks: blocks.length, memberCount: members.length }
 }
 
@@ -315,7 +317,7 @@ if (isCheck) {
   }
   const same = current === text
   console.log(same
-    ? `  ok   cordis.patch.yml 与 agent.cordis.yml 一致（${blocks} 条顶格行 · ${memberCount + 1} 份预设 · 拷进来 ${copied} 个 id）`
+    ? `  ok   cordis.patch.yml 与 agent.cordis.yml 一致（${blocks} 条顶格行 · 2 份预设（1 组长 + 1 通用组员） · ${memberCount} 条委派行同指 ${MEMBER_PRESET_ID} · 拷进来 ${copied} 个 id）`
     : `  RED  cordis.patch.yml 与 agent.cordis.yml 对不上 —— 改了 .yml 就跑 <node> .tools/make-bundle-patch.mjs`)
   process.exit(same ? 0 : 1)
 }
@@ -325,4 +327,4 @@ console.log(`写出 ${TARGET}`)
 // ⚠️ 这两个数**本来就不相等**，不是一个"对不上"：
 //    `copied` 数的是**每一份预设的顶层行块**总和，`sourceRows` 数的是源文件里**全部 `- id:`**
 //    （含组内子行）。真正的对账是 `--check` 那条（整份文本逐字比）。
-console.log(`  ${blocks} 条顶格行 · ${memberCount + 1} 份预设（1 组长 + ${memberCount} 组员） · 补丁里拷进来 ${copied} 条 · 源文件共 ${sourceRows} 个 id`)
+console.log(`  ${blocks} 条顶格行 · 2 份预设（1 组长 + 1 通用组员） · ${memberCount} 条委派行同指 ${MEMBER_PRESET_ID} · 补丁里拷进来 ${copied} 条 · 源文件共 ${sourceRows} 个 id`)

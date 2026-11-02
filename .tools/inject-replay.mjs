@@ -349,7 +349,11 @@ async function replayThroughInjector(events, sessionId, contentDir, header = {},
   const assemblers = handlers.get('system-prompt/assemble') ?? []
   const preSteps = handlers.get('agent/pre-step') ?? []
 
-  /** 一次装配：`sections` 里带不带那枚 `【组员:xx】`，决定实现认不认得出"这次是组员"。 */
+  /**
+   * 一次装配：`sections` 里原样带上那枚 `【组员:xx】`（旧日志当时的样子）。
+   * 🔴 2026-11-01 起它**不决定身份**了 —— 注入器只看会话头的 `agentPreset`（+ `toolName`）。
+   *    回放旧日志时头里写的是旧预设 id ⇒ 判成"预设认不出"（row 6/7，组员侧、窄），方向仍对。
+   */
   const assembleOnce = async () => {
     const assembly = {
       sections: [{
@@ -626,8 +630,10 @@ for (const path of logs) {
   const member = header.delegationDepth > 0 || typeof header.parentSession === 'string'
   // 插 claim 点：机制② 现在挂在"这一步领到的 messages"上（见文件头第 3 条）。
   const { timeline, orphans } = withPrestepPoints(events)
-  // 组员的岗位名从日志里认 —— 装配的 `sections` 要原样带上那枚标记，
-  // 实现才知道"这次开口的是组员"（口径 8b 就靠它）。
+  // 组员的岗位名从日志里认 —— 装配的 `sections` 里原样带上那枚标记。
+  // 🔴 2026-11-01（并员）起那枚标记**退役**、注入器不再读它：身份只看会话头
+  //    （`header.agentPreset` + `toolName`）。这里留着它，是因为**被回放的是旧日志**，
+  //    标记是那些会话当时的样子；判"是不是组员"别依赖它 —— 那是 `presetKindOf(header)` 的结论。
   const memberRole = member ? memberRoleOf(events) : undefined
   loaded.push({ path, id, events, timeline, orphans, memberRole, bossCount, toolCount, erroredTools, member, header, preset: header.agentPreset })
 }

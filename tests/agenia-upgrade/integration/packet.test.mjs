@@ -21,7 +21,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
-import { ENV } from '../support/env.mjs'
+import { ENV, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, sha256Equal, sha256File, stagingReadings, writeJson } from '../support/evidence.mjs'
 import { canonical, ensureMarkedDir } from '../support/root-guard.mjs'
 import { fixturePath, loadStagedModule, nonCallables, runCli, stagingExists, writeFixture } from '../support/sut.mjs'
@@ -59,7 +59,7 @@ function manifestOf(built) {
   try { return JSON.parse(readFileSync(p, 'utf8')) } catch { return null }
 }
 
-const ZSTD_TOOL = 'E:\\Harness\\.tools\\asar-cli\\zstd-frames.mjs'
+const ZSTD_TOOL = path.join(PATHS.repo, '.tools', 'asar-cli', 'zstd-frames.mjs')   // 派生：本工作区那一份（2026-11-02）
 
 /** 合成一条"会话流"（本项目的 / 别的项目的 / 本次评审作业的），压成**多帧**：逐段压缩再拼接。 */
 function multiFrameFixture() {

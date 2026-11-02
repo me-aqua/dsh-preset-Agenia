@@ -17,33 +17,41 @@ import {
 } from './root-guard.mjs'
 
 // ── 路径（提案 §B1.1 绝对路径表）────────────────────────────────────────────
+/**
+ * 🔴 2026-11-02：**全部跟着 `REPO_ROOT` 派生**（组长裁：worktree 也要能跑全量）。
+ * 旧版把 `E:\Harness\…` 写死在这里 —— 在 `git worktree` 里跑时，被测树 / 运行根 / `[尺子]`
+ * 会静默指向**另一棵树**（`mig-i16-staging-tree-01` / `cand-20261028-0461`）。
+ * 活树（`E:\Harness`）里派生值与旧字面量**逐字符相同** ⇒ 那边一个字节都没变。
+ * ⚠️ `FROZEN.patchTargets` 不在此列：那是**安装落点**，不是"这个工作区在哪"。
+ */
+const STAGING_ROOT = path.join(REPO_ROOT, '.tools', '_staging', 'agenia-upgrade')
 export const PATHS = {
   repo: REPO_ROOT,
   /** 执行一 staging 根（提案 §B1.1；**实现岗的地盘**，测试只读）。 */
-  stagingRoot: 'E:\\Harness\\.tools\\_staging\\agenia-upgrade',
+  stagingRoot: STAGING_ROOT,
   /** staged preset（测试唯一的只读靶子）。 */
-  stagedPreset: 'E:\\Harness\\.tools\\_staging\\agenia-upgrade\\preset',
+  stagedPreset: path.join(STAGING_ROOT, 'preset'),
   /** desktop oracle 落点（拍板 Q2）。 */
-  oracleFile: 'E:\\Harness\\.tools\\_staging\\agenia-upgrade\\oracle\\standard.patch.yml',
-  oracleProvenance: 'E:\\Harness\\.tools\\_staging\\agenia-upgrade\\oracle\\provenance.json',
+  oracleFile: path.join(STAGING_ROOT, 'oracle', 'standard.patch.yml'),
+  oracleProvenance: path.join(STAGING_ROOT, 'oracle', 'provenance.json'),
   /** 最终代码落点（执行一不许写；staged patch 里那两处绝对路径指的就是它）。 */
   finalPreset: REAL_PRESET_ROOT,
   /** 活体那两个文件 —— 只作**解析器阳性对照**的见证，永远不是被测对象（提案 §B1.1 第 3 条）。 */
-  liveComposition: 'E:\\Harness\\presets\\agenia\\agent.cordis.yml',
-  livePatch: 'E:\\Harness\\presets\\agenia\\cordis.patch.yml',
-  liveInjector: 'E:\\Harness\\presets\\agenia\\inject.js',
+  liveComposition: path.join(REAL_PRESET_ROOT, 'agent.cordis.yml'),
+  livePatch: path.join(REAL_PRESET_ROOT, 'cordis.patch.yml'),
+  liveInjector: path.join(REAL_PRESET_ROOT, 'inject.js'),
   /**
    * **靶子落后声明**（F-105）—— 靶子（staged）与现役（`presets/agenia`）之间允许存在的差额，
    * 只许写在这里；没有这份文件就不许有差额。形状与判据见 `support/target.mjs`。
    */
-  targetLagDeclaration: 'E:\\Harness\\.tools\\_staging\\agenia-upgrade\\target-lag.json',
+  targetLagDeclaration: path.join(STAGING_ROOT, 'target-lag.json'),
   /** 本轮体检脚本 / 探针 / 生成器（STAT-03 的静态扫描对象）。 */
-  checkNotes: 'E:\\Harness\\.tools\\check-notes.mjs',
-  injectProbe: 'E:\\Harness\\.tools\\inject-probe.mjs',
-  generator: 'E:\\Harness\\.tools\\make-bundle-patch.mjs',
+  checkNotes: path.join(REPO_ROOT, '.tools', 'check-notes.mjs'),
+  injectProbe: path.join(REPO_ROOT, '.tools', 'inject-probe.mjs'),
+  generator: path.join(REPO_ROOT, '.tools', 'make-bundle-patch.mjs'),
   realBrainRoot: REAL_BRAIN_ROOT,
   realRouteRoot: REAL_ROUTE_ROOT,
-  testRoot: 'E:\\Harness\\tests\\agenia-upgrade',
+  testRoot: path.join(REPO_ROOT, 'tests', 'agenia-upgrade'),
   runsParent: RUNS_PARENT,
   testMarker: TEST_ROOT_MARKER,
 }
@@ -80,6 +88,26 @@ export function requireEnv(name, env = process.env) {
 export function optionalEnv(name, env = process.env) {
   const v = env[name]
   return v === undefined || String(v).trim() === '' ? null : v
+}
+
+/**
+ * **安装落点**（补丁里那两处绝对路径该写什么）。
+ *
+ * 这是"预设装到哪"，不是"这个工作区在哪"—— 两者在 worktree 里**必然分叉**：
+ * 工作区是 `E:\Harness-upgrade`，而安装落点仍是活树 `E:\Harness\presets\agenia`
+ * （补丁正文就是这么生成的，`FROZEN.patchTargets` 只负责把它**说清楚**，不改它）。
+ * 换安装落点：`AGENIA_PATCH_TARGET_ROOT`（+ 重新生成补丁），两条一起改。
+ */
+function patchTargetsOf() {
+  const raw = typeof process.env.AGENIA_PATCH_TARGET_ROOT === 'string' ? process.env.AGENIA_PATCH_TARGET_ROOT.trim() : ''
+  const root = (raw !== '' ? raw : 'E:\\Harness\\presets\\agenia').replace(/\\/g, '/').replace(/\/+$/, '')
+  // ⚠️ 形状与旧值**逐键相同**（只有这三把）：多塞一个 `*_source` 进去会让
+  //    "活树派生值与旧字面量逐字符相同"这条自证变成不成立（探针 `roots-probe.mjs` 会当场红）。
+  return {
+    injectorDir: root,
+    injectorUrl: `file:///${root}/inject.js`,
+    contentDir: root,
+  }
 }
 
 // ── 冻结常量（提案 §4 汇总 + §B1.4 退出码 + §B2.4 派生计数）──────────────────
@@ -126,24 +154,33 @@ export const FROZEN = {
    * 推导：staging 与活体**逐字节对应**（§B1.1），装的时候是拷过去；补丁是预设的注册入口，
    * 所以它必须写**装好之后**那个绝对路径 —— 写 staging 路径 ⇒ 装完那一行 never started ⇒ 整份预设 broken。
    * 已作为"待组长确认的派生期望"记进红基线。
+   *
+   * 🔴 **2026-11-02：这一格故意**不跟着 `REPO_ROOT` 派生**（与 `PATHS` 相反，别当成漏改）。
+   *    它答的是"**装到哪**"（安装落点 = 活树 `E:\Harness\presets\agenia`），不是"这个工作区在哪"。
+   *    在 worktree 里跑时，补丁正文仍然写着安装落点（那是事实）—— 把期望改成 worktree 路径，
+   *    只会让 STAT-02/STAT-03 在 worktree 里**假红**。
+   *    要换安装落点：改 `.tools/make-bundle-patch.mjs` 的 INJECTOR / CONTENT_DIR 并重新生成补丁，
+   *    同时用 `AGENIA_PATCH_TARGET_ROOT` 指过来（两条一起改，别只改一边）。
    */
-  patchTargets: {
-    injectorDir: 'E:/Harness/presets/agenia',
-    injectorUrl: 'file:///E:/Harness/presets/agenia/inject.js',
-    contentDir: 'E:/Harness/presets/agenia',
-  },
+  patchTargets: patchTargetsOf(),
 
   /**
-   * **0.2.1 的补丁形状**（2026-10-19 迁移）：一份组合派生 **N 份预设入口**，不是"组合 + 1 行注册行"。
+   * **补丁形状**（2026-11-01 任务 A 并员之后）：一份组合派生 **2 份预设入口** —— 1 份组长（`agenia`）
+   * + **1 份通用组员**（`agenia-member`，id 由生成器定）；**九条委派行同指那一份**。
+   * 不是"组合 + 1 行注册行"，也不是 0.2.1 那套"每条委派行各指一份"。
    *
-   * 来历（只看这两处的原文，不从实现反推）：
-   *   · `cordis.patch.yml` 文件头「一份预设变十份」那段：0.2.1 的 `tool-subagent` 删掉了 `persona` /
-   *     `toolFilter` ⇒ 每条委派行必须用 `agentPreset:` 指向**一份独立的组员预设**；
+   * 🔴 **这一格的事实是「九条委派行同指一份」**（评审 R-13 的收口；2026-11-01 之前是九份、各指各的）：
+   *   · 0.2.1 的 `tool-subagent` 删掉了 `persona` / `toolFilter` ⇒ 那时每条委派行必须用
+   *     `agentPreset:` 指向**一份独立的组员预设**。那段历史只解释"补丁里为什么曾经有十份"，
+   *     **别再按它推现在有几份** —— 并员之后那种九份形态已经删除，九行都指 `agenia-member`。
    *   · `.tools/make-bundle-patch.mjs::memberBody()`：组员那一份 = 组合**去掉 delegation 组**，
-   *     `persona` 换成组员人格（组员行上方的 `# @member-persona`）。
+   *     `persona` 换成生成器里那份**通用**组员人格常量（`MEMBER_PERSONA`，不再从行上方的
+   *     `# @member-persona` 注释取 —— 那条注释已退役）。角色人格 / 说明书 / model / tools 的**唯一作者**
+   *     是 `inject.js` 的 `ROLE_TABLE`（运行时按 `toolName` 注入），预设里不再写。
+   *   · ⇒ `memberDropsGroup` 只对**那一份**组员预设生效；组长那一份是另一份，两份就是页面上那两条。
    *
    * 这里只冻**两个名字**，份数与行数一律从组合推（`expectedPresetIds()` / `expectedPresetRows()`）——
-   * 钉死"10 份 / 259 行"会把判据钉在会变的东西上（`mig-test-criterion-drift-01`）。
+   * 钉死"2 份 / 259 行"会把判据钉在会变的东西上（`mig-test-criterion-drift-01`）。
    */
   patchPresets: {
     /** 组长那一份的预设 id（组员份由 `agentPreset:` 的值给出，不在这里）。 */
@@ -302,16 +339,15 @@ export const FROZEN = {
     { id: 'tool-job-technical-review', toolName: 'job_technical_review', role: 'technical-review', officeBound: false },
   ],
   /**
-   * 🔴 **0.2.1 迁移（2026-10-19）把"四条作业行的否定名单"挪了地方** —— 旧值 `['workflow','ralph']`
-   * 对应的是 `toolFilter.deny`，而 0.2.1 里 `toolFilter` 不再是 `tool-subagent` 的配置键
-   * （来源：`presets/agenia/agent.cordis.yml` L443-449 / L458-470 的 🔴 注释；体检脚本
-   * `.tools/check-notes.mjs::expectedJobDeny` 已是这个口径）。
+   * 🔴 **`jobMemberDeny` 现在是零读点**（任务 A · 2026-11-01）。
    *
-   * 现在两条并存、各管一件事：
-   *   · `jobMemberDeny` —— 行上方 `# @member-deny <名字>` 的**期望表**（生成器据此给组员预设的注入器写
-   *     `proposalFile: false`）。**只有判决岗**有；其余三行是空表。
-   *   · `memberPresetForbidden` —— 组员预设里**结构性不许有**的东西（委派组整个不搬过去
-   *     ⇒ workflow / ralph / 裸 subagent 根本不在那一份工具集里，所以不需要 deny 名单）。
+   * 它服务的旧期望（`STAT-02` / `REV-02` 的 "行上方 `# @member-deny` 期望表"）随九份 per-role 预设一起
+   * 退休：判决岗的拒绝搬进 `inject.js` 的 `ROLE_TABLE[role=memory-judge].deny = ['proposal']`，
+   * 行为判据是 `PRS-03`（调用时拒），静态判据是 `JUDGE-DENY-SOURCE`（`deny` 非空的角色恰为判决岗）。
+   * 值留着只为"它为什么不在判据里"有处可查；**别拿它当仍然生效的期望**（`F-109` 的 `O-5` 同一形状）。
+   *
+   * 仍然生效的那一条：`memberPresetForbidden` —— 组员预设里**结构性不许有**的东西（委派组整个不搬过去
+   * ⇒ workflow / ralph / 裸 subagent 根本不在那一份工具集里，所以不需要 deny 名单）。
    */
   jobMemberDeny: { 'tool-job-memory-judge': ['proposal_file'] },
   memberPresetForbidden: ['delegation', 'tool-subagent', 'tool-workflow', 'tool-ralph'],
@@ -554,6 +590,48 @@ export const FROZEN = {
     // guard 那五个**不是 CLI 退出码**（工具调用层的拒绝码，住 `inject.js`）—— 归口给 5 只为让 `CODES[code].exit` 有确定值。
     E_GUARD_JOB_FOREGROUND: 5, E_GUARD_SELF_FOREGROUND: 5,
     E_GUARD_OFFICE_SHELL: 5, E_GUARD_OFFICE_WRITE: 5, E_GUARD_CONFIG_MISSING: 5,
+
+    // ── 任务 B · bug 系统（2026-11-01 第 2 关，契约 `.team/test/CONTRACT-B.md` §9.3）──────────────
+    // 七个新码，**全是"校验类拒绝" ⇒ 5**（同族：`E_TICKET_*` / `E_COVERAGE_*` 都是 5）。
+    // 🔴 它们**现在不在** `lib/error-codes.mjs::CODES` 里（实现还没做）⇒ 这一格在 `STAT-02` 的
+    //    退出码对账里只会落进 `mine_only`（**读数，不是红**）；实现落地时**同批**把码加进 CODES，
+    //    两边重叠部分的值必须逐项相同。CLI 的 catch 只认表里的码：漏登记 ⇒ 被折成 `E_INTERNAL`，
+    //    于是"该拒"和"程序有 bug"长得一模一样（`BUG-03` / `BUG-02` 各有一格盯这件事）。
+    E_BUG_ROUTE_NOT_APPLICABLE: 5,
+    E_BUG_ARCHIVE_OPEN: 5,
+    E_BUG_SEVERITY_THIRD_LINE_UNGROUNDED: 5,
+    E_BUG_SEVERITY_ESCALATE_MISSING: 5,
+    E_BUG_WRITER_ROLE: 5,
+    E_BUG_SAMPLE_LATE: 5,
+    E_BUG_SAMPLE_REJUDGE: 5,
+
+    // ── 任务 C1 · 路线账本（2026-11-01 第 2 关，契约 `.team/test/CONTRACT-C1.md` §9.3）──────────────
+    // 十三个新码，**全是"校验类拒绝" ⇒ 5**（同族：`E_TICKET_*` / `E_BUG_*` 都是 5）。
+    // 🔴 它们**现在不在** `lib/error-codes.mjs::CODES` 里（实现还没做）⇒ 这一格在 `STAT-02` 的
+    //    退出码对账里只会落进 `mine_only`（**读数，不是红**）；实现落地时**同批**把码加进 CODES，
+    //    两边重叠部分的值必须逐项相同。CLI 的 catch 只认表里的码：漏登记 ⇒ 被折成 `E_INTERNAL`，
+    //    于是"该拒"和"程序有 bug"长得一模一样（LED-05 有两格盯这件事）。
+    /** `admitTask` 的六个拒码：四种模式 × 三种工作种类的十六格，拒的理由至少六种（契约 §7）。 */
+    E_ADMIT_UNINITIALIZED: 5,
+    E_ADMIT_HEADLINE: 5,
+    E_ADMIT_KIND: 5,
+    E_ADMIT_SET: 5,
+    E_ADMIT_MODE: 5,
+    E_ADMIT_ENTRY: 5,
+    /** C1a：legacy 票店坏了（形状 / 重复票号 / 状态越界）⇒ 拒 + 零写入。 */
+    E_LEGACY_STORE_BAD: 5,
+    /** C1d：暂停必须停会话 —— 有活会话且没声明 ⇒ 拒绝暂停（不是静默放行）。 */
+    E_PAUSE_SESSION_LIVE: 5,
+    /** C1d：`maintain` 不支持暂停 —— `(maintain, pause)` 拒，**不静默忽略**。 */
+    E_PAUSE_NOT_SUPPORTED: 5,
+    /** C1d：不在 `build-paused` 时 resume ⇒ 拒（不许静默成功）。 */
+    E_RESUME_NOT_PAUSED: 5,
+    /** C1b/C1d：切阶段那一刻还留着活会话 ⇒ 拒（先停会话再 `stage-enter`）。 */
+    E_STAGE_SESSION_LIVE: 5,
+    /** C1：有 live task 的票不许 `void`（先取消任务）—— 票段的那一条不变量。 */
+    E_TICKET_LIVE_TASK: 5,
+    /** C1c：派工门禁的"槽被占"（工具调用层的拒绝码；归口 5 只为让 `CODES[code].exit` 有确定值）。 */
+    E_GUARD_SLOT_BUSY: 5,
   },
 
   /**
@@ -608,7 +686,31 @@ export const FROZEN = {
       { op: 'ticket-open', writes: true }, { op: 'ticket-update', writes: true },
       { op: 'ticket-close', writes: true }, { op: 'ticket-void', writes: true },
       { op: 'read', writes: false }, { op: 'verify', writes: false },
-      { op: 'summarize', writes: false }, { op: 'help', writes: false },
+      { op: 'summarize', writes: false },
+      // 任务 B · bug 系统（2026-11-01）：九个 bug op 落在**这支** CLI（契约 `.team/test/CONTRACT-B.md`
+      // §9.1 的裁定 —— 不新造 `agenia-bug.mjs`：新 CLI 会连带 install / release-scan / binFiles /
+      // surfaceInventory 四张清单同批动；"登记不需要路线"用写面边界钉）。
+      // 🔴 `writes` 必须与 `presets/agenia/lib/cli-inventory.mjs::ROUTE_OPS` 逐条相同 —— DR-01 两个方向
+      //    都比（漏一条 / 多一条 / `writes` 差一个值，各一条红）。
+      // ⚠️ `needsDataRoot` 不用写：`FROZEN_COMMANDS` 按 `cli === 'agenia-brain.mjs'` 派生 ⇒ 这一支恒 false，
+      //    与清单一致；也正因为 false，这九条**不进** DR-01 那张「非法根 × 写命令」矩阵（那矩阵只跑写命令）。
+      { op: 'bug-register', writes: true }, { op: 'bug-assess', writes: true },
+      { op: 'bug-dispose', writes: true }, { op: 'bug-batch-freeze', writes: true },
+      { op: 'bug-samples-register', writes: true }, { op: 'bug-archive', writes: true },
+      { op: 'bug-task-set', writes: true }, { op: 'bug-route', writes: true },
+      { op: 'bug-read', writes: false },
+      // ── 任务 C1 · 路线账本（2026-11-01）────────────────────────────────────
+      // 三个新 op（契约 `.team/test/CONTRACT-C1.md` §9.1 / §12 #1）—— **与实现同批**：
+      // 早加 ⇒ `DR-01` 的 `CLI-INVENTORY` 当场红（那等于跨用例红）；晚加 ⇒ 常驻红。
+      // 生产侧 `lib/cli-inventory.mjs::ROUTE_OPS` 已先落这三条，本表随后补齐（这一条就是那半张同批账）。
+      // 🔴 `writes` 必须与生产清单**逐条相同**：`DR-01` 两个方向都比
+      //    （漏一条 / 多一条 / `writes` 差一个值，各一条红）。
+      // ⚠️ `needsDataRoot` 不用写：`FROZEN_COMMANDS` 按 `cli === 'agenia-brain.mjs'` 派生 ⇒ 这一支恒 false，
+      //    与清单一致；也正因为 false，这三条**不进** DR-01 那张「非法根 × 写命令」矩阵。
+      //    （`bootstrap` 另有一条窄例外：observation 迁移写 `.team/bug/` —— 见契约 §4.4。）
+      { op: 'bootstrap', writes: true }, { op: 'route-mark', writes: true },
+      { op: 'headline-set', writes: true },
+      { op: 'help', writes: false },
     ],
     'agenia-local.mjs': [
       { op: 'local-read', writes: false }, { op: 'local-claim', writes: true },
@@ -641,13 +743,13 @@ export const FROZEN = {
    */
   docsUnresolved: ['报告模板', '名册说明'],
   /** 裁定 A7：`重启卡` 的路径**已有**（只记录、不判红）。 */
-  restartCard: 'E:\\Harness\\.team\\leader\\2026-10-13\\agenia-upgrade-restart-card.md',
+  restartCard: path.join(REPO_ROOT, '.team', 'leader', '2026-10-13', 'agenia-upgrade-restart-card.md'),
 
   /** DOC-01 读的三份载体（契约 §6.1 的读时清单）。 */
   docConsistency: {
-    readingVersion: 'E:\\Harness\\.team\\leader\\2026-10-13\\Agenia升级-计划书-老板阅读版.md',
-    leaderNow: 'E:\\Harness\\.team\\leader\\now.md',
-    leaderLog: 'E:\\Harness\\.team\\leader\\2026-10-14\\log.md',
+    readingVersion: path.join(REPO_ROOT, '.team', 'leader', '2026-10-13', 'Agenia升级-计划书-老板阅读版.md'),
+    leaderNow: path.join(REPO_ROOT, '.team', 'leader', 'now.md'),
+    leaderLog: path.join(REPO_ROOT, '.team', 'leader', '2026-10-14', 'log.md'),
   },
 }
 

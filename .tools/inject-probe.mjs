@@ -412,9 +412,11 @@ function readDelegationConfig(text) {
  *
  * @param contentDir 内容根（夹具，或真的预设目录）
  * @param member     填了就是"这次是组员"：**只给一个信号** ——
- *                   装配用的 `sections` 里带 `【组员:<role>】`。
+ *                   会话头的 `agentPreset` 写成 `agenia-member`（组长夹具写 `agenia`）。
+ *                   装配用的 `sections` 里**也**带 `【组员:<role>】`，但那枚标记 2026-11-01 起退役、
+ *                   注入器不读它 ⇒ 它只当"旧文本形状"的对照，**不构成身份**。
  *                   ⚠️ 故意**不**在会话头上塞 `parentSession` / `delegationDepth`：
- *                   组长拍下来的设计里，认人发生在装配那一刻（那里角色是现成的）；
+ *                   组长拍下来的设计里，身份判定发生在装配那一刻（那里头和角色都是现成的）；
  *                   多给一条路会掩盖"认人到底发生了没有"。
  * @param guard      🔴 2026-10-15（I4c）新增的两档（**不填 = 原来那个空门禁，一个字节没变**）：
  *                   · `'absent'` —— **不给** `ctx.get('tools')`：量"拿不到门禁必须出声"那一格；
@@ -466,7 +468,18 @@ async function harness(contentDir, { member, guard, entry, config } = {}) {
    * 读数跟着「今天组长写没写日志」漂 ⇒ 又是一个"会在半夜自己变红"的量具。
    * ⇒ 每个夹具现在自带一份 `.team/leader/<日期>/log.md`（`leaderLog` 参数可覆盖）。
    */
-  const session = { id: AGENT_ID, header: { cwd: contentDir }, appending: false }
+  const session = {
+    id: AGENT_ID,
+    /**
+     * 会话头 —— 身份的唯一来源（定形 §2.2）。
+     * 🔴 2026-11-01（并员 + 第 4 关返修）：`agentPreset` 必须给，而且组长 / 组员两种值各一个：
+     *    注入器现在**只看这个字段 + `toolName`**，不再读注入文本里的 `【组员:xx】` 标记。
+     *    ⇒ 旧夹具（头里只有 `cwd`）会被判成"预设认不出"（row 7）走组员侧，
+     *      组长那一族会整片假红 —— 那不是实现坏了，是夹具没建模真 session 头。
+     */
+    header: { cwd: contentDir, agentPreset: member === undefined ? 'agenia' : 'agenia-member' },
+    appending: false,
+  }
   const agent = {
     id: AGENT_ID,
     session,
@@ -557,13 +570,18 @@ async function harness(contentDir, { member, guard, entry, config } = {}) {
   const assemble = async () => {
     seq += 1
     const assembly = {
+      // ⚠️ 标记**仍然留着**：它现在只是人看的冗余提示（注入器一个字节都不读）。
+      //    留着反而是个对照：组长夹具（没有标记）与组员夹具（带标记）走的必须是**头**那两条路。
       sections: [{ name: 'x', text: member === undefined ? '没有标记' : `【组员:${member}】` }],
       contexts: [],
       tools: [],
       variables: {},
     }
+    // 🔴 装配的第二个参数照真框架建模（`dsh-agent` 的 `assembleContextFor(agent)`）：
+    //    `{ agent, scope: agent }` —— 注入器从 `context.agent.session.header` 读身份。
+    //    旧夹具只给 `{ scope: { id } }` ⇒ 头读不到 ⇒ 所有会话都被判成 row 7。
     for (const handler of handlers.get('system-prompt/assemble') ?? []) {
-      await handler(assembly, { scope: { id: AGENT_ID } }, async () => assembly)
+      await handler(assembly, { agent, scope: agent }, async () => assembly)
     }
     await settle()
   }
@@ -1927,11 +1945,11 @@ try {
     await minMate.turnStart()
     await bossThenStep(minMate)
     checkIf(minLead.count() === 1, 'M2', 5,
-      '【最小对照·组员】同一序列、装配带 `【组员:test】` ⇒ **0 条**（组员的开场消息不会换来一次注入）',
+      '【最小对照·组员】同一序列、装配成组员侧（夹具头 = `agenia-member` + 没有 `toolName` ⇒ row 5）⇒ **0 条**（组员侧的开场消息不会换来一次注入）',
       minMate.count(), 0)
 
     const mate = await harness(fixture, { member: 'test' })
-    await mate.assemble()          // 装配带标记 ⇒ 登记角色
+    await mate.assemble()          // 装配（夹具是 row 5：组员预设 + 没有 toolName；标记不读）⇒ 登记组员侧
     await mate.turnStart()
     await bossThenStep(mate)
     for (let k = 0; k < 4; k++) await toolStep(mate)
@@ -1956,11 +1974,16 @@ try {
     ]) {
       checkTrue(id, criterion, name, !pattern.test(src), why)
     }
-    // ⚠️ 别误伤：认组员靠的是这枚标记（`agent.cordis.yml` 的 deployment:persona-prefix 段），
-    //    8b 关掉的是"给组员贴语气"，不是"认出他是谁"。
-    checkTrue('J5', 5, '认组员的 `【组员:xx】` 标记还在（关的是语气，不是身份）',
-      /【组员:\(\[a-z0-9\]/.test(src) || /ROLE_MARK/.test(src),
-      '连标记一起删，组长和组员就再也分不开了')
+    // 🔴 2026-11-01（第 4 关返修 · A0a 结算）：这一格**翻面**了。
+    //    旧判据钉的是"`【组员:xx】` 标记还在"（那时身份靠它）。定形 §2.2 现在写死
+    //    **注入器不读这枚标记**、角色只由 `toolName` 决定 ⇒ 标记若还被读，身份就有两个作者，
+    //    A0a 永远判不出来（标记与 toolName 产出同一个现象）。
+    //    判据 = 「标记不读」×「身份判定在」（两条都要：只删标记不接角色表，组长和组员照样分不开）。
+    checkTrue('J5', 5, '`【组员:xx】` 标记**不再被读**（身份只由 `toolName` + `ROLE_TABLE` 决定）',
+      // ⚠️ 认的是**声明**（`const ROLE_MARK =` / `function roleOf(`），不是注释里提到它们的那几个字 ——
+      //    注释里留着"这里原来有个 roleOf / 别把 ROLE_MARK 加回来"是来历，不是第二个作者。
+      !/const ROLE_MARK\s*=/.test(src) && !/function roleOf\s*\(/.test(src) && /export function identityVerdict/.test(src),
+      '标记还被读 ⇒ 身份有两个作者（标记 + toolName），A0a 探针永远分不出"工具名到没到"')
 
     // ── 2026-09-26 返修加的三条静态判据（口径 1 的"读代码"那半边）──────────────
     // 🔴 上面 J1–J5 钉的是"旧机制别回来"；这三条钉的是**这一批的地基**：

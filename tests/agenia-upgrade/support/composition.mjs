@@ -16,8 +16,8 @@
  * 不支持（会进 warnings）：锚点 `&`/`*`、多行折叠 `>`、流式映射 `{}`、多文档 `---`。
  */
 import path from 'node:path'
-import { readdirSync, statSync } from 'node:fs'
-import { FROZEN } from './env.mjs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { FROZEN, PATHS } from './env.mjs'
 
 // ── 词法小工具 ─────────────────────────────────────────────────────────────
 const isBlank = (l) => l.trim() === ''
@@ -251,11 +251,20 @@ export function capabilityRows(rows) {
 }
 
 /**
- * 组员注释（**0.2.1 迁移之后，人格与否定项的唯一来源**）。
+ * 🔴 **退休的两句组员注释的提取器** —— 现在断言的是「它什么都不该读到」。
  *
  * 形状（逐字）：行**上方**两句注释 ——
- *   `# @member-persona 【组员:<角色>】…`   ← 人格（生成器写进那一份组员预设的 `persona.prefix`）
- *   `# @member-deny <名字> [<名字> …]`     ← 工具否定项（生成器给注入器写 `proposalFile: false` 之类）
+ *   `# @member-persona 【组员:<角色>】…`   ← 0.2.1 时代的人格来源
+ *   `# @member-deny <名字> [<名字> …]`     ← 0.2.1 时代的否定项来源
+ * 这两句在**任务 A**（2026-11-01 · 九份组员预设并成一份）里随 per-role 预设一起退休：
+ *   人格 / 说明书 / model / tools 的唯一作者变成 `inject.js` 的 `ROLE_TABLE`（按 `toolName` 查角色），
+ *   判决岗的提案拒绝变成 `ROLE_TABLE.deny: ['proposal']` + `proposalVerdict()` 的**调用时**拒
+ *   （`CONTRACT-A` §3.3 / §6）。
+ *
+ * 为什么保留这个读取器、而不是删掉它：判据从「必须有」翻成「必须没有」时，
+ * **仍然需要一个真能读到它的读取器**，否则"断言它为空"会在读取器哑掉时**恒真**
+ * （`cand-20261020-0087`：一条判据会静默恒真）。阳性对照的样本 = 冻结的升级前组长块全文
+ * （`fixtures/preset-baseline-A.json` 的 `preset_blocks[agenia].full_text`，里面有 9 条 persona + 1 条 deny）。
  * 对照物：`.tools/check-notes.mjs::memberAnnotations`（体检那一侧，同一口径；两边必须同形）。
  *
  * 🔴 为什么不从解析出来的 `row.config` 里读：0.2.1 里 `persona` / `toolFilter` 已经**不是**配置键，
@@ -284,8 +293,21 @@ export function memberAnnotations(rawText) {
 }
 
 /**
- * 补丁里的**预设入口**（`name: @deepseek-ai/dsh-agent-preset` 的那些行）——
- * 0.2.1 起补丁里有 **10** 份（组长 1 + 组员 9），旧的"注册行恰好 1"已经作废。
+ * **还带着退休注释的行**（`memberAnnotations()` 的产物侧口径）—— 空数组 = 一句都不该有。
+ *
+ * 为什么要一个单独的出口：四个消费方（`STAT-02` / `REV-02` / `PFL-06` / `PFL-07`）都要报
+ * "哪一行还留着"，各写一遍 filter 就是四份算式（`mig-rules-18`：一个数不许担两个意思）。
+ */
+export function annotationLeaks(rawText) {
+  return [...memberAnnotations(rawText)]
+    .filter(([, m]) => m.persona !== undefined || (m.deny ?? []).length > 0)
+    .map(([row_id, m]) => ({ row_id, persona: m.persona ?? null, deny: m.deny ?? [] }))
+}
+
+
+/**
+ * 补丁里的**预设入口**（`name: @deepseek-ai/dsh-agent-preset` 的那些行）。
+ * 任务 A 之后**恰好 2 份**：组长 `agenia` + **一份**通用组员（id 由实现定；本套件不写死它）。
  * 每份给出：`config.id`、`plugins` 的 id 列表、以及那一份自己的 injector 配置（普通对象）。
  */
 export function presetEntries(rows) {
@@ -302,9 +324,12 @@ export function presetEntries(rows) {
 }
 
 /**
- * 补丁里"应当有哪几份预设"—— **从组合推**（不写死 10）：
- * 组长一份（`agenia`）+ 每个写了 `agentPreset` 的委派行各一份（值就是那一份的 id）。
- * ⇒ 改了组合没跑生成器，或生成器多吐/少吐一份，这一条当场对不上。
+ * 补丁里"应当有哪几份预设"—— **从组合推**（不写死份数）：
+ * 组长一份（`agenia`）+ 每个写了 `agentPreset` 的委派行指到的那一份（**同值去重**）。
+ *
+ * 🔴 任务 A（2026-11-01）之后这个函数的读数从 **10** 变成 **2**（九条委派行同指一份 ⇒ 去重后一份组员）：
+ *    它仍然只钉"组合里引用了哪几份"，份数本身不是它钉的常量 —— 加一条合法的新预设仍会自己长出来。
+ *    ⇒ 改了组合没跑生成器，或生成器多吐/少吐一份，这一条当场对不上。
  */
 export function expectedPresetIds(rows, { leaderId = FROZEN.patchPresets.leaderPresetId } = {}) {
   const out = [leaderId]
@@ -316,32 +341,52 @@ export function expectedPresetIds(rows, { leaderId = FROZEN.patchPresets.leaderP
 }
 
 /**
- * **组员预设 id 的公式** —— `agenia-<名字，下划线换横线>`（一份实现，三个调用点）。
+ * **九条委派行共同指向的那一份组员预设** —— 任务 A 之后，组员预设 id **不再编码角色**
+ * （角色只由 `toolName` 决定，人格 / 说明书 / model / tools 的唯一作者是 `ROLE_TABLE`）。
  *
- * 名字 = 那一行的 `toolName`；**唯一的例外是裸 `subagent`** —— 它没有自己的岗位行，
- * 那一份预设叫 `agenia-hire`（`.tools/make-bundle-patch.mjs::presetIdOf` 与组合
- * `agent.cordis.yml:302` 的 `# @member-persona 【组员:hire】` 同一口径；AGENTS.md 3b：外聘走裸那一行）。
+ * 口径（`CONTRACT-A` §3.1；定形 §2.2）：
+ *   · 每一条**已启用**的具名委派行都必须写 `agentPreset`；
+ *   · 九行的值必须**同值**（各指各的 = 还是九份）；
+ *   · 那个值**不许**等于组长那份（指到组长 = 子会话按组长起来，越权）。
  *
- * 🔴 **别在别处再抄一份这个公式**（架构判据 1）：`static/roles.test.mjs`（四条 job 行）与
- *    `static/composition.test.mjs`（`TEAM-AGENTPRESET` / `SUBAGENT-AGENTPRESET`）都调这里。
- *    来历：`F-109` 第 4 关评审 `M-4` —— 那两条原来只断言"`agentPreset` 在补丁的入口里存在"，
- *    于是把 `team-design` / `team-dev` 两行的 `agentPreset` **对调**（份数不变、每份行数不变、
- *    两份都存在）⇒ 全绿，而装配时两个岗位的人格互换了。
+ * 为什么"同值"这件事不能只看组合：`values` 里出现两个不同的值时本函数返回 `id: null` + 一条 problem，
+ * 消费方（`TEAM-AGENTPRESET` / `SUBAGENT-AGENTPRESET` / `JOB-AGENTPRESET`）各自那一行就都红 ——
+ * 这替掉了 0.2.1 的 `agenia-<toolName>` 公式（`M-4`：把两行的 `agentPreset` 对调曾经全绿）。
+ * 公式的替代物是"九行同一个值 + 那个值必须真的存在于补丁入口 + 不许是组长"，
+ * 也就是"并员"这件事本身 —— 不是把实现挑的名字抄进测试。
+ *
+ * @returns {{id: string|null, values: string[], rows: number, problems: string[]}}
  */
-export function memberPresetIdFor(toolName) {
-  const name = toolName === FROZEN.bareSubagent.toolName ? 'hire' : String(toolName)
-  return `agenia-${name.replace(/_/g, '-')}`
+export function memberPresetShared(rows, { leaderId = FROZEN.patchPresets.leaderPresetId } = {}) {
+  const problems = []
+  const enabled = enabledDelegations(rows)
+  const values = enabled.map((r) => cfg(r, 'agentPreset'))
+  const missing = enabled.filter((r) => typeof cfg(r, 'agentPreset') !== 'string' || String(cfg(r, 'agentPreset')).trim() === '').map((r) => r.id)
+  if (missing.length > 0) {
+    problems.push(`这些已启用的委派行没有写 agentPreset：${missing.join(', ')}（并员之后每一行都必须指那份通用组员预设）`)
+  }
+  const distinct = [...new Set(values.filter((v) => typeof v === 'string' && v.trim() !== ''))]
+  if (distinct.length !== 1) {
+    problems.push(`九条委派行的 agentPreset 必须**同值**（并员之后共用一份组员预设），实得 ${distinct.length} 个不同值：${JSON.stringify(distinct)}`)
+  }
+  const id = distinct.length === 1 ? distinct[0] : null
+  if (id !== null && id === leaderId) {
+    problems.push(`九条委派行指向的是**组长**那份预设（${leaderId}）—— 子会话会按组长起来（全权），那不是"通用组员"`)
+  }
+  return { id, values, rows: enabled.length, problems }
 }
 
 /**
- * **组员预设 id → 那个岗位的角色名**（`M-2` 的产物侧锚点）—— `memberPresetIdFor()` 的逆。
- *   `agenia-team-test` → `test` · `agenia-job-memory-judge` → `memory-judge` · `agenia-hire` → `hire`。
- * 组长那一份（`agenia`）**没有角色** ⇒ 返回 `null`（调用方据此分开"组长份"与"组员份"，不写死判断）。
+ * 🔴 **`roleOfPresetId()` / `memberPresetIdFor()` 已随任务 A 退休**（2026-11-01 · 九份组员预设并成一份）。
+ *
+ * 为什么删而不是留个空壳：那两个函数的全部语义是"预设 id 编码角色 / 角色编码预设 id"。
+ * 并员之后**一份通用组员预设**同时服务九个角色 ⇒ id 里没有角色可读。
+ * 角色现在的唯一来源是 `toolName` → `ROLE_TABLE`（`presets/agenia/inject.js`），
+ * 判据在 `PRS-02` / `PRS-04`（现役树）与 `REV-02`（staged 树）。
+ * 留一个"总是返回 null"或"忽略入参"的壳会让调用方读到一张**看起来还在**的表（`cand-20261019-0030`）。
+ *
+ * 替身：`memberPresetShared(rows)`（九行同值的那一份）。
  */
-export function roleOfPresetId(presetId) {
-  const m = /^agenia-(?:(?:team|job)-)?(.+)$/.exec(String(presetId))
-  return m === null ? null : m[1]
-}
 
 /**
  * 组合里属于某个 `cordis:group` 的**整棵子树**：组自己那一行 + 它 `config` 列表里的全部行（含更深一层）。
@@ -412,11 +457,13 @@ export function delegationGroupProblems(compRows, {
 }
 
 /**
- * **每份预设入口里应当有哪几行**（0.2.1：一份组合派生 N 份预设）—— 从组合推，不写死行数。
+ * **每份预设入口里应当有哪几行**（0.2.1：一份组合派生 N 份预设；任务 A 之后 N = 2）—— 从组合推，不写死行数。
  *
  * 口径来自生成器契约（`.tools/make-bundle-patch.mjs` 文件头 + `build()` 的 `memberBody()`）：
  *   · **组长份** = 组合的**全部**行；`persona-injector` 那一行由生成器改写（绝对 URL + 插入 contentDir）；
- *   · **组员份** = 组合**去掉整个 `delegation` 组**（组员没有委派工具），`persona` 换成该组员的人格。
+ *   · **组员份**（任务 A 之后只有一份、九个角色共用）= 组合**去掉整个 `delegation` 组**
+ *     （组员没有委派工具），`persona` 换成那份**通用**人格（不扮演任何具体角色 ——
+ *     各角色的人格住在 `ROLE_TABLE[toolName].persona`）。
  * 两条都只影响**行内容**，不影响**行 id 集合** ⇒ 这里冻的是"哪几行在哪一份里"。
  *
  * @returns {Map<string, string[]>} 预设 id → 那一份应有的行 id（**顺序不作为判据**，比较走多重集）
@@ -456,7 +503,7 @@ export function presetEntryProblems(compRows, patchRows, { leaderId = FROZEN.pat
   readings.patch_preset_ids = gotPresetIds
   readings.expected_preset_ids = [...expected.keys()]
   if (regs.length !== expected.size) {
-    problems.push(`补丁里的预设入口应有 ${expected.size} 份（从组合推：组长 1 + 每条带 agentPreset 的委派行各 1），实得 ${regs.length}`)
+    problems.push(`补丁里的预设入口应有 ${expected.size} 份（从组合推：组长 1 + 委派行指到的那些，同值去重），实得 ${regs.length}`)
   }
   const missing = [...expected.keys()].filter((id) => !gotPresetIds.includes(id))
   const extra = gotPresetIds.filter((id) => !expected.has(id))
@@ -645,16 +692,17 @@ export function patchStructuralProblems(compositionText, patchText) {
    *
    * 🔴 2026-10-19 第 4 关评审 `M-1`（现场 `S-1`）：这一条原来判的是"组合的每个顶层块
    *    **在补丁全文里找得到**"。0.2.0 只有 1 份入口 ⇒ 那时它等价于"那一份里有"（逐字判据）；
-   *    0.2.1 有 10 份 ⇒ 它退化成"**任一份里有就行**"。输入：把 `preset-agenia-team-test` 里
-   *    `tool-fs` 那一行的 `name` 换掉 —— id 多重集照旧相等 · ④ 在另外 9 份里找得到 · 行数不变
+   *    0.2.1 有 10 份（任务 A 之后 2 份）⇒ 它退化成"**任一份里有就行**"。输入：把某一份里
+   *    `tool-fs` 那一行的 `name` 换掉 —— id 多重集照旧相等 · ④ 在别份里找得到 · 行数不变
    *    ⇒ **那两条判据都静默**，而那一份组员的工具集被换掉了。这是"真判据被换成弱判据"，不是历史包袱。
    *
    * 现在的口径：
    *   · **逐份入口**（每份 `name: dsh-agent-preset` 的入口各比各的，不跨份借）；
    *   · **逐行**（`rowBlocks()` 切的每一块 vs 组合里同一个 id 的块，`shape()` 比相对缩进与逐行文字）；
    *   · **跳过 `persona` / `persona-injector` 两行** —— 生成器允许改写它们，改写后的落点由别的判据管：
-   *     前者写组员人格 —— `STAT-02` 有两条：`PERSONA-PREFIX` 钉开头那枚 `【组员:<角色>】` 标记，
-   *     `PERSONA-PREFIX-SOURCE` 钉标记之后那一段正文（必须等于组合里 `# @member-persona` 的原文）；
+   *     前者写那份**通用**组员人格 —— `STAT-02` 有两条：`PERSONA-PREFIX` 钉"它非空、且不带任何
+   *     `【组员:<角色>】` 标记（通用组员不扮演具体角色）"，`PERSONA-PREFIX-SOURCE` 钉"它一段角色人格
+   *     都没偷带（角色人格的唯一作者是 `ROLE_TABLE`）"；
    *     后者写绝对 URL + contentDir（由下面 ⑤ 逐份精确断言）；
    *   · 组员份**少了**某些行不管（`delegation` 整组）—— 那是 ①–③ 的多重集管的，④ 只管"在的那几行长什么样"。
    */
@@ -723,6 +771,186 @@ export function patchStructuralProblems(compositionText, patchText) {
     }
   }
   return { problems, patchRowCount: patchRows.length, compositionRowCount: compRows.length }
+}
+
+/**
+ * **组长预设块的"没被顺手改过"判据**（`PRS-01` ⑤′ · `CONTRACT-A` §3.2 那条"逐字不变"在 ③ 之下换的量法）。
+ *
+ * 背景：③ 要求九条委派行同指一份通用组员预设，而那九行**住在组长块里** ⇒ 它们的 `agentPreset`
+ * 值是组长块字节的一部分。「整块 sha256 = 升级前基线」与 ③ **字面互斥**（满足 ③ 就必须改那九行；
+ * 满足旧口径就等于发一份九行指向已删除预设 id 的配置 ⇒ 每一行 never started）。所以这里量两条腿：
+ *
+ *   ⑤′-a **功能字段**逐格等于基线 —— 人格 `prefix`/`suffix` · 注入次序 `leaderOrder`/`memberOrder` ·
+ *        `officeBound` · `delegationTools` · 预设 `id`/`order` · `contentDir`；
+ *   ⑤′-b **值行**（非注释、非空行）里，除了九条 `agentPreset`，**逐行逐字等于基线**；
+ *        且那九条的唯一去向是：旧九个 per-role id → **同一份**通用组员预设。
+ *        2026-11-01 收口：**另放行恰好一条 `defaultRole: leader`**（组长 ruling 7 —— 组长预设必须自己声明
+ *        自己那一档；详见下面 `DEFAULT_ROLE_ALLOWED` 那一段的四条限制。放行的是**那一条**，不是那一类键）。
+ *
+ * ⚠️ **注释行不参与比较**：描述"九个 per-role 预设"的那些注释必须改写/删除（留着就是谎话），
+ *    它们不是配置 —— 把注释算进"逐字不变"会要求注释保持错误。但**旧预设 id 一个都不许再出现**
+ *    （注释里出现也算）：它指向的预设本次已删。
+ *
+ * @param {object} input
+ * @param {string} input.baseText   升级前组长块全文（基线夹具 `preset_blocks[agenia].full_text`）
+ * @param {string} input.nowText    现在补丁里的组长块全文
+ * @param {string} [input.memberPresetId] 九行同指的那一份（`memberPresetShared().id`；null = 读不出）
+ * @param {string[]} [input.oldMemberIds] 升级前那九份 per-role 预设 id
+ * @returns {{problems: {code: string, message: string}[], readings: object}}
+ */
+export function leaderBlockProblems({
+  baseText,
+  nowText,
+  leaderPresetId = FROZEN.patchPresets.leaderPresetId,
+  memberPresetId = null,
+  oldMemberIds = [],
+}) {
+  const problems = []
+  const readings = { leader_preset_id: leaderPresetId, member_preset_id: memberPresetId, old_member_ids: oldMemberIds }
+  const push = (code, message) => problems.push({ code, message })
+
+  /** 两侧各解析一次；**行长什么样**由值行比较管，这里只取功能字段。 */
+  const functional = (text) => {
+    const parsed = parseComposition(text, 'leader-block').rows
+    const inj = parsed.find((r) => r.id === 'persona-injector')
+    const persona = parsed.find((r) => r.id === 'persona')
+    const reg = parsed.find((r) => r.name === FROZEN.oracle.registrationName)
+    return {
+      prefix: persona === undefined ? undefined : plain(cfg(persona, 'prefix')),
+      suffix: persona === undefined ? undefined : plain(cfg(persona, 'suffix')),
+      leaderOrder: inj === undefined ? undefined : plain(cfg(inj, 'leaderOrder')),
+      memberOrder: inj === undefined ? undefined : plain(cfg(inj, 'memberOrder')),
+      officeBound: inj === undefined ? undefined : plain(cfg(inj, 'officeBound')),
+      delegationTools: inj === undefined ? undefined : plain(cfg(inj, 'delegationTools')),
+      id: reg === undefined ? undefined : cfg(reg, 'id'),
+      order: reg === undefined ? undefined : cfg(reg, 'order'),
+      contentDir: inj === undefined ? undefined : cfg(inj, 'contentDir'),
+    }
+  }
+  const baseFields = functional(baseText)
+  const nowFields = functional(nowText)
+  const fieldDrift = Object.keys(baseFields).filter((k) => JSON.stringify(baseFields[k]) !== JSON.stringify(nowFields[k]))
+  readings.functional_fields = { base: baseFields, now: nowFields, drift: fieldDrift }
+  if (fieldDrift.length > 0) {
+    push('LEADER-CLOBBERED', `组长块的功能字段动了：${JSON.stringify(fieldDrift)}`
+      + `（基线 ${JSON.stringify(fieldDrift.map((k) => baseFields[k]))?.slice(0, 300)}`
+      + ` / 现 ${JSON.stringify(fieldDrift.map((k) => nowFields[k]))?.slice(0, 300)}）`
+      + ' —— 任务 A 只并员，组长的人设 / 次序 / 边界 / 路径 / 预设属性一格都不许动')
+  }
+
+  /** 值行 = 非注释、非空行（`agentPreset:` 单独挑出来看去向）。 */
+  const valueLines = (text) => String(text).split(/\r?\n/).filter((l) => l.trim() !== '' && !/^\s*#/.test(l))
+  const isPresetLine = (l) => /^\s*agentPreset:/.test(l)
+  /**
+   * 🔴 **⑤′-b 的唯一一处放行**（2026-11-01 收口 · 组长 ruling 7）：组长块里**恰好一条** `defaultRole: leader`。
+   *
+   * 为什么放它：组长预设必须**自己声明**自己那一档（`identityVerdict` 读它才不出"没声明档"的报警），
+   * 而这一行是第 4 关返修新加的 ⇒ 字节上必然与升级前基线不同。放行范围钉死在**四条同时成立**：
+   *   ① 基线里**一条都没有**；② 现侧**恰好一条**；③ 那一行逐字是 `defaultRole: leader`
+   *   （`defaultRole: member` / `not-a-tier` / 行尾带注释 / 第二行都**不认**）；
+   *   ④ 它坐在 `persona-injector` 那一行的 config 里、**缩进与该行的 `leaderOrder:` 同级**
+   *   （位置不对 ⇒ 读它的那一行读不到 = ruling 7 要关掉的那条报警又回来了）。
+   *
+   * 🔴 **"允许一条"不是"允许这一类键"**：新增第二条 / 换个值 / 塞到别的行下面，三种都红
+   * （`LEADER-VALUE-EXTRA`，报文点名实得的那几行）。阳性对照：`.team/test/2026-11-01/_tools/prs01-leader-flip.mjs`
+   * 共 14 格 —— 该绿的 2 格绿（原样 / 删掉那一行）、该红的 12 格各自红到点名的码。
+   */
+  const DEFAULT_ROLE_ALLOWED = /^\s*defaultRole:\s*leader\s*$/
+  const isDefaultRoleLine = (l) => /^\s*defaultRole\s*:/.test(l)
+  const indentOfLine = (l) => l.length - l.trimStart().length
+  /** `persona-injector` 那一行在原文里的行号区间 + 它的 `leaderOrder:` 缩进（放行线的落点锚）。 */
+  const injectorAnchor = (text) => {
+    const lines = String(text).split(/\r?\n/)
+    const start = lines.findIndex((l) => /^\s*- id: persona-injector\s*(?:#.*)?$/.test(l))
+    if (start < 0) return { start: null, end: null, indent: null }
+    const rowIndent = indentOfLine(lines[start])
+    let end = lines.length
+    for (let i = start + 1; i < lines.length; i += 1) {
+      if (lines[i].trim() !== '' && indentOfLine(lines[i]) <= rowIndent) { end = i; break }
+    }
+    const orderAt = lines.findIndex((l, i) => i > start && i < end && /^\s*leaderOrder:\s*$/.test(l))
+    return { start, end, indent: orderAt < 0 ? null : indentOfLine(lines[orderAt]) }
+  }
+  /** 那些 `defaultRole` **值行**的「行号 + 原文」（报"它坐错地方 / 多了一条"要先指得到它）。 */
+  const defaultRoleLines = (text) => String(text)
+    .split(/\r?\n/)
+    .map((line, i) => ({ line, i }))
+    .filter(({ line }) => line.trim() !== '' && !/^\s*#/.test(line) && isDefaultRoleLine(line))
+  const dropFirst = (arr, pred) => {
+    const at = arr.findIndex(pred)
+    return at < 0 ? arr : [...arr.slice(0, at), ...arr.slice(at + 1)]
+  }
+  const baseAll = valueLines(baseText)
+  const nowAll = valueLines(nowText)
+  const baseRest = baseAll.filter((l) => !isPresetLine(l))
+  const nowRest = nowAll.filter((l) => !isPresetLine(l))
+  const baseDr = defaultRoleLines(baseText)
+  const nowDr = defaultRoleLines(nowText)
+  const anchor = injectorAnchor(nowText)
+  const allowedDr = baseDr.length === 0
+    && nowDr.length === 1
+    && DEFAULT_ROLE_ALLOWED.test(nowDr[0].line)
+    && anchor.start !== null
+    && anchor.indent !== null
+    && nowDr[0].i > anchor.start
+    && nowDr[0].i < anchor.end
+    && indentOfLine(nowDr[0].line) === anchor.indent
+  /** 放行的那一条从现侧**摘掉一次**（四条不同时成立就一行都不摘 ⇒ 下面照实报红）。 */
+  const nowCore = allowedDr ? dropFirst(nowRest, (l) => DEFAULT_ROLE_ALLOWED.test(l)) : nowRest
+  const firstDrift = baseRest.findIndex((l, i) => l !== nowCore[i])
+  readings.value_lines = {
+    base: baseRest.length,
+    now: nowCore.length,
+    identical: firstDrift === -1 && baseRest.length === nowCore.length,
+    first_drift: firstDrift === -1 ? null : { index: firstDrift, base: baseRest[firstDrift] ?? null, now: nowCore[firstDrift] ?? null },
+    default_role_whitelist: {
+      allowed_line: 'defaultRole: leader',
+      base_count: baseDr.length,
+      now_lines: nowDr.map((x) => `${x.i}:${x.line.trim()}`),
+      injector_span: [anchor.start, anchor.end],
+      injector_key_indent: anchor.indent,
+      accepted: allowedDr,
+    },
+  }
+  if (!allowedDr && (baseDr.length > 0 || nowDr.length > 0)) {
+    push('LEADER-VALUE-EXTRA', '组长块的 `defaultRole` 值行只允许**恰好一条** `defaultRole: leader`'
+      + '（组长 ruling 7：组长预设自己声明自己那一档），且必须坐在 `persona-injector` 的 config 里'
+      + '（缩进与该行 `leaderOrder:` 同级）'
+      + `—— 基线 ${baseDr.length} 条 / 现 ${nowDr.length} 条：${JSON.stringify(nowDr.map((x) => `${x.i}:${x.line.trim()}`))}`
+      + (anchor.start === null ? '（锚点不对：组长块里找不到 `- id: persona-injector` 那一行）' : '')
+      + (anchor.start !== null && anchor.indent === null ? '（锚点不对：那一行里找不到 `leaderOrder:`）' : '')
+      + ' —— "允许一条"是**具体那一行**，不是"允许这一类键"：多一条 / 换个值 / 塞到别处都不算')
+  }
+  if (firstDrift !== -1 || baseRest.length !== nowCore.length) {
+    push('LEADER-CLOBBERED', '组长块的值行（非注释行，去掉九条 `agentPreset` 之后，'
+      + '另去掉那**一条**放行的 `defaultRole: leader`）与基线不再逐行相同'
+      + `（基线 ${baseRest.length} 行 / 现 ${nowCore.length} 行；第一处不同在 #${firstDrift === -1 ? '(长度)' : firstDrift}：`
+      + `基线 ${JSON.stringify(baseRest[firstDrift] ?? null)} ≠ 现 ${JSON.stringify(nowCore[firstDrift] ?? null)}）`
+      + ' —— 除了九条 agentPreset 与那一条 defaultRole，组长块的值一个都不许动')
+  }
+
+  const removedAp = baseAll.filter(isPresetLine).map((l) => l.replace(/^\s*agentPreset:\s*/, '').trim())
+  const addedAp = nowAll.filter(isPresetLine).map((l) => l.replace(/^\s*agentPreset:\s*/, '').trim())
+  readings.agentpreset = { removed: removedAp, added: addedAp }
+  const removedWant = [...oldMemberIds].sort()
+  const removedGot = [...removedAp].sort()
+  const badRemoved = oldMemberIds.length > 0 && JSON.stringify(removedGot) !== JSON.stringify(removedWant)
+  const badAddedCount = addedAp.length !== 9
+  const badAddedValue = memberPresetId !== null && addedAp.some((v) => v !== memberPresetId)
+  if (badRemoved || badAddedCount || badAddedValue) {
+    push('LEADER-DELEGATION-RETARGET', '组长块里 `agentPreset` 那一族的改动形状不对：'
+      + `去掉的 ${removedAp.length} 条 ${JSON.stringify(removedGot)}（应恰为升级前那九个 per-role id ${JSON.stringify(removedWant)}）`
+      + ` · 新增的 ${addedAp.length} 条 ${JSON.stringify(addedAp)}`
+      + `（应恰为 9 条、且都等于那份通用组员预设 ${JSON.stringify(memberPresetId)}）`
+      + ' —— 九条委派行同指一份是任务 A 的全部内容；别的改法都不是并员')
+  }
+  const staleIds = oldMemberIds.filter((id) => String(nowText).includes(id))
+  readings.stale_preset_ids = staleIds
+  if (staleIds.length > 0) {
+    push('OLD-PRESETS-LEFT', `组长块里还引用着已删除的旧预设 id：${JSON.stringify(staleIds)}`
+      + '（注释也算）—— 读的人 / 下一个人会被引向不存在的那份预设')
+  }
+  return { problems, readings }
 }
 
 // ── 解析器阳性对照（**活体那两个已知文件**，只读）──────────────────────────
@@ -796,9 +1024,73 @@ export function calibrate(compositionText, patchText) {
   return { problems, readings }
 }
 
-// ── 目录小工具 ─────────────────────────────────────────────────────────────
-export function listMd(dir) {
+// ── 升级前基线 / 身份落点（任务 A 之后新增的两个共用输入）────────────────────
+/**
+ * **升级前冻结的预设面**（`fixtures/preset-baseline-A.json`，2026-11-01 冻结）。
+ *
+ * 为什么升级之后还需要它：它是**删 9 旧预设之前**的全文 ——
+ *   · 九句人格的逐字底稿（`member_rows[].persona_body`，`PRS-04` / `REV-02` 拿它当"没丢一句"的尺子）；
+ *   · 组长块全文（`preset_blocks[agenia].full_text`，`PRS-01` ⑤′ 的对照物 + 退休注释提取器的阳性对照样本）；
+ *   · 旧九个 per-role 预设 id（`PRS-01` ⑤′ 的"它们必须全删、组长块里一个都不许再引用"）。
+ *
+ * @returns {{ok: boolean, why: string|null, value: object|null}}
+ */
+export function readPresetBaseline() {
+  const file = path.join(PATHS.testRoot, 'fixtures', 'preset-baseline-A.json')
   try {
+    return { ok: true, why: null, value: JSON.parse(readFileSync(file, 'utf8')) }
+  } catch (err) {
+    return { ok: false, why: `基线夹具读不出来：${file}（${err.message}）`, value: null }
+  }
+}
+
+/**
+ * **角色 → 该角色的 `toolName`**（定形 §2.2 那张闭表；从 `FROZEN` 的冻结表推，不手抄九行）。
+ *
+ * 任务 A 之后"角色 = 由 `toolName` 决定"是唯一口径 ⇒ 判据要点名某个角色的行时，
+ * 不能再按 `team-<role>` / `tool-job-<role>` 的行 id 找（那是 0.2.1 的行名，不是身份来源）。
+ *   · 四个固定岗位：`FROZEN.enabledFixedTeamTools` 里 `team_<role>`（`team-retro` 关着、无角色，不在表里）；
+ *   · 四类一次性作业：`FROZEN.jobs[].toolName`；
+ *   · **剩下的那一个角色**（既没有 `team_` 行也没有 `job_` 行）= 裸 `subagent` 的角色（`hire`）。
+ */
+export function roleToolNames({ roles = FROZEN.teamRoles } = {}) {
+  const out = new Map()
+  for (const toolName of FROZEN.enabledFixedTeamTools) out.set(toolName.replace(/^team_/, ''), toolName)
+  for (const job of FROZEN.jobs) out.set(job.role, job.toolName)
+  const bare = FROZEN.bareSubagent.toolName
+  const bareRole = roles.find((r) => !out.has(r) && !out.has(`team_${r}`))
+  if (bareRole !== undefined) out.set(bareRole, bare)
+  return out
+}
+
+/**
+ * **每个角色的身份落点**：`toolName` → 角色 → 那一行（任务 A 之后 persona/charter 的唯一入口）。
+ *
+ * 判据（`STAT-02` 的 `ROLE-LANDING` / `REV-02` 的 `ROLE-MARK` 迁移后共用这一份）：
+ *   · 每个角色**恰好一行**已启用的委派行带着它的 `toolName`（零行 = 那个角色没有入口；两行 = 抢名）；
+ *   · 那一行的 `agentPreset` 必须指向九行共用的那份组员预设（`memberPresetShared()`）。
+ * 行 id 不参与判定（`toolName` 才是身份）。
+ *
+ * @returns {{byRole: Map<string, {toolName: string, rows: object[]}>, problems: string[]}}
+ */
+export function identityLanding(rows, { roles = FROZEN.teamRoles } = {}) {
+  const problems = []
+  const byRole = new Map()
+  const wanted = roleToolNames({ roles })
+  const enabled = enabledRows(rows).filter((r) => r.name === '@deepseek-ai/dsh-tool-subagent')
+  for (const role of roles) {
+    const toolName = wanted.get(role)
+    if (toolName === undefined) { problems.push(`角色 ${role} 推不出自己的 toolName（冻结表里没有它）—— 身份没有落点`); continue }
+    const hits = enabled.filter((r) => cfg(r, 'toolName') === toolName)
+    byRole.set(role, { toolName, rows: hits })
+    if (hits.length === 0) problems.push(`角色 ${role} 没有任何一行带 toolName=${toolName} —— 派工时它永远起不来`)
+    else if (hits.length > 1) problems.push(`角色 ${role} 有 ${hits.length} 行都带 toolName=${toolName}（${hits.map((r) => r.id).join(', ')}）—— 同一身份两个入口，派工分不清`)
+  }
+  return { byRole, problems }
+}
+
+// ── 目录小工具 ─────────────────────────────────────────────────────────────
+export function listMd(dir) {  try {
     return readdirSync(dir).filter((n) => n.endsWith('.md') && statSync(path.join(dir, n)).isFile()).sort()
   } catch {
     return null

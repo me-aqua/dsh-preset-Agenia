@@ -35,7 +35,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { ENV, PATHS } from './env.mjs'
-import { NODE_BIN, childEnv, importStaged, runBrain, runLocal, stagingExists } from './sut.mjs'
+import { NODE_BIN, childEnv, importStaged, runBrain, runLocal, stagingExists, stagingPath } from './sut.mjs'
 import { canonical, ensureMarkedDir } from './root-guard.mjs'
 import { fixtureDir } from './verify-recompute.mjs'
 
@@ -476,13 +476,37 @@ export async function rulesControlArm(ownedKnifeId) {
 }
 
 // ── ③ 四处的缺省日（真子进程；缺省 = payload 里**没有** day 这个键）──────────
-/** 一个格子一副全新的根：工作区 + 脑根各自带 marker（脑根不许共用 —— 指针会让缺省值拐弯）。 */
+/**
+ * 一个格子一副全新的根：工作区 + 脑根各自带 marker（脑根不许共用 —— 指针会让缺省值拐弯）。
+ *
+ * 🔴 **2026-11-02 补的那一格（组长裁：修夹具，不给产品加降级）**：
+ * `.tools/daily-cards.py::read_capacity()` 读的是**这个工作区自己那份预设树**的
+ * `<workspace>/presets/agenia/lib/memory.mjs`（参考线只许有一个真源 —— 写死 200/60000 会漂）。
+ * 合成工作区原来只造 `.team/` ⇒ 它读不到就 `E_CAP_SOURCE` 当场停：`DBY-01..04` 的四条 cards 腿
+ * 因此红在夹具上，**不是**产品坏（两棵树的 `daily-cards.py` 逐字节相同）。
+ * ⇒ 这里把**被测那一份（staged）**的 `lib/memory.mjs` 按它要的路径挂进合成工作区。
+ * ⚠️ 挂的是 **staged 的字节**（不是测试自己抄一份常量 —— 那就是第二个真源）。
+ *    staged 不在 / 没这份文件 ⇒ **不造**（各格自己的 `SUT-SURFACE-MISSING` 会点名），
+ *    绝不用活树或常量顶上：那样"参考线一致"就是测试自己说的。
+ */
+const CAP_SOURCE_REL = 'lib/memory.mjs'
+
+/** 把 staged 的 `lib/memory.mjs` 挂进工作区（`presets/agenia/lib/memory.mjs`）。返回挂没挂上。 */
+function mountCapSource(ws) {
+  if (!stagingExists(CAP_SOURCE_REL)) return false
+  const dest = path.join(ws, 'presets', 'agenia', 'lib')
+  mkdirSync(dest, { recursive: true })
+  writeFileSync(path.join(dest, 'memory.mjs'), readFileSync(stagingPath(CAP_SOURCE_REL)))
+  return true
+}
+
 export function makeRoots(caseId, name) {
   const runRoot = canonical(process.env[ENV.RUN_ROOT])
   const base = path.join(runRoot, `${String(caseId).toLowerCase()}-${name}`)
   const ws = ensureMarkedDir(path.join(base, 'ws'), { runRoot, runId: path.basename(runRoot), kind: 'agenia-test-workspace' })
   const brain = ensureMarkedDir(path.join(base, 'brain'), { runRoot, runId: path.basename(runRoot), kind: 'agenia-test-brain-root' })
   mkdirSync(path.join(ws, '.team'), { recursive: true })
+  mountCapSource(ws)
   return { base, ws, brain }
 }
 
@@ -852,10 +876,10 @@ export function pythonBin() {
   return PYTHON_CACHE
 }
 
-// ── ③' Python 那份切点的**刀**（F1：把 4 改成 3 / 5，相邻那一格必须翻面）────────
+// ── ③' 切点的**刀**（F1：把 4 改成 3 / 5，相邻那一格必须翻面）────────────────────
 /**
- * 把 `.tools/daily-cards.py` **拷到运行根**、只把 `DAY_CUT_HOURS = 4` 改成 `cutHours`，
- * 再用**同一个注入时钟、同一个命令行**跑一次，看它把卡落进了哪一天。
+ * 把切点从 4 改成 `cutHours`，再用**同一个注入时钟、同一个命令行**跑一次**真的**生成器，
+ * 看它把卡落进了哪一天。
  *
  * 为什么要这一刀：切点今天**已经在 4 小时上**时，腿是绿的 —— 但"绿"不证明这条腿能红
  * （`mig-rules-14`：一格红不了，它就是装饰）。评审 F1 就是这么找到洞的：
@@ -863,25 +887,40 @@ export function pythonBin() {
  * 这一刀改成 3（或 5）之后，`03:59:59`（或 `04:00:01`）那一向**必须**落到相邻的那一天 ——
  * 落到原来的日子 ⇒ 这条腿没有牙。
  *
- * ⚠️ `.tools/**` 一个字节都不动：改的是**运行根里的副本**。
+ * 🔴 **刀口跟着"切点只有一个家"改过（2026-11-02 · `gate4-C2` F-11）**：
+ * 切点现在**不在** `.tools/daily-cards.py` 里（那一份是**解析**权威的调用方）。
+ * 唯一的家 = `presets/agenia/lib/route.mjs::DAY_CUT_HOURS`；生成器按
+ * `daily-cards.py::route_source_path()` 先找工作区自己那份、再找仓库那份。
+ * ⇒ 刀落在**夹具工作区的 `presets/agenia/lib/route.mjs`**（切过的副本），跑的是**真生成器**。
+ *   这样这一刀同时证明两件事：① 那条腿真按这个数算日子；② 生成器**真的在读**权威那一份
+ *   （它若退回手抄的 4，刀就不咬 ⇒ `DBY-CARDS-KNIFE-NO-BITE`）。
+ * ⚠️ `.tools/**` / `presets/**` 一个字节都不动：改的是**夹具工作区里那份副本**，跑完删掉。
  */
 export function cardsCutKnife(roots, nowIso, cutHours) {
-  const source = readFileSync(path.join(PATHS.repo, '.tools', 'daily-cards.py'), 'utf8')
-  const find = 'DAY_CUT_HOURS = 4'
-  const hits = source.split(find).length - 1
+  const routeRepo = path.join(PATHS.repo, 'presets', 'agenia', 'lib', 'route.mjs')
+  const routeSource = readFileSync(routeRepo, 'utf8')
+  const find = 'export const DAY_CUT_HOURS = 4'
+  const hits = routeSource.split(find).length - 1
   if (hits !== 1) {
-    return { ok: false, cut: cutHours, day: null, exit_code: null, file: null, dirs: [], why: `\`.tools/daily-cards.py\` 里 ${JSON.stringify(find)} 出现 ${hits} 次（这一刀必须恰好切一处）` }
+    return { ok: false, cut: cutHours, day: null, exit_code: null, file: null, dirs: [], why: `\`presets/agenia/lib/route.mjs\` 里 ${JSON.stringify(find)} 出现 ${hits} 次（这一刀必须恰好切一处；切点换写法了就把这条刀同批挪过去）` }
   }
   const py = pythonBin()
   if (!py.ok) return { ok: false, cut: cutHours, day: null, exit_code: null, file: null, dirs: [], why: py.note }
-  const dir = fixtureDir('DBY', `cards-knife-${cutHours}h`)
-  const file = path.join(dir, `daily-cards-cut${cutHours}.py`)
-  writeFileSync(file, source.replace(find, `DAY_CUT_HOURS = ${cutHours}`), 'utf8')
-  const args = [file, '--workspace', roots.ws, '--data-root', roots.brain]
+  const wsRoute = path.join(roots.ws, 'presets', 'agenia', 'lib', 'route.mjs')
+  mkdirSync(path.dirname(wsRoute), { recursive: true })
+  writeFileSync(wsRoute, routeSource.replace(find, `export const DAY_CUT_HOURS = ${cutHours}`), 'utf8')
+  const args = [path.join(PATHS.repo, '.tools', 'daily-cards.py'), '--workspace', roots.ws, '--data-root', roots.brain]
   const started = Date.now()
-  const res = withClock(nowIso, () => spawnSync(py.bin, args, {
-    cwd: PATHS.repo, env: { ...childEnv() }, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024, windowsHide: true,
-  }))
+  let res = null
+  try {
+    res = withClock(nowIso, () => spawnSync(py.bin, args, {
+      cwd: PATHS.repo, env: { ...childEnv() }, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024, windowsHide: true,
+    }))
+  } finally {
+    // 刀口是一次性的（同一份工作区后面还要给别的腿用）：把那份副本**原样写回**（不删文件 ——
+    // 「删除 / 递归清除」要过 marker 与落点校验，那是另一件事，这里不需要动那个能力）。
+    writeFileSync(wsRoute, routeSource, 'utf8')
+  }
   const dirs = listDirs(path.join(roots.ws, '.team', 'leader'))
   const exitCode = res?.status ?? null
   const ok = exitCode === 0 && dirs.length === 1
@@ -890,7 +929,8 @@ export function cardsCutKnife(roots, nowIso, cutHours) {
     cut: cutHours,
     day: ok ? dirs[0] : null,
     exit_code: exitCode,
-    file,
+    file: wsRoute,
+    source: routeRepo,
     dirs,
     ms: Date.now() - started,
     // 只认**这次改一个字面量**之后的落点：目录里多于一个就说不清是哪一次写的。

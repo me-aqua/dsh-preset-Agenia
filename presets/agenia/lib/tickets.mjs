@@ -22,7 +22,7 @@
 // 字符尺子**只有一把**：`lib/memory.mjs` 的 code point 口径（§B3.4）。
 // void 理由那 10 字的下限与"记忆条目多少字符"必须是同一把尺子 —— 两处各写一份迟早分叉。
 import { charCountOf } from './memory.mjs'
-import { dayDigitsOfKey } from './route.mjs'
+import { dayDigitsOfKey, ticketStatusOf } from './route.mjs'
 
 /** 票的四个状态（v5 §8.3 原样 + B3.3 的 `void`）。 */
 export const TICKET_STATUSES = Object.freeze(['open', 'in_progress', 'done', 'void'])
@@ -85,7 +85,7 @@ export function nextTicketId(tickets, dayKey) {
 }
 
 /** 一条**新票**的完整记录（v5 §8.3 的字段 + B3.3 的四个新字段，一次成型）。 */
-export function newTicketRecord({ id, title, source, next_step: nextStep, acceptance, at, supersedes = null }) {
+export function newTicketRecord({ id, title, source, next_step: nextStep, acceptance, at, supersedes = null, finding_refs: findingRefs = [] }) {
   return {
     schema: 1,
     id,
@@ -102,7 +102,42 @@ export function newTicketRecord({ id, title, source, next_step: nextStep, accept
     re_present: null,
     re_present_history: [],
     closed_at: null,
+    /** 这张票是由哪几条评审 finding 长出来的（定形 §6.2「评审 finding → 票」那一行的载体）。 */
+    finding_refs: Array.isArray(findingRefs) ? [...findingRefs] : findingRefs,
   }
+}
+
+/**
+ * 票的 `finding_refs[]` 形状判定（gate4 复审 BC-03a）。
+ *
+ * 口径：**给就必须非空、且 ids 唯一**（"没有"与"给了个空表"是两件事：前者省略这个键，
+ * 后者会让"票段里查不到这张票"与"查到了但一条 finding 都没挂"长得一样）。
+ * 元素是**非空字符串**（finding id 的形状由报告那边决定，这里不当第二个真相）。
+ *
+ * @param {unknown} refs 入参 / 记录上的 `finding_refs`
+ * @param {{requireNonEmpty?:boolean}} [options] 调用方**显式给了**这个键（值可能是 `[]`）⇒ 传 `true`；
+ *   记录校验（`validateTicket`）照旧用缺省 —— 新票 / 迁移票的记录里 `[]` 是"没挂 finding"的合法形态。
+ */
+export function findingRefsVerdict(refs, { requireNonEmpty = false } = {}) {
+  if (refs === undefined || refs === null) return ok()
+  if (!Array.isArray(refs)) {
+    return bad('E_ARG_SCHEMA', `finding_refs 必须是字符串数组（不给就整个省略），实得 ${JSON.stringify(refs)}`)
+  }
+  if (refs.length === 0) {
+    if (requireNonEmpty) return bad('E_ARG_SCHEMA', 'finding_refs 给了就必须 ≥1 条（"没有"就把这个键整个省略）')
+    return ok()
+  }
+  const seen = new Set()
+  for (const [i, ref] of refs.entries()) {
+    if (!isFilledString(ref)) {
+      return bad('E_ARG_SCHEMA', `finding_refs[${i}] 必须是非空字符串（finding id），实得 ${JSON.stringify(ref)}`)
+    }
+    if (seen.has(ref)) {
+      return bad('E_ARG_SCHEMA', `finding_refs 里的 ${JSON.stringify(ref)} 重复了 —— ids 必须唯一（同一张票不重复挂同一条 finding）`)
+    }
+    seen.add(ref)
+  }
+  return ok()
 }
 
 /**
@@ -115,6 +150,43 @@ export function canTransition(from, to) {
   const allowed = TICKET_TRANSITIONS[from]
   if (!Array.isArray(allowed)) return false
   return allowed.includes(to)
+}
+
+/**
+ * **写面的 from-state = 投影**（gate4 复审 BC-01，组长裁定：用投影归一化，不往迁移票里写 `status`）。
+ *
+ * `bootstrap` 迁进来的票**按契约不存 `status`**（`lib/route.mjs::migratedTicketRecord`），
+ * 于是 `canTransition(ticket.status, …)` 拿到的是 `undefined` ⇒ 每一张迁移票都拒 `E_TICKET_TRANSITION`
+ * （`void` 这条唯一的控制写当场不可达）。修法只有一处：**先把票投影成状态，再喂状态机**。
+ *
+ * 投影规则就是 `lib/route.mjs::ticketStatusOf`（**唯一一份**，不在这里重写）：
+ * `void`（唯一存下的终态）→ 有任务就按任务 → 没有任务用 `legacy_status` → 都没有 ⇒ `open`。
+ * 🔴 别把 `undefined → 'open'` 当成兜底的全部：迁移票的 `legacy_status` 也在投影里（`in_progress` 的票
+ *    照样能 `close`，`done` 的票照样是终态）。
+ */
+export function ticketFromStateOf(ticket, tasks = []) {
+  return ticketStatusOf(ticket, tasks)
+}
+
+/**
+ * **状态机 + 从哪一格来**（三个票写 op 共用的那一处；gate4 复审 BC-01）。
+ *
+ * @param {object} ticket 盘上那张票（`status` 可能不存在）
+ * @param {string} to 目标状态
+ * @param {Array} [tasks] 路线任务段（投影的输入之一：`paused` / `in_progress` 都算 doing）
+ * @param {{hint?:string}} [options] 报文末尾那句"为什么"（三个 op 各一句）
+ * @returns {{ok:boolean, code:string|null, message:string, from:string}}
+ */
+export function transitionVerdict(ticket, to, tasks = [], { hint = '' } = {}) {
+  const from = ticketFromStateOf(ticket, tasks)
+  if (canTransition(from, to)) return { ok: true, code: null, message: '', from }
+  const tail = hint === '' ? '' : ` —— ${hint}`
+  return {
+    ok: false,
+    code: 'E_TICKET_TRANSITION',
+    from,
+    message: `票 ${ticket?.id ?? '(未知票)'}：${from} → ${to} 不合法（C-3：open→in_progress|void · in_progress→done|void · done/void 是终态）${tail}`,
+  }
 }
 
 /**
@@ -223,6 +295,9 @@ export function validateTicket(ticket, { existingIds = [], findingsSet = null } 
   if (taken.has(String(ticket.id))) {
     return bad('E_TICKET_DUP', `票号 ${ticket.id} 已经存在 —— 同一张票不许重开（要补差就在原票上补，要换就 void 后再开新票）`)
   }
+  // `finding_refs[]` 是"评审 finding → 票"的载体（gate4 复审 BC-03a）：给了就非空、ids 唯一。
+  const refs = findingRefsVerdict(ticket.finding_refs)
+  if (!refs.ok) return refs
 
   // 终态与它那两样必填项的自洽（§B3.3 的"何时必填"那一列）。
   if (ticket.status === 'done') {

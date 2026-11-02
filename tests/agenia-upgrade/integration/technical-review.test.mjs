@@ -13,7 +13,7 @@
 import { before, describe, test } from 'node:test'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { ENV, FROZEN } from '../support/env.mjs'
+import { ENV, FROZEN, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, sha256Equal, sha256File, stagingReadings, writeJson } from '../support/evidence.mjs'
 import { canonical, ensureMarkedDir } from '../support/root-guard.mjs'
 import { loadStagedModule, runLocal, stagingExists } from '../support/sut.mjs'
@@ -198,7 +198,7 @@ describe('integration · technical-review (REV-03 / RCP-03)', () => {
 
       // ⑤ CODE/ALL 指纹脚本（拍板 Q7；v1.18 ⑥ 把路径改到**已交付**的 `.tools/fingerprint.mjs`）
       //    🔴 先判存在性再说话 —— 原来那一下不判 `existsSync`、**无条件** push ⇒ "文件在也报缺"。
-      const fp = 'E:\\Harness\\.tools\\fingerprint.mjs'
+      const fp = path.join(PATHS.repo, '.tools', 'fingerprint.mjs')   // 派生：本工作区那一份（2026-11-02）
       const FROZEN_FP_SHA = 'FE15C0FEF566F8CAD0A331CD7ABA3CD91A58D46F6BF9FAAB0619C7BFE27FFD3E'
       const fpExists = existsSync(fp)
       const fpText = fpExists ? readFileSync(fp, 'utf8') : null

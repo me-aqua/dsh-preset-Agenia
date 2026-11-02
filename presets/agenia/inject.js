@@ -36,7 +36,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { readFileSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -169,10 +169,733 @@ const DIM_KEYS = new Set(DIMS.map(([key]) => key))
 const stripComments = (raw) => raw.replace(/<!--[\s\S]*?-->/g, '').trim()
 
 /**
- * 组员上岗时，岗位配置那一行会在它的人设最前面留一枚标记。
- * 认这枚标记，就知道"这次开口的是谁"。
+ * 🔴 **`【组员:<角色>】` 标记：退役，注入器一个字节都不读。**
+ *
+ * 2026-11-01（并员）起**身份只由 `toolName` 决定**（定形 §2.2）：
+ *   · 角色 = `toolName` 查 `ROLE_TABLE`；查不到 ⇒ 无角色（窄）；
+ *   · 预设里也不再写按角色的标记（通用组员那一份不扮演任何具体角色）。
+ *
+ * ⚠️ 这里**没有** `ROLE_MARK` 这个常量，也**别加回来**：那是一份"从注入文本里认身份"的
+ *    第二个作者 —— 标记 + 没有 `toolName` 时它会把角色偷偷补回来（`roleOf()` 干过这件事），
+ *    而契约要的正好相反（**只有标记没有 toolName ⇒ 当无角色 + 窄**）。
+ *    标记最多只是**人看的**冗余提示；就算哪天要显示，也只能由角色**生成**，不能当输入读。
  */
-const ROLE_MARK = /【组员:([a-z0-9][a-z0-9-]*)】/
+// ─────────────────────────────────────────────────────────────────────────────
+// 身份：两份预设 + 九个工具名（定形 §2.2 / CONTRACT-A §2–§7）
+//
+// 两个事实，各一个作者：
+//   · **档** = 会话是从哪一份预设起来的（组长 / 通用组员 / 认不出）；
+//   · **角色** = `toolName`，闭集九个 —— 人设 / 说明书 / tools 全从下面这张表取。
+//     ⚠️ `model` 也在表里，但它是**纯声明**：这一版**没有读者**（见下表那段注释）。
+// `defaultRole` 是预设自己声明的**冗余校验值**，只进 `warnings`，**不改档、不剥角色**。
+//
+// 为什么这张表在 `inject.js` 里而不是在预设里：预设只有两份（组长 + 通用组员），
+// 而角色有九个 —— 一份通用组员预设装不下九个角色的人设与工具集。表放这儿，
+// 页面不再逐角色调 `model` / `tools`（代价：老板失去页面级调参，见定形 §3.3）。
+//
+// ⚠️ 这张表是**唯一作者**：别在预设里再写一份 `model` / `tools`（生成器当场对账），
+//    也别在 `team/*.md` 里另立一份人设 —— 那两句以这里为准。
+// 🔴 但"唯一作者"只对 `persona` / `charter` / `tools` 成立：`model` 这一版**没有读者**
+//    （纯声明），"改了某个角色的 model ⇒ 会话就用它"这句话在这一版**不成立**（见下表那段注释）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 组长那一份预设的 id（页面上那两条之一）。 */
+export const LEADER_PRESET_ID = 'agenia'
+/** 通用组员那一份预设的 id；九条委派行全指它（`agentPreset: agenia-member`）。 */
+export const MEMBER_PRESET_ID = 'agenia-member'
+/** `defaultRole` 的合法值（别的值只报警，不改档）。 */
+const TIERS = ['leader', 'member']
+/** 判决岗那一声拒的码（`CONTRACT-A` §6 冻的名字；报文措辞不冻）。 */
+const JUDGE_PROPOSAL_CODE = 'E_GUARD_JUDGE_PROPOSAL'
+/**
+ * 提候选那个工具的名字（角色表的 `deny` 与门禁都按这个字判）。
+ * ⚠️ 与 `tools/proposal-file.mjs` 的 `PROPOSAL_FILE_TOOL_NAME` 是**同一个字**；这里只能写字面量，
+ * 因为注册发生在 `apply()` 里，而那个模块**不许**在顶层 import（理由见下面 `proposalFileToolModule`）。
+ */
+const PROPOSAL_FILE_TOOL = 'proposal_file'
+/** 身份被拒的两个码（`CONTRACT-A` §4 冻的名字）。 */
+const IDENTITY_LEADER_CODE = 'E_IDENTITY_LEADER_PRESET'
+const IDENTITY_TOOL_CODE = 'E_IDENTITY_UNKNOWN_TOOL'
+
+/**
+ * **base 工具集** —— 组合里那些面向模型的工具名（不含任何委派工具）。
+ *
+ * 谁真的拿它：
+ *   · **row 0（内部 worker）** —— 无角色 + base（定形 §2.2 / §5：fail-open，拦不住）；
+ *   · **角色表每一条的默认值** —— `ROLE_TABLE[].tools` 是它的副本（`review` 少 shell）。
+ *
+ * 🔴 **row 5 / 6 / 7（窄权限）拿的不是它**：那三行是**闭三元组** `NARROW_PERMISSION`
+ *    （`read` / `write` / `edit` + 只写队伍目录 + 提案拒），装配时按角色过滤目录、调用时按门禁拒。
+ *    定形 §2.2 末尾那句「无角色 / 未知预设会话的 tools = base 工具集」**只对 row 0 成立** ——
+ *    2026-11-01 第 4 关返修裁的（窄赢），别再拿它给 row 5/6/7 的 base 工具集翻案。
+ *
+ * ⚠️ 委派工具（九个 `toolName` + `workflow` / `ralph` / `subagent_fork` /
+ *    `subagent_codex` / `subagent_claude_code`）**一个都不在**：组员结构上不能再招人。
+ */
+const FILE_READ_TOOLS = ['read', 'glob', 'grep']
+const FILE_WRITE_TOOLS = ['write', 'edit']
+const SHELL_TOOLS = ['bash', 'pwsh']
+const BACKGROUND_TOOLS = ['job_list', 'job_output', 'job_kill']
+const COMMON_TOOLS = [
+  'skill', 'todo_write', 'ask_user_question', 'web_search', 'web_fetch',
+  'create_goal', 'get_goal', 'update_goal', 'exit_plan_mode',
+  // 提候选那个工具由这个注入器自己注册（`proposal_file`）—— 判决岗那一份**注册但调用被拒**。
+  'proposal_file',
+]
+export const BASE_TOOL_SET = Object.freeze([
+  ...FILE_READ_TOOLS, ...FILE_WRITE_TOOLS, ...SHELL_TOOLS, ...BACKGROUND_TOOLS, ...COMMON_TOOLS,
+])
+/** 只有 `review` 拿这一份：它在 `officeBound` 里 ⇒ 没有命令行（两样不能兼得）。 */
+const NO_SHELL_TOOLS = Object.freeze(BASE_TOOL_SET.filter((name) => !SHELL_TOOLS.includes(name)))
+
+/**
+ * **角色表**（闭集九条）—— `toolName` → 角色 → 人设 / 说明书 / tools（+ 一格纯声明的 `model`）。
+ *
+ * 九句人设**逐字**是升级前九份 per-role 预设里的那九句（基线
+ * `tests/agenia-upgrade/fixtures/preset-baseline-A.json` 的 `member_rows[].persona_body`）；
+ * 一份都不许丢，也不许串到别的角色身上（`PRS-04` 两个方向都判）。
+ *
+ * 🔴 **`model` 这一版是"纯声明"（declaration-only）：一个读者都没有，改了也不会生效。**
+ *    · 九条全是 `model: null`，这一版**也没有模型值要应用**（第 4 关第二轮评审 N-2 的裁定）。
+ *    · 这个注入器**没有**"给会话指定模型"的那条接线（它只挂在装配 / 门禁 / 流上）⇒
+ *      这一格今天不生效。**按角色注入模型在这一版不可用**。
+ *    · ⚠️ 所以**别**在这一格旁边写"改了之后会话真用它" —— 那是一句现在为假的话。
+ *      真要接，现成的接缝是框架的 `agent/request` 瀑布（`dsh-agent-loop` 的 `prepareRequest`：
+ *      它把瀑布返回值的 `provider` + `model` 当成权威值，两个都缺就抛 `no provider/model`）——
+ *      **本版不接**：那要一组真实 provider/model 值、要 `CONTRACT-A` 改口径，而且 定形 §3.3
+ *      已经把"页面级逐角色调参"当代价放弃掉了 ⇒ 那是一张新票，不是这里补一行。
+ *    · 验收口径（`定形` §6.1 那一行"改一个 model，会话真用它"）**在这一版不适用**，不是没做。
+ *
+ * `deny`：只有判决岗非空，值是 `['proposal']`（"注册与拒同源"，`CONTRACT-A` §6）。
+ */
+export const ROLE_TABLE = Object.freeze([
+  {
+    toolName: 'team_design',
+    role: 'design',
+    mode: 'read',
+    persona: '你是这个项目的设计和美工。你的岗位说明书会随请求自动注入 —— 开工前先读它。',
+    charter: 'team/design.md',
+    model: null,
+    tools: Object.freeze([...BASE_TOOL_SET]),
+    deny: Object.freeze([]),
+  },
+  {
+    toolName: 'team_dev',
+    role: 'dev',
+    mode: 'write',
+    persona: '你是这个项目的实现者。你的岗位说明书会随请求自动注入 —— 开工前先读它。',
+    charter: 'team/dev.md',
+    model: null,
+    tools: Object.freeze([...BASE_TOOL_SET]),
+    deny: Object.freeze([]),
+  },
+  {
+    toolName: 'team_test',
+    role: 'test',
+    mode: 'read',
+    persona: '你是这个项目的测试与流水线负责人。你的岗位说明书会随请求自动注入 —— 开工前先读它。',
+    charter: 'team/test.md',
+    model: null,
+    tools: Object.freeze([...BASE_TOOL_SET]),
+    deny: Object.freeze([]),
+  },
+  {
+    toolName: 'team_review',
+    role: 'review',
+    mode: 'read',
+    persona: '你是这个项目的独立评审。你只审不改。岗位说明书会随请求自动注入 —— 开工前先读它。',
+    charter: 'team/review.md',
+    model: null,
+    tools: NO_SHELL_TOOLS,
+    deny: Object.freeze([]),
+  },
+  {
+    toolName: 'subagent',
+    role: 'hire',
+    mode: 'write',
+    persona: '你是这个组临时外聘的专家，干完就走。队伍的来龙去脉、干活的次序、以及你自己的岗位说明书会随请求自动注入 —— 开工前先读它们。',
+    charter: 'team/hire.md',
+    model: null,
+    tools: Object.freeze([...BASE_TOOL_SET]),
+    deny: Object.freeze([]),
+  },
+  {
+    toolName: 'job_memory_judge',
+    role: 'memory-judge',
+    mode: 'read',
+    persona: '你是一次性后台作业：记忆判决。你的岗位说明书会随请求自动注入 —— 开工前先读它。',
+    charter: 'team/memory-judge.md',
+    model: null,
+    tools: Object.freeze([...BASE_TOOL_SET]),
+    // 老板 2026-10-17：「判决应该不能提候选」；2026-11-01 起落法是**调用时被拒**，
+    // 不是"工具集里没有它" —— 工具在列表里，这一格是拒的依据（唯一作者）。
+    deny: Object.freeze(['proposal']),
+  },
+  {
+    toolName: 'job_memory_review',
+    role: 'memory-review',
+    mode: 'read',
+    persona: '你是一次性后台作业：记忆复核。你的岗位说明书会随请求自动注入 —— 开工前先读它。',
+    charter: 'team/memory-review.md',
+    model: null,
+    tools: Object.freeze([...BASE_TOOL_SET]),
+    deny: Object.freeze([]),
+  },
+  {
+    toolName: 'job_conversation_review',
+    role: 'conversation-review',
+    mode: 'read',
+    persona: '你是一次性后台作业：会话评审。你的岗位说明书会随请求自动注入 —— 开工前先读它。',
+    charter: 'team/conversation-review.md',
+    model: null,
+    tools: Object.freeze([...BASE_TOOL_SET]),
+    deny: Object.freeze([]),
+  },
+  {
+    toolName: 'job_technical_review',
+    role: 'technical-review',
+    mode: 'read',
+    persona: '你是一次性后台作业：技术评审。你的岗位说明书会随请求自动注入 —— 开工前先读它。',
+    charter: 'team/technical-review.md',
+    model: null,
+    tools: Object.freeze([...BASE_TOOL_SET]),
+    deny: Object.freeze([]),
+  },
+])
+
+/** `toolName` → 角色表条目（闭集）。 */
+const ROLE_ENTRY_BY_TOOL = new Map(ROLE_TABLE.map((entry) => [entry.toolName, entry]))
+/** 角色 → 角色表条目（`proposalVerdict` / 说明书路径都按角色查）。 */
+const ROLE_ENTRY_BY_ROLE = new Map(ROLE_TABLE.map((entry) => [entry.role, entry]))
+
+// ─────────────────────────────────────────────────────────────
+// 委派工具名的**插件桥**（父会话门禁记、子会话装配取）。
+//
+// 要解决的事：子会话头里没有 `toolName`（`header_keys` = cwd / agentPreset / origin / parentSession）
+// ⇒ `identityVerdict()` 落 **row 5**：无角色、窄权限、人设与说明书都不注入、工具目录只剩
+// `read/write/edit`（没有 `bash`/`pwsh`）。九个 `team_*` / `job_*` 委派会话因此全是窄的。
+// 桥的做法：父会话 `tools.guard` 在**放行那一刻**把这次委派的工具名记进内存队列（按父会话排队），
+// 子会话第一次装配时取一条，**当作 `toolName`** 交给 `identityVerdict()` ——
+// 角色仍然只有一个作者（`ROLE_TABLE`），桥不写会话头、不读 `【组员】` 标记、不碰客户端。
+//
+// 🔴 **两张表必须在模块级，不在 `apply()` 里**：`cordis.patch.yml` 里 `persona-injector` 出现两次
+//    （`preset-agenia` 组长那份 / `preset-agenia-member` 组员那份），两行指同一个 `inject.js`
+//    ⇒ 模块只加载一次、`apply()` 被调两次、**两套闭包**。写成闭包里的 `new Map()`，
+//    组长那份记的 claim 组员那份取不到 —— 桥在生产拓扑上根本不通。
+// 🔴 两张表都**只活在内存**：进程重启即空；不进盘、不进会话包、不进快照。
+// ─────────────────────────────────────────────────────────────
+/** 父会话 header id → FIFO 队列 `[{ toolName, at }]`。只放角色表那九个 `toolName`。 */
+const BRIDGE_CLAIMS = new Map()
+/** 子会话 agent id（`context.scope.id`）→ 第一次装配定下来的 `toolName`（第二次装配不再消费队列）。 */
+const BRIDGE_PINNED = new Map()
+/**
+ * 一条 claim 的存活窗口：**5 分钟**。
+ * 两端是判据：`+30 s` 的 claim **必须**还能用（派工到装配的正常延迟），`+10 min` 的**必须**不再用
+ * （父会话派了活、子会话没起来 —— 留着就是给下一个子会话下毒）。5 分钟落在 (30 s, 10 min] 里。
+ * 时钟只能是 `Date.now()`：判据把 `Date` 当成可注入时钟，换别的时钟那一格会当场变红。
+ */
+const BRIDGE_CLAIM_TTL_MS = 5 * 60 * 1000
+/** 一个父会话最多攒多少条（丢**最旧**的）。进程级的表必须有个头，不然内存只涨不落。 */
+const BRIDGE_CLAIM_CAP = 16
+/** 桥自己出错只喊一次 —— 它是纯观察，不许每次调用都刷屏。 */
+let bridgeErrorWarned = false
+
+/** 桥内部的出声：**一次**就够（同一个错误重复喊会把日志淹掉）。 */
+function bridgeWarnOnce(where, error) {
+  if (bridgeErrorWarned) return
+  bridgeErrorWarned = true
+  console.error(`[agenia] 委派桥（${where}）出错：这一条 claim 丢掉，其余照旧（${String(error?.message ?? error)}）`)
+}
+
+/** 桥"取不到"的那一行：**一个子会话只喊一次**（同一会话每轮装配都会重走这条路，不能刷屏）。 */
+const BRIDGE_MISS_WARNED = new Set()
+
+/**
+ * 桥失败时的那一行（第 4 关复审 F-02）：**有 `parentSession`、却没有可用 claim** 时才喊。
+ *
+ * 为什么必须喊：桥生效之后「委派子会话头里没有 `toolName`」是**正常态** —— 不点名"桥没取到"，
+ * 现场就会去查那条已作废的平台补丁，而真正要查的是**父会话的队列**（`BRIDGE_CLAIMS`，只在内存里）。
+ * 报三样：队列几条 / 其中过期几条 / 最早一条几秒前 —— 判的人一眼分得清"父会话没记"（0 条）
+ * 与"记了但子会话起晚了"（有过期件）。
+ *
+ * @param {unknown} header 子会话头
+ * @param {string} parent 父会话 id（`header.parentSession`）
+ * @param {Array<{toolName:string, at:number}>|undefined} queue 那个父会话的队列
+ * @param {string|undefined} agentId 子会话 agent id（键；取不到就退回 header id / 父会话 id）
+ * @param {number} now 这一次判定的时刻（`Date.now()`）
+ */
+function bridgeWarnMiss(header, parent, queue, agentId, now) {
+  const key = typeof agentId === 'string' && agentId !== ''
+    ? agentId
+    : (typeof header?.id === 'string' && header.id !== '' ? header.id : parent)
+  if (BRIDGE_MISS_WARNED.has(key)) return
+  BRIDGE_MISS_WARNED.add(key)
+  const list = Array.isArray(queue) ? queue : []
+  const expired = list.filter((item) => now - item.at > BRIDGE_CLAIM_TTL_MS).length
+  const oldestAt = list.length === 0 ? null : Math.min(...list.map((item) => item.at))
+  const age = oldestAt === null ? null : Math.max(0, Math.round((now - oldestAt) / 1000))
+  console.error(`[agenia] 桥：父会话 ${parent} 没有可用 claim`
+    + `（队列 ${list.length} / 过期 ${expired}${age === null ? '' : `，最早一条 ${age}s`}）`
+    + '—— 这个子会话落 row 5')
+}
+
+/**
+ * 父会话放行一次委派 ⇒ 记一条 claim。
+ *
+ * 🔴 **只许在"放行那一刻"调用**：五条判定（后台硬门 → 窄 → 角色工具集 → 判决岗提案 → 岗位写边界）
+ * 全部过完、回调即将 `return undefined` 的那一处。被拒的委派不会起子会话，记了就是给下一个
+ * 子会话下毒（下一个真子会话会拿到一个从未启动过的角色）。
+ * 🔴 记录是**纯观察**：不改判词、不改五条判定的次序与报文；这里自己抛错也**不许**冒出门禁。
+ *
+ * 记什么：只有 `ROLE_TABLE` 的九个 `toolName`。`workflow` / `ralph` / `subagent_fork` / `team_retro`
+ * 这类名字不在角色表里 —— 它们不是角色，记了会把子会话推进 row 2（该被拒）或 row 6。
+ * 键：`call.agent.session.header.id`（子会话头里的 `parentSession` 就是父会话**头**的 id），
+ * **不是** `call.agent.id` —— 那是 agent id，取不到 claim。
+ *
+ * @param {unknown} call `tools.guard` 收到的那一次调用
+ */
+function bridgeRecordClaim(call) {
+  try {
+    const toolName = call === null || call === undefined ? undefined : call.name
+    if (typeof toolName !== 'string' || !ROLE_ENTRY_BY_TOOL.has(toolName)) return
+    const headerId = call.agent === null || call.agent === undefined
+      ? undefined
+      : call.agent.session?.header?.id
+    if (typeof headerId !== 'string' || headerId === '') return
+    const queue = BRIDGE_CLAIMS.get(headerId) ?? []
+    queue.push({ toolName, at: Date.now() })
+    if (queue.length > BRIDGE_CLAIM_CAP) queue.splice(0, queue.length - BRIDGE_CLAIM_CAP)
+    BRIDGE_CLAIMS.set(headerId, queue)
+  } catch (error) {
+    bridgeWarnOnce('记录', error)
+  }
+}
+
+/**
+ * 子会话装配 ⇒ 取一条 claim（取不到 ⇒ `null`）。
+ *
+ * 四条门**同时**满足才取：
+ *   ① `toolNameOf(header) === null` —— 会话头里真的没有名字（header **永远优先**：有就一个字都不动）；
+ *   ② `header.origin === 'subagent'`；
+ *   ③ `presetKindOf(header) === 'member'` —— `origin:"subagent"` 不是"这是委派子会话"的充分条件
+ *      （`subagent_fork` / `workflow` / `ralph` 起来的会话也可能带它）；而且**组长预设**的会话
+ *      吃到 claim 会被推进 row 1（该被拒），从 row 3 掉下来 ⇒ 只让通用组员预设消费；
+ *   ④ `header.parentSession` 是非空字符串，且那个父会话的队列里有**未过期**的 claim。
+ *
+ * 取法：先剔过期件 ⇒ `shift` 队首（FIFO，一次一条）⇒ 钉在这个子会话上。钉住之后同一子会话的
+ * 后续装配**不再消费**队列 —— 否则下一轮对话就掉回 row 5，角色与工具目录**中途消失**。
+ *
+ * ⚠️ 返回的是**名字**，不是角色：调用方必须再核一次它在角色表里，再交给 `identityVerdict()`。
+ *
+ * @param {unknown} header 会话头
+ * @param {string|undefined} agentId 子会话 agent id（`context.scope.id`，与 `roleOfAgent` 同一把键）
+ * @returns {string|null}
+ */
+function bridgeTakeClaim(header, agentId) {
+  try {
+    if (toolNameOf(header) !== null) return null
+    if (header === null || header === undefined || header.origin !== 'subagent') return null
+    if (presetKindOf(header) !== 'member') return null
+    const pinned = typeof agentId === 'string' ? BRIDGE_PINNED.get(agentId) : undefined
+    if (typeof pinned === 'string') return pinned
+    const parent = header.parentSession
+    if (typeof parent !== 'string' || parent === '') return null
+    const queue = BRIDGE_CLAIMS.get(parent)
+    const at = Date.now()
+    // 有 parentSession 却没有可用 claim ⇒ **桥这一格没接上**。这一支必须出声（一个子会话一次），
+    // 否则现场只会看到"会话头里没有 toolName"，去查一条已经作废的路（复审 F-02）。
+    if (!Array.isArray(queue) || queue.length === 0) {
+      bridgeWarnMiss(header, parent, queue, agentId, at)
+      return null
+    }
+    const fresh = queue.filter((item) => at - item.at <= BRIDGE_CLAIM_TTL_MS)
+    const head = fresh.shift()
+    BRIDGE_CLAIMS.set(parent, fresh)
+    if (head === undefined) {
+      bridgeWarnMiss(header, parent, queue, agentId, at)
+      return null
+    }
+    if (typeof agentId === 'string') BRIDGE_PINNED.set(agentId, head.toolName)
+    return head.toolName
+  } catch (error) {
+    bridgeWarnOnce('消费', error)
+    return null
+  }
+}
+
+/**
+ * **窄权限 = 闭三元组**（定形 §2.2 / `CONTRACT-A` §7）：
+ *   · 工具白名单 `read` / `write` / `edit`（别的一律拒）；
+ *   · 写范围 = 只写队伍目录（`.team/`，不写项目）；
+ *   · 提案 = 拒。
+ * 来源**恰三条**：row 5（组员 + 无工具，手动开）· row 6（未知预设 + 有效工具）·
+ * row 7（未知 + 无工具）。**没有第四条**；row 0 / 0.5 是显式例外（不窄），排在毯子规则之前。
+ */
+export const NARROW_PERMISSION = Object.freeze({
+  tools: Object.freeze(['read', 'write', 'edit']),
+  write_scope: 'team',
+  proposal: 'deny',
+})
+
+/** 窄权限拒的三个码（措辞不冻；`NARROW_PERMISSION` 那三格各一个，读日志能分清是哪一格）。 */
+export const NARROW_CODES = Object.freeze({
+  tool: 'E_GUARD_NARROW_TOOL',
+  write: 'E_GUARD_NARROW_WRITE',
+  proposal: 'E_GUARD_NARROW_PROPOSAL',
+})
+
+/**
+ * **窄权限的执行者**（纯函数）：`null` = 放行；`{ code, message }` = 拒。
+ *
+ * 三格逐条对 `NARROW_PERMISSION`（**一个字符都不在这里重复**）：
+ *   ① `proposal` = deny ⇒ `proposal_file` 调用被拒（先判：报文要说清是"窄"不是"你不该提"）；
+ *   ② `tools` 白名单 ⇒ 不在名单里的**一律拒**（含 shell / 委派 / 记忆库工具）；
+ *   ③ `write_scope` = team ⇒ `write` / `edit` 的**落点**必须在 `resolve(cwd,'.team')` 之下。
+ *
+ * 口径边界（别把它读成"全机沙箱"）：它管的是**模型能调的这些工具**；真正写到别处
+ * 还有框架自己的 fs 沙箱那一道。这里拒的是"这个会话没有这个工具"。
+ *
+ * @param {string} toolName 被调用的工具名
+ * @param {unknown} args 调用实参（`write` / `edit` 从 `file_path` 取落点）
+ * @param {unknown} agent 调用方（`agent.session.header.cwd` 用来算落点）
+ * @returns {null | {code:string, message:string}}
+ */
+export function narrowVerdict(toolName, args, agent) {
+  const name = typeof toolName === 'string' ? toolName : ''
+  const why = '这个会话是**窄权限**（无角色 / 未知预设，见定形 §2.2 的 row 5/6/7）'
+  if (NARROW_PERMISSION.proposal === 'deny' && name === PROPOSAL_FILE_TOOL) {
+    return {
+      code: NARROW_CODES.proposal,
+      message: `${why}：提案调用被拒。要提候选，让有角色的会话（或组长）替你提。`,
+    }
+  }
+  if (!NARROW_PERMISSION.tools.includes(name)) {
+    return {
+      code: NARROW_CODES.tool,
+      message: `${why}：工具白名单只有 ${NARROW_PERMISSION.tools.map((t) => `\`${t}\``).join(' / ')}，`
+        + `「${name}」不在里面。没有命令行、也不能再派人 —— 要什么，写成意见交回组长。`,
+    }
+  }
+  const key = WRITE_TARGET[name]
+  if (NARROW_PERMISSION.write_scope === 'team' && key !== undefined) {
+    const target = args === null || typeof args !== 'object' ? undefined : args[key]
+    if (!landsInOffice(target, agent)) {
+      return {
+        code: NARROW_CODES.write,
+        message: `${why}：只能写项目里 .team/ 下面的东西。`
+          + `你这次要写的是「${String(target)}」，按落点算在队伍目录外面。`,
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * **角色工具集的执行者**（纯函数）：`null` = 放行；`{ code, message }` = 拒。
+ *
+ * `ROLE_TABLE[role].tools` 是**运行时作者**：装配时按它过滤模型看得见的目录
+ * （`system-prompt/assemble` 的 `tools` 是权威值），调用时按它拒。
+ * 所以"给 review 去掉 shell"改的是**角色表那一格**，不是别处再写一份。
+ *
+ * ⚠️ 只判 `BASE_TOOL_SET` 里那些**模型面向**的工具：框架自己的工具（PTC 的 `run_code`、
+ *    结构化输出之类的）不在这张表里，**不许**被角色白名单误伤（fail-open 那一侧）。
+ *
+ * @param {string} role 角色名
+ * @param {string} toolName 被调用的工具名
+ * @returns {null | {code:string, message:string}}
+ */
+export function roleToolVerdict(role, toolName) {
+  if (typeof role !== 'string') return null
+  const entry = ROLE_ENTRY_BY_ROLE.get(role)
+  const name = typeof toolName === 'string' ? toolName : ''
+  if (entry === undefined || !BASE_TOOL_SET.includes(name)) return null
+  if (entry.tools.includes(name)) return null
+  return {
+    code: 'E_GUARD_ROLE_TOOL',
+    message: `你的岗位（${role}）的工具集里没有「${name}」—— 角色表是工具集的唯一作者`
+      + '（定形 §3.3）。要什么材料，找组长要，他给你。',
+  }
+}
+
+/**
+ * **按角色裁模型看得见的工具目录**（装配时的那一半，`system-prompt/assemble` 的 `tools`）。
+ *
+ * 为什么能这么做：`dsh-system-prompt` 的 `assemble()` 先收集各家的 schema，再发
+ * `system-prompt/assemble` 这个瀑布 —— **瀑布的返回值就是权威值**（`buildRequest(…, assembly.tools, …)`
+ * 直接拿它当请求的 `tools`）。所以"角色表是 `tools` 的唯一作者"这句话在运行时**有落点**：
+ * 改 `ROLE_TABLE[role].tools` 那一格，下一轮装配这张目录就跟着变。
+ *
+ * 裁剪口径：只裁 `BASE_TOOL_SET` 里的**模型面向**工具；不在表里的框架工具（PTC 的 `run_code`、
+ * 结构化输出之类）原样留着 —— 那是平台自己的通道，角色表管不着，也不许误伤。
+ *   · 窄（row 5/6/7）⇒ 白名单 = `NARROW_PERMISSION.tools`；
+ *   · 有角色（row 4；row 6 已被窄覆盖）⇒ 白名单 = `ROLE_TABLE[role].tools`；
+ *   · 都没有（row 0 / 0.3 / 0.5，组长也行）⇒ 不裁。
+ *
+ * @param {string|undefined} role 角色名（没有 = 不裁）
+ * @param {boolean} narrow 窄权限（优先于角色）
+ * @param {unknown} tools 装配出来的 schema 数组
+ * @returns {unknown} 同一个数组（不需要裁时原样返回，引用不变）
+ */
+export function toolCatalogFor(role, narrow, tools) {
+  if (!Array.isArray(tools)) return tools
+  const allow = narrow === true
+    ? NARROW_PERMISSION.tools
+    : (typeof role === 'string' ? ROLE_ENTRY_BY_ROLE.get(role)?.tools : undefined)
+  if (!Array.isArray(allow)) return tools
+  return tools.filter((schema) => {
+    const name = schema === null || schema === undefined ? undefined : schema.name
+    if (typeof name !== 'string' || !BASE_TOOL_SET.includes(name)) return true
+    return allow.includes(name)
+  })
+}
+
+/**
+ * `defaultRole` 的那一条报警（**只报警**：档与角色一格都不动）。
+ * @returns {string[]} 合法 ⇒ 空数组；缺 / 非法 / 与预设不符 ⇒ 恰一条，且点名 `defaultRole`
+ */
+function tierWarnings(expected, declared) {
+  if (declared === null || declared === undefined) {
+    return [`defaultRole 缺（这一份预设该声明 defaultRole: ${expected}）—— 只报警，不改档、不剥角色`]
+  }
+  if (!TIERS.includes(declared)) {
+    return [`defaultRole=${JSON.stringify(declared)} 不是合法值（${TIERS.join(' / ')}）—— 只报警，不改档、不剥角色`]
+  }
+  if (declared !== expected) {
+    return [`defaultRole=${declared} 与这一份预设的档（${expected}）不符 —— 只报警，不改档、不剥角色`]
+  }
+  return []
+}
+
+/**
+ * **身份判定**（纯函数，定形 §2.2 那张表**按行序判**，第一条命中即返回）。
+ *
+ * 入参（`CONTRACT-A` §4.1 冻的接缝）：
+ *   · `preset`：`'leader' | 'member' | 'unknown'` —— 会话是从哪一份预设起来的；
+ *   · `toolName`：派工层传给子会话的工具名，`null` = 没有；
+ *   · `defaultRole`：预设自己声明的冗余校验值，**只影响 warnings**；
+ *   · `worker`：`'workflow' | 'ralph' | null` —— 内部 worker（拦不住，fail-open）；
+ *   · `legacy`：`isLegacySession()` 的结论 —— 升级日之前开着的旧会话。
+ *
+ * @returns {{row:number, role:string|null, narrow:boolean, managed:boolean,
+ *            rejected:boolean, code:string|null, warnings:string[]}}
+ */
+export function identityVerdict(input = {}) {
+  const { preset, toolName, defaultRole, worker, legacy } = input
+  const hasTool = typeof toolName === 'string' && toolName.trim() !== ''
+  const entry = hasTool ? ROLE_ENTRY_BY_TOOL.get(toolName) : undefined
+  const verdict = (row, extra = {}) => ({
+    row,
+    role: null,
+    narrow: false,
+    managed: true,
+    rejected: false,
+    code: null,
+    warnings: [],
+    ...extra,
+  })
+
+  // row 0：内部 worker（workflow / ralph）—— 不看预设，无角色，**记未受管**。
+  if (worker === 'workflow' || worker === 'ralph') return verdict(0, { managed: false })
+  // row 0.5：legacy session（升级日旧会话）—— 不窄、拦不住、记未受管。
+  if (legacy === true) return verdict(0.5, { managed: false })
+  // row 1：组长预设 + 工具名 ⇒ 拒（工具 spawn 必须用组员预设）。
+  if (preset === 'leader' && hasTool) {
+    return verdict(1, {
+      rejected: true,
+      code: IDENTITY_LEADER_CODE,
+      warnings: [`组长预设的会话带着工具名 ${JSON.stringify(toolName)} —— 工具 spawn 必须用通用组员预设 ${MEMBER_PRESET_ID}`],
+    })
+  }
+  // row 2：工具名不在角色表 ⇒ 拒（工具注册表只认那九个）。
+  if (hasTool && entry === undefined) {
+    return verdict(2, {
+      rejected: true,
+      code: IDENTITY_TOOL_CODE,
+      warnings: [`toolName=${JSON.stringify(toolName)} 不在角色表里（闭集九个）—— 这个工具名不该被注册`],
+    })
+  }
+  // row 3：组长（全权）。
+  if (preset === 'leader') return verdict(3, { warnings: tierWarnings('leader', defaultRole) })
+  // row 4：组员 + 有效工具名 ⇒ 该角色（全权）。
+  if (preset === 'member' && entry !== undefined) {
+    return verdict(4, { role: entry.role, warnings: tierWarnings('member', defaultRole) })
+  }
+  // row 5：组员 + 无工具名 = 手动开的组员会话 ⇒ 窄。
+  if (preset === 'member') {
+    return verdict(5, {
+      narrow: true,
+      warnings: ['组员预设 + 没有 toolName ⇒ 角色认不出：窄权限、没有人设 / 说明书'],
+    })
+  }
+  // row 6：未知预设 + 有效工具 ⇒ **角色保留** + 窄 + 报警（升级残留 / 损坏，不是常态）。
+  if (entry !== undefined) {
+    return verdict(6, {
+      role: entry.role,
+      narrow: true,
+      warnings: [`预设身份认不出（preset=${JSON.stringify(preset)}）—— 角色按 toolName 保留，权限窄、非生产态`],
+    })
+  }
+  // row 7：未知预设 + 无工具 ⇒ 无角色 + 窄 + 报警。
+  return verdict(7, { narrow: true, warnings: [`预设身份认不出（preset=${JSON.stringify(preset)}）且没有 toolName ⇒ 无角色、窄权限`] })
+}
+
+/**
+ * **判决岗的提案工具在列表里、调用被拒**（`CONTRACT-A` §6 的冻结接缝）。
+ *
+ * 注册与拒**同源**：`deny` 只挂在角色表判决岗那一条上（值是 `['proposal']`）；
+ * 这个函数是它唯一的读者。别在别处再写一份"判决岗不能提案"的判断。
+ *
+ * @param {string} role 角色名（`ROLE_TABLE[].role`；认不出就传 `null` / `undefined`）
+ * @param {string} toolName 被调用的工具名
+ * @returns {null | {code:string, message:string}} `null` = 放行
+ */
+export function proposalVerdict(role, toolName) {
+  if (toolName !== PROPOSAL_FILE_TOOL) return null
+  const entry = typeof role === 'string' ? ROLE_ENTRY_BY_ROLE.get(role) : undefined
+  if (entry === undefined || !entry.deny.includes('proposal')) return null
+  return {
+    code: JUDGE_PROPOSAL_CODE,
+    message: `${entry.role} 不能提候选：它判的就是别人提的案子，自己再提一个就成了既当运动员又当裁判`
+      + '（老板 2026-10-17）。这个工具在列表里、调用被拒。',
+  }
+}
+
+/** 升级日那一刻的 session-id 快照落在哪（`{ upgrade_at, session_ids[] }`）。 */
+const LEGACY_SNAPSHOT_FILE = 'legacy-sessions.json'
+
+/**
+ * **legacy session 的谓词**（`CONTRACT-A` §5.2 的冻结接缝）：id 恰在升级那一刻的快照里。
+ *
+ * 方向是刻意的：**快照读不出来 ⇒ `false`** —— 判 `false` 会走向**窄**（安全方向），
+ * 判 `true` 会把人放进"不窄"。之后同形（不在快照里、预设又认不出的会话）走 row 6/7。
+ *
+ * @param {string} sessionId 会话 id
+ * @param {unknown} snapshot `{ upgrade_at: string, session_ids: string[] }`
+ * @returns {boolean}
+ */
+export function isLegacySession(sessionId, snapshot) {
+  if (typeof sessionId !== 'string' || sessionId.trim() === '') return false
+  if (snapshot === null || typeof snapshot !== 'object') return false
+  if (!Array.isArray(snapshot.session_ids)) return false
+  return snapshot.session_ids.includes(sessionId)
+}
+
+// ── 身份报警的**落点**（契约 C2 §4.2 #7/#8 · 组长 2026-11-02 裁定第 1 条）──────────
+/**
+ * 状态条那两格（`unknown_preset` / `preset_downgrade`）的 producer：注入器把报警写到
+ * 工作区的 `.team/state/identity/<day>.json`，卡读它。
+ *
+ * 为什么要有这个落点：`console.error` 那一行只活在**当事会话**里 —— 卡（以及看卡的人）
+ * 看不见它。裁定第 1 条把这两格要求成 `wired:true`，于是"报警"必须有一个当天的载体。
+ *
+ * 形状（裁定原文）：`{ unknown_preset: [...], preset_downgrade: [...] }`；同一格只一份 ——
+ * 所以是**当天合并后整份重写**（先写 `.tmp` 再 `rename`，绝不原地半写）。
+ *
+ * 两个数组各自的含义（`CONTRACT-A` §8.2 的"注入器报警"那一行）：
+ *   · `unknown_preset`   ← 预设认不出（`presetKindOf` 给 `unknown` ⇒ 判定表 row 6/7）；
+ *   · `preset_downgrade` ← 这一份预设**自己声明的档**与它该是的那一档不符（`tierWarnings` 的三种形状）。
+ * 两条都**只记账、不改判定**：档、角色、`narrow` 一格都不动。
+ */
+const IDENTITY_STATE_DIR = ['state', 'identity']
+const IDENTITY_WRITTEN = new Set()
+const IDENTITY_KEYS = { unknown: 'unknown_preset', downgrade: 'preset_downgrade' }
+
+/**
+ * 当地日期（`YYYY-MM-DD`）—— **不在这里算**。
+ *
+ * 切点（`DAY_CUT_HOURS = 4`，00:00–03:59 归前一天）与那个算法只有**一处**：
+ * `presets/agenia/lib/route.mjs::dayKeyOf`（契约 CONTRACT.md §13.1）。这里只是它的
+ * 一个**调用方** —— 以前这里有第二份 `IDENTITY_DAY_CUT_HOURS = 4` + 自己拼日期，
+ * 三份副本漂一处，凌晨 0–4 点写下的报警就会落进**另一天**的文件，卡读到"没有报警"，
+ * 而"没接线"和"读了、是空的"长得一模一样（`mig-rules-12`）。
+ *
+ * 🔴 为什么是**懒加载**（`await import()`）而不是顶层静态 import：
+ *    · 这份注入器的顶层 import 一坏 = "人格注入 0 字符"（本文件别处同一条规矩）；
+ *    · 变异刀会把**这份文件的源码副本**落进运行根再 import（`importSourceCopy()`），
+ *      副本旁边没有 `lib/` ⇒ 静态 import 在那里就是 `ERR_MODULE_NOT_FOUND`。
+ *    懒加载只在**真的写报警**那一下才解析（路径按本文件的 `import.meta.url` 算），
+ *    加载失败不影响注入：`recordIdentityAlarm()` 绝不抛，只回一个失败原因。
+ * ⚠️ 所以 `identityDayKeyOf` 是 **async** 的（它要读另一个模块）。
+ */
+let sharedDayKeyOf = null
+async function sharedDayKeyOfFn() {
+  if (sharedDayKeyOf === null) {
+    const module = await import(new URL('./lib/route.mjs', import.meta.url).href)
+    if (typeof module.dayKeyOf !== 'function') throw new Error('lib/route.mjs 没有导出 dayKeyOf')
+    sharedDayKeyOf = module.dayKeyOf
+  }
+  return sharedDayKeyOf
+}
+
+export async function identityDayKeyOf(nowMs) {
+  const dayKeyOf = await sharedDayKeyOfFn()
+  return dayKeyOf(nowMs)
+}
+
+/**
+ * 把一条报警并进当天的文件（**同一格只一份**：按 `session` + `kind` 去重；文件里的旧条目留着）。
+ * 返回 `{ok, path, reason}` —— **绝不抛**：报警写不进去不许影响注入（那是两条独立的事），
+ * 但也不许静默（`reason` 会被调用方打成一行）。
+ *
+ * @param {{cwd: string, nowMs: number, kind: 'unknown'|'downgrade', record: object}} input
+ */
+export async function recordIdentityAlarm({ cwd, nowMs, kind, record } = {}) {
+  const key = IDENTITY_KEYS[kind]
+  if (typeof key !== 'string') return { ok: false, code: 'bad-kind', path: null, reason: `未知的报警种类 ${JSON.stringify(kind)}` }
+  if (typeof cwd !== 'string' || cwd.trim() === '') return { ok: false, code: 'no-cwd', path: null, reason: '会话头里没有 cwd ⇒ 不知道写进哪个工作区' }
+  if (record === null || typeof record !== 'object') return { ok: false, code: 'bad-record', path: null, reason: '报警记录必须是对象' }
+  // 报警只落进**有 `.team/` 的那个目录**（= 工作区）。`cwd` 不是工作区时（内容根 / 夹具根）不写，
+  // 也不报错 —— 那只是"这里不是团队的抽屉"，不是失败。
+  if (!existsSync(join(cwd, OFFICE_DIR))) return { ok: false, code: 'not-a-workspace', path: null, reason: `not-a-workspace: ${join(cwd, OFFICE_DIR)} 不在` }
+  let day
+  try {
+    day = await identityDayKeyOf(nowMs)
+  } catch (err) {
+    // 切点那一份读不到 ⇒ 这一条**不知道落哪一天**：不许拿"今天"猜，也不许静默。
+    return { ok: false, code: 'day-key-unavailable', path: null, reason: `lib/route.mjs::dayKeyOf 读不到（${err?.message ?? err}）⇒ 这条报警不知道落哪一天` }
+  }
+  const id = typeof record.session === 'string' && record.session.trim() !== '' ? record.session.trim() : null
+  // 一个会话的同一种报警只落一次（装配会被反复触发；文件里堆同一行 20 遍比没记录还难读）。
+  const once = `${kind}|${id ?? '(no-session)'}|${day}`
+  if (IDENTITY_WRITTEN.has(once)) return { ok: true, code: 'already-recorded', path: null, reason: null }
+  const dir = join(cwd, OFFICE_DIR, ...IDENTITY_STATE_DIR)
+  const file = join(dir, `${day}.json`)
+  let current = {}
+  try {
+    current = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    current = {}
+  }
+  const base = current !== null && typeof current === 'object' && !Array.isArray(current) ? current : {}
+  const before = Array.isArray(base[key]) ? base[key] : []
+  const dedupe = (rows) => {
+    const seen = new Set()
+    return rows.filter((row) => {
+      const tag = `${row?.session ?? ''}|${row?.message ?? ''}|${row?.at ?? ''}`
+      if (seen.has(tag)) return false
+      seen.add(tag)
+      return true
+    })
+  }
+  const next = {
+    schema: 1,
+    day,
+    updated_at: new Date(nowMs).toISOString(),
+    unknown_preset: kind === 'unknown' ? dedupe([...before, record]) : (Array.isArray(base.unknown_preset) ? base.unknown_preset : []),
+    preset_downgrade: kind === 'downgrade' ? dedupe([...before, record]) : (Array.isArray(base.preset_downgrade) ? base.preset_downgrade : []),
+  }
+  try {
+    mkdirSync(dir, { recursive: true })
+    const tmp = `${file}.tmp`
+    writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+    renameSync(tmp, file)
+  } catch (err) {
+    return { ok: false, code: 'write-failed', path: file, reason: `${err?.code ?? 'UNKNOWN'}: ${err?.message ?? err}` }
+  }
+  IDENTITY_WRITTEN.add(once)
+  return { ok: true, code: null, path: file, reason: null }
+}
+
 
 /** 只有这两个工具的参数里写着"要写到哪儿"。 */
 const WRITE_TARGET = { write: 'file_path', edit: 'file_path' }
@@ -493,15 +1216,20 @@ async function currentSnapshotOf(root, say) {
 }
 
 /**
- * 长期记忆那几节正文。**按受众分流**（组长 = 三类全条 + 索引；组员 = 只有索引）。
+ * 长期记忆那几节正文。**按受众分流**（组长 = 三类全条 + 索引；组员侧 = 只有索引）。
+ *
+ * 🔴 `leaderSide` 必须由**调用方按注入侧**给，**不许再从 `role === undefined` 推**
+ *    （2026-11-01 第二轮评审 N-3 实测出来的那条）：并员之后"组员侧 + 没有角色"是常态
+ *    （row 5 / 7，加上 row 0 / 0.5）—— 拿"没有角色"当"是组长"，它们会拿到 `boss` / `machine` /
+ *    `project` 的**全条**（那是老板的画像，只给组长）。同一个字段不许担两个意思。
  *
  * ⚠️ 条数、类型名全从**真的注进去的那些条目**里数出来，**不读快照自带的 `distribution`** ——
  *    那个数与"这一份里到底有什么"是两件事：万一跳过了坏条目，读它就会写出一个假数。
  */
-function memorySections(version, file, entries, role) {
+function memorySections(version, file, entries, leaderSide) {
   const ofType = (type) => entries.filter((entry) => entry.type === type)
   const inventory = MEMORY_TYPES.map(([type]) => `${type} ${ofType(type).length}`).join(' · ')
-  const isLeader = role === undefined
+  const isLeader = leaderSide === true
   const out = []
 
   if (isLeader) {
@@ -546,10 +1274,11 @@ function memorySections(version, file, entries, role) {
  * 🔴 一段都没读成 ⇒ `undefined`（调用方据此**整段不注入**）——
  *    但绝不静默：上面每条失败路径都已经出过声，这里不抛错、也不编一段空的顶上。
  *
- * @param role 岗位名；`undefined` = 组长。
  * @param warn `warnOnce(key, message)`；没给就退回 `console.error`（**出声不许省**）。
+ * @param leaderSide **注入侧**是不是组长（true = 组长）；受众分流只认这一格，**不认 `role`**
+ *   （"没有角色"的组员侧会话是常态，见 `memorySections` 上面那段）。
  */
-async function sharedMemoryText(contentDir, role, warn) {
+async function sharedMemoryText(contentDir, warn, leaderSide) {
   const say = typeof warn === 'function' ? warn : (key, message) => console.error(message)
   const root = join(contentDir, RUNTIME_DIR)
   const blocks = []
@@ -562,22 +1291,34 @@ async function sharedMemoryText(contentDir, role, warn) {
   } else if (sense.text.trim().length === 0) {
     say('memory-common-sense-empty',
       `[agenia] 共享记忆的常识是空文件（${senseFile}）—— 常识这一节不注入（长期记忆照旧）。`)
-  } else if (role !== undefined) {
-    // F-89：组员照旧（他们是一次性作业，很多活不到 10 个工具结果 ⇒ 走尾巴等于永远不看常识）；
+  } else if (leaderSide !== true) {
+    // F-89：组员侧照旧（他们是一次性作业，很多活不到 10 个工具结果 ⇒ 走尾巴等于永远不看常识）；
     // 组长改走 ⑤ 那一刀（`commonSenseOf`），这里不 push。
+    // ⚠️ 判据是**注入侧**，不是"有没有角色"：row 5 / 7 的组员会话没有角色，但它们照样要常识。
     blocks.push(`## 共享记忆 · 常识\n\n${sense.text.trim()}`)
   }
 
   const snapshot = await currentSnapshotOf(root, say)
   if (snapshot !== undefined) {
-    blocks.push(...memorySections(snapshot.version, snapshot.file, snapshot.entries, role))
+    blocks.push(...memorySections(snapshot.version, snapshot.file, snapshot.entries, leaderSide))
   }
 
   return blocks.length === 0 ? undefined : blocks.join('\n\n')
 }
 
-/** 按 order 里写的顺序，把该给这一拨人的内容一份份读出来。 */
-async function gather(order, { contentDir, role, board, warn }) {
+/**
+ * 按 order 里写的顺序，把该给这一拨人的内容一份份读出来。
+ *
+ * 🔴 **角色人格 = `ROLE_TABLE[role].persona`，唯一一份、就在紧挨 charter 的前面**：
+ *    定形 §6.1 要的是「子会话拿到那个角色的 persona/charter；不是只印一个 role」。
+ *    所以 `charter` 那一格会先吐一条 `agenia:role-persona`（正文逐字就是角色表里那一句），
+ *    再吐 `agenia:charter:<角色>` —— **别在预设里 / `team/*.md` 里另写一份人格**（那就是第二个作者）。
+ *    没有角色（row 5 / 7、旧会话）⇒ 两条都不吐，只有通用组员人格 + 通用注入。
+ *
+ * ⚠️ `leaderSide` 是**注入侧**（row 3 才 true）：共享记忆的受众分流按它，不按"有没有角色"
+ *    （组员侧 + 没有角色是常态，见 `memorySections` 上面那段）。
+ */
+async function gather(order, { contentDir, role, leaderSide, board, warn }) {
   const out = []
   for (const key of order) {
     if (key === 'roster') {
@@ -588,7 +1329,14 @@ async function gather(order, { contentDir, role, board, warn }) {
     }
     if (key === 'charter') {
       if (role === undefined) continue
-      const text = await readText(join(contentDir, 'team', `${role}.md`))
+      const entry = ROLE_ENTRY_BY_ROLE.get(role)
+      // ① 角色人格：正文**逐字**是角色表那一格（不拼前缀、不改写 —— 那条才能被逐字对账）。
+      if (entry !== undefined && typeof entry.persona === 'string' && entry.persona.trim() !== '') {
+        out.push({ name: 'agenia:role-persona', text: entry.persona })
+      }
+      // ② 说明书：路径以**角色表**为准（它是 charter 的唯一作者）；表里没有这个角色 ⇒ 退回老约定。
+      const charterRel = entry?.charter ?? join('team', `${role}.md`)
+      const text = await readText(join(contentDir, charterRel))
       if (text !== undefined) out.push({ name: `agenia:charter:${role}`, text })
       continue
     }
@@ -597,7 +1345,7 @@ async function gather(order, { contentDir, role, board, warn }) {
       continue
     }
     if (key === MEMORY_KEY) {
-      const text = await sharedMemoryText(contentDir, role, warn)
+      const text = await sharedMemoryText(contentDir, warn, leaderSide)
       if (text !== undefined) out.push({ name: 'agenia:memory', text })
       continue
     }
@@ -607,17 +1355,95 @@ async function gather(order, { contentDir, role, board, warn }) {
   return out
 }
 
-/** 这次开口的是哪个岗位？没有标记就是组长。 */
-function roleOf(assembly) {
-  const sections = Array.isArray(assembly === null || assembly === undefined ? undefined : assembly.sections)
-    ? assembly.sections
-    : []
-  for (const section of sections) {
-    if (typeof section?.text !== 'string') continue
-    const hit = ROLE_MARK.exec(section.text)
-    if (hit !== null) return hit[1]
-  }
-  return undefined
+/**
+ * 🔴 这里原来有个 `roleOf(assembly)`：从注入文本里扫 `【组员:<角色>】` 认角色。
+ *    2026-11-01 第 4 关返修**删掉**了 —— 它是身份的第二作者（定形 §2.2：注入器不读那枚标记）。
+ *    现在的唯一作者是 `identityVerdict()`（`toolName` → `ROLE_TABLE`）。
+ *    ⚠️ 别把它加回来"照顾旧会话"：旧会话走 `legacy`（row 0.5，不窄、记未受管），
+ *       之后同形的走 row 6/7（窄）；**只有标记没有 toolName ⇒ 无角色 + 窄**，这是冻结的负样本。
+ */
+
+/**
+ * 会话头 → **档**（`'leader' | 'member' | 'unknown'`）。
+ *
+ * 依据：子会话头里的 `agentPreset`（框架 `childSessionMeta()` 写的：`cwd` /
+ * `agentPreset` / `parentSession` / `isSeeded` / `origin: 'subagent'` / `delegationDepth`）。
+ * 认不出（缺字段 / 第三个 id）⇒ `'unknown'`（row 6/7：非生产态，窄 + 报警）。
+ *
+ * ⚠️ `@` 之后那一截（如果哪天出现）不算身份：只比预设 id 本体。
+ */
+function presetKindOf(header) {
+  const id = header === null || header === undefined ? undefined : header.agentPreset
+  if (typeof id !== 'string') return 'unknown'
+  const base = id.split('@')[0]
+  if (base === LEADER_PRESET_ID) return 'leader'
+  if (base === MEMBER_PRESET_ID) return 'member'
+  return 'unknown'
+}
+
+/**
+ * 会话头 → `toolName`（派工层传给子会话的那个工具名）。
+ *
+ * 🔴 这是**会话头**那一条路：头里有 `toolName` 就读它，**永远优先**（有它就不走了桥、也不消费队列）。
+ *    **2026-11-02 实测**：委派子会话的头是 `["cwd","agentPreset","origin","parentSession"]` ——
+ *    **没有 `toolName`**（九个 `team_*` / `job_*` 全一样）⇒ 这一格给 `null`，`identityVerdict()`
+ *    落 row 5（无角色 + 窄），除非装配那一侧从**插件桥**（`BRIDGE_CLAIMS`）补到一条 claim。
+ *    桥补到名字时，A0a 那一行自报 `toolName_source=parent-call`；头里本来有就是 `header`。
+ * ⚠️ 别在这里补一条"从别处猜 toolName"的退路：那会让身份回到两个作者，A0a 又永远判不出来。
+ *    桥不是猜 —— 它记的是父会话**门禁放行那一刻**的真实调用名（同一进程内的内存队列）。
+ */
+function toolNameOf(header) {
+  const name = header === null || header === undefined ? undefined : header.toolName
+  return typeof name === 'string' && name.trim() !== '' ? name : null
+}
+
+/**
+ * 会话头 → 内部 worker（`workflow` / `ralph`）。
+ *
+ * 🔴 **这一版框架没有这个标记**：子会话头里没有"这条是 workflow / ralph 起的"这个字段（实测子会话头
+ *    只有 `cwd` / `agentPreset` / `toolName`，连 `origin` / `parentSession` 都没有）。
+ *    ⇒ 永远返回 `null`；`identityVerdict` 的 row 0 只是**纯函数那一侧**的事实。
+ *
+ * ⇒ 所以这里**不装**"row 0 在运行时能走到"：认不出就是认不出。
+ *    能出声的那一条在装配处（`unattributableSession()`）：不是组长那一行、会话头里既没有
+ *    `toolName` 也没有 `origin` / `parentSession` ⇒ 打一行「**未受管 · 认不出**」
+ *    （workflow / ralph 内部 worker、"工具起的子会话但 toolName 没到"、手动开的组员会话、
+ *    升级前的旧会话在这一版**同形**，那句话不许二选一地说成哪一边）。
+ *    定形 §2.2 / `CONTRACT-A` §5.1 的"门禁在日志里记一行"因此**降级为这一行**；
+ *    要真认出内部 worker，得框架加一个标记（或第 5 关的会话日志探针拿到别的事实）。
+ */
+function workerKindOf(header) {
+  const kind = header === null || header === undefined ? undefined : header.worker
+  return kind === 'workflow' || kind === 'ralph' ? kind : null
+}
+
+/**
+ * 这一行会话是不是**认不出主人**（谁起的它，头上没有任何证据）。
+ *
+ * 是 ⇒ 装配处打一行「未受管 · 认不出」，并说明 row 0 在这一版**不可达**（不许谎报覆盖）。
+ *
+ * 🔴 判据**只能用真存在的事实**（2026-11-01 第二轮评审 N-9）：
+ *   · 旧判据是 `header.origin === 'subagent'` —— **死代码**：实测子会话头里连 `origin` 这个键
+ *     都没有（`header_keys` 只有 `cwd` / `agentPreset` / `toolName`），那一行永远不会出；
+ *   · 现在：**不是 row 3（组长那一行认得出）** + `toolNameOf(header) === null`
+ *     + 没有 `origin` / `parentSession` 这两个"谁起的"字段。
+ *   **不猜**：满足时，"内部 worker / 派工子会话但 toolName 没到 / 手动开的组员会话 / 旧会话"
+ *   这一版同形，日志里几个可能都写出来。
+ *
+ * @param {unknown} header 会话头
+ * @param {{row:number}|unknown} identity `identityVerdict()` 的结论（只用 `row`）
+ * @returns {boolean}
+ */
+function unattributableSession(header, identity) {
+  if (header === null || typeof header !== 'object') return false
+  if (identity === null || typeof identity !== 'object') return false
+  // row 3 = 组长自己：没有 toolName 是正常的，预设已经把"它是谁"说清了。
+  if (identity.row === 3) return false
+  if (toolNameOf(header) !== null) return false
+  // 哪天框架真写了"谁起的"这两个字段，就不再是"认不出" —— 那时该按它们判，而不是按这一行。
+  if (header.origin !== undefined && header.origin !== null) return false
+  if (header.parentSession !== undefined && header.parentSession !== null) return false
+  return true
 }
 
 /**
@@ -817,6 +1643,13 @@ export function subagentBackgroundVerdict(toolName, args, policy) {
  *   · `bash` / `pwsh` 一律拒（一条通用命令行就是一条通用写入通道，留着它边界就是纸的）；
  *   · `write` / `edit` 按**落点**判：落点要在 `resolve(cwd, '.team')` 之下才放行
  *     （containment，追加裁定 v1.7 · B4 —— `landsInOffice` 那一节写着三条口径）。
+ *
+ * 🔴 2026-11-01 第 4 关返修：**"`review` 没有命令行"这条规则的运行时作者是角色表**
+ *    （`ROLE_TABLE[review].tools = NO_SHELL_TOOLS`）—— 装配时裁目录（`toolCatalogFor`）、
+ *    调用时由 `roleToolVerdict` 拒，门禁里排在它前面。这个函数留着的是**写边界**
+ *    （+ 冻结单测直接调它时的那条 shell 语义：`roles.test.mjs` / `REV-02` 钉着两个码与报文前缀）。
+ *    ⚠️ 别把 `officeBound: ['review']` 从组合里删掉去"消灭第二个作者"：那份配置与这个函数
+ *       被 `REV-02` / `PFL-06` / `STAT-02` 三处冻结判据钉着，删它要改测试 —— 那不是本票能单方面做的。
  */
 export function officeBoundVerdict(role, toolName, args, agent, officeBoundSet) {
   const bound = officeBoundSet instanceof Set
@@ -1140,17 +1973,11 @@ function moodConstants(markdown) {
 // 不存在）。加行的代价是体检 `composition` 那一族要同批动两处（增量类白名单 + 常量），
 // 而那两处是 `.tools/**` —— 组员动不了；而不加行，`apply()` 里 `register` 就够。
 //
-// 判决岗（`memory-judge`）提不了候选这件事**不在这个文件里**：它在 `agent.cordis.yml`
-// 那一行的 `toolFilter.deny` 里（结构性：它的工具集里根本没有这个工具，不是"调用被拒"）。
-// 🔴 这个文件里**不许**按"调用者是谁"做判断 —— 那是新发明一条身份判定。
+// 🔴 它**对所有角色都注册**（包括判决岗）：
+//    判决岗「不能提候选」的落法是**调用时被拒**（`proposalVerdict()`，码
+//    `E_GUARD_JUDGE_PROPOSAL`），**不是**"工具集里没有它"。`deny` 的唯一作者是
+//    上面 `ROLE_TABLE` 判决岗那一条 —— 这个文件里**不许**再写第二处"判决岗不能提案"的判断。
 // ─────────────────────────────────────────────────────────────
-
-/**
- * 工具名。
- * ⚠️ 与 `tools/proposal-file.mjs` 的 `PROPOSAL_FILE_TOOL_NAME` 是**同一个字**；这里只能写字面量，
- * 因为注册发生在 `apply()` 里，而那个模块**不许**在顶层 import（理由见下面 `proposalFileToolModule`）。
- */
-const PROPOSAL_FILE_TOOL = 'proposal_file'
 
 /**
  * 工具的实现模块：**按需**加载（`await import`，不是顶层 import）。
@@ -1270,6 +2097,19 @@ export async function apply(ctx, config = {}) {
   const officeBound = new Set(
     Array.isArray(config.officeBound) ? config.officeBound : DEFAULT_OFFICE_BOUND,
   )
+  /**
+   * 这一份预设自己声明的档（`leader` / `member`）。**只是冗余校验值**：
+   * 合法 ⇒ 一条报警都没有；缺 / 非法 ⇒ 出声，但**不改档、不剥角色**（定形 §2.2）。
+   * ⚠️ 它**不是**身份的来源 —— 档由会话头的 `agentPreset` 认（`presetKindOf`），
+   *    角色只由 `toolName` 认（`ROLE_TABLE`）。
+   */
+  const declaredTier = typeof config.defaultRole === 'string' ? config.defaultRole : null
+  if (declaredTier !== null && !TIERS.includes(declaredTier)) {
+    console.error(
+      `[agenia] config 里的 defaultRole=${JSON.stringify(declaredTier)} 不是合法档（${TIERS.join(' / ')}）—— `
+        + '只报警，不改档、不剥角色。',
+    )
+  }
 
   // 委派名单（裁定 A4）：从 config 算一遍，门禁与"配置坏了"的出声都用它。
   // 配置坏了**不抛** —— 队伍照常挂载，但门禁降级成 A13 那条窄形状，而且这里必须出声：
@@ -1296,7 +2136,10 @@ export async function apply(ctx, config = {}) {
   // ─────────────────────────────────────────────────────────────
   // ⚠️ 新加的 config 键必须**同批**进这张白名单，否则每次挂载都会误报"不认识的配置键"
   //    （2026-10-15 批次 I2 加 `delegationTools` 时就是这么加进来的）。
-  const KNOWN_CONFIG = ['leaderOrder', 'memberOrder', 'officeBound', 'contentDir', DELEGATION_TOOLS_KEY, 'proposalFile']
+  // 🔴 2026-11-01（并员）：`proposalFile` **退出**这张表 —— 那个键的语义是"这份预设不注册
+  //    提候选工具"，并员之后那个工具对所有角色都注册（判决岗靠调用时拒，不靠"没有这个工具"）。
+  //    预设里再写它 ⇒ 这里报"不认识的配置键"，那正是要的读数。
+  const KNOWN_CONFIG = ['leaderOrder', 'memberOrder', 'officeBound', 'contentDir', 'defaultRole', DELEGATION_TOOLS_KEY]
   /**
    * 这几个 key **不是"内容根这一层的一个 .md"**，所以下面那条"文件在不在"的检查要跳过它们：
    *   · `roster` / `board` —— 算出来的正文；
@@ -1373,10 +2216,72 @@ export async function apply(ctx, config = {}) {
   })
 
   // ─────────────────────────────────────────────────────────────
-  // ③ / ④ / ⑤ 都要知道"这个 agent 是哪个岗位"，这张表就是它们之间的桥。
-  // 表在装配时登记（那里才知道角色），门禁、台账、尾巴提醒按编号来查。
+  // ③ / ④ / ⑤ 都要知道"这个 agent 是哪个岗位"，这三张表就是它们之间的桥。
+  // 表在装配时登记（那里才知道身份），门禁、台账、尾巴提醒按编号来查。
+  //
+  // 🔴 2026-11-01（并员）：**"是不是组员" / "是哪个角色" / "窄不窄" 分成三张表** ——
+  //    组员预设只有一份、`toolName` 又到不了子会话（A0a）⇒ 一个组员会话可以
+  //    **是组员但没有角色**。并成一张表时，"查不到角色"会被读成"不是组员"，
+  //    于是组员拿到组长那套注入与尾巴 —— 那正是最危险的那种错。
+  //    `narrowSessions` 也不许并进 `roleOfAgent`：row 6 是"有角色 + 窄"，row 5/7 是"无角色 + 窄"，
+  //    窄这件事与角色有无**正交**。
   // ─────────────────────────────────────────────────────────────
+  /** agent id → 角色（只放**认得出**的角色 —— 唯一来源是 `identityVerdict()` 的 `role`）。 */
   const roleOfAgent = new Map()
+  /**
+   * agent id 集合：这次开口的走**组员侧**（row 0 / 0.5 / 1·2 / 4–7 —— 即**不是 row 3**）。
+   * ⚠️ 2026-11-01 第二轮评审 N-3：这张表原来是 row 4/5/6/7。现在与"注入哪一侧"同一个谓词
+   *    （`isMemberSide = row !== 3`）—— ⑤ 的语气提醒也按它整条丢，否则 row 0.5 的旧会话
+   *    照样会拿到组长的 `style.md` 尾巴。
+   */
+  const memberSessions = new Set()
+  /** agent id 集合：**窄权限**（row 5/6/7）。门禁按这一张判 `NARROW_PERMISSION`。 */
+  const narrowSessions = new Set()
+  /** 身份那几条报警 / 会话只喊一次。 */
+  const warnedIdentity = new Set()
+  /** 「未受管 · 认不出」那一行：一个会话只喊一次。 */
+  const warnedUnattributable = new Set()
+  /**
+   * A0a 的一次性读数：**按名字来源各打一次**（`toolName_source` = `header` / `parent-call` / `none`）
+   * —— 不是"第一个组员会话"那一次。
+   * 为什么按来源拆（2026-11-01 第二轮评审 N-8）：手动开的组员会话也会走到这里、而且没有工具名，
+   * 它会把唯一那一格吃掉，让真正的派工子会话一声不响。
+   * ⚠️ 注入器是**按预设挂一次、被选同一份预设的会话共享**（`dsh-agent-preset-registry`：
+   *    "Runtime plugin trees shared by Agents selecting one preset revision"）——
+   *    所以组员预设那一份实例最多打三行（三种来源各一行）；不是"每个会话都刷一行"，
+   *    也不是"整个进程只一行"。
+   */
+  const identityProbes = new Set()
+
+  /**
+   * 升级日那一刻的 session-id 快照（`{ upgrade_at, session_ids[] }`）—— 读一次、记一辈子。
+   *
+   * 读不到 / 解析不了 ⇒ `null` ⇒ `isLegacySession()` 判 `false` ⇒ 旧会话走 row 6/7（窄）。
+   * 方向是刻意的（`CONTRACT-A` §13.3）：判 `false` 把人放进窄，判 `true` 放人进"不窄"。
+   * ⚠️ 文件由**升级那一天**写（`<内容根>/.runtime/legacy-sessions.json`）；没有它只是
+   *    "这一台还没有升级快照"，不是错误 —— 所以缺文件不出声，只有**坏了**才出声。
+   */
+  const legacySnapshot = (() => {
+    let pending = null
+    return () => {
+      if (pending === null) {
+        const file = join(contentDir, RUNTIME_DIR, LEGACY_SNAPSHOT_FILE)
+        pending = readText(file).then((text) => {
+          if (text === undefined) return null
+          try {
+            return JSON.parse(text)
+          } catch (err) {
+            console.error(
+              `[agenia] 升级快照 ${file} 解析不了（${String(err?.message ?? err)}）—— `
+                + '旧会话判定一律 false，它们走窄权限（安全方向）。',
+            )
+            return null
+          }
+        })
+      }
+      return pending
+    }
+  })()
 
   // ─────────────────────────────────────────────────────────────
   // ④ 进度提醒。
@@ -1501,12 +2406,19 @@ export async function apply(ctx, config = {}) {
   // 排在文件最后 —— 为什么必须排在 ⑤ 后面，那儿写着。
 
   // ─────────────────────────────────────────────────────────────
-  // ③ 岗位边界 + 后台硬门。**同一道门禁里两条判定，次序是定的：**
+  // ③ 岗位边界 + 后台硬门 + 窄权限 + 角色工具集 + 判决岗的提案拒。
+  //   **同一道门禁里五条判定，次序是定的：**
   //   ① 后台硬门（`subagentBackgroundVerdict`）先判 —— 它对**所有角色**都生效；
-  //   ② 岗位写边界（`officeBoundVerdict`）后判 —— 认不出岗位的一律放行。
+  //   ② 窄权限（`narrowVerdict`）第二判 —— row 5/6/7 的三格闭集（白名单 / 写范围 / 提案拒）；
+  //   ③ 角色工具集（`roleToolVerdict`）第三判 —— `ROLE_TABLE[role].tools` 的运行时执行者
+  //      （`review` 的"没有命令行"就住在这里，不再由 `officeBound` 那一条单独说一遍）；
+  //   ④ 判决岗的提案拒（`proposalVerdict`）—— 拒的只是"提案"这一个工具，不是这个人；
+  //   ⑤ 岗位写边界（`officeBoundVerdict`）最后判 —— 认不出岗位的一律放行（它的写边界仍在）。
   //   ⚠️ **次序别倒过来**：受限岗位若先被岗位判定放行/拒绝，就轮不到后台硬门了，
   //      而 GRD-01 要的正是"门禁覆盖所有角色"。（真正的语义证明只能靠 R1 真挂载，
   //      这里这条只是文件序代理 —— 追加裁定 v1.1 · A15。）
+  //   ⚠️ 窄与角色两条都依赖"装配时登记的这份会话的身份"（`narrowSessions` / `roleOfAgent`）；
+  //      还没装配过的会话查不到 ⇒ 按老规矩放行（模型不先被装配一次也叫不出工具）。
   // ─────────────────────────────────────────────────────────────
   const tools = ctx.get('tools')
   if (tools !== undefined && typeof tools.guard === 'function') {
@@ -1521,11 +2433,26 @@ export async function apply(ctx, config = {}) {
           if (background !== null) return background.message
 
           const id = who === null || who === undefined ? undefined : who.id
+          // 窄权限：row 5/6/7。三格逐条来自 `NARROW_PERMISSION`（唯一作者）。
+          if (typeof id === 'string' && narrowSessions.has(id)) {
+            const narrow = narrowVerdict(toolName, args, who)
+            if (narrow !== null) return `${narrow.code}：${narrow.message}`
+          }
           const role = typeof id === 'string' ? roleOfAgent.get(id) : undefined
+          // 角色工具集：`ROLE_TABLE[role].tools`（`review` 的 shell 就在这一格被拒）。
+          const roleTool = roleToolVerdict(role, toolName)
+          if (roleTool !== null) return `${roleTool.code}：${roleTool.message}`
+          // 判决岗「提案调用被拒」：注册与拒同源（`ROLE_TABLE` 那一条的 `deny`）。
+          const proposal = proposalVerdict(role, toolName)
+          if (proposal !== null) return `${proposal.code}：${proposal.message}`
           const office = officeBoundVerdict(role, toolName, args, who, officeBound)
-          return office === null ? undefined : office.message
+          if (office !== null) return office.message
+          // 五条判定全过完 = 这次委派会被放行 ⇒ 记一条 claim（被拒的一条都不记）。
+          // ⚠️ 这一行必须在**所有** return 之后：记录是纯观察，判词的次序与报文一个字节都不改。
+          bridgeRecordClaim(call)
+          return undefined
         }),
-      'agenia：岗位写权限边界 + 后台硬门',
+      'agenia：岗位写权限边界 + 后台硬门 + 窄权限 + 角色工具集 + 判决岗提案拒',
     )
   } else {
     // 悄悄失效比明着失败更糟：评审和复盘会以为自己"只审不改"、作业会在前台等着，
@@ -1544,15 +2471,12 @@ export async function apply(ctx, config = {}) {
   //   🔴 失败策略同 ③：拿不到 / 注册失败都**出声**，绝不让一条工具把整份注入拖下水
   //      （这份文件一挂就是"人格注入 0 字符"）。
   // ─────────────────────────────────────────────────────────────
-  // 🔴 2026-10-19（DSH 0.2.1）：`proposalFile: false` = 这一份预设**按设计**就没有提候选这个工具。
-  //   判决岗（memory-judge）用它 —— 老板 2026-10-17 的原话：「判决应该不能提候选，
-  //   其他这几个应该都可以自己提候选」。0.2.1 之前这条靠 `toolFilter.deny` 实现，
-  //   那条路没了（`toolFilter` 删了）⇒ 改成让这个工具**根本不注册**（结构性，不是"调用被拒"）。
-  //   ⚠️ 只有判决岗那一份组员预设带它；其余预设不写这个键 ⇒ 照常注册。
-  const proposalFileEnabled = config.proposalFile !== false
-  if (!proposalFileEnabled) {
-    // 有意不装：不出声（这是配置要的结果，不是失败）。
-  } else if (tools !== undefined && typeof tools.register === 'function') {
+  // 🔴 2026-11-01（并员）：**每一份预设都注册它**（含判决岗那一份）。
+  //   判决岗「不能提候选」不是靠"工具集里没有它"，而是**调用时被拒** —— 见 ③ 那道门禁里的
+  //   `proposalVerdict()`（`ROLE_TABLE` 判决岗那一条的 `deny: ['proposal']` 是唯一作者）。
+  //   旧键 `proposalFile: false`（"这一份预设干脆不注册"）已退休：它对所有角色一视同仁，
+  //   并员之后再也表达不了"只有判决岗不许"。
+  if (tools !== undefined && typeof tools.register === 'function') {
     ctx.effect(
       () => {
         try {
@@ -1640,12 +2564,13 @@ export async function apply(ctx, config = {}) {
   //      "你的话 + 机制② + 第一个工具结果"会让同一个请求里出现两条 style。
   //
   // 组员整个不贴（2026-09-25 老板：「组员完全不需要语气，不需要这个东西」）：
-  // 认人用装配时登记的那份岗位（`roleOfAgent`，第 ② 件事那张表）——
+  // 认人用装配时登记的那份身份（`memberSessions` / `roleOfAgent`，第 ② 件事那张表）——
   //   机制② 在 pre-step 那一刻认出是组员 ⇒ 整条丢；
   //   机制① 也按同一份登记整条丢掉（工具结果一定发生在首次装配之后：模型得先被装配出来
   //   才会去调工具，所以来得及）。
-  // ⚠️ **装配排在 `agent/pre-step` 前面**（L890 早于 L894）⇒ 到 pre-step 那一刻，角色是现成的。
-  // ⚠️ 关的是**语气**，不是**身份** —— 那枚 `【组员:xxx】` 标记还要给第 ② 件事分流用。
+  // ⚠️ **装配排在 `agent/pre-step` 前面**（L890 早于 L894）⇒ 到 pre-step 那一刻，身份是现成的。
+  // ⚠️ 关的是**语气**，不是**身份**：组员照旧按 row 4/5/6/7 走组员侧注入（`memberSessions`）。
+  //    这跟"关语气"无关的那半（人设 / 说明书 / 窄权限）住在 ① 与 ③，别在这里改它。
   // ─────────────────────────────────────────────────────────────
   /** 机制① 的计数器：这个会话攒了几个"该数的"工具结果。 */
   const counts = new Map()
@@ -1678,8 +2603,8 @@ export async function apply(ctx, config = {}) {
     if (at !== undefined) mood.lastEventAt = at
     const type = event.type
 
-    // 组员：机制①② 都不成立，整条丢掉（口径 16）。认的是装配时登记的那份岗位。
-    if (roleOfAgent.has(id)) return
+    // 组员：机制①② 都不成立，整条丢掉（口径 16）。认的是装配时登记的"是不是组员"。
+    if (memberSessions.has(id)) return
 
     if (type === 'turn/start') {
       counts.set(id, 0)
@@ -2124,7 +3049,7 @@ export async function apply(ctx, config = {}) {
         + '两条尾巴机制都没有生效（老板开口之后不补语气，每 n 个工具结果也不补）。')
       return decision
     }
-    if (roleOfAgent.has(id)) return decision            // 组员：一条都不贴
+    if (memberSessions.has(id)) return decision            // 组员：一条都不贴
 
     const messages = Array.isArray(decision.messages) ? decision.messages : []
     const at = messages.findLastIndex(isBossMessage)
@@ -2229,28 +3154,191 @@ export async function apply(ctx, config = {}) {
     // 没有作用域的装配不是会话，跳过。
     if (context === null || context === undefined || context.scope === undefined) return result
 
-    // 登记这次开口的是谁 —— ⑤ 两条机制（还有 ③ 的门禁）都靠这张表认人。
-    const role = roleOf(assembly) ?? roleOf(result)
     const agentId = context.scope.id
-    if (typeof agentId === 'string' && role !== undefined) roleOfAgent.set(agentId, role)
 
-    const entries = await gather(role === undefined ? leaderOrder : memberOrder, {
+    // ── 身份：档看会话头的 `agentPreset`，角色只看 `toolName`（定形 §2.2 的判定表）──────
+    // 🔴 2026-11-01 第 4 关返修（A0a 结算）：**这里不再读 `【组员:<角色>】` 标记**。
+    //    `role` 就是 `identity.role`，走哪一侧只看判定表的行号 —— 注入文本不再参与身份判定。
+    //    两个作者会让"A0a 到底过没过"永远判不出来（标记与 toolName 产出同一个现象）。
+    // 这里**只读不判权**：`identityVerdict()` 的结论进 `memberSessions` / `roleOfAgent` / `narrowSessions`，
+    // 外加把 `warnings` 打出来（它是"最小永不取消件" —— 卡不交付它也照样出声）。
+    const header = context.agent?.session?.header ?? context.scope?.session?.header ?? null
+    const headerToolName = toolNameOf(header)
+    // 🔴 **插件桥**：子会话头里没有 `toolName` 时，取父会话门禁那一刻记下的那一条。
+    //    header 永远优先（头里有名字 ⇒ 一个字都不动、也不消费队列）；四条门在 `bridgeTakeClaim` 里。
+    //    取到的名字要**再核一次**在角色表里：不在就当没取到 —— 别把它塞进 `identityVerdict()`
+    //    制造 row 2（那是"这个工具名不该被注册"的拒，不是这一条会话该有的结论）。
+    const claimedToolName = headerToolName === null ? bridgeTakeClaim(header, agentId) : null
+    const usableClaim = claimedToolName !== null && ROLE_ENTRY_BY_TOOL.has(claimedToolName)
+      ? claimedToolName
+      : null
+    const rawToolName = headerToolName ?? usableClaim
+    /** 这个名字是谁给的 —— A0a 那一行必须自报（没有它，`row=4` 分不出"平台修好了"和"桥在兜"）。 */
+    const toolNameSource = headerToolName !== null ? 'header' : (usableClaim !== null ? 'parent-call' : 'none')
+    const identity = identityVerdict({
+      preset: presetKindOf(header),
+      toolName: rawToolName,
+      defaultRole: declaredTier,
+      worker: workerKindOf(header),
+      legacy: isLegacySession(typeof agentId === 'string' ? agentId : null, await legacySnapshot()),
+    })
+    // 角色 = 判定表给的（唯一作者）。没有就是**没有** —— 不许从别处补，也不许拿它猜。
+    const role = typeof identity.role === 'string' ? identity.role : undefined
+    // 走哪一侧注入：**只看判定表的行号，row 3（组长）是唯一组长侧**。
+    //   · row 3 = 组长预设 + 没有工具名 ⇒ 组长自己：`leaderOrder` + 开工四步 + 全条记忆；
+    //   · **其余每一行都走组员侧**（row 0 内部 worker / 0.5 旧会话 / 1·2 该被拒的 / 4–7 组员与未知预设）——
+    //     认不出的、拦不住的、旧会话**一律不许**拿到组长那份上下文（`persona` / `leader.md` /
+    //     `style.md` / 全条 `boss`·`machine`·`project`）与开工四步。
+    //     ⚠️ 2026-11-01 第 4 关返修（第二轮评审 N-3）：row 0 / 0.5 原来是**组长侧**的 ——
+    //        注释写着"只有 row 3 是组长侧兜底"而代码把这两行也算进去了。
+    //        升级前的**组员**会话（row 0.5）因此会拿到组长的上下文；现在它们按组员侧走。
+    //        代价照写：升级前的**组长**会话（也在 row 0.5 里）同样降级成组员侧注入 ——
+    //        `isLegacySession()` 只认 id、分不出它当年是组长还是组员 ⇒ 安全的那一侧赢
+    //        （丢一段上下文 ≠ 把老板的画像发给组员）。
+    //   ⚠️ 工具那一侧**不跟着变**：row 0 / 0.5 仍然 `narrow === false`（base 工具集），
+    //      见 `identityVerdict` 与 `CONTRACT-A` §5 —— 这一格只管**注入哪一侧**。
+    const isMemberSide = identity.row !== 3
+
+    // 登记这次开口的是谁 —— ③ 的门禁与 ⑤ 两条机制都靠这三张表认人。
+    if (typeof agentId === 'string') {
+      // ⚠️ 这张表管的是**语气**（⑤ 的两条机制：组员一条都不贴），口径与"注入哪一侧"同一格：
+      //    只有 row 3（组长）不在这张表里 ⇒ 其余每一行（含 row 0 / 0.5）都不贴组长的语气。
+      if (isMemberSide) memberSessions.add(agentId)
+      if (role !== undefined) roleOfAgent.set(agentId, role)
+      if (identity.narrow === true) narrowSessions.add(agentId)
+
+      // 🔴 **A0a 的一次性读数**：**按形状各打一次**，形状 = **名字从哪来**（`toolName_source`），
+      //    不是"第一个组员会话"那一次。为什么按形状拆：
+      //      · 手动开的组员会话（README 说"不要手动选"，但拦不住）**也没有** `toolName`
+      //        （2026-11-01 第二轮评审 N-8）—— 它会先把"第一个组员会话"那一格吃掉，
+      //        真正的派工子会话反而一声不响，gate 5 于是把一个**手动会话**的 row=5 读成"A0a 没过"。
+      //      · `header` / `parent-call` 的形状 = **决定性读数**（角色真的从工具名来了）；
+      //        `none` 的形状 = **不决定性**：手动会话 / 派工但 toolName 没到 / 内部 worker /
+      //        旧会话在这一版同形 —— 这一行明说它"不是 A0a 判定行"。
+      //    两格分开记 ⇒ 决定性那一行永远不会被手动会话占掉；失败方向也不会变成"一声不响"。
+      //    ⚠️ 措辞必须与 `toolName_source` 同一件事：行里说「带 toolName」就得**会话头**里真有它；
+      //       桥兜来的名字不是"头里带"（按名字来源分形状，就不会说出那句假话）。
+      if (isMemberSide) {
+        const probeShape = toolNameSource
+        if (!identityProbes.has(probeShape)) {
+          identityProbes.add(probeShape)
+          const decisive = toolNameSource !== 'none'
+          console.error(`[agenia] A0a 身份读数（第一个组员侧会话 · toolName_source=${toolNameSource}`
+            + `${decisive ? ' —— 判定行' : ' —— 不是判定行'}）：`
+            + `row=${identity.row}`
+            + ` · preset=${JSON.stringify(presetKindOf(header))}`
+            + ` · header.agentPreset=${JSON.stringify(header?.agentPreset ?? null)}`
+            + ` · header.origin=${JSON.stringify(header?.origin ?? null)}`
+            + ` · header.parentSession=${JSON.stringify(header?.parentSession ?? null)}`
+            + ` · header.toolName=${JSON.stringify(header?.toolName ?? null)}`
+            + ` · toolName=${JSON.stringify(rawToolName)}`
+            + ` · role=${JSON.stringify(role ?? null)}`
+            + ` · role_from_toolName=${rawToolName !== null && role !== undefined}`
+            + ` · toolName_source=${toolNameSource}`
+            + ` · narrow=${identity.narrow === true}`
+            + ` · header_keys=${JSON.stringify(header === null || header === undefined ? [] : Object.keys(header))}`
+            + (decisive
+              ? ''
+              : ' —— 这一行**分不出**"手动开的组员会话 / 派工子会话但 toolName 没到 / 内部 worker / 旧会话"，A0a 的判定请读**带 toolName 的那一行**'))
+        }
+      }
+
+      // 身份报警：一个会话只喊一次。`rejected` 那两行（row 1 / 2）在**子会话这一侧**才看得见，
+      // 拒绝本身发生在建会话那一刻（框架那边），这个文件只能出声 —— 别把它读成"已经拦住了"。
+      if (!warnedIdentity.has(agentId) && (identity.rejected || identity.warnings.length > 0)) {
+        warnedIdentity.add(agentId)
+        for (const warning of identity.warnings) console.error(`[agenia] 身份（row ${identity.row}）：${warning}`)
+        if (identity.rejected) {
+          console.error(`[agenia] 身份（row ${identity.row}）：这个会话按契约应当被拒（${identity.code}）——`
+            + ' 拒绝点在起会话那一侧，这个文件只出声，拦不住它。')
+        }
+        // A0a 探针的读数（定形 §2.2）：组员预设 + 认不出角色 ⇒ 说清**这一条**会话为什么没角色。
+        // 两种形状分开说（复审 F-02）：有 `parentSession` ⇒ 桥该管这一格，失败在**队列**；
+        // 没有它 ⇒ 手动开的组员会话 / 内部 worker / 旧会话，失败在"会话头里根本没有名字"。
+        // ⚠️ 只说"这个会话"，不说"这一版框架"；这一行只描述当下这一条会话头。
+        if (identity.row === 5) {
+          const parentSession = header?.parentSession
+          if (typeof parentSession === 'string' && parentSession !== '') {
+            console.error(`[agenia] A0a：这个会话来自通用组员预设，有 parentSession（${parentSession}），`
+              + '但**桥没取到 claim** ⇒ 角色认不出（row 5：无角色 + 窄）。岗位人设与说明书这一轮都没有注入。'
+              + ' 要查的是父会话的队列（`BRIDGE_CLAIMS`，只在内存里），不是会话头。')
+          } else {
+            console.error('[agenia] A0a：这个会话来自通用组员预设，但它的会话头里没有 toolName'
+              + ' ⇒ 角色认不出（row 5：无角色 + 窄）。岗位人设与说明书这一轮都没有注入。')
+          }
+        }
+      }
+
+      // 🔴 **未受管 · 认不出**（`CONTRACT-A` §5.1 的诚实读数；第二轮评审 N-9 改的判据）。
+      //    ⚠️ **旧的判据是 `header.origin === 'subagent'`，它是死代码**：2026-11-01 实测子会话头里
+      //    连 `origin` 这个键都没有（`header_keys` 只有 `cwd` / `agentPreset` / `toolName`），
+      //    那一行永远不会出。现在按**真存在的事实**判：不是组长那一行 + 会话头里没有 `toolName`
+      //    + 会话头里没有 `origin` / `parentSession`（这一版不写它们）⇒ 谁起的**没有任何证据**。
+      //    这一版框架也没有 workflow / ralph 的标记 ⇒ `identityVerdict` 的 row 0 在运行时**不可达**。
+      //    所以这里只报**认不出**，不二选一；更不许把它说成"内部 worker 已经被记下来了"。
+      if (unattributableSession(header, identity) && !warnedUnattributable.has(agentId)) {
+        warnedUnattributable.add(agentId)
+        console.error('[agenia] 未受管 · 认不出（unattributable）：会话头里既没有 toolName，也没有 origin / parentSession'
+          + '（2026-11-01 实测：子会话头只有 cwd / agentPreset / toolName 这几个键）⇒ 认不出这条会话是谁起的 ——'
+          + ' workflow / ralph 的内部 worker、工具起的子会话（toolName 没到）、手动开的组员会话、升级前的旧会话，'
+          + `这一版**同形**（identity row=${identity.row}）。`
+          + ' 这一版框架没有内部 worker 标记 ⇒ **row 0 在运行时不可达**（定形 §2.2 / §5 的"记一行"降级为这一行）；'
+          + '这一行也不许读成"内部 worker 已被记录"。')
+      }
+
+      // ── 身份报警的**当天落点**（契约 C2 §4.2 #7/#8；裁定第 1 条）──────────────────
+      // 状态条那两格（`unknown_preset` / `preset_downgrade`）读的是这个文件。`console.error` 那一行
+      // 只活在当事会话里，卡看不见它 —— 两条载体各管一半，判定的档 / 角色 / narrow 一个都不动。
+      {
+        const nowMs = Date.now()
+        const sessionLabel = typeof agentId === 'string' ? agentId : null
+        const presetKind = presetKindOf(header)
+        const alarms = []
+        if (presetKind === 'unknown') {
+          alarms.push({ kind: 'unknown', record: { session: sessionLabel, row: identity.row, preset: presetKind, toolName: rawToolName, at: new Date(nowMs).toISOString() } })
+        }
+        // 「预设降级」= 这一份预设**自己声明的档**与它该是的那一档对不上（缺 / 非法 / 不符三种形状）。
+        // ⚠️ 它**不是**"降级交付"（`CONTRACT-A` §8.1：A 的二值只有交付 / 不交付）—— 这里只说预设自己的声明。
+        if (presetKind === 'leader' || presetKind === 'member') {
+          const tierAlarms = tierWarnings(presetKind, declaredTier)
+          if (tierAlarms.length > 0) {
+            alarms.push({ kind: 'downgrade', record: { session: sessionLabel, row: identity.row, preset: presetKind, default_role: declaredTier, message: tierAlarms.join(' · '), at: new Date(nowMs).toISOString() } })
+          }
+        }
+        for (const alarm of alarms) {
+          const wrote = await recordIdentityAlarm({ cwd: header?.cwd, nowMs, kind: alarm.kind, record: alarm.record })
+          // 只报真正的失败；`not-a-workspace` / 已经记过 是正常形态，不出声（那会把真红淹掉）。
+          if (!wrote.ok && (wrote.code === 'write-failed' || wrote.code === 'day-key-unavailable')) {
+            console.error(`[agenia] 身份报警（${alarm.kind}）写不进 .team/state/identity/ —— `
+              + `这一条只在会话里出声，卡上看不到：${wrote.reason}`)
+          }
+        }
+      }
+    }
+
+    // 按角色裁工具目录（装配时的那一半；调用时那一半在 ③ 的 `roleToolVerdict`）。
+    const catalog = toolCatalogFor(role, identity.narrow === true, result.tools)
+
+    const entries = await gather(isMemberSide ? memberOrder : leaderOrder, {
       contentDir,
       role,
+      leaderSide: !isMemberSide,
       board: undefined,   // F-94：板子不进快照（`boardOf` 改由 ⑤ 尾巴那条路贴）
       // 共享记忆库读不到时那几声（`memory` 那个 key）—— 同一个问题每个会话只喊一次。
       warn: warnOnce,
     })
 
-    if (entries.length === 0) return result
+    // ⚠️ 早退这条路也要带上裁好的目录：`entries.length === 0` 只说明没有 .md 可注，
+    //    不代表"这一轮的工具目录不用按角色裁"（两份事实各走各的）。
+    if (entries.length === 0) return { ...result, tools: catalog }
 
-    // 「每天开工第一步」只给组长：组员不读 `leader.md`，那四步是队伍设定，不是它的活。
-    // 正文用 `gather` 刚读过的那一份，不另读一次盘 —— 读一次、用一次，两串不会分叉。
-    const leaderText = role === undefined
-      ? entries.map((entry) => entry?.text).find((text) => openingBlockOf(text) !== undefined)
-      : undefined
+    // 「每天开工第一步」只给组长：组员侧（含 row 0 / 0.5）不读 `leader.md`，那四步是队伍设定，
+    // 不是它的活。正文用 `gather` 刚读过的那一份，不另读一次盘 —— 读一次、用一次，两串不会分叉。
+    const leaderText = isMemberSide
+      ? undefined
+      : entries.map((entry) => entry?.text).find((text) => openingBlockOf(text) !== undefined)
     const opening = openingBlockOf(leaderText)
-    if (role === undefined && opening === undefined) {
+    if (!isMemberSide && opening === undefined) {
       warnOnce('opening', `[agenia] 内容根的 ${OPENING_FILE} 里找不到「${OPENING_HEADING}」那一节 ——`
         + ' 开工四步这次不注入（其余照旧）。')
     }
@@ -2267,13 +3355,14 @@ export async function apply(ctx, config = {}) {
         : { ...entry, text: withoutOpeningBlock(text) }
     })
     const keptContexts = [...kept, ...contexts]
-    if (opening === undefined) return { ...result, contexts: keptContexts }
+    if (opening === undefined) return { ...result, tools: catalog, contexts: keptContexts }
 
     // 🔴 位置就是这一行：**`sections` 的数组第 0 位**（waterfall 的返回值就是权威值，`:355-356`）。
     // `interpolate: false`：这段正文是从 `.md` 抄来的散文，将来里面出现 `{{` 时框架会当成变量去求值，
     // 未知变量**直接抛**（`:167-170`）—— 整条请求跟着挂。散文不插值。
     return {
       ...result,
+      tools: catalog,
       sections: [
         { name: OPENING_SECTION, text: opening, interpolate: false },
         ...(Array.isArray(result.sections) ? result.sections : []),

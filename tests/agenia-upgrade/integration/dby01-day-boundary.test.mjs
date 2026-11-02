@@ -63,7 +63,7 @@ before(() => {
 })
 
 /** 被测面的字节读数（"我量的是哪一版"，与 `run-all` 的靶子对数分开记）。 */
-const SUT_FILES = ['lib/route.mjs', 'lib/tickets.mjs', 'lib/state.mjs', 'bin/agenia-brain.mjs', 'bin/agenia-local.mjs']
+const SUT_FILES = ['lib/route.mjs', 'lib/tickets.mjs', 'lib/state.mjs', 'lib/memory.mjs', 'bin/agenia-brain.mjs', 'bin/agenia-local.mjs']
 
 function sutReadings() {
   const out = {}
@@ -166,7 +166,7 @@ describe('integration · day boundary (DBY) · F-158 一天从本地 04:00 切',
         rec.readings.cards_knife = knife
         if (!knife.ok) {
           push('DBY-CARDS-KNIFE', `Python 切点刀没跑起来：${knife.why} —— 这一刀切不动 ⇒ 这条腿"能翻面"没有证据`
-            + '（切点那一行改名 / 换写法了？回来重新对准 `.tools/daily-cards.py` 的 `DAY_CUT_HOURS`）')
+            + '（切点那一行改名 / 换写法了？回来重新对准 `presets/agenia/lib/route.mjs` 的 `DAY_CUT_HOURS` —— 它是切点唯一的家）')
         } else if (knife.day !== DAY_NEXT) {
           push('DBY-CARDS-KNIFE-NO-BITE', `切点改成 3 小时之后，${DAY_BELOW} 仍落到 ${JSON.stringify(knife.day)}（应当是 ${DAY_NEXT}）`
             + ' —— 这说明 `daily-cards` 那一腿**不是**靠那个切点算出日子的（它有第二套算法，或这一腿本来就不看切点）')
@@ -270,7 +270,7 @@ describe('integration · day boundary (DBY) · F-158 一天从本地 04:00 切',
         rec.readings.cards_knife = knife
         if (!knife.ok) {
           push('DBY-CARDS-KNIFE', `Python 切点刀没跑起来：${knife.why} —— 这一刀切不动 ⇒ 这条腿"能翻面"没有证据`
-            + '（切点那一行改名 / 换写法了？回来重新对准 `.tools/daily-cards.py` 的 `DAY_CUT_HOURS`）')
+            + '（切点那一行改名 / 换写法了？回来重新对准 `presets/agenia/lib/route.mjs` 的 `DAY_CUT_HOURS` —— 它是切点唯一的家）')
         } else if (knife.day !== DAY_PREV) {
           push('DBY-CARDS-KNIFE-NO-BITE', `切点改成 5 小时之后，${DAY_ABOVE} 仍落到 ${JSON.stringify(knife.day)}（应当是 ${DAY_PREV}）`
             + ' —— 这说明 `daily-cards` 那一腿**不是**靠那个切点算出日子的（它有第二套算法，或这一腿本来就不看切点）')

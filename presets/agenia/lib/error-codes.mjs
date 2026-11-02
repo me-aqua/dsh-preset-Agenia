@@ -118,6 +118,42 @@ export const CODES = Object.freeze({
   E_FENCE_STALE: { exit: 5, zh: '导入 fence 过期（基准快照 / update_generation / review_attempt 对不上）' },
   E_JOB_FENCE_STALE: { exit: 5, zh: '作业侧 fence 过期（旧 attempt 的作业结果不许回写）' },
 
+  // ── 任务 B · bug 系统（2026-11-01，契约 `.team/test/CONTRACT-B.md` §9.3）─────────
+  // 七个新码，**全是"校验类拒绝" ⇒ 5**（同族：`E_TICKET_*` / `E_COVERAGE_*` 都是 5）。
+  // 🔴 为什么必须进这张表：`bin/agenia-route.mjs` 的 catch **只认表里的码**，漏登记 ⇒ 被折成
+  //    `E_INTERNAL` ⇒「该拒」与「程序有 bug」在报文里长得一模一样（`BUG-02` / `BUG-03` / `BUG-04`
+  //    各有一格盯这件事）。测试侧 `support/env.mjs::FROZEN.exitCodes` 已先落好（值 = 5），
+  //    两边重叠部分必须逐项相同。
+  E_BUG_ROUTE_NOT_APPLICABLE: { exit: 5, zh: '老板报的 bug 被塞进五分支表（定形 §4.1：按「现象 + 证据」登记，不适用此表）' },
+  E_BUG_ARCHIVE_OPEN: { exit: 5, zh: '归档了一条没有结论的条目（只搬带 disposition 的；簿上 live 段只留没结论的）' },
+  E_BUG_SEVERITY_THIRD_LINE_UNGROUNDED: { exit: 5, zh: '判「读数说假话」却没点名它掩盖了前两条里的哪一条（第三线必须有地基）' },
+  E_BUG_SEVERITY_ESCALATE_MISSING: { exit: 5, zh: '严重线"判不了" / unclassified 却没升级（必须 escalate + 卡红，不许静默保留 open）' },
+  E_BUG_WRITER_ROLE: { exit: 5, zh: '跨角色写（测试岗写线决定 / 组长写严重度 / 测试岗写处置 —— 两个作者各一个事实）' },
+  E_BUG_SAMPLE_LATE: { exit: 5, zh: '样本的 registered_at 晚于它判的那次评估（样本必须事故前预注册）' },
+  E_BUG_SAMPLE_REJUDGE: { exit: 5, zh: '换了样本版本再判同一条 entry（改样本 = 版本 + 旧样本留档；改后不许重判）' },
+
+  // ── 任务 C1 · 路线账本（2026-11-01，契约 `.team/test/CONTRACT-C1.md` §9.3）──────────
+  // 十三个新码，**全是"校验类拒绝" ⇒ 5**（同族：`E_TICKET_*` / `E_BUG_*` 都是 5）。
+  // 🔴 为什么必须进这张表：`bin/agenia-route.mjs` 的 catch **只认表里的码**，漏登记 ⇒ 被折成
+  //    `E_INTERNAL` ⇒「该拒」与「程序有 bug」在报文里长得一模一样（`LED-05` / `BUG-03` 各有一格盯它）。
+  //    测试侧 `support/env.mjs::FROZEN.exitCodes` 已先落好（值 = 5），两边重叠部分必须逐项相同。
+  /** `admitTask` 的六个拒码：四种模式 × 三种工作种类，拒的理由至少六种（契约 §7）。 */
+  E_ADMIT_UNINITIALIZED: { exit: 5, zh: '未建账（没有路线账本）⇒ 拒一切修任务与实现任务（只能登记）' },
+  E_ADMIT_HEADLINE: { exit: 5, zh: 'headline 空 ⇒ 拒实现任务（先补第一行）' },
+  E_ADMIT_KIND: { exit: 5, zh: '这个模式不收这种工作（两期互斥：哪个期收哪种工作）' },
+  E_ADMIT_SET: { exit: 5, zh: '不在当前集合里 / 集合是空的（maintain 读 batch · build-paused 读 pause set）' },
+  E_ADMIT_MODE: { exit: 5, zh: '模式不在四值闭集里（`paused` 是任务状态，不是模式）' },
+  E_ADMIT_ENTRY: { exit: 5, zh: 'bug 修必须点名一条 entry（不点名就不知道修的是哪一条）' },
+  E_LEGACY_STORE_BAD: { exit: 5, zh: 'legacy 票店形状不对 / 重复票号 / 状态越界 ⇒ 拒，零写入' },
+  E_PAUSE_SESSION_LIVE: { exit: 5, zh: '暂停时还有没声明"已停"的活会话 ⇒ 拒（停不下来 ⇒ 暂停失败）' },
+  E_PAUSE_NOT_SUPPORTED: { exit: 5, zh: '`(maintain, pause)` 拒 —— maintain 不支持暂停，不静默忽略' },
+  E_RESUME_NOT_PAUSED: { exit: 5, zh: '不在 `build-paused` 时 resume ⇒ 拒（不许静默成功）' },
+  E_STAGE_SESSION_LIVE: { exit: 5, zh: '切阶段那一刻还留着活会话 ⇒ 拒（先停会话再 stage-enter）' },
+  E_TICKET_LIVE_TASK: { exit: 5, zh: '有 live task 的票不许 void（先取消任务）' },
+  // ⚠️ 与上面五个 guard 码同族：它是**工具调用层**的拒绝码（派工门禁在 spawn 前拒），不是 CLI 退出码；
+  //    给 5 只为让 `CODES[code].exit` 有确定值。
+  E_GUARD_SLOT_BUSY: { exit: 5, zh: '槽被占（单写者：一个工作区同时最多一个工作写）' },
+
   // ── 6 状态与不变量 ───────────────────────────────────────────────────────
   E_STATE_PHASE: { exit: 6, zh: '当前 phase 不允许这个动作' },
   E_STATE_TYPE_CAP: { exit: 6, zh: '对象里出现了逐类硬帽字段（四类不设硬帽）' },
