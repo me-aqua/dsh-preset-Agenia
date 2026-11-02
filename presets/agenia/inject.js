@@ -440,6 +440,38 @@ function bridgeWarnMiss(header, parent, queue, agentId, now) {
 }
 
 /**
+ * 子会话的**第一条用户消息**（= 父会话派工时传下来的那份 prompt）。
+ *
+ * 为什么需要它：并行派两个委派时，子会话的**启动先后**与父会话调用的先后无关；只按队列顺序取
+ * claim 会把两个角色串位（2026-11-02 live 探针实测：`team_test` 取到了 `job_technical_review` 的 claim）。
+ * prompt 是父→子之间唯一稳定的对应物，拿它对号，顺序就无所谓了。
+ *
+ * 读的是会话的消息列表；形状不认识的字段一律跳过，取不到就返回 `''`（调用方退回队列顺序）。
+ *
+ * @param {unknown} session `context.agent.session` / `context.scope.session`
+ * @returns {string}
+ */
+function firstUserPromptOf(session) {
+  const list = session === null || session === undefined
+    ? []
+    : (Array.isArray(session.messages) ? session.messages : [])
+  for (const message of list) {
+    if (message === null || message === undefined) continue
+    if (message.role !== 'user') continue
+    const content = message.content
+    if (typeof content === 'string' && content !== '') return content
+    if (Array.isArray(content)) {
+      const text = content
+        .map((part) => (typeof part === 'string' ? part : (typeof part?.text === 'string' ? part.text : '')))
+        .join('')
+      if (text !== '') return text
+    }
+    if (typeof message.text === 'string' && message.text !== '') return message.text
+  }
+  return ''
+}
+
+/**
  * 父会话放行一次委派 ⇒ 记一条 claim。
  *
  * 🔴 **只许在"放行那一刻"调用**：五条判定（后台硬门 → 窄 → 角色工具集 → 判决岗提案 → 岗位写边界）
@@ -451,6 +483,7 @@ function bridgeWarnMiss(header, parent, queue, agentId, now) {
  * 这类名字不在角色表里 —— 它们不是角色，记了会把子会话推进 row 2（该被拒）或 row 6。
  * 键：`call.agent.session.header.id`（子会话头里的 `parentSession` 就是父会话**头**的 id），
  * **不是** `call.agent.id` —— 那是 agent id，取不到 claim。
+ * 值里带 `prompt`：子会话装配时拿自己的第一条用户消息对号（并行派工不串位的唯一稳的键）。
  *
  * @param {unknown} call `tools.guard` 收到的那一次调用
  */
@@ -462,8 +495,10 @@ function bridgeRecordClaim(call) {
       ? undefined
       : call.agent.session?.header?.id
     if (typeof headerId !== 'string' || headerId === '') return
+    const args = call.arguments
+    const prompt = args !== null && args !== undefined && typeof args.prompt === 'string' ? args.prompt : undefined
     const queue = BRIDGE_CLAIMS.get(headerId) ?? []
-    queue.push({ toolName, at: Date.now() })
+    queue.push({ toolName, prompt, at: Date.now() })
     if (queue.length > BRIDGE_CLAIM_CAP) queue.splice(0, queue.length - BRIDGE_CLAIM_CAP)
     BRIDGE_CLAIMS.set(headerId, queue)
   } catch (error) {
@@ -482,16 +517,19 @@ function bridgeRecordClaim(call) {
  *      吃到 claim 会被推进 row 1（该被拒），从 row 3 掉下来 ⇒ 只让通用组员预设消费；
  *   ④ `header.parentSession` 是非空字符串，且那个父会话的队列里有**未过期**的 claim。
  *
- * 取法：先剔过期件 ⇒ `shift` 队首（FIFO，一次一条）⇒ 钉在这个子会话上。钉住之后同一子会话的
- * 后续装配**不再消费**队列 —— 否则下一轮对话就掉回 row 5，角色与工具目录**中途消失**。
+ * 取法：先剔过期件 ⇒ **按 `childPrompt` 对号**（同一次父会话并行派出的多个子会话启动先后不定，
+ * 队列顺序会把角色串位；prompt 是唯一稳定的对应物）⇒ 对不上再退回 `shift` 队首（老路径）。
+ * 取到后钉在这个子会话上 —— 同一子会话的后续装配**不再消费**队列，否则下一轮对话就掉回 row 5，
+ * 角色与工具目录**中途消失**。
  *
  * ⚠️ 返回的是**名字**，不是角色：调用方必须再核一次它在角色表里，再交给 `identityVerdict()`。
  *
  * @param {unknown} header 会话头
  * @param {string|undefined} agentId 子会话 agent id（`context.scope.id`，与 `roleOfAgent` 同一把键）
+ * @param {string} [childPrompt] 子会话第一条用户消息（对号用；取不到就退回队列顺序）
  * @returns {string|null}
  */
-function bridgeTakeClaim(header, agentId) {
+function bridgeTakeClaim(header, agentId, childPrompt) {
   try {
     if (toolNameOf(header) !== null) return null
     if (header === null || header === undefined || header.origin !== 'subagent') return null
@@ -509,7 +547,15 @@ function bridgeTakeClaim(header, agentId) {
       return null
     }
     const fresh = queue.filter((item) => at - item.at <= BRIDGE_CLAIM_TTL_MS)
-    const head = fresh.shift()
+    const prompt = typeof childPrompt === 'string' ? childPrompt : ''
+    let index = -1
+    if (prompt !== '') {
+      index = fresh.findIndex((item) => {
+        const claimPrompt = typeof item.prompt === 'string' ? item.prompt : ''
+        return claimPrompt !== '' && (claimPrompt === prompt || prompt.includes(claimPrompt) || claimPrompt.includes(prompt))
+      })
+    }
+    const head = index >= 0 ? fresh.splice(index, 1)[0] : fresh.shift()
     BRIDGE_CLAIMS.set(parent, fresh)
     if (head === undefined) {
       bridgeWarnMiss(header, parent, queue, agentId, at)
@@ -3168,7 +3214,10 @@ export async function apply(ctx, config = {}) {
     //    header 永远优先（头里有名字 ⇒ 一个字都不动、也不消费队列）；四条门在 `bridgeTakeClaim` 里。
     //    取到的名字要**再核一次**在角色表里：不在就当没取到 —— 别把它塞进 `identityVerdict()`
     //    制造 row 2（那是"这个工具名不该被注册"的拒，不是这一条会话该有的结论）。
-    const claimedToolName = headerToolName === null ? bridgeTakeClaim(header, agentId) : null
+    //    并行派工时子会话启动先后不定 ⇒ 用**子会话自己的第一条用户消息**对号（prompt 是父→子
+    //    唯一稳定的对应物），对不上才退回队列顺序。
+    const childPrompt = firstUserPromptOf(context.agent?.session ?? context.scope?.session)
+    const claimedToolName = headerToolName === null ? bridgeTakeClaim(header, agentId, childPrompt) : null
     const usableClaim = claimedToolName !== null && ROLE_ENTRY_BY_TOOL.has(claimedToolName)
       ? claimedToolName
       : null
