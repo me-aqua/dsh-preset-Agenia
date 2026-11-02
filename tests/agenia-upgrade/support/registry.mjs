@@ -492,11 +492,12 @@ export const BATCH_Y = ['CARD-01', 'CARD-02', 'CARD-03', 'CARD-04', 'CARD-05', '
  * 六格同住 `integration/brg01-toolname-bridge.test.mjs`：一个机制六面（记录 / 消费 / 九名全表 / 队列 /
  * 过期 / 边界），红的行自己带码（`BRG-*`），一眼看得出是哪一面。
  * ⚠️ 这批**不是** C2 那六格（`CARD-01`…`CARD-06`，批次 **Y**，**已装**在
- *    `tests/agenia-upgrade/report/card0*.test.mjs`）—— 两者都装上之后分母才是 111 + 6 + 6 = 123。
+ *    `tests/agenia-upgrade/report/card0*.test.mjs`）—— 两者都装上之后分母才是 111 + 6 + 6 = 123；
+ *    再加 `BRG-07`（并行派工那把修的回归锁）= **124**。
  *    （2026-11-02 补：C2 六格在 `_deliver/apply.mjs` 跑完之后就已进盘；"仍在 `_deliver` 未装"那句是
  *    装之前的读数 —— `gate4-C2` F-14 #5 点到为止，别再照旧话读。）
  */
-export const BATCH_X = ['BRG-01', 'BRG-02', 'BRG-03', 'BRG-04', 'BRG-05', 'BRG-06']
+export const BATCH_X = ['BRG-01', 'BRG-02', 'BRG-03', 'BRG-04', 'BRG-05', 'BRG-06', 'BRG-07']
 
 /**
  * 已落笔的二十三批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
@@ -514,7 +515,7 @@ export const BATCH_X = ['BRG-01', 'BRG-02', 'BRG-03', 'BRG-04', 'BRG-05', 'BRG-0
  * ⇒ `pending-write` 必须是 **0**；这条不变量由 `registryProblems()` 钉住。
  * 批次 X 是**任务 A 的运行时绕行**（`toolName` 插件桥，2026-11-02 第 2 关；老板 11:33 拍板，
  * 对应长期票 `ticket-20261102-01`）：`BRG-01` 记录面 / `BRG-02` 消费面 / `BRG-03` 九名全表 /
- * `BRG-04` 队列 / `BRG-05` 过期 / `BRG-06` 边界。
+ * `BRG-04` 队列 / `BRG-05` 过期 / `BRG-06` 边界 / `BRG-07` 并行派工（live 修后补的那把回归锁）。
  */
 export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y }
 const BATCH_OF = (id) =>
@@ -834,6 +835,7 @@ const ROWS = [
   ['BRG-04', 'toolname-bridge', F.brg01, '**队列语义**：一个父会话连派 `team_test` + `job_technical_review` ⇒ 两个子会话按**派工次序**各自拿到自己的角色（FIFO；次序错 = 名字配错人，契约 F1）；队列空了之后第三个子会话必须回到 row 5（无角色 + 闭三元组）—— **一条 claim 只消费一次**；**同一个子会话第二次装配**（下一轮对话）仍然是 test（名字必须钉在子会话上，R9/F7：角色、人设、工具目录不许中途消失）；**同一个工具连派两次** ⇒ 两条 claim，两个子会话各拿一份（队列是"一次一条"，不是"一个父会话一条"）', '批次 X'],
   ['BRG-05', 'toolname-bridge', F.brg01, '**过期清理**（可注入时钟 = `node:test` 的 `mock.timers`，只遮 `Date`；量具先自证时钟真的被遮住，遮不住记 `BRG-CLOCK-NOT-DATE` 而不是记功能红）：`+30 s` 的 claim **必须**还能用（正常派工到装配的延迟，TTL 不许短过这个）· `+10 min` 的 claim **必须**不再用（父会话派了活、子会话没起来，留着就是给下一个子会话下毒）· 过期件之后**新的** claim 照常生效（清理不许把新的一起清，也不许让过期件把队列堵死）', '批次 X'],
   ['BRG-06', 'toolname-bridge', F.brg01, '**边界（四格，全是"别切宽"那一侧）**：① **会话头一个字节都不动** —— 装配前后键集相同、JSON 逐字相同、**不许**冒出 `toolName`（老板明令；写了它 A0a 就永远判不出来）；② **`【组员:dev】` 标记不参与身份** —— claim 说 review、装配入参里塞着 dev 的标记 ⇒ 必须 review（人设 + 说明书两面都判；标记若赢 = 身份第二作者回来了）；③ **`origin` 门** —— `origin:"manual"` 的会话不许吃 claim，而且**claim 要留给**紧随其后的真子会话（不是"吃了也没关系"）；④ **组长预设的子会话不许抢** —— `agentPreset:"agenia"` + `origin:subagent` + 有 claim ⇒ 仍在**组长侧**（有 `agenia:leader`、没有组员说明书），**且不消费** claim（契约 R7/F8：`subagent_fork` 那一类不许把名额定走）', '批次 X'],
+  ['BRG-07', 'toolname-bridge', F.brg01, '**并行派工（子会话启动次序与父会话调用次序相反）**：一个父会话连派 `team_test`(prompt A) + `job_technical_review`(prompt B)，两个子会话**反序**装配（各自带自己的第一条用户消息）⇒ 每一发仍然拿到**自己**那个角色（charter / 人设 / shell 三面都判），不是对方的 —— 两向都量（先派 test 后起 review / 先派 review 后起 test；只量一向的话"固定偏移"那种半修看不出来）；红因分开：`BRG-PARALLEL-SWAP-TEST` / `-REVIEW`（哪一发串了位）+ `BRG-PARALLEL-PERSONA` / `-CATALOG`（角色到了但没有对应的注入面）；两处**量具自证**：① 两条 prompt 不许互为子串（`BRG-HARNESS-PROMPT-AMBIGUOUS`：互为子串时"对号"与"撞号"分不开）② 子会话的第一条用户消息必须真的交到注入器手里（`BRG-HARNESS-MESSAGES`，否则整格以功能红的样子假红）；外加**老路径仍在**：子会话取不到第一条用户消息时退回队列顺序（`BRG-FALLBACK-LOST`）—— 这一格是"对不上再退回 shift 队首"那句承诺的判据；它是 2026-11-02 live 探针（`team_test` 取到了 `job_technical_review` 的 claim）那把修的回归锁', '批次 X'],
   // ── 任务 C2 · 卡（记忆更新报告，2026-11-02 第 2 关）：路线格 / 票区 / bug 开放数与 50-30 / 严重度 / 状态条 / 容量与回执 ──
   ['CARD-01', 'memory-update-card', F.card01, '任务 C2 **路线格**（契约 `.team/test/CONTRACT-C2.md` §3.1）：`A` 没有路线账本 ⇒ 第一行**逐字** `未建账`（不带目标 / 阶段 / 间隔号）+ `mode=uninitialized` + 徽标 `null` + `red_bar:false`（红由状态条「未建账」那一格说）+ `card.reasons` 有 `ROUTE_MISSING`；`B` 有账 ⇒ 第一行**逐字**等于账上 `headline`（唯一载体，C1 §6.1）+ `mode=build` + 没有徽标 / 红条；`C` `headline` **缺键** ⇒ `（目标未填）`（全角括号、四个字）+ `red_bar:true` + `HEADLINE_EMPTY`；`D` `headline` = `""` / 全空白 ⇒ 与 C 同形；`E` `pauses[]` 有一条 `state:open` ⇒ `mode=build-paused` + 徽标非空且含「暂停」+ **第一行与 B 逐字相同**（暂停写进第一行就翻面）；`F` 两版账本只差 `tasks[]` ⇒ 第一行**逐字不变**（定形 §6.2：「第一行只随 `stage-enter` 或 headline 补齐而变」）；`G` 账本在盘上但读不出来 ⇒ **卡照样出**、第一行 `（目标未填）`、`red_bar:true`、`ROUTE_UNREADABLE`（"读不出来"不是"没有"）；`H` 正文「目标 · 大阶段」行与 `route.first_line` **同值**（§2.2；负样本 = 只改正文一格 ⇒ 必红）；每一格的 `card.reasons` 都过 §5 闭集（`gate4-C2` F-05 / F-08）', '批次 Y'],
   ['CARD-02', 'memory-update-card', F.card02, '任务 C2 **票区**（契约 §3.2）：`open` / `in_progress` / `done` / `void` 四个数 + `total` 来自**路线票段投影**（C1 §7.5 唯一一份口径），**不是** `.team/leader/follow-ups.md` —— 夹具里那张文件**故意写 9 张**、票段 8 张（7 迁移 + 1 新票）⇒ 卡上必须是 8 的组合，出现 9 ⇒ `C2-TICKETS-FROM-FOLLOWUPS`；**第五个数 `tickets.legacy`**（组长 2026-11-02 裁定第 4 条）= `legacy_status` 非空的张数（今天 7）——**子集计数**，不进四数、不加进 `total`，`legacy <= total`；`A` 7 张迁移票按 `legacy_status` 投成 5 open / 1 in_progress / 1 done；`C` 在途任务把票顶成 `in_progress`（存着的 `status` 不是权威）、任务 `done` ⇒ 票 `done`；`D` 票段空 ⇒ 五个数都是**数** `0`（不是 `—` / `无` / 空串）；`D2` `void` 来自组长关票（控制写）；`E` **负样本（必须红）**：一张 `void` 的票 + 一条挂在它上面的在途任务 ⇒ `card.red:true` + `card.reasons` 有 `VOID_WITH_LIVE_TASK` 并**点名那张票**；`F` 正文票区那一行的六个数（四数 + 迁移票 + 合计）逐个与其机器格**同值**（§2.2；负样本 = 正文改一个数 ⇒ 必红）+ 闭集', '批次 Y'],
@@ -933,8 +935,8 @@ export const GROUP_COUNTS = {
    *  `LED-04` C1d 暂停 / `LED-05` `admitTask` 十六格与两个入口）—— 契约见 `.team/test/CONTRACT-C1.md`。 */
   'route-ledger': 5,
   /** 任务 A 的运行时绕行 · `toolName` 插件桥（`BRG-01` 记录面 / `BRG-02` 消费面 / `BRG-03` 九名全表 /
-   *  `BRG-04` 队列 / `BRG-05` 过期 / `BRG-06` 边界）—— 契约见 `.team/test/CONTRACT-A-bridge.md`。 */
-  'toolname-bridge': 6,
+   *  `BRG-04` 队列 / `BRG-05` 过期 / `BRG-06` 边界 / `BRG-07` 并行派工）—— 契约见 `.team/test/CONTRACT-A-bridge.md`。 */
+  'toolname-bridge': 7,
   /** 任务 C2 · 卡（记忆更新报告）—— 六格：路线格 / 票区 / bug 开放数与 50-30 / 严重度那一排 /
    *  状态条十二格 / 容量与回执与卡本身。契约见 `.team/test/CONTRACT-C2.md`。 */
   'memory-update-card': 6,

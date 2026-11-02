@@ -166,13 +166,17 @@ function makeCtx({ contentDir, state, logs }) {
 /**
  * 跑一次 `apply()`，量完（**一定**）把 `console.error` 还回去。
  *
+ * `messages`（可选）：这条会话的**消息列表**。委派桥在 `system-prompt/assemble` 里读子会话的
+ * **第一条用户消息**（`firstUserPromptOf`）去给 claim 对号 —— 夹具不给它，那一条路就永远走不到
+ * （2026-11-02 的并行派工那一格就是靠它量出来的）。不给 ⇒ 会话形状与从前一样（没有 `messages`）。
+ *
  * @param {object} mod  `inject.js` 的模块
- * @param {{contentDir: string, config: object, header: object, id: string, catalog: object[], quietMs?: number}} input
- * @param {(h: {assemble: Function, guard: Function, logs: string[], newSession: Function}) => Promise<void>} fn
+ * @param {{contentDir: string, config: object, header: object, id: string, catalog: object[], messages?: object[], quietMs?: number}} input
+ * @param {(h: {assemble: Function, guard: Function, logs: string[], newSession: Function, session: Function}) => Promise<void>} fn
  */
 export async function withHarness(mod, input, fn) {
   const logs = []
-  const state = { session: { id: input.id, header: input.header } }
+  const state = { session: { id: input.id, header: input.header, messages: input.messages } }
   const sink = (line) => logs.push(String(line))
   const originalError = console.error
   console.error = (...args) => sink(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '))
@@ -183,13 +187,22 @@ export async function withHarness(mod, input, fn) {
     // 注入器自己的配置自检是 fire-and-forget（`selfCheck().catch(...)`）—— 等它出完声再量，
     // 否则"这一次有没有报配置问题"会随调度顺序变。50ms 是实测够用的（量的是 console 输出，不是等盘）。
     await new Promise((resolve) => setTimeout(resolve, input.quietMs ?? 50))
-    state.session = { id: state.session.id, header: state.session.header, appending: false }
+    // ⚠️ `messages` 必须**跟着**过来：桥在装配时读它（并行派工靠它对号），丢了就量不到那一条路。
+    state.session = { id: state.session.id, header: state.session.header, messages: state.session.messages, appending: false }
     const harness = {
       logs,
       /** 换一条会话（同一个注入器实例里的第二条会话 —— 量"一次性 / 按形状各一次"要用它）。 */
       newSession(next) {
-        state.session = { id: next.id, header: next.header, appending: false }
+        state.session = { id: next.id, header: next.header, messages: next.messages, appending: false }
         return harness
+      },
+      /**
+       * 读回这条会话的**裸形状**（装配那一刻注入器看到的东西）。
+       * 用途：夹具自证 —— "我喂进去的第一条用户消息真的交到注入器手里了吗"。
+       * 没有它，`messages` 中途掉了会以"功能红"的样子出现（假红，`mig-test-05`）。
+       */
+      session() {
+        return state.session
       },
       /** 走一次 `system-prompt/assemble` 瀑布；`sections` 缺省 = 空。 */
       async assemble(sections = []) {

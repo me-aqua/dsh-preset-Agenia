@@ -1,5 +1,5 @@
 /**
- * `BRG-01`…`BRG-06` —— **`toolName` 插件桥**（父会话记、子会话取）的自动判据。
+ * `BRG-01`…`BRG-07` —— **`toolName` 插件桥**（父会话记、子会话取）的自动判据。
  *
  * 契约：`.team/test/CONTRACT-A-bridge.md`（规则 R1–R12 · 行映射 §5 · A0a 行 §6 · 失败模式 §7）。
  * 票：老板 2026-11-02 11:33「不改客户端本体，改走 `inject.js` 插件桥接」；
@@ -35,6 +35,19 @@
  *      （`.team/test/2026-11-02/_probe/brg-mutant.mjs` 五刀造出，`presets/**` 零字节）⇒ 实测
  *      `RED 0 / GREEN 6`。⚠️ 那份副本**不是实现**：它只回答"六格能不能翻面"，读数里
  *      `readings.preset.sut_overridden` 会把这件事印出来。
+ *
+ * ── 桥现在怎么取 claim（`BRG-07` 锁的就是这一条）──────────────────────────────
+ * `bridgeTakeClaim` 先拿**子会话自己的第一条用户消息**给 claim 对号（`inject.js::firstUserPromptOf`），
+ * 对不上才退回队列顺序。理由：并行派两发时子会话的启动先后与父会话的调用先后**无关**，只按队列取
+ * 会把两个角色发给对方。`BRG-04` 量的是"退回队列"那一侧，`BRG-07` 量的是"按 prompt 对号"那一侧。
+ *
+ * `BRG-07` 的翻面读数（都是 `run-all --glob=integration/brg01-toolname-bridge.test.mjs` 跑的）：
+ *   · 现役 `inject.js`（215164 B · sha256 `76F88E9A…`）⇒ **RED 0 / GREEN 7**（run `brg07-target2`）；
+ *   · `BRG_SUT_INJECTOR` 指到修前那一份**副本**（212390 B · sha256 `0314BD9B…`，与提交 `6c848dd`
+ *     和 staging 的 `preset/inject.js` 逐字节相同，`presets/**` 零字节；那一跑 `sut_overridden=true` /
+ *     `acceptance_eligible=false`）⇒ **RED 1 / GREEN 6**，红的就是 `BRG-07`：
+ *     `BRG-PARALLEL-SWAP-TEST` ×2 + `BRG-PARALLEL-SWAP-REVIEW` ×2（两组里角色都换成了对方的）+
+ *     `BRG-PARALLEL-PERSONA` ×4（run `brg07-prefix1`）—— 这一格只在"按 prompt 对号"那把修上翻面。
  */
 import { before, describe, test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -193,19 +206,25 @@ async function parentCall({ contentDir, conf, catalog, tool, args = {}, parentSi
 /**
  * 一条子会话（组员那份 `apply()`）：走一次装配，返回读数 + 日志 + 会话头的前后指纹。
  * ⚠️ 子会话头**不带** `toolName`（除非显式给）—— 这是这一票要修的那个形状。
+ * `messages`：这条会话的消息列表（桥按**第一条用户消息**给 claim 对号，见 `BRG-07`）；
+ * 不给 ⇒ 会话形状与从前一样（没有 `messages`，桥退回队列顺序）。
  */
-async function childAssemble({ contentDir, conf, catalog, childSid, header, sections = [] }) {
+async function childAssemble({ contentDir, conf, catalog, childSid, header, sections = [], messages = undefined }) {
   const headerBefore = JSON.stringify(header)
   const keysBefore = Object.keys(header).sort()
   let reading = null
+  let messagesSeen = null
   const logs = []
-  await withHarness(SUT.mod, { contentDir, config: conf, header, id: childSid, catalog }, async (harness) => {
+  await withHarness(SUT.mod, { contentDir, config: conf, header, id: childSid, catalog, messages }, async (harness) => {
     reading = digestOf(await harness.assemble(sections))
     logs.push(...harness.logs)
+    // 夹具自证：装配那一刻会话里到底有没有那条消息（见 `BRG-HARNESS-MESSAGES`）。
+    messagesSeen = typeof harness.session === 'function' ? (harness.session()?.messages ?? null) : null
   })
   return {
     child_id: childSid,
     reading,
+    messages_seen: messagesSeen,
     a0a: logs.find((line) => line.includes('A0a 身份读数')) ?? null,
     header_keys_before: keysBefore,
     header_json_same: JSON.stringify(header) === headerBefore,
@@ -874,6 +893,217 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
           '紧随组长预设子会话之后的真子会话拿不到 `team_test`'
           + `（charters=${JSON.stringify(afterLeader.reading.charters)}）—— 两种可能：组长预设的子会话把 claim 吃了、`
           + '或者那条 claim 压根没记；两种都违反契约 R7 / F8（那一类会话不许把名额定走）')
+      }
+
+      caseFail(problems)
+    })
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // BRG-07 · 并行派工：两个子会话的启动次序与父会话的调用次序**相反**
+  //
+  // 为什么要这一格（2026-11-02 live 探针）：`BRG-04` 那格量的是"子会话按派工次序起来"，
+  // 而现场不是这样 —— 并行派两发时，**谁先起来与父会话的调用先后无关**。只按队列顺序取 claim
+  // 会把两个角色发给对方（live 实测：`team_test` 拿到了 `job_technical_review` 的 claim）。
+  // 修法是拿**子会话自己的第一条用户消息**给 claim 对号（`inject.js::firstUserPromptOf`）。
+  //
+  // 这一格是那把修的**回归锁**：红的时候一眼看得出是"名字按启动次序发了"，而不是"桥没记"。
+  // 反序的两向都量（先 test 后 review / 先 review 后 test）—— 只量一个方向的话，
+  // "把匹配写成固定偏移"这种半修看不出来。
+  // ───────────────────────────────────────────────────────────────────────────
+  test('BRG-07 并行两发委派：子会话启动次序与调用次序相反时，按各自的第一条用户消息对号，角色不串位', async () => {
+    await runCase('BRG-07', async (rec) => {
+      const problems = []
+      const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
+      const fx = fixture('BRG-07')
+      rec.readings.preset = presetReadings()
+      if (!prerequisites(problems, fx)) return caseFail(problems)
+
+      const { contentDir, config, catalog } = fx
+      const header = (parentSid) => ({ cwd: contentDir, agentPreset: 'agenia-member', origin: 'subagent', parentSession: parentSid })
+      /** 父会话派工时传下来的那份 prompt（子会话的第一条用户消息就是它）。 */
+      const PROMPT_TEST = 'BRG-07 派工：这一发是 team_test —— 只跑 tests/ 下的用例，别动生产代码。'
+      const PROMPT_REVIEW = 'BRG-07 派工：这一发是 job_technical_review —— 只读评审，项目一个字节都不许改。'
+      const PROMPT_DEV = 'BRG-07 派工：这一发是 team_dev —— 只写实现，别动测试。'
+      /** 会话的消息列表：**第一条用户消息**就是要对号的那份 prompt。 */
+      const firstUser = (content) => [{ role: 'user', content }]
+      const charterOf = (role) => `agenia:charter:${role}`
+      /**
+       * 人设取样 = **手写副本**（与 `PERSONA_PREFIX` 同一族：来源是角色表 `ROLE_TABLE[role].persona`
+       * 那一列，不是从这一跑的注入结果反推 —— `cand-20261016-selfsourced-order-01`）。
+       * ⚠️ `technical-review` 与 `review` 是**两句话**：前者「你是一次性后台作业：技术评审。」，
+       *    后者「你是这个项目的独立评审」。两者混用 ⇒ 角色明明算对了，也会以人设红的样子出现（假红）。
+       */
+      const PERSONA_OF = {
+        test: PERSONA_PREFIX.test,
+        'technical-review': '你是一次性后台作业：技术评审。',
+      }
+
+      // ── 量具自证 ①：两条 prompt **不许互为子串** ────────────────────────────
+      // 桥的匹配是"相等 / 互相包含"（平台可能给 prompt 加壳或截断，所以互含也算对上）。
+      // 夹具里若一条含另一条，这一格就分不出"对号"与"撞号" —— 那会以**功能红**的样子出现（假红）。
+      const ambiguous = PROMPT_TEST.includes(PROMPT_REVIEW) || PROMPT_REVIEW.includes(PROMPT_TEST)
+      rec.readings.prompts = { test: PROMPT_TEST, review: PROMPT_REVIEW, mutually_contained: ambiguous }
+      if (ambiguous) {
+        push('BRG-HARNESS-PROMPT-AMBIGUOUS', '两条派工 prompt 互为子串 —— 夹具分不出"对号"与"撞号"，先修夹具再看下面')
+      }
+
+      /**
+       * 一组并行派工：父会话按 `calls` 的次序派，子会话按 `order` 的次序装配（反序 = 现场）。
+       * 返回两发子会话的读数。
+       */
+      const pair = async ({ tag, calls, order }) => {
+        const parentSid = `brg07-p-${tag}`
+        // ① 父会话：按 calls 的次序放行（队列 = calls 的次序）
+        const guards = []
+        for (const [index, call] of calls.entries()) {
+          const shot = await parentCall({
+            contentDir, conf: config, catalog, tool: call.tool,
+            args: { prompt: call.prompt }, parentSid, agentId: `brg07-agent-${tag}-${index}`,
+          })
+          guards.push({ tool: call.tool, ok: shot.guard?.ok ?? null, reason: shot.guard?.reason ?? null })
+        }
+        // ② 子会话：按 order 的次序装配（每条带自己的第一条用户消息）
+        const children = {}
+        for (const [index, who] of order.entries()) {
+          const call = calls.find((c) => c.who === who)
+          children[who] = await childAssemble({
+            contentDir, conf: config, catalog,
+            childSid: `brg07-c-${tag}-${index}-${who}`,
+            header: header(parentSid),
+            messages: firstUser(call.prompt),
+          })
+        }
+        return { tag, guards, children, calls, order }
+      }
+
+      // ── 主组：先派 test、再派 review；子会话**反序**起来（review 先） ──────────
+      const main = await pair({
+        tag: 'main',
+        calls: [
+          { who: 'test', tool: 'team_test', prompt: PROMPT_TEST },
+          { who: 'review', tool: 'job_technical_review', prompt: PROMPT_REVIEW },
+        ],
+        order: ['review', 'test'],
+      })
+      // ── 镜像组：先派 review、再派 test；子会话反过来（test 先） ────────────────
+      const mirror = await pair({
+        tag: 'mirror',
+        calls: [
+          { who: 'review', tool: 'job_technical_review', prompt: PROMPT_REVIEW },
+          { who: 'test', tool: 'team_test', prompt: PROMPT_TEST },
+        ],
+        order: ['test', 'review'],
+      })
+
+      const digest = (group) => ({
+        guards: group.guards,
+        assemble_order: group.order,
+        children: Object.fromEntries(Object.entries(group.children).map(([who, item]) => [who, {
+          child_id: item.child_id,
+          charters: item.reading?.charters ?? null,
+          persona_head: String(item.reading?.persona ?? '').slice(0, 30),
+          shell: item.reading?.shell ?? null,
+          messages_seen: item.messages_seen,
+          a0a: item.a0a,
+        }])),
+      })
+      rec.readings.parallel = { main: digest(main), mirror: digest(mirror) }
+
+      // ── 前置：门禁真的挂上了、两发都被放行（不然"没记 claim"会伪装成"串位"） ──
+      for (const group of [main, mirror]) {
+        for (const guard of group.guards) {
+          if (guard.ok !== true) {
+            push('BRG-GUARD-NOT-MOUNTED', `${group.tag}：\`${guard.tool}\` 的门禁没挂上（${guard.reason ?? '(无)'}）`)
+          } else if (guard.reason !== undefined && guard.reason !== null) {
+            push('BRG-GUARD-VERDICT-MOVED', `${group.tag}：放行的 \`${guard.tool}\` 被判词拦住了：${JSON.stringify(guard.reason).slice(0, 160)}`)
+          }
+        }
+      }
+      const missing = [main, mirror].flatMap((group) => Object.entries(group.children)
+        .filter(([, item]) => item.reading === null)
+        .map(([who]) => `${group.tag}:${who}`))
+      if (missing.length > 0) {
+        push('BRG-HARNESS-ASSEMBLE', `这些子会话装配没有产出（夹具/入口失败）：${missing.join(' / ')}`)
+        return caseFail(problems)
+      }
+
+      // ── 量具自证 ②：子会话的第一条用户消息**真的交到了注入器手里** ────────────
+      // 交不进去 ⇒ prompt 对号那一层根本没被量到，下面每条断言都会以"功能红"的样子红（假红）。
+      const seenBy = (group, who) => {
+        const list = group.children[who]?.messages_seen
+        const hit = (Array.isArray(list) ? list : []).find((m) => m !== null && m !== undefined && m.role === 'user')
+        return typeof hit?.content === 'string' ? hit.content : null
+      }
+      const seen = {}
+      for (const group of [main, mirror]) {
+        for (const who of ['test', 'review']) seen[`${group.tag}:${who}`] = seenBy(group, who)
+      }
+      rec.readings.messages_seen = seen
+      for (const group of [main, mirror]) {
+        for (const [who, prompt] of [['test', PROMPT_TEST], ['review', PROMPT_REVIEW]]) {
+          if (seen[`${group.tag}:${who}`] !== prompt) {
+            push('BRG-HARNESS-MESSAGES',
+              `夹具没把「${group.tag}:${who}」那条会话的第一条用户消息交到注入器手里`
+              + `（读到 ${JSON.stringify(seen[`${group.tag}:${who}`])}）—— 先修夹具，别把它读成功能红`)
+          }
+        }
+      }
+
+      // ── 判据：反序装配之后，每一发仍然是**自己那个角色** ───────────────────────
+      // 期望值的来历：契约 `.team/test/CONTRACT-A-bridge.md` R1（工具名 → 角色，九名闭表）；
+      // 用例 ID 里的角色名与 `ROLE_PAIRS`（本文件那份手写副本）是两份独立载体。
+      for (const group of [main, mirror]) {
+        for (const [who, role] of [['test', 'test'], ['review', 'technical-review']]) {
+          const item = group.children[who]
+          const charters = item.reading.charters
+          const tag = `${group.tag}:${who}`
+          if (!charters.includes(charterOf(role)) || charters.length !== 1) {
+            push(who === 'test' ? 'BRG-PARALLEL-SWAP-TEST' : 'BRG-PARALLEL-SWAP-REVIEW',
+              `「${tag}」这一发没拿到自己的角色 ${role}（charters=${JSON.stringify(charters)}）`
+              + `—— 父会话的调用次序 = ${JSON.stringify(group.calls.map((c) => c.who))}，`
+              + `子会话的启动次序 = ${JSON.stringify(group.order)}；名字按**启动次序**发了（队首 claim 被吃掉）`
+              + '。并行派工下按队列顺序取 claim 就会串位，正解是按子会话第一条用户消息对号')
+          }
+          const prefix = PERSONA_OF[role]
+          if (!String(item.reading.persona).startsWith(prefix)) {
+            push('BRG-PARALLEL-PERSONA',
+              `「${tag}」注入的人设不是 ${role} 那一份（该以「${prefix}」开头）：`
+              + `${JSON.stringify(String(item.reading.persona).slice(0, 30))}`)
+          }
+          // 工具面：两个角色都该在 row 4（窄目录被换掉 ⇒ 有 shell）。没角色 ⇒ 落在 row 5 的闭三元组。
+          if (item.reading.shell !== true) {
+            push('BRG-PARALLEL-CATALOG',
+              `「${tag}」的工具目录里没有 shell（catalog=${JSON.stringify(item.reading.catalog)}）`
+              + '—— 那一发落回 row 5 了，等于一个角色都没拿到')
+          }
+        }
+      }
+
+      // ── 老路径仍在：子会话**取不到**第一条用户消息时，退回队列顺序 ──────────────
+      // 这是修法自己承诺的兜底（`inject.js::bridgeTakeClaim`：「对不上再退回 shift 队首」）。
+      // 量不到它，就等于"加了 prompt 对号之后，没有消息列表的会话会掉成无角色"这件事没人管。
+      const fallbackParent = 'brg07-p-fallback'
+      const fallbackCall = await parentCall({
+        contentDir, conf: config, catalog, tool: 'team_dev',
+        args: { prompt: PROMPT_DEV }, parentSid: fallbackParent, agentId: 'brg07-agent-fallback',
+      })
+      const noMessages = await childAssemble({ contentDir, conf: config, catalog, childSid: 'brg07-c-fallback', header: header(fallbackParent) })
+      rec.readings.fallback = {
+        guard: { ok: fallbackCall.guard?.ok ?? null, reason: fallbackCall.guard?.reason ?? null },
+        child: noMessages.reading,
+        messages_seen: noMessages.messages_seen,
+      }
+      if (fallbackCall.guard?.ok !== true || fallbackCall.guard?.reason !== undefined && fallbackCall.guard?.reason !== null) {
+        push('BRG-GUARD-VERDICT-MOVED', `兜底那一发的 \`team_dev\` 没被放行：${JSON.stringify(fallbackCall.guard?.reason ?? null).slice(0, 160)}`)
+      }
+      if (noMessages.reading === null) {
+        push('BRG-HARNESS-ASSEMBLE', '兜底那一发装配没有产出')
+      } else if (!noMessages.reading.charters.includes(charterOf('dev'))) {
+        push('BRG-FALLBACK-LOST',
+          '子会话取不到第一条用户消息时，队列顺序那条老路径没了'
+          + `（charters=${JSON.stringify(noMessages.reading.charters)}，messages_seen=${JSON.stringify(noMessages.messages_seen)}）`
+          + '—— 修法承诺"对不上再退回 shift 队首"；这一格是那句话的判据')
       }
 
       caseFail(problems)

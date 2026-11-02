@@ -15,7 +15,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { ENV, PATHS } from './env.mjs'
 import { makeWorkspace } from './bug-surface.mjs'
@@ -208,7 +208,7 @@ export function writeMemorySource(ws, { capCount = 137, capChars = 12345 } = {})
     `const CAP_CHARS = ${String(capChars).replace(/\B(?=(\d{3})+(?!\d))/g, '_')}`,
     '',
   ].join('\n')
-  return writeJsonAtText(path.join(ws, 'presets', 'agenia', 'lib', 'memory.mjs'), text)
+  return writeJsonAtText(memorySourceAt(ws), text)
 }
 
 function writeJsonAtText(file, text) {
@@ -519,13 +519,14 @@ export function writeLegacyStore(ws, { remaining = 0 } = {}) {
  * 跑一次 `daily-cards.py`。**真子进程**、注入时钟、`TEMP`/`TMP` 落运行根（`childEnv()` 已做）。
  * 返回 `{exit_code, stdout, stderr, card, marker, cmdline, ms}`。
  */
-export function runCards(roots, { day, nowIso, extraArgs = [], timeoutMs = 180000 } = {}) {
+export function runCards(roots, { day, nowIso, extraArgs = [], timeoutMs = 180000, script = null, cwd = null } = {}) {
   const py = pythonBin()
   if (!py.ok) return { exit_code: null, stdout: '', stderr: py.note, card: cardFile(roots.ws, day), marker: failureFile(roots.ws, day), cmdline: null, ms: 0, python: py }
-  const args = [path.join(PATHS.repo, '.tools', 'daily-cards.py'), '--day', day, '--workspace', roots.ws, '--data-root', roots.dr, ...extraArgs]
+  const scriptPath = script ?? path.join(PATHS.repo, '.tools', 'daily-cards.py')
+  const args = [scriptPath, '--day', day, '--workspace', roots.ws, '--data-root', roots.dr, ...extraArgs]
   const started = Date.now()
   const res = spawnSync(py.bin, args, {
-    cwd: PATHS.repo,
+    cwd: cwd ?? PATHS.repo,
     env: setClock(roots, nowIso),
     encoding: 'utf8',
     timeout: timeoutMs,
@@ -1120,3 +1121,73 @@ export function redDetails(cells, code) {
 }
 
 export { NODE_BIN }
+
+
+// ── 容量参考线的三级候选 + 生成器副本（CARD-06 的两条腿）────────────────────────────
+/**
+ * 容量参考线那份真源在某个根下的形状：`<root>/presets/agenia/lib/memory.mjs`。
+ * `read_capacity()` 的三个候选就是这个形状分别在 **工作区 / 生成器自己那棵树 / cwd** 下拼出来的。
+ */
+export const memorySourceAt = (root) => path.join(root, 'presets', 'agenia', 'lib', 'memory.mjs')
+
+/** `read_capacity()` 的第二级候选 = **生成器自己那棵树**（`<repo>/presets/agenia/lib/memory.mjs`）。 */
+export const generatorTreeMemorySource = () => memorySourceAt(PATHS.repo)
+
+/** 生产那一份生成器的绝对路径（副本要与它逐字节相同，才叫"同一把尺子"）。 */
+export const generatorScriptPath = () => path.join(PATHS.repo, '.tools', 'daily-cards.py')
+
+/**
+ * 从一份 `memory.mjs` **解析** `CAP_COUNT` / `CAP_CHARS`。
+ *
+ * 读的是**输入**（生成器要解析的那份真源），不是生成器的输出 —— 期望值因此不是自证的。
+ * 两个正则与 `daily-cards.py::read_capacity()` 同一个形状（`^const CAP_COUNT = <数>`）：
+ * 夹具比被测面更宽松，就等于给"那段没被解析到"留了一条静默通过的缝。
+ */
+export function readCapConstants(file) {
+  if (!existsSync(file)) return { ok: false, file, count: null, chars: null, error: `E_NO_FILE: ${file}` }
+  let text = ''
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch (err) {
+    return { ok: false, file, count: null, chars: null, error: `E_READ: ${String(err?.message ?? err)}` }
+  }
+  const mCount = /^const CAP_COUNT\s*=\s*(\d+)/m.exec(text)
+  const mChars = /^const CAP_CHARS\s*=\s*([\d_]+)/m.exec(text)
+  if (mCount === null || mChars === null) {
+    return {
+      ok: false, file, count: null, chars: null,
+      error: 'E_PARSE: 文件里没有 `const CAP_COUNT` / `const CAP_CHARS`（形状变了？）',
+    }
+  }
+  return { ok: true, file, count: Number(mCount[1]), chars: Number(mChars[1].replace(/_/g, '')) }
+}
+
+/**
+ * 把**生产那一份**生成器复制到 `<dir>/tools/daily-cards.py`（生产目录零字节）。
+ *
+ * 副本的"自己那棵树" = `<dir>`（`read_capacity()` 取 `dirname(dirname(__file__))`）——
+ * 于是"让它站在没有预设的地方、跑的却是同一份脚本"这件事才量得出来。
+ */
+export function copyGeneratorInto(dir) {
+  const from = generatorScriptPath()
+  const to = path.join(dir, 'tools', 'daily-cards.py')
+  mkdirSync(path.dirname(to), { recursive: true })
+  copyFileSync(from, to)
+  return to
+}
+
+/**
+ * 把 `lib/route.mjs` 摆进合成工作区（`<ws>/presets/agenia/lib/route.mjs`）。
+ *
+ * 用途：**只让 `memory.mjs` 那一级落空**。`daily-cards.py::main()` 先 `route_constants()`（`:877`）
+ * 再 `read_capacity()`（`:920`）；`route.mjs` 也找不到时失败停在 `E_ROUTE_SOURCE`，
+ * 就量不到"三处都没有 memory.mjs"这一格了（`cand-20261020-0078`）。
+ */
+export function writeRouteSource(ws) {
+  const from = path.join(PATHS.finalPreset, 'lib', 'route.mjs')
+  const to = path.join(ws, 'presets', 'agenia', 'lib', 'route.mjs')
+  mkdirSync(path.dirname(to), { recursive: true })
+  copyFileSync(from, to)
+  return to
+}
+

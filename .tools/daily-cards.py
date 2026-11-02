@@ -115,8 +115,21 @@ def read_capacity():
 
     🔴 卡片里**不再写死** 200 / 60000 / 80000 —— 写死的那一份会漂（2026-11-02 实测：卡上还是
     60,000，权威常量已是 80,000，虚报 20,000 字符）。读不到就当场停，不许回落到旧值。
+    但「哪儿去找这份真源」不能只认工作区那一条路：没有装预设的工作区（例：AdvancedEnemyWeapon
+    只有 `src/` `config/` `data/`）会连卡都出不来（`E_CAP_SOURCE`）。照 `route_source_path()` 的
+    形状给三级回退：工作区 → 这份生成器自己的树 → cwd；三级都读不到才停。
     """
-    path = os.path.join(WS, "presets", "agenia", "lib", "memory.mjs")
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates = []
+    if isinstance(WS, str) and WS.strip():
+        candidates.append(os.path.join(WS, "presets", "agenia", "lib", "memory.mjs"))
+    candidates += [
+        os.path.join(here, "presets", "agenia", "lib", "memory.mjs"),
+        os.path.join(os.getcwd(), "presets", "agenia", "lib", "memory.mjs"),
+    ]
+    path = next((candidate for candidate in candidates if os.path.isfile(candidate)), None)
+    if path is None:
+        raise CardFailure("E_CAP_SOURCE", "读不到 memory.mjs（找过 %s）—— 容量参考线从它解析，不另抄一份" % " · ".join(candidates))
     try:
         text = open(path, encoding="utf-8").read()
     except OSError as exc:

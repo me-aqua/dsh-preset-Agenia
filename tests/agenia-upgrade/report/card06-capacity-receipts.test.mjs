@@ -29,22 +29,31 @@
  *   `D` **回执三态 · 逐段逐卡**：`present`（本周期 done）/ `missing`（本周期没有）/ `expired`（只有上一周期）/
  *       `na`（无路线、无任务 ⇒ **不判红**）；缺 / 过期 ⇒ **那张卡**的 `receipt.red:true` + 逐段点名；
  *       两张卡的 `receipt.required` 必须同值（同一条事实两个读者）。
- *   `E` **生成失败四件套**：退出码非 0 · **没有卡**（绝不绿兜底）· append-only 的失败标记（带 `at` / `day` /
- *       `code`）· stderr 上一行 `🔴` 带那个 `E_*` 码；**再失败一次 ⇒ 两行**（覆盖写 ⇒ 红）。
+ *   `E1` **容量参考线三级回退**（正向）：工作区没有 `presets/agenia/lib/memory.mjs`、**生成器自己那棵树有**
+ *       ⇒ 卡照出，参考线 = 那一份声明的两个数（今天 200 / 80000），而**实际占用**仍是快照 `totals`（73 / 4321）。
+ *   `E2` **三处候选都没有 ⇒ 生成失败**（`E_CAP_SOURCE`）：跑一份**生成器副本**（它的"自己那棵树"里也没有
+ *       `presets/agenia/lib/memory.mjs`）+ cwd 那一级也空 + 工作区也没有 ⇒ 退出码非 0 · **没有卡** ·
+ *       append-only 失败标记（带 `at` / `day` / `code`）· stderr 一行 `🔴` 带 `E_CAP_SOURCE` 且**点名试过的三处**；
+ *       **再失败一次 ⇒ 两行**（覆盖写 ⇒ 红）。
  *   `F` **卡不自证**：失败标记里的 `at` 是**注入时钟**那一刻，不是真实此刻。
  *
- * ── 现在为什么红 ─────────────────────────────────────────────────────────
- * 卡上没有容量行、没有回执段、两张卡都没有 `C2 · 验收格` / `C2 · 回执格` 那一页；
- * 失败路径今天**什么也不留**（`daily-cards.py` 的 `raise SystemExit("E_CAP_SOURCE: …")` 只有 stderr）。
+ * ── `E` 那两条腿各自在防什么 ─────────────────────────────────────────────
+ * `E1` 防的是"别的工区出不了卡"：只装了项目文件、没装预设的工作区（`src/` `config/` `data/` 那种），
+ *      生成器站的那棵树里有 `lib/memory.mjs` ⇒ 参考线从**第二级**读到，卡照出、两个数分开印。
+ * `E2` 防的是"真读不到时不出声"：**三处候选**（工作区 / 生成器那棵树 / cwd）都空 ⇒ 必须失败、
+ *      必须没有卡、必须留失败标记，而且**报文点名试过的三处**（否则"三处都没有"不可复核）。
  */
 import { before, test } from 'node:test'
+import { existsSync, mkdirSync } from 'node:fs'
+import path from 'node:path'
 import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
 import {
   CARD2_KEYS, CARD2_NAME, CARD_KEYS, CARD_NAME, CARD_SHEET, DAY, DAY_PREV, NOW, assertReasonCodes,
-  card2File, cardFile, card2SheetMissing, copyCardWithBodyPatch, failureFile, hasRed, judgeRenderAgree,
-  keysMissing, localState, makeCardRoots, readCard, readCard2, readFailures, removeSnapshot, renderChecks,
-  routeLedger, runCards, scene, setClock, sheetMissing, statOf, writeDataRoot, writeIdentity,
-  writeIdentityRaw, writeLegacyStore, writeLocal, writeMemorySource, writeReviewReports, writeRoute,
+  card2File, cardFile, card2SheetMissing, copyCardWithBodyPatch, copyGeneratorInto, failureFile, generatorScriptPath,
+  generatorTreeMemorySource, hasRed, judgeRenderAgree, keysMissing, localState, makeCardRoots, memorySourceAt,
+  readCapConstants, readCard, readCard2, readFailures, removeSnapshot, renderChecks, routeLedger, runCards, scene,
+  setClock, sha256Of, sheetMissing, statOf, writeDataRoot, writeIdentity, writeIdentityRaw, writeLegacyStore,
+  writeLocal, writeMemorySource, writeReviewReports, writeRoute, writeRouteSource,
 } from '../support/card-surface.mjs'
 
 before(() => {
@@ -638,17 +647,142 @@ test('CARD-06 容量行 + 两段回执（两张卡）+ 卡本身：参考线读 
       }
     }
 
-    // ── E/F · 生成失败四件套（外加 append-only）──────────────────────────
+    // ── E1/E2 · 容量参考线三级回退（正向）+ 三处都没有（负向）────────────────────────────
     {
-      // `memory.mjs` 不在 ⇒ 生成器现行为 `SystemExit("E_CAP_SOURCE: …")`（exit 1）。
-      const roots = makeCardRoots('CARD-06', 'failure')
+      /**
+       * 现场 = 老板那个"别的工区"（`AdvancedEnemyWeapon`：只有 `src/` `config/` `data/`，没装预设）。
+       * `read_capacity()` 的候选次序是 **工作区 → 生成器自己那棵树（`dirname(dirname(__file__))`）→ cwd**；
+       * 这一格把**第一级与第三级都做成空的**、只留第二级 ⇒ 卡能出，而且参考线只能来自**第二级**：
+       *   ① 工作区没有 `presets/agenia/lib/memory.mjs`（就是"没装预设"那个工区）；
+       *   ② cwd 指到一个空目录（否则 cwd 那一级也命中仓库里那份，分不清是第二级还是第三级给的）；
+       *   ③ 生成器自己那棵树**有**（跑的是 `.tools/daily-cards.py`，`here` = 仓库根）。
+       * 参考线 = 那一份里的两个数（今天 **200 / 80000**），而**实际占用**仍是快照的 `totals`（73 / 4321）。
+       * ⚠️ 那两对数**故意不同**（参考线 vs 实际占用）：把参考线当实际占用印上去 ⇒ 这一格翻红。
+       */
+      {
+      const label = 'E1/参考线回退·生成器那棵树'
+      const roots = makeCardRoots('CARD-06', 'cap-source-fallback')
+      const cwdDir = path.join(roots.runRoot, 'card-generator-cwd', 'card-06-cap-source-fallback')
+      mkdirSync(cwdDir, { recursive: true })
       writeDataRoot(roots.dr, { day: DAY, totals: { count: 73, chars: 4321 } })
-      const run1 = runCards(roots, { day: DAY, nowIso: NOW })
+      writeRoute(roots.ws, routeLedger({ tickets: [] }))
+      writeLocal(roots.ws, DAY, localState({ day: DAY, technical: 'done', conversation: 'done' }))
+      // 不写 `writeMemorySource(roots.ws)` —— 工作区就是"没装预设"那一个现场。
+      const run = runCards(roots, { day: DAY, nowIso: NOW, cwd: cwdDir })
+      const card = readCard(cardFile(roots.ws, DAY))
+      const wsSource = memorySourceAt(roots.ws)
+      const cwdSource = memorySourceAt(cwdDir)
+      const genSource = generatorTreeMemorySource()
+      const genCaps = readCapConstants(genSource)
+      const fixture = {
+        cwd: cwdDir,
+        ws_memory_source: { file: wsSource, exists: existsSync(wsSource) },
+        cwd_memory_source: { file: cwdSource, exists: existsSync(cwdSource) },
+        generator_memory_source: {
+          file: genSource, exists: existsSync(genSource), ok: genCaps.ok,
+          count: genCaps.count, chars: genCaps.chars, error: genCaps.error ?? null,
+        },
+      }
+      // 夹具自证 ①：工作区那一份**真的不在**（在的话这一格量的就不是回退，是工作区那条老路）。
+      if (fixture.ws_memory_source.exists) {
+        push('C2-CAP-FALLBACK-FIXTURE', `E1：夹具工作区里居然有 ${wsSource} —— 这一格量的是"工作区没有、生成器那棵树有"，先修夹具`)
+      }
+      // 夹具自证 ②：第二级那一份**真的在**、两个数解析得出来。
+      if (!genCaps.ok) {
+        push('C2-CAP-FALLBACK-FIXTURE', `E1：生成器自己那棵树里的 ${genSource} ${genCaps.error ?? '读不出来'} —— 第二级候选不存在，这一格无从判`)
+      }
+      // 夹具自证 ③：第三级（cwd）那一份**也不在** —— 不然 200/80000 可能是 cwd 给的，这一格就没钉住"第二级"。
+      if (fixture.cwd_memory_source.exists) {
+        push('C2-CAP-FALLBACK-FIXTURE', `E1：cwd 那一级居然也有 ${cwdSource} —— 分不清参考线是第二级还是第三级给的，先修夹具`)
+      }
+      const okUsable = usable(readings, problems, push, label, { run, card })
+      readings[label] = { ...fixture, ...(readings[label] ?? {}) }
+      if (!okUsable) { caseFail(problems); return }
+      const cells = card.cells
+      const cap = {
+        count: cells['capacity.count'], chars: cells['capacity.chars'],
+        cap_count: cells['capacity.cap_count'], cap_chars: cells['capacity.cap_chars'],
+        state: cells['capacity.state'], source: cells['capacity.source'],
+      }
+      readings[label].capacity = cap
+      // 判据 A：参考线 = **第二级那份真源**里的两个数（回退真的发生了）
+      const wantCount = genCaps.ok ? genCaps.count : null
+      const wantChars = genCaps.ok ? genCaps.chars : null
+      if (genCaps.ok && (cap.cap_count !== wantCount || cap.cap_chars !== wantChars)) {
+        push('C2-CAP-FALLBACK-VALUE',
+          `E1：工作区没有 \`presets/agenia/lib/memory.mjs\`，生成器自己那棵树那一份声明的是 `
+          + `${JSON.stringify(wantCount)} 条 / ${JSON.stringify(wantChars)} 字符 ⇒ 卡上 \`capacity.cap_count/cap_chars\` `
+          + `必须是这两个数，实得 ${JSON.stringify(cap.cap_count)} / ${JSON.stringify(cap.cap_chars)} —— `
+          + '三级回退没有走到第二级（走到却印成别的数，同样是错的）')
+      }
+      // 判据 B：**实际占用**仍是快照的 `totals`，不许被参考线顶掉
+      if (cap.count !== 73 || cap.chars !== 4321) {
+        push('C2-CAPACITY-COUNT',
+          `E1：\`capacity.count/chars\` 必须仍是快照 \`totals\` 的 73 / 4321，实得 `
+          + `${JSON.stringify(cap.count)} / ${JSON.stringify(cap.chars)} —— 参考线（上限）与实际占用是两件事，混了就是虚报`)
+      }
+      if (cap.state !== 'green') {
+        push('C2-CAPACITY-STATE', `E1：参考线从第二级读到了、快照也在 ⇒ \`capacity.state\` 必须 \`green\`，实得 ${JSON.stringify(cap.state)}`)
+      }
+      // 判据 C：`source` 仍只许点名**快照**（参考线不进 source；§3.6）
+      if (!String(cap.source ?? '').includes('memory/snapshots')) {
+        push('C2-CAPACITY-SOURCE', `E1：\`capacity.source\` 必须点名快照路径（含 \`memory/snapshots/\`），实得 ${JSON.stringify(cap.source)}`)
+      }
+      if (genCaps.ok && (genCaps.count !== 200 || genCaps.chars !== 80000)) {
+        push('C2-CAP-FALLBACK-SPEC',
+          `E1：参考线真源现在是 ${genCaps.count} 条 / ${genCaps.chars} 字符，不是契约 §3.6 的 200 / 80000 —— `
+          + '参考线搬家 / 改数就同批改契约那一条，别让这一格跟着漂')
+      }
+    }
+
+    // ── E2 · 三处候选**都没有** ⇒ 生成失败（四件套 + 报文点名三处）──────────────────────
+    /**
+     * 为什么要**造**"三处都没有"：`read_capacity()` 的第三级候选是 **cwd**，而夹具跑生成器时 cwd 是仓库根
+     * ⇒ "把工作区那份拿掉"已经不再失败（第二级 / 第三级都找得到）。这一格因此三处一起断：
+     *   ① 跑一份生成器**副本**（`<copyRoot>/tools/daily-cards.py`，它的"自己那棵树" = `<copyRoot>`，里面没有 `presets/`）；
+     *   ② cwd 指到 `<copyRoot>/cwd`（那一级也空）；
+     *   ③ 工作区也不给 `memory.mjs`。
+     * 🔴 还要先把 `route.mjs` 摆进工作区：`main()` 先 `route_constants()`（`:877`）后 `read_capacity()`（`:920`），
+     *    `route.mjs` 也找不到的话失败会停在 `E_ROUTE_SOURCE`，这一格就量不到 `E_CAP_SOURCE`
+     *    （`cand-20261020-0078`：要证明 A 在挡，先把也会挡它的 B 调成不挡）。
+     * 🔴 副本与生产**逐字节相同**（sha256 比过）：同一把尺子，只换了它站的位置。
+     */
+      // ⚠️ E2 **不另开一层块**：老 E 段那一层 `{ … }` 还开着（E2 的现场与断言都住在它里面，
+      //    末了那个 `}` 收的就是它）。多开一层 = 花括号少一个收口 —— 补丁工具的 `node --check`
+      //    会当场拒装，但报错点落在文件末尾，白查一轮。
+      const roots = makeCardRoots('CARD-06', 'cap-source-absent')
+      const copyRoot = path.join(roots.runRoot, 'card-generator-copy', 'card-06-cap-source-absent')
+      const cwdDir = path.join(copyRoot, 'cwd')
+      mkdirSync(cwdDir, { recursive: true })
+      const scriptCopy = copyGeneratorInto(copyRoot)
+      writeRouteSource(roots.ws)
+      writeDataRoot(roots.dr, { day: DAY, totals: { count: 73, chars: 4321 } })
+      const candidates = [memorySourceAt(roots.ws), memorySourceAt(copyRoot), memorySourceAt(cwdDir)]
+      const fixtureAbsent = {
+        script_copy: scriptCopy,
+        production_script: generatorScriptPath(),
+        script_copy_same_as_production: sha256Of(scriptCopy) === sha256Of(generatorScriptPath()),
+        cwd: cwdDir,
+        candidates: candidates.map((file) => ({ file, exists: existsSync(file) })),
+      }
+      readings['E2/三处都没有'] = { ...fixtureAbsent }
+      if (!fixtureAbsent.script_copy_same_as_production) {
+        push('C2-CAP-FAIL-FIXTURE',
+          `E2：生成器副本与生产那一份不是同一份（${sha256Of(scriptCopy)} ≠ ${sha256Of(generatorScriptPath())}）`
+          + '—— 这一格就变成"跑别的脚本"了，先修夹具')
+      }
+      const leaked = fixtureAbsent.candidates.filter((c) => c.exists)
+      if (leaked.length > 0) {
+        push('C2-CAP-FAIL-FIXTURE',
+          `E2：三处候选里还有 ${leaked.length} 处能找到 memory.mjs（${leaked.map((c) => c.file).join(' · ')}）`
+          + '—— 这一格要的是"三处都没有"，先修夹具')
+      }
+      const run1 = runCards(roots, { day: DAY, nowIso: NOW, script: scriptCopy, cwd: cwdDir })
       const cardFileAbs = cardFile(roots.ws, DAY)
       const card2FileAbs = card2File(roots.ws, DAY)
       const markerAbs = failureFile(roots.ws, DAY)
       const failures1 = readFailures(roots.ws, DAY)
-      readings['E/失败1'] = {
+      readings['E2/失败1'] = {
         exit_code: run1.exit_code,
         card: statOf(cardFileAbs),
         card2: statOf(card2FileAbs),
@@ -659,8 +793,8 @@ test('CARD-06 容量行 + 两段回执（两张卡）+ 卡本身：参考线读 
       }
       if (run1.exit_code === 0) {
         push('C2-FAIL-SILENT',
-          'E：夹具里没有 `presets/agenia/lib/memory.mjs`（参考线读不到）⇒ 生成必须失败，实得 **exit 0** —— '
-          + '"看起来成功了"比失败更坏（`F-111` ⑤ 的同一条病）')
+          'E2：三处候选都没有 `presets/agenia/lib/memory.mjs`（工作区 / 生成器那棵树 / cwd）⇒ 生成必须失败，'
+          + '实得 **exit 0** —— "看起来成功了"比失败更坏（`F-111` ⑤ 的同一条病）')
       }
       if (statOf(cardFileAbs).exists) {
         push('C2-FAIL-NO-CARD',
@@ -686,8 +820,15 @@ test('CARD-06 容量行 + 两段回执（两张卡）+ 卡本身：参考线读 
         if (f?.day !== DAY) {
           push('C2-FAIL-MARKER-DAY', `E：失败标记的 \`day\` 必须是 ${DAY}，实得 ${JSON.stringify(f?.day)}`)
         }
-        if (typeof f?.code !== 'string' || !/^E_[A-Z][A-Z_]+$/.test(f.code)) {
-          push('C2-FAIL-MARKER-CODE', `E：失败标记没有点名错误码（实得 ${JSON.stringify(f)}）—— 老板要知道是哪一类失败`)
+        const code = typeof f?.code === 'string' ? f.code : null
+        if (code === null || !/^E_[A-Z][A-Z_]+$/.test(code)) {
+          push('C2-FAIL-MARKER-CODE', `E2：失败标记没有点名错误码（实得 ${JSON.stringify(f)}）—— 老板要知道是哪一类失败`)
+        } else if (code !== 'E_CAP_SOURCE') {
+          // `E_ROUTE_SOURCE` = 夹具没把 `lib/route.mjs` 摆进工作区 ⇒ `main()` 先解析 route 就停了，
+          // 这一格根本没量到 memory.mjs 那一级。那是**夹具红**，不是"生成器的红因不对"。
+          push(code === 'E_ROUTE_SOURCE' ? 'C2-CAP-FAIL-FIXTURE' : 'C2-FAIL-MARKER-CODE',
+            `E2：三处都没有 memory.mjs ⇒ 失败标记的 \`code\` 必须是 \`E_CAP_SOURCE\`，实得 ${JSON.stringify(code)}`
+            + (code === 'E_ROUTE_SOURCE' ? '（`E_ROUTE_SOURCE`：夹具没把 `lib/route.mjs` 摆进工作区，先修夹具）' : ''))
         }
       }
       const stderr = String(run1.stderr ?? '')
@@ -695,13 +836,29 @@ test('CARD-06 容量行 + 两段回执（两张卡）+ 卡本身：参考线读 
         push('C2-FAIL-STDOUT', `E：stderr 上没有那一行「🔴」（定形：「会话里一行红」的生成器侧那一半）；实得 ${JSON.stringify(stderr.trim().slice(0, 240))}`)
       }
       if (!/\bE_[A-Z][A-Z_]+\b/.test(stderr)) {
-        push('C2-FAIL-STDOUT', `E：stderr 上没有错误码（\`E_*\`）；实得 ${JSON.stringify(stderr.trim().slice(0, 240))}`)
+        push('C2-FAIL-STDOUT', `E2：stderr 上没有错误码（\`E_*\`）；实得 ${JSON.stringify(stderr.trim().slice(0, 240))}`)
+      }
+      // 🔴 必须是 `E_CAP_SOURCE` 那一条路（不是别的失败）：三处都没有 memory.mjs，红因只该是它。
+      if (!/\bE_CAP_SOURCE\b/.test(stderr)) {
+        push('C2-FAIL-STDOUT', `E2：stderr 上没有 \`E_CAP_SOURCE\`（实得 ${JSON.stringify(stderr.trim().slice(0, 300))}）`)
+      }
+      // 🔴 报文必须点名**试过的三处**候选（"三处都没有"要能被复核；只印一句"读不到"分不出试过几处）。
+      {
+        const norm = (text) => String(text).replace(/\\/g, '/')
+        const named = candidates.filter((file) => norm(stderr).includes(norm(file)))
+        readings['E2/失败1'].candidates = candidates.map((file) => norm(file))
+        readings['E2/失败1'].candidates_named_in_stderr = named.length
+        if (named.length !== candidates.length) {
+          push('C2-FAIL-CANDIDATES',
+            `E2：失败报文只点名了 ${named.length}/${candidates.length} 处候选（缺 ${candidates.filter((f) => !named.includes(f)).map(norm).join(' · ')}）`
+            + ' —— "三处都没有"要能被复核；只印一句"读不到"就分不出它试过几处')
+        }
       }
 
       // 第二次失败 ⇒ 标记**追加**成两行（覆盖写 ⇒ 红）
-      const run2 = runCards(roots, { day: DAY, nowIso: NOW })
+      const run2 = runCards(roots, { day: DAY, nowIso: NOW, script: scriptCopy, cwd: cwdDir })
       const failures2 = readFailures(roots.ws, DAY)
-      readings['E/失败2'] = { exit_code: run2.exit_code, count: failures2.length }
+      readings['E2/失败2'] = { exit_code: run2.exit_code, count: failures2.length }
       if (failures2.length !== 2) {
         push('C2-FAIL-MARKER-APPEND',
           `E：第二次失败之后失败标记应当是 **2 行**（append-only），实得 ${failures2.length} 行 —— `

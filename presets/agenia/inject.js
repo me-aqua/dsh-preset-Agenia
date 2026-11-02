@@ -457,7 +457,14 @@ function firstUserPromptOf(session) {
     : (Array.isArray(session.messages) ? session.messages : [])
   for (const message of list) {
     if (message === null || message === undefined) continue
-    if (message.role !== 'user') continue
+    // 两种形状都认：消息对象 `{role:'user', content}` 与会话事件
+    // `{type:'user/message', data:{text, source:{kind:'user'}}}`（后者是 live 会话流里的真形状）。
+    const kind = message.type ?? message.kind
+    const role = message.role
+      ?? (kind === 'user/message' ? 'user' : undefined)
+      ?? message.source?.kind
+      ?? message.data?.source?.kind
+    if (role !== 'user') continue
     const content = message.content
     if (typeof content === 'string' && content !== '') return content
     if (Array.isArray(content)) {
@@ -467,6 +474,7 @@ function firstUserPromptOf(session) {
       if (text !== '') return text
     }
     if (typeof message.text === 'string' && message.text !== '') return message.text
+    if (typeof message.data?.text === 'string' && message.data.text !== '') return message.data.text
   }
   return ''
 }
