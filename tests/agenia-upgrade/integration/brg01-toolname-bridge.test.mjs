@@ -38,16 +38,22 @@
  *
  * ── 桥现在怎么取 claim（`BRG-07` 锁的就是这一条）──────────────────────────────
  * `bridgeTakeClaim` 先拿**子会话自己的第一条用户消息**给 claim 对号（`inject.js::firstUserPromptOf`），
- * 对不上才退回队列顺序。理由：并行派两发时子会话的启动先后与父会话的调用先后**无关**，只按队列取
- * 会把两个角色发给对方。`BRG-04` 量的是"退回队列"那一侧，`BRG-07` 量的是"按 prompt 对号"那一侧。
+ * 只认**完整相等**（`item.prompt === prompt`）：对不上就**不取**（子会话落 row 5，安全），
+ * 不退回队列队首。只有**取不到**第一条用户消息（`prompt === ''`）那一支才退回队首 ——
+ * 那条老路径仍在，由 `BRG-FALLBACK-LOST` 单独锁着。
+ * 理由：并行派两发时子会话的启动先后与父会话的调用先后**无关**，只按队列取
+ * 会把两个角色发给对方。`BRG-04` 量的是"退回队列"那一侧，`BRG-07` 量的是"按 prompt 对号（完整相等）"那一侧。
  *
- * `BRG-07` 的翻面读数（都是 `run-all --glob=integration/brg01-toolname-bridge.test.mjs` 跑的）：
- *   · 现役 `inject.js`（215164 B · sha256 `76F88E9A…`）⇒ **RED 0 / GREEN 7**（run `brg07-target2`）；
- *   · `BRG_SUT_INJECTOR` 指到修前那一份**副本**（212390 B · sha256 `0314BD9B…`，与提交 `6c848dd`
- *     和 staging 的 `preset/inject.js` 逐字节相同，`presets/**` 零字节；那一跑 `sut_overridden=true` /
- *     `acceptance_eligible=false`）⇒ **RED 1 / GREEN 6**，红的就是 `BRG-07`：
- *     `BRG-PARALLEL-SWAP-TEST` ×2 + `BRG-PARALLEL-SWAP-REVIEW` ×2（两组里角色都换成了对方的）+
- *     `BRG-PARALLEL-PERSONA` ×4（run `brg07-prefix1`）—— 这一格只在"按 prompt 对号"那把修上翻面。
+ * `BRG-07` 的翻面读数（都是 `run-all --glob=integration/brg01-toolname-bridge.test.mjs` 跑的；
+ * 字节数与 sha256 量的是**提交里那个 blob**（`HEAD:presets/agenia/inject.js`），不是工作树）：
+ *   · 现役 `inject.js`（提交 `4ed62cc` · 216504 B · sha256 `49A42EA6…`）⇒ **RED 0 / GREEN 7**
+ *     （run `m03-brg-live`；那一跑的盘上那一份与提交逐字节相同，`disk_equals_commit:true`）；
+ *   · 把 `BRG_SUT_INJECTOR` 指到修前那一份**副本**（`.team/test/2026-11-02/_probe/_run/pre-fix-inject.mjs`
+ *     · 212390 B · sha256 `0314BD9B…`；它与提交 `6c848dd` 那份逐字节相同，`presets/**` 零字节；
+ *     那一跑 `sut_overridden=true` / `acceptance_eligible=false`）
+ *     ⇒ **RED 1 / GREEN 6**，红的就是 `BRG-07`：`BRG-PARALLEL-SWAP-TEST` ×3 + `BRG-PARALLEL-SWAP-REVIEW` ×3
+ *     （三组里角色都换成了对方的）+ `BRG-PARALLEL-PERSONA` ×6（run `m04-brg-prefix`）
+ *     —— 这一格只在"按 prompt 对号（完整相等）"那把修上翻面。
  */
 import { before, describe, test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -207,7 +213,7 @@ async function parentCall({ contentDir, conf, catalog, tool, args = {}, parentSi
  * 一条子会话（组员那份 `apply()`）：走一次装配，返回读数 + 日志 + 会话头的前后指纹。
  * ⚠️ 子会话头**不带** `toolName`（除非显式给）—— 这是这一票要修的那个形状。
  * `messages`：这条会话的消息列表（桥按**第一条用户消息**给 claim 对号，见 `BRG-07`）；
- * 不给 ⇒ 会话形状与从前一样（没有 `messages`，桥退回队列顺序）。
+ * 不给 ⇒ 会话形状与从前一样（没有 `messages` ⇒ 取不到第一条用户消息，桥走 `prompt === ''` 那一支：退回队首）。
  */
 async function childAssemble({ contentDir, conf, catalog, childSid, header, sections = [], messages = undefined }) {
   const headerBefore = JSON.stringify(header)
@@ -948,8 +954,8 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
       }
 
       // ── 量具自证 ①：两条 prompt **不许互为子串** ────────────────────────────
-      // 桥的匹配是"相等 / 互相包含"（平台可能给 prompt 加壳或截断，所以互含也算对上）。
-      // 夹具里若一条含另一条，这一格就分不出"对号"与"撞号" —— 那会以**功能红**的样子出现（假红）。
+      // 桥的匹配是**完整相等**（`item.prompt === prompt`）：对不上就不取（子会话落 row 5），不按子串匹配。
+      // 夹具里若一条 prompt 含另一条，这一格就分不出"对号"与"撞号" —— 那会以**功能红**的样子出现（假红）。
       const ambiguous = PROMPT_TEST.includes(PROMPT_REVIEW) || PROMPT_REVIEW.includes(PROMPT_TEST)
       rec.readings.prompts = { test: PROMPT_TEST, review: PROMPT_REVIEW, mutually_contained: ambiguous }
       if (ambiguous) {
@@ -1110,8 +1116,9 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
         }
       }
 
-      // ── 老路径仍在：子会话**取不到**第一条用户消息时，退回队列顺序 ──────────────
-      // 这是修法自己承诺的兜底（`inject.js::bridgeTakeClaim`：「对不上再退回 shift 队首」）。
+      // ── 老路径仍在：子会话**取不到**第一条用户消息时，退回队列队首 ──────────────
+      // 那一支是 `inject.js::bridgeTakeClaim` 的 `prompt === ''` 分支（`fresh.shift()`）：
+      // 只有"读不到第一条用户消息"才退回队首；**有** prompt 而不等 ⇒ 不取（落 row 5）。
       // 量不到它，就等于"加了 prompt 对号之后，没有消息列表的会话会掉成无角色"这件事没人管。
       const fallbackParent = 'brg07-p-fallback'
       const fallbackCall = await parentCall({
@@ -1133,7 +1140,7 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
         push('BRG-FALLBACK-LOST',
           '子会话取不到第一条用户消息时，队列顺序那条老路径没了'
           + `（charters=${JSON.stringify(noMessages.reading.charters)}，messages_seen=${JSON.stringify(noMessages.messages_seen)}）`
-          + '—— 修法承诺"对不上再退回 shift 队首"；这一格是那句话的判据')
+          + '—— 修法承诺"取不到第一条用户消息时退回 shift 队首"（`prompt` 读空那一支）；这一格是那一支的判据')
       }
 
       caseFail(problems)

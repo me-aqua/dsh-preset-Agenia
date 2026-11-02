@@ -20,7 +20,7 @@
  *    不会静默放过。改这一份之前先改 `.tools/fingerprint.mjs` 的文件头，两份一起改。
  */
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { PATHS } from './env.mjs'
@@ -404,21 +404,75 @@ export function buildFixtureRepo(runRoot, name) {
 
 // ── 副本核对（"它是那个提交"，不是"某个目录"）────────────────────────────────
 /**
+ * **声明的追加**（`CPY-01` · `ticket-20261102-03` 的 `F2` 决定，2026-11-02）：
+ * 导出器带 `--with-staging` 时，副本 = 提交里的全部 blob **+ 下面这一层**。
+ *
+ * 为什么允许"多"：套件原地跑要吃 `.tools/_staging/agenia-upgrade/{preset,oracle}`
+ * （`run-all.mjs:194/201/206`），而那一层在 `.gitignore` 里、**不在**提交里；
+ * 不放行它，「副本原地跑」永远是句空话。但放行必须两向钉死：
+ *   · **只准多这两棵子树** —— 多出任何一条别的路径 ⇒ 红（不然"声明的追加"会变成"随便多"）；
+ *   · **每一条必须与活树那一份逐字节相同** —— "有这份文件"不算数。
+ */
+export const STAGING_ADDITION = Object.freeze({
+  /** 仓根下的相对前缀（副本里同形）。 */
+  prefix: '.tools/_staging/agenia-upgrade',
+  /** 允许被追加的子树（相对 `prefix`）。 */
+  dirs: Object.freeze(['preset', 'oracle']),
+})
+
+/** 活树那一层里**允许被追加**的文件清单（`rel` 相对仓根、正斜杠）。`repo` 是活树，不是副本。
+ * ⚠️ 链接（符号链接 / junction）不算：活树里若有一份是链接，副本**无法**忠实地复现它 ⇒ 不算进声明的清单
+ * （那会让"缺一份"红出来，比"字节相同"更诚实）。 */
+export function declaredAdditionPaths(repo, addition = STAGING_ADDITION) {
+  const out = []
+  const links = []
+  for (const dir of addition.dirs) {
+    const base = path.join(repo, ...addition.prefix.split('/'), dir)
+    if (!existsSync(base)) continue
+    const walk = (d) => {
+      for (const name of readdirSync(d)) {
+        const full = path.join(d, name)
+        const st = lstatSync(full)
+        const rel = path.relative(repo, full).replace(/\\/g, '/')
+        if (st.isSymbolicLink()) { links.push(rel); continue }
+        if (st.isDirectory()) walk(full)
+        else if (st.isFile()) out.push({ rel, abs: full })
+      }
+    }
+    walk(base)
+  }
+  out.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
+  out.links = links
+  return out
+}
+
+/**
  * 逐条核：副本里的**每一个**文件，其 `git blob` SHA-1 必须等于该路径在该提交里的 blob SHA-1；
  * 路径集合也必须一致（多一份 / 少一份都报）；副本里不许有 `.git`（文件或目录 ——
  * `git worktree add` 会留一个 `.git` 文件，那个文件本身就是一条指向真实仓库的活链）。
+ *
+ * `declared`（可选，默认 `[]` = 过去的行为**逐字不变**）：一组"允许追加"的层，
+ * 每项形如 `{ prefix, dirs }`（见 `STAGING_ADDITION`）。给了它之后：
+ *   · 提交里的文件：少一份 / 字节不同 ⇒ 红（**子集核对**，与从前一样）；
+ *   · 多出来的文件：落在声明的层里 ⇒ 逐字节比活树（不同 / 缺一份 ⇒ 红），
+ *     落在层外 ⇒ 红（`副本多一份…也不在声明的追加里`）。
+ * ⚠️ 链接（符号链接 / **junction**）一律红：`statSync` 会跟着链接走，"字节相同"因此可能只是"指回活树"。
+ *    副本必须是**纯树** —— 这一条对任何调用方都成立（不随 `declared` 开关）。
  */
-export function verifyCopyIsCommit({ repo, commit, copyRoot }) {
+export function verifyCopyIsCommit({ repo, commit, copyRoot, declared = [] }) {
   const problems = []
   const tree = lsTreeBlobs(repo, commit)
   if (!tree.ok) return { ok: false, problems: tree.problems, expected: [], actual: [], mismatched: [] }
   const expected = new Map(tree.entries.map((e) => [e.rel, e.sha]))
   const actual = new Map()
+  const links = []
   const walk = (dir) => {
     for (const name of readdirSync(dir)) {
       const full = path.join(dir, name)
-      const st = statSync(full)
+      const st = lstatSync(full)
       const rel = path.relative(copyRoot, full).replace(/\\/g, '/')
+      // 🔴 链接不跟进去：跟进去就等于把活树的字节算成"副本里有"。
+      if (st.isSymbolicLink()) { links.push(rel); continue }
       if (st.isDirectory()) walk(full)
       else if (st.isFile()) actual.set(rel, full)
     }
@@ -427,6 +481,7 @@ export function verifyCopyIsCommit({ repo, commit, copyRoot }) {
   for (const rel of actual.keys()) {
     if (rel === '.git' || rel.startsWith('.git/')) problems.push(`副本里带着 \`.git\`：${rel} —— 副本必须是**纯树**（用 \`git archive\`，或把 worktree 的 \`.git\` 文件去掉）`)
   }
+  for (const rel of links) problems.push(`副本里有链接（符号链接 / junction）：${rel} —— 副本必须是**纯树**：跟着链接走，"副本自足"就变成"借活树的字节"`)
   const missing = [...expected.keys()].filter((rel) => !actual.has(rel)).sort()
   const extra = [...actual.keys()].filter((rel) => !expected.has(rel) && rel !== '.git' && !rel.startsWith('.git/')).sort()
   const mismatched = []
@@ -435,10 +490,45 @@ export function verifyCopyIsCommit({ repo, commit, copyRoot }) {
     const got = gitBlobSha1(readFileSync(abs))
     if (got !== expected.get(rel)) mismatched.push({ rel, expected: expected.get(rel), actual: got })
   }
+  // ── 声明的追加（只有给了 `declared` 才走这一段；`[]` ⇒ 全部多出来的都是普通 extra）──
+  const declaredLive = new Map()
+  for (const addition of declared) {
+    for (const item of declaredAdditionPaths(repo, addition)) declaredLive.set(item.rel, item.abs)
+  }
+  const declaredExtra = extra.filter((rel) => declaredLive.has(rel))
+  const undeclaredExtra = extra.filter((rel) => !declaredLive.has(rel))
+  const declaredMissing = [...declaredLive.keys()].filter((rel) => !actual.has(rel)).sort()
+  const declaredMismatched = []
+  for (const rel of declaredExtra) {
+    const copyFile = actual.get(rel)
+    const got = sha256Of(readFileSync(copyFile))
+    const want = sha256Of(readFileSync(declaredLive.get(rel)))
+    if (got !== want) declaredMismatched.push({ rel, reason: 'bytes', copy: got, live: want })
+  }
   for (const rel of missing) problems.push(`副本少一份（提交里有、副本里没有）：${rel}`)
-  for (const rel of extra) problems.push(`副本多一份（副本里有、提交里没有）：${rel}`)
+  for (const rel of undeclaredExtra) problems.push(`副本多一份（副本里有、提交里没有）：${rel}`)
   for (const m of mismatched) problems.push(`副本这一份的字节不是该提交里的那一份：${m.rel}（提交 ${m.expected.slice(0, 12)}… / 副本 ${m.actual.slice(0, 12)}…）`)
-  return { ok: problems.length === 0, problems, expected: [...expected.keys()].sort(), actual: [...actual.keys()].sort(), missing, extra, mismatched }
+  for (const rel of declaredMissing) problems.push(`声明的追加少一份（活树那一层有、副本里没有）：${rel} —— \`--with-staging\` 没把这 52 份都带上，副本原地跑会缺输入`)
+  for (const m of declaredMismatched) problems.push(`声明的追加这一份与活树不同：${m.rel}（活树 ${String(m.live).slice(0, 12)}… / 副本 ${String(m.copy).slice(0, 12)}…）—— 副本里的不是这一份`)
+  return {
+    ok: problems.length === 0,
+    problems,
+    expected: [...expected.keys()].sort(),
+    actual: [...actual.keys()].sort(),
+    missing,
+    extra,
+    mismatched,
+    /** 副本里的链接（符号链接 / junction）：副本必须是纯树，有一条就不算自足。 */
+    links,
+    /** 声明的追加：活树那层一共几条、副本里命中几条、缺了/不一样的是哪些。 */
+    declared: {
+      live_paths: declaredLive.size,
+      in_copy: declaredExtra.length,
+      missing: declaredMissing,
+      mismatched: declaredMismatched.map((m) => ({ rel: m.rel, reason: m.reason })),
+    },
+    undeclared_extra: undeclaredExtra,
+  }
 }
 
 // ── 校验侧 ──────────────────────────────────────────────────────────────────
@@ -503,10 +593,15 @@ function runJsonCli(file, args, { cwd = PATHS.repo, timeoutMs = 180000, env = pr
   return { exit: r.status ?? (r.error ? -1 : 1), json, json_error: jsonError, stdout, stderr }
 }
 
-/** 导出：`--repo <root> --commit <sha> --out <dir> [--live-baseline <file>] --json`
- *  ⇒ 副本 + 读数；给了 `--live-baseline` 才量活树那一刻（否则 `live_baseline: null`，**不是**"没变"）。 */
-export function runExport({ exporter, repo, commit, out, liveBaseline = null, timeoutMs } = {}) {
+/**
+ * 导出：`--repo <root> --commit <sha> --out <dir> [--with-staging] [--live-baseline <file>] --json`
+ *  ⇒ 副本 + 读数；给了 `--live-baseline` 才量活树那一刻（否则 `live_baseline: null`，**不是**"没变"）。
+ * `withStaging`：让导出器把声明的 staging 那一层（`STAGING_ADDITION`）一起带进副本 ——
+ * 没有它，副本原地跑永远缺那 52 份输入（`CPY-01`）。
+ */
+export function runExport({ exporter, repo, commit, out, liveBaseline = null, withStaging = false, timeoutMs } = {}) {
   const args = ['--repo', repo, '--commit', commit, '--out', out, '--json']
+  if (withStaging) args.push('--with-staging')
   if (liveBaseline) args.push('--live-baseline', liveBaseline)
   return runJsonCli(exporter, args, { timeoutMs })
 }

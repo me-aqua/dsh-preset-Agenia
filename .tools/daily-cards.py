@@ -27,7 +27,8 @@
     <WS>/presets/agenia/lib/memory.mjs        容量参考线（CAP_COUNT / CAP_CHARS）
 
 出什么：
-    <WS>/.team/leader/<day>/记忆更新报告-<day>.xlsx     ← 人读四页 + `C2 · 验收格`（39 格机器读面）
+    <WS>/.team/leader/<day>/记忆更新报告-<day>.xlsx     ← 人读四页 + `C2 · 验收格`（40 格机器读面：
+                                                        契约 §2.3 的 39 个冻结 key + `capacity.cap_source`）
     <WS>/.team/leader/<day>/技术评审回执-<day>.xlsx     ← 人读一页 + `C2 · 回执格`（6 格机器读面）
 
 🔴 **两个读面与正文必须同值**（契约 C2 §2.2）：正文里出现的每一个数都要等于机器格里那一格 ——
@@ -118,6 +119,11 @@ def read_capacity():
     但「哪儿去找这份真源」不能只认工作区那一条路：没有装预设的工作区（例：AdvancedEnemyWeapon
     只有 `src/` `config/` `data/`）会连卡都出不来（`E_CAP_SOURCE`）。照 `route_source_path()` 的
     形状给三级回退：工作区 → 这份生成器自己的树 → cwd；三级都读不到才停。
+
+    返 `(CAP_COUNT, CAP_CHARS, path)`，**`path` 是赢下来那一条候选自己的路径**（三级里第一个
+    有文件的那一份）。为什么要把它交出去：同一对数字可以来自三棵内容不同的树（一个没装预设的
+    工区读到的是生成器那棵树的值、一个装了旧预设的工区读到的是它自己那棵旧树的值），
+    只印两个数、不印路径，读卡的人分不出是哪一份给的 —— 那一格是 `capacity.cap_source`。
     """
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     candidates = []
@@ -138,7 +144,7 @@ def read_capacity():
     m_chars = re.search(r"^const CAP_CHARS\s*=\s*([\d_]+)", text, re.M)
     if not (m_count and m_chars):
         raise CardFailure("E_CAP_SOURCE", "%s 里找不到 CAP_COUNT / CAP_CHARS" % path)
-    return int(m_count.group(1)), int(m_chars.group(1).replace("_", ""))
+    return int(m_count.group(1)), int(m_chars.group(1).replace("_", "")), path
 
 # ── 路线那一侧的两个常量：**解析**，不手抄（`presets/agenia/lib/route.mjs`）──────────
 # 为什么解析：`ROUTE_TASK_KINDS`（槽谓词）与 `DAY_CUT_HOURS`（04:00 切）在实现里**已经各有一份**，
@@ -931,7 +937,7 @@ def main():
     raw_totals = (rep.get("totals") or snap.get("totals") or {}) if snap_ok else {}
     totals = raw_totals if isinstance(raw_totals, dict) else {}
     totals_ok = bool(snap_ok and is_int(totals.get("count")) and is_int(totals.get("chars")))
-    cap_count, cap_chars = read_capacity()
+    cap_count, cap_chars, cap_path = read_capacity()
     maint_pool = [p for p in pool if p.get("kind") == "maintenance"]
     prop_pool  = [p for p in pool if p.get("kind") == "proposal"]
     decisions = rep.get("maintenance_decisions") or []
@@ -1213,7 +1219,7 @@ def main():
     for cell in ws4[ws4.max_row]: cell.alignment = WRAP
     widths(ws4, [("A", 26), ("B", 66), ("C", 40)])
 
-    # ── 卡 1 的机器读面（39 格，次序 = 契约 §2.3 那张表）────────────────────
+    # ── 卡 1 的机器读面（40 格 = 契约 §2.3 那 39 格 + `capacity.cap_source`；次序 = 契约 §2.3 那张表）
     card1_entries = [
         ("route.first_line", route_first_line(route, route_state), "route.headline"),
         ("route.mode", mode, "route.mode-of"),
@@ -1243,6 +1249,9 @@ def main():
         ("capacity.chars", totals.get("chars") if totals_ok else None, "memory.snapshot.totals"),
         ("capacity.cap_count", cap_count, "memory.mjs"),
         ("capacity.cap_chars", cap_chars, "memory.mjs"),
+        # 参考线的**来源**：三级候选（工作区 → 生成器那棵树 → cwd）里赢下来那一份的路径。
+        # 与 `capacity.source`（快照，管"实际占用"）是两个来源，不许合成一格。
+        ("capacity.cap_source", cap_path.replace(os.sep, "/"), "daily-cards.read_capacity"),
         ("capacity.source", snap_path.replace(os.sep, "/"), "memory.snapshot"),
         ("capacity.state", "green" if totals_ok else "red", "card.capacity"),
         ("receipt.required", receipt_required, "card.receipt"),

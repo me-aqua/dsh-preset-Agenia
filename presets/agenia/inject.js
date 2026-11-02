@@ -386,7 +386,11 @@ const ROLE_ENTRY_BY_ROLE = new Map(ROLE_TABLE.map((entry) => [entry.role, entry]
 // ─────────────────────────────────────────────────────────────
 /** 父会话 header id → FIFO 队列 `[{ toolName, at }]`。只放角色表那九个 `toolName`。 */
 const BRIDGE_CLAIMS = new Map()
-/** 子会话 agent id（`context.scope.id`）→ 第一次装配定下来的 `toolName`（第二次装配不再消费队列）。 */
+/**
+ * 子会话键 → 第一次装配定下来的 `toolName`（第二次装配不再消费队列）。
+ * 键 = `context.scope.id`；它缺失 / 不是字符串时用 `context.agent.id` 兜底（见装配那一处：
+ * 平台的 `scope` 形状会变，而"键拿不到 ⇒ 静默不钉"会让同一个子会话下一轮掉回 row 5）。
+ */
 const BRIDGE_PINNED = new Map()
 /**
  * 一条 claim 的存活窗口：**5 分钟**。
@@ -409,6 +413,21 @@ function bridgeWarnOnce(where, error) {
 
 /** 桥"取不到"的那一行：**一个子会话只喊一次**（同一会话每轮装配都会重走这条路，不能刷屏）。 */
 const BRIDGE_MISS_WARNED = new Set()
+/**
+ * `BRIDGE_PINNED` / `BRIDGE_MISS_WARNED` 两张表的头：进程级表只涨不落就是内存泄漏
+ * （每来一个子会话多一条，跑到关机为止）。与 `BRIDGE_CLAIM_CAP` 同一个道理，只是这两张是
+ * Map / Set（按**插入次序**迭代）⇒ 超了丢最旧那一条。
+ */
+const BRIDGE_STATE_CAP = 256
+
+/** 把一张桥状态表收到 `BRIDGE_STATE_CAP` 以内：删最旧的键（Map / Set 的迭代次序 = 插入次序）。 */
+function bridgeTrimState(table) {
+  while (table.size > BRIDGE_STATE_CAP) {
+    const oldest = table.keys().next()
+    if (oldest.done === true) return
+    table.delete(oldest.value)
+  }
+}
 
 /**
  * 桥失败时的那一行（第 4 关复审 F-02）：**有 `parentSession`、却没有可用 claim** 时才喊。
@@ -430,6 +449,7 @@ function bridgeWarnMiss(header, parent, queue, agentId, now) {
     : (typeof header?.id === 'string' && header.id !== '' ? header.id : parent)
   if (BRIDGE_MISS_WARNED.has(key)) return
   BRIDGE_MISS_WARNED.add(key)
+  bridgeTrimState(BRIDGE_MISS_WARNED)
   const list = Array.isArray(queue) ? queue : []
   const expired = list.filter((item) => now - item.at > BRIDGE_CLAIM_TTL_MS).length
   const oldestAt = list.length === 0 ? null : Math.min(...list.map((item) => item.at))
@@ -543,16 +563,17 @@ function bridgeRecordClaim(call) {
  * ⚠️ 返回的是**名字**，不是角色：调用方必须再核一次它在角色表里，再交给 `identityVerdict()`。
  *
  * @param {unknown} header 会话头
- * @param {string|undefined} agentId 子会话 agent id（`context.scope.id`，与 `roleOfAgent` 同一把键）
+ * @param {string|undefined} pinKey 钉住 / 告警的去重键：首选 `context.scope.id`；它缺失或不是
+ *   字符串时，调用方给的是 `context.agent.id`（装配那一处算的）。键拿不到 ⇒ 不钉（第二次装配落 row 5）。
  * @param {string} [childPrompt] 子会话第一条用户消息（对号用；取不到就退回队列顺序）
  * @returns {string|null}
  */
-function bridgeTakeClaim(header, agentId, childPrompt) {
+function bridgeTakeClaim(header, pinKey, childPrompt) {
   try {
     if (toolNameOf(header) !== null) return null
     if (header === null || header === undefined || header.origin !== 'subagent') return null
     if (presetKindOf(header) !== 'member') return null
-    const pinned = typeof agentId === 'string' ? BRIDGE_PINNED.get(agentId) : undefined
+    const pinned = typeof pinKey === 'string' ? BRIDGE_PINNED.get(pinKey) : undefined
     if (typeof pinned === 'string') return pinned
     const parent = header.parentSession
     if (typeof parent !== 'string' || parent === '') return null
@@ -561,7 +582,7 @@ function bridgeTakeClaim(header, agentId, childPrompt) {
     // 有 parentSession 却没有可用 claim ⇒ **桥这一格没接上**。这一支必须出声（一个子会话一次），
     // 否则现场只会看到"会话头里没有 toolName"，去查一条已经作废的路（复审 F-02）。
     if (!Array.isArray(queue) || queue.length === 0) {
-      bridgeWarnMiss(header, parent, queue, agentId, at)
+      bridgeWarnMiss(header, parent, queue, pinKey, at)
       return null
     }
     const fresh = queue.filter((item) => at - item.at <= BRIDGE_CLAIM_TTL_MS)
@@ -576,10 +597,13 @@ function bridgeTakeClaim(header, agentId, childPrompt) {
     const head = index >= 0 ? fresh.splice(index, 1)[0] : (prompt === '' ? fresh.shift() : undefined)
     BRIDGE_CLAIMS.set(parent, fresh)
     if (head === undefined) {
-      bridgeWarnMiss(header, parent, queue, agentId, at)
+      bridgeWarnMiss(header, parent, queue, pinKey, at)
       return null
     }
-    if (typeof agentId === 'string') BRIDGE_PINNED.set(agentId, head.toolName)
+    if (typeof pinKey === 'string') {
+      BRIDGE_PINNED.set(pinKey, head.toolName)
+      bridgeTrimState(BRIDGE_PINNED)
+    }
     return head.toolName
   } catch (error) {
     bridgeWarnOnce('消费', error)
@@ -3219,6 +3243,15 @@ export async function apply(ctx, config = {}) {
     if (context === null || context === undefined || context.scope === undefined) return result
 
     const agentId = context.scope.id
+    /**
+     * 钉住 / 告警的去重键：**首选 `context.scope.id`**（与 `roleOfAgent` 同一把键）。
+     * 它缺失 / 不是字符串时退回 `context.agent.id` —— 平台的 `scope` 形状会变（可能是数字、
+     * 也可能没有 `id` 这个键），而"键拿不到 ⇒ 静默不钉"的代价是**同一个子会话下一轮掉回 row 5**
+     * （无角色 + 窄 + 没有说明书）。两个 id 是**两个键**：这里只换 pin 的键，身份表仍用 `scope.id`。
+     */
+    const bridgeKey = typeof agentId === 'string' && agentId !== ''
+      ? agentId
+      : (typeof context.agent?.id === 'string' && context.agent.id !== '' ? context.agent.id : undefined)
 
     // ── 身份：档看会话头的 `agentPreset`，角色只看 `toolName`（定形 §2.2 的判定表）──────
     // 🔴 2026-11-01 第 4 关返修（A0a 结算）：**这里不再读 `【组员:<角色>】` 标记**。
@@ -3235,7 +3268,7 @@ export async function apply(ctx, config = {}) {
     //    并行派工时子会话启动先后不定 ⇒ 用**子会话自己的第一条用户消息**对号（prompt 是父→子
     //    唯一稳定的对应物），对不上才退回队列顺序。
     const childPrompt = firstUserPromptOf(context.agent?.session ?? context.scope?.session)
-    const claimedToolName = headerToolName === null ? bridgeTakeClaim(header, agentId, childPrompt) : null
+    const claimedToolName = headerToolName === null ? bridgeTakeClaim(header, bridgeKey, childPrompt) : null
     const usableClaim = claimedToolName !== null && ROLE_ENTRY_BY_TOOL.has(claimedToolName)
       ? claimedToolName
       : null

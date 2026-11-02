@@ -45,6 +45,14 @@ export const SYNTH_COMMON_SENSE = '# 常识（合成夹具）\n\n- 夹具常识�
 /** 假升级快照里的那个 session id —— 拿它开口的会话落在 row 0.5。 */
 export const SYNTH_LEGACY_SESSION = 'prs-legacy-session'
 
+/**
+ * `withHarness({ scopeId: MISSING_ID })` ⇒ `context.scope` 上**没有 `id` 这个键**。
+ * 为什么要一个哨兵、而不是 `scopeId: undefined`：`undefined` 在参数里读作"没给"（缺省 = 用 `id`），
+ * 而"键不存在"与"给了个 `undefined`"在注入器里都读成 `undefined` —— 这里要的是**前一种形状**，
+ * 免得将来有人拿 `'id' in scope` 做判据时，两个现场混成一个。
+ */
+export const MISSING_ID = Symbol('agenia-harness-missing-id')
+
 const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex')
 
 /**
@@ -170,13 +178,28 @@ function makeCtx({ contentDir, state, logs }) {
  * **第一条用户消息**（`firstUserPromptOf`）去给 claim 对号 —— 夹具不给它，那一条路就永远走不到
  * （2026-11-02 的并行派工那一格就是靠它量出来的）。不给 ⇒ 会话形状与从前一样（没有 `messages`）。
  *
+ * `agentId` / `scopeId`（可选）：装配那一刻 `context.agent.id` / `context.scope.id` 各自是什么。
+ * **不给 ⇒ 两个都等于 `id`**（与从前逐字相同的形状）。给它是为了量**两者分叉**的现场：
+ * 注入器里 `agentId = context.scope.id`（`inject.js:3221`），而 `context.agent.id` 是另一个可取到的键
+ * —— "`scope.id` 不是字符串时还钉不钉得住"这件事只有让它们分叉才量得到（`BMAP-01`）。
+ * `scopeId` 给 `MISSING_ID` ⇒ `context.scope` 上**连 `id` 这个键都没有**（"缺失"与"给了个坏值"是两形）。
+ * 量具自证：`contextSeen()` 回报**最近一次装配真的传进去**的那两个 id —— 没有它，
+ * "传进去的确实是坏形状"就退回自报（`mig-test-05`）。
+ *
  * @param {object} mod  `inject.js` 的模块
- * @param {{contentDir: string, config: object, header: object, id: string, catalog: object[], messages?: object[], quietMs?: number}} input
- * @param {(h: {assemble: Function, guard: Function, logs: string[], newSession: Function, session: Function}) => Promise<void>} fn
+ * @param {{contentDir: string, config: object, header: object, id: string, catalog: object[], messages?: object[], quietMs?: number, agentId?: unknown, scopeId?: unknown}} input
+ * @param {(h: {assemble: Function, guard: Function, logs: string[], newSession: Function, session: Function, contextSeen: Function}) => Promise<void>} fn
  */
 export async function withHarness(mod, input, fn) {
   const logs = []
   const state = { session: { id: input.id, header: input.header, messages: input.messages } }
+  /**
+   * 装配那一刻交给注入器的两个 id（缺省都等于 `input.id`）。
+   * `=== undefined` 才算"没给"：显式给 `null` / 数字 / 空串都是**要在现场出现的坏形状**。
+   */
+  const agentIdOf = () => (input.agentId === undefined ? state.session.id : input.agentId)
+  const scopeIdOf = () => (input.scopeId === undefined ? agentIdOf() : input.scopeId)
+  let contextSeen = null
   const sink = (line) => logs.push(String(line))
   const originalError = console.error
   console.error = (...args) => sink(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '))
@@ -204,9 +227,23 @@ export async function withHarness(mod, input, fn) {
       session() {
         return state.session
       },
+      /** 装配那一刻真的交给注入器的两个 id（量具自证；没装配过 ⇒ `null`）。 */
+      contextSeen() {
+        return contextSeen
+      },
       /** 走一次 `system-prompt/assemble` 瀑布；`sections` 缺省 = 空。 */
       async assemble(sections = []) {
-        const agent = { id: state.session.id, session: state.session }
+        // ⚠️ `agent` 与 `scope` 是**两个对象**（不是从前那种同一个引用）：注入器两边都读
+        //    （`context.agent.session` / `context.scope.session`），而不比引用 —— 量"两个 id 分叉"必须让它们分开。
+        const session = state.session
+        const agent = { id: agentIdOf(), session }
+        // `MISSING_ID` ⇒ 连 `id` 这个键都不放到 `scope` 上（"缺失"那一形，与"给了个坏值"分开量）。
+        const scope = input.scopeId === MISSING_ID ? { session } : { id: scopeIdOf(), session }
+        contextSeen = {
+          agent_id: agent.id,
+          scope_id: scope.id,
+          scope_has_id: Object.prototype.hasOwnProperty.call(scope, 'id'),
+        }
         const assembly = {
           sections: Array.isArray(sections) ? [...sections] : [],
           contexts: [],
@@ -215,7 +252,7 @@ export async function withHarness(mod, input, fn) {
         }
         let out = assembly
         for (const handler of built.handlers.get('system-prompt/assemble') ?? []) {
-          out = await handler(out, { agent, scope: agent }, async () => out)
+          out = await handler(out, { agent, scope }, async () => out)
         }
         return out
       },
