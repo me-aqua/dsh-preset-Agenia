@@ -475,6 +475,16 @@ function firstUserPromptOf(session) {
     }
     if (typeof message.text === 'string' && message.text !== '') return message.text
     if (typeof message.data?.text === 'string' && message.data.text !== '') return message.data.text
+    // live 会话事件里的真形状：正文在 `data.content`（字符串或分块数组），不在 `data.text`。
+    // 技术评审 2026-11-02 F1 实测：解出来的子会话流就是这一形；只读 `data.text` 会永远取空。
+    const dataContent = message.data?.content
+    if (typeof dataContent === 'string' && dataContent !== '') return dataContent
+    if (Array.isArray(dataContent)) {
+      const text = dataContent
+        .map((part) => (typeof part === 'string' ? part : (typeof part?.text === 'string' ? part.text : '')))
+        .join('')
+      if (text !== '') return text
+    }
   }
   return ''
 }

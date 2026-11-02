@@ -927,6 +927,14 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
       const PROMPT_DEV = 'BRG-07 派工：这一发是 team_dev —— 只写实现，别动测试。'
       /** 会话的消息列表：**第一条用户消息**就是要对号的那份 prompt。 */
       const firstUser = (content) => [{ role: 'user', content }]
+      /**
+       * **live 会话流里的真形状**（技术评审 2026-11-02 F1 实测）：事件对象，
+       * 正文在 `data.content`（分块数组），不在 `data.text`。桥只读 `data.text` 时永远取空。
+       */
+      const firstUserEvent = (content) => [{
+        type: 'user/message',
+        data: { content: [{ type: 'text', text: content }], source: { kind: 'user' } },
+      }]
       const charterOf = (role) => `agenia:charter:${role}`
       /**
        * 人设取样 = **手写副本**（与 `PERSONA_PREFIX` 同一族：来源是角色表 `ROLE_TABLE[role].persona`
@@ -952,7 +960,7 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
        * 一组并行派工：父会话按 `calls` 的次序派，子会话按 `order` 的次序装配（反序 = 现场）。
        * 返回两发子会话的读数。
        */
-      const pair = async ({ tag, calls, order }) => {
+      const pair = async ({ tag, calls, order, messagesOf = firstUser }) => {
         const parentSid = `brg07-p-${tag}`
         // ① 父会话：按 calls 的次序放行（队列 = calls 的次序）
         const guards = []
@@ -971,7 +979,7 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
             contentDir, conf: config, catalog,
             childSid: `brg07-c-${tag}-${index}-${who}`,
             header: header(parentSid),
-            messages: firstUser(call.prompt),
+            messages: messagesOf(call.prompt),
           })
         }
         return { tag, guards, children, calls, order }
@@ -996,6 +1004,19 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
         order: ['test', 'review'],
       })
 
+      // ── 事件组：同样的反序，但子会话的消息列表是**live 会话事件的真形状** ─────────
+      // 技术评审 2026-11-02 F1：live 里正文在 `data.content[0].text`，不在 `data.text`。
+      // 只量消息对象形状的话，`firstUserPromptOf` 读空后回退队列顺序，这一格会以"恰好对了"的绿出现。
+      const event = await pair({
+        tag: 'event',
+        calls: [
+          { who: 'test', tool: 'team_test', prompt: PROMPT_TEST },
+          { who: 'review', tool: 'job_technical_review', prompt: PROMPT_REVIEW },
+        ],
+        order: ['review', 'test'],
+        messagesOf: firstUserEvent,
+      })
+
       const digest = (group) => ({
         guards: group.guards,
         assemble_order: group.order,
@@ -1008,10 +1029,10 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
           a0a: item.a0a,
         }])),
       })
-      rec.readings.parallel = { main: digest(main), mirror: digest(mirror) }
+      rec.readings.parallel = { main: digest(main), mirror: digest(mirror), event: digest(event) }
 
       // ── 前置：门禁真的挂上了、两发都被放行（不然"没记 claim"会伪装成"串位"） ──
-      for (const group of [main, mirror]) {
+      for (const group of [main, mirror, event]) {
         for (const guard of group.guards) {
           if (guard.ok !== true) {
             push('BRG-GUARD-NOT-MOUNTED', `${group.tag}：\`${guard.tool}\` 的门禁没挂上（${guard.reason ?? '(无)'}）`)
@@ -1020,7 +1041,7 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
           }
         }
       }
-      const missing = [main, mirror].flatMap((group) => Object.entries(group.children)
+      const missing = [main, mirror, event].flatMap((group) => Object.entries(group.children)
         .filter(([, item]) => item.reading === null)
         .map(([who]) => `${group.tag}:${who}`))
       if (missing.length > 0) {
@@ -1032,15 +1053,24 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
       // 交不进去 ⇒ prompt 对号那一层根本没被量到，下面每条断言都会以"功能红"的样子红（假红）。
       const seenBy = (group, who) => {
         const list = group.children[who]?.messages_seen
-        const hit = (Array.isArray(list) ? list : []).find((m) => m !== null && m !== undefined && m.role === 'user')
-        return typeof hit?.content === 'string' ? hit.content : null
+        const hit = (Array.isArray(list) ? list : []).find((m) =>
+          m !== null && m !== undefined
+          && (m.role === 'user' || m.type === 'user/message' || m.kind === 'user/message' || m.data?.source?.kind === 'user'))
+        if (hit === undefined) return null
+        if (typeof hit.content === 'string') return hit.content
+        const dataContent = hit.data?.content
+        if (typeof dataContent === 'string') return dataContent
+        if (Array.isArray(dataContent)) {
+          return dataContent.map((part) => (typeof part === 'string' ? part : (part?.text ?? ''))).join('')
+        }
+        return null
       }
       const seen = {}
-      for (const group of [main, mirror]) {
+      for (const group of [main, mirror, event]) {
         for (const who of ['test', 'review']) seen[`${group.tag}:${who}`] = seenBy(group, who)
       }
       rec.readings.messages_seen = seen
-      for (const group of [main, mirror]) {
+      for (const group of [main, mirror, event]) {
         for (const [who, prompt] of [['test', PROMPT_TEST], ['review', PROMPT_REVIEW]]) {
           if (seen[`${group.tag}:${who}`] !== prompt) {
             push('BRG-HARNESS-MESSAGES',
@@ -1053,7 +1083,7 @@ describe('integration · toolname-bridge (任务 A 绕行)', () => {
       // ── 判据：反序装配之后，每一发仍然是**自己那个角色** ───────────────────────
       // 期望值的来历：契约 `.team/test/CONTRACT-A-bridge.md` R1（工具名 → 角色，九名闭表）；
       // 用例 ID 里的角色名与 `ROLE_PAIRS`（本文件那份手写副本）是两份独立载体。
-      for (const group of [main, mirror]) {
+      for (const group of [main, mirror, event]) {
         for (const [who, role] of [['test', 'test'], ['review', 'technical-review']]) {
           const item = group.children[who]
           const charters = item.reading.charters

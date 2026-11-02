@@ -775,6 +775,20 @@ def local_state_of(ws, day):
     return value if isinstance(value, dict) else None
 
 
+def node_of_local_state(state, node_key):
+    """本地状态里三段节点的读面：**顶层那一个**是今天的形状（`technical` / `conversation` / `memory_review`）；
+    别处/老形状可能把它收在 `nodes` 下面 —— 两种都认，顶层优先。"""
+    if not isinstance(state, dict):
+        return None
+    top = state.get(node_key)
+    if isinstance(top, dict):
+        return top
+    nodes = state.get("nodes")
+    if isinstance(nodes, dict) and isinstance(nodes.get(node_key), dict):
+        return nodes[node_key]
+    return None
+
+
 def receipt_segment(ws, day, node_key):
     """两段回执里的一段。三态 + `day` / `report_path`（契约 §3.7）。
 
@@ -784,7 +798,7 @@ def receipt_segment(ws, day, node_key):
     周期号 = `<day>`（与 `--day` 同一个键）—— **不按 24h 算**：同一场里先后生成两张卡会互相判过期。
     """
     current = local_state_of(ws, day)
-    node = ((current or {}).get("nodes") or {}).get(node_key) if isinstance((current or {}).get("nodes"), dict) else None
+    node = node_of_local_state(current, node_key)
     if isinstance(node, dict) and node.get("state") == "done" and filled(node.get("report_path")):
         return {"state": "present", "day": day, "report_path": node.get("report_path")}
 
@@ -798,7 +812,7 @@ def receipt_segment(ws, day, node_key):
         if not is_day_key(earlier) or earlier >= day:
             continue
         other = local_state_of(ws, earlier)
-        other_node = ((other or {}).get("nodes") or {}).get(node_key) if isinstance((other or {}).get("nodes"), dict) else None
+        other_node = node_of_local_state(other, node_key)
         if isinstance(other_node, dict) and other_node.get("state") == "done" and filled(other_node.get("report_path")):
             return {"state": "expired", "day": earlier, "report_path": other_node.get("report_path")}
     return {"state": "missing", "day": None, "report_path": None}
