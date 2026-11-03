@@ -544,7 +544,30 @@ export const BATCH_Z = ['CPY-01', 'CSRC-01', 'CSRC-02', 'BMAP-01', 'BDOC-01', 'F
 export const BATCH_AA = ['RGATE-01']
 
 /**
- * 已落笔的二十三批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
+ * 批次 AB 的 1 条 —— **提案不许当 bug 报告**（老板 2026-11-03 21:2x 插票；21:24 更正：只加判决岗）。
+ *
+ * 一张脸：**库的入库口只收知识，不收 bug 报告** —— 一条提案如果针对的是「一个或一组修复动作就能解决的问题」，
+ * 判决岗必须**拒绝**（落点是 bug 台账 / 那一处代码，不是长期记忆）。这一票交付的是**两份说明书里的那一节**，
+ * 所以判据是**静态文本**（现役 `presets/agenia`，与 `PRS-01..04` 同一个理由：注入到岗位手里的就是那一份）。
+ *   · `A` `MJUDGE-RULE-SUBJECT` 老板原话那半句（`一个或一组修复动作`）**同一段里**的结论必须是"拒"（不是"收"）；
+ *   · `B` `MJUDGE-DISCRIMINATOR` 定形 §3 的**替换法**（`替换法` + `改(变)?那一处` + 结论 `缺陷报告`）；
+ *   · `C1` `MJUDGE-BOUNDARY-READING` 一处具体读数**不构成入库理由**；
+ *   · `C2` `MJUDGE-BOUNDARY-CARVE-OUT` **反例必须成立**：不许退化成「提到具体文件 / 具体数字就拒」；
+ *   · `D` `MJUDGE-REVIEW-CARRIES-RULE` **复核岗一个字都不许带** —— 做成"这条规矩的标记句
+ *     （`替换法` / `一个或一组修复动作`）不许出现在两份复核岗说明书里"：将来谁整节复制粘贴过去 ⇒ 当场红
+ *     （钉"标记句"而不是"哈希逐字节不变"：那两份与这条规矩无关的合法改动不该被判红）。
+ * 另一条腿是**判据自己的可翻面性**（今天就量，不等实现）：用例体内一具**合成阳性对照** + **六把刀**
+ * （删替换法段 / 删读数边界 / 删反例 / 把"拒绝"换成"接受" / 标题去掉「入库」 / 把那一节粘进复核岗），
+ * 每把刀**只许翻它那一面**；红在那一族（`MJUDGE-CONTROL-FAIL` / `MJUDGE-KNIFE-*`）说明尺子坏了，不是文字没写。
+ * 定形：`.team/leader/2026-11-03/定形-提案不许当bug报告.md`。
+ * ⚠️ 它**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G…AA 的规矩。
+ * ⚠️ **分母 131 → 132**（一格：这一票的六个面是**同一句话的六张脸**——"这条规矩进了判决岗、没进复核岗"，
+ *    一把刀只能落在其中一面，但它们同住一份文本、同一个判定体，拆成六格只会让"哪一面坏了"更贵）。
+ */
+export const BATCH_AB = ['MJUDGE-01']
+
+/**
+ * 已落笔的二十四批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
  * 批次 L 是 `F-148` 思考链过滤（同日 · 紧急票），批次 M 是 `F-152` 板子三态（同日），
@@ -564,8 +587,10 @@ export const BATCH_AA = ['RGATE-01']
  * 一格一张票，红的时候一眼看得出是哪张票）。
  * 批次 AA 是**每日评审闸**（`RGATE-01`，2026-11-03；老板 09:10 点破判决没回来就派评审，`bug-20261103-01`）——
  * 打的同样是**现役** `presets/agenia`；staged 靶子是否已同版由入口的 `F57-TARGET` 每次现量（这里不写死差额）。
+ * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
+ * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -593,7 +618,8 @@ const BATCH_OF = (id) =>
                                                 : BATCH_X.includes(id) ? 'X' : BATCH_Y.includes(id) ? 'Y'
                                                   : BATCH_Z.includes(id) ? 'Z'
                                                     : BATCH_AA.includes(id) ? 'AA'
-                                                      : null
+                                                      : BATCH_AB.includes(id) ? 'AB'
+                                                        : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -718,6 +744,10 @@ const F = {
    *  时钟由 `node:test` 的 `mock.timers` 钉住：这道闸判的是"今天的报告在不在"，
    *  不钉时钟就会随墙钟漂（`RGATE-CLOCK-*` 把"钉没钉上"与功能红分开报）。 */
   rgate01: 'integration/rgate01-daily-review-gate.test.mjs',
+  /** 批次 AB · **提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票）——
+   *  判两份判决岗说明书（`team/` + `job-briefs/`）里那一节 + 四个面，外加**复核岗不许带**那条标记句。
+   *  静态文本腿：打**现役** `presets/agenia`（定形 §4 点名的两个落点就在这棵树里，岗位读到的是它）。 */
+  mjudge01: 'static/mjudge01-judge-charter.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -921,6 +951,11 @@ const ROWS = [
   // （`<内容根>/.runtime/reports/memory-update/<day>.json`），不钉 `phase` 字段。
   // 判据口径、四格、量具自证逐条写在 `integration/rgate01-daily-review-gate.test.mjs` 的文件头。
   ['RGATE-01', 'guard', F.rgate01, '每日评审闸（**生产** `presets/agenia/inject.js::dailyReviewGateVerdict`，`bug-20261103-01`）：`job_conversation_review` / `job_technical_review` 必须等**今天**的记忆判决报告落盘 —— `A` 没有 `2026-11-02` 的报告 ⇒ 两个工具**都**被 `tools.guard` 拒、码**恰好** `E_REVIEW_BEFORE_JUDGE`（且**不是**门禁里另外那几个码 `E_GUARD_*`）、报文点名 `2026-11-02` 且不点名 `2026-11-03`；`B` 种一份 `2026-11-02` 报告 ⇒ **同一个调用**（`name`/`arguments`/`agent` 逐字相同）放行、放行值必须是 `undefined`（红的合法性来源：唯一变量是那份文件在不在）；`C` 阴性对照 `team_test` 在**同一副"没有报告"的根**上照样放行；`D` **一天从本地 04:00 切**：两个钉住的时刻（本地 `2026-11-03 01:30:00` / `04:00:01`）× 三副报告现场（无 / 只有 11-02 / 只有 11-03）—— 01:30 点名 `11-02`、04:00:01 点名 `11-03`，且 11-03 的报告在切点下方**不顶用**、11-02 的报告在切点上方**不顶用**（两向一夹，整数小时的切点只能是 4）；`C2` 同一个工具显式 `run_in_background:false` ⇒ 后台硬门先拒、用**另一句话**（运行时报文不带码，码 `E_GUARD_JOB_FOREGROUND` 只活在纯函数 verdict 里，`GRD-01` 钉）—— 证明"精确码"不是碰巧、两个闸的报文分得开；`P` 夹具自证（guard 挂没挂上 `RGATE-HARNESS-GUARD` / 时钟遮没遮住 `RGATE-CLOCK-NOT-DATE` + 用完还原 / 三副根的报告现场恰好 无·11-02·11-03 / 那个时刻真的落在切点下方）。时钟由 `node:test` 的 `mock.timers`（`apis:[Date]`）钉住，`Date.now()` 与 `new Date()` 两个入口都验 —— 不钉就会随墙钟漂。⚠️ 打的是**现役**树：那道闸只在生产上，staged 靶子还没同步它（`F57-TARGET` 会照实报）', '批次 AA'],
+
+  // ── 批次 AB · 提案不许当 bug 报告（老板 2026-11-03 21:2x 插票 · 21:24 更正「只加判决岗」）──────────
+  // 一句话：**库的入库口只收知识，不收 bug 报告。** 判据口径、六个面、六把刀逐条写在
+  // `static/mjudge01-judge-charter.test.mjs` 的文件头；打的是**现役** `presets/agenia`（定形 §4 逐字点名的两个落点）。
+  ['MJUDGE-01', 'static-doc', F.mjudge01, '**提案不许当 bug 报告**（老板 2026-11-03 21:2x 插票；定形 `.team/leader/2026-11-03/定形-提案不许当bug报告.md`）：两份**判决岗**说明书（`team/memory-judge.md` + `job-briefs/memory-judge.md`）里必须有**一节**（标题点名「入库 / 进库」），节内四个面**各要一个段落**同时成立 —— `A` `MJUDGE-RULE-SUBJECT` 老板原话那半句（一个或一组修复动作）与"拒"的结论在**同一段**里（拒的词：拒绝 / 不进库 / 不通过 / 不收 / 驳回；换成"接受"⇒ 必红）；`B` `MJUDGE-DISCRIMINATOR` 定形 §3 的**替换法**（`替换法` + `改(变)?那一处` + 结论 `缺陷报告`）；`C1` `MJUDGE-BOUNDARY-READING` 一处具体读数**不构成入库理由**；`C2` `MJUDGE-BOUNDARY-CARVE-OUT` **反例必须成立**（不许退化成"提到具体文件 / 具体数字就拒"）—— 整节没写 ⇒ **只**报 `MJUDGE-SECTION-MISSING`（不拿四条噪音盖住第一条）；`D` `MJUDGE-REVIEW-CARRIES-RULE` **复核岗一个字都不许带**：这条规矩的标记句（`替换法` / `一个或一组修复动作`）不许出现在 `team/memory-review.md` 与 `job-briefs/memory-review.md` 里（将来整节复制粘贴过去 ⇒ 当场红；钉标记句而非哈希，是为了不把与这条规矩无关的合法改动判红）。另一条腿是**判据自己的可翻面性**（今天就量，不等实现）：用例体内一具**合成阳性对照**（照契约写的最小实现 ⇒ 0 问题）+ **六把刀**（删替换法段 / 删读数边界 / 删反例 / "拒绝"换"接受" / 标题去掉「入库」/ 那一节粘进复核岗），每把刀**只许翻它那一面**（`MJUDGE-KNIFE-NOT-FLIPPED` / `-OVERREACH` / `-WRONG-VECTOR` / `MJUDGE-CONTROL-FAIL` 是**尺子坏了**，不是文字没写）。`AGENIA_MJUDGE_CHARTER_ROOT` 只给对照/刀用，一被设置就记 **HOLD**（那一跑不是对现役的判据）', '批次 AB'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -977,8 +1012,12 @@ export const GROUP_COUNTS = {
    * 第 6 条判定（每日评审闸）—— 它不另开一族：拒它的是 guard 回调、被拒的是委派工具，
    * 与 `GRD-01..03` 同一个出口。差别只在量法：`GRD-*` 量纯函数 + 假 ctx，`RGATE-01` 量
    * **真 `apply()` 注册的那个回调**（载具 `support/injector-harness.mjs`）。
+   *
+   * `static-doc` 6 → 7：`MJUDGE-01`（批次 AB，2026-11-03 21:2x 老板插票）是**静态文本腿** ——
+   * 判两份判决岗说明书里那一节（主语 / 替换法 / 两个边界）与"复核岗不许带"那一面；
+   * 它与 `STAT-04` / `DOC-01` 同一族（"文档里必须出现 / 必须消失的字面量"），所以不另开一族。
    */
-  'static-doc': 6, route: 8, store: 4, memory: 12, guard: 4, job: 4,
+  'static-doc': 7, route: 8, store: 4, memory: 12, guard: 4, job: 4,
   /** `receipt` 4 → 5 / `health` 2 → 3：`F-162` 的两半（`RCP-05` 回执三件套进 `local-mark` ·
    *  `HLT-03` 卡的第二半 = `E_RECEIPT_ANCHOR` 那一支）各自归到它守的那一族。契约见 `CONTRACT.md` §12.2.4 / §12.5。 */
   /** `review` 3 → 5：`F-160` 的两格（`REV-04` 活树动了仍然有效 · `REV-05` 副本被动过就作废）——
@@ -1047,9 +1086,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1076,6 +1115,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
