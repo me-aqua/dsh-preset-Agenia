@@ -3,7 +3,7 @@
  *
  * 病根（评审原话）：只读副本原地跑不动检查器（staging 被 gitignore）——「124/124」量的是**活树**。
  * 契约（这一格钉的那一句）：**一个由 `.tools/tree-at-commit.mjs --with-staging` 在某个提交上导出的副本，
- * 要自足到能原地跑套件：提交里的文件逐字节都在、多出来的只有那 52 份"声明的追加"
+ * 要自足到能原地跑套件：提交里的文件逐字节都在、多出来的只有那一层"声明的追加"
  * （`.tools/_staging/agenia-upgrade/{preset,oracle}`，与活树逐字节相同），而套件跑起来必须吃的
  * 四条输入在副本里、且与活树逐字节相同。**
  * ⚠️ 这一格**不判**"副本原地跑全量 0 红"：跑一遍要几分钟，而且今天实测还有几条红来自**提交里根本没有的数据**
@@ -21,17 +21,28 @@
  * 这份清单是"副本自足"的可判形状；三条齐了，第 ② 条才有资格单独去判（那一票的格）。
  *
  * ── 这一格怎么判"副本就是那个提交"（2026-11-02 `F2` 的决定）────────────────────
- * 导出器带 `--with-staging` 时，副本 = 提交里的 164 份 **+** `.tools/_staging/agenia-upgrade/{preset,oracle}`
- * 这 **52 份**（活树那一层，`.gitignore` 挡着、不在提交里）。判定两向钉死：
- *   · 提交里的 164 份：少一份 / 字节不同 ⇒ 红（**子集核对**；不要求"副本里只有这些"）；
- *   · 多出来的：只准是那 52 条路径，且每一条与活树逐字节相同；多出任何一条别的 ⇒ 红。
- * 为什么不是"副本必须与提交逐字相同"：那样 `--with-staging` 一开就必然红（副本"多"了 52 份），
- * 而"副本自足"要的正是这 52 份（`support/tree-at-commit.mjs` 的 `STAGING_ADDITION` 是唯一写法）。
+ * 导出器带 `--with-staging` 时，副本 = **提交里的全部 blob** **+** `.tools/_staging/agenia-upgrade/{preset,oracle}`
+ * 那一层（活树那一层，`.gitignore` 挡着、**不在提交里**）。判定两向钉死：
+ *   · 提交里的每一份：少一份 / 字节不同 ⇒ 红（**子集核对**；不要求"副本里只有这些"）；
+ *   · 多出来的：只准是那一层里的路径，且每一条与活树逐字节相同；多出任何一条别的 ⇒ 红。
+ * 为什么不是"副本必须与提交逐字相同"：那样 `--with-staging` 一开就必然红（副本"多"了那一层），
+ * 而"副本自足"要的正是它（`support/tree-at-commit.mjs` 的 `STAGING_ADDITION` 是唯一写法）。
  *
- * ── 今天的量（2026-11-02 23:36 现量）──────────────────────────────────────────
- * `.tools/_staging/` 在 `.gitignore` 里，`git ls-tree -r HEAD` 里 `.tools/_staging` 下的路径 **0 份**；
- * 导出器已有 `--with-staging` ⇒ 副本 = **216 份**（提交 164 + 活树那 52 份追加），
- * 四条必需输入与活树逐字节相同 ⇒ 这一格**绿**。
+ * 🔴 **份数一个都不许写死在这份文件里**（2026-11-03 第三轮评审 `R3-2`：同一个量在两个载体上
+ *    出现过**三个互不相同的值**，而它每天都会变 —— 读的人拿旧数去核一份新副本，就会得出"副本被动过"）。
+ *    **唯一的来源是那一跑的读数本身**，三个数各有一个落点，别的载体只许指过来：
+ *      · 提交里的份数 = `readings.cpy01.commit_tree.files_total`
+ *        （`support/tree-at-commit.mjs::lsTreeBlobs`：`git ls-tree -r --full-tree <commit>` 的条数）；
+ *      · 声明的追加份数 = `readings.cpy01.declared_staging.live_paths` /
+ *        `declared_staging.manifest.mine.files`（`declaredAdditionPaths` / `declaredAdditionManifest` 现算）；
+ *      · 副本里的份数 = `readings.cpy01.copy_is_commit.files`（副本目录逐份枚举）。
+ *    这三者必须满足 `副本 = 提交 + 声明的追加`，由 `CPY-FILE-COUNT-DRIFT` 当场判 —— 文档里再抄一份
+ *    数字，就是给下一次"写死了没跟上"留的位置。
+ *
+ * ── 这一格的现场（每一项都由这一跑现量）──────────────────────────────────────
+ * `.tools/_staging/` 在 `.gitignore` 里 ⇒ 提交里 `.tools/_staging` 下的路径应当是 **0 份**
+ * （读数 `readings.cpy01.commit_tree.staging_paths`）；带 `--with-staging` 导出的副本因此 = 提交 + 那层追加，
+ * 四条必需输入与活树逐字节相同 ⇒ 这一格**绿**。**具体份数看读数，不看这段注释。**
  *
  * ── 什么会把它弄红（四种形状，各自一个红因码）──────────────────────────────────
  *   · 导出器不认这个开关 / 导出失败 ⇒ `CPY-EXPORT-STAGING`（红在**工具那一半**，不是副本缺件）；
@@ -43,8 +54,8 @@
  *
  * ── 量的是哪棵树（口径）──────────────────────────────────────────────────────
  * 副本 = `runExport()`（真子进程跑 `.tools/tree-at-commit.mjs --commit <HEAD> --with-staging`）落出来的树；
- * `verifyCopyIsCommit({ declared: [STAGING_ADDITION] })` 逐份拿 `git blob` SHA-1 对账提交那 164 份、
- * 再拿 sha256 对账那 52 份声明的追加 ⇒ **判据量的确实是那个提交的副本**，不是"某个目录"
+ * `verifyCopyIsCommit({ declared: [STAGING_ADDITION] })` 逐份拿 `git blob` SHA-1 对账提交里每一份、
+ * 再拿 sha256 对账那一层声明的追加 ⇒ **判据量的确实是那个提交的副本**，不是"某个目录"
  * （`cand-20261019-0033`：证据件必须自报它量的是哪一版）。
  */
 import { before, test } from 'node:test'
@@ -246,7 +257,7 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
     }
 
     // ── ④ 导出副本（落在运行根里；`.team/` 不在 CODE 名单里，不会把这条写进读数）──────
-    // `withStaging` ⇒ 导出器要把声明的追加（活树那 52 份）一起带进副本；没有它，副本永远缺输入。
+    // `withStaging` ⇒ 导出器要把声明的追加（活树那一层）一起带进副本；没有它，副本永远缺输入。
     const copyRoot = path.join(runRoot(), 'review-copy', 'cpy01-head')
     const exp = runExport({ exporter: exporter.file, repo: PATHS.repo, commit, out: copyRoot, withStaging: true })
     readings.export = {
@@ -268,14 +279,14 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
         + `（exit=${exp.exit} · ok=${JSON.stringify(exp.json?.ok ?? null)} · `
         + `error=${JSON.stringify(readings.export.error ?? null)} · stderr=${JSON.stringify(String(exp.stderr).slice(0, 240))}`
         + `${readings.export.missing_fields.length > 0 ? ` · 缺字段 ${JSON.stringify(readings.export.missing_fields)}` : ''}）`
-        + ' —— 这一格判的是"副本带不带那 52 份声明的追加"；导出器不认这个开关就产不出那种副本，'
+        + ' —— 这一格判的是"副本带不带那一层声明的追加"；导出器不认这个开关就产不出那种副本，'
         + '现在红在**工具那一半**（`ticket-20261102-03` 的实现侧），不是副本缺件')
       return caseFail(problems)
     }
 
     /**
-     * ⑤ 量具自证：**副本就是那个提交**（+ 恰好那 52 份声明的追加）。
-     * 判定两向钉死：提交那 164 份子集核对；多出来的只准是声明的追加，且与活树逐字节相同。
+     * ⑤ 量具自证：**副本就是那个提交**（+ 恰好那一层声明的追加）。
+     * 判定两向钉死：提交里每一份子集核对；多出来的只准是声明的追加，且与活树逐字节相同。
      */
     const isThatCommit = verifyCopyIsCommit({ repo: PATHS.repo, commit, copyRoot, declared: [STAGING_ADDITION] })
     readings.copy_is_commit = {
@@ -409,7 +420,7 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
     /**
      * `--staging-manifest` 的三个数（`files` / `bytes` / `digest`）必须与它**自己那份 `list`** 对得上。
      * 病：`readStagingManifest` 只逐条校验条目形状、不校验清单自洽 ⇒ 一份被截断的清单
-     * （`list` 3 条、`files` 52）会被当成"声明了 52 份"照收，而"拿导出那一刻的清单核副本"这句话
+     * （`list` 3 条、`files` 却写着别的数）会被当成"声明了那一份数"照收，而"拿导出那一刻的清单核副本"这句话
      * 就变成了"信任何一份 JSON"。
      * 正反两侧各跑一次**真校验**（同一份副本、同一个 `--expect`；校验是只读的）：
      *   · **正样本**：导出那一刻记下的那份 JSON **原样** ⇒ 必须照收 —— 没有它，下面那条红不成立
@@ -540,7 +551,7 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
         same_files: exportManifest !== null && liveManifest.files === exportManifest.files,
         same_bytes: exportManifest !== null && liveManifest.bytes === exportManifest.bytes,
         note: '导出器那份是它 `stagingFilesOf()` 的清单（跳 `.runtime` + 链接）；我这份是 `declaredAdditionPaths()`；'
-          + '副本那份是从副本字节现算的。三个摘要同一个数 = 两边规则一致、且副本就是那 52 份。',
+          + '副本那份是从副本字节现算的。三个摘要同一个数 = 两边规则一致、且副本就是那一层。',
       },
     }
     if (exportManifest === null) {
@@ -560,13 +571,50 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
         `副本里那几份追加的**摘要**与活树清单不同（副本 ${String(copyDigest).slice(0, 16)}… / 清单 ${liveManifest.digest.slice(0, 16)}…）—— `
         + '路径齐了但字节不是同一批：内容冻结的要的是"同一份清单"')
     }
+    /**
+     * ── ⑥a' **份数只有一个来源**（2026-11-03 第三轮评审 `R3-2`）────────────────────────
+     * 病历：`cpy01` 的文件头写过 164 / 216，`registry` 那一行写过 171，而实际是 174 / 226 ——
+     * 三个值、两个载体、同一个量。这里把那个量**判出来**而不是再抄一遍：
+     *   副本里的份数 = 提交里的份数 + 声明的追加份数
+     * 三个加数各自只有一个落点（见文件头 🔴），一个都不许手写。
+     * ⚠️ 它同时是"文档里的数没人维护"这件事的替代物：谁把某一处写死成旧值，这一条不会红
+     *    （文档不参与判定），但**读的人只要看这一节就知道该读哪个读数** —— 所以文案里一个数都不留。
+     */
+    const countCommit = readings.commit_tree.files_total
+    const countDeclared = readings.declared_staging.live_paths
+    const countCopy = readings.copy_is_commit.files
+    const countManifestMine = readings.declared_staging.manifest.mine.files
+    const countManifestExported = readings.declared_staging.manifest.exported?.files ?? null
+    readings.file_count_invariant = {
+      commit: countCommit,
+      declared_addition: countDeclared,
+      copy: countCopy,
+      manifest_mine: countManifestMine,
+      manifest_exported: countManifestExported,
+      expected_copy: countCommit === null || countDeclared === null ? null : countCommit + countDeclared,
+      note: '副本 = 提交（`commit_tree.files_total`）+ 声明的追加（`declared_staging.live_paths`）；'
+        + '三个数各只有一个来源，见文件头 🔴（第三轮评审 `R3-2`）',
+    }
+    if (countCommit !== null && countDeclared !== null && countCopy !== countCommit + countDeclared) {
+      push('CPY-FILE-COUNT-DRIFT',
+        `副本里的份数对不上"提交 + 声明的追加"：副本 ${countCopy} 份，`
+        + `而提交 ${countCommit} 份 + 声明的追加 ${countDeclared} 份 = ${countCommit + countDeclared} 份 —— `
+        + '三个数各只有一个来源（`commit_tree.files_total` / `declared_staging.live_paths` / `copy_is_commit.files`）；'
+        + '对不上说明多带了 / 少带了一份，而不是"文档里的数写旧了"')
+    }
+    if (countManifestExported !== null && countManifestMine !== countManifestExported) {
+      push('CPY-FILE-COUNT-DRIFT',
+        `"声明的追加"有两份清单、份数却不同：测试侧 \`declaredAdditionPaths()\` = ${countManifestMine} 份，`
+        + `导出器 \`stagingFilesOf()\` = ${countManifestExported} 份 —— 两边"什么算追加"的规则已经分叉`
+        + `（跳过的是 ${JSON.stringify(liveSkipped)} / 导出器记的 ${JSON.stringify(exportSkippedNorm)}）`)
+    }
     readings.gap = {
       missing_in_copy: inCopy.filter((item) => !item.present).map((item) => item.rel),
       differs_from_live: inCopy.filter((item) => item.same_as_live === false).map((item) => item.rel),
       staging_paths_in_commit: readings.commit_tree.staging_paths,
       commit: commit.slice(0, 12),
       note: '提交里 `.tools/_staging` 下的路径数 = 0（那一层被 .gitignore 挡着）；'
-        + '副本要自足，只能靠导出器 `--with-staging` 把活树那 52 份带进来，且必须与活树逐字节相同。',
+        + '副本要自足，只能靠导出器 `--with-staging` 把活树那一层带进来，且必须与活树逐字节相同。',
     }
 
     for (const item of inCopy) {

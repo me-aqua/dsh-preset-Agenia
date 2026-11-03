@@ -161,7 +161,15 @@ function resolveCommit(repo, rev) {
   return { ok: true, sha, problems: [] }
 }
 
-/** 提交里的**全部文件**（`rel → {mode, blob}`）—— 只读 git 对象，不看工作树。 */
+/**
+ * 提交里的**全部文件**（`rel → {mode, blob}`）—— 只读 git 对象，不看工作树。
+ *
+ * 🔴 **0 条是问题，不是"空成功"**（第三轮评审 `R3-3`）：只判退出码时，0 条会一路走到"写纯树"
+ * 的循环（写 0 份）、再通过读回自证，回来一个 `ok:true` —— 下游把它读成"提交里一份都没有"。
+ * 同一句话在量具那一份（`tests/agenia-upgrade/support/tree-at-commit.mjs::lsTreeBlobs`）里已经写着，
+ * 这里是同一个事实的第二个载体：**两个载体一个口径**，改一处必须同批改另一处。
+ * （`--full-tree` 早就在：`git ls-tree -r` 不给 pathspec 时只列 cwd 前缀，从子目录调会少算。）
+ */
 function lsTree(repo, commit) {
   const r = git(['ls-tree', '-r', '-z', '--full-tree', commit], { cwd: repo })
   if (r.status !== 0) return { ok: false, entries: [], problems: [`git ls-tree ${commit} 退出码 ${r.status}：${String(r.stderr).trim().slice(0, 300)}`] }
@@ -177,6 +185,15 @@ function lsTree(repo, commit) {
     if (rel === '.git' || rel.startsWith('.git/')) { problems.push(`提交里的路径带着 .git：${rel}`); continue }
     if (rel.split('/').includes('..')) { problems.push(`提交里的路径带 ..：${rel}`); continue }
     entries.push({ rel, mode, blob })
+  }
+  if (entries.length === 0 && problems.length === 0) {
+    // ⚠️ 只在**没有别的问题**时才补这一句：有解析问题时那一条已经把原因说清了，
+    //    再加"一条路径都没读到"就是**假话**（读到了，只是都不是 blob）。
+    problems.push(
+      `git ls-tree ${commit} 返回 **0 条**（repo=${path.resolve(repo)}）—— 0 条不是"提交是空的"，`
+        + '是这个提交上一条路径都没读到：先核 `--repo` 指的是不是那个仓库、`--commit` 解析到的是不是那个提交'
+        + '（量具那一份 `tests/agenia-upgrade/support/tree-at-commit.mjs::lsTreeBlobs` 同一句，`R3-3`）',
+    )
   }
   return { ok: problems.length === 0, entries, problems }
 }

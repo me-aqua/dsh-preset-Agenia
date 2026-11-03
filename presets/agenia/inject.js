@@ -936,6 +936,18 @@ export async function identityDayKeyOf(nowMs) {
  */
 const DAILY_REVIEW_TOOLS = Object.freeze(new Set(['job_conversation_review', 'job_technical_review']))
 
+/** 日子键的形状（契约 §13.1：`YYYY-MM-DD`）。坏值 = 拿不到 —— 不许拿去拼路径。 */
+const DAY_KEY_SHAPE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * 报文里只许有**一个**"今天"（`mig-rules-18`）：原因文本里的日期形状一律遮掉。
+ * 为什么：`import` 失败的原文常常带着运行根路径（`…\_runs\2026-11-03\…`），读的人（和探针）
+ * 会把路径里的日期当成"闸点名的日子" —— 而"今天算不出来"这一支**不许点名任何一天**。
+ */
+function withoutDateShapes(text) {
+  return String(text ?? '').replace(/\d{4}-\d{2}-\d{2}/g, '<日期>')
+}
+
 /**
  * 本地日 `YYYY-MM-DD` —— **同步签名，算法仍在唯一的家**：`lib/route.mjs::dayKeyOf`（契约 §13.1）。
  *
@@ -944,22 +956,40 @@ const DAILY_REVIEW_TOOLS = Object.freeze(new Set(['job_conversation_review', 'jo
  * 取一次，把**那个函数对象**存进 `sharedDayKeyOf`；这里只是它的调用面，**不复制**切点、不复制算法
  * （`cand-20261023-0249`：一个值只许有一个定义）。
  *
- * 取不到（`lib/route.mjs` 不在 / import 失败）⇒ 返回 `null`。调用方**必须拒**并点名 ——
- * 不许退回手抄的 4（`F5` 打回的就是那份副本；"猜一个今天"比"说不知道"更坏）。
+ * 返回 `{ day, why }`：`day` 只可能是**合格的日子键**或 `null`；`why` 是**拿不到的原因**（不点名任何一天）。
+ * 🔴 **三种"拿不到"都算失败，不只判 `=== null`**（第三轮评审 `R3-6`）：① 没有 `dayKeyOf`（不是函数）；
+ * ② 它抛了；③ 它返回的不是 `YYYY-MM-DD`。只判 `null` 时，`undefined` / 空串会被拿去拼成
+ * `undefined.json` 再 `existsSync` —— 那会变成"读不到报告 ⇒ 拒"，**理由是错的**。
+ * 拿不到时**不许退回手抄的 4**，也不许拿"今天"猜（`F5` 打回的就是那份副本）。
  */
 function localDayKeySync(nowMs = Date.now()) {
-  return sharedDayKeyOf === null ? null : sharedDayKeyOf(nowMs)
+  if (typeof sharedDayKeyOf !== 'function') {
+    return { day: null, why: `没有可用的 dayKeyOf（${sharedDayKeyError ?? 'lib/route.mjs 还没加载上'}）` }
+  }
+  let day
+  try {
+    day = sharedDayKeyOf(nowMs)
+  } catch (err) {
+    return { day: null, why: `dayKeyOf 抛了：${withoutDateShapes(err?.message ?? err)}` }
+  }
+  if (typeof day !== 'string' || !DAY_KEY_SHAPE.test(day)) {
+    return {
+      day: null,
+      why: `dayKeyOf 返回的不是 YYYY-MM-DD（typeof=${day === null ? 'null' : typeof day}`
+        + `${typeof day === 'string' ? ` · 长度 ${day.length}` : ''}）`,
+    }
+  }
+  return { day, why: null }
 }
 
 function dailyReviewGateVerdict(toolName, contentDir) {
   if (!DAILY_REVIEW_TOOLS.has(toolName)) return null
-  const day = localDayKeySync()
+  const { day, why } = localDayKeySync()
   if (day === null) {
     return {
       code: 'E_REVIEW_DAY_UNKNOWN',
-      message: '今天算不出来（`lib/route.mjs::dayKeyOf` 没取到：'
-        + `${sharedDayKeyError ?? '装配时没加载上'}）—— 两份每日评审不知道要等哪一天的判决，所以这一发**拒**；`
-        + '先把那份文件修回来（它在 `presets/agenia/lib/route.mjs`，是切点唯一的家），别拿"今天"猜',
+      message: `今天算不出来（${withoutDateShapes(why)}）—— 两份每日评审不知道要等哪一天的判决，所以这一发**拒**；`
+        + '先把 `presets/agenia/lib/route.mjs` 那份切点修回来（它是唯一的家），别拿"今天"猜',
     }
   }
   const report = join(contentDir, RUNTIME_DIR, 'reports', 'memory-update', `${day}.json`)

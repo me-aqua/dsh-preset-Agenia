@@ -14,10 +14,13 @@
  * import 崩 / 夹具异常（那是"换个崩法"，不是判据）。
  *
  * ── 量的是哪棵树（口径，别读成"打的是 E:\Harness"）────────────────────────────
- * 本文件**不用** `PATHS.finalPreset`：`support/env.mjs` 与 `root-guard.mjs` 里的根是**硬编码**的
- * `E:\Harness`（活树 = 旧 10 份 bundle），照它量就量错了树（`mig-i16-staging-tree-01`）。
- * 这里按 `import.meta.url` 推**本工作区**的 `presets/agenia`，并把路径 + `inject.js` 的 sha256
- * 写进每一格的 `readings.preset`（"这份证据量的是哪一版"必须自报，`cand-20261019-0033`）。
+ * 本文件**按 `import.meta.url` 自己推根**（`HERE → REPO → PRESET`），不经过 `PATHS.finalPreset`：
+ * 它量的是**跑着的这份测试代码所在的那棵树**的 `presets/agenia`（副本 / worktree 里也成立）。
+ * `PATHS.finalPreset` 现在也由 `root-guard.mjs` 按自身位置派生（`REPO_ROOT` → `presets/agenia`），
+ * 与这里推出同一个根；这一格仍然自己推一次，是为了让**被测树**这个输入不依赖另一个模块的实现
+ * （`cand-20261028-0461`：根定在别处 ⇒ 红的那条会被人当成被测对象的问题）。
+ * 路径 + `inject.js` 的 sha256 写进每一格的 `readings.preset`（"这份证据量的是哪一版"必须自报，
+ * `cand-20261019-0033`）。
  *
  * ── 两实例 = 生产拓扑（**推断**，见契约 §2 / §10.2）──────────────────────────
  * `cordis.patch.yml:81`（`preset-agenia`）与 `:613`（`preset-agenia-member`）各有一行
@@ -46,9 +49,10 @@
  *
  * `BRG-07` 的翻面读数（都是 `run-all --glob=integration/brg01-toolname-bridge.test.mjs` 跑的；
  * 字节数与 sha256 量的是**提交里那个 blob**（`HEAD:presets/agenia/inject.js`），不是工作树）：
- *   · 现役 `inject.js`（提交 `6a5d27b` · 222455 B · sha256 `37D63DAA…`）⇒ **RED 0 / GREEN 7**
- *     （run `r13-brg`，2026-11-03；那一跑 `readings.preset.injector` 与 `production_injector` 是同一个数
- *     ⇒ 量的就是这一段点名的那一份。工作树与提交同不同由 `FLIP-01` 的读数照实记，这里不拿它当判据）；
+ *   · 现役 `inject.js`（提交 `ee48c24` · 222455 B · sha256 `37D63DAA…`）⇒ **RED 0 / GREEN 7**
+ *     （run `b02-brg`：在 `ee48c24` 的**克隆**里跑的 —— 那一跑 `F57-TARGET 靶子=现役 · 50 份逐字节相同`，
+ *     `readings.preset.injector` 与 `production_injector` 是同一个数 ⇒ 量的就是这一段点名的那一份）；
+ *     三个数（提交号 / 字节数 / sha256）由 `FLIP-01` 逐项对上，**任一变化它当场红**。
  *   · 把 `BRG_SUT_INJECTOR` 指到修前那一份**副本**（`.team/test/2026-11-02/_probe/_run/pre-fix-inject.mjs`
  *     · 212390 B · sha256 `0314BD9B…`；它与提交 `6c848dd` 那份逐字节相同，`presets/**` 零字节；
  *     那一跑 `sut_overridden=true` / `acceptance_eligible=false`）

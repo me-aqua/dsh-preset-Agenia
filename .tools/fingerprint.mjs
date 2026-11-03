@@ -26,9 +26,9 @@
  *     ⇒ 现在根相对那一条是 `.runtime/`（**只有顶层**那一段叫 `.runtime` 才算数据：
  *     `lib/.runtime/x` 这种是代码，不许被排除 —— 所以**不是**"任何一段叫 `.runtime` 就排"）。
  *     两条并存的理由：`--root` 是自由变量，两个根（仓库根 / 预设根）各需要一条能命中的形状。
- *       · 任意一段目录名是：`node_modules`
+ *       · 任意一段目录名是：`node_modules` · `__pycache__`
  *       · 文件名是：`api.txt` · `.credentials.yaml` · `.credentials.yml`
- *       · 后缀是：`.log`
+ *       · 后缀是：`.log` · `.pyc`
  *     理由：前三类是"别的东西"（版本库 / 工作台 / 桌面客户端）；`.team/` 是队伍的办公桌，
  *     **每轮都在写**，拿它当"代码动过"就是天天喊狼来了（AGENTS.md 3e ④ 的同一条判据）；
  *     三个 `.tools/_*` 是施工区与备份区（实现岗并发在写）；凭据与日志不是代码，
@@ -78,9 +78,9 @@ const EXCLUDE_PREFIXES = [
   // 它是"仓库根相对"的形状 ⇒ 只有 `--root` = 仓库根时才命中；预设根那一路由上面那条 `.runtime/` 管。
   'presets/agenia/.runtime/',
 ]
-const EXCLUDE_SEGMENTS = ['node_modules']
+const EXCLUDE_SEGMENTS = ['node_modules', '__pycache__']
 const EXCLUDE_BASENAMES = ['api.txt', '.credentials.yaml', '.credentials.yml']
-const EXCLUDE_SUFFIXES = ['.log']
+const EXCLUDE_SUFFIXES = ['.log', '.pyc']
 
 /** env 类（④）—— 两套的**唯一**差异。 */
 function isEnvClass(name) {
@@ -105,9 +105,11 @@ function excluded(rel) {
 /**
  * 目录剪枝 —— **进都不进**（`F6`：先量后筛会让"量 12 MB"先把整棵工作区读一遍，2026-11-03 实测 362 s）。
  *
- * 只吃**目录形状**的两条规则（前缀 / 段名）。文件名那几条（`api.txt` / 后缀 `.log`）对目录没有意义 ——
+ * 只吃**目录形状**的两条规则（前缀 / 段名）。文件名那几条（`api.txt` / 后缀 `.log`、`.pyc`）对目录没有意义 ——
  * 拿它们剪目录会把"名字带 `.log` 的目录里的真代码"一起藏起来（**少算不是安全**）。
- * ⚠️ 与 `excluded()` 必须**同一个基准**：`rel` 相对给定 root、`/` 分隔（③b）。
+ * ⚠️ 与 `excluded()` 必须**同一个基准**：`rel` 相对给定 root、`/` 分隔（③b）。表里加了新条目
+ * （2026-11-03 加 `__pycache__` / `.pyc`，`F2` 的尾巴）时**不用改这里**：段名类自动跟着剪，
+ * 后缀类本来就不剪目录 —— 但要跑一次等价性探针（`.team/test/2026-11-03/_probe/f6-probes.mjs`）。
  * ⚠️ 剪枝**不许改读数**：被剪掉的目录里每一份文件本来就过不了 `excluded()` ⇒ 同一棵树剪枝前后
  *    的 `sha256` / `files` / `bytes` / `list` 必须逐字相同（探针见 `.team/test/2026-11-03/log.md`）；
  *    所以这次改动**不**需要重跑任何基线。

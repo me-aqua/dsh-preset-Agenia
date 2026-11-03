@@ -78,9 +78,15 @@ const EXCLUDE_PREFIXES = [
   '.runtime/',
   'presets/agenia/.runtime/',
 ]
-const EXCLUDE_SEGMENTS = ['node_modules']
+/**
+ * ⚠️ 这一格与 `.tools/fingerprint.mjs` 的 `EXCLUDE_SEGMENTS` / `EXCLUDE_SUFFIXES` **必须同批改**
+ * （文件头 🔴 那条规矩）：`__pycache__` 与 `.pyc` 是 2026-11-03 第三轮评审 `R3-4` 加进工具那一份的
+ * （一条 `python` 跑一次就重写 `.pyc`，拿它当"代码动过"会让活树指纹无故翻面）；量具这一份不跟，
+ * 两台尺子就会在同一棵树上报不同的数（`DEVICE-MISMATCH`）—— 那是这一票最怕的假红。
+ */
+const EXCLUDE_SEGMENTS = ['node_modules', '__pycache__']
 const EXCLUDE_BASENAMES = ['api.txt', '.credentials.yaml', '.credentials.yml']
-const EXCLUDE_SUFFIXES = ['.log']
+const EXCLUDE_SUFFIXES = ['.log', '.pyc']
 
 const isEnvClass = (base) => base === '.env' || base.startsWith('.env.')
 
