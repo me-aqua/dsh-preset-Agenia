@@ -35,14 +35,21 @@
  *       码 `E_GUARD_JOB_FOREGROUND` 只活在纯函数 verdict 里，由 `GRD-01` 钉）。
  *       没有这一格，"精确码"这条断言可能只是碰巧：它证明同一把工具上**还有**别的闸在响、
  *       而那一声与每日评审闸的报文分得开（不点日子、不点报告路径）。
+ *   `E` **这道闸的第二个前置**（2026-11-03 审查补）：`lib/route.mjs::dayKeyOf` 是切点唯一的家，
+ *       `apply()` 时取不到它 ⇒ `localDayKeySync()` 返回 `null` ⇒ 拒 `E_REVIEW_DAY_UNKNOWN`
+ *       （**不许猜一个今天**，也不许拿"判决没落盘"顶替）。控制面 = 一份**旁边没有 `lib/`** 的
+ *       `inject.js` 副本（落在运行根里，`presets/**` 一个字节不动）+ 同一现场的真实预设（放行）；
+ *       两侧只差 injector 旁边有没有那份文件。**今天这条不响**（真实预设旁边有 `lib/route.mjs`，
+ *       A/B/D 把日子点成了 11-02 / 11-03）；响不响由 `readings.rgate01.day_unknown.fires_today` 现推。
  *   `P` **预检/夹具自证**：被测面加载得上、guard 真的挂上了（`RGATE-HARNESS-GUARD`，不是功能红）、
  *       三副根的报告现场恰好是 无/11-02/11-03（`RGATE-FIXTURE-REPORT-STATE`）、
- *       时刻真的落在"切点下方"（`RGATE-FIXTURE-CUT-SIDE`：零点尺子会算出另一天，否则分不出 04:00 与 00:00）。
+ *       时刻真的落在"切点下方"（`RGATE-FIXTURE-CUT-SIDE`：零点尺子会算出另一天，否则分不出 04:00 与 00:00）、
+ *       `E` 的那个副本真的没有 `lib/route.mjs`（`RGATE-DAYUNKNOWN-FIXTURE`）。
  *
  * ── 为什么没有刀（`presets/**` 一个字节不动）──────────────────────────────────
- * 这条判据的"能翻面"由 `A`/`B` 与 `D` 两侧证明（同一个调用：报告在 ⇒ 过、不在 ⇒ 拒；同一副空根：
- * 时钟换一侧 ⇒ 点名的日子跟着换）。刀切的是**实现**，而这一票问的是"那道闸在不在、拒得对不对"；
- * 生产文件不归测试岗动 —— 所以没有变异体，也不假装有。
+ * 这条判据的"能翻面"由 `A`/`B` 与 `D` 与 `E` 三侧证明（同一个调用：报告在 ⇒ 过、不在 ⇒ 拒；同一副空根：
+ * 时钟换一侧 ⇒ 点名的日子跟着换；同一现场：取不到 `dayKeyOf` ⇒ 换一个码）。刀切的是**实现**，
+ * 而这一票问的是"那道闸在不在、拒得对不对"；生产文件不归测试岗动 —— 所以没有变异体，也不假装有。
  */
 import { before, test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -53,7 +60,7 @@ import { caseFail, preflight, problem, runCase, runRoot } from '../support/evide
 import { FROZEN } from '../support/env.mjs'
 import {
   DAILY_REPORT_DIR, buildCatalog, buildContentRoot, configFromComposition, dailyReportPathOf,
-  loadInjector, plantDailyReport, withHarness,
+  importSourceCopy, loadInjector, plantDailyReport, withHarness,
 } from '../support/injector-harness.mjs'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,6 +87,11 @@ const REVIEW_GATE_CODE = 'E_REVIEW_BEFORE_JUDGE'
  * **门禁里另外那几个码**（闭集，2026-11-03 从生产 `inject.js` 的 guard 段读出、手抄在这儿）。
  * 为什么手抄：判据的期望值不许从被测物反推（`cand-20261016-selfsourced-order-01`）——
  * 这一份与源码是两份独立载体，两边一起错的时候才看不见。
+ *
+ * 🔴 `E_REVIEW_DAY_UNKNOWN` 在表里的意思与其余十个不同：它不是"另一个闸"，是**同一道闸的另一个前置** ——
+ *    `apply()` 时拿不到 `lib/route.mjs::dayKeyOf`（那份文件是切点唯一的家）⇒ 今天算不出来 ⇒ 拒。
+ *    它进这张表是为了让"码表是闭的"这条断言仍然成立（`C2` 那一格拿它判"这个头码认不认识"），
+ *    而且这一格自己有一条控制面（`E1`：一份**没有 `lib/`** 的 inject.js 副本必须拒这个码）。
  */
 const OTHER_GATE_CODES = [
   'E_GUARD_CONFIG_MISSING', // 后台硬门：委派名单配置坏了
@@ -92,6 +104,7 @@ const OTHER_GATE_CODES = [
   'E_GUARD_JUDGE_PROPOSAL', // 判决岗的提案拒
   'E_GUARD_OFFICE_SHELL', // 岗位写边界：命令行
   'E_GUARD_OFFICE_WRITE', // 岗位写边界：写落点
+  'E_REVIEW_DAY_UNKNOWN', // **同一道闸的另一个前置**：`lib/route.mjs` 取不到 ⇒ 今天算不出来
 ]
 /** 记忆判决报告在内容根下的落点（相对）：`<内容根>/.runtime/reports/memory-update/<day>.json`。
  *  **路径只有一份定义**（`support/injector-harness.mjs`）—— 本用例与 `brg01` 的夹具共用它。 */
@@ -176,11 +189,11 @@ function verdictOf(res) {
 const codesIn = (text) => [...new Set([...String(text ?? '').matchAll(/\bE_[A-Z][A-Z0-9_]+\b/g)].map((m) => m[0]))]
 
 /** 跑一次 `apply()` 并调一次 guard（每次都是新闭包 ⇒ 不共享 `narrowSessions` 之类的状态）。 */
-async function guardCall(fx, call) {
+async function guardCallWith(mod, fx, call) {
   let res = null
   let thrown = null
   try {
-    await withHarness(SUT.mod, {
+    await withHarness(mod, {
       contentDir: fx.contentDir,
       config: fx.config,
       header: headerOf(),
@@ -193,6 +206,11 @@ async function guardCall(fx, call) {
     thrown = `${err?.code ?? err?.name ?? 'THROW'}: ${String(err?.message ?? err).slice(0, 240)}`
   }
   return { call, res, thrown, verdict: verdictOf(res) }
+}
+
+/** 同一条路，被测面 = 文件顶部那份（生产预设）。 */
+async function guardCall(fx, call) {
+  return guardCallWith(SUT.mod, fx, call)
 }
 
 test('RGATE-01 每日评审要等今天的记忆判决报告（码恰好 E_REVIEW_BEFORE_JUDGE · 本地 04:00 切）', async (t) => {
@@ -342,9 +360,13 @@ test('RGATE-01 每日评审要等今天的记忆判决报告（码恰好 E_REVIE
         return
       }
       if (v.code !== code) push('RGATE-WRONG-CODE', `${label}：拒绝码应为 ${code}，实得 ${JSON.stringify(v.code)}（报文：${v.message.slice(0, 200)}）`)
-      // 任务口径："拒的**不是**门禁里另外那几个码"——精确相等已经蕴含它，这里再显式判一次（读的人不必推）
+      // 任务口径："拒的**不是**门禁里另外那几个码"——精确相等已经蕴含它，这里再显式判一次（读的人不必推）。
+      // ⚠️ 表里现在也收着**同一道闸的另一个前置**（`E_REVIEW_DAY_UNKNOWN`）：所以这句的措辞不许再写死
+      //    "另一个闸"（那句话对那个码是假的）。它只说明"不是这一格要的那一个码"，两种成因都指向同一个修法：
+      //    码不对 ⇒ 先看是不是别的闸先拒、或今天算不出来。
       if (OTHER_GATE_CODES.includes(v.code)) {
-        push('RGATE-OTHER-GATE', `${label}：拒它的是**另一个闸**（${v.code}），不是每日评审那道闸 —— 这一格量错了东西`)
+        push('RGATE-OTHER-GATE', `${label}：拒它的不是这一格要的 ${code}，而是码表里的 ${v.code}`
+          + '（另一个闸，或同一道闸的另一个前置 —— 例如 `E_REVIEW_DAY_UNKNOWN`：今天算不出来）—— 这一格量错了东西')
       }
       if (want.day !== undefined && want.day !== null) {
         if (!v.message.includes(want.day)) {
@@ -529,6 +551,98 @@ test('RGATE-01 每日评审要等今天的记忆判决报告（码恰好 E_REVIE
         expectAllow(`D2b:${tool}`, await guardCall(fxNext, callOf(tool)),
           '04:00:01 属于 2026-11-03，这副根里正好有 11-03 的报告')
       }
+
+      /**
+       * ── E · 这道闸的**第二个前置**：拿不到 `lib/route.mjs` ⇒ 今天算不出来 ⇒ 拒 `E_REVIEW_DAY_UNKNOWN` ──
+       *
+       * 病：`localDayKeySync()` 在 `sharedDayKeyOf === null` 时返回 `null`。F5 之前那份实现自己复制了
+       * 4 小时算法 ⇒ 永远"算得出"；F5 之后唯一的家是 `lib/route.mjs`，于是"那份文件取不到"成了一条
+       * **真的会走到**的分支。没有这一格，那条拒绝只有代码、没有判据（一个走不到位的前置 = 装饰）。
+       *
+       * 做法：把生产 `inject.js` **原样**落进运行根里的一份副本再 import（`importSourceCopy`）——
+       * 它旁边没有 `lib/`，`apply()` 那次懒加载必然失败。**`presets/**` 一个字节不动。**
+       * 两侧只差"副本旁边有没有 `lib/`"：同一个内容根（`fxNext`，11-03 的报告在盘上）、同一个钉住的时刻。
+       */
+      const DAY_UNKNOWN_CODE = 'E_REVIEW_DAY_UNKNOWN'
+      const noLibDir = path.join(runRoot(), 'tmp', 'rgate', 'no-lib')
+      const noLibSrc = readFileSync(INJECTOR, 'utf8')
+      const noLib = await importSourceCopy({ dir: noLibDir, source: noLibSrc, name: 'inject-nolib.mjs' })
+      const noLibFile = path.join(noLibDir, 'inject-nolib.mjs')
+      const noLibRoute = path.join(noLibDir, 'lib', 'route.mjs')
+      readings.day_unknown_fixture = {
+        file: noLibFile,
+        bytes: existsSync(noLibFile) ? readFileSync(noLibFile).length : null,
+        production_bytes: Buffer.byteLength(noLibSrc, 'utf8'),
+        same_source: existsSync(noLibFile) && readFileSync(noLibFile, 'utf8') === noLibSrc,
+        lib_route_present: existsSync(noLibRoute),
+        lib_route_path: noLibRoute,
+        loaded: noLib.ok,
+        load_error: noLib.ok ? null : String(noLib.why ?? ''),
+      }
+      if (!noLib.ok) {
+        push('RGATE-DAYUNKNOWN-FIXTURE', `那份"旁边没有 lib/ 的 inject.js 副本"加载不上（${noLib.why}）—— 这一格量不了`)
+      } else if (readings.day_unknown_fixture.lib_route_present !== false) {
+        push('RGATE-DAYUNKNOWN-FIXTURE', `副本旁边居然有 \`lib/route.mjs\`（${noLibRoute}）—— "取不到 route.mjs"这个现场没造出来`)
+      } else if (!readings.day_unknown_fixture.same_source) {
+        push('RGATE-DAYUNKNOWN-FIXTURE', `副本的字节与生产 \`inject.js\` 不同（${readings.day_unknown_fixture.bytes} B vs ${readings.day_unknown_fixture.production_bytes} B）—— 那样"只差 lib/"这句话不成立`)
+      } else {
+        // 阳性对照（同一现场、只换 injector）：真实预设算得出今天 ⇒ 放行。
+        expectAllow('E1:real', await guardCall(fxNext, callOf(DAILY_REVIEW_TOOLS[0])),
+          '同一个内容根（11-03 的报告在盘上）+ 同一个时刻：真实预设旁边有 lib/route.mjs ⇒ 今天算得出，放行')
+        // 负样本：副本取不到 route.mjs ⇒ 必须拒，且码恰好是那一个。
+        const out = await guardCallWith(noLib.mod, fxNext, callOf(DAILY_REVIEW_TOOLS[0]))
+        const v = out.verdict
+        readings.cells['E1:nolib'] = {
+          tool: out.call.name,
+          arguments: out.call.arguments,
+          call: JSON.stringify(out.call),
+          harness_ok: out.res?.ok ?? null,
+          thrown: out.thrown,
+          kind: v.kind,
+          code: v.code,
+          message: v.message,
+          raw: v.raw ?? null,
+          codes_in_message: codesIn(v.raw),
+        }
+        if (out.thrown !== null) {
+          push('RGATE-HARNESS-THROW', `E1:nolib：门禁这一调用抛了（${out.thrown}）—— 那是崩溃，不是"拒了"`)
+        } else if (v.kind === 'no-guard') {
+          push('RGATE-HARNESS-GUARD', `E1:nolib：那份副本没有注册 tools.guard（${v.message}）—— 门禁没挂上，这一格量不了`)
+        } else if (v.kind !== 'reject') {
+          push('RGATE-DAYUNKNOWN-NOT-REFUSED',
+            `E1:nolib：拿不到 \`lib/route.mjs\`（今天算不出来）时应当**拒** \`${DAY_UNKNOWN_CODE}\`，实得 ${v.kind}/${JSON.stringify(v.code)}：${v.message.slice(0, 240)}`)
+        } else {
+          if (v.code !== DAY_UNKNOWN_CODE) {
+            push('RGATE-DAYUNKNOWN-WRONG-CODE',
+              `E1:nolib：拒绝码应为 \`${DAY_UNKNOWN_CODE}\`，实得 ${JSON.stringify(v.code)}（报文：${v.message.slice(0, 240)}）`)
+          }
+          if (v.code === REVIEW_GATE_CODE) {
+            push('RGATE-DAYUNKNOWN-WRONG-CODE', `E1:nolib：今天算不出来时报的却是"判决没落盘"（\`${REVIEW_GATE_CODE}\`）—— 两个前置被糊成一句`)
+          }
+          if (!v.message.includes('lib/route.mjs')) {
+            push('RGATE-DAYUNKNOWN-MESSAGE', `E1:nolib：报文没有点名缺的是 \`lib/route.mjs\`（实得：${v.message.slice(0, 240)}）—— 读的人不知道该修哪一份`)
+          }
+          // ⚠️ 先把报文里的**绝对路径**剥掉再判"有没有点名日子"：这条路的两端都是路径 ——
+          //    副本落在 `<运行根>\tmp\rgate\no-lib\`、运行根落在 `…\<日期>\_runs\<RUN_ID>`，
+          //    而 Node 的 import 报错会把**两边**都印出来，日期就在目录名里。
+          //    不剥就是假红（2026-11-03 两次实测：一次栽在运行根、一次栽在副本自己的路径）。
+          //    剥路径这一刀只会让判据更准："猜了一个今天"是非路径的散文，剥不到它。
+          const msgNoPaths = v.message
+            .replace(/[A-Za-z]:\\[^）\s'"`]*/g, '<path>')
+            .split(runRoot()).join('<run-root>')
+          const namedDay = [WANT_DAY_BELOW, WANT_DAY_ABOVE].filter((day) => msgNoPaths.includes(day))
+          if (namedDay.length > 0) {
+            push('RGATE-DAYUNKNOWN-MESSAGE', `E1:nolib：今天都算不出来，报文却点名了日子 ${JSON.stringify(namedDay)} —— 那是"猜了一个今天"（${msgNoPaths.slice(0, 240)}）`)
+          }
+          if (v.message.includes(REPORT_TAIL)) {
+            push('RGATE-DAYUNKNOWN-MESSAGE', `E1:nolib：报文点到了报告路径（\`${REPORT_TAIL}\`）—— 这一支根本没走到"报告在不在"那一步（${v.message.slice(0, 240)}）`)
+          }
+        }
+      }
+      // 码表是闭的：这条码必须在表里 —— 删掉那一行会让 `C2` 那一格的"认不认识这个头码"重新开口子。
+      if (!OTHER_GATE_CODES.includes(DAY_UNKNOWN_CODE)) {
+        push('RGATE-CODE-TABLE-CLOSED', `\`OTHER_GATE_CODES\` 里没有 \`${DAY_UNKNOWN_CODE}\` —— 门禁码表不闭：读码这一步会把它读成"另一个闸"`)
+      }
     } finally {
       t.mock.timers.reset()
       reset = { now: Date.now(), below: INSTANT_BELOW.getTime(), above: INSTANT_ABOVE.getTime() }
@@ -549,6 +663,36 @@ test('RGATE-01 每日评审要等今天的记忆判决报告（码恰好 E_REVIE
           `${tool}：\`A\`（该拒）与 \`B\`（该放行）喂进去的调用不是同一个 —— 那样"报告在不在"就不是唯一的变量，`
           + '这一格的红绿证明不了任何因果')
       }
+    }
+
+    // ── 这道闸的第二个前置码：**今天会不会响？**（从这一跑自己的读数里推，不手填）────────────
+    /**
+     * 任务问的那句话是"`E_REVIEW_DAY_UNKNOWN` 今天会不会响"。答案不是一个词，是两件事：
+     *   · **真实预设**（A/B/C/D 那些格）：一次都不许响 —— 它会响的唯一条件是 `apply()` 时拿不到
+     *     `lib/route.mjs`（`sharedDayKeyOf === null`），而 A/B/D 那些格子把"今天"点成了
+     *     11-02 / 11-03，那本身证明 `dayKeyOf` 在手上。
+     *   · **控制面 `E1:nolib`**：那条分支必须**真的会响**（否则那句拒绝只是注释）。
+     * 所以 `fires_today` 从 `readings.cells` 现推；`control_cell` 记负样本真的拿到了哪个码。
+     */
+    const realCells = Object.entries(readings.cells ?? {}).filter(([label]) => !label.startsWith('E1:'))
+    const realDayUnknown = realCells.filter(([, cell]) => cell.code === 'E_REVIEW_DAY_UNKNOWN').map(([label]) => label)
+    readings.day_unknown = {
+      code: 'E_REVIEW_DAY_UNKNOWN',
+      in_code_table: OTHER_GATE_CODES.includes('E_REVIEW_DAY_UNKNOWN'),
+      fires_today: realDayUnknown.length > 0,
+      real_preset_cells_firing_it: realDayUnknown,
+      control_cell: readings.cells['E1:nolib']?.code ?? null,
+      only_when: '`apply()` 时 `import(./lib/route.mjs)` 失败 ⇒ `sharedDayKeyOf === null`（F5 收口之后那份文件是切点唯一的家）',
+      why_not_fired_today: '真实预设旁边有 `lib/route.mjs`，`localDayKeySync()` 非 null —— A/B/D 那些格子把日子点成了 11-02 / 11-03；'
+        + '`E1` 那一格（旁边没有 lib/ 的副本）证明这条分支真的会响',
+    }
+    if (readings.day_unknown.fires_today) {
+      push('RGATE-DAY-UNKNOWN-FIRED',
+        `真实预设在这一跑里报出了 \`E_REVIEW_DAY_UNKNOWN\`（${realDayUnknown.join(' / ')}）—— 说明 \`lib/route.mjs\` 取不到；`
+        + '那样 A/B/D 那些格子的"点名了哪一天"就不是这道闸的读数了（先修 `presets/agenia/lib/route.mjs`）')
+    }
+    if (!readings.day_unknown.in_code_table) {
+      push('RGATE-CODE-TABLE-CLOSED', '`OTHER_GATE_CODES` 里没有 `E_REVIEW_DAY_UNKNOWN` —— 门禁码表不闭')
     }
 
     caseFail(problems)
