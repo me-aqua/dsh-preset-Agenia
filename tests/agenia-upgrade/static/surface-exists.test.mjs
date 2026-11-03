@@ -64,7 +64,7 @@ import { before, describe, test } from 'node:test'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { FROZEN, PATHS } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
+import { caseFail, caseHold, commitCopyReading, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import { readStagedText, stagingExists, stagingPath, stagingRoot } from '../support/sut.mjs'
 import {
   CODES,
@@ -262,8 +262,24 @@ describe('static · surface-declared', () => {
 
         // ① 主判据：活体那份
         const live = commonSenseFileProblems({ read: () => inspectAbs(csPath), path: csPath, where })
-        for (const p of live.problems) push(p.code, p.message, p.detail)
         rec.readings.common_sense = live.readings
+        /**
+         * 🔴 技术评审 2026-11-03 `F4`：这份常识住在**数据段**（`presets/agenia/.runtime/`），不随提交走
+         * ⇒ 从提交导出的只读副本里它必然不在。那时这一格**判不了**（`HOLD`），不是"常识没了"那种红；
+         * 红只留给活树（活树里它不在 ⇒ 老板那份正文真的没了，`F-135` 的病）。
+         * ⚠️ 空壳 / 读不出**照旧红**：副本里若真有人放了一份空文件，那是真缺陷，不是"副本答不了"。
+         */
+        const copyTree = commitCopyReading()
+        rec.readings.copy_tree = copyTree
+        const missingOnly = live.problems.length > 0 && live.problems.every((p) => p.code === COMMON_SENSE_CODES.missing)
+        if (missingOnly && copyTree.is_copy) {
+          caseHold(rec, 'SURF-COMMON-SENSE-NOT-IN-COPY',
+            `这棵树是**提交的只读副本**（\`${copyTree.git_mark}\` 不在）⇒ \`${csPath}\` 是数据段（\`.runtime/\`），`
+            + '不随提交走、本来就不该在副本里 ⇒ "常识在不在"这一格判不了。**不是绿**：要在活树上跑同一条判据'
+            + '（`F4`：副本答不了的记 HOLD，不记红）')
+        } else {
+          for (const p of live.problems) push(p.code, p.message, p.detail)
+        }
 
         // ② 抽走 / 还原对照（夹具副本，落在**运行根**里）：证明"这份文件没了 ⇒ 这一格真的红"。
         //    副本正文 = **活体那份的逐字节副本**（读它的字节，绝不改它）；活体那份已经坏了就用合成正文，

@@ -904,8 +904,15 @@ const IDENTITY_KEYS = { unknown: 'unknown_preset', downgrade: 'preset_downgrade'
  *    懒加载只在**真的写报警**那一下才解析（路径按本文件的 `import.meta.url` 算），
  *    加载失败不影响注入：`recordIdentityAlarm()` 绝不抛，只回一个失败原因。
  * ⚠️ 所以 `identityDayKeyOf` 是 **async** 的（它要读另一个模块）。
+ *
+ * 🔴 每日评审那道闸（`dailyReviewGateVerdict`）问的是**同一个**"今天是哪天"，而且也必须走
+ * **同一个** `route.mjs::dayKeyOf`：那份文件是唯一的家。区别只在签名 —— `tools.guard` 的回调
+ * **必须同步**（框架契约：返回字符串即拒），所以另有一个**同步调用面** `localDayKeySync()`
+ * （见它自己的说明）。切点那个数与日期算法**一份都没有复制**。
  */
 let sharedDayKeyOf = null
+/** 取 `route.mjs::dayKeyOf` 失败时的原因（装配时记下；闸的拒绝报文点名它，不拿"今天"猜）。 */
+let sharedDayKeyError = null
 async function sharedDayKeyOfFn() {
   if (sharedDayKeyOf === null) {
     const module = await import(new URL('./lib/route.mjs', import.meta.url).href)
@@ -929,18 +936,32 @@ export async function identityDayKeyOf(nowMs) {
  */
 const DAILY_REVIEW_TOOLS = Object.freeze(new Set(['job_conversation_review', 'job_technical_review']))
 
-/** 本地日（04:00 切，与 `lib/route.mjs::dayKeyOf` 同一个口径 —— 这里要的是同步版本）。 */
+/**
+ * 本地日 `YYYY-MM-DD` —— **同步签名，算法仍在唯一的家**：`lib/route.mjs::dayKeyOf`（契约 §13.1）。
+ *
+ * 为什么是同步的：`tools.guard` 的回调**必须同步**（框架契约：返回字符串即拒），而 `route.mjs`
+ * 是 ESM —— 这里不能顶层静态 import（见上面"为什么是懒加载"）。⇒ `apply()` 装配时 `await`
+ * 取一次，把**那个函数对象**存进 `sharedDayKeyOf`；这里只是它的调用面，**不复制**切点、不复制算法
+ * （`cand-20261023-0249`：一个值只许有一个定义）。
+ *
+ * 取不到（`lib/route.mjs` 不在 / import 失败）⇒ 返回 `null`。调用方**必须拒**并点名 ——
+ * 不许退回手抄的 4（`F5` 打回的就是那份副本；"猜一个今天"比"说不知道"更坏）。
+ */
 function localDayKeySync(nowMs = Date.now()) {
-  const shifted = new Date(nowMs - 4 * 60 * 60 * 1000)
-  const y = shifted.getFullYear()
-  const m = String(shifted.getMonth() + 1).padStart(2, '0')
-  const d = String(shifted.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
+  return sharedDayKeyOf === null ? null : sharedDayKeyOf(nowMs)
 }
 
 function dailyReviewGateVerdict(toolName, contentDir) {
   if (!DAILY_REVIEW_TOOLS.has(toolName)) return null
   const day = localDayKeySync()
+  if (day === null) {
+    return {
+      code: 'E_REVIEW_DAY_UNKNOWN',
+      message: '今天算不出来（`lib/route.mjs::dayKeyOf` 没取到：'
+        + `${sharedDayKeyError ?? '装配时没加载上'}）—— 两份每日评审不知道要等哪一天的判决，所以这一发**拒**；`
+        + '先把那份文件修回来（它在 `presets/agenia/lib/route.mjs`，是切点唯一的家），别拿"今天"猜',
+    }
+  }
   const report = join(contentDir, RUNTIME_DIR, 'reports', 'memory-update', `${day}.json`)
   if (existsSync(report)) return null
   return {
@@ -2539,6 +2560,16 @@ export async function apply(ctx, config = {}) {
   //   ⚠️ 窄与角色两条都依赖"装配时登记的这份会话的身份"（`narrowSessions` / `roleOfAgent`）；
   //      还没装配过的会话查不到 ⇒ 按老规矩放行（模型不先被装配一次也叫不出工具）。
   // ─────────────────────────────────────────────────────────────
+  // 🔴 每日评审闸（第 ⑥ 条）要的"今天是哪天"只有一处算法：`lib/route.mjs::dayKeyOf`。
+  //   门禁回调**必须同步**（框架契约），所以装配时先 `await` 取一次那个函数（与身份报警共用
+  //   同一个缓存）。框架按 `fiber.await()` 等这个 `apply()` 落地才算加载完 ⇒ 门禁装好那一刻
+  //   值已经在手上。取不到**绝不抛** —— 那份文件一挂就是"人格注入 0 字符"；这处只记原因，
+  //   闸自己在拒绝报文里点名它（`E_REVIEW_DAY_UNKNOWN`），不拿"今天"猜。
+  try {
+    await sharedDayKeyOfFn()
+  } catch (err) {
+    sharedDayKeyError = String(err?.message ?? err).slice(0, 240)
+  }
   const tools = ctx.get('tools')
   if (tools !== undefined && typeof tools.guard === 'function') {
     ctx.effect(

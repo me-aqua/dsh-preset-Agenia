@@ -563,7 +563,7 @@ export const BATCH_AA = ['RGATE-01']
  * 批次 Z 是**技术评审 2026-11-02 的 F2–F7 六张票**（`ticket-20261102-03`…`-08`，同日第 2 关补；
  * 一格一张票，红的时候一眼看得出是哪张票）。
  * 批次 AA 是**每日评审闸**（`RGATE-01`，2026-11-03；老板 09:10 点破判决没回来就派评审，`bug-20261103-01`）——
- * 打的同样是**现役** `presets/agenia`：那道闸只在生产上，staged 靶子还没同步它（`F57-TARGET` 会照实报）。
+ * 打的同样是**现役** `presets/agenia`；staged 靶子是否已同版由入口的 `F57-TARGET` 每次现量（这里不写死差额）。
  */
 export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA }
 const BATCH_OF = (id) =>

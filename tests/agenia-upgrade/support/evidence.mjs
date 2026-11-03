@@ -231,6 +231,32 @@ export function stagingReadings(env = process.env) {
   }
 }
 
+// ── 这棵树答得了哪一类问题（评审副本答不了数据 / 文档 / 仓库历史）──────────────
+/**
+ * **这一棵树是不是「从提交导出的只读副本」** —— 决定"样本不在"该记红还是记 `HOLD`。
+ *
+ * 技术评审 2026-11-03 `F4`：套件原地跑在副本里时，六条用例（`STAT-04` / `DOC-01` / `SURF-03` /
+ * `VRF-01` / `DBY-05` / `REV-04`）报"缺数据 / 缺文档 / 缺历史提交"，被记成 **RED** 并推 `exit 1` ——
+ * 只看结算行的人会把**冻结版**读成"六条红"。那六条量的是**活树的数据段**，而数据段
+ * （`.runtime/` · `.team/`）与仓库历史**不随提交走**（导出器只搬 blob；`.gitignore` 挡着它们）⇒
+ * 副本里它们本来就不该在，那不是"副本坏了"，是**这一格在这棵树上判不了**。
+ *
+ * 判据只有一条、可复算：`<repo>/.git` 在不在。
+ *   · 活树是 git 检出（`.git` 目录，或 worktree 的 `.git` 文件）⇒ 缺了就是**真缺** ⇒ 红；
+ *   · `.tools/tree-at-commit.mjs` 的副本是**纯树**（连 `.git` 都不许有，它自己会拒）⇒ 缺的是数据/历史 ⇒ `HOLD`。
+ * ⚠️ 它只回答"缺样本时该记什么"，**不回答"样本在不在"**（那是各用例自己量的）；也**不是绿** ——
+ *    `HOLD` 在结算里单独一栏，分母照旧计它（`evidence.mjs::runCase` 的第三态）。
+ */
+export function commitCopyReading({ repo = PATHS.repo } = {}) {
+  const gitMark = path.join(repo, '.git')
+  return {
+    repo,
+    git_mark: gitMark,
+    is_copy: !existsSync(gitMark),
+    note: '副本 = 导出器落的纯树（没有 `.git`）；`.runtime/` · `.team/` · 仓库历史都不随提交走',
+  }
+}
+
 // ── 用例壳 ─────────────────────────────────────────────────────────────────
 export class CaseFailure extends Error {
   constructor(id, problems) {

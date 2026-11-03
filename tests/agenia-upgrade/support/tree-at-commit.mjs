@@ -185,10 +185,24 @@ export function git(args, { cwd, input, maxBuffer = 256 * 1024 * 1024 } = {}) {
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error ?? null }
 }
 
-/** 一个提交里的**全部 blob**（`rel → blob sha`）—— 只读 git 对象，不看工作树。 */
-export function lsTreeBlobs(repo, commit) {
-  const r = git(['ls-tree', '-r', '-z', commit], { cwd: repo })
-  if (r.status !== 0) return { ok: false, entries: [], problems: [`git ls-tree ${commit} 退出码 ${r.status}：${String(r.stderr).trim().slice(0, 300)}`] }
+/**
+ * 一个提交里的**全部 blob**（`rel → blob sha`）—— 只读 git 对象，不看工作树。
+ *
+ * 🔴 两条都来自技术评审 2026-11-03 的 `F3`（`CPY-01` 在副本里报"227 份全是多出来的"）：
+ *   · **`--full-tree` 是必须的**：`git ls-tree -r <commit>` **不给 pathspec 时只列当前 cwd 前缀**
+ *     （`git ls-tree` 的默认行为）。从仓库子目录调它只拿到那一层（实测 99 / 175 条）；
+ *     从**副本**里调它 —— 副本没有 `.git`，git 走到活树那个仓、前缀是副本在活树里的相对路径，
+ *     提交里没有那一段 ⇒ **0 条**。这不是"提交是空的"，是量具看错了地方。
+ *   · **0 条不是 OK**：旧代码只判退出码，0 条照样 `ok:true` ⇒ 下游把"提交里一份都没有"
+ *     读成"提交是空的"，于是副本里每一份都成了"多一份"。现在 0 条单独一条 problem。
+ * `cwd` 可换（控制面用：从子目录调一次，结果必须与仓根那次同一份清单）；
+ * 返回的 `toplevel` 是这一次实际读的那个仓库 —— 读数，不是判据。
+ */
+export function lsTreeBlobs(repo, commit, { cwd = repo } = {}) {
+  const top = git(['rev-parse', '--show-toplevel'], { cwd })
+  const toplevel = top.status === 0 ? String(top.stdout).trim() : null
+  const r = git(['ls-tree', '-r', '-z', '--full-tree', commit], { cwd: toplevel ?? cwd })
+  if (r.status !== 0) return { ok: false, entries: [], problems: [`git ls-tree ${commit} 退出码 ${r.status}：${String(r.stderr).trim().slice(0, 300)}`], toplevel }
   const entries = []
   const problems = []
   for (const item of String(r.stdout).split('\u0000')) {
@@ -201,7 +215,10 @@ export function lsTreeBlobs(repo, commit) {
     if (type !== 'blob') { problems.push(`${rel} 在提交里不是 blob（${type}）—— 夹具不支持子模块 / 目录项`); continue }
     entries.push({ rel, mode, sha })
   }
-  return { ok: problems.length === 0, entries, problems }
+  if (entries.length === 0) {
+    problems.push(`git ls-tree ${commit} 返回 **0 条**（cwd=${cwd} · 实际读的仓=${toplevel ?? '(找不到)'}）—— 0 条不是"提交是空的"，是这一问没落到那个提交上（F3：cwd 前缀裁剪）`)
+  }
+  return { ok: problems.length === 0, entries, problems, toplevel }
 }
 
 /** 一次 `git cat-file --batch` 把一堆 blob 的字节读出来（照请求次序）。 */
@@ -657,11 +674,13 @@ export function runExport({ exporter, repo, commit, out, liveBaseline = null, wi
  * `withStaging`：副本带着**声明的追加**（`STAGING_ADDITION`）时必须开 —— 否则那 52 份会被读成
  * "副本多一份"，`is_that_commit` 永远 false（导出侧与校验侧是同一个开关，缺一边就自相矛盾）。
  */
-export function runVerify({ exporter, copy, repo, commit, expect, liveBaseline, liveRoot, withStaging = false, timeoutMs } = {}) {
+export function runVerify({ exporter, copy, repo, commit, expect, liveBaseline, liveRoot, withStaging = false, stagingManifest = null, timeoutMs } = {}) {
   const args = ['--verify', copy, '--repo', repo, '--commit', commit, '--expect', expect, '--json']
   if (withStaging) args.push('--with-staging')
   if (liveBaseline) args.push('--live-baseline', liveBaseline)
   if (liveRoot) args.push('--live-root', liveRoot)
+  // `--staging-manifest`：拿**导出那一刻**记下的清单当参考（`F8` 的自洽控制面用它喂一份被改过的清单）。
+  if (stagingManifest) args.push('--staging-manifest', stagingManifest)
   return runJsonCli(exporter, args, { timeoutMs })
 }
 

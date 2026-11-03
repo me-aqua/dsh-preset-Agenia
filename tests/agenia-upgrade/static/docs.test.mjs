@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { FROZEN, PATHS } from '../support/env.mjs'
-import { caseFail, caseHold, preflight, problem, runCase, sha256Text, sha256File, stagingReadings, oracleReadings } from '../support/evidence.mjs'
+import { caseFail, caseHold, commitCopyReading, preflight, problem, runCase, sha256Text, sha256File, stagingReadings, oracleReadings } from '../support/evidence.mjs'
 import { readStagedText, stagingExists } from '../support/sut.mjs'
 import { CODES as SURFACE_CODES, INJECTED_OBLIGATIONS, committedIn, injectedSurfaceProblems, jobRowProblems, leaderInjectionSurface, syntheticComposition } from '../support/docs-surface.mjs'
 import { fixtureDir } from '../support/verify-recompute.mjs'
@@ -297,7 +297,19 @@ async function importSurfaceSource(dir, name, source) {
   return { mod: await import(`${pathToFileURL(file).href}?sha256=${sha256}`), file, sha256, bytes: Buffer.byteLength(source, 'utf8') }
 }
 
-function readDoc(spec, problems) {
+/**
+ * 这份文档是不是**住在 git 之外**（`.team/` 是队伍抽屉、`*.local.md` 是本机事实 —— 两者都不进提交）。
+ * `F4` 用它把"副本里本来就不该有"与"活树里真缺了"分开。
+ */
+const outsideGit = (rel) => String(rel).split('/')[0] === '.team' || /\.local\.md$/i.test(String(rel))
+
+/**
+ * 读一份 DOC_SPECS 里的文档。
+ * `opts.rec` + `opts.copy` 给了、且**这棵树是提交的只读副本**、且这份文档住在 git 之外 ⇒
+ * 记 `HOLD`（`DOC-NOT-IN-COPY`）而不是 `DOC-MISSING` 红：副本里它本来就不该在（技术评审 2026-11-03 `F4`）。
+ * 活树（`copy.is_copy === false`）里缺一份照旧红 —— 那是真的缺。
+ */
+function readDoc(spec, problems, { rec = null, copy = null } = {}) {
   if (spec.root === 'staged') {
     if (!stagingExists(spec.rel)) {
       problems.push(problem('DOC-MISSING', `staged 还没有 ${spec.rel}（staging 未实现 ⇒ 预期红）`))
@@ -309,6 +321,13 @@ function readDoc(spec, problems) {
   try {
     return readFileSync(abs, 'utf8')
   } catch {
+    if (rec !== null && copy?.is_copy === true && outsideGit(spec.rel)) {
+      caseHold(rec, 'DOC-NOT-IN-COPY',
+        `这棵树是**提交的只读副本**（\`${copy.git_mark}\` 不在）⇒ \`${spec.rel}\` 住在 git 之外（数据 / 本机事实），`
+        + '不随提交走、本来就不该在副本里 ⇒ 这一份判不了。**不是绿**：要在活树上跑同一条判据'
+        + '（`F4`：副本答不了的记 HOLD，不记红）')
+      return null
+    }
     problems.push(problem('DOC-MISSING', `读不到 ${abs}`))
     return null
   }
@@ -321,9 +340,11 @@ describe('static · docs', () => {
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
       rec.readings.staging = stagingReadings()
       rec.readings.docs = {}
+      const copy = commitCopyReading()
+      rec.readings.copy_tree = copy
 
       for (const spec of DOC_SPECS) {
-        const text = readDoc(spec, problems)
+        const text = readDoc(spec, problems, { rec, copy })
         if (text === null) continue
         const hits = []
         const misses = []
@@ -515,12 +536,16 @@ describe('static · docs', () => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
       rec.readings.oracle = oracleReadings()
+      const copy = commitCopyReading()
+      rec.readings.copy_tree = copy
 
+      /** 读不到的那几份：先攒着，读完再决定它们该记红还是记 HOLD（见下面 🔴）。 */
+      const missingDocs = []
       const readLive = (abs) => {
         try {
           return readFileSync(abs, 'utf8')
         } catch (err) {
-          push('DOC-MISSING', `读不到 ${abs}：${err.message}`)
+          missingDocs.push({ abs, error: String(err.message) })
           return null
         }
       }
@@ -531,6 +556,25 @@ describe('static · docs', () => {
         reading_version: reading ? sha256Text(reading) : null,
         leader_now: now ? sha256Text(now) : null,
         leader_log: log ? sha256Text(log) : null,
+      }
+      /**
+       * 🔴 技术评审 2026-11-03 `F4`：这三份文档全在 `.team/leader/`（**队伍抽屉**，不进提交）。
+       * 从提交导出的只读副本里它们必然不在 ⇒ 这一格**判不了**（`HOLD`），不是"文档没了"那种红。
+       * ⚠️ 挂起**不跳过下面那些量具自证**：`②` 的 `STAGE-JUDGE-CONTROL` 喂的是合成样例（不读盘），
+       *    它在副本里照样要跑 —— 不然"这一格的红绿算不算数"就少了一条自证。
+       * 但 `③` GO 证据那三条**必须跳过**：它们读的是这两份文档拼起来的正文，缺了正文只用 `null`
+       * 就能造出 `GO-QUOTE` / `GO-SESSION` / `GO-TIME` 三条派生红（同一个成因的假红）。
+       * 活树里缺一份照旧红（`DOC-MISSING`）：那是真的缺文档。
+       */
+      const missingInCopy = missingDocs.length > 0 && copy.is_copy
+      if (missingInCopy) {
+        caseHold(rec, 'DOC-NOT-IN-COPY',
+          `这棵树是**提交的只读副本**（\`${copy.git_mark}\` 不在）⇒ ${missingDocs.map((m) => `\`${m.abs}\``).join(' · ')} `
+          + '住在 `.team/leader/`（不进提交的数据抽屉），本来就不该在副本里 ⇒ 阅读版 / now / log 这一组判不了'
+          + '（依赖它们正文的 GO 证据一并未判）。**不是绿**：要在活树上跑同一条判据'
+          + '（`F4`：副本答不了的记 HOLD，不记红）')
+      } else {
+        for (const m of missingDocs) push('DOC-MISSING', `读不到 ${m.abs}：${m.error}`)
       }
       for (const [label, text] of [['老板阅读版', reading], ['leader/now.md', now], ['leader/log.md', log]]) {
         if (text && text.includes('B02501C54CAE3741533F961763AC5B57F655B19D9579578F7129C85D7D092C55')) rec.readings[`${label}_binds_v5_sha`] = true
@@ -604,14 +648,20 @@ describe('static · docs', () => {
       }
 
       // ③ GO 证据：原话 + 来源会话 + 时间（拍板 Q4：历史这一条允许 occurred_at=null，但必须有 note）
+      //    ⚠️ 副本里这两份文档不在（`missingInCopy`）⇒ 这一组**不判**：正文是 `null`，三条断言都会以
+      //    "派生红"的样子响（那是同一个成因的假红，`F4`）。它已经记进 `DOC-NOT-IN-COPY` 那条 HOLD。
       const goQuote = 'you have the go. don\'t let me down my good girl'
       const both = `${now ?? ''}\n${log ?? ''}`
-      if (!both.includes(goQuote)) push('GO-QUOTE', 'now/log 里找不到施工 GO 的老板原话（逐字）')
-      if (!/session-[0-9a-f-]{8,}/.test(both)) push('GO-SESSION', 'GO 证据缺来源会话 id（形如 session-…）')
-      const hasIso = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(both)
-      const hasNote = /(区间|时刻未|未捕获|未持久化|未落下)/.test(both)
-      rec.readings.go_evidence = { has_iso_time: hasIso, has_time_note: hasNote }
-      if (!hasIso && !hasNote) push('GO-TIME', 'GO 证据既没有精确时刻、也没有"时刻未捕获 + 区间"的说明（拍板 Q4：null 必须配 note，不许编时间）')
+      if (!missingInCopy) {
+        if (!both.includes(goQuote)) push('GO-QUOTE', 'now/log 里找不到施工 GO 的老板原话（逐字）')
+        if (!/session-[0-9a-f-]{8,}/.test(both)) push('GO-SESSION', 'GO 证据缺来源会话 id（形如 session-…）')
+        const hasIso = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(both)
+        const hasNote = /(区间|时刻未|未捕获|未持久化|未落下)/.test(both)
+        rec.readings.go_evidence = { has_iso_time: hasIso, has_time_note: hasNote }
+        if (!hasIso && !hasNote) push('GO-TIME', 'GO 证据既没有精确时刻、也没有"时刻未捕获 + 区间"的说明（拍板 Q4：null 必须配 note，不许编时间）')
+      } else {
+        rec.readings.go_evidence = { judged: false, why: '副本里没有 now / log（`.team/leader/` 不进提交）⇒ GO 证据这一组判不了（见 DOC-NOT-IN-COPY）' }
+      }
 
       // ④ log 尾部不许还停在"等 GO"（GO 记录之后出现旧结论就是没同步）
       if (log) {

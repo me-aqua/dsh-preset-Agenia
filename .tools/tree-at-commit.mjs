@@ -69,6 +69,9 @@
  *        `equal` **不受影响**：`.tools/_staging/` 在 CODE 排除表里（同一把尺子的名单），附加不改 CODE 指纹。
  *      · `live.moved` = **活树从派工那一刻起动了几处**（按基线逐份比，`fingerprint.mjs --compare`）。
  *        没有基线 ⇒ `null` + 非空 `detail`（**判不了要写出来，不许写 0**）。
+ *        🔴 `detail` 点名**哪一种判不了**：没给基线 / 基线不在盘上 / 活树根不是目录 / **子进程超时** /
+ *        退出码非 0 / 读数里没有 `compare`。超时与"没有基线"从前同形（都是 `moved: null` + "退出码 null"），
+ *        读的人分不出该补基线还是该修工具（`F6`，2026-11-03 打回）。
  *        🔴 它不是"副本 vs 活树的分歧"：分歧里装着从没进过提交的文件（本仓库 2026-10-24 实测
  *        活树 192 份 / 提交 135 份），拿它当变动数会把"派工后动了 0 处"报成 50 多处。
  *      · 退出码：`0` = 判定成立（`ok:true` = `equal` 且 `is_that_commit.ok`）；否则非 0，但**照样印 JSON**。
@@ -115,6 +118,7 @@ const USAGE = [
   '        [--live-baseline <file>] [--live-root <活树>] [--with-staging [--staging-manifest <导出 JSON>]] [--json]',
   '',
   '  --out 已存在且非空 ⇒ 拒（exit 2，拒在写之前）· 没有活树基线 ⇒ live.moved = null（不是 0）',
+  '  `live.moved` 判不了时 detail 点名是哪一种（没给基线 / 基线不在 / 不是目录 / 超时 / 退出码）',
   '  --expect 必须是 64 位小写十六进制（sha256）· 副本量不动 ⇒ equal = null（不是 false）',
   '  --live-baseline 落进被测的 CODE 名单 ⇒ 拒（E_BASELINE_IN_CODE）—— 挪到 .team/ 或被测根之外',
   '  --with-staging ⇒ 副本另外带上 .tools/_staging/agenia-upgrade/{preset,oracle}（F2：副本原地要跑套件）；',
@@ -316,35 +320,89 @@ function stagingManifest(files) {
  * 或裸清单（本身就有 `.list`）。落点是被 `--with-staging` 导出的那份 JSON —— 于是
  * "副本还是不是导出那一刻那 52 份"可以拿**当时记下的数**核，而不是拿现在的活树核。
  * 形状不对 ⇒ `ok:false` + 一句点名的原因（拿一份读不出来的清单去比，等于没比）。
+ *
+ * 🔴 **清单还要自洽**（技术评审 2026-11-03 `F8`）：`files` / `bytes` / `digest` 必须与它**自己那份
+ * `list`** 对得上 ——
+ *   · `files` = `list.length`（不然一份被截断的清单会把"list 3 条"报成"声明了 52 份"）；
+ *   · `bytes` = Σ `list[].bytes`；
+ *   · `digest` = 按 `list` 现算的 `manifestOfEntries(list).digest`（同一个公式、同一套排序）；
+ *   · `prefix` / `algorithm` 给了就必须是本工具那套值。
+ * 三样一起查、**不在第一条上早退**（三个数各自承重：只修一个的人要看得见另外两个还在）。
+ * 不自洽 ⇒ `ok:false`（`E_STAGING_MANIFEST_INCONSISTENT`）：那是"清单本身坏了"，不是"副本对不上"，
+ * 两种红因分开报 —— 照着前者去改副本，只会把一份好副本改坏。
  */
 function readStagingManifest(file) {
-  if (!existsSync(file)) return { ok: false, problems: [`--staging-manifest 不在盘上：${file}`], manifest: null }
+  if (!existsSync(file)) return { ok: false, code: 'E_STAGING_MANIFEST_MISSING', problems: [`--staging-manifest 不在盘上：${file}`], manifest: null }
   let raw = null
   try {
     raw = JSON.parse(readFileSync(file, 'utf8'))
   } catch (err) {
-    return { ok: false, problems: [`--staging-manifest 不是可解析 JSON：${file}（${String(err.message).slice(0, 160)}）`], manifest: null }
+    return { ok: false, code: 'E_STAGING_MANIFEST_UNREADABLE', problems: [`--staging-manifest 不是可解析 JSON：${file}（${String(err.message).slice(0, 160)}）`], manifest: null }
   }
   const manifest = raw?.staging?.sha256 ?? raw?.sha256 ?? raw
   if (manifest === null || typeof manifest !== 'object' || !Array.isArray(manifest.list)) {
-    return { ok: false, problems: [`--staging-manifest 里没有清单（要 \`staging.sha256.list\` 或 \`list\`）：${file}`], manifest: null }
+    return { ok: false, code: 'E_STAGING_MANIFEST_SHAPE', problems: [`--staging-manifest 里没有清单（要 \`staging.sha256.list\` 或 \`list\`）：${file}`], manifest: null }
   }
   const bad = manifest.list.filter((e) => e === null || typeof e !== 'object'
     || typeof e.rel !== 'string' || !String(e.rel).startsWith(`${STAGING_REL}/`)
     || !/^[0-9a-f]{64}$/.test(String(e.sha256)) || !Number.isInteger(e.bytes))
   if (bad.length > 0) {
-    return { ok: false, problems: [`--staging-manifest 里有 ${bad.length} 条形状不对（要 {rel: \`${STAGING_REL}/…\`, sha256: 64 位小写十六进制, bytes: 整数}）：${file}`], manifest: null }
+    return { ok: false, code: 'E_STAGING_MANIFEST_SHAPE', problems: [`--staging-manifest 里有 ${bad.length} 条形状不对（要 {rel: \`${STAGING_REL}/…\`, sha256: 64 位小写十六进制, bytes: 整数}）：${file}`], manifest: null }
   }
-  return { ok: true, problems: [], manifest }
+  // ── 自洽（`F8`）：files / bytes / digest 与 list 自己的对账 ────────────────────
+  const computed = manifestOfEntries(manifest.list)
+  const inconsistent = []
+  if (manifest.files !== manifest.list.length) inconsistent.push(`files 声明 ${JSON.stringify(manifest.files)} ≠ list 条数 ${manifest.list.length}`)
+  if (manifest.bytes !== computed.bytes) inconsistent.push(`bytes 声明 ${JSON.stringify(manifest.bytes)} ≠ list 的字节和 ${computed.bytes}`)
+  if (manifest.digest !== computed.digest) inconsistent.push(`digest 声明 ${JSON.stringify(manifest.digest)} ≠ 按 list 复算的 ${computed.digest}`)
+  if (manifest.prefix !== undefined && manifest.prefix !== STAGING_REL) inconsistent.push(`prefix 声明 ${JSON.stringify(manifest.prefix)} ≠ ${STAGING_REL}`)
+  if (manifest.algorithm !== undefined && manifest.algorithm !== 'sha256') inconsistent.push(`algorithm 声明 ${JSON.stringify(manifest.algorithm)} ≠ sha256`)
+  if (inconsistent.length > 0) {
+    return {
+      ok: false,
+      code: 'E_STAGING_MANIFEST_INCONSISTENT',
+      problems: [
+        `E_STAGING_MANIFEST_INCONSISTENT：--staging-manifest 自己不自洽（${inconsistent.length} 处）：${inconsistent.join('；')} —— `
+          + `文件 ${file}。一份被截断 / 改过的清单会被当成"声明了 ${JSON.stringify(manifest.files)} 份"照收（\`F8\`）：`
+          + '清单的三个数必须与它自己那份 list 对得上，否则"拿导出那一刻的清单核副本"这句话不成立',
+      ],
+      manifest: null,
+      computed,
+    }
+  }
+  return { ok: true, problems: [], manifest, computed, code: 'E_STAGING_MANIFEST_OK' }
 }
 
 
 // ── 尺子（只调用 `.tools/fingerprint.mjs`，自己不实现排除表）────────────────────
+/**
+ * 子进程上限。`.tools/fingerprint.mjs` 剪枝之后，本工作区整根 CODE 从 **362 s** 掉到 **~0.12 s**
+ * （2026-11-03 实测，`F6`），这个上限是给"别的、更大的树"留的余量 —— 它**不再**是常态。
+ */
+const FINGERPRINT_CAP_MS = 300000
+
+/**
+ * 尺子没跑成时的那一句 —— **超时和"退出码非 0"必须分得开**（`F6`）。
+ *
+ * `spawnSync` 撞上 `timeout` 时 `status` 是 `null`、`signal` 是 `SIGTERM`、`error.code` 是 `ETIMEDOUT`；
+ * 从前这两种都印成"退出码 null"，于是"树太大/太慢"和"没有基线"在报文里长得一模一样，
+ * 读的人分不出该补基线还是该修工具（`mig-rules-12`：没记录 ≠ 没发生）。
+ */
+function fingerprintFailure(r) {
+  if (r.timedOut) {
+    return `超时：fingerprint.mjs 在 ${FINGERPRINT_CAP_MS} ms 内没跑完（子进程被掐掉）`
+      + `${r.stderr.trim() === '' ? '' : `；stderr：${r.stderr.trim().slice(0, 200)}`}`
+      + ` —— 这不是"比不了"，是这一棵树在 ${FINGERPRINT_CAP_MS} ms 里量不完（F6）`
+  }
+  const extra = r.error === null ? '' : ` · ${r.error.code ?? 'ERROR'}：${String(r.error.message ?? '').slice(0, 200)}`
+  return `退出码 ${r.status}${r.signal === null ? '' : ` · signal ${r.signal}`}${extra}`
+}
+
 function runFingerprint(args) {
   const r = spawnSync(process.execPath, [FINGERPRINT_TOOL, ...args], {
     encoding: 'utf8',
     maxBuffer: MAX_BUFFER,
-    timeout: 300000,
+    timeout: FINGERPRINT_CAP_MS,
     env: { ...process.env },
   })
   let json = null
@@ -352,7 +410,18 @@ function runFingerprint(args) {
     const lines = String(r.stdout ?? '').trim().split('\n').filter((l) => l.trim() !== '')
     json = lines.length === 0 ? null : JSON.parse(lines[lines.length - 1])
   } catch { json = null }
-  return { status: r.status, json, stderr: String(r.stderr ?? ''), stdout: String(r.stdout ?? '') }
+  const error = r.error === undefined || r.error === null
+    ? null
+    : { code: r.error.code ?? null, message: String(r.error.message ?? '') }
+  return {
+    status: r.status,
+    signal: r.signal ?? null,
+    timedOut: error?.code === 'ETIMEDOUT',
+    error,
+    json,
+    stderr: String(r.stderr ?? ''),
+    stdout: String(r.stdout ?? ''),
+  }
 }
 
 /** 一棵树的 CODE 指纹（现算）。 */
@@ -360,7 +429,7 @@ function codeFingerprintOf(root) {
   const r = runFingerprint(['--root', root, '--set', 'code', '--json'])
   const code = r.json?.sets?.code
   if (r.status !== 0 || code === undefined || typeof code.sha256 !== 'string') {
-    return { ok: false, sha256: null, files: null, bytes: null, problems: [`fingerprint.mjs 量不动 ${root}（退出码 ${r.status}）：${r.stderr.trim().slice(0, 300)}`] }
+    return { ok: false, sha256: null, files: null, bytes: null, problems: [`fingerprint.mjs 量不动 ${root}（${fingerprintFailure(r)}）`] }
   }
   return { ok: true, sha256: code.sha256, files: code.files, bytes: code.bytes, problems: [] }
 }
@@ -386,7 +455,7 @@ function codeListOf(root) {
 function saveLiveBaseline(liveRoot, file) {
   mkdirSync(path.dirname(file), { recursive: true })
   const r = runFingerprint(['--root', liveRoot, '--set', 'code', '--save', file, '--json'])
-  if (r.status !== 0) return { ok: false, problems: [`fingerprint.mjs --save 退出码 ${r.status}：${r.stderr.trim().slice(0, 300)}`] }
+  if (r.status !== 0) return { ok: false, problems: [`fingerprint.mjs --save 没跑成（${fingerprintFailure(r)}）`] }
   let raw = null
   try { raw = JSON.parse(readFileSync(file, 'utf8')) } catch (err) { return { ok: false, problems: [`写出来的基线不是可解析 JSON：${String(err.message).slice(0, 160)}`] } }
   const list = raw?.sets?.code?.list
@@ -419,6 +488,9 @@ function saveLiveBaseline(liveRoot, file) {
 /**
  * 活树**从基线那一刻起**动了几处：`{ok, moved, places, detail}`。
  * 没有基线 / 比不了 ⇒ `moved: null` + 非空 `detail`（判不了要写出来，**不许**写 0）。
+ * 🔴 `detail` 必须**说得清是哪一种判不了**（`F6`）：没给基线 / 基线不在盘上 / 活树根不是目录 /
+ *    **超时** / 退出码非 0 / 读数里没有 `compare` —— 六种各有各的句子。从前"超时"印成
+ *    "退出码 null"，与"没有基线"同形，读的人分不出该补基线还是该修工具。
  */
 function liveMoved(liveRoot, baselineFile) {
   if (!baselineFile) {
@@ -432,7 +504,7 @@ function liveMoved(liveRoot, baselineFile) {
   }
   const r = runFingerprint(['--root', liveRoot, '--set', 'code', '--compare', baselineFile, '--json'])
   if (r.status !== 0 && r.status !== 1) {
-    return { ok: false, moved: null, places: [], detail: `基线比不了（fingerprint.mjs --compare 退出码 ${r.status}）：${r.stderr.trim().slice(0, 200)}` }
+    return { ok: false, moved: null, places: [], detail: `基线比不了（fingerprint.mjs --compare ${fingerprintFailure(r)}）` }
   }
   const cmp = r.json?.compare
   if (!cmp || typeof cmp.equal !== 'boolean' || !Array.isArray(cmp.changed)) {

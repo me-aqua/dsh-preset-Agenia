@@ -131,3 +131,7 @@ out/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Python bytecode (must never enter the CODE fingerprint)
+__pycache__/
+*.pyc

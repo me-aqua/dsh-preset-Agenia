@@ -37,7 +37,7 @@ import { before, describe, test } from 'node:test'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { ENV, PATHS } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase, sha256File, stagingReadings } from '../support/evidence.mjs'
+import { caseFail, caseHold, commitCopyReading, preflight, problem, runCase, sha256File, stagingReadings } from '../support/evidence.mjs'
 import { runCheckNotes, memoryRootReading } from '../support/day-cut.mjs'
 
 before(() => {
@@ -74,6 +74,22 @@ describe('integration · check-notes day cut (DBY) · F-158 体检那条红的�
       }
       const mem = memoryRootReading()
       rec.readings.memory_root = mem
+      /**
+       * 🔴 技术评审 2026-11-03 `F4`：记忆库根是**数据段**（`presets/agenia/.runtime`），不随提交走。
+       * 从提交导出的只读副本里它必然不在 ⇒ 体检那一行只能走「挂起」那一支，两个方向都量不到 ——
+       * 这一格在副本里**判不了**（`HOLD`），不是"体检那条断言坏了"那种红。
+       * ⚠️ 活树里它不在仍然是**红**（`DBY-CN-PRECONDITION`）：那是真缺数据。
+       */
+      const copyTree = commitCopyReading()
+      rec.readings.copy_tree = copyTree
+      if (!mem.exists && copyTree.is_copy) {
+        caseHold(rec, 'DBY-CN-NO-DATA-IN-COPY',
+          `这棵树是**提交的只读副本**（\`${copyTree.git_mark}\` 不在）⇒ 记忆库根（${mem.path}）是数据段、不随提交走，`
+          + '体检那一行在副本里只能走「挂起」，两个方向（01:30 / 04:30）都量不到 ⇒ 这一格判不了。**不是绿**：'
+          + '要在活树上跑同一条判据（`F4`：副本答不了的记 HOLD，不记红）')
+        rec.readings.verdict = 'HOLD：两个方向都没跑（记忆库根不在副本里）'
+        return caseFail(problems)
+      }
       if (!mem.exists) {
         // 记忆库根不在 ⇒ 体检走「挂起」那一支（"判不了"），两向都量不到 —— 前置不成立要出声。
         push('DBY-CN-PRECONDITION', `记忆库根不在（${mem.path}）⇒ 体检那一条走「挂起」而不是「红/绿」，两个方向都量不到；`

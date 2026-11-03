@@ -102,10 +102,28 @@ function excluded(rel) {
   return false
 }
 
+/**
+ * 目录剪枝 —— **进都不进**（`F6`：先量后筛会让"量 12 MB"先把整棵工作区读一遍，2026-11-03 实测 362 s）。
+ *
+ * 只吃**目录形状**的两条规则（前缀 / 段名）。文件名那几条（`api.txt` / 后缀 `.log`）对目录没有意义 ——
+ * 拿它们剪目录会把"名字带 `.log` 的目录里的真代码"一起藏起来（**少算不是安全**）。
+ * ⚠️ 与 `excluded()` 必须**同一个基准**：`rel` 相对给定 root、`/` 分隔（③b）。
+ * ⚠️ 剪枝**不许改读数**：被剪掉的目录里每一份文件本来就过不了 `excluded()` ⇒ 同一棵树剪枝前后
+ *    的 `sha256` / `files` / `bytes` / `list` 必须逐字相同（探针见 `.team/test/2026-11-03/log.md`）；
+ *    所以这次改动**不**需要重跑任何基线。
+ */
+function pruned(rel) {
+  const asDir = `${rel.toLowerCase()}/`
+  for (const p of EXCLUDE_PREFIXES) if (asDir.startsWith(p.toLowerCase())) return true
+  const segs = rel.toLowerCase().split('/')
+  for (const s of EXCLUDE_SEGMENTS) if (segs.includes(s)) return true
+  return false
+}
+
 /** 枚举一棵树（相对路径 + 字节 + 单文件 sha + 行数），按 UTF-8 字节序升序。 */
 function walk(root) {
   const out = []
-  const visit = (dir) => {
+  const visit = (dir, relDir) => {
     let names
     try {
       names = readdirSync(dir)
@@ -114,6 +132,7 @@ function walk(root) {
     }
     for (const name of names) {
       const full = path.join(dir, name)
+      const rel = relDir === '' ? name : `${relDir}/${name}`
       let st
       try {
         st = statSync(full)
@@ -121,9 +140,9 @@ function walk(root) {
         continue
       }
       if (st.isDirectory()) {
-        visit(full)
+        if (pruned(rel)) continue
+        visit(full, rel)
       } else if (st.isFile()) {
-        const rel = path.relative(root, full).replace(/\\/g, '/')
         const buf = readFileSync(full)
         out.push({
           rel,
@@ -133,7 +152,7 @@ function walk(root) {
       }
     }
   }
-  visit(root)
+  visit(root, '')
   out.sort((a, b) => Buffer.compare(Buffer.from(a.rel, 'utf8'), Buffer.from(b.rel, 'utf8')))
   return out
 }

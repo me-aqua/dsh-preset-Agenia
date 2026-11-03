@@ -29,7 +29,7 @@ import { before, describe, test } from 'node:test'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
+import { caseFail, caseHold, commitCopyReading, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import {
   EXPORT_FIELDS, VERIFY_FIELDS, buildFixtureRepo, codeDigestOfCommit, codeDigestOfDir, codeListDiff,
   dispatchShapes, excludedFromCode, exportCommitReference, exporterPath, fingerprintCompare, fingerprintTool,
@@ -278,15 +278,36 @@ describe('integration · review (REV) · F-160 评审对象是提交', () => {
       }
 
       // ══ D REAL：真仓库里钉住的那个提交 ═══════════════════════════════════════
+      /**
+       * 🔴 技术评审 2026-11-03 `F4`：这一格的样本是**仓库历史**（`8b7cea6…` 那个提交）。
+       * 提交历史不随副本走（副本是纯树、没有 `.git`）⇒ 在副本里读不出它时这一格**判不了**（`HOLD`），
+       * 不是"历史被谁删了"那种红；红留给活树（历史只追加 ⇒ 活树里它不在才是真出事）。
+       */
+      const copyTree = commitCopyReading()
+      rec.readings.copy_tree = copyTree
       const realTree = lsTreeBlobs(PATHS.repo, REAL_COMMIT)
       if (!realTree.ok) {
-        push('REAL-COMMIT-MISSING', `真仓库里钉住的提交 ${REAL_COMMIT.slice(0, 12)}… 读不出来：${realTree.problems.join('；')}（历史只追加 ⇒ 它应当永远在那儿；不在说明这一格的输入没了）`)
+        if (copyTree.is_copy) {
+          caseHold(rec, 'REAL-COMMIT-NOT-IN-COPY',
+            `这棵树是**提交的只读副本**（\`${copyTree.git_mark}\` 不在）⇒ 没有自己的仓库历史，`
+            + `钉住的提交 ${REAL_COMMIT.slice(0, 12)}… 读不出来 ⇒ 这一格判不了。**不是绿**：要在活树上跑同一条判据`
+            + `（\`F4\`：副本答不了的记 HOLD，不记红；量具读数：${realTree.problems.join('；').slice(0, 300)}）`)
+        } else {
+          push('REAL-COMMIT-MISSING', `真仓库里钉住的提交 ${REAL_COMMIT.slice(0, 12)}… 读不出来：${realTree.problems.join('；')}（历史只追加 ⇒ 它应当永远在那儿；不在说明这一格的输入没了）`)
+        }
       } else {
         const realCommit = codeDigestOfCommit(PATHS.repo, REAL_COMMIT)
         rec.readings.real = { commit: REAL_COMMIT, tracked: realTree.entries.length, code: { ok: realCommit.ok, sha256: realCommit.sha256, files: realCommit.files, bytes: realCommit.bytes } }
         if (!realCommit.ok) push('REAL-COMMIT-MISSING', `提交 ${REAL_COMMIT.slice(0, 12)}… 的 CODE 指纹算不出来：${realCommit.problems.join('；')}`)
-        else if (realCommit.files < 50) push('REAL-COMMIT-MISSING', `提交 ${REAL_COMMIT.slice(0, 12)}… 的 CODE 名单只有 ${realCommit.files} 份 —— 样本太小，"副本是不是那个提交"就没什么可核的`)
-        else {
+        else if (realCommit.files < 50) {
+          if (copyTree.is_copy) {
+            caseHold(rec, 'REAL-COMMIT-NOT-IN-COPY',
+              `这棵树是**提交的只读副本**（\`${copyTree.git_mark}\` 不在）⇒ 提交 ${REAL_COMMIT.slice(0, 12)}… 的 CODE 名单只读出 ${realCommit.files} 份 `
+              + '（样本太小）—— 副本没有自己的仓库历史，这一格判不了。**不是绿**：要在活树上跑同一条判据')
+          } else {
+            push('REAL-COMMIT-MISSING', `提交 ${REAL_COMMIT.slice(0, 12)}… 的 CODE 名单只有 ${realCommit.files} 份 —— 样本太小，"副本是不是那个提交"就没什么可核的`)
+          }
+        } else {
           // 读数（**不判**）：活树里有一批从没进过提交的 CODE 文件 ⇒ "分歧 ≠ 变动"（今天是 192 vs 135）。
           const liveCode = codeDigestOfDir(PATHS.repo)
           const divergence = codeListDiff(realCommit.list, liveCode.list)

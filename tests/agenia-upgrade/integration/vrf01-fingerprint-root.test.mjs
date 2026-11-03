@@ -18,7 +18,7 @@
 import { before, describe, test } from 'node:test'
 import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
+import { caseFail, caseHold, commitCopyReading, preflight, problem, runCase } from '../support/evidence.mjs'
 import {
   buildPresetTree, countFiles, fingerprintCode, writeUnder,
 } from '../support/verify-recompute.mjs'
@@ -35,6 +35,13 @@ describe('integration · verify-recompute (VRF) · F-120 指纹口径', () => {
     await runCase('VRF-01', async (rec) => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
+      /**
+       * 🔴 技术评审 2026-11-03 `F4`：`A` 格的样本是**数据段**（`presets/agenia/.runtime/`）。
+       * 它不随提交走 ⇒ 从提交导出的只读副本里必然 0 份 —— 那时这一格**判不了**（`HOLD`），
+       * 不是"判据空转"那种红（红留给活树：活树里它突然空了才是真的没样本）。
+       */
+      const copyTree = commitCopyReading()
+      rec.readings.copy_tree = copyTree
 
       // ── A 真现场：现役预设根（只读）────────────────────────────────────
       const real = fingerprintCode(PATHS.finalPreset)
@@ -58,7 +65,14 @@ describe('integration · verify-recompute (VRF) · F-120 指纹口径', () => {
         rec.readings.real_root.runtime_byte_share = real.code.bytes > 0 ? `${(runtimeBytes / real.code.bytes * 100).toFixed(1)}%` : null
         rec.readings.real_root.sample = runtimeRels.slice(0, 5)
         if (runtimeDisk === 0) {
-          push('CRITERION-VACUOUS', `现役 ${path.join(PATHS.finalPreset, '.runtime')} 里一份文件都没有 ⇒ "CODE 里不许有 .runtime/" 这条断言**空转**（它今天必然绿，绿得毫无意义）`)
+          if (copyTree.is_copy) {
+            caseHold(rec, 'VRF-NO-DATA-IN-COPY',
+              `这棵树是**提交的只读副本**（\`${copyTree.git_mark}\` 不在）⇒ 现役预设根下那份 \`.runtime/\` 数据`
+              + `（"盘上非空"这一格的样本）不随提交走，本来就不该在副本里 ⇒ 这一格判不了。**不是绿**：`
+              + '要在活树上跑同一条判据（`F4`：副本答不了的记 HOLD，不记红）')
+          } else {
+            push('CRITERION-VACUOUS', `现役 ${path.join(PATHS.finalPreset, '.runtime')} 里一份文件都没有 ⇒ "CODE 里不许有 .runtime/" 这条断言**空转**（它今天必然绿，绿得毫无意义）`)
+          }
         }
         if (runtimeRels.length !== 0) {
           push('CODE-INCLUDES-DATA', `现役预设根的 CODE 名单里混进 ${runtimeRels.length} 份 .runtime/ 文件（${runtimeBytes} B，占 CODE ${real.code.bytes} B 的 ${(runtimeBytes / real.code.bytes * 100).toFixed(1)}%）—— 举例 ${runtimeRels.slice(0, 3).join(' · ')}；排除表里的 \`presets/agenia/.runtime/\` 是**仓库根相对**写法，\`--root presets\\agenia\` 时永不匹配`)

@@ -53,10 +53,10 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
+import { caseFail, ensureDir, preflight, problem, runCase, runRoot, writeJson } from '../support/evidence.mjs'
 import { ROOT_SOURCE, canonical, isUnder } from '../support/root-guard.mjs'
 import {
-  EXPORT_FIELDS, STAGING_ADDITION, VERIFY_FIELDS, declaredAdditionManifest, declaredAdditionPaths, fingerprintTool, git,
+  EXPORT_FIELDS, STAGING_ADDITION, VERIFY_FIELDS, buildFixtureRepo, declaredAdditionManifest, declaredAdditionPaths, fingerprintTool, git,
   lsTreeBlobs, exporterPath, missingFields, runExport, runVerify, treeDigest, verifyCopyIsCommit,
 } from '../support/tree-at-commit.mjs'
 import { PATHS } from '../support/env.mjs'
@@ -184,6 +184,65 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
       files_total: tree.ok ? tree.entries.length : null,
       staging_paths: stagingInCommit === null ? null : stagingInCommit.length,
       problems: tree.ok ? [] : tree.problems,
+    }
+
+    /**
+     * ③b **量具自证：`lsTreeBlobs` 不许被 cwd 前缀裁空**（技术评审 2026-11-03 `F3`）。
+     *
+     * 病：`git ls-tree -r <commit>` **不给 pathspec 时只列当前 cwd 前缀**。从副本里调它（副本没有
+     * `.git`，git 走到活树那个仓、前缀是副本在活树里的相对路径）⇒ **0 条**；旧代码把 0 条当成
+     * `ok:true` ⇒ 提交里那 175 份全成了"多一份"，这一格报"227 份 extras"并在下面提前 return，
+     * 三条后来的腿（根钉死 / 内容冻结 / 前后 equal）一次都没跑到。
+     * 两条腿各量一次，缺一条这句话都不成立：
+     *   · **正向**：从仓库**子目录**调一次 ⇒ 必须与仓根那次**同一份清单**（前缀裁剪当场露出来）；
+     *   · **反向**：一个**空树提交**（0 条 blob，造在运行根的夹具仓库里）⇒ 必须 `ok:false` 并点名"0 条"
+     *     （0 条 ≠ "提交是空的也可以"）。
+     */
+    const nestedCwd = path.join(PATHS.repo, 'tests', 'agenia-upgrade')
+    const nested = lsTreeBlobs(PATHS.repo, commit, { cwd: nestedCwd })
+    const rootRels = tree.ok ? tree.entries.map((e) => e.rel) : null
+    const nestedRels = nested.ok ? nested.entries.map((e) => e.rel) : null
+    const fxEmpty = buildFixtureRepo(runRoot(), 'cpy01-empty-tree')
+    const emptyTreeSha = String(git(['mktree'], { cwd: fxEmpty.repo, input: '' }).stdout).trim()
+    const emptyCommit = String(git(['commit-tree', emptyTreeSha, '-m', '空树提交（0 条 blob）'], { cwd: fxEmpty.repo }).stdout).trim()
+    const emptyRead = /^[0-9a-f]{40}$/.test(emptyCommit)
+      ? lsTreeBlobs(fxEmpty.repo, emptyCommit)
+      : { ok: null, entries: [], problems: ['夹具里没造出空树提交（commit-tree 输出不是 40 hex）'], toplevel: null }
+    readings.ls_tree_scope = {
+      repo: PATHS.repo,
+      from_repo_root: { ok: tree.ok, files: rootRels === null ? null : rootRels.length, toplevel: tree.toplevel ?? null },
+      from_nested_cwd: {
+        cwd: nestedCwd, ok: nested.ok,
+        files: nestedRels === null ? null : nestedRels.length,
+        toplevel: nested.toplevel ?? null,
+        problems: nestedRels === null ? nested.problems.slice(0, 3) : [],
+      },
+      same_list: rootRels !== null && nestedRels !== null && JSON.stringify(rootRels) === JSON.stringify(nestedRels),
+      empty_tree_control: {
+        fixture_repo: fxEmpty.repo,
+        commit: /^[0-9a-f]{40}$/.test(emptyCommit) ? emptyCommit : null,
+        ok: emptyRead.ok,
+        entries: emptyRead.entries.length,
+        problems: emptyRead.problems.slice(0, 3),
+      },
+      note: '正向：从子目录调必须与仓根同一份清单；反向：空树提交必须 ok:false（0 条不是"没问题"）',
+    }
+    if (!nested.ok) {
+      push('CPY-LS-TREE-SCOPE',
+        `从仓库子目录（${nestedCwd}）调 \`lsTreeBlobs\` 读不出来：${nested.problems.slice(0, 3).join(' / ')} —— `
+        + '`git ls-tree -r` 不给 pathspec 时**只列 cwd 前缀**（`F3`）；这一格量的必须是整个提交')
+    } else if (!readings.ls_tree_scope.same_list) {
+      push('CPY-LS-TREE-SCOPE',
+        `从仓根与从子目录调 \`lsTreeBlobs\` 得到的清单不一致（仓根 ${rootRels?.length ?? '?'} 条 / 子目录 ${nestedRels.length} 条）—— `
+        + '提交那棵树与 cwd 无关；两个数不同就是前缀裁剪又回来了（`F3`：从副本里调会拿到 0 条）')
+    }
+    if (emptyRead.ok !== false) {
+      push('CPY-LS-TREE-EMPTY-OK',
+        `一个 **0 条 blob 的空树提交**被 \`lsTreeBlobs\` 判成 ok=${JSON.stringify(emptyRead.ok)}（${emptyRead.entries.length} 条）—— `
+        + '0 条不是"提交是空的也可以"，是**这一问没落到那个提交上**（`F3`：下游会把副本里每一份都算成"多一份"）')
+    } else if (!emptyRead.problems.some((p) => String(p).includes('0 条'))) {
+      push('CPY-LS-TREE-EMPTY-OK',
+        `空树提交红了，但没有一句点名"0 条"：${JSON.stringify(emptyRead.problems.slice(0, 3))} —— 读的人分不出是"空"还是"读错了地方"`)
     }
 
     // ── ④ 导出副本（落在运行根里；`.team/` 不在 CODE 名单里，不会把这条写进读数）──────
@@ -344,6 +403,72 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
         '导出器自己复算的 `is_that_commit.ok` 不是 `true`（'
         + JSON.stringify(verify.json.is_that_commit ?? null).slice(0, 300) + '）—— 和 `verifyCopyIsCommit()` 的结论打架：'
         + '同一个 `--with-staging` 声明，两条路必须都认这份副本')
+    }
+
+    // ── ⑤b' **清单自洽**（技术评审 2026-11-03 `F8`）──────────────────────────────
+    /**
+     * `--staging-manifest` 的三个数（`files` / `bytes` / `digest`）必须与它**自己那份 `list`** 对得上。
+     * 病：`readStagingManifest` 只逐条校验条目形状、不校验清单自洽 ⇒ 一份被截断的清单
+     * （`list` 3 条、`files` 52）会被当成"声明了 52 份"照收，而"拿导出那一刻的清单核副本"这句话
+     * 就变成了"信任何一份 JSON"。
+     * 正反两侧各跑一次**真校验**（同一份副本、同一个 `--expect`；校验是只读的）：
+     *   · **正样本**：导出那一刻记下的那份 JSON **原样** ⇒ 必须照收 —— 没有它，下面那条红不成立
+     *     （红了可能只是"这条路本来就不通"）；
+     *   · **负样本**：同一份 JSON、把 `files` / `bytes` / `digest` 各改一处 ⇒ 必须拒，且**三个不符项
+     *     都要被点名**（只修一个的人要看得见另外两个还在）。
+     */
+    if (expectOk) {
+      const manifestDir = ensureDir(path.join(runRoot(), 'tmp', 'cpy01-manifest'))
+      const goodManifest = path.join(manifestDir, 'export-as-is.json')
+      writeJson(goodManifest, exp.json)
+      const badJson = JSON.parse(JSON.stringify(exp.json))
+      const declaredFiles = badJson?.staging?.sha256?.files ?? null
+      badJson.staging.sha256.files = 3
+      badJson.staging.sha256.bytes = 1
+      badJson.staging.sha256.digest = '0'.repeat(64)
+      const badManifest = path.join(manifestDir, 'export-truncated.json')
+      writeJson(badManifest, badJson)
+      const verifyWith = (file) => runVerify({
+        exporter: exporter.file, copy: copyRoot, repo: PATHS.repo, commit, expect: expectSha,
+        withStaging: true, stagingManifest: file,
+      })
+      const goodRun = verifyWith(goodManifest)
+      const badRun = verifyWith(badManifest)
+      const badProblems = Array.isArray(badRun.json?.is_that_commit?.problems) ? badRun.json.is_that_commit.problems : []
+      const named = ['files', 'bytes', 'digest'].filter((k) => badProblems.some((p) => String(p).includes(`${k} 声明`)))
+      readings.manifest_selfcheck = {
+        good: {
+          manifest: goodManifest, exit: goodRun.exit, ok: goodRun.json?.ok ?? null,
+          equal: goodRun.json?.equal ?? null, is_that_commit_ok: goodRun.json?.is_that_commit?.ok ?? null,
+          json_error: goodRun.json_error ?? null,
+        },
+        bad: {
+          manifest: badManifest, exit: badRun.exit, ok: badRun.json?.ok ?? null,
+          equal: badRun.json?.equal ?? null, is_that_commit_ok: badRun.json?.is_that_commit?.ok ?? null,
+          json_error: badRun.json_error ?? null,
+          problems: badProblems.slice(0, 4),
+        },
+        tampered: { declared_files_was: declaredFiles, files: 3, bytes: 1, digest: `${'0'.repeat(8)}…` },
+        named_inconsistencies: named,
+        note: '正样本（原样清单）必须照收；负样本（files/bytes/digest 各改一处）必须拒，且三个不符项都被点名',
+      }
+      if (goodRun.json === null || goodRun.json?.ok !== true) {
+        const goodProblems = Array.isArray(goodRun.json?.is_that_commit?.problems) ? goodRun.json.is_that_commit.problems : []
+        push('CPY-MANIFEST-CONTROL',
+          `导出那一刻记下的那份清单（原样交给 \`--staging-manifest\`）被拒了：exit=${goodRun.exit} · `
+          + `ok=${JSON.stringify(goodRun.json?.ok ?? null)} · ${JSON.stringify(goodProblems.slice(0, 2))} —— `
+          + '这一条是控制面的**起点**：它不绿，"改动过的清单必须被拒"那条红就不说明任何事')
+      }
+      if (badRun.json === null || badRun.json?.ok !== false) {
+        push('CPY-MANIFEST-SELFCHECK',
+          `一份 \`files\`/\`bytes\`/\`digest\` 与它自己那份 \`list\` 对不上的清单被**照收**了`
+          + `（ok=${JSON.stringify(badRun.json?.ok ?? null)} · exit=${badRun.exit}）—— `
+          + '`readStagingManifest` 只校验条目形状、不校验清单自洽（`F8`）：一份被截断的清单会变成"声明了 N 份"')
+      } else if (named.length !== 3) {
+        push('CPY-MANIFEST-SELFCHECK',
+          `被改过的清单确实红了，但没有把三个不符项**都**点名（点到 ${JSON.stringify(named)}）：`
+          + `${JSON.stringify(badProblems.slice(0, 3))} —— 三个数各自承重，只报一个会让"另外两个还没修"看不见（\`F8\`）`)
+      }
     }
 
     // ── ⑥ 判据：套件要的四条输入，副本里有没有、是不是副本自己的、是不是活树那一份 ────────
