@@ -48,13 +48,16 @@
  * （`cand-20261019-0033`：证据件必须自报它量的是哪一版）。
  */
 import { before, test } from 'node:test'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
+import { ROOT_SOURCE, canonical, isUnder } from '../support/root-guard.mjs'
 import {
-  EXPORT_FIELDS, STAGING_ADDITION, declaredAdditionPaths, git, lsTreeBlobs, exporterPath, missingFields,
-  runExport, verifyCopyIsCommit,
+  EXPORT_FIELDS, STAGING_ADDITION, VERIFY_FIELDS, declaredAdditionManifest, declaredAdditionPaths, fingerprintTool, git,
+  lsTreeBlobs, exporterPath, missingFields, runExport, runVerify, treeDigest, verifyCopyIsCommit,
 } from '../support/tree-at-commit.mjs'
 import { PATHS } from '../support/env.mjs'
 
@@ -63,6 +66,35 @@ before(() => {
 })
 
 const sha256Of = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+
+/**
+ * **副本的自证**（评审 2026-11-02 打回项 2）：问"这份副本是谁写的"，而不是"某个目录像不像它"。
+ *
+ * 两问，都从**副本里**发出去（`cwd = 副本根`）：
+ *   ① 拿**副本里那份** `support/root-guard.mjs` 问它"你的仓库根是谁" —— 必须解析成副本自己
+ *      （否则副本原地跑套件时，套件判的是**另一棵树**，绿不在副本上）；
+ *   ② 在副本里问 git"你的仓库在哪" —— 今天会指回**活树**（副本嵌在活树的工作树里、`.git` 在上一层）。
+ *      这一问是**读数不是判据**：它正是"在副本里跑套件会静默认证活树"那个坑，所以本文件
+ *      **一次都不在副本里调 git** —— 所有 git 调用都显式钉 `cwd: PATHS.repo`（期望那一侧）。
+ */
+function copyAuthorship(copyRoot) {
+  const moduleUrl = pathToFileURL(path.join(copyRoot, 'tests', 'agenia-upgrade', 'support', 'root-guard.mjs')).href
+  const code = `
+    import { execFileSync } from 'node:child_process'
+    const mod = await import(${JSON.stringify(moduleUrl)})
+    let top = null, err = null
+    try { top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: process.env.CPY_PROBE_CWD, encoding: 'utf8' }).trim() } catch (e) { err = String(e.message).slice(0, 200) }
+    console.log(JSON.stringify({ cwd: process.cwd(), repo_root: mod.REPO_ROOT, root_source: mod.ROOT_SOURCE, git_toplevel: top, git_error: err }))
+  `
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
+    cwd: copyRoot, encoding: 'utf8', timeout: 60000, env: { ...process.env, CPY_PROBE_CWD: copyRoot },
+  })
+  const last = String(r.stdout ?? '').trim().split('\n').filter((line) => line.trim() !== '').pop()
+  let json = null
+  try { json = last === undefined ? null : JSON.parse(last) } catch { json = null }
+  return { exit: r.status, json, stderr: String(r.stderr ?? '').slice(0, 300) }
+}
 
 /**
  * 套件跑起来**必须有**的四条（路径相对**副本根**；`why` 写清"哪一行把它绑上去的"）。
@@ -201,6 +233,119 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
       return caseFail(problems)
     }
 
+    /**
+     * ⑤b **根钉死 + 副本自证**（评审 2026-11-02 打回项 2）。
+     *
+     * 病根：副本里没有 `.git`，而它嵌在**活树的工作树**里 ⇒ 从副本里调 git 会一路走到活树的 `.git`，
+     * 于是"在副本里跑出来 0 红"可能只是"套件读了活树"。所以这一格把两件事落成读数：
+     *   · **根是钉死的**：判据只用 `PATHS.repo`（来源 `ROOT_SOURCE` 自报），副本必须在运行根之下；
+     *   · **副本自证**：拿副本里那份 `root-guard.mjs` 问它"你的仓库根是谁" ⇒ 必须解析成副本自己。
+     *     （`git rev-parse --show-toplevel` 在副本里会指回活树 —— 这一格把它记成读数，
+     *      并因此**不在副本里调 git**；所有 git 调用都显式钉 `cwd: PATHS.repo`。）
+     */
+    const runRootDir = runRoot()
+    const authorship = copyAuthorship(copyRoot)
+    const copyCanon = canonical(copyRoot)
+    const probeRoot = authorship.json?.repo_root === undefined || authorship.json?.repo_root === null
+      ? null
+      : canonical(authorship.json.repo_root)
+    const gitTop = authorship.json?.git_toplevel === undefined || authorship.json?.git_toplevel === null
+      ? null
+      : canonical(authorship.json.git_toplevel)
+    readings.roots = {
+      repo: PATHS.repo,
+      repo_source: ROOT_SOURCE,
+      run_root: runRootDir,
+      copy_root: copyRoot,
+      copy_under_run_root: isUnder(copyCanon, canonical(runRootDir)),
+      copy_has_git: existsSync(path.join(copyRoot, '.git')),
+      test_file: fileURLToPath(import.meta.url),
+      test_file_under_repo: isUnder(canonical(fileURLToPath(import.meta.url)), canonical(PATHS.repo)),
+      note: '判据只用 PATHS.repo（期望那一侧）；副本里的一切用副本自己的文件量',
+    }
+    readings.authorship = {
+      probe_exit: authorship.exit,
+      probe_error: authorship.json === null ? authorship.stderr : null,
+      copy_cwd: authorship.json?.cwd ?? null,
+      copy_repo_root: authorship.json?.repo_root ?? null,
+      copy_root_source: authorship.json?.root_source ?? null,
+      copy_is_own_root: probeRoot !== null && probeRoot === copyCanon,
+      git_toplevel_from_copy: authorship.json?.git_toplevel ?? null,
+      git_from_copy_is_live_repo: gitTop !== null && gitTop === canonical(PATHS.repo),
+      note: '`git_from_copy_is_live_repo:true` 是**已知的坑**（副本嵌在活树里）——所以本文件不在副本里调 git；'
+        + '副本的身份只由副本自己的字节 + 副本自己那份 root-guard 说',
+    }
+    if (!readings.roots.copy_under_run_root) {
+      push('CPY-COPY-OUTSIDE-RUNROOT',
+        `副本落在运行根之外（copy=${copyRoot} · run_root=${runRootDir}）—— 证据落点不分开的话，`
+        + '「副本里量到的」与「运行根里量到的」会混成一件事')
+    }
+    if (readings.roots.copy_has_git) {
+      push('CPY-COPY-HAS-GIT', `副本里带着 \`.git\`（${path.join(copyRoot, '.git')}）—— 那等于把活仓库带进副本，副本不是纯树`)
+    }
+    if (!readings.authorship.copy_is_own_root) {
+      push('CPY-COPY-NOT-SELFROOT',
+        `拿副本里那份 \`support/root-guard.mjs\` 问"仓库根是谁"，它答的是 ${JSON.stringify(authorship.json?.repo_root ?? null)}，`
+        + `不是副本自己（${copyRoot}）—— 副本原地跑套件时，套件判的是**另一棵树**，那个绿不在副本上`
+        + '（`ROOT_SOURCE` = ' + JSON.stringify(authorship.json?.root_source ?? null) + '；'
+        + `probe exit=${authorship.exit}${authorship.json === null ? ` · stderr=${JSON.stringify(authorship.stderr)}` : ''}）`)
+    }
+
+    /**
+     * ⑤c **副本在这一轮里没被动过**：`equal` 的前后两次读数（评审 2026-11-02 打回项 3）。
+     *
+     * 两把尺子各量一次，缺一把都不算：
+     *   · 我这边：`.tools/fingerprint.mjs --root <副本> --set code` 开跑 / 收口各一次 ⇒ sha256 必须相同；
+     *   · **导出器自己**：`--verify <副本> --expect <before_sha256> --with-staging` ⇒ `equal` 必须 `true`
+     *     （它读的是副本现在的字节与 `--expect` 的比，不是照抄我给的数）。
+     * 另外记 `countFiles()`：**任何**写入（含运行根 / 探针文件）都会让收口的份数变——这一格也判它。
+     */
+    const copyFilesBefore = countFiles(copyRoot)
+    const copyBefore = fingerprintTool(copyRoot, { repo: PATHS.repo })
+    const expectSha = String(copyBefore.sha256 ?? '').toLowerCase()
+    const expectOk = /^[0-9a-f]{64}$/.test(expectSha)
+    const verify = expectOk
+      ? runVerify({ exporter: exporter.file, copy: copyRoot, repo: PATHS.repo, commit, expect: expectSha, withStaging: true })
+      : { exit: null, json: null, json_error: 'before_sha256 不是 64 位小写 hex', stdout: '', stderr: '' }
+    readings.copy_equal = {
+      with_staging: true,
+      before_files: copyFilesBefore,
+      before: { ok: copyBefore.ok, sha256: copyBefore.sha256, files: copyBefore.files, bytes: copyBefore.bytes, problems: copyBefore.problems },
+      expect: expectOk ? expectSha : null,
+      verify: {
+        exit: verify.exit,
+        ok: verify.json?.ok ?? null,
+        equal: verify.json?.equal ?? null,
+        is_that_commit: verify.json?.is_that_commit ?? null,
+        live: verify.json?.live ?? null,
+        missing_fields: missingFields(verify.json, VERIFY_FIELDS),
+        json_error: verify.json_error ?? null,
+        stderr: String(verify.stderr).slice(0, 300),
+      },
+      note: 'before 在导出之后立刻量；after 在全部判据跑完之后量 —— 两次相同 ⇒ 这一轮没有往副本里写东西',
+    }
+    if (!copyBefore.ok) {
+      push('CPY-COPY-FINGERPRINT', `副本的 CODE 指纹量不出来（${(copyBefore.problems ?? []).join(' / ').slice(0, 300)}）—— 没有它，"副本没被动过"就没有读数`)
+    }
+    if (verify.json === null || readings.copy_equal.verify.missing_fields.length > 0) {
+      push('CPY-VERIFY-SURFACE',
+        `导出器的 \`--verify\` 没有给出可解析的读数（exit=${verify.exit} · 缺字段 ${JSON.stringify(readings.copy_equal.verify.missing_fields)} · `
+        + `stderr=${JSON.stringify(String(verify.stderr).slice(0, 240))}）—— "副本前后逐字不变"这一格判不了`)
+    } else if (verify.json.equal !== true) {
+      push('CPY-VERIFY-NOT-EQUAL',
+        `导出器对副本复算的 \`equal\` 不是 \`true\`（实得 ${JSON.stringify(verify.json.equal)} · expect=${expectSha.slice(0, 16)}…）—— `
+        + '副本的字节在这一轮里不是原来那一份（`F-160` 的 equal 口径：量在副本上，不量活树）')
+    }
+    // 第二个读者：导出器自己的 `--verify --with-staging` 也必须认"副本 = 提交 + 声明的追加"。
+    // 它和上面 `verifyCopyIsCommit()` 是两条独立的路（一条读副本字节 + 声明层清单；一条读导出器自己的账），
+    // 两个都 ok 才叫"副本就是那个提交"（`cand-20261016-selfsourced-order-01` 的反面：两份来源互相对账）。
+    if (verify.json !== null && verify.json.ok === true && verify.json.is_that_commit?.ok !== true) {
+      push('CPY-VERIFY-NOT-THAT-COMMIT',
+        '导出器自己复算的 `is_that_commit.ok` 不是 `true`（'
+        + JSON.stringify(verify.json.is_that_commit ?? null).slice(0, 300) + '）—— 和 `verifyCopyIsCommit()` 的结论打架：'
+        + '同一个 `--with-staging` 声明，两条路必须都认这份副本')
+    }
+
     // ── ⑥ 判据：套件要的四条输入，副本里有没有、是不是副本自己的、是不是活树那一份 ────────
     const inCopy = REQUIRED.map(([rel, why]) => {
       const file = path.join(copyRoot, STAGING_REL, ...rel.split('/'))
@@ -231,6 +376,28 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
       exists: existsSync(path.join(PATHS.repo, STAGING_REL)),
       files: countFiles(path.join(PATHS.repo, STAGING_REL)),
     }
+    /**
+     * ⑥a **两边是同一份规则**（`.runtime` 跳过那一半）。
+     *
+     * 导出器与测试侧各写一份"什么算声明的追加"（它 `stagingFilesOf()` / 我 `declaredAdditionPaths()`）；
+     * 两份规则靠**同一份清单摘要**对账：算法、排序（`rel` 的 UTF-8 字节序）、条目（`rel\0sha256\0bytes\n`）
+     * 三样都一样，才叫"同一个规则"。今天两边都跳过 `.runtime` 与链接（跳过的那几条各记一条读数）。
+     * 三个摘要必须相同：**活树那份**（我算的）· **导出时记下的那份**（导出器算的）· **副本里那份**（我从副本算的）。
+     */
+    const liveManifest = declaredAdditionManifest(PATHS.repo, STAGING_ADDITION)
+    const exportManifest = exp.json?.staging?.sha256 ?? null
+    const exportSkipped = exp.json?.staging?.skipped ?? null
+    const copyEntries = liveManifest.list.map((entry) => {
+      const copyFile = path.join(copyRoot, ...entry.rel.split('/'))
+      if (!existsSync(copyFile)) return { rel: entry.rel, sha256: null, bytes: null }
+      const buf = readFileSync(copyFile)
+      return { rel: entry.rel, sha256: createHash('sha256').update(buf).digest('hex'), bytes: buf.length }
+    })
+    const copyDigest = copyEntries.every((entry) => typeof entry.sha256 === 'string')
+      ? treeDigest(copyEntries).sha256
+      : null
+    const liveSkipped = (liveManifest.skipped ?? []).map((item) => `${item.rel}:${item.reason}`).sort()
+    const exportSkippedNorm = (Array.isArray(exportSkipped) ? exportSkipped : []).map(String).sort()
     readings.declared_staging = {
       dirs: STAGING_ADDITION.dirs,
       prefix: STAGING_ADDITION.prefix,
@@ -238,6 +405,35 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
       in_copy: isThatCommit.declared?.in_copy ?? null,
       missing: isThatCommit.declared?.missing ?? null,
       mismatched: isThatCommit.declared?.mismatched ?? null,
+      manifest: {
+        mine: { files: liveManifest.files, bytes: liveManifest.bytes, digest: liveManifest.digest, skipped: liveSkipped },
+        exported: exportManifest === null
+          ? null
+          : { files: exportManifest.files, bytes: exportManifest.bytes, digest: exportManifest.digest, skipped: exportSkippedNorm },
+        copy: { files: copyEntries.filter((e) => e.sha256 !== null).length, digest: copyDigest },
+        same_digest: exportManifest !== null && liveManifest.digest === exportManifest.digest && copyDigest === liveManifest.digest,
+        same_files: exportManifest !== null && liveManifest.files === exportManifest.files,
+        same_bytes: exportManifest !== null && liveManifest.bytes === exportManifest.bytes,
+        note: '导出器那份是它 `stagingFilesOf()` 的清单（跳 `.runtime` + 链接）；我这份是 `declaredAdditionPaths()`；'
+          + '副本那份是从副本字节现算的。三个摘要同一个数 = 两边规则一致、且副本就是那 52 份。',
+      },
+    }
+    if (exportManifest === null) {
+      push('CPY-STAGING-MANIFEST',
+        '导出 JSON 里没有 `staging.sha256` 清单（`--with-staging` 的"内容冻结"那一半）—— '
+        + `实得 staging=${JSON.stringify(exp.json?.staging ?? null).slice(0, 240)}；`
+        + '没有这份清单，"两边是同一份规则"就只能靠两段代码各自自报')
+    } else if (liveManifest.digest !== exportManifest.digest || liveManifest.files !== exportManifest.files
+      || liveManifest.bytes !== exportManifest.bytes) {
+      push('CPY-STAGING-MANIFEST',
+        `测试侧的声明清单与导出器记下的那份**不是同一份**（我：${liveManifest.files} 份 / ${liveManifest.bytes} B / ${liveManifest.digest.slice(0, 16)}…`
+        + ` · 导出器：${exportManifest.files} 份 / ${exportManifest.bytes} B / ${String(exportManifest.digest).slice(0, 16)}…）—— `
+        + '导出器与 `declaredAdditionPaths()` 各写了一份"什么算追加"：任一方的跳过规则/排序/条目公式变了，这一条就红'
+        + `（今天两边都跳过 ${JSON.stringify(liveSkipped)}；导出器记录的 skipped=${JSON.stringify(exportSkippedNorm)}）`)
+    } else if (copyDigest !== liveManifest.digest) {
+      push('CPY-STAGING-MANIFEST',
+        `副本里那几份追加的**摘要**与活树清单不同（副本 ${String(copyDigest).slice(0, 16)}… / 清单 ${liveManifest.digest.slice(0, 16)}…）—— `
+        + '路径齐了但字节不是同一批：内容冻结的要的是"同一份清单"')
     }
     readings.gap = {
       missing_in_copy: inCopy.filter((item) => !item.present).map((item) => item.rel),
@@ -268,6 +464,35 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
           + '副本里睡着一份过期输入，"副本原地跑"跑的不是现在这一套（`ticket-20261102-03`）',
           { rel: item.rel, copy: item.sha256, live: item.live_sha256 })
       }
+    }
+
+    // ── ⑥b 判据读的那几份文件，**都从副本里读**（不是从活树借）──────────────────
+    const judgedUnderCopy = inCopy.filter((item) => item.present && item.escapes_copy === false).length
+    readings.authorship.judged_files = inCopy.map((item) => ({ rel: item.rel, under_copy: item.present && item.escapes_copy === false }))
+    readings.authorship.judged_files_under_copy = `${judgedUnderCopy}/${inCopy.length}`
+    if (judgedUnderCopy !== inCopy.length) {
+      push('CPY-COPY-NOT-SELFROOT',
+        `四条必需输入里只有 ${judgedUnderCopy}/${inCopy.length} 条是从**副本自己**读到的（其余解析到了副本之外）—— `
+        + '那几格量的不是这份副本')
+    }
+
+    // ── ⑦ 收口：副本在这一轮里没被动过（`equal` 的第二半 + 份数）─────────────────────
+    const copyFilesAfter = countFiles(copyRoot)
+    const copyAfter = fingerprintTool(copyRoot, { repo: PATHS.repo })
+    readings.copy_equal.after_files = copyFilesAfter
+    readings.copy_equal.after = { ok: copyAfter.ok, sha256: copyAfter.sha256, files: copyAfter.files, bytes: copyAfter.bytes }
+    readings.copy_equal.equal = copyBefore.ok && copyAfter.ok
+      && String(copyBefore.sha256 ?? '').toLowerCase() === String(copyAfter.sha256 ?? '').toLowerCase()
+    readings.copy_equal.files_equal = copyFilesBefore === copyFilesAfter
+    if (!readings.copy_equal.equal) {
+      push('CPY-COPY-CHANGED',
+        `副本在这一轮里被改过：CODE 指纹 before ${String(copyBefore.sha256).slice(0, 16)}… / after ${String(copyAfter.sha256).slice(0, 16)}…`
+        + `（份数 ${copyFilesBefore} → ${copyFilesAfter}）—— 副本必须是只读的：谁往里写（运行根 / 探针 / 缓存），`
+        + '那次"副本里跑出来的绿"就不在原来那份字节上（`F-160` 的 equal 口径）')
+    } else if (!readings.copy_equal.files_equal) {
+      push('CPY-COPY-CHANGED',
+        `副本的文件份数变了（${copyFilesBefore} → ${copyFilesAfter}）而 CODE 指纹没变 —— 写进来的东西落在 CODE 排除表里`
+        + '（例如 `.runtime/`）：那也算往副本里写了东西，副本不再"只读"')
     }
 
     caseFail(problems)

@@ -921,6 +921,37 @@ export async function identityDayKeyOf(nowMs) {
 }
 
 /**
+ * 两份**每日评审**（会话评审 / 技术评审）的工具名 —— 它们必须等当天的记忆判决落盘才能派。
+ *
+ * 判据是**今天的判决报告在不在**（`<内容根>/.runtime/reports/memory-update/<day>.json`）：
+ * 报告一落盘 = 判决已经 `judge-commit`。判据钉在**产物**上，不钉 `phase` 字段 ——
+ * 字段会被中途改、产物不会（2026-11-03 老板点破：判决没回来就派评审，已连犯三次）。
+ */
+const DAILY_REVIEW_TOOLS = Object.freeze(new Set(['job_conversation_review', 'job_technical_review']))
+
+/** 本地日（04:00 切，与 `lib/route.mjs::dayKeyOf` 同一个口径 —— 这里要的是同步版本）。 */
+function localDayKeySync(nowMs = Date.now()) {
+  const shifted = new Date(nowMs - 4 * 60 * 60 * 1000)
+  const y = shifted.getFullYear()
+  const m = String(shifted.getMonth() + 1).padStart(2, '0')
+  const d = String(shifted.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+function dailyReviewGateVerdict(toolName, contentDir) {
+  if (!DAILY_REVIEW_TOOLS.has(toolName)) return null
+  const day = localDayKeySync()
+  const report = join(contentDir, RUNTIME_DIR, 'reports', 'memory-update', `${day}.json`)
+  if (existsSync(report)) return null
+  return {
+    code: 'E_REVIEW_BEFORE_JUDGE',
+    message: `今天的记忆判决还没落盘（${day} 的 reports/memory-update 报告不在）——`
+      + ' 两份每日评审必须等判决完成（claim-update → candidates-freeze → job_memory_judge → judge-commit）；'
+      + ' 先做完判决再派评审',
+  }
+}
+
+/**
  * 把一条报警并进当天的文件（**同一格只一份**：按 `session` + `kind` 去重；文件里的旧条目留着）。
  * 返回 `{ok, path, reason}` —— **绝不抛**：报警写不进去不许影响注入（那是两条独立的事），
  * 但也不许静默（`reason` 会被调用方打成一行）。
@@ -2535,6 +2566,9 @@ export async function apply(ctx, config = {}) {
           if (proposal !== null) return `${proposal.code}：${proposal.message}`
           const office = officeBoundVerdict(role, toolName, args, who, officeBound)
           if (office !== null) return office.message
+          // 🔴 两份每日评审要等**今天的记忆判决**落盘（老板 2026-11-03 定的硬门）。
+          const reviewGate = dailyReviewGateVerdict(toolName, contentDir)
+          if (reviewGate !== null) return `${reviewGate.code}：${reviewGate.message}`
           // 五条判定全过完 = 这次委派会被放行 ⇒ 记一条 claim（被拒的一条都不记）。
           // ⚠️ 这一行必须在**所有** return 之后：记录是纯观察，判词的次序与报文一个字节都不改。
           bridgeRecordClaim(call)

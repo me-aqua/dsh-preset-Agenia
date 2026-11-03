@@ -1,0 +1,85 @@
+{
+  "probe": "role-exact",
+  "turn": 2,
+  "measured_at": "2026-11-02T21:26:34.2266324+08:00",
+  "turn_log": [
+    {
+      "turn": 1,
+      "measured_at": "2026-11-02T21:25:46.8567054+08:00",
+      "role_name": "Marta",
+      "shell_stdout_exact": "v24.21.0",
+      "shell_exit_code": 0
+    },
+    {
+      "turn": 2,
+      "measured_at": "2026-11-02T21:26:34.2266324+08:00",
+      "role_name": "Marta",
+      "shell_stdout_exact": "v24.21.0",
+      "shell_exit_code": 0
+    }
+  ],
+  "role_pinned_across_turns": true,
+  "role": {
+    "name": "Marta",
+    "title": "测试与流水线",
+    "charter_source": "request-injected job description (玛尔塔 · 测试与流水线)",
+    "duties": [
+      "写测试，且在功能做出来之前先写、先跑红",
+      "功能完成后再跑一遍并贴输出",
+      "盯『真的验过』而不是『绿了』"
+    ]
+  },
+  "shell": {
+    "has_shell": true,
+    "tool": "pwsh",
+    "pwsh_version": "7.6.9",
+    "command": "node --version",
+    "exit_code": 0,
+    "stdout_exact": "v24.21.0",
+    "stderr_exact": "",
+    "cwd": "E:\\Harness"
+  },
+  "tools_provided": [
+    "ask_user_question",
+    "create_goal",
+    "edit",
+    "exit_plan_mode",
+    "get_goal",
+    "glob",
+    "grep",
+    "job_kill",
+    "job_list",
+    "job_output",
+    "load_workspace_dependencies",
+    "present",
+    "proposal_file",
+    "pwsh",
+    "read",
+    "read_image",
+    "skill",
+    "todo_write",
+    "update_goal",
+    "web_fetch",
+    "web_search",
+    "working_directory",
+    "write"
+  ],
+  "tools_absent": [
+    "team_design",
+    "team_dev",
+    "team_test",
+    "team_review",
+    "subagent",
+    "workflow",
+    "ralph"
+  ],
+  "scope_notes": {
+    "file_policy": "danger-full-access",
+    "approval_prompts": "disabled (auto-reject); no sandbox escalation possible",
+    "writes_performed": [
+      "E:\\Harness\\tests\\_probe\\2026-11-02\\role-exact.json"
+    ],
+    "production_edits": 0,
+    "team_leader_edits": 0
+  }
+}

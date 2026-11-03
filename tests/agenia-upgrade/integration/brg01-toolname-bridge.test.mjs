@@ -46,13 +46,13 @@
  *
  * `BRG-07` 的翻面读数（都是 `run-all --glob=integration/brg01-toolname-bridge.test.mjs` 跑的；
  * 字节数与 sha256 量的是**提交里那个 blob**（`HEAD:presets/agenia/inject.js`），不是工作树）：
- *   · 现役 `inject.js`（提交 `4ed62cc` · 216504 B · sha256 `49A42EA6…`）⇒ **RED 0 / GREEN 7**
- *     （run `m03-brg-live`；那一跑的盘上那一份与提交逐字节相同，`disk_equals_commit:true`）；
+ *   · 现役 `inject.js`（提交 `0c352f2` · 218300 B · sha256 `5A472660…`）⇒ **RED 0 / GREEN 7**
+ *     （run `p01-brg-live`；那一跑盘上那一份与提交逐字节相同，`disk_equals_commit:true`）；
  *   · 把 `BRG_SUT_INJECTOR` 指到修前那一份**副本**（`.team/test/2026-11-02/_probe/_run/pre-fix-inject.mjs`
  *     · 212390 B · sha256 `0314BD9B…`；它与提交 `6c848dd` 那份逐字节相同，`presets/**` 零字节；
  *     那一跑 `sut_overridden=true` / `acceptance_eligible=false`）
  *     ⇒ **RED 1 / GREEN 6**，红的就是 `BRG-07`：`BRG-PARALLEL-SWAP-TEST` ×3 + `BRG-PARALLEL-SWAP-REVIEW` ×3
- *     （三组里角色都换成了对方的）+ `BRG-PARALLEL-PERSONA` ×6（run `m04-brg-prefix`）
+ *     （三组里角色都换成了对方的）+ `BRG-PARALLEL-PERSONA` ×6（run `p02-brg-prefix`）
  *     —— 这一格只在"按 prompt 对号（完整相等）"那把修上翻面。
  */
 import { before, describe, test } from 'node:test'
@@ -63,7 +63,7 @@ import { fileURLToPath } from 'node:url'
 import { caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import {
   buildCatalog, buildContentRoot, catalogNames, configFromComposition,
-  injectedNames, injectedText, loadInjector, withHarness,
+  injectedNames, injectedText, loadInjector, plantDailyReport, withHarness,
 } from '../support/injector-harness.mjs'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -238,15 +238,39 @@ async function childAssemble({ contentDir, conf, catalog, childSid, header, sect
   }
 }
 
+/**
+ * **每日评审闸要的产物**（`RGATE-01` / `bug-20261103-01`，2026-11-03 落进生产）。
+ *
+ * 闸的规则：`job_conversation_review` / `job_technical_review` 被拒，除非内容根里有
+ * `<内容根>/.runtime/reports/memory-update/<day>.json`。本文件量的是**桥**（记 claim / 取角色），
+ * 不是那道闸 —— 不补这份产物，这两发委派会在门禁里被拒、claim 记不上，
+ * `BRG-01` / `BRG-03` / `BRG-04` / `BRG-07` 会以"桥丢了名字"的样子红（2026-11-03 实测四条）。
+ *
+ * ⚠️ **不在夹具里再算一次 04:00 切点**（那是"切点"的第二份真相）：窗口按**本地日历**取
+ * 前一天 / 当天 / 后一天 —— 一个健康脑根本来就攒着多天的报告，跑一次最多跨一次边界，
+ * 切点落在哪一侧都在这三天里。闸自己的两侧（该拒 / 该放行 / 日子算得对不对）由 `RGATE-01` 判。
+ * 断言一条没动：补的只是"环境里该有的那份产物"。
+ */
+function plantDailyReports(contentDir, nowMs = Date.now()) {
+  const now = new Date(nowMs)
+  return [-1, 0, 1].map((delta) => {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + delta)
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    return plantDailyReport(contentDir, day, 'BRG 夹具：桥要的量的是委派，不是每日评审闸；这份产物只是把闸要的环境补齐')
+  })
+}
+
 /** 一格要的东西：内容根 + config + 目录（每格一份，落在运行根里）。 */
 function fixture(id) {
   const contentDir = path.join(runRoot(), 'tmp', 'brg', id)
   const built = buildContentRoot({ root: contentDir, presetDir: PRESET, runRoot: runRoot() })
   const conf = configFromComposition({ ymlText: readFileSync(YML, 'utf8'), contentDir })
   const base = Array.isArray(SUT.mod?.BASE_TOOL_SET) ? SUT.mod.BASE_TOOL_SET : null
+  const dailyReports = plantDailyReports(contentDir)
   return {
     contentDir,
     built,
+    dailyReports,
     conf,
     catalog: base === null ? null : buildCatalog(base),
     config: conf.ok ? { ...conf.config, defaultRole: 'member' } : null,

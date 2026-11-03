@@ -46,6 +46,35 @@ export const SYNTH_COMMON_SENSE = '# 常识（合成夹具）\n\n- 夹具常识�
 export const SYNTH_LEGACY_SESSION = 'prs-legacy-session'
 
 /**
+ * **记忆判决报告**在内容根下的落点（相对）—— `<内容根>/.runtime/reports/memory-update/<day>.json`。
+ *
+ * 两道消费者共用这一个定义，别在各处再抄一份路径：
+ *   · `RGATE-01`（每日评审闸）—— 闸判的就是这份文件在不在；
+ *   · `brg01` 的夹具（`BRG-01..07`）—— 那一批量的是**桥**，所以夹具要把闸要的产物补上，
+ *     否则 `job_conversation_review` / `job_technical_review` 这两发会被闸拒、claim 记不上
+ *     （2026-11-03 实测：`BRG-01/03/04/07` 因此红了四条）。
+ */
+export const DAILY_REPORT_DIR = Object.freeze(['.runtime', 'reports', 'memory-update'])
+
+/** 某一天的报告落点（绝对路径）。 */
+export function dailyReportPathOf(contentDir, day) {
+  return path.join(contentDir, ...DAILY_REPORT_DIR, `${day}.json`)
+}
+
+/**
+ * 种一份报告（**只造"这份产物在"**，不伪造判决内容 —— 闸判的是存在性，不读正文）。
+ * @param {string} contentDir 合成内容根
+ * @param {string} day `YYYY-MM-DD`
+ * @param {string} note 自述（落在正文里，读的人知道这是夹具）
+ */
+export function plantDailyReport(contentDir, day, note = '夹具：这道闸判的是这份文件在不在，不读正文') {
+  const file = dailyReportPathOf(contentDir, day)
+  mkdirSync(path.dirname(file), { recursive: true })
+  writeFileSync(file, `${JSON.stringify({ schema: 1, day, kind: 'memory-update', note }, null, 2)}\n`, 'utf8')
+  return file
+}
+
+/**
  * `withHarness({ scopeId: MISSING_ID })` ⇒ `context.scope` 上**没有 `id` 这个键**。
  * 为什么要一个哨兵、而不是 `scopeId: undefined`：`undefined` 在参数里读作"没给"（缺省 = 用 `id`），
  * 而"键不存在"与"给了个 `undefined`"在注入器里都读成 `undefined` —— 这里要的是**前一种形状**，

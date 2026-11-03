@@ -524,6 +524,26 @@ export const BATCH_X = ['BRG-01', 'BRG-02', 'BRG-03', 'BRG-04', 'BRG-05', 'BRG-0
 export const BATCH_Z = ['CPY-01', 'CSRC-01', 'CSRC-02', 'BMAP-01', 'BDOC-01', 'FLIP-01']
 
 /**
+ * 批次 AA 的 1 条 —— **每日评审要等今天的记忆判决报告**（老板 2026-11-03 定的硬门；`bug-20261103-01`）。
+ *
+ * 一张脸：**产物在不在**决定能不能派 —— `job_conversation_review` / `job_technical_review`
+ * 在 `tools.guard` 里被拒，除非 `<内容根>/.runtime/reports/memory-update/<day>.json` 在盘上；
+ * 拒绝码 `E_REVIEW_BEFORE_JUDGE`，报文点名那一天，`<day>` 从**本地 04:00** 切。
+ * 判据钉在**产物**上，不钉 `phase` 字段（字段会被中途改、产物不会）。
+ *   · `RGATE-01` 四格 + 两格量具自证（真跑生产 `presets/agenia/inject.js` 的 `apply()` + 假 ctx，
+ *     时钟由 `node:test` 的 `mock.timers` 钉住）：`A` 没有当天报告 ⇒ 两个工具都被拒、码**恰好**
+ *     `E_REVIEW_BEFORE_JUDGE`（且不是门禁里另外那几个码）、报文点名那一天；`B` 种一份报告 ⇒
+ *     **同一个调用**放行（红的合法性来源）；`C` `team_test` 在同一个"没有报告"的现场照样放行；
+ *     `D` 两个钉住的时刻（本地 `01:30:00` / `04:00:01`）× 三副报告现场（无 / 11-02 / 11-03）——
+ *     两向一夹，整数小时的切点只能是 4；`C2` 同一个工具显式塞前台 ⇒ 后台硬门用**另一个码**拒
+ *     （证明"读码"这一步分得清两个闸）；`P` 夹具自证（guard 挂没挂上 / 时钟遮没遮住 / 报告现场对不对）。
+ * 契约：本条（判据口径逐条写在用例文件头）。⚠️ 它**不进** `FROZEN_IDS`（历史冻结的 A–F 55 条）。
+ * ⚠️ **分母 130 → 131**（一格：这道闸只有一个红因 —— "该拒绝时没拒绝 / 拒错了码 / 算错了日子"，
+ *    三样都落在同一格的两侧对照里，拆成三格只会让"哪一条坏了"更贵）。
+ */
+export const BATCH_AA = ['RGATE-01']
+
+/**
  * 已落笔的二十三批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -542,8 +562,10 @@ export const BATCH_Z = ['CPY-01', 'CSRC-01', 'CSRC-02', 'BMAP-01', 'BDOC-01', 'F
  * `BRG-04` 队列 / `BRG-05` 过期 / `BRG-06` 边界 / `BRG-07` 并行派工（live 修后补的那把回归锁）。
  * 批次 Z 是**技术评审 2026-11-02 的 F2–F7 六张票**（`ticket-20261102-03`…`-08`，同日第 2 关补；
  * 一格一张票，红的时候一眼看得出是哪张票）。
+ * 批次 AA 是**每日评审闸**（`RGATE-01`，2026-11-03；老板 09:10 点破判决没回来就派评审，`bug-20261103-01`）——
+ * 打的同样是**现役** `presets/agenia`：那道闸只在生产上，staged 靶子还没同步它（`F57-TARGET` 会照实报）。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -570,7 +592,8 @@ const BATCH_OF = (id) =>
                                               : BATCH_W.includes(id) ? 'W'
                                                 : BATCH_X.includes(id) ? 'X' : BATCH_Y.includes(id) ? 'Y'
                                                   : BATCH_Z.includes(id) ? 'Z'
-                                                    : null
+                                                    : BATCH_AA.includes(id) ? 'AA'
+                                                      : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -690,6 +713,11 @@ const F = {
   bmap01: 'integration/bmap01-bridge-bounds.test.mjs',
   bdoc01: 'integration/bdoc01-bridge-doc.test.mjs',
   flip01: 'integration/flip01-bridge-reading.test.mjs',
+  /** 批次 AA · **每日评审闸**（`RGATE-01`，2026-11-03；`bug-20261103-01`）——
+   *  真跑**生产** `presets/agenia/inject.js` 的 `apply()`（与 `BRG-*` / `BMAP-01` 同一具载具），
+   *  时钟由 `node:test` 的 `mock.timers` 钉住：这道闸判的是"今天的报告在不在"，
+   *  不钉时钟就会随墙钟漂（`RGATE-CLOCK-*` 把"钉没钉上"与功能红分开报）。 */
+  rgate01: 'integration/rgate01-daily-review-gate.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -881,12 +909,18 @@ const ROWS = [
   ['CARD-06', 'memory-update-card', F.card06, '任务 C2 **容量行 + 两段回执 + 卡本身**（契约 §3.6/§3.7/§3.8/§2.4 + 裁定第 5 条）：`A` 容量五读数 —— `count/chars` = 快照 `totals`（73 / 4321）、`cap_count/cap_chars` = 夹具 `presets/agenia/lib/memory.mjs` 的**怪值**（137 / 12_345 ⇒ 写死 200/80000 当场翻红）、`source` 必须点名快照且**不许**含 `.team/route`（定形：「容量读记忆库快照，路线账本不存」）；`B` 卡本身 —— `card.name` 逐字 `记忆更新报告` · `card.generator` 含 `daily-cards.py` · `card.day` = `--day` · `card.as_of` 带偏移的 ISO8601；`C` **快照读不到 ⇒ 红不出 0**（`capacity.state:red` + `count:null` + `CAPACITY_UNREADABLE`）；`D` 回执四态**逐段逐卡** —— 第一段（技术评审）在卡 1 的 `C2 · 验收格`、第二段（会话评审）在**卡 2** 的 `C2 · 回执格`：`present`（本周期 done）/ `missing`（本周期没有）/ `expired`（只有上一周期，**超一个开工周期**）/ `na`（无路线无任务 ⇒ **不判红**），缺 / 过期 ⇒ **那张卡**的 `receipt.red:true` + 逐段点名，两卡 `required` 同值、两段的红不许串卡；`E` **生成失败四件套** —— 退出码非 0 · **两张卡都没有**（绝不绿兜底）· append-only 失败标记（`at` = **注入时钟**、`day`、`code`；第二次失败 ⇒ 2 行）· stderr 一行 `🔴` 带 `E_*` 码；`G` 第二段 `receipt.conversation.report_path` 逐字 `.team/retro/<day>/会话评审.md`（`gate4-C2` F-09）；`H` 正文容量行与 `capacity.count/chars` **同值**（负样本 = 首数印 0 ⇒ 必红）；两张卡的 `card.reasons` 都过 §5 闭集', '批次 Y'],
 
   // ── 批次 Z · 技术评审 2026-11-02 的 F2–F7 六张票（`ticket-20261102-03`…`-08`；一格一张票）──────────
-  ['CPY-01', 'review-20261102', F.cpy01, '`F2` **只读副本原地跑不动套件**（`ticket-20261102-03`）：用 `.tools/tree-at-commit.mjs --with-staging` 在 `HEAD` 导出副本，再判两件事 —— ① **副本就是那个提交 + 恰好那 52 份声明的追加**：`verifyCopyIsCommit({ declared: [STAGING_ADDITION] })` 对提交那 164 份做**子集核对**（少一份 / `git blob` 不同 ⇒ 红），多出来的只准是活树 `.tools/_staging/agenia-upgrade/{preset,oracle}` 那 52 条且每条 sha256 与活树相同（多一条别的一律红；任何链接 / junction 一律红；不给 `declared` 时行为与从前逐字相同 ⇒ `REV-04`/`REV-05` 不受影响）② 套件跑起来必须有的四条输入在**副本里**且与活树**逐字节相同** —— `.tools/_staging/agenia-upgrade/preset/inject.js` · `preset/agent.cordis.yml` · `preset/lib/route.mjs` · `oracle/standard.patch.yml`（`run-all.mjs:194/201/206` 与 `support/env.mjs:27-35` 的绑定）。四个红因码分开：`CPY-EXPORT-STAGING`（工具那一半）/ `CPY-STAGING-NOT-IN-COPY` / `CPY-STAGING-DIFFERS-LIVE` / `CPY-STAGING-ESCAPES-COPY`。⚠️ 这一格**不跑全量**（跑一遍要几分钟，且会把"副本缺输入"与"套件自己按活树推路径"混成一条红 —— 后者归 `F-169`），只判**副本自足**；`.tools/_staging` 在提交里的份数同时记成读数（今天 0 ⇒ 追加只可能来自 `--with-staging`）', '批次 Z'],
+  ['CPY-01', 'review-20261102', F.cpy01, '`F2` **只读副本原地跑不动套件**（`ticket-20261102-03`）：用 `.tools/tree-at-commit.mjs --with-staging` 在 `HEAD` 导出副本，再判两件事 —— ① **副本就是那个提交 + 恰好那 52 份声明的追加**：`verifyCopyIsCommit({ declared: [STAGING_ADDITION] })` 对提交里的**全部 blob**（今天 171 份）做**子集核对**（少一份 / `git blob` 不同 ⇒ 红），多出来的只准是活树 `.tools/_staging/agenia-upgrade/{preset,oracle}` 那 52 条且每条 sha256 与活树相同（多一条别的一律红；任何链接 / junction 一律红；不给 `declared` 时行为与从前逐字相同 ⇒ `REV-04`/`REV-05` 不受影响）② 套件跑起来必须有的四条输入在**副本里**且与活树**逐字节相同** —— `.tools/_staging/agenia-upgrade/preset/inject.js` · `preset/agent.cordis.yml` · `preset/lib/route.mjs` · `oracle/standard.patch.yml`（`run-all.mjs:194/201/206` 与 `support/env.mjs:27-35` 的绑定）。四个红因码分开：`CPY-EXPORT-STAGING`（工具那一半）/ `CPY-STAGING-NOT-IN-COPY` / `CPY-STAGING-DIFFERS-LIVE` / `CPY-STAGING-ESCAPES-COPY`。⚠️ 这一格**不跑全量**（跑一遍要几分钟，且会把"副本缺输入"与"套件自己按活树推路径"混成一条红 —— 后者归 `F-169`），只判**副本自足**；`.tools/_staging` 在提交里的份数同时记成读数（今天 0 ⇒ 追加只可能来自 `--with-staging`）；**副本的自证**（第 4 关打回项 2/3）：判据只用 `PATHS.repo`（来源自报）、副本必须在运行根之下（`CPY-COPY-OUTSIDE-RUNROOT`）、副本里不许有 `.git`（`CPY-COPY-HAS-GIT`）、拿**副本自己那份** `support/root-guard.mjs` 问出的根必须是副本自己（`CPY-COPY-NOT-SELFROOT`）、四条必需输入都从副本内读；副本在这一轮里不许被动过 —— 测试侧 fingerprint 开跑/收口各一次 + 文件份数前后相同（`CPY-COPY-CHANGED`）+ 导出器 `--verify` 的 `equal:true` / `is_that_commit.ok:true`（`CPY-VERIFY-NOT-EQUAL` / `CPY-VERIFY-NOT-THAT-COMMIT`，缺字段 `CPY-VERIFY-SURFACE`）。读数里记 `git_from_copy_is_live_repo`：从副本里调 git 会走到活树 `.git`（所以这一格**不在副本里调 git**，全部 `cwd: PATHS.repo`）', '批次 Z'],
   ['CSRC-01', 'review-20261102', F.csrc01, '`F3` **容量参考线的来源格 `capacity.cap_source`**（`ticket-20261102-04`）：三级回退（工作区 / 生成器那棵树 / cwd）**各跑一次**，每个现场只有那一级有 `presets/agenia/lib/memory.mjs`（另两级一个字节都不写，`sides` 自证），三级的三份数故意不同（311/31313 · 322/32323 · 333/33333）。判：① 参考线两个数 = **赢下来那一级**那份文件里的两个数；② `capacity.count/chars` 仍是快照 `totals`（参考线 ≠ 占用）；③ `capacity.cap_source` 这一格**在**、是非空字符串、点名赢下来那份、不把没赢的几级也点进来、不与 `capacity.source`（快照）同值；④ 三个值**互不相同**（"同一个常量 / 只印第一级"当场翻红）。今天红在 ③ 的第一条：那一格不存在', '批次 Z'],
   ['CSRC-02', 'review-20261102', F.csrc02, '`F4` **第三级（cwd）单独的正样本**（`ticket-20261102-05`）：现场 = 工作区没有 `presets/agenia/lib/memory.mjs`、**生成器副本**那棵树也没有（`<copyRoot>/presets/` 整个不存在）、只有 `<copyRoot>/cwd/presets/agenia/lib/memory.mjs`（333 / 33333）在；`lib/route.mjs` 摆进工作区（否则失败停在 `E_ROUTE_SOURCE`，量不到容量那一级）。判：卡照出（exit 0 + `C2 · 验收格` + 39 key）、`capacity.cap_count/cap_chars` = cwd 那份的两个数、`capacity.count/chars` = 快照 `totals`、`capacity.state:green`、`capacity.cap_source` 点名 **cwd** 那一份且不点不在盘上的候选。🔴 红的是最后一条（那一格不存在）；前几条**今天就是绿的**，读数里照实分开记 —— 但缺了来源那一句，"cwd 给的"与"生成器那棵树给的"在卡上同形，`F4` 要的那条**单独**的绿腿不可判', '批次 Z'],
   ['BMAP-01', 'review-20261102', F.bmap01, '`F5` **委派桥的两张表要有上限 + `scope.id` 坏了也要钉住**（`ticket-20261102-06`）：`A` 动态（真跑 `inject.js` 的 `apply()`）—— 父会话放行 `team_test`，子会话第一次装配拿到 test；再把**同一子会话**装配第二次（队列已空）必须是 test。两个输入：`context.scope.id = 12345`（非字符串）与 **`id` 键缺失**（`MISSING_ID`），两次 `context.agent.id` 都是正常字符串。今天第二次装配掉回 row 5（`BRIDGE_PINNED.set` 只在 `typeof agentId === "string"` 时执行，而 `agentId = context.scope.id`）。量具自证：`contextSeen()` 证明注入器真的看到了坏形状；`BMAP-HARNESS-SCOPE` 与功能红分开报。`B` 静态 —— 读 `inject.js`：两张表的**写入点旁**必须有一个 `BRIDGE_*CAP*` 常量 + 一条淘汰动作（`delete(`/`splice(`/`clear(`/循环），`BRIDGE_CLAIMS` 那一张今天有界（回归锁：不许把它一起删）；同一只读取器喂一段合成源码必须判"有界"（阳性对照，否则它只会红、翻不了面）。为什么上限只能落在源码上：两张表都是模块内私有变量、不导出，驱动一个编出来的 N 去撑爆它等于拿编的数当判据', '批次 Z'],
   ['BDOC-01', 'review-20261102', F.bdoc01, '`F6` **`brg01` 的注释与断言文本必须描述跑着的那套匹配**（`ticket-20261102-07`，**静态文档腿**）：读 `tests/agenia-upgrade/integration/brg01-toolname-bridge.test.mjs` 全文 —— ① **必须不出现**："互相包含" / "互含" / "对不上再退回" / "对不上才退回"（每一条都带行号与"它错在哪"；只钉"包含匹配"与"对不上退回队首"这两个轴 —— `加壳` 那半句是**理由**不是判据，单独禁它会把可能仍成立的话一起判红）；② **必须出现**完整相等那一句（`完整相等` / `完全相等` / `严格相等` / `精确相等` 任一）；③ **必须出现**"对不上就不取"那一条（`/对不上[^\\n]{0,30}不取/`）。期望值钉在**实现**上（`inject.js` 的 `item.prompt === prompt` + `prompt === "" ? fresh.shift() : undefined`）：实现一变，`BDOC-IMPL-ANCHOR` 先把这条腿按红喊停 —— 那时要改的是契约，不是让文档继续追着实现漂。另记读数：同一句话在 `support/registry.mjs` 的 `BRG-07` 那一行也出现过（只扫那一行，不扫全文 —— 本批自己的注释里也写着这几个词）', '批次 Z'],
   ['FLIP-01', 'review-20261102', F.flip01, '`F7` **`BRG-07` 的翻面读数点名本提交的 `inject.js`**（`ticket-20261102-08`）：从 `brg01` 文件头那一段（`BRG-07 的翻面读数` → 头部注释结束）里取所有提到 `inject.js` 的行，判 ① **至少一行**同时给**本提交那份 `inject.js`（`HEAD:presets/agenia/inject.js` 的 blob，字节数 + sha256 都从 `cat-file` 的字节算）**的字节数与 sha256 前缀（≥8 hex）；② 标着「现役」的那几行必须都是本提交那一份（新旧两个读数并排 = 读的人分不清）；③ 同一行里 sha 与字节数不许只说对一半（"改了 sha 忘了改字节"那种半修）。读数里另记一份**盘上**那份与 `disk_equals_commit`（工作树脏不脏是读数，判据仍按提交）。⚠️ 这是一条**会过期**的判据：`inject.js` 一变它就该红 —— 那正是它的用处（读数点名的是哪一版不能靠人记）', '批次 Z'],
+
+  // ── 批次 AA · 每日评审闸（老板 2026-11-03 09:10 定的硬门；`bug-20261103-01`）──────────────
+  // 一句话：**判决报告没落盘，两份每日评审不许派**。判据钉在产物上
+  // （`<内容根>/.runtime/reports/memory-update/<day>.json`），不钉 `phase` 字段。
+  // 判据口径、四格、量具自证逐条写在 `integration/rgate01-daily-review-gate.test.mjs` 的文件头。
+  ['RGATE-01', 'guard', F.rgate01, '每日评审闸（**生产** `presets/agenia/inject.js::dailyReviewGateVerdict`，`bug-20261103-01`）：`job_conversation_review` / `job_technical_review` 必须等**今天**的记忆判决报告落盘 —— `A` 没有 `2026-11-02` 的报告 ⇒ 两个工具**都**被 `tools.guard` 拒、码**恰好** `E_REVIEW_BEFORE_JUDGE`（且**不是**门禁里另外那几个码 `E_GUARD_*`）、报文点名 `2026-11-02` 且不点名 `2026-11-03`；`B` 种一份 `2026-11-02` 报告 ⇒ **同一个调用**（`name`/`arguments`/`agent` 逐字相同）放行、放行值必须是 `undefined`（红的合法性来源：唯一变量是那份文件在不在）；`C` 阴性对照 `team_test` 在**同一副"没有报告"的根**上照样放行；`D` **一天从本地 04:00 切**：两个钉住的时刻（本地 `2026-11-03 01:30:00` / `04:00:01`）× 三副报告现场（无 / 只有 11-02 / 只有 11-03）—— 01:30 点名 `11-02`、04:00:01 点名 `11-03`，且 11-03 的报告在切点下方**不顶用**、11-02 的报告在切点上方**不顶用**（两向一夹，整数小时的切点只能是 4）；`C2` 同一个工具显式 `run_in_background:false` ⇒ 后台硬门先拒、用**另一句话**（运行时报文不带码，码 `E_GUARD_JOB_FOREGROUND` 只活在纯函数 verdict 里，`GRD-01` 钉）—— 证明"精确码"不是碰巧、两个闸的报文分得开；`P` 夹具自证（guard 挂没挂上 `RGATE-HARNESS-GUARD` / 时钟遮没遮住 `RGATE-CLOCK-NOT-DATE` + 用完还原 / 三副根的报告现场恰好 无·11-02·11-03 / 那个时刻真的落在切点下方）。时钟由 `node:test` 的 `mock.timers`（`apis:[Date]`）钉住，`Date.now()` 与 `new Date()` 两个入口都验 —— 不钉就会随墙钟漂。⚠️ 打的是**现役**树：那道闸只在生产上，staged 靶子还没同步它（`F57-TARGET` 会照实报）', '批次 AA'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -938,7 +972,13 @@ export function batchB() {
 
 /** 契约 §9.1 的每组红用例数（分母的第二个口径，两处必须对上）。 */
 export const GROUP_COUNTS = {
-  'static-doc': 6, route: 8, store: 4, memory: 12, guard: 3, job: 4,
+  /**
+   * `guard` 3 → 4：`RGATE-01`（批次 AA，`bug-20261103-01`）守的是**同一道 `tools.guard`** 里的
+   * 第 6 条判定（每日评审闸）—— 它不另开一族：拒它的是 guard 回调、被拒的是委派工具，
+   * 与 `GRD-01..03` 同一个出口。差别只在量法：`GRD-*` 量纯函数 + 假 ctx，`RGATE-01` 量
+   * **真 `apply()` 注册的那个回调**（载具 `support/injector-harness.mjs`）。
+   */
+  'static-doc': 6, route: 8, store: 4, memory: 12, guard: 4, job: 4,
   /** `receipt` 4 → 5 / `health` 2 → 3：`F-162` 的两半（`RCP-05` 回执三件套进 `local-mark` ·
    *  `HLT-03` 卡的第二半 = `E_RECEIPT_ANCHOR` 那一支）各自归到它守的那一族。契约见 `CONTRACT.md` §12.2.4 / §12.5。 */
   /** `review` 3 → 5：`F-160` 的两格（`REV-04` 活树动了仍然有效 · `REV-05` 副本被动过就作废）——
@@ -1007,9 +1047,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1036,6 +1076,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }

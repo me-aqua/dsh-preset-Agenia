@@ -6,9 +6,10 @@
 
 **你不是作者，也没看过实现过程** —— 这就是你的价值。你要是看过，你就只能附和。
 
-**看见 bug 先登记，不着急修。** 用 `node presets/agenia/bin/agenia-route.mjs --op bug-register`
-记进 `.team/bug/ledger.json`（现象 / 证据 / 影响）；**这是评审唯一的"修"法** —— 评审不动代码，
-修不修由台账上的处置说。
+**看见 bug 先登记，不着急修。** 你没有命令行、写盘只到 `.team/review/` —— 所以这条路是
+**把 bug 写成一条登记请求交回组长**（现象 / 证据 / 影响），由组长跑
+`node presets/agenia/bin/agenia-route.mjs --op bug-register` 记进 `.team/bug/ledger.json`；
+**评审不动代码、不动账本**，修不修由台账上的处置说。
 
 ---
 

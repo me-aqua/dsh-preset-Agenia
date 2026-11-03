@@ -28,18 +28,24 @@
  *        **默认不带**：不给这个开关时，副本里仍然只有提交里那些 blob，这个工具的读数
  *        （`code` / `files` / `bytes` / JSON 的字段集合）与从前逐字节相同。
  *        附加只**加**不改：任何一条附加路径若已经在提交里 ⇒ 拒（`E_STAGING_SHADOWS_COMMIT`）——
- *        "副本里那几份是提交的字节"这条不因为附加而松动。`preset/` 里的 `.runtime` **不收**
- *        （那是真实脑数据、不是代码；与 `.team/dev/…/live-vs-staged.mjs` 的同步口径同一句），
- *        目录联接 / 符号链接也**不收**（它们会逃出副本 —— 那是 `CPY-STAGING-ESCAPES-COPY` 那条判据的同一个理由）。
+ *        "副本里那几份是提交的字节"这条不因为附加而松动。`preset/` 里的 `.runtime` **跳过**
+ *        （那是真实脑数据、不是代码；与 `.team/dev/…/live-vs-staged.mjs` 的同步口径同一句，
+ *        跳过的那几条写进 `staging.skipped` —— 没收要看得见），
+ *        目录联接 / 符号链接也**跳过**（它们会逃出副本 —— `CPY-STAGING-ESCAPES-COPY` 那条判据的同一个理由）。
  *      · stdout 最后一行 = JSON：
  *        `{ ok, commit, tree_root, code: { sha256, files, bytes }, live_baseline }`
- *        （给了 `--with-staging` 才多一段 `staging: { root, files, bytes, readback_ok }` ——
- *         不给就没有这一段，输出与从前逐字节相同）
+ *        （给了 `--with-staging` 才多一段 `staging` —— 不给就没有这一段，输出与从前逐字节相同）：
+ *        `staging: { root, files, bytes, readback_ok, skipped, sha256 }`，其中
+ *        `sha256 = { algorithm, prefix, files, bytes, digest, list: [{rel, sha256, bytes}] }`
+ *        是**内容冻结**的那一半：这 52 份的 path + sha256 + 字节数（`rel` 仓根相对），
+ *        `digest = sha256(Σ `${rel}\0${sha256}\0${bytes}\n`)`。这份清单就是"一次导出的身份"，
+ *        落盘（`--json > export.json`）之后可以交给任何第三方按同一公式复算。
  *
  *   ② 校验（交活时 / 任何第三方）
  *      <node> .tools/tree-at-commit.mjs --verify <副本> --repo <仓库根> --commit <40hex>
  *                                        --expect <派工卡上的 before_sha256>
- *                                        [--live-baseline <file>] [--live-root <活树>] [--with-staging] --json
+ *                                        [--live-baseline <file>] [--live-root <活树>]
+ *                                        [--with-staging [--staging-manifest <导出 JSON>]] --json
  *      · `equal` = **自己复算**副本的 CODE 指纹后与 `--expect` 比 —— 只回答"副本还是不是派工那一刻那份"，
  *        活树怎么动都不影响它（`REV-04`：活树动了 2 处、副本没动 ⇒ 仍然有效）。
  *        **三个值**：`true` / `false` / `null`。`null` = **量不动**（副本的 CODE 指纹算不出来，原因在
@@ -51,9 +57,15 @@
  *        `.git` 在副本里出现就算不成立）—— 只回答"这份副本是不是那个提交"。它与 `equal` **互相独立**：
  *        干净的提交 A 副本 + `--commit B` ⇒ `equal:true` + `is_that_commit.ok:false`（`REV-05/D`）。
  *      · `--with-staging` ⇒ 副本里 `.tools/_staging/agenia-upgrade/{preset,oracle}` 下多出来的那几份算
- *        **声明的附加**：按**活的** staging 树逐条点名才能通过（不在那份清单里的"多一份"仍然算不成立；
- *        活的那棵树不在 ⇒ 判不了：`staging.declared: null` + 一条 problem，不许当绿）。
- *        不给 ⇒ 与从前相同：副本里任何"多一份"都算"不是那个提交"。
+ *        **声明的附加**，但**内容也要对上**（第四关复审 F2-1：只核路径时，副本里换掉一个字节仍然
+ *        报 `equal:true / is_that_commit.ok:true`）：
+ *          · 每份**复算** `sha256 + bytes`，与参考清单比 ⇒ 任何一处字节不同都算不成立；
+ *          · 参考清单缺一份（参考里有、副本里没有）同样算不成立（自足是这一层的全部用处）；
+ *          · 参考清单从哪来：默认 = **活的** staging 树（"与现在的靶子是不是同一份"）；
+ *            给了 `--staging-manifest <导出 JSON>` = **导出那一刻记下的**那份清单
+ *            （"副本还是不是当时那 52 份" —— 活树后来合法换版不影响这一格）。
+ *        判定不过来（活树不在 / 清单读不出来）⇒ `staging.sha256: null` + 一条 problem，不许当绿。
+ *        不给 `--with-staging` ⇒ 与从前相同：副本里任何"多一份"都算"不是那个提交"。
  *        `equal` **不受影响**：`.tools/_staging/` 在 CODE 排除表里（同一把尺子的名单），附加不改 CODE 指纹。
  *      · `live.moved` = **活树从派工那一刻起动了几处**（按基线逐份比，`fingerprint.mjs --compare`）。
  *        没有基线 ⇒ `null` + 非空 `detail`（**判不了要写出来，不许写 0**）。
@@ -100,13 +112,15 @@ const USAGE = [
   '',
   '  导出：--repo <仓库根> --commit <40hex> --out <副本目录> [--live-baseline <file>] [--with-staging] [--json]',
   '  校验：--verify <副本目录> --repo <仓库根> --commit <40hex> --expect <before_sha256>',
-  '        [--live-baseline <file>] [--live-root <活树>] [--with-staging] [--json]',
+  '        [--live-baseline <file>] [--live-root <活树>] [--with-staging [--staging-manifest <导出 JSON>]] [--json]',
   '',
   '  --out 已存在且非空 ⇒ 拒（exit 2，拒在写之前）· 没有活树基线 ⇒ live.moved = null（不是 0）',
   '  --expect 必须是 64 位小写十六进制（sha256）· 副本量不动 ⇒ equal = null（不是 false）',
   '  --live-baseline 落进被测的 CODE 名单 ⇒ 拒（E_BASELINE_IN_CODE）—— 挪到 .team/ 或被测根之外',
   '  --with-staging ⇒ 副本另外带上 .tools/_staging/agenia-upgrade/{preset,oracle}（F2：副本原地要跑套件）；',
+  '                    导出回报 `staging.sha256` 清单（52 份的 path + sha256 + bytes），校验按它**逐字节**复算；',
   '                    不给 ⇒ 副本仍然只有提交里那些 blob（与从前逐字节相同）',
+  '  --staging-manifest <导出 JSON> ⇒ 校验拿**导出那一刻**记下的清单当参考（默认参考 = 现在的活 staging 树）',
 ].join('\n')
 
 // ── 输出：stdout 只放那**一行** JSON（人话一律走 stderr）────────────────────────
@@ -202,16 +216,15 @@ function gitBlobSha1(buf) {
 const STAGING_REL = '.tools/_staging/agenia-upgrade'
 const STAGING_SUBTREES = ['preset', 'oracle']
 /**
- * 什么**不**附加进副本：
- *   · `.runtime` —— 那是**真实脑数据**（记忆库 / 更新状态 / 报告），与 `.team/dev/…/live-vs-staged.mjs`
- *     的同步口径同一句：数据不是代码，不进靶子、也不进评审副本。
- *     🔴 它**不是静默跳过**：见到了就当场停（`E_STAGING_HAS_RUNTIME`）。理由：判据那一侧按
- *     "活树那 52 份"核完整性，这边静默少带一份会变成一条"声明的追加少一份"的假红 ——
- *     数据该怎么处理是口径问题，得有人说话，不许由这个开关替人静默决定。
+ * 什么**不**附加进副本（**跳过，不判红**）：
+ *   · `.runtime` —— 那是**真实脑数据**（记忆库 / 更新状态 / 报告）。口径与
+ *     `.team/dev/2026-10-24/_tmp/live-vs-staged.mjs` 的同步口径同一句：数据不是代码，
+ *     不进靶子、也不进评审副本。测试侧 `declaredAdditionPaths()` 同批排除它（2026-11-02 裁决）。
+ *     跳过的那几条写进 `staging.skipped` —— "没收"要看得见，不许静默。
  *   · 目录联接 / 符号链接 —— 它们会**逃出副本**（"副本借活树的输入"就不是自足），
- *     与 `CPY-STAGING-ESCAPES-COPY` 那条判据同一个理由，这里干脆不收（判据那一侧同样不收）。
+ *     与 `CPY-STAGING-ESCAPES-COPY` 那条判据同一个理由，这里不收（判据那一侧同样不收）。
  */
-const STAGING_BLOCKED_SEGMENTS = new Set(['.runtime'])
+const STAGING_SKIP_SEGMENTS = new Set(['.runtime'])
 
 /**
  * 活的 staging 树里那几份文件（`rel 相对 staging 根`，`/` 分隔）。
@@ -222,7 +235,7 @@ const STAGING_BLOCKED_SEGMENTS = new Set(['.runtime'])
  */
 function stagingFilesOf(repo) {
   const root = path.join(repo, ...STAGING_REL.split('/'))
-  const out = { root, exists: false, files: [], skipped: [], blocked: [], problems: [] }
+  const out = { root, exists: false, files: [], skipped: [], problems: [] }
   if (!existsSync(root) || !statSync(root).isDirectory()) return out
   out.exists = true
   const walk = (relDir) => {
@@ -236,8 +249,8 @@ function stagingFilesOf(repo) {
     }
     for (const item of names) {
       const rel = relDir === '' ? item.name : `${relDir}/${item.name}`
-      if (rel.split('/').some((seg) => STAGING_BLOCKED_SEGMENTS.has(seg))) {
-        out.blocked.push(rel)
+      if (rel.split('/').some((seg) => STAGING_SKIP_SEGMENTS.has(seg))) {
+        out.skipped.push(rel)
         continue
       }
       if (item.isSymbolicLink()) {
@@ -255,6 +268,75 @@ function stagingFilesOf(repo) {
 
 /** 副本里那条附加路径（`<out>/.tools/_staging/agenia-upgrade/<rel>`）。 */
 const stagingCopyPath = (out, rel) => path.join(out, ...`${STAGING_REL}/${rel}`.split('/'))
+
+/**
+ * 把一串 `{rel, sha256, bytes}`（`rel` 仓根相对）汇成**一份清单**：
+ * `{ algorithm, prefix, files, bytes, digest, list }`，`list` 按 `rel` 的 UTF-8 字节序升序，
+ * `digest = sha256( Σ `${rel}\0${sha256}\0${bytes}\n` )` —— 与
+ * `tests/agenia-upgrade/support/tree-at-commit.mjs::treeDigest` 同一个公式，第三个人能自己复算。
+ * 导出与校验**共用这一个函数**：两份清单的算法不许各写一份。
+ */
+function manifestOfEntries(entries) {
+  const list = entries
+    .map((e) => ({ rel: e.rel, sha256: e.sha256, bytes: e.bytes }))
+    .sort((a, b) => Buffer.compare(Buffer.from(a.rel, 'utf8'), Buffer.from(b.rel, 'utf8')))
+  const h = createHash('sha256')
+  for (const e of list) h.update(`${e.rel}\u0000${e.sha256}\u0000${e.bytes}\n`, 'utf8')
+  return {
+    algorithm: 'sha256',
+    prefix: STAGING_REL,
+    files: list.length,
+    bytes: list.reduce((n, e) => n + e.bytes, 0),
+    digest: h.digest('hex'),
+    list,
+  }
+}
+
+/**
+ * **一份 staging 清单**（`--with-staging` 的"内容冻结"那一半）。
+ *
+ * 形状见 `manifestOfEntries`：`{ algorithm, prefix, files, bytes, digest, list: [{rel, sha256, bytes}] }`。
+ * `rel` 是**仓根相对**（`.tools/_staging/agenia-upgrade/preset/inject.js`）—— 与 `is_that_commit`
+ * 与判据那一侧报出来的路径同一个写法，读的人不用换坐标系。
+ *
+ * 为什么清单里要有**字节数**：只有 sha256 时，"换了字节"与"截断了"在报文里长得一样；
+ * 两个数一起报，读的人一眼分得出（一个数不许担两个意思）。
+ *
+ * @param {Array<{rel: string, abs: string}>} files `rel` 相对 staging 根
+ */
+function stagingManifest(files) {
+  return manifestOfEntries(files.map((f) => {
+    const buf = readFileSync(f.abs)
+    return { rel: `${STAGING_REL}/${f.rel}`, sha256: createHash('sha256').update(buf).digest('hex'), bytes: buf.length }
+  }))
+}
+
+/**
+ * 读一份**已记录的**清单（`--staging-manifest <file>`）：收导出 JSON（取 `.staging.sha256`）
+ * 或裸清单（本身就有 `.list`）。落点是被 `--with-staging` 导出的那份 JSON —— 于是
+ * "副本还是不是导出那一刻那 52 份"可以拿**当时记下的数**核，而不是拿现在的活树核。
+ * 形状不对 ⇒ `ok:false` + 一句点名的原因（拿一份读不出来的清单去比，等于没比）。
+ */
+function readStagingManifest(file) {
+  if (!existsSync(file)) return { ok: false, problems: [`--staging-manifest 不在盘上：${file}`], manifest: null }
+  let raw = null
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (err) {
+    return { ok: false, problems: [`--staging-manifest 不是可解析 JSON：${file}（${String(err.message).slice(0, 160)}）`], manifest: null }
+  }
+  const manifest = raw?.staging?.sha256 ?? raw?.sha256 ?? raw
+  if (manifest === null || typeof manifest !== 'object' || !Array.isArray(manifest.list)) {
+    return { ok: false, problems: [`--staging-manifest 里没有清单（要 \`staging.sha256.list\` 或 \`list\`）：${file}`], manifest: null }
+  }
+  const bad = manifest.list.filter((e) => e === null || typeof e !== 'object'
+    || typeof e.rel !== 'string' || !String(e.rel).startsWith(`${STAGING_REL}/`)
+    || !/^[0-9a-f]{64}$/.test(String(e.sha256)) || !Number.isInteger(e.bytes))
+  if (bad.length > 0) {
+    return { ok: false, problems: [`--staging-manifest 里有 ${bad.length} 条形状不对（要 {rel: \`${STAGING_REL}/…\`, sha256: 64 位小写十六进制, bytes: 整数}）：${file}`], manifest: null }
+  }
+  return { ok: true, problems: [], manifest }
+}
 
 
 // ── 尺子（只调用 `.tools/fingerprint.mjs`，自己不实现排除表）────────────────────
@@ -362,7 +444,7 @@ function liveMoved(liveRoot, baselineFile) {
 
 // ── 参数 ───────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const out = { mode: null, repo: null, commit: null, out: null, verify: null, expect: null, liveBaseline: null, liveRoot: null, withStaging: false, json: false }
+  const out = { mode: null, repo: null, commit: null, out: null, verify: null, expect: null, liveBaseline: null, liveRoot: null, withStaging: false, stagingManifest: null, json: false }
   const missingValue = []
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]
@@ -387,11 +469,15 @@ function parseArgs(argv) {
     else if (a === '--live-baseline') out.liveBaseline = next()
     else if (a === '--live-root') out.liveRoot = next()
     else if (a === '--with-staging') out.withStaging = true
+    else if (a === '--staging-manifest') out.stagingManifest = next()
     else if (a === '--help' || a === '-h') out.help = true
     else return { error: `未知参数：${a}` }
   }
   if (missingValue.length > 0) return { error: `这些参数少了值：${missingValue.join(' · ')}` }
   if (out.help) return out
+  if (out.stagingManifest !== null && !out.withStaging) {
+    return { error: '--staging-manifest 只在 --verify --with-staging 下有意义（它是那一层的参考清单；不给 --with-staging 时这一层根本不在判据面上）' }
+  }
   if (out.repo === undefined || out.repo === null || String(out.repo).trim() === '') return { error: '--repo 不能是空串' }
   if (out.commit === undefined || out.commit === null || String(out.commit).trim() === '') return { error: '--commit 不能是空串' }
   if (out.verify !== null) {
@@ -492,13 +578,6 @@ function doExport(args) {
     if (!live.exists) {
       return fail('E_STAGING_MISSING', `要求带 staging，而 ${live.root} 不在 —— 这样导出的副本不自足（套件按 <REPO>/.tools/_staging/… 读靶子）`, { commit: resolved.sha, tree_root: out, live_baseline: baselineFile })
     }
-    if (live.blocked.length > 0) {
-      return fail('E_STAGING_HAS_RUNTIME',
-        `staging 里有真实脑数据目录（${live.blocked.slice(0, 3).join(' · ')}${live.blocked.length > 3 ? ` 等 ${live.blocked.length} 条` : ''}）—— `
-          + '这一层是**数据**，不进评审副本；而"少带一份"会被判成"声明的追加少一份"（假红）。'
-          + '先把那一层清出 staging，或者由组长定这一格的口径',
-        { commit: resolved.sha, tree_root: out, live_baseline: baselineFile })
-    }
     if (live.files.length === 0) {
       return fail('E_STAGING_EMPTY', `${live.root} 下一份文件都没有（${STAGING_SUBTREES.join(' / ')}）—— "带了 staging"会是一句空话`, { commit: resolved.sha, tree_root: out, live_baseline: baselineFile })
     }
@@ -510,14 +589,14 @@ function doExport(args) {
           + '附加只许**加**：写上它会盖掉提交的字节，"副本里那几份 = 提交的字节"这条就没了',
         { commit: resolved.sha, tree_root: out, live_baseline: baselineFile })
     }
-    let stagingBytes = 0
+    // 清单在**写之前**算：它就是"这一次导出的是哪 52 份字节"的读数（写盘顺序不影响它）。
+    const manifest = stagingManifest(live.files)
     const stagingBad = []
     for (const f of live.files) {
       const buf = readFileSync(f.abs)
       const dst = stagingCopyPath(out, f.rel)
       mkdirSync(path.dirname(dst), { recursive: true })
       writeFileSync(dst, buf)
-      stagingBytes += buf.length
       let back = null
       try { back = readFileSync(dst) } catch { back = null }
       if (back === null || !back.equals(buf)) stagingBad.push(f.rel)
@@ -525,7 +604,17 @@ function doExport(args) {
     if (stagingBad.length > 0) {
       return fail('E_STAGING_VERIFY', `附加写完读回来对不上（${stagingBad.length} 份）：${stagingBad.slice(0, 5).join(' · ')}`, { commit: resolved.sha, tree_root: out, live_baseline: baselineFile })
     }
-    staging = { root: live.root, files: live.files.length, bytes: stagingBytes, readback_ok: true, skipped: live.skipped }  }
+    staging = {
+      root: live.root,
+      files: manifest.files,
+      bytes: manifest.bytes,
+      readback_ok: true,
+      skipped: live.skipped,
+      // 🔴 **内容冻结**：这 52 份的 path + sha256 + bytes（第四关复审 F2-1）。
+      //    `--verify --with-staging` 拿它对账；人也能拿这份 JSON 自己复算。
+      sha256: manifest,
+    }
+  }
 
   const code = codeFingerprintOf(out)
   if (!code.ok) return fail('E_FINGERPRINT', code.problems.join('；'), { commit: resolved.sha, tree_root: out, live_baseline: baselineFile })
@@ -579,24 +668,30 @@ function doVerify(args) {
   const problems = []
   let files = 0
   /**
-   * `--with-staging` 时"声明的附加"清单：**活的** staging 树里那几份（`preset/` + `oracle/`）。
-   * 与导出用的是**同一个函数**（`stagingFilesOf`）—— 两份清单不许各写一份。
-   * `declared === null` = 判不了（活的 staging 树不在 / 读不了）：那时"多出来的那几份算不算声明的附加"
-   * 无从回答 ⇒ 报一条 problem，**不许**把"多一份"静默放过去（判不了不是绿）。
+   * `--with-staging` 的"声明的附加"**参考清单**（第四关复审 F2-1：路径对不算数，**字节**也要对）。
+   *   · 默认：**活的** staging 树（与导出同一个 `stagingFilesOf`）—— 回答"副本与**现在的**靶子是不是同一份"；
+   *   · 给了 `--staging-manifest <导出 JSON>`：**导出那一刻记下的清单** —— 回答"副本还是不是当时那 52 份"
+   *     （活树后来合法地换版也不影响这一格）。
+   * `reference === null` = 判不了（活树不在 / 清单读不出来）⇒ 报一条 problem，不许把附加静默放过去。
    */
-  let declared = null
-  const declaredProblems = []
+  let reference = null
+  const referenceProblems = []
+  let referenceSource = 'live'
   if (args.withStaging) {
-    const liveStaging = stagingFilesOf(repo)
-    declaredProblems.push(...liveStaging.problems)
-    if (liveStaging.exists && liveStaging.problems.length === 0) {
-      declared = {
-        root: liveStaging.root,
-        files: liveStaging.files.map((f) => `${STAGING_REL}/${f.rel}`),
-        skipped: liveStaging.skipped,
+    if (args.stagingManifest === null) {
+      const liveStaging = stagingFilesOf(repo)
+      referenceProblems.push(...liveStaging.problems)
+      if (liveStaging.exists && liveStaging.problems.length === 0) {
+        reference = { root: liveStaging.root, skipped: liveStaging.skipped, manifest: stagingManifest(liveStaging.files) }
       }
+    } else {
+      referenceSource = path.resolve(args.stagingManifest)
+      const read = readStagingManifest(referenceSource)
+      referenceProblems.push(...read.problems)
+      if (read.ok) reference = { root: null, skipped: [], manifest: read.manifest }
     }
   }
+  const refByRel = new Map(reference === null ? [] : reference.manifest.list.map((e) => [e.rel, e]))
   /** 副本里那几份额外的 staging 附加（只有 `--with-staging` 才非空；否则 null = 这一版没有这个概念）。 */
   let isThatStaging = null
   if (!tree.ok) {
@@ -626,8 +721,8 @@ function doVerify(args) {
       // 🔴 只有**明确要了** `--with-staging` 才谈"声明的附加"：不开这个开关时，
       //    副本里任何"多一份"（包括 `.tools/_staging/…` 下的）都算"不是那个提交"—— 与从前逐字节相同。
       if (args.withStaging && rel.startsWith(`${STAGING_REL}/`)) {
-        if (declared === null) continue   // 判不了 ⇒ 下面统一报一条，不许在这里静默当绿
-        if (declared.files.includes(rel)) { added.push(rel); continue }
+        if (reference === null) continue   // 判不了 ⇒ 下面统一报一条，不许在这里静默当绿
+        if (refByRel.has(rel)) { added.push(rel); continue }
       }
       problems.push(`副本多一份（副本里有、提交里没有）：${rel}`)
     }
@@ -637,16 +732,45 @@ function doVerify(args) {
       if (got !== expected.get(rel)) problems.push(`副本这一份的字节不是该提交里的那一份：${rel}（提交 ${expected.get(rel).slice(0, 12)}… / 副本 ${got.slice(0, 12)}…）`)
     }
     if (args.withStaging) {
-      if (declared === null) {
+      if (reference === null) {
         problems.push(`\`--with-staging\`：判不了"多出来的那几份算不算声明的 staging 附加"—— `
-          + `${declaredProblems.length > 0 ? declaredProblems.join('；') : `活的 staging 树不在：${path.join(repo, ...STAGING_REL.split('/'))}`}。`
+          + `${referenceProblems.length > 0 ? referenceProblems.join('；') : `活的 staging 树不在：${path.join(repo, ...STAGING_REL.split('/'))}`}。`
           + '没有那一份清单，任何一条"多一份"都可能被当成附加混过去（判不了不是绿）')
-      }
-      isThatStaging = {
-        root: declared === null ? null : declared.root,
-        declared: declared === null ? null : declared.files.length,
-        added: added.sort(),
-        skipped: declared === null ? [] : declared.skipped,
+        isThatStaging = { root: null, reference: referenceSource, declared: null, added: added.sort(), missing: null, mismatched: null, skipped: [], sha256: null }
+      } else {
+        /**
+         * 🔴 **内容冻结**（复审 F2-1）：逐份复算副本里那 52 份的 `sha256 + bytes`，与参考清单比。
+         * 只核"路径在不在"时，副本里换掉一个字节仍然报 `equal:true / is_that_commit.ok:true` ——
+         * 那正是复审拿一把翻字节的副本戳中的洞（"有这份文件"≠"是这一份字节"）。
+         */
+        const copyEntries = []
+        const mismatched = []
+        for (const rel of [...added].sort()) {
+          const buf = readFileSync(actual.get(rel))
+          const entry = { rel, sha256: createHash('sha256').update(buf).digest('hex'), bytes: buf.length }
+          copyEntries.push(entry)
+          const want = refByRel.get(rel)
+          if (entry.sha256 !== want.sha256 || entry.bytes !== want.bytes) {
+            mismatched.push({ rel, want: { sha256: want.sha256, bytes: want.bytes }, got: { sha256: entry.sha256, bytes: entry.bytes } })
+            problems.push(`副本的 staging 附加不是参考清单里的那一份：${rel}`
+              + `（参考 ${want.sha256.slice(0, 12)}… / ${want.bytes} B · 副本 ${entry.sha256.slice(0, 12)}… / ${entry.bytes} B）—— `
+              + '路径对上不算数：内容冻结要的是**字节**也对上')
+          }
+        }
+        // 参考清单里有、副本里没有 ⇒ 不是"带 staging 的副本"（自足是这一层的全部用处）
+        const missing = reference.manifest.list.map((e) => e.rel).filter((rel) => !actual.has(rel)).sort()
+        for (const rel of missing) problems.push(`副本少一份声明的 staging 附加（参考清单里有、副本里没有）：${rel}`)
+        isThatStaging = {
+          root: reference.root,
+          reference: referenceSource,
+          declared: reference.manifest.files,
+          added: added.sort(),
+          missing,
+          mismatched,
+          skipped: reference.skipped,
+          // 副本这一侧**现算**的清单（导出那一侧记的是"写下去的是什么"，这里记的是"现在盘上是什么"）
+          sha256: manifestOfEntries(copyEntries),
+        }
       }
     }
   }

@@ -1,0 +1,55 @@
+{
+  "probe": "bundle-switch-live-probe",
+  "turn": 1,
+  "day": "2026-11-02",
+  "generated_at": "2026-11-02T16:55:11+08:00",
+  "workspace": "E:\\Harness",
+  "toolName": "unknown-to-self",
+  "toolName_note": "Job brief (presets/agenia/job-briefs/technical-review.md, line 3) names the tool as job_technical_review. I receive no self-observable field naming the tool that started me, so this value is a claim from the brief, not something I can verify from inside.",
+  "role": "technical-review",
+  "role_detail": "Amara · 技术评审 · one-shot background job · read-only production, may run tests, must not modify tests/** or production code",
+  "persona_injected": true,
+  "charter_sources": [
+    "presets/agenia/team/technical-review.md (injected as persona)",
+    "presets/agenia/job-briefs/technical-review.md (read at start of shift)"
+  ],
+  "runtime_facts": {
+    "node": "v24.21.0",
+    "os": "Windows",
+    "shell": "pwsh",
+    "dsh_home": "C:\\Users\\DAVID\\.dsh",
+    "dsh_profile": "desktop",
+    "dsh_session_id": "519a4826-4174-46a5-8168-ab11a0f1797b"
+  },
+  "tools_available": [
+    "ask_user_question",
+    "create_goal",
+    "edit",
+    "exit_plan_mode",
+    "get_goal",
+    "glob",
+    "grep",
+    "job_kill",
+    "job_list",
+    "job_output",
+    "load_workspace_dependencies",
+    "present",
+    "proposal_file",
+    "pwsh",
+    "read",
+    "read_image",
+    "skill",
+    "todo_write",
+    "update_goal",
+    "web_fetch",
+    "web_search",
+    "working_directory",
+    "write"
+  ],
+  "tools_available_count": 23,
+  "notes": [
+    "Written by the file-write tool (not shell redirection) on explicit probe instruction.",
+    "Path is under tests/_, which my charter normally forbids me to modify; this is a probe artifact, no existing test file touched.",
+    "tests/_probe is NOT covered by .gitignore, so this file shows as untracked in git status."
+  ]
+}

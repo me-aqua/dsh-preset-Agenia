@@ -420,12 +420,26 @@ export const STAGING_ADDITION = Object.freeze({
   dirs: Object.freeze(['preset', 'oracle']),
 })
 
-/** 活树那一层里**允许被追加**的文件清单（`rel` 相对仓根、正斜杠）。`repo` 是活树，不是副本。
- * ⚠️ 链接（符号链接 / junction）不算：活树里若有一份是链接，副本**无法**忠实地复现它 ⇒ 不算进声明的清单
- * （那会让"缺一份"红出来，比"字节相同"更诚实）。 */
+/**
+ * 什么**不**进声明的追加（跳过，不判红）—— 与导出器 `.tools/tree-at-commit.mjs` 的
+ * `STAGING_SKIP_SEGMENTS` **逐字同一份规则**（两边各写一份，靠 `cpy01` 的清单摘要对账）：
+ *   · **`.runtime`**（任何一层目录名是它）—— 真实脑数据（记忆库 / 更新状态 / 报告），不是代码；
+ *     口径与 `.team/dev/…/live-vs-staged.mjs` 的同步口径同一句：数据不进靶子、也不进评审副本。
+ *     跳过的那几条写进 `skipped` 读数 —— "没收"要看得见，不许静默。
+ *   · **链接（符号链接 / junction）** —— 它们会逃出副本（"副本借活树的输入"就不是自足）。
+ */
+export const STAGING_SKIP_SEGMENTS = Object.freeze(['.runtime'])
+
+/**
+ * 活树那一层里**允许被追加**的文件清单（`rel` 相对仓根、正斜杠）。`repo` 是活树，不是副本。
+ *
+ * 排序按 `rel` 的 **UTF-8 字节序**（与导出器的 `manifestOfEntries` 同一个排序，摘要才对得上）。
+ * 跳过的不算进清单，但**记下来**：`out.skipped = [{rel, reason}]`（`reason` = `data-runtime` / `symbolic-link`），
+ * 另留 `out.links`（只含链接那几条，旧调用方用）。
+ */
 export function declaredAdditionPaths(repo, addition = STAGING_ADDITION) {
   const out = []
-  const links = []
+  const skipped = []
   for (const dir of addition.dirs) {
     const base = path.join(repo, ...addition.prefix.split('/'), dir)
     if (!existsSync(base)) continue
@@ -434,16 +448,47 @@ export function declaredAdditionPaths(repo, addition = STAGING_ADDITION) {
         const full = path.join(d, name)
         const st = lstatSync(full)
         const rel = path.relative(repo, full).replace(/\\/g, '/')
-        if (st.isSymbolicLink()) { links.push(rel); continue }
+        // 与导出器同一条规则：路径里**任何一段**是 `.runtime` ⇒ 跳过（不是红）。
+        const relToStaging = path.relative(path.join(repo, ...addition.prefix.split('/')), full).replace(/\\/g, '/')
+        if (relToStaging.split('/').some((seg) => STAGING_SKIP_SEGMENTS.includes(seg))) {
+          skipped.push({ rel, reason: 'data-runtime' })
+          continue
+        }
+        if (st.isSymbolicLink()) { skipped.push({ rel, reason: 'symbolic-link' }); continue }
         if (st.isDirectory()) walk(full)
         else if (st.isFile()) out.push({ rel, abs: full })
       }
     }
     walk(base)
   }
-  out.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
-  out.links = links
+  out.sort((a, b) => Buffer.compare(Buffer.from(a.rel, 'utf8'), Buffer.from(b.rel, 'utf8')))
+  out.skipped = skipped.sort((a, b) => Buffer.compare(Buffer.from(a.rel, 'utf8'), Buffer.from(b.rel, 'utf8')))
+  out.links = out.skipped.filter((item) => item.reason === 'symbolic-link').map((item) => item.rel)
   return out
+}
+
+/**
+ * **声明的追加**那一层的清单（`{algorithm, prefix, files, bytes, digest, list, skipped}`）——
+ * 与导出器 `--with-staging` 的 `staging.sha256` **同一个形状、同一个公式**
+ * （`treeDigest`：按 `rel` 的 UTF-8 字节序，`digest = sha256( Σ `${rel}\0${sha256}\0${bytes}\n` )`）。
+ * `CPY-01` 拿它与导出 JSON 里的那份逐字对账：两份摘要相同 ⇒ 两边的"哪些算、哪些跳过"是同一份规则。
+ */
+export function declaredAdditionManifest(repo, addition = STAGING_ADDITION) {
+  const files = declaredAdditionPaths(repo, addition)
+  const entries = files.map((item) => {
+    const buf = readFileSync(item.abs)
+    return { rel: item.rel, sha256: sha256Of(buf), bytes: buf.length }
+  })
+  const d = treeDigest(entries)
+  return {
+    algorithm: 'sha256',
+    prefix: addition.prefix,
+    files: d.files,
+    bytes: d.bytes,
+    digest: d.sha256,
+    list: d.list,
+    skipped: files.skipped ?? [],
+  }
 }
 
 /**
@@ -607,11 +652,14 @@ export function runExport({ exporter, repo, commit, out, liveBaseline = null, wi
 }
 
 /**
- * 校验：`--verify <副本> --repo <root> --commit <sha> --expect <before_sha256> --live-baseline <file> --json`。
+ * 校验：`--verify <副本> --repo <root> --commit <sha> --expect <before_sha256> [--with-staging] --json`。
  * **它必须自己复算**：`equal` 读的是副本现在的字节与 `--expect` 的比，不是照抄卡上的值。
+ * `withStaging`：副本带着**声明的追加**（`STAGING_ADDITION`）时必须开 —— 否则那 52 份会被读成
+ * "副本多一份"，`is_that_commit` 永远 false（导出侧与校验侧是同一个开关，缺一边就自相矛盾）。
  */
-export function runVerify({ exporter, copy, repo, commit, expect, liveBaseline, liveRoot, timeoutMs } = {}) {
+export function runVerify({ exporter, copy, repo, commit, expect, liveBaseline, liveRoot, withStaging = false, timeoutMs } = {}) {
   const args = ['--verify', copy, '--repo', repo, '--commit', commit, '--expect', expect, '--json']
+  if (withStaging) args.push('--with-staging')
   if (liveBaseline) args.push('--live-baseline', liveBaseline)
   if (liveRoot) args.push('--live-root', liveRoot)
   return runJsonCli(exporter, args, { timeoutMs })
