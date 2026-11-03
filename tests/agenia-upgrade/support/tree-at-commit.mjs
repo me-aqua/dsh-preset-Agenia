@@ -515,6 +515,87 @@ export function declaredAdditionManifest(repo, addition = STAGING_ADDITION) {
 }
 
 /**
+ * **派工那一刻记下的那份清单**（`AGENIA_STAGING_MANIFEST` 指过来）：份数对账的**第二个声明来源**。
+ *
+ * 为什么需要它（技术评审 2026-11-03 第四轮 `F2`）：`副本 = 提交 + 声明` 如果两侧都从**这一跑**现算，
+ * 那是一个恒等式 —— 副本正是从同一棵树上导出来的，三个数当然一起动（评审的两把刀 +1 / −1 都绿，
+ * 不是判据看着不对，是它**没有第二个来源可对**）。要让这个等式能翻面，声明那一侧必须有一个
+ * **不随这一跑变化**的来源：派工时导出副本记下的那份清单（`--with-staging` 的导出 JSON）。
+ * 拿它当声明侧之后，"这一跑的活树比派工那一刻多/少一份"就是一条真差异 —— 而那正是要看到它响的场景。
+ *
+ * 只读三个数：`list.length`（**条数**；对账用它，不用 `files` 那个自报值）、`files`（自报值，
+ * 只用来判清单自洽）、以及条目形状（`rel` 必须在声明的前缀下、`sha256` 64 位小写、`bytes` 整数）。
+ * **摘要复算不在这里**：清单自洽的那把尺子是导出器 `readStagingManifest`（评审 `F8`）——
+ * 测试侧不造第二份实现，这里只回答"够不够拿去当份数对账的声明侧"。
+ */
+export function declaredManifestOnDisk(file) {
+  if (!existsSync(file)) return { ok: false, file, entries: null, declared_files: null, consistent: null, problems: [`清单不在盘上：${file}`] }
+  let raw = null
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (err) {
+    return { ok: false, file, entries: null, declared_files: null, consistent: null, problems: [`清单不是可解析 JSON：${file}（${String(err.message).slice(0, 160)}）`] }
+  }
+  const manifest = raw?.staging?.sha256 ?? raw?.sha256 ?? raw
+  if (manifest === null || typeof manifest !== 'object' || !Array.isArray(manifest.list)) {
+    return { ok: false, file, entries: null, declared_files: null, consistent: null, problems: [`清单里没有 \`staging.sha256.list\` 或 \`list\`：${file}`] }
+  }
+  const prefix = `${STAGING_ADDITION.prefix}/`
+  const bad = manifest.list.filter((e) => e === null || typeof e !== 'object'
+    || typeof e.rel !== 'string' || !e.rel.startsWith(prefix)
+    || !/^[0-9a-f]{64}$/.test(String(e.sha256)) || !Number.isInteger(e.bytes))
+  if (bad.length > 0) {
+    return { ok: false, file, entries: null, declared_files: null, consistent: null, problems: [`清单里有 ${bad.length} 条形状不对（要 {rel: \`${prefix}…\`, sha256: 64 位小写十六进制, bytes: 整数}）：${file}`] }
+  }
+  return {
+    ok: true,
+    file,
+    entries: manifest.list.length,
+    declared_files: typeof manifest.files === 'number' ? manifest.files : null,
+    consistent: manifest.files === manifest.list.length,
+    problems: [],
+  }
+}
+
+/**
+ * **份数对账**（纯函数：只吃读数，不碰盘、不读 env）—— `CPY-FILE-COUNT-DRIFT` 的判据本体。
+ *
+ * 为什么要它存在（技术评审 2026-11-03 第四轮 `F2`）：`副本 = 提交 + 声明` 如果三侧都从**同一棵树**
+ * 现算，那是一条恒等式 —— 副本正是从这棵树上导出来的，三个数当然一起动（评审两把刀 +1 / −1 都绿）。
+ * 这里把**每一对读数**单独列出来：任一侧不是数 ⇒ `ok:null`（判不了，不许当绿）；两侧都是数且不等
+ * ⇒ `ok:false`（这一对漂了）。判断哪几对、每对的来历由调用方给（`CPY-01` 用 `sources` 那一张表）。
+ *
+ * @param {{copy:any, copyStaging:any, commit:any, declaredLive:any, exportCommit:any, exportStaging:any, pinned?:any, pinnedGiven?:boolean}} input
+ *   每项是**一条独立读数的值**（数或 `null`）；`pinned` 不给 / `null` ⇒ 那一条不判（不参与 `judged`）。
+ *   `pinnedGiven:true` + `pinned:null` = **给了派工清单但读不出来** ⇒ 那一条要出现在 `pairs` 里且 `ok:null`
+ *   （"配了但判不了"与"没配"是两件事，读数要分得开）。
+ * @returns {{pairs: Array<{id:string, got:number|null, want:number|null, ok:boolean|null}>, judged:boolean, allOk:boolean, drifted:string[]}}
+ */
+export function fileCountDrift(input) {
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const sum = (a, b) => (num(a) !== null && num(b) !== null ? num(a) + num(b) : null)
+  const pairs = []
+  const pair = (id, got, want) => {
+    const ok = num(got) !== null && num(want) !== null ? num(got) === num(want) : null
+    pairs.push({ id, got: num(got), want: num(want), ok })
+  }
+  pair('copy_vs_export_record', num(input.copy), sum(input.exportCommit, input.exportStaging))
+  pair('commit_now_vs_export_record', num(input.commit), num(input.exportCommit))
+  pair('declared_live_vs_export_record', num(input.declaredLive), num(input.exportStaging))
+  pair('copy_vs_commit_plus_declared', num(input.copy), sum(input.commit, input.declaredLive))
+  pair('copy_staging_vs_declared_live', num(input.copyStaging), num(input.declaredLive))
+  pair('copy_staging_vs_export_record', num(input.copyStaging), num(input.exportStaging))
+  const pinnedGiven = typeof input.pinnedGiven === 'boolean' ? input.pinnedGiven : (input.pinned !== undefined && input.pinned !== null)
+  if (pinnedGiven) pair('declared_live_vs_pinned', num(input.declaredLive), num(input.pinned))
+  return {
+    pairs,
+    judged: pairs.every((p) => p.ok !== null),
+    allOk: pairs.every((p) => p.ok === true),
+    drifted: pairs.filter((p) => p.ok === false).map((p) => p.id),
+  }
+}
+
+/**
  * 逐条核：副本里的**每一个**文件，其 `git blob` SHA-1 必须等于该路径在该提交里的 blob SHA-1；
  * 路径集合也必须一致（多一份 / 少一份都报）；副本里不许有 `.git`（文件或目录 ——
  * `git worktree add` 会留一个 `.git` 文件，那个文件本身就是一条指向真实仓库的活链）。
@@ -576,7 +657,9 @@ export function verifyCopyIsCommit({ repo, commit, copyRoot, declared = [] }) {
   for (const rel of missing) problems.push(`副本少一份（提交里有、副本里没有）：${rel}`)
   for (const rel of undeclaredExtra) problems.push(`副本多一份（副本里有、提交里没有）：${rel}`)
   for (const m of mismatched) problems.push(`副本这一份的字节不是该提交里的那一份：${m.rel}（提交 ${m.expected.slice(0, 12)}… / 副本 ${m.actual.slice(0, 12)}…）`)
-  for (const rel of declaredMissing) problems.push(`声明的追加少一份（活树那一层有、副本里没有）：${rel} —— \`--with-staging\` 没把这 52 份都带上，副本原地跑会缺输入`)
+  // ⚠️ 份数**从这一次的声明现算**（`declaredLive.size`），不许在报文里写死一个数：
+  //    同一个量写死在两个载体上，改一处 = 没改，而读数不一致比"两处都错"更难发现（第三轮 `R3-2` / 本轮 `F3`）。
+  for (const rel of declaredMissing) problems.push(`声明的追加少一份（活树那一层有、副本里没有）：${rel} —— \`--with-staging\` 没把这 ${declaredLive.size} 份都带上（缺 ${declaredMissing.length} 份），副本原地跑会缺输入`)
   for (const m of declaredMismatched) problems.push(`声明的追加这一份与活树不同：${m.rel}（活树 ${String(m.live).slice(0, 12)}… / 副本 ${String(m.copy).slice(0, 12)}…）—— 副本里的不是这一份`)
   return {
     ok: problems.length === 0,
@@ -665,7 +748,7 @@ function runJsonCli(file, args, { cwd = PATHS.repo, timeoutMs = 180000, env = pr
  * 导出：`--repo <root> --commit <sha> --out <dir> [--with-staging] [--live-baseline <file>] --json`
  *  ⇒ 副本 + 读数；给了 `--live-baseline` 才量活树那一刻（否则 `live_baseline: null`，**不是**"没变"）。
  * `withStaging`：让导出器把声明的 staging 那一层（`STAGING_ADDITION`）一起带进副本 ——
- * 没有它，副本原地跑永远缺那 52 份输入（`CPY-01`）。
+ * 没有它，副本原地跑永远缺那一层输入（`CPY-01`）。
  */
 export function runExport({ exporter, repo, commit, out, liveBaseline = null, withStaging = false, timeoutMs } = {}) {
   const args = ['--repo', repo, '--commit', commit, '--out', out, '--json']
@@ -677,7 +760,7 @@ export function runExport({ exporter, repo, commit, out, liveBaseline = null, wi
 /**
  * 校验：`--verify <副本> --repo <root> --commit <sha> --expect <before_sha256> [--with-staging] --json`。
  * **它必须自己复算**：`equal` 读的是副本现在的字节与 `--expect` 的比，不是照抄卡上的值。
- * `withStaging`：副本带着**声明的追加**（`STAGING_ADDITION`）时必须开 —— 否则那 52 份会被读成
+ * `withStaging`：副本带着**声明的追加**（`STAGING_ADDITION`）时必须开 —— 否则那一层会被读成
  * "副本多一份"，`is_that_commit` 永远 false（导出侧与校验侧是同一个开关，缺一边就自相矛盾）。
  */
 export function runVerify({ exporter, copy, repo, commit, expect, liveBaseline, liveRoot, withStaging = false, stagingManifest = null, timeoutMs } = {}) {

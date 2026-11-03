@@ -68,6 +68,13 @@ export const ENV = {
   ORACLE_VERSION: 'AGENIA_ORACLE_VERSION',
   ORACLE_SHA256: 'AGENIA_ORACLE_SHA256',
   CONTENT_DIR: 'AGENIA_CONTENT_DIR',
+  /**
+   * **派工那一刻记下的那份声明清单**（`--with-staging` 的导出 JSON，可选）。
+   * `CPY-01` 的份数对账拿它当"声明的追加"那一侧的**第二个来源**：没有它，`副本 = 提交 + 声明`
+   * 两侧都从这一跑现算（副本正是从这棵树上导出来的）⇒ 恒等式（技术评审 2026-11-03 第四轮 `F2`）。
+   * 不给 ⇒ 读数里记 `pinned: null`（"这一格没配"是读数，不是绿灯）。
+   */
+  STAGING_MANIFEST: 'AGENIA_STAGING_MANIFEST',
 }
 
 export class EnvMissingError extends Error {

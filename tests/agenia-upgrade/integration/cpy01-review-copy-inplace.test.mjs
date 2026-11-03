@@ -30,22 +30,26 @@
  *
  * 🔴 **份数一个都不许写死在这份文件里**（2026-11-03 第三轮评审 `R3-2`：同一个量在两个载体上
  *    出现过**三个互不相同的值**，而它每天都会变 —— 读的人拿旧数去核一份新副本，就会得出"副本被动过"）。
- *    **唯一的来源是那一跑的读数本身**，三个数各有一个落点，别的载体只许指过来：
- *      · 提交里的份数 = `readings.cpy01.commit_tree.files_total`
- *        （`support/tree-at-commit.mjs::lsTreeBlobs`：`git ls-tree -r --full-tree <commit>` 的条数）；
- *      · 声明的追加份数 = `readings.cpy01.declared_staging.live_paths` /
- *        `declared_staging.manifest.mine.files`（`declaredAdditionPaths` / `declaredAdditionManifest` 现算）；
- *      · 副本里的份数 = `readings.cpy01.copy_is_commit.files`（副本目录逐份枚举）。
- *    这三者必须满足 `副本 = 提交 + 声明的追加`，由 `CPY-FILE-COUNT-DRIFT` 当场判 —— 文档里再抄一份
- *    数字，就是给下一次"写死了没跟上"留的位置。
+ *    份数的来源只有读数，载体是 `readings.cpy01.file_count_ledger.sources` 那几条（**各一个落点**）：
+ *      · 副本里的份数 = `copy`（副本目录逐份枚举）· 其中追加那一层 = `copy_staging`；
+ *      · 提交里的份数 = `commit`（`lsTreeBlobs`：`git ls-tree -r --full-tree <commit>` 的条数）；
+ *      · 声明的追加 = `declared_live`（`declaredAdditionPaths()` / `declaredAdditionManifest()` 现算）；
+ *      · 导出器自己记的 = `export_record_commit` / `export_record_staging`（`exp.json`）；
+ *      · **派工那一刻**记的 = `pinned_declared`（`AGENIA_STAGING_MANIFEST`，可选）。
+ *    `副本 = 提交 + 声明的追加` 只是这些读数之间的**一条**关系（第四轮评审 `F2`：只判它、而且三侧现算
+ *    ⇒ 恒等式、响不了）；现在是**两两对账**，由 `CPY-FILE-COUNT-DRIFT` 当场判，任一来源分叉都红。
+ *    ⚠️ 它跑在"副本不是那个提交就早退"**之前** —— 否则"多带/少带一份"这种最该响的事永远到不了它。
+ *    文档里再抄一份数字，就是给下一次"写死了没跟上"留的位置。
  *
  * ── 这一格的现场（每一项都由这一跑现量）──────────────────────────────────────
  * `.tools/_staging/` 在 `.gitignore` 里 ⇒ 提交里 `.tools/_staging` 下的路径应当是 **0 份**
  * （读数 `readings.cpy01.commit_tree.staging_paths`）；带 `--with-staging` 导出的副本因此 = 提交 + 那层追加，
  * 四条必需输入与活树逐字节相同 ⇒ 这一格**绿**。**具体份数看读数，不看这段注释。**
  *
- * ── 什么会把它弄红（四种形状，各自一个红因码）──────────────────────────────────
+ * ── 什么会把它弄红（五种形状，各自一个红因码）──────────────────────────────────
  *   · 导出器不认这个开关 / 导出失败 ⇒ `CPY-EXPORT-STAGING`（红在**工具那一半**，不是副本缺件）；
+ *   · **份数对账**：副本 / 提交 / 活树那一层 / 导出器记录 / 派工那份清单，任一对不上 ⇒
+ *     `CPY-FILE-COUNT-DRIFT`（**跑在早退之前**：多带/少带一份正是会让 `isThatCommit.ok === false` 的事）；
  *   · 副本里缺一条必需输入 ⇒ `CPY-STAGING-NOT-IN-COPY`（点名绝对路径 + 声明的追加命中几条）；
  *   · 副本里的与活树不是同一份 ⇒ `CPY-STAGING-DIFFERS-LIVE`（副本里睡着一份过期输入）；
  *   · 副本解析后不在副本之下（链接 / junction）⇒ `CPY-STAGING-ESCAPES-COPY`；
@@ -67,10 +71,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { caseFail, ensureDir, preflight, problem, runCase, runRoot, writeJson } from '../support/evidence.mjs'
 import { ROOT_SOURCE, canonical, isUnder } from '../support/root-guard.mjs'
 import {
-  EXPORT_FIELDS, STAGING_ADDITION, VERIFY_FIELDS, buildFixtureRepo, declaredAdditionManifest, declaredAdditionPaths, fingerprintTool, git,
-  lsTreeBlobs, exporterPath, missingFields, runExport, runVerify, treeDigest, verifyCopyIsCommit,
+  EXPORT_FIELDS, STAGING_ADDITION, VERIFY_FIELDS, buildFixtureRepo, declaredAdditionManifest, declaredManifestOnDisk,
+  fileCountDrift, fingerprintTool, git, lsTreeBlobs, exporterPath, missingFields, runExport, runVerify, treeDigest, verifyCopyIsCommit,
 } from '../support/tree-at-commit.mjs'
-import { PATHS } from '../support/env.mjs'
+import { ENV, PATHS, optionalEnv } from '../support/env.mjs'
 
 before(() => {
   preflight()
@@ -287,19 +291,233 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
     /**
      * ⑤ 量具自证：**副本就是那个提交**（+ 恰好那一层声明的追加）。
      * 判定两向钉死：提交里每一份子集核对；多出来的只准是声明的追加，且与活树逐字节相同。
+     *
+     * ⚠️ **这里只算、不早退**（技术评审 2026-11-03 第四轮 `F2`）：下面 ⑤a 的份数对账要用
+     * 「副本自己的枚举」与另外几份独立读数对账，而"多带 / 少带一份"恰恰就是让 `isThatCommit.ok === false`
+     * 的那类事 —— 早年退的话，份数那条判据在**它本该响的场景里永远到不了**（评审原话：垫在早退后面 = 装饰）。
+     * 早退挪到 ⑤a 之后：两种红因（`CPY-EXPORT-FIXTURE` + `CPY-FILE-COUNT-DRIFT`）同一次交活都看得见。
      */
     const isThatCommit = verifyCopyIsCommit({ repo: PATHS.repo, commit, copyRoot, declared: [STAGING_ADDITION] })
+    const copyPaths = Array.isArray(isThatCommit.actual) ? isThatCommit.actual : []
+    /** 副本里落在"声明的追加"那两棵子树下的路径（前缀与 `declaredAdditionPaths()` 同一份 `STAGING_ADDITION`）。 */
+    const STAGING_PATH_RE = new RegExp(`^\\.tools/_staging/agenia-upgrade/(${STAGING_ADDITION.dirs.join('|')})/`)
+    const copyStagingPaths = copyPaths.filter((rel) => STAGING_PATH_RE.test(rel))
     readings.copy_is_commit = {
       ok: isThatCommit.ok,
-      files: isThatCommit.actual.length,
+      files: copyPaths.length,
+      staging_files: copyStagingPaths.length,
+      commit_part: copyPaths.length - copyStagingPaths.length,
       missing: isThatCommit.missing.slice(0, 5),
       extra: isThatCommit.extra.length,
       undeclared_extra: (isThatCommit.undeclared_extra ?? []).slice(0, 5),
       declared: isThatCommit.declared ?? null,
       problems: isThatCommit.problems.slice(0, 5),
     }
+
+    /**
+     * ── ⑤a **份数对账：几条各自独立的读数两两对账**（技术评审 2026-11-03 第四轮 `F2`）────────────
+     *
+     * 病历（第三轮 `R3-2` 的修法在第四轮被打回）：那一版判 `副本 = 提交 + 声明`，但三个数**全部从这一跑
+     * 现算**，而副本又正是拿**同一棵树**导出来的 ⇒ 等式是恒等式（评审两把刀 +1 / −1 都绿、判据一声不响）。
+     * 现在改成**几个各自独立的来源**，成对对账，任何一对不等都当场红：
+     *   · `copy`               —— 副本目录**逐份枚举**（`verifyCopyIsCommit().actual`，测试侧读盘）；
+     *   · `commit`             —— `git ls-tree -r --full-tree <commit>`（测试侧读 **git 对象**，不看工作树）；
+     *   · `declared_live`      —— `declaredAdditionPaths()` / `declaredAdditionManifest()`（测试侧现走活树那一层）；
+     *   · `export_record`      —— 导出器**自己写下的** `exp.json.files` + `exp.json.staging.sha256`（另一个进程、另一条代码路）；
+     *   · `copy_staging`       —— 副本里那两棵追加子树自己的枚举（与 `copy` 分开，单独对账）；
+     *   · `pinned_declared`    —— **派工那一刻**记下的清单（`AGENIA_STAGING_MANIFEST`；见 `support/env.mjs`）。
+     * `副本 = 提交 + 声明` 只是**其中一条**关系（它现在有独立的两侧可对）；其余每一对都能在"没有恒等式保护"
+     * 的情况下分叉：副本被谁写过 · 导出之后 HEAD 前进 · 活树那一层在导出之后被同步过 · 导出记录与它写下的
+     * 字节对不上 · **派工那份声明与这一跑的活树不是同一份**。
+     * ⚠️ 判不了（某一侧读数为 `null`）要**写出来**（`judged:false` + 原因），不许当绿。
+     * ⚠️ 无 `AGENIA_STAGING_MANIFEST` 时 `pinned` 记 `null` —— "这一格没配"是读数，不是"对上了"。
+     */
+    const liveManifest = declaredAdditionManifest(PATHS.repo, STAGING_ADDITION)
+    readings.declared_staging = {
+      dirs: STAGING_ADDITION.dirs,
+      prefix: STAGING_ADDITION.prefix,
+      live_paths: liveManifest.files,
+    }
+    const exportManifest = exp.json?.staging?.sha256 ?? null
+    const exportSkipped = exp.json?.staging?.skipped ?? null
+    const exportCommitFiles = typeof exp.json?.files === 'number' ? exp.json.files : null
+    /**
+     * 导出记录里的追加份数 = **清单条数**（`list.length`），不是 `files` 那个自报值 ——
+     * 自报值只用来判清单自洽（`same_files` / `F8` 那一侧）：拿一个"声明 53 条、list 只有 52 条"的
+     * 清单当份数依据，就是让被对账的那个数自己说了算。
+     */
+    const exportStagingFiles = exportManifest === null
+      ? null
+      : (Array.isArray(exportManifest.list)
+        ? exportManifest.list.length
+        : (typeof exportManifest.files === 'number' ? exportManifest.files : null))
+    const pinnedFileRaw = optionalEnv(ENV.STAGING_MANIFEST)
+    const pinned = pinnedFileRaw === null
+      ? { given: false }
+      : { given: true, file: path.resolve(pinnedFileRaw), ...declaredManifestOnDisk(path.resolve(pinnedFileRaw)) }
+    const pinnedUsable = pinned.given === true && pinned.ok === true && pinned.consistent === true
+
+    const ledgerSources = {
+      copy: { value: copyPaths.length, source: '副本目录逐份枚举（`verifyCopyIsCommit().actual`）' },
+      commit: { value: readings.commit_tree.files_total, source: '`git ls-tree -r --full-tree <commit>`（读 git 对象，不看工作树）' },
+      declared_live: { value: liveManifest.files, source: '`declaredAdditionPaths()`（活树那一层逐份走，测试侧现算）' },
+      export_record_commit: { value: exportCommitFiles, source: '导出器记录 `exp.json.files`（它写了几份提交 blob）' },
+      export_record_staging: { value: exportStagingFiles, source: '导出器记录 `exp.json.staging.sha256.list` 的条数（它写了几份追加；`files` 是自报值，只进 `same_files`）' },
+      copy_staging: { value: copyStagingPaths.length, source: '副本里 `.tools/_staging/agenia-upgrade/{preset,oracle}` 的逐份枚举' },
+      pinned_declared: pinned.given === false
+        ? { value: null, source: '没给 `AGENIA_STAGING_MANIFEST`（这一格没配）' }
+        : (pinnedUsable
+          ? { value: pinned.entries, source: `派工那一刻记下的清单 ${pinned.file}（${pinned.entries} 条，` + '`list.length` 为准）' }
+          : { value: null, source: `派工那一刻记下的清单 ${pinned.file}（读不出来 / 不自洽：${(pinned.problems ?? []).slice(0, 2).join(' / ') || `files 声明 ${JSON.stringify(pinned.declared_files ?? null)} ≠ list ${JSON.stringify(pinned.entries ?? null)} 条`}）` }),
+    }
+    /**
+     * 判据本体在 `support/tree-at-commit.mjs::fileCountDrift`（**纯函数**：只吃读数，不碰盘）；
+     * 这里只负责把"每一对读数各自从哪来 / 不等说明什么"写成人话。纯函数那一侧有一张
+     * 阳性对照矩阵（`_probe/r4-f2-ledger.mjs`：副本 +1 / −1 · 声明层 +1 / −1 · 派工清单 +1 · 判不了）
+     * —— 每一对都能翻面，不是"永远不会不等的等式"。
+     */
+    const ledger = fileCountDrift({
+      copy: ledgerSources.copy.value,
+      copyStaging: ledgerSources.copy_staging.value,
+      commit: ledgerSources.commit.value,
+      declaredLive: ledgerSources.declared_live.value,
+      exportCommit: ledgerSources.export_record_commit.value,
+      exportStaging: ledgerSources.export_record_staging.value,
+      pinned: ledgerSources.pinned_declared.value,
+      pinnedGiven: pinned.given,
+    })
+    /**
+     * 每一对的**两侧**各自指回 `ledgerSources` 里的一个来源；两条"和"（导出记录两项之和 / 提交 + 声明）
+     * 在 `sources` 里没有单独的键 ⇒ 这里给它们一句说明（`pairSourceText`），别让报文里出现 `?`。
+     */
+    const pairSourceText = (key) => ledgerSources[key]?.source ?? (
+      key === 'export_record_commit + export_record_staging'
+        ? '导出器记下的两份数之和（`exp.json.files` + `exp.json.staging.sha256.list`）'
+        : key === 'commit + declared_live'
+          ? '提交清单 + 声明的追加（两条独立读数相加）'
+          : '?')
+    const PAIR_TEXT = {
+      copy_vs_export_record: {
+        got: 'copy', want: 'export_record_commit + export_record_staging',
+        why: '副本盘上的份数 ≠ 导出器自己记下的"提交 + 追加" —— 导出之后有人往副本里写过 / 少过一份，或者导出器记的数与它写下的字节对不上',
+      },
+      commit_now_vs_export_record: {
+        got: 'commit', want: 'export_record_commit',
+        why: '提交**现在**的清单 ≠ 导出那一刻的清单 —— 导出之后 `HEAD` 前进 / 退回了，这份副本不对着现在这个提交',
+      },
+      declared_live_vs_export_record: {
+        got: 'declared_live', want: 'export_record_staging',
+        why: '活树那一层**现在**的份数 ≠ 导出器那一刻写下的份数 —— 导出之后那一层被同步过：副本里的追加不是现在这一份',
+      },
+      copy_vs_commit_plus_declared: {
+        got: 'copy', want: 'commit + declared_live',
+        why: '副本 ≠ 提交 + 声明的追加：多带 / 少带了一份（这一条**不是**恒等式了 —— 两侧各有独立来源）',
+      },
+      copy_staging_vs_declared_live: {
+        got: 'copy_staging', want: 'declared_live',
+        why: '副本里那两棵追加子树的份数 ≠ 活树那一层的份数 —— 副本里的追加与现在这一份不是同一批路径',
+      },
+      copy_staging_vs_export_record: {
+        got: 'copy_staging', want: 'export_record_staging',
+        why: '副本里那两棵追加子树的份数 ≠ 导出器记下的份数 —— 副本里的追加与导出记录不是同一批',
+      },
+      declared_live_vs_pinned: {
+        got: 'declared_live', want: 'pinned_declared',
+        why: '这一跑活树那一层的份数 ≠ **派工那一刻**记下的清单条数 —— 派工之后那一层被加过 / 删过（副本里的追加也不是派工那一批）',
+      },
+    }
+    readings.file_count_ledger = {
+      sources: ledgerSources,
+      pairs: ledger.pairs.map((p) => ({
+        ...p,
+        got_source: pairSourceText(PAIR_TEXT[p.id].got),
+        want_source: pairSourceText(PAIR_TEXT[p.id].want),
+      })),
+      /** 全部对账对都**判得了**（没有 `null` 那条边）—— `false` 时看 `unjudged` 是哪一对。 */
+      judged: ledger.judged,
+      all_ok: ledger.allOk,
+      unjudged: ledger.pairs.filter((p) => p.ok === null).map((p) => p.id),
+      pinned: pinned.given === false
+        ? null
+        : { file: pinned.file, ok: pinned.ok === true, consistent: pinned.consistent ?? null, entries: pinned.entries ?? null, declared_files: pinned.declared_files ?? null },
+      note: '副本 / 提交 / 活树那一层 / 导出器记录 / 派工那份清单 —— 各自一个来源，两两对账（第四轮 `F2`）；'
+        + '`pinned: null` = 没给 `AGENIA_STAGING_MANIFEST`（那一条没判，不是绿）',
+    }
+    for (const pair of ledger.pairs) {
+      if (pair.ok !== false) continue
+      const text = PAIR_TEXT[pair.id]
+      push('CPY-FILE-COUNT-DRIFT',
+        `份数对账不过（${pair.id}）：**左边** ${pair.got}（${pairSourceText(text.got)}）`
+        + ` ≠ **右边** ${pair.want}（${pairSourceText(text.want)}）—— ${text.why}。`
+        + (pair.id === 'declared_live_vs_pinned'
+          ? ` 这一跑的副本里有 ${ledgerSources.copy_staging.value} 份追加，` + '派工那一刻的声明是另一个数 ⇒ 副本里的那一层已经不是派工那一批。'
+          : '')
+        + ' ⚠️ 这几个数各有独立来源（`readings.cpy01.file_count_ledger.sources`），不是同一棵树现算两遍。')
+    }
+    /**
+     * ⚠️ **判不了不是绿**：某一对读数的某一侧是 `null`（提交清单读不出来 / 导出记录没有 `staging` 清单 /
+     * 派工那份清单给了但读不出来或不自洽）⇒ 这一条要单独红、点名是哪一对，不许让它静悄悄地"跳过"。
+     * （`cand-20261019-0042`：判据钉在一个读不到的东西上，绿和"没判"长得一模一样。）
+     */
+    if (!ledger.judged) {
+      push('CPY-FILE-COUNT-UNJUDGED',
+        `份数对账有 ${ledger.pairs.filter((p) => p.ok === null).length} 对**判不了**（${ledger.pairs.filter((p) => p.ok === null).map((p) => p.id).join(' · ')}）：`
+        + `各对的读数 ${JSON.stringify(ledger.pairs.filter((p) => p.ok === null).map((p) => ({ id: p.id, got: p.got, want: p.want })))}，`
+        + `来源 ${JSON.stringify(ledgerSources)} —— 判不了不是绿：先把缺的那一侧读出来（导出记录有没有 \`staging\` 清单 / 提交清单读得出来吗 / 派工那份清单能不能用），再谈对账`)
+    }
+
+    // ── ⑤a' 声明那一层的**清单**：三份（活树 / 导出记录 / 副本字节）必须同一个摘要 ────────────
+    const copyEntries = liveManifest.list.map((entry) => {
+      const copyFile = path.join(copyRoot, ...entry.rel.split('/'))
+      if (!existsSync(copyFile)) return { rel: entry.rel, sha256: null, bytes: null }
+      const buf = readFileSync(copyFile)
+      return { rel: entry.rel, sha256: createHash('sha256').update(buf).digest('hex'), bytes: buf.length }
+    })
+    const copyDigest = copyEntries.every((entry) => typeof entry.sha256 === 'string')
+      ? treeDigest(copyEntries).sha256
+      : null
+    const liveSkipped = (liveManifest.skipped ?? []).map((item) => `${item.rel}:${item.reason}`).sort()
+    const exportSkippedNorm = (Array.isArray(exportSkipped) ? exportSkipped : []).map(String).sort()
+    readings.declared_staging = {
+      ...readings.declared_staging,
+      in_copy: isThatCommit.declared?.in_copy ?? null,
+      missing: isThatCommit.declared?.missing ?? null,
+      mismatched: isThatCommit.declared?.mismatched ?? null,
+      manifest: {
+        mine: { files: liveManifest.files, bytes: liveManifest.bytes, digest: liveManifest.digest, skipped: liveSkipped },
+        exported: exportManifest === null
+          ? null
+          : { files: exportManifest.files, bytes: exportManifest.bytes, digest: exportManifest.digest, skipped: exportSkippedNorm },
+        copy: { files: copyEntries.filter((e) => e.sha256 !== null).length, digest: copyDigest },
+        same_digest: exportManifest !== null && liveManifest.digest === exportManifest.digest && copyDigest === liveManifest.digest,
+        same_files: exportManifest !== null && liveManifest.files === exportManifest.files,
+        same_bytes: exportManifest !== null && liveManifest.bytes === exportManifest.bytes,
+        note: '导出器那份是它 `stagingFilesOf()` 的清单（跳 `.runtime` + 链接）；我这份是 `declaredAdditionPaths()`；'
+          + '副本那份是从副本字节现算的。三个摘要同一个数 = 两边规则一致、且副本就是那一层。',
+      },
+    }
+    if (exportManifest === null) {
+      push('CPY-STAGING-MANIFEST',
+        '导出 JSON 里没有 `staging.sha256` 清单（`--with-staging` 的"内容冻结"那一半）—— '
+        + `实得 staging=${JSON.stringify(exp.json?.staging ?? null).slice(0, 240)}；`
+        + '没有这份清单，"两边是同一份规则"就只能靠两段代码各自自报')
+    } else if (liveManifest.digest !== exportManifest.digest || liveManifest.files !== exportManifest.files
+      || liveManifest.bytes !== exportManifest.bytes) {
+      push('CPY-STAGING-MANIFEST',
+        `测试侧的声明清单与导出器记下的那份**不是同一份**（我：${liveManifest.files} 份 / ${liveManifest.bytes} B / ${liveManifest.digest.slice(0, 16)}…`
+        + ` · 导出器：${exportManifest.files} 份 / ${exportManifest.bytes} B / ${String(exportManifest.digest).slice(0, 16)}…）—— `
+        + '导出器与 `declaredAdditionPaths()` 各写了一份"什么算追加"：任一方的跳过规则/排序/条目公式变了，这一条就红'
+        + `（今天两边都跳过 ${JSON.stringify(liveSkipped)}；导出器记录的 skipped=${JSON.stringify(exportSkippedNorm)}）`)
+    } else if (copyDigest !== liveManifest.digest) {
+      push('CPY-STAGING-MANIFEST',
+        `副本里那几份追加的**摘要**与活树清单不同（副本 ${String(copyDigest).slice(0, 16)}… / 清单 ${liveManifest.digest.slice(0, 16)}…）—— `
+        + '路径齐了但字节不是同一批：内容冻结的要的是"同一份清单"')
+    }
+
     if (!isThatCommit.ok) {
-      push('CPY-EXPORT-FIXTURE', `导出的副本不是"提交 ${commit.slice(0, 12)} + 声明的追加"（${isThatCommit.problems.slice(0, 3).join(' / ')}）—— 先修导出，再判"副本够不够用"`)
+      push('CPY-EXPORT-FIXTURE',
+        `导出的副本不是"提交 ${commit.slice(0, 12)} + 声明的追加"（${isThatCommit.problems.slice(0, 3).join(' / ')}）—— `
+        + '先修导出，再判"副本够不够用"（份数对账**已经在它之前**判过：见 `file_count_ledger` / `CPY-FILE-COUNT-DRIFT`）')
       return caseFail(problems)
     }
 
@@ -511,102 +729,6 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
       root: path.join(PATHS.repo, STAGING_REL),
       exists: existsSync(path.join(PATHS.repo, STAGING_REL)),
       files: countFiles(path.join(PATHS.repo, STAGING_REL)),
-    }
-    /**
-     * ⑥a **两边是同一份规则**（`.runtime` 跳过那一半）。
-     *
-     * 导出器与测试侧各写一份"什么算声明的追加"（它 `stagingFilesOf()` / 我 `declaredAdditionPaths()`）；
-     * 两份规则靠**同一份清单摘要**对账：算法、排序（`rel` 的 UTF-8 字节序）、条目（`rel\0sha256\0bytes\n`）
-     * 三样都一样，才叫"同一个规则"。今天两边都跳过 `.runtime` 与链接（跳过的那几条各记一条读数）。
-     * 三个摘要必须相同：**活树那份**（我算的）· **导出时记下的那份**（导出器算的）· **副本里那份**（我从副本算的）。
-     */
-    const liveManifest = declaredAdditionManifest(PATHS.repo, STAGING_ADDITION)
-    const exportManifest = exp.json?.staging?.sha256 ?? null
-    const exportSkipped = exp.json?.staging?.skipped ?? null
-    const copyEntries = liveManifest.list.map((entry) => {
-      const copyFile = path.join(copyRoot, ...entry.rel.split('/'))
-      if (!existsSync(copyFile)) return { rel: entry.rel, sha256: null, bytes: null }
-      const buf = readFileSync(copyFile)
-      return { rel: entry.rel, sha256: createHash('sha256').update(buf).digest('hex'), bytes: buf.length }
-    })
-    const copyDigest = copyEntries.every((entry) => typeof entry.sha256 === 'string')
-      ? treeDigest(copyEntries).sha256
-      : null
-    const liveSkipped = (liveManifest.skipped ?? []).map((item) => `${item.rel}:${item.reason}`).sort()
-    const exportSkippedNorm = (Array.isArray(exportSkipped) ? exportSkipped : []).map(String).sort()
-    readings.declared_staging = {
-      dirs: STAGING_ADDITION.dirs,
-      prefix: STAGING_ADDITION.prefix,
-      live_paths: declaredAdditionPaths(PATHS.repo, STAGING_ADDITION).length,
-      in_copy: isThatCommit.declared?.in_copy ?? null,
-      missing: isThatCommit.declared?.missing ?? null,
-      mismatched: isThatCommit.declared?.mismatched ?? null,
-      manifest: {
-        mine: { files: liveManifest.files, bytes: liveManifest.bytes, digest: liveManifest.digest, skipped: liveSkipped },
-        exported: exportManifest === null
-          ? null
-          : { files: exportManifest.files, bytes: exportManifest.bytes, digest: exportManifest.digest, skipped: exportSkippedNorm },
-        copy: { files: copyEntries.filter((e) => e.sha256 !== null).length, digest: copyDigest },
-        same_digest: exportManifest !== null && liveManifest.digest === exportManifest.digest && copyDigest === liveManifest.digest,
-        same_files: exportManifest !== null && liveManifest.files === exportManifest.files,
-        same_bytes: exportManifest !== null && liveManifest.bytes === exportManifest.bytes,
-        note: '导出器那份是它 `stagingFilesOf()` 的清单（跳 `.runtime` + 链接）；我这份是 `declaredAdditionPaths()`；'
-          + '副本那份是从副本字节现算的。三个摘要同一个数 = 两边规则一致、且副本就是那一层。',
-      },
-    }
-    if (exportManifest === null) {
-      push('CPY-STAGING-MANIFEST',
-        '导出 JSON 里没有 `staging.sha256` 清单（`--with-staging` 的"内容冻结"那一半）—— '
-        + `实得 staging=${JSON.stringify(exp.json?.staging ?? null).slice(0, 240)}；`
-        + '没有这份清单，"两边是同一份规则"就只能靠两段代码各自自报')
-    } else if (liveManifest.digest !== exportManifest.digest || liveManifest.files !== exportManifest.files
-      || liveManifest.bytes !== exportManifest.bytes) {
-      push('CPY-STAGING-MANIFEST',
-        `测试侧的声明清单与导出器记下的那份**不是同一份**（我：${liveManifest.files} 份 / ${liveManifest.bytes} B / ${liveManifest.digest.slice(0, 16)}…`
-        + ` · 导出器：${exportManifest.files} 份 / ${exportManifest.bytes} B / ${String(exportManifest.digest).slice(0, 16)}…）—— `
-        + '导出器与 `declaredAdditionPaths()` 各写了一份"什么算追加"：任一方的跳过规则/排序/条目公式变了，这一条就红'
-        + `（今天两边都跳过 ${JSON.stringify(liveSkipped)}；导出器记录的 skipped=${JSON.stringify(exportSkippedNorm)}）`)
-    } else if (copyDigest !== liveManifest.digest) {
-      push('CPY-STAGING-MANIFEST',
-        `副本里那几份追加的**摘要**与活树清单不同（副本 ${String(copyDigest).slice(0, 16)}… / 清单 ${liveManifest.digest.slice(0, 16)}…）—— `
-        + '路径齐了但字节不是同一批：内容冻结的要的是"同一份清单"')
-    }
-    /**
-     * ── ⑥a' **份数只有一个来源**（2026-11-03 第三轮评审 `R3-2`）────────────────────────
-     * 病历：`cpy01` 的文件头写过 164 / 216，`registry` 那一行写过 171，而实际是 174 / 226 ——
-     * 三个值、两个载体、同一个量。这里把那个量**判出来**而不是再抄一遍：
-     *   副本里的份数 = 提交里的份数 + 声明的追加份数
-     * 三个加数各自只有一个落点（见文件头 🔴），一个都不许手写。
-     * ⚠️ 它同时是"文档里的数没人维护"这件事的替代物：谁把某一处写死成旧值，这一条不会红
-     *    （文档不参与判定），但**读的人只要看这一节就知道该读哪个读数** —— 所以文案里一个数都不留。
-     */
-    const countCommit = readings.commit_tree.files_total
-    const countDeclared = readings.declared_staging.live_paths
-    const countCopy = readings.copy_is_commit.files
-    const countManifestMine = readings.declared_staging.manifest.mine.files
-    const countManifestExported = readings.declared_staging.manifest.exported?.files ?? null
-    readings.file_count_invariant = {
-      commit: countCommit,
-      declared_addition: countDeclared,
-      copy: countCopy,
-      manifest_mine: countManifestMine,
-      manifest_exported: countManifestExported,
-      expected_copy: countCommit === null || countDeclared === null ? null : countCommit + countDeclared,
-      note: '副本 = 提交（`commit_tree.files_total`）+ 声明的追加（`declared_staging.live_paths`）；'
-        + '三个数各只有一个来源，见文件头 🔴（第三轮评审 `R3-2`）',
-    }
-    if (countCommit !== null && countDeclared !== null && countCopy !== countCommit + countDeclared) {
-      push('CPY-FILE-COUNT-DRIFT',
-        `副本里的份数对不上"提交 + 声明的追加"：副本 ${countCopy} 份，`
-        + `而提交 ${countCommit} 份 + 声明的追加 ${countDeclared} 份 = ${countCommit + countDeclared} 份 —— `
-        + '三个数各只有一个来源（`commit_tree.files_total` / `declared_staging.live_paths` / `copy_is_commit.files`）；'
-        + '对不上说明多带了 / 少带了一份，而不是"文档里的数写旧了"')
-    }
-    if (countManifestExported !== null && countManifestMine !== countManifestExported) {
-      push('CPY-FILE-COUNT-DRIFT',
-        `"声明的追加"有两份清单、份数却不同：测试侧 \`declaredAdditionPaths()\` = ${countManifestMine} 份，`
-        + `导出器 \`stagingFilesOf()\` = ${countManifestExported} 份 —— 两边"什么算追加"的规则已经分叉`
-        + `（跳过的是 ${JSON.stringify(liveSkipped)} / 导出器记的 ${JSON.stringify(exportSkippedNorm)}）`)
     }
     readings.gap = {
       missing_in_copy: inCopy.filter((item) => !item.present).map((item) => item.rel),

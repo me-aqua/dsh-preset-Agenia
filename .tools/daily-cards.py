@@ -752,12 +752,27 @@ def read_identity(ws, day):
     }
 
 
+def review_dirs(ws, day):
+    """当日评审产物的候选抽屉（**按存在性逐个看**，不是只认一个）。
+
+    四类一次性作业各有自己的落点（`.team/retro/` · `.team/technical-review/` ·
+    `.team/conversation-review/` —— 见 `leader.md` 的目录图），而 `--day` 决定的是"哪一天"、
+    不是"哪个抽屉"：只认一个抽屉 ⇒ 评审按派工卡落进另一个抽屉时，卡上会印成"作业没交"。
+    """
+    out = []
+    for sub in ("retro", "technical-review", "conversation-review"):
+        base = os.path.join(ws, ".team", sub, day)
+        if os.path.isdir(base):
+            out.append(base)
+    return out
+
+
 def review_carriers(ws, day):
     """`carrier_missing` 的读面：两份评审报告在不在（`review.carrier`）。"""
-    base = os.path.join(ws, ".team", "retro", day)
+    dirs = review_dirs(ws, day)
     return {
-        "technical": os.path.isfile(os.path.join(base, "技术评审.md")),
-        "conversation": os.path.isfile(os.path.join(base, "会话评审.md")),
+        "technical": any(os.path.isfile(os.path.join(d, "技术评审.md")) for d in dirs),
+        "conversation": any(os.path.isfile(os.path.join(d, "会话评审.md")) for d in dirs),
     }
 
 
@@ -921,9 +936,10 @@ def main():
     pool   = jlines(os.path.join(DR, "proposals", "pool.jsonl"))
     arch   = jload(os.path.join(DR, "proposals", "archive", "MANIFEST.json"), {}) or {}
     findings = []
-    for p in sorted(glob.glob(os.path.join(WS, ".team", "retro", day, "*.findings.json"))):
-        d = jload(p, {}) or {}
-        findings.append((os.path.basename(p), d))
+    for base in review_dirs(WS, day):
+        for p in sorted(glob.glob(os.path.join(base, "*.findings.json"))):
+            d = jload(p, {}) or {}
+            findings.append((os.path.basename(p), d))
 
     frozen = [j for j in judged if j.get("day") == day]
     acc = [j for j in frozen if j.get("verdict") == "accepted"]

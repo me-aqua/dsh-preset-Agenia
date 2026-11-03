@@ -152,7 +152,7 @@ test('FLIP-01 BRG-07 的翻面读数点名这一版：提交号 + 字节数 + sh
      * 一行文字里**挂在「提交」这个词后面的**哈希（短的 / 长的都认）。
      * 为什么限定在"提交/commit 后面"：裸的 7 位十六进制在字节数、sha256 前缀、文件名里都可能撞上，
      * 那样"提交号对不对"就会以"碰巧命中"的样子变绿（`cand-20261016-selfsourced-order-01` 那一族）。
-     * 写法见 `brg01:49`：``（提交 `6a5d27b` · 222455 B · sha256 `37D63DAA…`）``。
+     * 写法见 `brg01` 文件头那一段：``（提交 `a87bd0a` · 223972 B · sha256 `80F07048…`）``。
      */
     const commitLabelsIn = (text) => [...String(text).matchAll(/(?:提交|commit)[^0-9a-f\n]{0,8}([0-9a-f]{7,40})/gi)]
       .map((m) => String(m[1]).toLowerCase())
