@@ -15,47 +15,71 @@
  * 反过来"现役改了、staged 没跟上"由 `STAT-01`（`STAGED-LIVE-DRIFT`）与入口的 `F57-TARGET` 各管一次 ——
  * 本文件**不**再抄一份漂移判据。
  *
- * ── 这一条判什么（五面，各自一个码）────────────────────────────────────────────────
+ * ── 这一条判什么：**同一个数只出现一次**（`FACES` 那一张表）──────────────────────────
+ * **面 = 5 个，码 = 5 个，一个面对一个码**（A / B / C1 / C2 / D）。分布：
+ *   · **A / B / C1 / C2 —— 4 个面在判决岗那一侧**，且必须落在**同一节**里：那一节的标题点名「入库」
+ *     （`## 入库判据`；`进库` 也认），节内允许 `###` 子节。每个面要**一个段落**（连续非空行）满足；
+ *   · **D —— 1 个面在复核岗那一侧**（见下面「D 那一面」）。
+ * ⇒ 判决岗那一份少一节 ⇒ 它的 4 个面一条都不报，只报一次 `MJUDGE-SECTION-MISSING`；
+ *   复核岗那一份的 D 与判决岗那 4 个面**互不影响**（两边各自报）。
  * 只判**现役文本里有没有那几件事**，不判文义（静态层的能力上限，同 `STAT-04` / `READ-01`）。
- * 针的形状是「**一节 + 四个面**」：四个面必须落在**同一节**里 —— 那一节的标题点名「入库」
- * （`## 入库判据`；`进库` 也认），节内允许 `###` 子节。四个面各要一个**段落**（连续非空行）满足：
+ * 针的**唯一一份**定义就是下面这张表（码 + 逐条判据都在 `FACES` 里；这张表是它的散文版，改一处要同批改另一处）：
  *
- * | 面 | 码 | 段落里同时要有 |
+ * | 面 | 码 | 段落里同时要有（全部条件） |
  * | --- | --- | --- |
- * | A 一条提案**针对的是「一个或一组修复动作就能解决的问题」⇒ 拒绝**（不是接受） | `MJUDGE-RULE-SUBJECT` | `一个或一组修复动作` + 一个拒的词（拒绝 / 不进库 / 不通过 / 不收 / 驳回） |
- * | B **替换法**：换成「改（变）那一处」之后没话可说 ⇒ **缺陷报告** | `MJUDGE-DISCRIMINATOR` | `替换法` + `改(变)?那一处` + `缺陷报告`（`bug 报告` / `缺陷单` 也认） |
- * | C1 **一处具体读数本身不构成入库理由** | `MJUDGE-BOUNDARY-READING` | `读数` + 一个否定（不构成/不是/不算/不足以）+ `理由` 或 `入库`/`进库` |
- * | C2 **反例**：不许退化成「提到具体文件 / 具体数字就拒」 | `MJUDGE-BOUNDARY-CARVE-OUT` | 文件类词（文件/路径）+ 数字类词（数字/数值/条数/个数）+ 一个否定（不许/不得/不是/不能/禁止） |
- * | D **复核岗不许带**：那两句标记句**不许**出现在两份复核岗说明书里 | `MJUDGE-REVIEW-CARRIES-RULE` | —— （见下） |
+ * | A 一条提案**针对的是「一个或一组修复动作就能解决的问题」⇒ 拒绝**（不是接受） | `MJUDGE-RULE-SUBJECT` | ① `一个或一组修复动作`；② 一个拒的词：`拒绝` / `不进库` / `不通过` / `不收` / `驳回` |
+ * | B **替换法**：换成「改（变）那一处」之后没话可说 ⇒ **缺陷报告** | `MJUDGE-DISCRIMINATOR` | ① `替换法`；② `改(变)?那一处`；③ `缺陷报告` / `bug 报告` / `缺陷单` |
+ * | C1 **一处具体读数本身不构成入库理由** | `MJUDGE-BOUNDARY-READING` | ① `读数`；② 否定 `不构成`/`不是`/`不算`/`不足以`；③ `理由` 或 `入库`/`进库` |
+ * | C2 **反例**：不许退化成「提到具体文件 / 具体数字就拒」 | `MJUDGE-BOUNDARY-CARVE-OUT` | ① 文件类词 `文件`/`路径`；② 数字类词 `数字`/`数值`/`条数`/`个数`/`读数`；③ 否定 `不许`/`不得`/`不是`/`不能`/`禁止`/`别把`；**④ 且下面两条至少一条成立**：<br>（4a）**定形那套措辞**：`具体文件`/`具体路径` **且** `具体数字`/`具体数值`/`具体条数`/`具体个数`/`具体读数` 都在；<br>（4b）**白话写法**：出现 `凡是` / `一律` / `任何` / `只要` 之一（"放之皆准"的量词） |
+ * | D **复核岗不许带**：这条规矩的标记句**不许**出现在两份复核岗说明书里 | `MJUDGE-REVIEW-CARRIES-RULE` | 标记句 `替换法` / `一个或一组修复动作` 一个都不许有（见下；**只管复核岗那两份**） |
  *
- * 没落成那一节（标题里没有「入库」）⇒ 只报 `MJUDGE-SECTION-MISSING`，四个面**不再逐条报**
+ * ⚠️ **C2 为什么必须有 ④**（第四轮/第六轮评审都点过这一处）：只钉 ①②③ 的话，"带文件名的条目按条数拒掉"
+ *   这种句子自己就满足了它，而那条**不是**这条边界 —— 边界讲的是"**凡是**提到就拒"这个退化形态。
+ *   ④ 是把"这一句自己说的话"与"别的句子凑巧带着的词"分开的唯一一道闸（`K3` 那把刀量的就是它）。
+ *   ⇒ **C2 认两种写法**（4a 定形那套措辞 / 4b 白话的"凡是…都拒"）。第三种写法要进来 = **改契约**：
+ *     先加一条 `K7` 刀证明"删掉它只翻 C2"，再动这张表；不许为了让某句话变绿就把 ④ 删掉（那就退回装饰）。
+ * 没落成那一节（标题里没有「入库」）⇒ 只报 `MJUDGE-SECTION-MISSING`，那 4 个面**不再逐条报**
  * （"整节还没写"与"写了但缺一条"是两种红因，别拿四条噪音盖住第一条）。
- * 文件读不到 ⇒ `MJUDGE-CHARTER-MISSING`。
+ * 文件读不到 ⇒ `MJUDGE-CHARTER-MISSING`（**覆盖根**里的文件读不到是另一件事：`MJUDGE-OVERRIDE-ROOT-BAD`）。
  *
  * ── D 那一面（复核岗）为什么长这样 ────────────────────────────────────────────────
  * 老板 21:24 的更正是「**只加判决岗**，复核岗一个字都不改」。把它写成"两份复核说明书逐字节等于某个哈希"
  * 会把**与这条规矩无关**的合法改动也判红（那两份今天还在改），所以钉的是**这条规矩的标记句**：
  * `替换法` 与 `一个或一组修复动作` —— 将来谁把判决岗那一节**复制粘贴**进复核岗，这两个字面量就跟着过去 ⇒ 当场红。
- * 两句都进不去（今天全仓 `presets/agenia/**` 里两个都是 0 命中）⇒ 这一面今天**绿**，
- * 它红只可能是"有人把规矩搬到了复核岗"。
+ * 🔴 **这一面只扫两份复核岗说明书**（`REVIEW_FILES`），**不扫判决岗**：两个标记句出现在**判决岗**那两份里
+ * 是**应该的**（实现落地后 `team/memory-judge.md` 与 `job-briefs/memory-judge.md` 各两处；行号会漂，
+ * 别把行号当判据），出现在**复核岗**那两份里才是红。
+ * ⚠️ 写下来的边界：它**不保证**复核岗一个字都没动（那两页的其他改动不归这一条管，也不该归）——
+ * 它只回答"这条规矩有没有被搬到复核岗"。要知道"那两份这一票到底动没动"，看读数里那两格 sha256
+ * （与派工那一刻交接的那两个值逐字比；那两个值记在当天 `log.md` 里，**不写在这份文件头** ——
+ * 写在这份文件头里的"今天盘上是什么样"过一天就会变成假话，这份注释里不许出现第二份读数）：那是一格**读数**，不是这里的判据。
  *
- * ── 判据的可翻面性（**今天就证明，不等实现**）──────────────────────────────────────
- * 红必须只来自"文字还没写"。所以本用例体内带**一具合成的阳性对照 + 六把刀**（全程只在内存里，
- * 一个字节都不落盘），它们今天必须全绿：
- *   · `CONTROL` 一份照契约写的判决岗文本 ⇒ 0 问题（证明四个面**可以**同时成立 —— 判据不是永远红）；
+ * ── 判据的可翻面性（**任何一次跑都要成立**：文字没写时红、写了之后绿）───────────────
+ * 红必须只来自"现役文本里那几件事在不在"。所以本用例体内带**一具合成的阳性对照 + 一把刀架（K1…K8）**
+ * （全程只在内存里，一个字节都不落盘），**它们每一次都必须全绿**：
+ *   · `CONTROL` 一份照契约写的判决岗文本 ⇒ 0 问题（证明那 4 个面**可以**同时成立 —— 判据不是永远红）；
  *   · `K1` 删掉替换法那一段 ⇒ **只**翻 `MJUDGE-DISCRIMINATOR`；
  *   · `K2` 删掉读数边界那一段 ⇒ **只**翻 `MJUDGE-BOUNDARY-READING`；
  *   · `K3` 删掉反例那一段 ⇒ **只**翻 `MJUDGE-BOUNDARY-CARVE-OUT`；
  *   · `K4` 把「拒绝，不进库」换成「接受，进库」⇒ **只**翻 `MJUDGE-RULE-SUBJECT`（"要拒"与"收"分得开）；
- *   · `K5` 标题去掉「入库」⇒ **只**翻 `MJUDGE-SECTION-MISSING`（且四个面不再各报一条）；
- *   · `K6` 把那一节粘进复核岗文本 ⇒ **只**翻 `MJUDGE-REVIEW-CARRIES-RULE`（D 那一面的阳性对照）。
+ *   · `K5` 标题去掉「入库」⇒ **只**翻 `MJUDGE-SECTION-MISSING`（且那 4 个面不再各报一条）；
+ *   · `K6` 把那一节粘进复核岗文本 ⇒ **只**翻 `MJUDGE-REVIEW-CARRIES-RULE`（D 那一面的阳性对照）；
+ *   · `K7` 前面多插一节也叫「入库」的别节 ⇒ **不许红**（防"取第一个候选节"那种假红）；
+ *   · `K8` 那 4 个面跨两节各凑一半 ⇒ **必须红**（口径仍然是"落在同一节里"）。
+ *   ⚠️ 不写"六把/八把"这种数：刀可以加，数一加就成第二份账（同一句话的数字只出现一次）。
+ *   🔴 **同一批变异还打在"现役文本的拷贝"上跑外部对照**（`_probe/mjudge-charters/knife-k1…k6`，由
+ *     `_probe/mjudge-fixtures.mjs` **从现役那两份派生出**来，不是抄一段死文本）：体内那八把量的是**尺子**，
+ *     外部那六把量的是**真文本上的刀口**（同一个 `AGENIA_MJUDGE_CHARTER_ROOT` 指过去）。
+ *     两条腿都要绿：体内红 ⇒ 尺子坏了；外部红 ⇒ 那一面在**现役文本**上也是承重的。
  *   ⇒ 读到红时先看**这几条有没有红**：它们红了说明**尺子坏了**（`MJUDGE-CONTROL-FAIL` /
- *     `MJUDGE-KNIFE-NOT-FLIPPED` / `MJUDGE-KNIFE-OVERREACH`），不是"文字还没写"。
+ *     `MJUDGE-KNIFE-NOT-FLIPPED` / `MJUDGE-KNIFE-OVERREACH`），不是"现役文本缺那几件事"。
  *
  * ── 一件必须写下来的操作口径 ─────────────────────────────────────────────────────
  * `AGENIA_MJUDGE_CHARTER_ROOT`（**可选**，只给对照/刀用）：把被测根指到另一棵树上（拷一份再改）。
  * 它一被设置，本用例额外记一条 **`HOLD`**（`MJUDGE-CHARTER-ROOT-OVERRIDE`）——
  * 那一跑**不是**对现役 `presets/agenia` 的判据，**不许**被读成绿。全量跑不设它。
+ * ⚠️ 覆盖根里**文件不在** ⇒ `MJUDGE-OVERRIDE-ROOT-BAD`（不是 `MJUDGE-CHARTER-MISSING`）：
+ * 那说明**夹具坏了 / 指错了路**，不是"现役说明书里没有那一节"——两种红因不许长得一样。
  */
 import { before, describe, test } from 'node:test'
 import { existsSync, readFileSync } from 'node:fs'
@@ -81,7 +105,7 @@ const SECTION_WORD = /(入库|进库)/
 /** 标题解析：`#`…`######` + 空白。 */
 const HEADING = /^(#{1,6})\s+(.*)$/
 
-/** 「一个或一组修复动作」—— 老板原话里那个**主语**，四个面与复核岗那一面共用这一根针。 */
+/** 「一个或一组修复动作」—— 老板原话里那个**主语**：A 面用它，复核岗那一面（D）也把它当标记句。 */
 const SUBJECT_NEEDLE = '一个或一组修复动作'
 /** 「替换法」—— 定形 §3 那个**判别法**的名字；也是复核岗那一面的主标记句。 */
 const DISCRIMINATOR_NAME = '替换法'
@@ -178,25 +202,44 @@ function paragraphsOf(lines) {
 }
 
 /**
- * 一份**判决岗**说明书的四张脸。
+ * 一份判决岗文本里，**每个候选节**各命中了哪几个面（`best` = 命中最多的那一个；没有候选节 ⇒ `best:null`）。
+ * 判据（`judgeCharterProblems`）与**读数**（`readings.judge_face_hits`，给人看的"哪一面落在哪一节"）读同一份。
+ */
+function sectionScoresOf(text) {
+  const scored = headingsOf(text)
+    .filter((h) => SECTION_WORD.test(h.text))
+    .map((section) => {
+      const paras = paragraphsOf(section.body)
+      const hits = FACES.filter((face) => paras.some((p) => face.hit(p))).map((face) => face.id)
+      return { section, hits }
+    })
+  const best = scored.length === 0 ? null : scored.reduce((a, b) => (b.hits.length > a.hits.length ? b : a))
+  return { scored, best }
+}
+
+/**
+ * 一份**判决岗**说明书的 4 个面（A / B / C1 / C2）。
  * 找不到那一节 ⇒ **只**报 `MJUDGE-SECTION-MISSING`（整节没写 vs 写了缺一条，是两种红因）。
+ *
+ * 🔴 **候选节不止一个时**（标题里含「入库」的 `#`/`##`/`###` 可能不止一处）：逐个候选量那 4 个面，
+ * 取**命中最多**的那一个来报缺（`best`）。不取"第一个"的理由：第一个候选可能是别的一节
+ * （例如"入库流程"），那样真正那一节哪怕写全了也会被判红 —— 那是假红，而假红是删判据最顺手的借口。
+ * ⚠️ 口径**没有放宽**：那 4 个面仍然必须落在**同一个**候选节里（跨两节各凑一半 ⇒ 红）。
  */
 function judgeCharterProblems(rel, text) {
   const out = []
   const push = (code, message) => out.push(problem(code, `[${rel}] ${message}`))
-  const sections = headingsOf(text).filter((h) => SECTION_WORD.test(h.text))
-  if (sections.length === 0) {
+  const { scored, best } = sectionScoresOf(text)
+  if (best === null) {
     push('MJUDGE-SECTION-MISSING', '找不到「入库」那一节（标题里要点名 `入库` / `进库`，例如 `## 入库判据`）—— '
-      + '定形 §4 要的是**一节**，不是散在别处的几句话；四个面（主语/替换法/两个边界）都得落在这一节里')
+      + '定形 §4 要的是**一节**，不是散在别处的几句话；那 4 个面（主语/替换法/两个边界）都得落在这一节里')
     return out
   }
-  const section = sections[0]
-  const paras = paragraphsOf(section.body)
   for (const face of FACES) {
-    if (!paras.some((p) => face.hit(p))) {
-      push(face.code, `「${section.text}」（第 ${section.line} 行起）那一节里，${face.id} 那一面不在：${face.what}`
-        + ` —— ${face.why}`)
-    }
+    if (best.hits.includes(face.id)) continue
+    const others = scored.length > 1 ? `（含「入库」的节共 ${scored.length} 个，取命中最多的那个报缺）` : ''
+    push(face.code, `「${best.section.text}」（第 ${best.section.line} 行起）那一节里，${face.id} 那一面不在：${face.what}`
+      + ` —— ${face.why}${others}`)
   }
   return out
 }
@@ -284,7 +327,18 @@ describe('static · mjudge01 · 提案不许当 bug 报告（MJUDGE-01）', () =
       const readOne = (rel) => {
         const abs = path.join(root, rel)
         if (!existsSync(abs)) {
-          push('MJUDGE-CHARTER-MISSING', `${abs} 不在 —— 这一票要判的两份判决岗说明书之一是空的（复核岗那两份也要在，否则"没带"这一面判不了）`)
+          /**
+           * 🔴 两种"文件不在"**不许长得一样**（第六轮评审 P7）：
+           *   · 没有覆盖 ⇒ 是**现役说明书缺一份**（这一票要判的东西不在）⇒ `MJUDGE-CHARTER-MISSING`；
+           *   · 有覆盖 ⇒ 是**夹具坏了 / 指错了路**（`AGENIA_MJUDGE_CHARTER_ROOT` 指到一棵缺文件的树）——
+           *     把它报成"现役缺一份"会让人去改说明书，而真正要改的是那一行环境变量 ⇒ `MJUDGE-OVERRIDE-ROOT-BAD`。
+           */
+          if (override === '') {
+            push('MJUDGE-CHARTER-MISSING', `${abs} 不在 —— 这一票要判的两份判决岗说明书之一是空的（复核岗那两份也要在，否则"没带"这一面判不了）`)
+          } else {
+            push('MJUDGE-OVERRIDE-ROOT-BAD', `覆盖根 ${root} 里没有 ${rel} —— 这是**夹具/覆盖指错了**（AGENIA_MJUDGE_CHARTER_ROOT=${override}），`
+              + `不是"现役 ${PATHS.finalPreset} 缺一份说明书"：先修夹具或那一行环境变量，别去改说明书`)
+          }
           return null
         }
         const text = readFileSync(abs, 'utf8')
@@ -302,13 +356,27 @@ describe('static · mjudge01 · 提案不许当 bug 报告（MJUDGE-01）', () =
         if (text !== null) review.push([rel, text])
       }
 
-      // ── ② 现役那四份文本：六个面（A/B/C1/C2 逐份 + D 逐份）─────────────────
+      /**
+       * ── ①' 读数（**不是判据**）：每一份判决岗文本里那 4 个面各落在哪个候选节、哪几个标记句出现在复核岗。
+       * 判据只管"在不在"；这两格回答"**在哪一节 / 哪一份**"，读的人不必自己去 diff 两份说明书。
+       * ⚠️ 两份判决岗现在**措辞并不对称**（说明书 vs 作业书是两种文体）——那是合法的，
+       * 这一格只把不对称**记下来**，不判它（第六轮评审 P4：要看见，不要替需求方做取舍）。
+       */
+      rec.readings.judge_face_hits = Object.fromEntries(judge.map(([rel, text]) => {
+        const { scored, best } = sectionScoresOf(text)
+        return [rel, best === null
+          ? { section: null, section_line: null, hits: [], sections_matching: 0 }
+          : { section: best.section.text, section_line: best.section.line, hits: best.hits, sections_matching: scored.length }]
+      }))
+      rec.readings.review_marker_hits = Object.fromEntries(review.map(([rel, text]) => [rel, RULE_MARKERS.filter((m) => text.includes(m))]))
+
+      // ── ② 现役那四份文本：那 5 个面（A/B/C1/C2 逐份 + D 逐份）────────────────
       const live = charterProblems({ judge, review })
       rec.readings.live_problem_codes = live.map((p) => p.code)
       for (const p of live) problems.push(p)
 
       /**
-       * ── ③ 量具自证（**今天必须全绿**）：阳性对照 + 六把刀 ─────────────────────
+       * ── ③ 量具自证（**今天必须全绿**）：阳性对照 + 刀架（K1…K8） ─────────────────────
        * 红在下面这一节 ⇒ 尺子坏了，别去改说明书（`MJUDGE-CONTROL-FAIL` / `MJUDGE-KNIFE-*`）。
        */
       const codeSet = (list) => [...new Set(list.map((p) => p.code))].sort()
@@ -328,7 +396,7 @@ describe('static · mjudge01 · 提案不许当 bug 报告（MJUDGE-01）', () =
         }
       }
 
-      // 阳性对照：照契约写的合格文本 ⇒ 0 问题（证明六个面**可以**同时成立）
+      // 阳性对照：照契约写的合格文本 ⇒ 0 问题（证明那 5 个面**可以**同时成立）
       const control = charterProblems({
         judge: JUDGE_FILES.map((rel) => [rel, SYNTH_OK]),
         review: REVIEW_FILES.map((rel) => [rel, SYNTH_REVIEW_CLEAN]),
@@ -358,6 +426,31 @@ describe('static · mjudge01 · 提案不许当 bug 报告（MJUDGE-01）', () =
         charterProblems({ judge: [], review: [['team/memory-review.md', `${SYNTH_REVIEW_CLEAN}\n${SYNTH_OK}`]] }),
         ['MJUDGE-REVIEW-CARRIES-RULE'],
       )
+
+      /**
+       * `K7` / `K8` —— **候选节不止一个**那一支（第六轮评审 P6 的改法，`sectionScoresOf()` 取"命中最多的"）。
+       * 没有这两条，那个改法就是"改了没有判据"：`K7` 防**假红**（前面插一节也叫「入库」的别节 ⇒ 不许红），
+       * `K8` 防**放宽**（4 个面跨两节各凑一半 ⇒ 必须红：口径仍然是"落在同一节里"）。
+       */
+      const decoy = SYNTH_OK.replace('## 入库判据（老板 2026-11-03 插票）', '## 入库流程（别的节，与本票无关）\n\n这一节不该被当成判据那一节。\n\n## 入库判据（老板 2026-11-03 插票）')
+      expectOne('K7 前面多一节也叫「入库」的别节（不许假红）', knifeOf(decoy), [])
+      const split = [
+        '# 合成 · 判决岗说明书（把 4 个面拆到两节里）',
+        '',
+        '## 入库判据（上半）',
+        '',
+        SYNTH_PARAS.subject,
+        '',
+        SYNTH_PARAS.discriminator,
+        '',
+        '## 入库判据（下半）',
+        '',
+        SYNTH_PARAS.reading,
+        '',
+        SYNTH_PARAS.carveOut,
+        '',
+      ].join('\n')
+      expectOne('K8 4 个面跨两节各凑一半（必须红）', knifeOf(split), ['MJUDGE-BOUNDARY-READING', 'MJUDGE-BOUNDARY-CARVE-OUT'])
 
       // ── ④ 这一跑打的是哪棵树：指到别处 ⇒ 记 HOLD（不是绿）─────────────────────
       if (override !== '') {
