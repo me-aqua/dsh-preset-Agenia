@@ -5,7 +5,8 @@
 // 只放**能变成断言**的事实 —— 判断与取舍归文档，数字、路径、结构归这里。
 //
 // 跑法：<node.exe> .tools/check-notes.mjs
-// 退出码：0 全绿 / 1 有红。红的每一条都给出「笔记写的是」与「现在量到的是」。
+// 退出码：0 全绿 / 2 有挂起（没红，但有判不了的条目 —— 未验 ≠ 通过）/ 1 有红。
+//   红的每一条都给出「笔记写的是」与「现在量到的是」。
 //
 // ⚠️ 2026-09-20 改版：旧预设（process.md / persona-plugin/ / world.md / product 岗）
 //    已被新版替换。这一版盯的是新结构 —— 见 presets/agenia/ 与 README.md「文件」一节。
@@ -1550,13 +1551,30 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     d.setUTCDate(d.getUTCDate() - 1)
     return d.toISOString().slice(0, 10)
   })()
-  const techReport = join(teamRoot, 'retro', yesterday, '技术评审.md')
-  const convReport = join(teamRoot, 'retro', yesterday, '会话评审.md')
-  const techOk = existsSync(techReport)
-  const convOk = existsSync(convReport)
-  yes('office', `**昨天（${yesterday}）的每日评审两份都在** —— 开工第一步该派的正是它（.team/retro/${yesterday}/）`,
+  // 🔴 **2026-11-04 第二修（命名规矩 + 同一天多份）**：
+  //    抽屉日期 = **被评的那一天**（`retro/<covered-day>/`），不是"交付的那一天" ——
+  //    本判据判的本来就是"昨天那份在不在"，所以日期必须是被评的那天，两者才是同一个量。
+  //    ⚠️ 同一天可以有多份（一天里派两次、或者日终补一份）：文件名允许带后缀，
+  //    `会话评审.md` / `会话评审-日终.md` 都算 `会话评审*.md`；判据要的是"那一份存在"，不是"只许叫一个名字"。
+  //    ⚠️ 后缀口径不许放宽到 `*会话评审*`（那会把 `旧会话评审备份` 也算上）—— 只许「名字以它开头」。
+  const reviewDirs = ['retro', 'technical-review', 'conversation-review', 'memory-review']
+    .map((sub) => join(teamRoot, sub, yesterday))
+  const firstExisting = (prefix) => {
+    for (const dir of reviewDirs) {
+      let names = []
+      try { names = readdirSync(dir) } catch { continue }
+      const hit = names.filter((n) => n.startsWith(prefix) && n.endsWith('.md')).sort()[0]
+      if (hit) return join(dir, hit)
+    }
+    return null
+  }
+  const techFound = firstExisting('技术评审')
+  const convFound = firstExisting('会话评审')
+  const techOk = techFound !== null
+  const convOk = convFound !== null
+  yes('office', `**昨天（${yesterday}）的每日评审两份都在** —— 开工第一步该派的正是它（四个抽屉任一个：retro / technical-review / conversation-review / memory-review）`,
     techOk && convOk,
-    `技术评审 ${techOk ? '在' : '**缺**'} · 会话评审 ${convOk ? '在' : '**缺**'} —— `
+    `技术评审 ${techOk ? '在 · ' + techFound : '**缺**'} · 会话评审 ${convOk ? '在 · ' + convFound : '**缺**'} —— `
     + '⚠️ 判的是**昨天**不是今天：今天的要到**明天早上**才验收（评审评的是昨天的工作，'
     + '今天派出去的那两份此刻还在写）；今天没派 ⇒ 明天这一格就红')
 

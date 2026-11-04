@@ -931,7 +931,10 @@ export async function identityDayKeyOf(nowMs) {
  * 两份**每日评审**（会话评审 / 技术评审）的工具名 —— 它们必须等当天的记忆判决落盘才能派。
  *
  * 判据是**今天的判决报告在不在**（`<内容根>/.runtime/reports/memory-update/<day>.json`）：
- * 报告一落盘 = 判决已经 `judge-commit`。判据钉在**产物**上，不钉 `phase` 字段 ——
+ * 报告是发布事务里**第一个**写的（`lib/snapshot.mjs::publishUpdate`：报告 → 快照 → `current` 指针 → 共享状态），
+ * 所以这一条保证的是「**判决的报告已经写出来了**」，**不是**「`judge-commit` 已经走完」：
+ * 报告在、快照 / 指针 / 状态还没落的那一小段窗口里，本闸会放行 —— 窗口窄，且发布失败时回滚会把报告删掉
+ * （窗口自己关上）。判据钉在**产物**上，不钉 `phase` 字段 ——
  * 字段会被中途改、产物不会（2026-11-03 老板点破：判决没回来就派评审，已连犯三次）。
  */
 const DAILY_REVIEW_TOOLS = Object.freeze(new Set(['job_conversation_review', 'job_technical_review']))

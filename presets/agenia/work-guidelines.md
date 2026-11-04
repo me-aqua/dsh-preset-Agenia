@@ -70,9 +70,9 @@
 .team/
 ├─ _archive/          ← 冻结档案（只读，不是工作区）
 ├─ leader/  design/  dev/  test/  review/     ← 各岗位一格：now.md + <日期>/log.md
-├─ retro/             ← 会话评审（conversation-review）的产物落点；早期的属于冻结档案
+├─ retro/             ← 会话**包**（conversation-packet）的落点 + 早期复盘档案；评审报告不在这里
 ├─ hire/<日期>/       ← 临时外聘
-└─ memory-judge/ memory-review/ conversation-review/ technical-review/   ← 四类一次性作业的落点
+└─ memory-judge/ memory-review/ conversation-review/ technical-review/   ← 四类一次性作业的落点（各自的报告写进自己那格）
 ```
 
 🔴 **全局硬约束**

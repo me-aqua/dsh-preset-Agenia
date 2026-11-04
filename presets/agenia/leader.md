@@ -91,14 +91,16 @@ echo '{"day":"<今天>"}' > today.json
 · 🔴 **别把「干活的会话」写进 `exclude_session_ids`** —— 那个字段是"评审自己那条"，不是"被评的那条"。
 · 实测：这一步过去只活在组长脑子里 —— 有些天有包、有些天没有；**没有包的那天，评审只有一个空门。**
 
-产物落 `.team/retro/<今天>/`。🔴 **派之前先看** `snapshot_available === true`（= 判决已 `judge-commit`）——
+产物落**各自那个抽屉**，日期用**被评的那一天**：技术评审 `.team/technical-review/<被评日>/`、
+会话评审 `.team/conversation-review/<被评日>/`（冻结包仍留 `.team/retro/<被评日>/conversation-packet/`）。
+🔴 **派之前先看** `snapshot_available === true`（= 判决已 `judge-commit`）——
 **不是 ⇒ 先别派**（会话评审的作业书是硬门，派早了它当场停），去干第四步、等判决作业的完成通知。
 ⚠️ 两份的**作业书连活一起交过去**。
 
 🔴 **派技术评审时，派工卡要钉死三样（评审的对象是"提交"，不是活树）**：
 ```sh
 git rev-parse HEAD                      # ① 派工那一刻的完整 40 hex
-<node> .tools\tree-at-commit.mjs --repo <WS> --commit <40hex> --out <WS>\.team\retro\<今天>\tree-at-<短哈希> --live-baseline <WS>\.team\retro\<今天>\live-baseline.json --json
+<node> .tools\tree-at-commit.mjs --repo <WS> --commit <40hex> --out <WS>\.team\technical-review\<被评日>\tree-at-<短哈希> --live-baseline <WS>\.team\technical-review\<被评日>\live-baseline.json --json
                                         # ② 只读副本（纯树、不带 .git）；它同时量出副本的 CODE 指纹
 # ③ 把 ① 的提交、② 的副本路径、② 量出的 before_sha256 三样写进派工卡
 ```

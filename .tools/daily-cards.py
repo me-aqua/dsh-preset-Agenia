@@ -17,8 +17,10 @@
     <DR>/proposals/pool.jsonl                 未判的池子（今天的产出 = 明天那一批）
     <DR>/memory/snapshots/<snap>.json         条目正文 + `totals`（容量**实际占用**）
     <DR>/proposals/archive/MANIFEST.json      最近一次清池归档（有才读）
-    <WS>/.team/retro/<day>/*.findings.json    当日技术评审的 findings
-    <WS>/.team/retro/<day>/{技术评审,会话评审}.md   两份评审报告在不在（carrier）
+    <WS>/.team/<抽屉>/<day>/*.findings.json    当日技术评审的 findings
+    <WS>/.team/<抽屉>/<day>/{技术评审,会话评审}.md   两份评审报告在不在（carrier）
+    ↳ 抽屉 = 四类一次性作业各自的落点，按存在性逐个看（见 `review_dirs`）：
+      retro / technical-review / conversation-review / memory-review
     <WS>/.team/route/current.json             路线账本（第一行 / 模式 / 暂停 / 票段）
     <WS>/.team/bug/ledger.json                bug 台账（开放数 / 50-30 / 严重线 / SLA）
     <WS>/.team/state/local/<day>.json         两段回执的节点（技术评审 / 会话评审）
@@ -756,11 +758,13 @@ def review_dirs(ws, day):
     """当日评审产物的候选抽屉（**按存在性逐个看**，不是只认一个）。
 
     四类一次性作业各有自己的落点（`.team/retro/` · `.team/technical-review/` ·
-    `.team/conversation-review/` —— 见 `leader.md` 的目录图），而 `--day` 决定的是"哪一天"、
+    `.team/conversation-review/` · `.team/memory-review/` —— 见 `leader.md` 的目录图，
+    作业在哪个抽屉由 `job-briefs/<角色>.md` 点名），而 `--day` 决定的是"哪一天"、
     不是"哪个抽屉"：只认一个抽屉 ⇒ 评审按派工卡落进另一个抽屉时，卡上会印成"作业没交"。
+    ⚠️ 这张表是**容错**，不是"报告可以随便落"：写者只有一个落点，读者认四个。
     """
     out = []
-    for sub in ("retro", "technical-review", "conversation-review"):
+    for sub in ("retro", "technical-review", "conversation-review", "memory-review"):
         base = os.path.join(ws, ".team", sub, day)
         if os.path.isdir(base):
             out.append(base)
@@ -768,12 +772,23 @@ def review_dirs(ws, day):
 
 
 def review_carriers(ws, day):
-    """`carrier_missing` 的读面：两份评审报告在不在（`review.carrier`）。"""
-    dirs = review_dirs(ws, day)
-    return {
-        "technical": any(os.path.isfile(os.path.join(d, "技术评审.md")) for d in dirs),
-        "conversation": any(os.path.isfile(os.path.join(d, "会话评审.md")) for d in dirs),
-    }
+    """`carrier_missing` 的读面：两份评审报告在不在（`review.carrier`）。
+
+    命名口径与 `check-notes.mjs` 同一套（2026-11-04 定）：**文件名以 `技术评审` / `会话评审`
+    开头、以 `.md` 结尾**就算 —— 同一天可以有多份（`会话评审.md` / `会话评审-日终.md`），
+    只认一个死名字会把"日志里明明交了"读成"没交"。
+    """
+    names = set()
+    for base in review_dirs(ws, day):
+        try:
+            names.update(n for n in os.listdir(base) if n.endswith(".md"))
+        except OSError:
+            continue
+
+    def has(prefix):
+        return any(n.startswith(prefix) for n in names)
+
+    return {"technical": has("技术评审"), "conversation": has("会话评审")}
 
 
 def legacy_remaining(ws):
