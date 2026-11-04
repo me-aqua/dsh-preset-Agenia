@@ -11,7 +11,7 @@ window.__ModuleLoader__.load({
 		//#region lib/DashboardAction.module.css.mjs
 		// 照抄官方 `client-ui-agent-team/lib/client.js` L12 那条 CSS 的形状与那四个尺寸原值；
 		// 唯一按定形 §八.1 改过的格子是 `roster` 的列数（官方 2 列 → 我们 3 列）。
-		const css = ".DASHB1_root{position:relative}.DASHB1_trigger{min-height:28px;color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:0;border-radius:6px;align-items:center;gap:5px;padding:3px 7px;font-size:12px;display:inline-flex}.DASHB1_trigger:hover,.DASHB1_trigger:focus-visible{color:var(--dsw-alias-label-primary)}@container (width<=480px){.DASHB1_triggerLabel{display:none}}.DASHB1_count{color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums;font-size:12px;font-weight:400;line-height:16px}.DASHB1_panel{--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);z-index:100;box-sizing:border-box;--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:min(500px,100vw - 32px);max-height:min(680px,100vh - 32px);box-shadow:var(--dsw-elevation-prominent);border:0;border-radius:12px;flex-direction:column;padding:8px 2px 0;display:flex;position:fixed;overflow:hidden;background:var(--dsw-specific-menu)}.DASHB1_body{--dsh-scrollbar-track-margin:8px;scrollbar-gutter:stable;flex:auto;min-height:0;padding:0 9px 16px 14px;overflow-y:auto}.DASHB1_error{color:var(--dsw-alias-label-error);align-items:center;gap:6px;margin:8px 0;font-size:12px;display:flex}.DASHB1_notice{color:var(--dsw-alias-label-tertiary);align-items:center;gap:6px;margin:8px 0;font-size:12px;display:flex}.DASHB1_panel h3{color:var(--dsw-alias-label-primary);align-items:center;gap:8px;margin:16px 0 8px 4px;font-size:13px;font-weight:500;display:flex}.DASHB1_body section:first-of-type h3{margin-top:8px}.DASHB1_tasks{flex-direction:column;gap:7px;display:flex}.DASHB1_task{--dsw-elevation-stroke-color:var(--dsw-alias-border-l2);box-shadow:var(--dsw-elevation-stroke);background:var(--dsw-alias-bg-layer-2);border-radius:9px;padding:11px 13px}.DASHB1_taskTitle{align-items:center;gap:8px;display:flex}.DASHB1_taskTitle strong{font-size:13px;font-weight:500}.DASHB1_taskState{color:var(--dsw-alias-label-caption);align-items:center;gap:4px;font-size:11px;display:inline-flex}.DASHB1_clampedDescription{color:var(--dsw-alias-label-secondary);-webkit-line-clamp:2;-webkit-box-orient:vertical;margin:6px 0 0;font-size:12px;display:-webkit-box;overflow:hidden}.DASHB1_meta{color:var(--dsw-alias-label-caption);flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px;font-size:11px;line-height:20px;display:flex}.DASHB1_emptyNotice{color:var(--dsw-alias-label-tertiary);margin:0 0 0 4px;font-size:12px}.DASHB1_roster{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;display:grid}.DASHB1_member{--dsw-elevation-stroke-color:var(--dsw-alias-border-l2);min-width:0;box-shadow:var(--dsw-elevation-stroke);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);text-align:left;border:0;border-radius:9px;flex-direction:column;gap:2px;padding:9px 11px;display:flex}.DASHB1_memberDot{align-items:center;display:inline-flex}.DASHB1_memberName{color:var(--dsw-alias-label-primary);align-items:center;gap:6px;font-size:12px;font-weight:500;display:flex}.DASHB1_memberText{color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums;font-size:11px;line-height:20px}";
+		const css = ".DASHB1_root{position:relative}.DASHB1_trigger{min-height:28px;color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:0;border-radius:6px;align-items:center;gap:5px;padding:3px 7px;font-size:12px;display:inline-flex}.DASHB1_trigger:hover,.DASHB1_trigger:focus-visible{color:var(--dsw-alias-label-primary)}@container (width<=480px){.DASHB1_triggerLabel{display:none}}.DASHB1_count{color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums;font-size:12px;font-weight:400;line-height:16px}.DASHB1_panel{--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);z-index:100;box-sizing:border-box;--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:min(500px,100vw - 32px);max-height:min(680px,100vh - 32px);box-shadow:var(--dsw-elevation-prominent);border:0;border-radius:12px;flex-direction:column;padding:8px 2px 0;display:flex;position:fixed;overflow:hidden}.DASHB1_panel:before{content:\"\";z-index:-1;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);border-radius:12px;position:absolute;inset:0}.DASHB1_body{--dsh-scrollbar-track-margin:8px;scrollbar-gutter:stable;flex:auto;min-height:0;padding:0 9px 16px 14px;overflow-y:auto}.DASHB1_error{color:var(--dsw-alias-label-error);align-items:center;gap:6px;margin:8px 0;font-size:12px;display:flex}.DASHB1_notice{color:var(--dsw-alias-label-tertiary);align-items:center;gap:6px;margin:8px 0;font-size:12px;display:flex}.DASHB1_panel h3{color:var(--dsw-alias-label-primary);align-items:center;gap:8px;margin:16px 0 8px 4px;font-size:13px;font-weight:500;display:flex}.DASHB1_body section:first-of-type h3{margin-top:8px}.DASHB1_tasks{flex-direction:column;gap:7px;display:flex}.DASHB1_task{--dsw-elevation-stroke-color:var(--dsw-alias-border-l2);box-shadow:var(--dsw-elevation-stroke);background:var(--dsw-alias-bg-layer-2);border-radius:9px;padding:11px 13px}.DASHB1_taskTitle{align-items:center;gap:8px;display:flex}.DASHB1_taskTitle strong{font-size:13px;font-weight:500}.DASHB1_taskState{color:var(--dsw-alias-label-caption);align-items:center;gap:4px;font-size:11px;display:inline-flex}.DASHB1_clampedDescription{color:var(--dsw-alias-label-secondary);-webkit-line-clamp:2;-webkit-box-orient:vertical;margin:6px 0 0;font-size:12px;display:-webkit-box;overflow:hidden}.DASHB1_meta{color:var(--dsw-alias-label-caption);flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px;font-size:11px;line-height:20px;display:flex}.DASHB1_emptyNotice{color:var(--dsw-alias-label-tertiary);margin:0 0 0 4px;font-size:12px}.DASHB1_roster{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;display:grid}.DASHB1_member{--dsw-elevation-stroke-color:var(--dsw-alias-border-l2);min-width:0;box-shadow:var(--dsw-elevation-stroke);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);text-align:left;cursor:pointer;border:0;border-radius:8px;align-items:flex-start;gap:8px;padding:10px 12px;display:flex;flex-direction:column}.DASHB1_member:disabled{cursor:default}.DASHB1_memberDot{flex:none;align-items:center;height:1lh;display:inline-flex}.DASHB1_memberName{color:var(--dsw-alias-label-primary);align-items:center;gap:6px;font-size:12px;font-weight:500;display:flex}.DASHB1_memberText{color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums;font-size:11px;line-height:20px}.DASHB1_expandToggle{float:right;color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:0;align-items:center;gap:2px;margin-left:10px;padding:0;font-size:11px;line-height:20px;display:inline-flex}.DASHB1_expandToggle:hover,.DASHB1_expandToggle:focus-visible{color:var(--dsw-alias-label-primary)}.DASHB1_expandToggle svg{transition:transform .12s}.DASHB1_expandToggleOpen{transform:rotate(180deg)}";
 		const tagId = "@agenia/dsh-client-ui-dashboard/DashboardAction.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -26,6 +26,8 @@ window.__ModuleLoader__.load({
 			"count": "DASHB1_count",
 			"emptyNotice": "DASHB1_emptyNotice",
 			"error": "DASHB1_error",
+			"expandToggle": "DASHB1_expandToggle",
+			"expandToggleOpen": "DASHB1_expandToggleOpen",
 			"member": "DASHB1_member",
 			"memberDot": "DASHB1_memberDot",
 			"memberName": "DASHB1_memberName",
@@ -51,8 +53,30 @@ window.__ModuleLoader__.load({
 		/**
 		 * 主行（E24/E25）：标题与五关**同一个 flex 行**（`div.taskTitle`）——
 		 * 定形 R4 的"一行"就落在这里，拆成两块就是两行。
+		 *
+		 * 说明段照抄官方 `TaskCard`（官方 L146-195）：两行截断 + **真的量溢出**（`scrollHeight >
+		 * clientHeight + 1`，`ResizeObserver` 跟着尺寸变），溢出才在 `div.meta` 里出 `button.expandToggle`
+		 * （展开/收起，箭头 `.expandToggleOpen` 转 180°）。没有这条测量，"截断两行"就没有展开路径。
 		 */
-		function TaskRow({ task }) {
+		function TaskRow({ task, t }) {
+			const [expanded, setExpanded] = (0, react.useState)(false);
+			const [clamped, setClamped] = (0, react.useState)(false);
+			const textRef = (0, react.useRef)(null);
+			(0, react.useLayoutEffect)(() => {
+				if (expanded) return;
+				const paragraph = textRef.current;
+				if (paragraph === null) return;
+				const measure = () => {
+					setClamped(paragraph.scrollHeight > paragraph.clientHeight + 1);
+				};
+				measure();
+				if (typeof ResizeObserver === "undefined") return;
+				const observer = new ResizeObserver(measure);
+				observer.observe(paragraph);
+				return () => {
+					observer.disconnect();
+				};
+			}, [task.note, expanded]);
 			return (0, react_jsx_runtime.jsxs)("article", {
 				className: Dashboard_module_css_default.task,
 				children: [
@@ -64,12 +88,24 @@ window.__ModuleLoader__.load({
 						})]
 					}),
 					task.note !== null && (0, react_jsx_runtime.jsx)("p", {
-						className: Dashboard_module_css_default.clampedDescription,
+						ref: textRef,
+						className: expanded ? void 0 : Dashboard_module_css_default.clampedDescription,
 						children: task.note
 					}),
-					(0, react_jsx_runtime.jsx)("div", {
+					(0, react_jsx_runtime.jsxs)("div", {
 						className: Dashboard_module_css_default.meta,
-						children: (0, react_jsx_runtime.jsx)("span", { children: task.taskId })
+						children: [(clamped || expanded) && (0, react_jsx_runtime.jsxs)("button", {
+							type: "button",
+							className: Dashboard_module_css_default.expandToggle,
+							"aria-expanded": expanded,
+							onClick: () => {
+								setExpanded((current) => !current);
+							},
+							children: [t(expanded ? "collapse" : "expand"), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutlineRegular, {
+								size: 12,
+								className: expanded ? Dashboard_module_css_default.expandToggleOpen : void 0
+							})]
+						}), (0, react_jsx_runtime.jsx)("span", { children: task.taskId })]
 					})
 				]
 			});
@@ -93,17 +129,37 @@ window.__ModuleLoader__.load({
 			});
 		}
 		/**
+		 * 视图模型版本号的**渲染层那一半**：与 `lib/dashboard.mjs::DASHBOARD_SCHEMA` 同号。
+		 * 浏览器模块 import 不了 Node 那一份，所以两半各持一份；形状一改两边同批改。
+		 * 对不上就画错误条、**不硬画**（否则旧客户端会对着新视图静默画错）。
+		 */
+		const VIEW_SCHEMA = 1;
+		/**
 		 * 看板面板：第一行 = 目标 · 当前大阶段（`view.header.text`）、主行一行、欠账三格。
 		 *
 		 * 🔴 这里**不读盘、不算账**：视图由 Node 侧算好写成一份快照（`dashboard.mjs`），
 		 * 本组件只经 `ctx.remote.workspaceFiles.read` 把那一份快照读进来画。
+		 *
+		 * 🔴 **定位**照抄官方（官方 L230-236 + L327-331）：`useAnchoredPosition` 拿触发器的
+		 * `getBoundingClientRect()` 算 `{left, top}`（`gap:5` / `margin:16`，越界夹回视口内），
+		 * 结果塞进面板的 `style`；**还没算出来**（`null`）⇒ `visibility:hidden;left:0;top:0` 的兜底 ——
+		 * 面板是 portal 到 `<body>` 末尾的，没有兜底的那一帧会落在页面末尾。
 		 */
 		function DashboardAction({ sessionId, t, readSnapshot }) {
 			const [open, setOpen] = (0, react.useState)(false);
 			const [view, setView] = (0, react.useState)(null);
 			const [failure, setFailure] = (0, react.useState)(null);
 			const rootRef = (0, react.useRef)(null);
+			const triggerRef = (0, react.useRef)(null);
 			const panelRef = (0, react.useRef)(null);
+			const position = _deepseek_ai_dsh_client_ui_primitives.useAnchoredPosition({
+				open,
+				anchorRef: triggerRef,
+				panelRef,
+				gap: 5,
+				margin: 16
+			});
+			const readable = view !== null && view.schema === VIEW_SCHEMA;
 			(0, react.useEffect)(() => {
 				if (!open) return;
 				setFailure(null);
@@ -131,6 +187,7 @@ window.__ModuleLoader__.load({
 				"data-dashboard-action": true,
 				children: [(0, react_jsx_runtime.jsxs)("button", {
 					type: "button",
+					ref: triggerRef,
 					className: Dashboard_module_css_default.trigger,
 					"aria-label": t("trigger"),
 					"aria-haspopup": "dialog",
@@ -145,6 +202,11 @@ window.__ModuleLoader__.load({
 				}), open && (0, react_dom.createPortal)((0, react_jsx_runtime.jsxs)("div", {
 					ref: panelRef,
 					className: Dashboard_module_css_default.panel,
+					style: position ?? {
+						visibility: "hidden",
+						left: 0,
+						top: 0
+					},
 					role: "dialog",
 					tabIndex: -1,
 					"aria-label": t("trigger"),
@@ -155,26 +217,34 @@ window.__ModuleLoader__.load({
 							className: Dashboard_module_css_default.notice,
 							role: "status",
 							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }), t("loading")]
+						}), readable && (0, react_jsx_runtime.jsxs)("div", {
+							className: Dashboard_module_css_default.notice,
+							role: "status",
+							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }), `读数日 ${view.day ?? "未知"}`]
 						}), failure !== null && (0, react_jsx_runtime.jsxs)("div", {
 							className: Dashboard_module_css_default.error,
 							role: "alert",
 							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "error" }), failure]
-						}), view !== null && view.alerts.length > 0 && (0, react_jsx_runtime.jsx)("div", {
+						}), view !== null && !readable && (0, react_jsx_runtime.jsxs)("div", {
+							className: Dashboard_module_css_default.error,
+							role: "alert",
+							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "error" }), `视图版本不认识（schema ${String(view.schema)}）；这一版客户端只认 ${VIEW_SCHEMA} —— 数据层与渲染层要同批改`]
+						}), readable && view.alerts.length > 0 && (0, react_jsx_runtime.jsx)("div", {
 							className: Dashboard_module_css_default.error,
 							role: "alert",
 							children: view.alerts.map((alert) => (0, react_jsx_runtime.jsx)("span", { children: alert.message }, alert.code))
-						}), view !== null && (0, react_jsx_runtime.jsxs)("section", {
+						}), readable && (0, react_jsx_runtime.jsxs)("section", {
 							children: [(0, react_jsx_runtime.jsxs)("h3", { children: [view.header.text, view.badge !== null && (0, react_jsx_runtime.jsx)("span", {
 								className: Dashboard_module_css_default.count,
 								children: view.badge.word
 							})] }), (0, react_jsx_runtime.jsx)("div", {
 								className: Dashboard_module_css_default.tasks,
-								children: view.main !== null ? (0, react_jsx_runtime.jsx)(TaskRow, { task: view.main }) : (0, react_jsx_runtime.jsx)("p", {
+								children: view.main !== null ? (0, react_jsx_runtime.jsx)(TaskRow, { task: view.main, t }) : (0, react_jsx_runtime.jsx)("p", {
 									className: Dashboard_module_css_default.emptyNotice,
 									children: view.emptyNotice
 								})
 							})]
-						}), view !== null && (0, react_jsx_runtime.jsxs)("section", {
+						}), readable && (0, react_jsx_runtime.jsxs)("section", {
 							children: [(0, react_jsx_runtime.jsx)("h3", { children: t("debts") }), (0, react_jsx_runtime.jsx)("div", {
 								className: Dashboard_module_css_default.roster,
 								children: view.debts.map((debt) => (0, react_jsx_runtime.jsx)(DebtCell, { debt }, debt.key))
@@ -192,13 +262,17 @@ window.__ModuleLoader__.load({
 			trigger: "看板",
 			loading: "正在读账本…",
 			unavailable: "账本暂不可用",
-			debts: "欠着的东西"
+			debts: "欠着的东西",
+			expand: "展开",
+			collapse: "收起"
 		};
 		const en = {
 			trigger: "Dashboard",
 			loading: "Reading the ledger…",
 			unavailable: "Ledger unavailable",
-			debts: "Outstanding"
+			debts: "Outstanding",
+			expand: "Show more",
+			collapse: "Show less"
 		};
 		//#endregion
 		//#region lib/types/client/mount.js

@@ -15,14 +15,20 @@
  *   · **缺 ≠ 空**（对照表 §5）：文件不在 / JSON 坏 / 形状不对 ⇒ `value: null` + `未知` + 报警；
  *     **集合为空** ⇒ 显式 `0`。把这两件事塌成一种，读的人就分不清"没有"和"坏了"。
  */
-import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { FIVE_GATES, headlineOf, ticketStatusOf } from './route.mjs'
 import { openCounts } from './bug-ledger.mjs'
 import { NODE_STATES } from './local-state.mjs'
 import { PHASES } from './state.mjs'
 
-/** 视图模型的版本号（形状一变就 +1；渲染层按它判断自己认不认识这份视图）。 */
+/**
+ * 视图模型的版本号（形状一变就 +1）。
+ *
+ * 渲染层 `client-ui-dashboard/lib/client.js` 里有一份**同号**的 `VIEW_SCHEMA` 闸门：
+ * 对不上就画错误条、不硬画 —— 浏览器那一半 import 不了这份 Node ESM，所以两半各持一份号，
+ * **改形状时两边同批改**（`DASHBOARD_SCHEMA` / `VIEW_SCHEMA` 是同一个契约的两个落点）。
+ */
 export const DASHBOARD_SCHEMA = 1
 
 /** 读源的四种状态（契约 §1.3）—— **四种必须分得开**。 */
@@ -193,22 +199,36 @@ function gateOf(task) {
   return { gate: GATE_NOT_APPLICABLE, invalid: true }
 }
 
-/** `local` 那两段里没回来的段数（节点缺 = 真的没回来 ⇒ 算 1）。 */
-function receiptMissingOf(local) {
+/**
+ * `local` 那两段里没回来的段数（契约 §2 `receipt_missing`）。
+ *
+ * 两个读数必须分开（缺 ≠ 空）：
+ *   · **段不在**（文件在、那个键没有）⇒ 算 1 —— 真的没回来；
+ *   · **段在、形状不对**（不是对象 / `state` 不在 `NODE_STATES` 里）⇒ 不是"缺一段"，
+ *     是**这一份源的形状坏了** ⇒ `missing: null` + `broken` 点名，画面写「未知」。
+ * 把第二种折成"缺 1 段"，读的人会以为评审没回来（一个看起来完全合理的数字）。
+ *
+ * 两段走同一个循环、同一条规则 —— **对称**（`technical` 与 `conversation` 谁坏了都走这一支）。
+ *
+ * @param {object} local `local/<day>.json` 解析出来的对象
+ * @returns {{missing:number|null, broken:string[]}}
+ */
+function receiptsOf(local) {
   let missing = 0
+  const broken = []
   for (const segment of RECEIPT_SEGMENTS) {
-    const node = local?.[segment]
-    if (!isObject(node)) {
+    if (!isObject(local) || !Object.hasOwn(local, segment)) {
       missing += 1
       continue
     }
-    if (!NODE_STATES.includes(node.state)) {
-      missing += 1
+    const node = local[segment]
+    if (!isObject(node) || !NODE_STATES.includes(node.state)) {
+      broken.push(segment)
       continue
     }
     if (node.state !== 'done') missing += 1
   }
-  return missing
+  return { missing: broken.length === 0 ? missing : null, broken }
 }
 
 /**
@@ -284,12 +304,18 @@ export function dashboardOf(input) {
   const ticketOpen = routeOk ? ticketList.filter((ticket) => ticketStatusOf(ticket, tasks) === 'open').length : null
   const bugOpen = bugOk ? openCounts(bug.value).bug_open : null
   if (!bugOk) push(sourceAlert('bug', bug.reason))
-  const receiptMissing = localOk ? receiptMissingOf(local.value) : null
+  const receipts = localOk ? receiptsOf(local.value) : { missing: null, broken: [] }
   if (!localOk) push(sourceAlert('local', local.reason))
+  else if (receipts.broken.length > 0) {
+    push({
+      code: 'DASH-SOURCE-SCHEMA:local',
+      message: `local 的 ${receipts.broken.join(' / ')} 段形状不对（不是对象，或 state 不在 NODE_STATES 里）—— 回执格记「未知」，不记「缺 1 段」`,
+    })
+  }
   const debts = [
     debtCell('tickets', ticketOpen),
     debtCell('bugs', bugOpen),
-    debtCell('receipts', receiptMissing),
+    debtCell('receipts', receipts.missing),
   ]
 
   // ── 徽标（§八.2）：一个词 —— 当天的记忆相位 --------------------------------
@@ -357,6 +383,7 @@ function resolvePointer(root, pointer) {
  * 四种问题各有自己的码：源没有 / 源读不到（`DASH-FIELD-NO-SOURCE`）· 键不存在
  * （`DASH-FIELD-PHANTOM-KEY`）· 路上形状不对（`DASH-FIELD-BAD-SHAPE`）· 静态字段形状不对
  * （`DASH-FIELD-SHAPE`）。空数组只说明"今天判不出"，**不记红**（那是测试侧的 HOLD 口径）。
+ * 一条字段若是 `receipt_missing`（读两段），两段各解析一次 —— 见下面那条 `pointers` 注释。
  *
  * @param {ReadonlyArray<object>} fields
  * @param {object} input `readDashboardSources().input`
@@ -388,11 +415,24 @@ export function auditFields(fields, input) {
       add('DASH-FIELD-NO-SOURCE', field, `${String(field?.source)} 这一份源没读成（reason=${String(source.reason)}）`)
       continue
     }
-    const hit = resolvePointer(source.value, field.pointer)
-    if (hit.state === 'missing_key') {
-      add('DASH-FIELD-PHANTOM-KEY', field, `指向的键不在（缺在 ${String(hit.at)}）—— 这一格会永远是空的`)
-    } else if (hit.state === 'bad_shape') {
-      add('DASH-FIELD-BAD-SHAPE', field, `路上形状不对（${String(hit.at)}）`)
+    // 一条字段可以有**一份以上**指针：`receipt_missing` 读的是两段（`RECEIPT_SEGMENTS`），
+    // 而字段表那一行只能写一个 `pointer` —— 段清单由 `RECEIPT_SEGMENTS` 给（不另抄一份），
+    // 这里逐段解析，`technical` 与 `conversation` **对称**：谁被改名/缺键都会红。
+    const pointers = [field.pointer]
+    if (field?.compute === 'receipt_missing') {
+      for (const segment of RECEIPT_SEGMENTS) {
+        const pointer = `/${segment}/state`
+        if (!pointers.includes(pointer)) pointers.push(pointer)
+      }
+    }
+    for (const pointer of pointers) {
+      const hit = resolvePointer(source.value, pointer)
+      const at = { ...field, pointer }
+      if (hit.state === 'missing_key') {
+        add('DASH-FIELD-PHANTOM-KEY', at, `指向的键不在（缺在 ${String(hit.at)}）—— 这一格会永远是空的`)
+      } else if (hit.state === 'bad_shape') {
+        add('DASH-FIELD-BAD-SHAPE', at, `路上形状不对（${String(hit.at)}）`)
+      }
     }
   }
   return { ok: problems.length === 0, problems }
@@ -411,16 +451,4 @@ export function dashboardSourcePaths(root, day) {
     localFile: at('.team', 'state', 'local', `${day}.json`),
     updateFile: at('presets', 'agenia', '.runtime', 'state', 'update', `${day}.json`),
   }
-}
-
-/** 最新一天有相位文件的日期（按天文件名里挑最大的；一份都没有 ⇒ `null`）。 */
-export function latestUpdateDay(root) {
-  const dir = path.join(root, 'presets', 'agenia', '.runtime', 'state', 'update')
-  if (!existsSync(dir)) return null
-  const days = readdirSync(dir)
-    .map((name) => /^(\d{4}-\d{2}-\d{2})\.json$/.exec(name))
-    .filter((hit) => hit !== null)
-    .map((hit) => hit[1])
-    .sort()
-  return days.length === 0 ? null : days[days.length - 1]
 }

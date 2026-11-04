@@ -9,10 +9,19 @@
  * 那条路的全部代价），自造 RPC 要一套 typert 生成物。快照这条路只用**框架已有**的
  * `workspaceFiles`（有界读、只读），不动 `app.asar`，也不新增任何 RPC 面。
  *
+ * 🔴 **日身份**：`day` = **今天这一个周期日**，按 `lib/route.mjs::dayKeyOf`（本地 04:00 切点，
+ * 全系统唯一一份日函数）算；**不是**"最近一天有相位文件的那一天"—— 后者会把前一天的相位词与
+ * 前一天的回执当成今天的显示（04:00 之后、当天的文件还没写出来时尤其危险）。
+ * 当天文件不在 ⇒ 徽标 `null`、回执「未知」（契约 §3.4 / §4），那是**正常态**，不是错误。
+ *
+ * 从外面驱动它：`refreshSnapshot({root, now})`（导出），或 `bin/snapshot.mjs`（CLI）。
+ *
  * @module @agenia/dsh-client-ui-dashboard
  */
 import path from 'node:path'
-import { DASHBOARD_SNAPSHOT_REL, dashboardSourcePaths, latestUpdateDay, readDashboardSources, writeDashboardSnapshot } from '../../lib/dashboard.mjs'
+import { now as clockNow } from '../../lib/clock.mjs'
+import { dayKeyOf } from '../../lib/route.mjs'
+import { DASHBOARD_SNAPSHOT_REL, dashboardSourcePaths, readDashboardSources, writeDashboardSnapshot } from '../../lib/dashboard.mjs'
 
 /** 插件的行名（与 `agent.cordis.yml` 里那一行同名）。 */
 export const name = 'agenia-dashboard'
@@ -24,20 +33,18 @@ export const inject = []
 const REFRESH_MS = 15000
 
 /**
- * 重新算一次视图并写快照。
+ * 重新算一次视图并写快照（**原子写**：同目录 `<file>.tmp` → rename，见 `writeDashboardSnapshot`）。
  *
- * `day` 取**最近一天有相位文件**的那一天：跨越本地 04:00 的开工切点、而当天相位文件还没写出来时，
- * 看板显示上一份而不是一片空白（"今天还没写"与"写坏了"是两件事）。
- *
- * @param {{root:string}} args
- * @returns {{ok:boolean, file?:string, bytes?:number, day?:string|null, reason?:string}}
+ * @param {{root:string, now?:Date}} args `root` = 工作区根（绝对路径）；`now` = 可选注入时刻
+ *   （默认走 `lib/clock.mjs::now()`：`AGENIA_NOW_FILE` 在就按它，不在就真实时钟）
+ * @returns {{ok:true, day:string, file:string, bytes:number}}
  */
-export function refreshSnapshot({ root }) {
-  const day = latestUpdateDay(root)
-  if (day === null) return { ok: false, reason: '没有任何一天的相位文件（`.runtime/state/update/` 里一份 <day>.json 都没有）' }
+export function refreshSnapshot({ root, now = clockNow() } = {}) {
+  if (typeof root !== 'string' || root === '') throw new Error('refreshSnapshot: 必须给 root（工作区绝对路径）')
+  const day = dayKeyOf(now)
   const { input } = readDashboardSources({ ...dashboardSourcePaths(root, day), day })
   const written = writeDashboardSnapshot({ input, outFile: path.join(root, DASHBOARD_SNAPSHOT_REL) })
-  return { ok: true, file: written.file, bytes: written.bytes, day }
+  return { ok: true, day, file: written.file, bytes: written.bytes }
 }
 
 /**
@@ -50,8 +57,12 @@ export function apply(ctx, config = {}) {
   const root = typeof config.root === 'string' && config.root !== '' ? config.root : process.cwd()
   ctx.effect(() => {
     const tick = () => {
-      const result = refreshSnapshot({ root })
-      if (!result.ok && ctx.logger !== undefined) ctx.logger.warn(`dashboard: ${result.reason}`)
+      try {
+        refreshSnapshot({ root })
+      } catch (err) {
+        // 定时器里的异常会掀掉宿主进程：写盘失败只记一条警告，下一拍再试。
+        if (ctx.logger !== undefined) ctx.logger.warn(`dashboard: 写快照失败：${String(err?.message ?? err)}`)
+      }
     }
     tick()
     const timer = setInterval(tick, REFRESH_MS)

@@ -387,14 +387,35 @@ export function parseElementCall(text, callIndex) {
     const segs = splitTopLevel(props.slice(at + name.length + 1))
     return segs.length === 0 ? null : balancedExpr(segs[0])
   }
-  return { tag, className: propOf('className'), children: propOf('children') }
+  return { tag, props, className: propOf('className'), children: propOf('children') }
+}
+
+/**
+ * 元素调用里某个 prop 的**原文**（`null` = 这个元素没写这个 prop）。
+ *
+ * 与 `parseElementCall` 里那个同名内部函数同一口径；单独导出是给"定位 / 展开钮"那类
+ * **看接线**的用例用的（它们要读 `style` / `ref` / `aria-expanded`，不只是 `className` 与 children）。
+ *
+ * ⚠️ 属性名有三种写法：`style:` / `"aria-expanded":` / `'x':` —— 只找裸名会把 JSX 里带引号的
+ * 属性判成"没有"（`aria-expanded` 就是这么漏的）。
+ */
+export function propOf(props, name) {
+  const text = String(props ?? '')
+  const candidates = [`${name}:`, `"${name}":`, `'${name}':`]
+    .map((needle) => ({ needle, at: text.indexOf(needle) }))
+    .filter((hit) => hit.at >= 0)
+    .sort((a, b) => a.at - b.at)
+  if (candidates.length === 0) return null
+  const { needle, at } = candidates[0]
+  const segs = splitTopLevel(text.slice(at + needle.length))
+  return segs.length === 0 ? null : balancedExpr(segs[0])
 }
 
 /**
  * 在源码里找 `.<token>` 这样的 **className 用法**（不是 CSS 映射表里的 `"token": "…"`），
- * 返回它所在的那个元素调用。
+ * 返回它所在的那个元素调用（含完整 props 原文与调用起点）。
  */
-export function elementByClassToken(source, token) {
+export function elementCallByClassToken(source, token) {
   const re = new RegExp(`\\.\\s*${token}\\b`, 'g')
   let m
   while ((m = re.exec(source)) !== null) {
@@ -406,9 +427,16 @@ export function elementByClassToken(source, token) {
     if (last === null) continue
     const callIndex = m.index - before.length + last.index
     const el = parseElementCall(source, callIndex)
-    if (el !== null) return el
+    if (el !== null) return { ...el, callIndex }
   }
   return null
+}
+
+/** 同 `elementCallByClassToken`，只留形状（旧的三个读者只用这三个键）。 */
+export function elementByClassToken(source, token) {
+  const el = elementCallByClassToken(source, token)
+  if (el === null) return null
+  return { tag: el.tag, className: el.className, children: el.children }
 }
 
 /**

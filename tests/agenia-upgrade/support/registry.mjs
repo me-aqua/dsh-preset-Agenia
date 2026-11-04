@@ -584,13 +584,27 @@ export const BATCH_AB = ['MJUDGE-01']
  *     `DASH-06` 没有活组员数（整个渲染层零 `members`；`span.count` 徽标里是相位词）；
  *     `DASH-07` 欠账三列（§八.1）+ 0 不许被渲染条件藏掉。
  *
- * 🔴 九格今天**全红**（两个落点都不在盘上）—— 这是第 2 关的交付形态，不是故障。
+ * 🔴 **2026-11-04 第 2 关重开**（第 4 关评审 `🟠 打回·修`：`.team/review/2026-11-04/评审报告.md`
+ * 的 F1 定位 / F2 端到端零证据 / F3 陈旧读数当当下 —— 三条都是**判据集上的洞**，不是单点 bug）：
+ *   · `DASH-10` **面板定位**：`useAnchoredPosition({open, anchorRef, panelRef, gap:5, margin:16})` +
+ *     `style: position ?? {visibility:"hidden",left:0,top:0}` 的**存在与接线**（官方 L230-236 / L327-331）；
+ *     像素（开在哪、圆角阴影）归 GUI 清单第 2/8 条，本格不判。
+ *   · `DASH-11` **Node 半边端到端**：真子进程跑 `lib/index.js` 的 `apply()`，判快照
+ *     **原子写**（`.tmp` → rename；崩在写盘中间不许留下半份活文件）· 契约 §3 形状 · 第二次跑覆盖 ·
+ *     渲染层**只读那一份快照**（路径两半同源、不碰账本）。
+ *   · `DASH-12` **日身份**：`view.day` = 今天这个**周期日**（`dayKeyOf` 的 04:00 切点）+ 画面要看得到 +
+ *     只有旧相位文件时 `badge` 必须是 `null`（"退回最近一天"那把刀必须红）。
+ *   · `DASH-13` **E29 展开钮**：元素对照表标「抄（条件）」⇒ 溢出测量 + `button.expandToggle` +
+ *     只在溢出时出现；像素归 GUI 清单第 4 条。
+ *   ⚠️ 新增四格**不进** `FROZEN_IDS`（同一批政策），但**同批**进 `BATCH_AC` 与
+ *   `GROUP_COUNTS['client-dashboard']`（分母 141 → 145，由盘上发现器数出来）。
+ *
  * 官方像素层是**只读**取件（设计抽屉的只读副本 → `.tools/asar-cli` 解到运行根兜底）；
- * `DASH-05/06/07` 里"同一个判据先量官方"的那几行是尺子自证（官方那侧必须为假/为真），
+ * `DASH-05/06/07/10/13` 里"同一个判据先量官方"的那几行是尺子自证（官方那侧必须为真/为假），
  * 官方取不到时记 `HOLD` 并点名 `tried`，不记绿。
- * ⚠️ 它**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G…AB 的规矩。
+ * ⚠️ 它们**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G…AB 的规矩。
  */
-export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 'DASH-06', 'DASH-07', 'DASH-08', 'DASH-09']
+export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 'DASH-06', 'DASH-07', 'DASH-08', 'DASH-09', 'DASH-10', 'DASH-11', 'DASH-12', 'DASH-13']
 
 /**
  * 已落笔的二十四批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
@@ -781,6 +795,10 @@ const F = {
   dash01: 'integration/dash01-fields.test.mjs',
   dash02: 'integration/dash02-view.test.mjs',
   dash03: 'integration/dash03-shape.test.mjs',
+  /** 第 2 关重开（2026-11-04 第 4 关评审打回）：渲染层接线两格（`DASH-10` 定位 / `DASH-13` E29）。 */
+  dash04: 'integration/dash04-wiring.test.mjs',
+  /** 第 2 关重开：数据链端到端两格（`DASH-11` 快照机制 / `DASH-12` 日身份）。 */
+  dash05: 'integration/dash05-snapshot.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1004,6 +1022,11 @@ const ROWS = [
   ['DASH-07', 'client-dashboard', F.dash03, '欠账区**三列** + 0 不许被藏（定形 §八.1 / R5；对照表 E11）：CSS 里 `roster` 那条网格必须含 `grid-template-columns:repeat(3, minmax(0,1fr))` 且**不再有** `repeat(2`（官方是 2 列 ⇒ 同一个判据在官方 CSS 上必须为假，证明它分得开 2 列与 3 列）；官方那四条尺寸/圆角原值（`min-height:28px` / `width:min(500px,100vw - 32px)` / `max-height:min(680px,100vh - 32px)` / `border-radius:12px`，对照表 E02/E03）逐条在；渲染条件不许用 `value > 0` / `value !== 0` / `!debt` 把 0 那一格藏掉（合成样本自证针是活的）；三格名 `票` / `bug` / `评审回执` 都在，且三格住在 `.roster` 网格里', '批次 AC'],
   ['DASH-08', 'client-dashboard', F.dash02, '缺 / 空 / 坏三态（定形 R5 + 对照表 §5「缺 ≠ 空」）：① **空但读得到** ⇒ 三格都是显式 `0`（`open 0` / `open 0` / `缺 0 段`，`state=done`，文字里真的有那个 0），第一行照印 headline，空态行照印；② **少一份源**（route / bug / local / update 各一次）⇒ 只有它那一格塌成 `null`/`未知`（读不到**不许**写 0），其余格与本行**一格不动**，**不抛异常**；route 读不到时**不许**印"本阶段没有当前任务"（那是"我们知道没有"，不是"不知道"）；update 不在是正常态 ⇒ badge=null 且**不报警**；③ **四份全不在** ⇒ 不崩、五格全 `未知`、报警点名 route/bug/local；④ **半截 JSON** 与"不在"必须两个诊断（`DASH-SOURCE-UNREADABLE:*` vs `DASH-SOURCE-MISSING:*`）；报警码全过契约 §4 的闭集', '批次 AC'],
   ['DASH-09', 'client-dashboard', F.dash01, '**这一版不读 `now.md`**（定形 §八.3 的决定；对照表 F9 的理由）：① 字段表里没有一条指向 `now.md`（针自证：喂一条假路径必须命中）；② 夹具里放一份带唯一标记的 `now.md`，看板数据（视图 + 读数）里**不许**出现它的正文；③ 视图里没有"下一步"这一类键（`next` / `nextStep` / `todo` / `nowMd`）—— 那是 `now.md` 唯一会带进来的东西。将来要加，先按 §八.3 给 `now.md` 加一行可解析的锚（另一条改动），不许从散文里捞', '批次 AC'],
+  // ── 第 2 关重开（2026-11-04 第 4 关评审 🟠 打回·修：三条都是判据集上的洞）────────────────
+  ['DASH-10', 'client-dashboard', F.dash04, '**面板定位**（评审 F1；官方 `client.js` L230-236 / L327-331）：`useAnchoredPosition({open, anchorRef, panelRef, gap:5, margin:16})` 必须被调用、结果有变量接住；面板 JSX 上必须有 `style: <那个变量> ?? {visibility:"hidden",left:0,top:0}`；两个 ref 必须是 `useRef(...)` 声明的真 ref，锚点 ref 真的挂在 `.trigger` 上、面板 ref 真的挂在 `.panel` 上。**判存在与接线，不判像素**（开在哪、圆角阴影归 GUI 清单第 2/8 条）。尺子先量官方（必须干净），再从官方源码切四把刀（删钩子/删 style/删兜底/锚点不挂），每把只翻它自己那一面 —— 今天红在 `DASH-POS-HOOK-MISSING` + `DASH-POS-NO-STYLE`', '批次 AC'],
+  ['DASH-11', 'client-dashboard', F.dash05, '**Node 半边端到端**（评审 F2：端到端零证据）：真子进程 + 假 ctx 跑 `lib/index.js` 的 `apply()`，判四件事 —— ① **原子写**：`<file>.tmp` 先写、再 `rename` 到活路径；真在写盘中间崩一次（子进程里把 `writeFileSync` 换成"写半份再抛"，不改盘上源码），活文件必须**逐字不变**（半个字节都不许进活路径），崩过之后下一拍能自己恢复；② **契约 §3 形状**：快照恰好八个键（schema/day/header/badge/main/emptyNotice/debts/alerts），三格次序固定；③ **第二次跑覆盖**（换掉 headline 再跑，快照内容跟过去）；④ **渲染层只读这一份**：`SNAPSHOT_PATH` 与 `DASHBOARD_SNAPSHOT_REL` 逐字相同、走 `workspaceFiles.read`、不碰四份账本、不自己算。两把刀只改内存里的源码：直接写活文件 ⇒ `DASH11-NONATOMIC-WRITE`；半份活文件 ⇒ `DASH11-HALF-LIVE-FILE`。⚠️ **机制上今天就是绿的**（原子写早就在），这一格补的是证据洞、不是首跑红 —— 读数里照实写', '批次 AC'],
+  ['DASH-12', 'client-dashboard', F.dash05, '**日身份**（评审 F3：陈旧读数当当下）：`view.day` 必须 = **今天这个周期日**（`lib/route.mjs::dayKeyOf`，本地 04:00 切点，与全系统同一把尺子），且画面上**看得到 day**；三个现场 —— ① 注入时钟 12:00、盘上**只有前一天**的相位文件 ⇒ `day` = 今天、`badge` = `null`（契约 §3.4：当天文件不在是正常态，不报警）、回执读**今天**的 `local`；② 01:30（切点下方）⇒ `day` = 前一天（用日历日就会是本日）；③ 当天文件在 ⇒ `badge` = 当天的相位词。源码那一腿：日键必须从 `dayKeyOf(...)` 来（`index.js` 或 `latestUpdateDay` 的函数体），"按文件名排序取最后一天"那把刀当场红（`DASH-DAY-NOT-CYCLE-KEY`）；"画得到 day"另有合成正负样本自证。今天红在 `DASH-DAY-NOT-TODAY` + `DASH-BADGE-STALE` + `DASH-RECEIPT-DAY` + `DASH-DAY-NOT-SHOWN` + `DASH-DAY-NOT-CYCLE-KEY`', '批次 AC'],
+  ['DASH-13', 'client-dashboard', F.dash04, '**E29 展开钮**（对照表 L148 标「抄（条件）」、在"抄 25"里；评审 §2.1 点名的唯一少画项）：① 说明段带 `ref` 且代码真读 `scrollHeight` / `clientHeight`（溢出测量）；② `clampedDescription` 的 CSS 是 2 行截断；③ 一个 `expandToggle` 按钮，带 `aria-expanded` + `onClick` + **被"只在溢出时出现"的条件守着**；④ 词典里有展开/收起那一对文案键、按钮 children 用 `t(...)` 切。**判存在与接线，不判像素**（按钮位置、展开后高度归 GUI 清单第 4 条）。判据先在官方源码上量（必须干净），再切五把刀（删测量/删类名/删 aria/删条件/删文案键），每把只翻它自己那一面 —— 今天红在 `E29-MEASURE-MISSING` + `E29-TOGGLE-MISSING` + `E29-TEXT-KEYS`（截断那一条今天是绿的）', '批次 AC'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1115,9 +1138,10 @@ export const GROUP_COUNTS = {
    *  一格一张票：副本自足 / 容量来源格 / 第三级正样本 / 桥的两张表 / 匹配描述 / 翻面读数。
    *  契约见 `.team/test/2026-11-02/CONTRACT-REVIEW-20261102.md`。 */
   'review-20261102': 6,
-  /** 批次 AC · 客户端看板（`DASH-01`…`DASH-09`：字段映射/视图三格/渲染三格）——
-   *  契约见 `.team/test/2026-11-04/技术契约-客户端看板.md`（定形 §六.1/§六.2/§八）。 */
-  'client-dashboard': 9,
+  /** 批次 AC · 客户端看板（`DASH-01`…`DASH-13`：字段映射/视图三格/渲染三格 +
+   *  第 2 关重开加的四格 —— 定位 / 端到端 / 日身份 / E29 展开钮）——
+   *  契约见 `.team/test/2026-11-04/技术契约-客户端看板.md`（定形 §六.1/§六.2/§八；§11 是重开那一批）。 */
+  'client-dashboard': 13,
 }
 
 /**
