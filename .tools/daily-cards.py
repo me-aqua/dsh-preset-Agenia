@@ -774,10 +774,24 @@ def review_dirs(ws, day):
 def review_carriers(ws, day):
     """`carrier_missing` 的读面：两份评审报告在不在（`review.carrier`）。
 
-    命名口径与 `check-notes.mjs` 同一套（2026-11-04 定）：**文件名以 `技术评审` / `会话评审`
-    开头、以 `.md` 结尾**就算 —— 同一天可以有多份（`会话评审.md` / `会话评审-日终.md`），
-    只认一个死名字会把"日志里明明交了"读成"没交"。
+    🔴 **先认登记过的那份**（2026-11-04 再修）：`local-mark` 已经把产物锚在
+    `nodes.<field>.report_path` 上 —— **那份锚才是"这一场交了没有"的真源**。
+    只按"今天抽屉里有没有那个名字"去扫，会把**昨晚开工时评昨天、产物落在昨天抽屉**的
+    正常情形读成"不在"（2026-11-04 实测：会话评审交在 `retro/2026-11-03/会话评审-日终.md`，
+    卡上印"会话评审.md=不在"）。
+    ⇒ 顺序：① 登记锚在盘上 ⇒ present；② 否则退回抽屉扫描（名字口径与 `check-notes.mjs`
+    同一套：以 `技术评审` / `会话评审` 开头、`.md` 结尾，同一天可以有多份）。
     """
+    anchor = {}
+    node_state = local_state_of(ws, day)
+    for field in ("technical", "conversation"):
+        node = node_of_local_state(node_state, field)
+        rel = node.get("report_path") if isinstance(node, dict) else None
+        if isinstance(rel, str) and rel.strip():
+            anchor[field] = all(os.path.isfile(p) for p in _anchor_candidates(ws, rel.strip()))
+        else:
+            anchor[field] = False
+
     names = set()
     for base in review_dirs(ws, day):
         try:
@@ -786,9 +800,29 @@ def review_carriers(ws, day):
             continue
 
     def has(prefix):
+        field = "technical" if prefix == "技术评审" else "conversation"
+        if anchor.get(field):
+            return True
         return any(n.startswith(prefix) for n in names)
 
     return {"technical": has("技术评审"), "conversation": has("会话评审")}
+
+
+def _anchor_candidates(ws, rel):
+    """登记锚的写法是 `.team/...`（相对工作区）—— 换算成盘上路径；写别的形状就按相对 `.team` 试。
+
+    ⚠️ 去前导 `./` 要用**前缀**判断，别用 `lstrip("./")`：那是**字符集**剥离，会把 `.team/…`
+    的 `.` 也吃掉（=`team/…`），于是两个候选都拼错、去读一个不存在的路径 —— 而它的读数是
+    "不在"，和"真的没交"长得一模一样（2026-11-04 实测栽了这一下）。
+    """
+    rel = rel.replace("\\", "/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    if rel.startswith("/"):
+        rel = rel[1:]
+    if rel.startswith(".team/"):
+        return [os.path.join(ws, *rel.split("/"))]
+    return [os.path.join(ws, ".team", *rel.split("/")), os.path.join(ws, *rel.split("/"))]
 
 
 def legacy_remaining(ws):
