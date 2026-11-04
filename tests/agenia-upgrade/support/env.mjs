@@ -294,7 +294,7 @@ export const FROZEN = {
      * 两件保护（无命令行 / 写只落 `.team/`）**只剩 `review` 一个岗位有**：复盘岗已撤
      * （`team/retro.md` 不存在、`team-retro` 那一行关着）；`memory-review` 2026-10-16 上午移出 ·
      * `conversation-review` 2026-10-16 同日下午移出（为什么与代价见上面那条 🔴）。
-     * 来历：`officeBound: 1` 是**计数**（同族 `capabilityRows: 42` / `teamFiles: 9` 都是计数），
+     * 来历：`officeBound: 1` 是**计数**（同族 `capabilityRows: 43` / `teamFiles: 9` 都是计数），
      * 而 STAT-02 / REV-02 拿它当名单去 `for...of` ⇒ 实现做对的那一刻当场 `TypeError: not iterable`，
      * 把整条被测面挡在后面（证据：实现岗 `dev/2026-10-14/log.md` §11）。
      */

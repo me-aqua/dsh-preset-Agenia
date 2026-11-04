@@ -468,7 +468,13 @@ const DAY_KEY = {
   cutBelow: '2026-11-04T01:30:00+08:00',
 }
 
-/** 画面上"看得到 day"：`view.day` 必须出现在某个 `jsx(...)` 调用的表达式里（不是只在变量里读一下）。 */
+/**
+ * 画面上"看得到 day"：`view.day` 必须出现在某个 `jsx(...)` 调用的表达式里（不是只在变量里读一下）。
+ *
+ * ⚠️ 只判**存在**，不判位置、也不认类名：它不看 `notice` / `meta` / `footer` 任何一个类名 token。
+ *    "日期在面板顶部还是底部""内容第一行必须是 headline 逐字"是 GUI 清单 #3/#4 的格子
+ *    （R2-1 就是日期抢在第一个 `h3` 上面的那一种）；本格只保证"这堆数字是哪一天"在画面上有载体。
+ */
 function dayRenderProblems(source) {
   const code = stripCommentLines(source)
   if (!/view\.day/.test(code)) {

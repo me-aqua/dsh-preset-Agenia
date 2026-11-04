@@ -604,7 +604,7 @@ export const BATCH_AB = ['MJUDGE-01']
  * 官方取不到时记 `HOLD` 并点名 `tried`，不记绿。
  * ⚠️ 它们**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G…AB 的规矩。
  */
-export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 'DASH-06', 'DASH-07', 'DASH-08', 'DASH-09', 'DASH-10', 'DASH-11', 'DASH-12', 'DASH-13']
+export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 'DASH-06', 'DASH-07', 'DASH-08', 'DASH-09', 'DASH-10', 'DASH-11', 'DASH-12', 'DASH-13', 'DASH-14']
 
 /**
  * 已落笔的二十四批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
@@ -1027,6 +1027,7 @@ const ROWS = [
   ['DASH-11', 'client-dashboard', F.dash05, '**Node 半边端到端**（评审 F2：端到端零证据）：真子进程 + 假 ctx 跑 `lib/index.js` 的 `apply()`，判四件事 —— ① **原子写**：`<file>.tmp` 先写、再 `rename` 到活路径；真在写盘中间崩一次（子进程里把 `writeFileSync` 换成"写半份再抛"，不改盘上源码），活文件必须**逐字不变**（半个字节都不许进活路径），崩过之后下一拍能自己恢复；② **契约 §3 形状**：快照恰好八个键（schema/day/header/badge/main/emptyNotice/debts/alerts），三格次序固定；③ **第二次跑覆盖**（换掉 headline 再跑，快照内容跟过去）；④ **渲染层只读这一份**：`SNAPSHOT_PATH` 与 `DASHBOARD_SNAPSHOT_REL` 逐字相同、走 `workspaceFiles.read`、不碰四份账本、不自己算。两把刀只改内存里的源码：直接写活文件 ⇒ `DASH11-NONATOMIC-WRITE`；半份活文件 ⇒ `DASH11-HALF-LIVE-FILE`。⚠️ **机制上今天就是绿的**（原子写早就在），这一格补的是证据洞、不是首跑红 —— 读数里照实写', '批次 AC'],
   ['DASH-12', 'client-dashboard', F.dash05, '**日身份**（评审 F3：陈旧读数当当下）：`view.day` 必须 = **今天这个周期日**（`lib/route.mjs::dayKeyOf`，本地 04:00 切点，与全系统同一把尺子），且画面上**看得到 day**；三个现场 —— ① 注入时钟 12:00、盘上**只有前一天**的相位文件 ⇒ `day` = 今天、`badge` = `null`（契约 §3.4：当天文件不在是正常态，不报警）、回执读**今天**的 `local`；② 01:30（切点下方）⇒ `day` = 前一天（用日历日就会是本日）；③ 当天文件在 ⇒ `badge` = 当天的相位词。源码那一腿：日键必须从 `dayKeyOf(...)` 来（`index.js` 或 `latestUpdateDay` 的函数体），"按文件名排序取最后一天"那把刀当场红（`DASH-DAY-NOT-CYCLE-KEY`）；"画得到 day"另有合成正负样本自证。今天红在 `DASH-DAY-NOT-TODAY` + `DASH-BADGE-STALE` + `DASH-RECEIPT-DAY` + `DASH-DAY-NOT-SHOWN` + `DASH-DAY-NOT-CYCLE-KEY`', '批次 AC'],
   ['DASH-13', 'client-dashboard', F.dash04, '**E29 展开钮**（对照表 L148 标「抄（条件）」、在"抄 25"里；评审 §2.1 点名的唯一少画项）：① 说明段带 `ref` 且代码真读 `scrollHeight` / `clientHeight`（溢出测量）；② `clampedDescription` 的 CSS 是 2 行截断；③ 一个 `expandToggle` 按钮，带 `aria-expanded` + `onClick` + **被"只在溢出时出现"的条件守着**；④ 词典里有展开/收起那一对文案键、按钮 children 用 `t(...)` 切。**判存在与接线，不判像素**（按钮位置、展开后高度归 GUI 清单第 4 条）。判据先在官方源码上量（必须干净），再切五把刀（删测量/删类名/删 aria/删条件/删文案键），每把只翻它自己那一面 —— 今天红在 `E29-MEASURE-MISSING` + `E29-TOGGLE-MISSING` + `E29-TEXT-KEYS`（截断那一条今天是绿的）', '批次 AC'],
+  ['DASH-14', 'client-dashboard', F.dash04, '**读数日的位置**（第 4 关复审 `R2-1`：日期抢了第一行）：**只判源码顺序与区域，不判像素**（看起来在底部 / 字号 / 灰条像不像归 GUI #3/#4/#6）—— ① 面板里**第一个 `h3`（headline 行）必须在 `view.day` 表达式之前**，日期抢在它前面 ⇒ `DASH-DATE-BEFORE-HEADLINE`（R2-1 的形态）；② `view.day` 必须落在**欠账网格（`.roster`）结束之后**（页脚）；还在 headline 之后、网格之前（E06/notice 那一带）⇒ `DASH-DATE-NOT-IN-FOOTER`。**不认类名**：页脚沿用 `notice` 的样式也算过。合成面板三格自证（正确形状干净 / 刀 A 日期挪回 headline 前 / 刀 B 日期塞回 notice 带），两把刀各只翻自己那一码（`DASH-KNIFE-VECTOR`）；冻结副本上今天红在 `DASH-DATE-BEFORE-HEADLINE`', '批次 AC'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1138,10 +1139,10 @@ export const GROUP_COUNTS = {
    *  一格一张票：副本自足 / 容量来源格 / 第三级正样本 / 桥的两张表 / 匹配描述 / 翻面读数。
    *  契约见 `.team/test/2026-11-02/CONTRACT-REVIEW-20261102.md`。 */
   'review-20261102': 6,
-  /** 批次 AC · 客户端看板（`DASH-01`…`DASH-13`：字段映射/视图三格/渲染三格 +
+  /** 批次 AC · 客户端看板（`DASH-01`…`DASH-14`：字段映射/视图三格/渲染三格 +
    *  第 2 关重开加的四格 —— 定位 / 端到端 / 日身份 / E29 展开钮）——
    *  契约见 `.team/test/2026-11-04/技术契约-客户端看板.md`（定形 §六.1/§六.2/§八；§11 是重开那一批）。 */
-  'client-dashboard': 13,
+  'client-dashboard': 14,
 }
 
 /**

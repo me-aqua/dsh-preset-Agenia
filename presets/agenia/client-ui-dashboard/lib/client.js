@@ -135,7 +135,9 @@ window.__ModuleLoader__.load({
 		 */
 		const VIEW_SCHEMA = 1;
 		/**
-		 * 看板面板：第一行 = 目标 · 当前大阶段（`view.header.text`）、主行一行、欠账三格。
+		 * 看板面板，自上而下：第一行 = 目标 · 当前大阶段（`view.header.text`）· 主行一行 · 欠账三格 ·
+		 * **最下面一行 `读数日 <day>`**。日期**不许**跑到第一行上面去 —— 定形 §六.3 / GUI 清单 #3
+		 * 要求"面板里最上面那一行字"是 headline（第 4 关 R2-1 就是这两行抢位置）。
 		 *
 		 * 🔴 这里**不读盘、不算账**：视图由 Node 侧算好写成一份快照（`dashboard.mjs`），
 		 * 本组件只经 `ctx.remote.workspaceFiles.read` 把那一份快照读进来画。
@@ -213,14 +215,12 @@ window.__ModuleLoader__.load({
 					"data-dashboard-panel": true,
 					children: [(0, react_jsx_runtime.jsxs)("div", {
 						className: Dashboard_module_css_default.body,
-						children: [view === null && (0, react_jsx_runtime.jsxs)("div", {
+						children: [view === null && failure === null && (0, react_jsx_runtime.jsxs)("div", {
+							// 官方 E06 那一格（`div.notice[role=status]`）只装**读盘状态**：只有"读的中途"这一行；
+							// 读完了（成功或失败）它就什么也不画 —— 空分支 = 没有提示。日期不在这一格。
 							className: Dashboard_module_css_default.notice,
 							role: "status",
 							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }), t("loading")]
-						}), readable && (0, react_jsx_runtime.jsxs)("div", {
-							className: Dashboard_module_css_default.notice,
-							role: "status",
-							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }), `读数日 ${view.day ?? "未知"}`]
 						}), failure !== null && (0, react_jsx_runtime.jsxs)("div", {
 							className: Dashboard_module_css_default.error,
 							role: "alert",
@@ -249,6 +249,14 @@ window.__ModuleLoader__.load({
 								className: Dashboard_module_css_default.roster,
 								children: view.debts.map((debt) => (0, react_jsx_runtime.jsx)(DebtCell, { debt }, debt.key))
 							})]
+						}),
+						// 读数日 <day>：面板**最下面**那一行（欠账网格之下）。它是"这堆数字是哪一天"的唯一载体，
+						// 所以必须看得见；但**不许**跑到第一行上面 —— 那一行是 headline（定形 §六.3 / GUI 清单 #3，
+						// 第 4 关 R2-1）。类名沿用官方 E06 那一格（`notice`：tertiary / 12px = 小、灰），位置在末尾。
+						readable && (0, react_jsx_runtime.jsxs)("div", {
+							className: Dashboard_module_css_default.notice,
+							role: "status",
+							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }), `读数日 ${view.day ?? "未知"}`]
 						})]
 					})]
 				}), document.body)]

@@ -1,29 +1,38 @@
 /**
- * `DASH-10` / `DASH-13` —— 客户端看板**渲染层接线**的两格（第 2 关重开，2026-11-04）。
+ * `DASH-10` / `DASH-13` / `DASH-14` —— 客户端看板**渲染层接线**的三格（第 2 关重开，2026-11-04）。
  *
- * 为什么会有这两格（第 4 关独立评审 `🟠 打回·修`，`.team/review/2026-11-04/评审报告.md`）：
+ * 为什么会有这几格（第 4 关独立评审 `🟠 打回·修`，`.team/review/2026-11-04/评审报告.md`）：
  *   · 评审 `F1`：面板**没有定位代码** —— 我们只有 `position:fixed`，没有坐标、也没有 `style`；
  *     官方那一块是 `useAnchoredPosition({open, anchorRef, panelRef, gap:5, margin:16})`
  *     再把结果塞进 `style: position ?? {visibility:"hidden",left:0,top:0}`
  *     （官方 `client.js` L230-236 / L327-331）。九格红测试里**没有一条**压着它。
  *   · 评审 §2.1 的"唯一少画的抄项"：`E29 button.expandToggle`（元素对照表 L148 标「抄（条件）」，
  *     且在"抄 25"那一栏里）—— 我们画了 2 行截断的 `p`，没有溢出测量、没有展开钮。
+ *   · 第 4 关复审 `R2-1`：面板顶上一行成了 `读数日 <day>`，headline 掉到第二行 —— "第一行是目标"
+ *     是老板自己的句子，机器**本来能抓**（源码顺序）却没抓。`DASH-14` 补这一格。
  *
- * 🔴 **这两格的"红"量在冻结评审副本上**（提交 `6dee18d` 的只读副本 —— 评审看到的那一版）：
+ * 🔴 **`DASH-10/13` 的"红"量在冻结评审副本上**（提交 `6dee18d` 的只读副本 —— 评审看到的那一版）：
  *   · `DASH-10` 红在 `DASH-POS-HOOK-MISSING` + `DASH-POS-NO-STYLE`；
  *   · `DASH-13` 红在 `E29-MEASURE-MISSING` + `E29-TOGGLE-MISSING` + `E29-TEXT-KEYS`
  *     （截断那一条**是绿的**：`.DASHB1_clampedDescription` 已经有 `-webkit-line-clamp:2`，
  *      读数里照实分开记 —— 一条用例里绿的那几条也是读数，别当成"这格绿的"）。
- * ⚠️ 写这两格的时候 dev 正在并发改 `presets/**`（22:19–22:20 把定位 / E29 补上了）⇒ 现役树上的读数
- *    可能已经是绿的。**红读数只能绑在一棵不变的树上**（冻结副本），现役读数只当读数（见契约 §11.4）。
+ * ⚠️ 写这几格的时候 dev 正在并发改 `presets/**`（22:19–22:20 补定位 / E29；22:56 把读数日挪到页脚）
+ *    ⇒ 现役树上的读数会变绿。**红读数只能绑在一棵不变的树上**（冻结副本），现役读数只当读数（见契约 §11.4）。
  *
- * 🔴 **像素不在这里判**：这一格判的是**存在与接线**（钩子有没有、接到哪个 ref、兜底在不在、
- * 按钮与测量在不在）。"面板开在哪、圆角阴影对不对、展开后长什么样"是
- * `.team/test/2026-11-04/GUI清单-客户端看板.md` 第 2/4/8 条那一格（**人点一次**）的事。
+ * 🔴 **`DASH-14` 只判顺序与区域，不判像素**：第一个 `h3`（headline 行）必须在 `view.day` 表达式**之前**；
+ *    日期表达式必须落在**欠账网格（`.roster`）结束之后**。它不看类名、不看宽度/字号/上下间距 ——
+ *    "看起来在底部、字号对不对、跟官方的灰条像不像"归 GUI 清单 #3/#4/#6（人点一次）。
+ *    两种缺陷各有自己的码：日期抢在 headline 前面 ⇒ `DASH-DATE-BEFORE-HEADLINE`；
+ *    日期还在 headline 之后但没走到欠账网格之后（E06/notice 那一带）⇒ `DASH-DATE-NOT-IN-FOOTER`。
+ *
+ * 🔴 **像素不在这里判**：`DASH-10/13` 判的是**存在与接线**（钩子有没有、接到哪个 ref、兜底在不在、
+ * 按钮与测量在不在），`DASH-14` 判的是**顺序与区域**。"面板开在哪、圆角阴影对不对、展开后长什么样、
+ * 读数日看起来是不是在底部"是 `.team/test/2026-11-04/GUI清单-客户端看板.md` 第 2/4/8 条
+ * （`DASH-14` 那一条对应第 3/4/6 条）那一格（**人点一次**）的事。
  *
  * 尺子：官方像素层（设计抽屉的只读副本 → asar 解包兜底）先被同一套判据量一遍 ——
  * 它必须**干净**（证明判据认得出"官方那套接线"），再从官方源码上切刀：`DASH-10` 四把、`DASH-13` 五把，
- * 每把只翻它自己那一面（向量对不上报 `DASH-KNIFE-VECTOR`）。
+ * 每把只翻它自己那一面（向量对不上报 `DASH-KNIFE-VECTOR`）；`DASH-14` 的两把刀在合成面板上切。
  */
 import { before, test } from 'node:test'
 import { readFileSync } from 'node:fs'
@@ -402,6 +411,153 @@ test('DASH-13 E29 展开钮：溢出测量 + expandToggle 按钮 + 只在溢出�
     }
     if (source !== null) {
       const ours = expandToggleProblems(source)
+      rec.readings.ours = ours
+      for (const p of ours) problems.push(p)
+    }
+
+    caseFail(problems)
+  })
+})
+
+// ── `DASH-14`：日期与 headline 的顺序 / 区域 ─────────────────────────────────
+const ORDER = {
+  before: 'DASH-DATE-BEFORE-HEADLINE',
+  footer: 'DASH-DATE-NOT-IN-FOOTER',
+  shape: 'DASH-DATE-PANEL-SHAPE',
+}
+
+/** `jsx(...)` / `jsxs)(` 那个调用的**结束偏移**（配对括号之后）；找不到 ⇒ -1。 */
+function callEndAt(source, callIndex) {
+  const open = source.indexOf('(', callIndex)
+  if (open < 0) return -1
+  const close = matchBracket(source, open)
+  return close < 0 ? -1 : close + 1
+}
+
+/** 面板里**第一个 `h3`**（headline 行）的区间；找不到 ⇒ null。 */
+function firstH3Range(source) {
+  const m = /(?:jsx|jsxs)\)?\(\s*["']h3["']/.exec(source)
+  if (m === null) return null
+  const end = callEndAt(source, m.index)
+  return end < 0 ? null : { start: m.index, end }
+}
+
+/** 画出来的 `view.day` 在源码里的偏移（必须前面 400 字内有一个 `jsx(` 调用）；找不到 ⇒ null。 */
+function renderedDayIndex(source) {
+  const re = /view\.day/g
+  let m
+  while ((m = re.exec(source)) !== null) {
+    const before = source.slice(Math.max(0, m.index - 400), m.index)
+    if (/(?:jsx|jsxs)\)?\([\s\S]{0,400}$/.test(before)) return m.index
+  }
+  return null
+}
+
+/**
+ * `DASH-14` 的判据（纯函数）：**只判顺序与区域**。
+ *
+ * 三条，互斥（一条命中就不再往下判，读数才分得清是哪一种）：
+ *   · 读数日没画在面板里 ⇒ `DASH-DATE-NOT-IN-FOOTER`；
+ *   · 读数日在第一个 `h3`（headline 行）**结束之前** ⇒ `DASH-DATE-BEFORE-HEADLINE`（R2-1 的形态）；
+ *   · 读数日在 headline 之后、但还没到欠账网格（`.roster`）结束 ⇒ `DASH-DATE-NOT-IN-FOOTER`
+ *     （它还在 E06/notice 那一带，不是页脚）。
+ *
+ * 不看类名（页脚沿用 `notice` 的样式也算过）、不看像素 —— 那归 GUI 清单 #3/#4/#6。
+ * @param {string} source
+ * @returns {Array<{code:string,message:string}>}
+ */
+function dateOrderProblems(source) {
+  const code = stripCommentLines(source)
+  const problems = []
+  const panel = elementCallByClassToken(code, 'panel')
+  if (panel === null) return [problem(ORDER.shape, '找不到 className 用到 `.panel` 的元素调用 —— 面板的 JSX 范围判不了')]
+  const panelEnd = callEndAt(code, panel.callIndex)
+  const h3 = firstH3Range(code)
+  const roster = elementCallByClassToken(code, 'roster')
+  const dateIndex = renderedDayIndex(code)
+  if (panelEnd < 0) problems.push(problem(ORDER.shape, '面板元素没有配对完整的调用括号'))
+  if (h3 === null) problems.push(problem(ORDER.shape, '找不到第一个 `h3`（headline 那一行）—— 顺序判不了'))
+  if (roster === null) problems.push(problem(ORDER.shape, '找不到 className 用到 `.roster` 的元素（欠账网格）—— "页脚区域"判不了'))
+  if (dateIndex === null) problems.push(problem(ORDER.shape, '找不到画出来的 `view.day` 表达式（"有没有画"归 DASH-12）'))
+  if (problems.length > 0) return problems
+
+  const rosterEnd = callEndAt(code, roster.callIndex)
+  if (h3.start < panel.callIndex || h3.end > panelEnd) problems.push(problem(ORDER.shape, '第一个 `h3` 不在面板的 JSX 范围里'))
+  if (roster.callIndex < panel.callIndex || rosterEnd > panelEnd) problems.push(problem(ORDER.shape, '`.roster` 不在面板的 JSX 范围里'))
+  if (rosterEnd < 0) problems.push(problem(ORDER.shape, '`.roster` 的调用没有配对完整的括号'))
+  if (problems.length > 0) return problems
+
+  if (dateIndex < panel.callIndex || dateIndex > panelEnd) {
+    problems.push(problem(ORDER.footer, '读数日没有画在面板里 —— 它不属于这块面板的任何区域，更不是页脚'))
+  } else if (dateIndex < h3.end) {
+    problems.push(problem(ORDER.before, '读数日出现在第一个 h3（headline 行）**结束之前** —— 读者看到的第一行成了日期，不是「目标 · 当前大阶段」（R2-1 的形态；定形 §六.3 / GUI 清单 #3）'))
+  } else if (dateIndex < rosterEnd) {
+    problems.push(problem(ORDER.footer, `读数日在 headline 之后、但还在欠账网格结束（偏移 ${rosterEnd}）之前（偏移 ${dateIndex}）—— 它不是页脚，读者在面板上半截就会看到日期`))
+  }
+  return problems
+}
+
+/**
+ * 合成面板（自证 + 两把刀）：同一份面板只改**读数日放哪**。
+ *   · `footer`：headline → 欠账网格 → 读数日（正确形状）；
+ *   · `top`：读数日在 headline 之前（刀 A）；
+ *   · `notice`：读数日在 headline 之后、欠账网格之前（刀 B，E06/notice 那一带）。
+ */
+function panelFixture(place) {
+  const dateLine = 'jsx("div", { className: css.footer, children: `读数日 ${view.day ?? "未知"}` })'
+  const noticeLine = 'jsx("div", { className: css.notice, children: `读数日 ${view.day ?? "未知"}` })'
+  const headline = 'jsx("h3", { children: view.header.text })'
+  const grid = 'jsxs("div", { className: css.roster, children: view.debts.map((debt) => jsx("span", { children: debt.text })) })'
+  const children = place === 'top'
+    ? [dateLine, headline, grid]
+    : place === 'notice'
+      ? [headline, noticeLine, grid]
+      : [headline, grid, dateLine]
+  return `jsxs("div", { className: css.panel, children: [${children.join(', ')}] })`
+}
+
+test('DASH-14 读数日的位置：headline 必须在前、日期必须在欠账网格之后（顺序/区域，像素归 GUI）', async () => {
+  await runCase('DASH-14', async (rec) => {
+    noteSutOverride(rec)
+    const problems = []
+
+    // ① 合成样本：正确形状必须干净；两把刀各只翻自己那一码
+    const control = {
+      footer: dateOrderProblems(panelFixture('footer')).map((p) => p.code),
+      top: dateOrderProblems(panelFixture('top')).map((p) => p.code),
+      notice: dateOrderProblems(panelFixture('notice')).map((p) => p.code),
+    }
+    rec.readings.control = control
+    if (control.footer.length !== 0) {
+      problems.push(problem('DASH-RULER-BROKEN', `合成的"正确形状"（headline → 欠账网格 → 读数日）被判出 ${JSON.stringify(control.footer)} —— 判据连正确形状都过不了`))
+    }
+    if (JSON.stringify(control.top) !== JSON.stringify([ORDER.before])) {
+      problems.push(problem('DASH-KNIFE-VECTOR', `刀 A（日期挪回 headline 之前）翻出来的面是 ${JSON.stringify(control.top)}，应当只有 ${JSON.stringify([ORDER.before])}`))
+    }
+    if (JSON.stringify(control.notice) !== JSON.stringify([ORDER.footer])) {
+      problems.push(problem('DASH-KNIFE-VECTOR', `刀 B（日期塞回 E06/notice 那一带）翻出来的面是 ${JSON.stringify(control.notice)}，应当只有 ${JSON.stringify([ORDER.footer])}`))
+    }
+
+    // ② 我们这一份：位置读数 + 判据
+    let source = null
+    try {
+      source = readFileSync(DASH_CLIENT, 'utf8')
+    } catch (err) {
+      problems.push(problem('DASH-CLIENT-MISSING', `渲染层读不出来：${DASH_CLIENT}（${String(err?.message ?? err)}）`))
+    }
+    if (source !== null) {
+      const code = stripCommentLines(source)
+      const panelForReading = elementCallByClassToken(code, 'panel')
+      const h3ForReading = firstH3Range(code)
+      const rosterForReading = elementCallByClassToken(code, 'roster')
+      rec.readings.positions = {
+        panel: panelForReading === null ? null : { start: panelForReading.callIndex, end: callEndAt(code, panelForReading.callIndex) },
+        first_h3: h3ForReading,
+        roster: rosterForReading === null ? null : { start: rosterForReading.callIndex, end: callEndAt(code, rosterForReading.callIndex) },
+        date: renderedDayIndex(code),
+        label_present: /读数日/.test(code),
+      }
+      const ours = dateOrderProblems(source)
       rec.readings.ours = ours
       for (const p of ours) problems.push(p)
     }
