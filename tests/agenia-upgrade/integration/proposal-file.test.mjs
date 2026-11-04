@@ -1122,21 +1122,31 @@ test('PFL-09 冻结契约同步：冻结 ID 一条不少 · 体检指名 · 增�
       push('CHECK-NOTES-MISSING', `体检脚本里一个字都没提 ${TOOL_NAME} —— 「同批更新」没做：这个工具加进去之后，没有任何体检判据盯着它`)
     }
 
-    // ③ 增量常量对账：若加了 cordis 行，EXPECTED_ONLY_AGENIA 必须同批 +1
+    // ③ 增量常量对账：`EXPECTED_ONLY_AGENIA` 必须等于**组合实测的增量**（不是"某个具体行在不在"）。
+    // 🔴 2026-11-04（看板接线行 re-baseline）：原来这里写的是 `newRow === undefined ? 10 : 11` ——
+    //    那是钉在 `tool-proposal-file` 这一行上的 change-detector：**任何别的行**合法加进组合
+    //    （今天的 `agenia-dashboard`），它都会把 11 判成"漂移"，而它守的那条义务其实成立
+    //    （`mig-test-criterion-drift-01`：判据不许钉在会变的东西上）。改成从**同一份组合**推：
+    //    增量 = 组合的 `- id:` 行数 − 出厂能力行数（`FROZEN.oracle.capabilityRows` = 32；
+    //    "standard 有的必须有"由 `STAT-01` 另判 ⇒ 这里只比这个差）。
+    //    今天：43 − 32 = 11 = 常量。加一行而不改常量 ⇒ 当场红；只改常量不加行 ⇒ 也红。
+    //    ⚠️ 仍然读 `.tools/check-notes.mjs`（组长的格子）：它不在树里就 HOLD，不许拿树外那份冒充。
     const yml = readText(YML)
     if (yml === null) push('SUT-SURFACE-MISSING', `读不到 ${YML}`)
     else {
       const newRow = rowBlocks(yml).find((b) => b.id === 'tool-proposal-file')
+      const compRows = parseComposition(yml, 'live-composition').rows.length
       const m = /const EXPECTED_ONLY_AGENIA\s*=\s*(\d+)/.exec(notes)
       const expected = m === null ? null : Number(m[1])
+      const want = compRows - FROZEN.oracle.capabilityRows
       rec.readings.expected_only_agenia = expected
+      rec.readings.only_agenia_from_composition = { composition_rows: compRows, standard_capability_rows: FROZEN.oracle.capabilityRows, delta: want }
       rec.readings.has_proposal_row = newRow !== undefined
       if (expected === null) push('CONST-MISSING', '读不出体检里的 EXPECTED_ONLY_AGENIA 常量')
-      else {
-        const want = newRow === undefined ? 10 : 11
-        if (expected !== want) {
-          push('CONST-DRIFT', `EXPECTED_ONLY_AGENIA 应为 ${want}（${newRow === undefined ? '还没加行 ⇒ 保持 10' : '加了 tool-proposal-file 行 ⇒ 必须 11'}），实得 ${expected}`)
-        }
+      else if (expected !== want) {
+        push('CONST-DRIFT', `EXPECTED_ONLY_AGENIA 应为 ${want}`
+          + `（组合 ${compRows} 行 − 出厂能力行 ${FROZEN.oracle.capabilityRows} = ${want}；公式前提"onlyInStandard 为空"由 STAT-01 判）`
+          + `，实得 ${expected}`)
       }
       // ④ 委派名单的反例：它不是 dsh-tool-subagent 实例 ⇒ 放进 delegationTools 会让体检红
       if (newRow !== undefined) {

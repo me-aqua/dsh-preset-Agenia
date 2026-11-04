@@ -306,7 +306,15 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //      = standard + 1（persona-injector）+ 5（五个固定岗位行）+ 它自己有的 `tool-job-*` 行。
   //    装前 32 + 1 + 5 + 0 = 38 ✅ · 装完 32 + 1 + 5 + 4 = 42 ✅
   //    谁凭空多抄一行、或者抄丢一行 standard 行 ⇒ 两边对不上，当场红。
+  // 🆕 2026-11-04 **加一类（第四类）增量：客户端 UI 行**（`CLIENT_UI_ROWS`）。
+  //    来历：看板面板 `agenia-dashboard` 是**宿主级 UI 插件**（包自己声明 `dsh.client`），它不属于
+  //    persona-injector / team-* / tool-job-* 任何一类；照旧规矩"多出来的每一项都必须写下来"，
+  //    写下来 = 在下面那个常量里点名。43 = 32 + 1 + 5 + 4 + 1。
+  //    ⚠️ 这条只放行**点了名的那几行**；组合里冒出别的不认识的行，仍然红。
   const jobRowIds = agenia.filter((r) => r.startsWith('tool-job-'))
+  // 第四类增量（2026-11-04 加）：宿主级客户端 UI 行 —— **点名**，不是"凡 dsh.client 都放行"。
+  // ⚠️ 它同时被下面 `declared`（"多出来的每一项都写下来了"那条）和 `EXPECTED_ONLY_AGENIA` 用。
+  const CLIENT_UI_ROWS = ['agenia-dashboard']
   if (!oracleThere) {
     pending('composition', 'agenia 能力行总数 = 出厂能力行 + 组合声明的增量（不写死 38 / 42）',
       '**挂起** —— oracle 不在，右边算不出来（上面那条已经红了）')
@@ -314,7 +322,7 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     eq('composition', 'agenia 能力行总数 = 出厂能力行 + 组合声明的增量（不写死 38 / 42）',
       agenia.length,
       idLines(read(ORACLE_FILE)).filter((r) => !PRESET_DECL.test(r)).length + 1
-        + FIXED_ROLES.length + RETIRED_ROLES.length + jobRowIds.length)
+        + FIXED_ROLES.length + RETIRED_ROLES.length + jobRowIds.length + CLIENT_UI_ROWS.length)
   }
   // ⚠️ 期望值含**已撤岗那一行**：`team-retro` 是"关掉不删"，行还在 ⇒ 5 条。
   eq('composition', 'team-* 子行数（含已撤岗但保留的那一行）',
@@ -375,10 +383,10 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     // 多出来的每一项都必须写下来（AGENTS.md §3b）—— 但**不写死项数**（装前 6 / 装后 10）。
     // 期望的增量 = 组合**自己声明**的那几类：persona-injector + 它有的 team-* 行 + 它有的 tool-job-* 行。
     // 这一对断言把"多抄了"与"抄丢了"分开报：多出来的项不属于那几类 ⇒ 红；声明了却没多出来 ⇒ 红。
-    const declared = ['persona-injector', ...agenia.filter((r) => r.startsWith('team-')), ...jobRowIds].sort()
+    const declared = ['persona-injector', ...agenia.filter((r) => r.startsWith('team-')), ...jobRowIds, ...CLIENT_UI_ROWS].sort()
     const extraNotDeclared = onlyAge.filter((r) => !declared.includes(r))
     const declaredMissing = declared.filter((r) => !onlyAge.includes(r))
-    yes('composition', 'onlyInAgenia 里每一项都是"写下来的增量类"（persona-injector / team-* / tool-job-*）',
+    yes('composition', 'onlyInAgenia 里每一项都是"写下来的增量类"（persona-injector / team-* / tool-job-* / 点名的客户端 UI 行）',
       extraNotDeclared.length === 0,
       extraNotDeclared.length === 0
         ? `${onlyAge.length} 项：${onlyAge.join(', ')}`
@@ -489,8 +497,14 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    权威数字原来只在 `AGENTS.md` §3b 一处；那份清空之后，数字**钉在这里** ——
   //    本脚本是**唯一还在读组合**的那个，契约钉在它自己的常量上，比钉在散文里更难撒谎。
   //    来历与全文：记忆条目 `capability-rows-set-vs-standard` · 归档 `.team/_archive/AGENTS.md-20261017/`。
+  // ⚠️ **2026-11-04 现读数：那条旧条目在 v21 已经 `retired`（to: v11），快照里没有"能力行"正文了。**
+  //    ⇒ 这个指针**指向一个已退役的 id**，不是"有正文没读"。要长期留住这条契约，得**新提一条**
+  //    （已提 `proposal-20261104-0031` 与 `-0033`；判决前它只活在本文件的注释和常量里）。
   //    规则照旧：**多出来的每一项都必须写下来** —— 现在"写下来" = 改这个常量（+ 同批改记忆条目）。
-  const EXPECTED_ONLY_AGENIA = 10
+  // 🆕 2026-11-04：10 → 11 —— 多出来的是点名的那一行客户端 UI（`CLIENT_UI_ROWS`，`agenia-dashboard`）。
+  //    ⚠️ 记忆条目 `capability-rows-set-vs-standard` 必须同批跟上；它不是我能写的
+  //    （共享记忆只能走"候选 → 次日判决"）⇒ 已提候选 `proposal-20261104-0031`，在判决前这一处是**已知缺口**。
+  const EXPECTED_ONLY_AGENIA = 11
   if (!oracleThere) {
     pending('composition', '组合实测的增量项数 = 能力契约（本脚本常量）',
       '**挂起** —— oracle 不在 ⇒ 实测项数算不出来（上面那条已经红了）')

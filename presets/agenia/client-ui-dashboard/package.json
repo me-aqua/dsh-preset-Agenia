@@ -1,0 +1,29 @@
+{
+  "name": "@agenia/dsh-client-ui-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agenia 看板：会话头部那块面板（读路线账本 / bug 台账 / 两份回执）。形状照抄官方 client-ui-agent-team。",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "remote.workspaceFiles",
+        "sessions",
+        "uiWorkspace",
+        "slots",
+        "locale"
+      ],
+      "platform": "web"
+    }
+  }
+}

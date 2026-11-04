@@ -567,3 +567,20 @@
 - id: tool-plugin-manager
   name: '@deepseek-ai/dsh-plugin-manager/tools'
   disabled: true
+
+# ── 客户端看板 ──────────────────────────────────────────────────────────────
+#
+# 会话头部那块面板。包有两半：Node 侧每 15 秒把视图算成一份快照
+# （`presets/agenia/.runtime/state/dashboard/view.json`），浏览器侧读那份快照。
+#
+# 它是**宿主级**的一行：`dsh-client-modules` 只把宿主 Loader 条目里声明了 `dsh.client`
+# （`platform: web` + `exports["./client"]`）的包发给浏览器 —— 没有这一行，面板不会被
+# 任何东西装载。这一份组合是唯一来源，所以它住在这里；`cordis.patch.yml` 由
+# `.tools/make-bundle-patch.mjs` 从这里生成，别手写那一份。
+#
+# ⚠️ `root` 写绝对路径：插件拿 `process.cwd()` 兜底，而宿主进程的工作目录不是工作区
+#    （与 `persona-injector` 那两处绝对路径同一个理由）—— 换机器 / 换目录要一起改。
+- id: agenia-dashboard
+  name: 'file:///E:/Harness/presets/agenia/client-ui-dashboard/lib/index.js'
+  config:
+    root: 'E:/Harness'

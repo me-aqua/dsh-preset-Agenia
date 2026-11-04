@@ -569,6 +569,30 @@ export const BATCH_AA = ['RGATE-01']
 export const BATCH_AB = ['MJUDGE-01']
 
 /**
+ * 批次 AC · **客户端看板**（定形 `.team/leader/2026-11-04/定形-客户端看板.md`；第 2 关 2026-11-04）。
+ *
+ * 九格分三组，每组一棵树（`support/dashboard-surface.mjs` 是共用夹具/量具）：
+ *   · **数据层**（`presets/agenia/lib/dashboard.mjs`，第三关才写）——
+ *     `DASH-01` 字段映射表逐条指到活树上那四份真源（定形 §六.1）；
+ *     `DASH-02` 两条负控（指向不存在的键必须红；四种读源状态分得开）；
+ *     `DASH-09` 这一版不读 `now.md`（§八.3 的决定）。
+ *   · **视图模型** —— `DASH-03` 第一行 = `headline` 原样（阶段名/目标名改不动它）；
+ *     `DASH-04` 五关读 `five_gate_state`（把大阶段名改成五关词也冒充不了）；
+ *     `DASH-08` 空集合写 `0`、缺源写 `未知`、不崩不空（定形 R5 + 对照表 §5「缺 ≠ 空」）。
+ *   · **渲染层**（`presets/agenia/client-ui-dashboard/lib/client.js`，官方同款插件形态）——
+ *     `DASH-05` 主行一行（`div.taskTitle` 的形状对官方 `client.js` L169-174）；
+ *     `DASH-06` 没有活组员数（整个渲染层零 `members`；`span.count` 徽标里是相位词）；
+ *     `DASH-07` 欠账三列（§八.1）+ 0 不许被渲染条件藏掉。
+ *
+ * 🔴 九格今天**全红**（两个落点都不在盘上）—— 这是第 2 关的交付形态，不是故障。
+ * 官方像素层是**只读**取件（设计抽屉的只读副本 → `.tools/asar-cli` 解到运行根兜底）；
+ * `DASH-05/06/07` 里"同一个判据先量官方"的那几行是尺子自证（官方那侧必须为假/为真），
+ * 官方取不到时记 `HOLD` 并点名 `tried`，不记绿。
+ * ⚠️ 它**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G…AB 的规矩。
+ */
+export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 'DASH-06', 'DASH-07', 'DASH-08', 'DASH-09']
+
+/**
  * 已落笔的二十四批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -592,7 +616,7 @@ export const BATCH_AB = ['MJUDGE-01']
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -621,7 +645,8 @@ const BATCH_OF = (id) =>
                                                   : BATCH_Z.includes(id) ? 'Z'
                                                     : BATCH_AA.includes(id) ? 'AA'
                                                       : BATCH_AB.includes(id) ? 'AB'
-                                                        : null
+                                                        : BATCH_AC.includes(id) ? 'AC'
+                                                          : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -750,6 +775,12 @@ const F = {
    *  判两份判决岗说明书（`team/` + `job-briefs/`）里那一节 + 四个面，外加**复核岗不许带**那条标记句。
    *  静态文本腿：打**现役** `presets/agenia`（定形 §4 点名的两个落点就在这棵树里，岗位读到的是它）。 */
   mjudge01: 'static/mjudge01-judge-charter.test.mjs',
+  /** 批次 AC · **客户端看板**（`DASH-01`…`DASH-09`，2026-11-04 第 2 关）——
+   *  契约 `.team/test/2026-11-04/技术契约-客户端看板.md`；量具与夹具在 `support/dashboard-surface.mjs`。
+   *  三份文件按"数据层 / 视图模型 / 渲染层"分，各自文件头写着判据与自证。 */
+  dash01: 'integration/dash01-fields.test.mjs',
+  dash02: 'integration/dash02-view.test.mjs',
+  dash03: 'integration/dash03-shape.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -906,7 +937,7 @@ const ROWS = [
   ['PLT-01', 'platform-reading', F.plt, 'F-163 平台版本读数（`support/platform.mjs`：asar 头的 `size` 是**声明值**，`0.2.1-rc.3` 的两份 package.json 的声明都比真身短 2 B；asar 里可解析的 JSON 文本比声明长 1 B）：**合成 asar 造在运行根里**，五条腿 —— A `SHORT-2` 头里的 `size` 比真身短 2 B，两份 package.json 都必须读出**夹具里那个版本**；B `BOM` 同形状 + 文件头 `\\uFEFF`、版本换成**另一个值** ⇒ 证"读的是这一份"（写死常量过不了）；C `TRUNCATED` 短 24 B（> 16 B 读窗）⇒ `ok:false`、版本 `null`，报文点名**文件 / 读了多少字节的窗口 / 最后 40 个字符**且**不许补括号**"修"成 JSON，同一 asar 里没被截断的那一份照读；D `PURE` 容错解析当纯函数再喂两串文本（短 2 B / 截断），与 A/C 是同一条腿的两种入口；E `LIVE` 这一跑真实 asar 上的 `[平台]` 行（读数，不写死版本；没有安装包时记 `asar_present:false`，不把"没装上"当"读对了"）', '批次 R'],
 
   // ── 任务 A · 九份组员并成一份（2026-11-01 第 2 关）：页面两条 / toolName 定角色 / 判决岗调用被拒 ──────
-  ['PRS-01', 'preset-identity', F.presetsTwo, '任务 A 预设面（**打现役** `presets/agenia`，理由见文件头）：① 基线自证（升级前冻的 10 份预设块，逐块 `sha256 = sha256(full_text)`；改了夹具任意一个字符 ⇒ `BASELINE-SELFPROOF`）；② 不变量（今天就对）：九个 `toolName` 一个不多不少、`delegationTools` 九个键、9 条已启用委派行；③ **页面恰好 2 条**预设入口（组长 `agenia` + **恰一份**通用组员），第 3 条 ⇒ `PAGE-COUNT`；④ 九条委派行的 `agentPreset` **同值**且不悬空；⑤ 通用组员预设**不声明** `model` / `tools`（禁字段提取器另有阳性对照：塞了 model+tools 的合成块必须抓得到），组长那一份允许有 leader 级字段；⑥ 旧九份 per-role 预设**全部删除**、组长块与基线**逐字相同**（并员不许顺手改组长那份）', '批次 U'],
+  ['PRS-01', 'preset-identity', F.presetsTwo, '任务 A 预设面（**打现役** `presets/agenia`，理由见文件头）：① 基线自证（升级前冻的 10 份预设块，逐块 `sha256 = sha256(full_text)`；改了夹具任意一个字符 ⇒ `BASELINE-SELFPROOF`）；② 不变量（今天就对）：九个 `toolName` 一个不多不少、`delegationTools` 九个键、9 条已启用委派行；③ **页面恰好 2 条**预设入口（组长 `agenia` + **恰一份**通用组员），第 3 条 ⇒ `PAGE-COUNT`；④ 九条委派行的 `agentPreset` **同值**且不悬空；⑤ 通用组员预设**不声明** `model` / `tools`（禁字段提取器另有阳性对照：塞了 model+tools 的合成块必须抓得到），组长那一份允许有 leader 级字段；⑥ 旧九份 per-role 预设**全部删除**、组长块的值行与基线**逐行相同**（两处**具名**放行：`defaultRole: leader` 一条 + 末尾 `agenia-dashboard` 的 4 条值行，各有四条限制与自己的阳性对照；其余一个字不许动）', '批次 U'],
   ['PRS-02', 'preset-identity', F.presetsTwo, '任务 A 身份判定表（定形 §2.2 九行按行序判；纯函数 `identityVerdict`）：① 角色表 9 对 `toolName↔role↔read/write` 逐条对（正向）+ 不许第十个（反向）；② 九行各喂一次：`row0` 内部 worker（workflow / ralph）⇒ 无角色 + 不窄 + **未受管**；`row0.5` legacy ⇒ 不窄 + 未受管；`row1` 组长+工具名 ⇒ 拒；`row2` 未知工具名（`team_retro` / `proposal_file`）⇒ 拒；`row3` 组长+无工具 ⇒ leader；`row4` 组员+工具 ⇒ 该角色；`row5` 组员+无工具 ⇒ 窄；`row6` 未知预设+有效工具 ⇒ **角色保留 + 窄**；`row7` 未知+无工具 ⇒ 窄；③ `defaultRole` **只报警**：缺 / 合法 / 与预设不符 / 非法串 四种输入下 `row`·`role`·`narrow` **一格不许动**，只有 `warnings` 变（合法的 0 条、其余 ≥1 且点名 `defaultRole`）；④ 窄权限**恰好** row 5/6/7（row 0/0.5 显式例外）+ 闭三元组 `NARROW_PERMISSION` 逐格对；⑤ `isLegacySession` 谓词：快照里 ⇒ true、之后同形 ⇒ false、**快照坏了 ⇒ false**（走向窄 = 安全方向）；⑥ **运行时执行者**（第 4 关第三轮 N-5）：`narrowVerdict` 读的就是 `NARROW_PERMISSION` —— 三个码各一格（`E_GUARD_NARROW_TOOL` / `_WRITE` / `_PROPOSAL`）+ 三个"该放行"的格子（拦过头也是错）+ 门禁五条判定的**次序**（文件序代理）+ 文字刀自证次序提取器会翻面 + 表值刀（白名单里加 `pwsh`，**证据根里的副本**）⇒ 同一个 `narrowVerdict("pwsh")` 从拒变成放行；⑦ **注入哪一侧**（第三轮 N-3）：**只有 row 3 是组长侧** —— row 0（内部 worker）/ 0.5（旧会话）/ 5（手动组员）/ 7（未知预设）都走组员侧（没有 `leader`/`persona`/`style`、没有开工四步、记忆 = 索引 + 常识、**没有** `boss`/`machine`/`project` 全条），工具侧**不跟着动**（0 / 0.5 仍不窄、5 / 7 窄）+ 刀（`isMemberSide = row >= 4` ⇒ row 0 / 0.5 变回组长侧，row 5 是"刀没切宽"的证人）', '批次 U'],
   ['PRS-03', 'preset-identity', F.presetsTwo, '任务 A 判决岗：提案工具**在列表里、调用被拒**（不是"工具集里没有"）：① `ROLE_TABLE` 的 `deny` **只**挂在判决岗那一条、值含 `proposal`（注册与拒同源）；② `proposalVerdict(\u0027memory-judge\u0027,\u0027proposal_file\u0027)` 必须拒（码 `E_GUARD_JUDGE_PROPOSAL` + 非空报文）；③ 反向：其余八个角色调同一个工具**一个都不许被挡**，判决岗调 `read` 也不许被挡（拒的只是提案，不是这个人）；④ 注册面：判决行上方 `# @member-deny proposal_file` 与补丁里任何 `proposalFile: false` 都必须消失（那是"根本不注册"的旧口径）；⑤ `team/memory-judge.md` 要点出提案工具并写着「调用被拒 / 调用会被拒 / 调用时被拒」，且**不许**再写"没有这个工具"这一类', '批次 U'],
   ['PRS-04', 'preset-identity', F.presetsTwo, '任务 A 角色表是 persona / charter / model / tools 的**唯一作者**（定形 §3.3 + §6.1 的 no-regression）：九份升级前人格**逐字**在角色表里（缺一句 ⇒ `PERSONA-MISSING` / `PERSONA-DRIFT`）、**不串味**（别人的那句出现在这个角色身上 ⇒ `PERSONA-CROSSTALK`，逐字比基线）；`charter` 是 team/ 下**自己那一份**真文件；`model` / `tools` 两个键都在（`model` 可为 null = 引擎默认）、`tools` 非空且**不含任何委派工具**（组员结构上不能再招人）；角色表恰 9 条；⑤ **工具的运行时执行者**（第 4 关第三轮 N-5）：`toolCatalogFor`（装配时裁目录）+ `roleToolVerdict`（调用时拒）都从 `ROLE_TABLE[role].tools` 读 —— review 的目录里**没有** `bash`/`pwsh`、dev 有；窄赢过角色目录（`toolCatalogFor("review", true, …)` = 闭三元组）；框架工具（`run_code` / 不认识的）**不误伤**；刀（把 review 那一格换成 base 全套，**证据根里的副本**）⇒ 目录里冒出 `bash`/`pwsh` **且** `roleToolVerdict("review","pwsh")` 变成放行；⑥ **人格真的被注入**：`agenia:role-persona` 紧挨 `agenia:charter:<role>` 之前、正文**逐字**是角色表那一格、全上下文里**只出现一次**；没有角色的会话两条都不吐；刀（换掉表里 `dev` 那一句）⇒ 注入的正文跟着换。`model` 这一版是**纯声明**（没有读者，见 `CONTRACT-A` §12.4）—— 本格不测"改 model 会话真用它"', '批次 U'],
@@ -958,6 +989,21 @@ const ROWS = [
   // 一句话：**库的入库口只收知识，不收 bug 报告。** 判据口径、面与刀逐条写在
   // `static/mjudge01-judge-charter.test.mjs` 的文件头；打的是**现役** `presets/agenia`（定形 §4 逐字点名的两个落点）。
   ['MJUDGE-01', 'static-doc', F.mjudge01, '**提案不许当 bug 报告**（老板 2026-11-03 21:2x 插票；定形 `.team/leader/2026-11-03/定形-提案不许当bug报告.md`）：两份**判决岗**说明书（`team/memory-judge.md` + `job-briefs/memory-judge.md`）里必须有**一节**（标题点名「入库 / 进库」），节内四个面**各要一个段落**同时成立 —— `A` `MJUDGE-RULE-SUBJECT` 老板原话那半句（一个或一组修复动作）与"拒"的结论在**同一段**里（拒的词：拒绝 / 不进库 / 不通过 / 不收 / 驳回；换成"接受"⇒ 必红）；`B` `MJUDGE-DISCRIMINATOR` 定形 §3 的**替换法**（`替换法` + `改(变)?那一处` + 结论 `缺陷报告`）；`C1` `MJUDGE-BOUNDARY-READING` 一处具体读数**不构成入库理由**；`C2` `MJUDGE-BOUNDARY-CARVE-OUT` **反例必须成立**（不许退化成"提到具体文件 / 具体数字就拒"）—— 整节没写 ⇒ **只**报 `MJUDGE-SECTION-MISSING`（不拿四条噪音盖住第一条）；`D` `MJUDGE-REVIEW-CARRIES-RULE` **复核岗一个字都不许带**：这条规矩的标记句（`替换法` / `一个或一组修复动作`）不许出现在 `team/memory-review.md` 与 `job-briefs/memory-review.md` 里（将来整节复制粘贴过去 ⇒ 当场红；钉标记句而非哈希，是为了不把与这条规矩无关的合法改动判红）。另一条腿是**判据自己的可翻面性**（任何一次跑都要成立：文字没写时红、写了之后绿）：用例体内一具**合成阳性对照**（照契约写的最小实现 ⇒ 0 问题）+ **刀架**（刀名与刀数**只在用例文件头那一处**给，这里不复述），每把刀**只许翻它那一面**；同一批变异还会打在**现役文本的拷贝**上跑一遍外部对照（夹具由生成器从现役文本派生，落当天抽屉）（`MJUDGE-KNIFE-NOT-FLIPPED` / `-OVERREACH` / `-WRONG-VECTOR` / `MJUDGE-CONTROL-FAIL` 是**尺子坏了**，不是现役文本缺那几件事）。`AGENIA_MJUDGE_CHARTER_ROOT` 只给对照/刀用，一被设置就记 **HOLD**（那一跑不是对现役的判据）', '批次 AB'],
+
+  // ── 批次 AC · 客户端看板（定形 `.team/leader/2026-11-04/定形-客户端看板.md`；第 2 关 2026-11-04）──
+  // 九格三组：数据层（字段映射 / 负控 / 不读 now.md）· 视图模型（第一行 / 五关 / 缺空坏）·
+  // 渲染层（一行 / 无组员数 / 三列与 0）。契约 `.team/test/2026-11-04/技术契约-客户端看板.md`；
+  // 判据口径逐条写在三份用例文件头。**今天九格全红**：`presets/agenia/lib/dashboard.mjs` 与
+  // `presets/agenia/client-ui-dashboard/lib/client.js` 都还不存在（第三关才写）。
+  ['DASH-01', 'client-dashboard', F.dash01, '字段映射表逐条指到真源（定形 §六.1）：`DASHBOARD_FIELDS` 恰好 13 行（10 条有真源 + 3 条静态文案），逐条在**活树上那四份真文件**里解析 —— 读的是 `.team/route/current.json`（`/headline` `/current_task_id` `/tasks[]/title` `/tasks[]/five_gate_state` `/tasks[]/note` `/tickets`）、`.team/bug/ledger.json`（`/entries`）、`.team/state/local/<day>.json`（`/technical/state` `/conversation/state`）、`presets/agenia/.runtime/state/update/<day>.json`（`/phase`）；测试侧解析器与生产代码**各一份**（一边错一边绿不算绿），自带阳性（活树 `/headline` 必须解析得出）+ 阴性（一个不存在的键必须判 missing）两条尺子自证；外加 `readDashboardSources` 的四条读数（`route/bug/local/update` 各一条，带文件名与 ok）—— 定形 §六.2「哪个字段读了哪个文件」的机器那一半', '批次 AC'],
+  ['DASH-02', 'client-dashboard', F.dash01, '映射表的**两条负控**：① 往 `DASHBOARD_FIELDS` 里塞一条指向 `/definitely_not_a_key_dash` 的字段 ⇒ 生产侧 `auditFields` 必须红、且**点名那个字段与那个键**（否则定形 §六.1「指不到 ⇒ 红」只写在文档里）；文件不在时也必须有它自己的码（缺 ≠ 空）。② 四种读源状态必须分得开 —— 在（`ok`）/ 不在（`missing`）/ 半截 JSON（`unreadable`）/ 不是对象（`schema`），塌成一种就没法告诉读的人"是没有还是坏了"。③ 票那一格读**投影**：夹具里一张 `status:"done"` 但没有任务、没有 `legacy_status` 的票，投影仍是 `open` ⇒ 三张票里 open 恰好 2（读落盘 `status` 会得到 1）', '批次 AC'],
+  ['DASH-03', 'client-dashboard', F.dash02, '第一行 = `current.json#headline` **原样**（定形 R3；对照表 E09/§8 的反向断言）：五个现场 —— 自洽（stored = `目标 · 大阶段`）/ headline 与派生值不一致 / **阶段改名而 headline 不动** / **目标改名而 headline 不动** / headline 空。两种"改法"都必须**动不了**第一行（动了 ⇒ `DASH-HEADER-REDERIVED`：那是现拼，不是读 headline）；自洽那一格又必须正好等于 `goal.title + " · " + stages[].name`（它不是另一个值）；`stale` = stored ≠ derived（读数）；headline 空 ⇒ 第一行 `（目标未填）` + `DASH-HEADLINE-EMPTY` 报警；route 读不出来 ⇒ 第一行 `未知` + `DASH-SOURCE-UNREADABLE:route`（**不是空白**，也不是"没有目标"）', '批次 AC'],
+  ['DASH-04', 'client-dashboard', F.dash02, '五关那一格读 `tasks[id].five_gate_state`（定形 R3/R4；对照表 E27）：五个现场 —— 正常值 `契约与测试` / **大阶段名恰好就是五关词 `独立评审`**（唯一可翻面的造法：印阶段名会得到 `独立评审`，读 five_gate_state 才得到 `契约与测试`）/ `null` ⇒ `不适用` / 并集同义词 `方案` ⇒ **原样收**（`FIVE_GATES` 的 9 值就是并集，不许"归一"成别的）/ 闭集外 `思考中` ⇒ `不适用` + `DASH-GATE-INVALID`。每一格的 `main.gate` 都必须落在 `FIVE_GATES ∪ {不适用}` 里；`current_task_id=null` ⇒ `main=null` 且 `emptyNotice` = `本阶段没有当前任务`（E20）', '批次 AC'],
+  ['DASH-05', 'client-dashboard', F.dash03, '主行 = **一行**（定形 R4；对照表 E25 的 JSX 形状）：`div.taskTitle` 的直接子元素必须**恰好**是 `strong`（标题）+ `span.taskState`（五关词）—— 与官方 `client.js` L169-174 同形。**尺子先量官方**（取件走设计抽屉的只读副本，缺了再用 `.tools/asar-cli` 解到运行根；取不到 ⇒ HOLD 并点名 `tried`），外加两个合成阴性样本（拆成两行的 / 标题不是 `strong` 的）必须被判假 —— 判据得翻得动面。插件身份同格判：`window.__ModuleLoader__.load` 装载口、`conversation.session.header.actions` 槽位（官方 L491-497）、槽 id `dashboard`、触发器文案 `看板`、官方那 13 个元素的 CSS 类名格一个不少；渲染层里**不许**出现 `openCounts` / `ticketStatusOf` / 读盘（它只画数据层给的东西）', '批次 AC'],
+  ['DASH-06', 'client-dashboard', F.dash03, '**不许有活组员数**（定形 §五；对照表 E10 已删）：渲染层（去注释后）零 `members` / `memberCount` —— **阴性对照**是官方那份里这两个针必须各命中 ≥1，否则"我们这边零命中"可能是针死了。同时 `span.count` 徽标是**复用官方元素装我们自己的内容**（§八.2）：它必须挂在某个 `h3` 上，children 必须是**一个词**（记忆相位），不带 `.length` / `members`；官方那枚徽标的 children 恰好是 `team.members.length` ⇒ 同一个判据在它身上必须为**假**。数据层这一侧：视图里没有 `member`/`roster` 类键，`badge.word` 在 `PHASES` 闭集里、不是数字、不含空白（只许一个词）', '批次 AC'],
+  ['DASH-07', 'client-dashboard', F.dash03, '欠账区**三列** + 0 不许被藏（定形 §八.1 / R5；对照表 E11）：CSS 里 `roster` 那条网格必须含 `grid-template-columns:repeat(3, minmax(0,1fr))` 且**不再有** `repeat(2`（官方是 2 列 ⇒ 同一个判据在官方 CSS 上必须为假，证明它分得开 2 列与 3 列）；官方那四条尺寸/圆角原值（`min-height:28px` / `width:min(500px,100vw - 32px)` / `max-height:min(680px,100vh - 32px)` / `border-radius:12px`，对照表 E02/E03）逐条在；渲染条件不许用 `value > 0` / `value !== 0` / `!debt` 把 0 那一格藏掉（合成样本自证针是活的）；三格名 `票` / `bug` / `评审回执` 都在，且三格住在 `.roster` 网格里', '批次 AC'],
+  ['DASH-08', 'client-dashboard', F.dash02, '缺 / 空 / 坏三态（定形 R5 + 对照表 §5「缺 ≠ 空」）：① **空但读得到** ⇒ 三格都是显式 `0`（`open 0` / `open 0` / `缺 0 段`，`state=done`，文字里真的有那个 0），第一行照印 headline，空态行照印；② **少一份源**（route / bug / local / update 各一次）⇒ 只有它那一格塌成 `null`/`未知`（读不到**不许**写 0），其余格与本行**一格不动**，**不抛异常**；route 读不到时**不许**印"本阶段没有当前任务"（那是"我们知道没有"，不是"不知道"）；update 不在是正常态 ⇒ badge=null 且**不报警**；③ **四份全不在** ⇒ 不崩、五格全 `未知`、报警点名 route/bug/local；④ **半截 JSON** 与"不在"必须两个诊断（`DASH-SOURCE-UNREADABLE:*` vs `DASH-SOURCE-MISSING:*`）；报警码全过契约 §4 的闭集', '批次 AC'],
+  ['DASH-09', 'client-dashboard', F.dash01, '**这一版不读 `now.md`**（定形 §八.3 的决定；对照表 F9 的理由）：① 字段表里没有一条指向 `now.md`（针自证：喂一条假路径必须命中）；② 夹具里放一份带唯一标记的 `now.md`，看板数据（视图 + 读数）里**不许**出现它的正文；③ 视图里没有"下一步"这一类键（`next` / `nextStep` / `todo` / `nowMd`）—— 那是 `now.md` 唯一会带进来的东西。将来要加，先按 §八.3 给 `now.md` 加一行可解析的锚（另一条改动），不许从散文里捞', '批次 AC'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1069,6 +1115,9 @@ export const GROUP_COUNTS = {
    *  一格一张票：副本自足 / 容量来源格 / 第三级正样本 / 桥的两张表 / 匹配描述 / 翻面读数。
    *  契约见 `.team/test/2026-11-02/CONTRACT-REVIEW-20261102.md`。 */
   'review-20261102': 6,
+  /** 批次 AC · 客户端看板（`DASH-01`…`DASH-09`：字段映射/视图三格/渲染三格）——
+   *  契约见 `.team/test/2026-11-04/技术契约-客户端看板.md`（定形 §六.1/§六.2/§八）。 */
+  'client-dashboard': 9,
 }
 
 /**
@@ -1088,9 +1137,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1117,6 +1166,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }

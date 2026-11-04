@@ -133,8 +133,10 @@ export const FROZEN = {
 
   /** 活体 agenia 组合的当前读数（AGENTS.md 3b / 契约 §0.2.2）—— 只作解析器校准，不是被测期望。 */
   liveWitness: {
-    /** 活体组合的 `- id:` 行数（能力行口径，含 persona-injector 与五条 team-* 行）—— 装已完成，活体就是 42。 */
-    capabilityRows: 42,
+    /** 活体组合的 `- id:` 行数（能力行口径，含 persona-injector、五条 team-* 行与点名的那条客户端 UI 行）。
+     *  2026-11-04：42 → 43（看板面板 `agenia-dashboard` 落进组合）。⚠️ 本字段**当前零读者** ——
+     *  它是校准读数不是被测期望；改它只是让它别在读者出现那天当场撒谎。 */
+    capabilityRows: 43,
     teamToolRows: 5,
     /** 活体组合 `officeBound` 的名单（**一个**判断类岗位：`review` —— 复盘岗已撤 · `memory-review` / `conversation-review`
      *  2026-10-16 先后由老板拍板移出；来历见下面 `FROZEN.staged.officeBound` 那条 🔴）。 */
@@ -143,14 +145,27 @@ export const FROZEN = {
     disabledLiteralRows: 5,
     /** 活体组合里**已启用**的具名 `dsh-tool-subagent` 实例数（`team-retro` 关着，不算）。 */
     enabledNamedDelegations: 9,
-    onlyInAgenia: ['persona-injector', 'team-design', 'team-dev', 'team-test', 'team-review', 'team-retro'],
     /**
-     * 解析器对照**允许**看到的活体行数：38 = 装前（AGENTS.md 3b 实测），42 = 装后（B2.4 冻结期望）。
-     * 只用来抓"解析器坏了 / 有人手改了活体"，**不是**对被测对象的期望。
+     * 活体组合里 standard 没有的**行 id**（明细那一侧；计数那一侧是 `FROZEN.staged.onlyInAgenia`）。
+     * 2026-11-04：加 `agenia-dashboard` —— 看板接线行是**宿主级客户端 UI 插件**（包自己声明 `dsh.client`），
+     * standard 里没有对应项；它不是岗位 / 委派行，所以单列一条，不并进 `team-*` / `tool-job-*`。
+     * 顺序不要紧：`STAT-01` 把这份名单排序后再与实得比。
      */
-    acceptableLiveRows: [38, 42],
-    // 装已完成（2026-10-15，活体 42 行）。两个值的容差到此只剩历史意义；
-    // 执行二整体收口时应当收成一个值（42）—— 收口前先问组长，别自己收。
+    onlyInAgenia: ['persona-injector', 'team-design', 'team-dev', 'team-test', 'team-review', 'team-retro', 'agenia-dashboard'],
+    /**
+     * 解析器对照**允许**看到的活体行数（同一个量的两个时刻读数）：
+     *   · **42** = `agenia-dashboard` 那一行落下去**之前**的活体读数（2026-11-04 这一批的装前）；
+     *   · **43** = 现在（这一批装之后）。
+     * 只用来抓"解析器坏了 / 有人手改了活体"，**不是**对被测对象的期望。
+     *
+     * 🔴 **38 不在这一对里**（2026-11-04 re-baseline 的裁定）：它是 AGENTS.md 3b 记的"装前"历史值，
+     *    今天没有任何一份活体文件能量出 38 ⇒ 放行它等于永久放行一个**量不出来的读数**。
+     *    同理不放行 39：现场唯一的 39 是生成器的"补丁里拷进来 39 条"（那是**顶格行**，改后 41），
+     *    不是"活体组合的 `- id:` 行数"——两个量，别混。
+     *
+     * ⚠️ 收成单值要等下一次整体收口、并且由组长点（这行原话如此）；别自己收。
+     */
+    acceptableLiveRows: [42, 43],
   },
 
   /**
@@ -245,7 +260,15 @@ export const FROZEN = {
 
   /** staged 组合的冻结期望（提案 §B2.4 + 2026-10-15 批次 I15 撤复盘岗后的事实）。 */
   staged: {
-    capabilityRows: 42,
+    /**
+     * 组合的 `- id:` 行数（含 persona-injector、五条 team-*、四条 job、一条客户端 UI —— 全部）。
+     * ⚠️ **不含预设注册行**（`- id: preset-agenia` 只住在补丁里，不在组合里；oracle 的 `rowsTotal` 33
+     *    才含它自己的注册行）。2026-11-04：**42 → 43**，多出来的是 `agenia-dashboard`
+     *    （`.tools/make-bundle-patch.mjs` 从组合派生两份预设，组合多一行 ⇒ 两份各多一行；
+     *    读数 `calibrate().readings.patch_preset_row_counts` 与 `STAT-01` 的 `staged_id_lines` 同源）。
+     *    它是**顶格行**，不是 delegation 组成员。
+     */
+    capabilityRows: 43,
     /** `team/<角色>.md` 的份数：四个固定岗位 + `hire` + 四类一次性作业（复盘岗已撤，没有 `retro.md`）。 */
     teamFiles: 9,
     jobBriefFiles: 4,
@@ -277,7 +300,14 @@ export const FROZEN = {
      */
     officeBoundRoles: ['review'],
     onlyInStandard: [],
-    onlyInAgenia: 10,
+    /**
+     * `onlyInAgenia` 的**项数**（`standard` 没有、agania 有的行 id 有几个）。
+     * 2026-11-04：**10 → 11** —— 多出来的是 `agenia-dashboard` 那一行。
+     * 算式（同一批读数）：6 条岗位/注入行（`liveWitness.onlyInAgenia`）+ 4 条 `tool-job-*` + 1 条客户端 UI。
+     * ⚠️ 这一格与 `liveWitness.onlyInAgenia` 是**一对**：只改计数会漏掉"一进一出同数"，
+     *    只改名单则 `ONLY-IN-AGENIA` 的计数那一句仍红（`STAT-01` 两句各判一次）。
+     */
+    onlyInAgenia: 11,
     disabledLiteralRows: 5,
     /** 进提示词的 .md 类数：persona/style/leader/work-guidelines + 9 角色 = **13**。
      *  🔴 2026-10-19（`F-109`）：**14 → 13**。`me-aqua.md` 是老板 2026-10-17 决定归档的

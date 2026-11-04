@@ -786,6 +786,9 @@ export function patchStructuralProblems(compositionText, patchText) {
  *        且那九条的唯一去向是：旧九个 per-role id → **同一份**通用组员预设。
  *        2026-11-01 收口：**另放行恰好一条 `defaultRole: leader`**（组长 ruling 7 —— 组长预设必须自己声明
  *        自己那一档；详见下面 `DEFAULT_ROLE_ALLOWED` 那一段的四条限制。放行的是**那一条**，不是那一类键）。
+ *        2026-11-04（看板接线行）：**再放行末尾那一条 `agenia-dashboard` 的 4 条值行**（组合里加一条
+ *        顶格行 ⇒ 组长块必然多 4 条值行；详见下面 `DASHBOARD_ROW_LINES` 那一段的四条限制。
+ *        放行的同样**是那 4 行 + 那个位置**，不是那一类键）。
  *
  * ⚠️ **注释行不参与比较**：描述"九个 per-role 预设"的那些注释必须改写/删除（留着就是谎话），
  *    它们不是配置 —— 把注释算进"逐字不变"会要求注释保持错误。但**旧预设 id 一个都不许再出现**
@@ -842,7 +845,7 @@ export function leaderBlockProblems({
   const valueLines = (text) => String(text).split(/\r?\n/).filter((l) => l.trim() !== '' && !/^\s*#/.test(l))
   const isPresetLine = (l) => /^\s*agentPreset:/.test(l)
   /**
-   * 🔴 **⑤′-b 的唯一一处放行**（2026-11-01 收口 · 组长 ruling 7）：组长块里**恰好一条** `defaultRole: leader`。
+   * 🔴 **⑤′-b 的第一处放行**（2026-11-01 收口 · 组长 ruling 7）：组长块里**恰好一条** `defaultRole: leader`。
    *
    * 为什么放它：组长预设必须**自己声明**自己那一档（`identityVerdict` 读它才不出"没声明档"的报警），
    * 而这一行是第 4 关返修新加的 ⇒ 字节上必然与升级前基线不同。放行范围钉死在**四条同时成立**：
@@ -857,6 +860,37 @@ export function leaderBlockProblems({
    */
   const DEFAULT_ROLE_ALLOWED = /^\s*defaultRole:\s*leader\s*$/
   const isDefaultRoleLine = (l) => /^\s*defaultRole\s*:/.test(l)
+  /**
+   * 🔴 **⑤′-b 的第二处具名放行**（2026-11-04 · 看板接线行）。
+   *
+   * 为什么必须放它：`.tools/make-bundle-patch.mjs:181` 的
+   * `leaderBody = indentBody(blocks.join('\n\n'))` —— **组长预设 = 组合的全部顶格块**。
+   * 组合里加一条宿主级行（`agenia-dashboard`），组长块字节上必然多 4 条值行；它没有
+   * "组长块之外"可去（三个候选落点实测都只改变"第一处不同在第几行"：
+   * `.team/dev/2026-11-04/_evidence/g3c/rebaseline-facts.md` §六）。
+   *
+   * 为什么**不**重冻 `preset_blocks[agenia].full_text`：那会连 `BASELINE-SELFPROOF` 一起动，
+   * 而且把"组长块被改名 / 被删行 / 被换预设"这一族整个变绿 —— 那正是 ⑤′ 存在的理由。
+   *
+   * 放行范围钉死在**四条同时成立**（与 `defaultRole` 那条同形，但这一条钉的是**整行逐字 + 位置**）：
+   *   ① 基线里**一条都没有**（`baseRest` 里 0 条 `- id: agenia-dashboard`）；
+   *   ② 现侧**恰好 4 条值行**、逐字等于 `DASHBOARD_ROW_LINES`（少一条 / 多一条 / 改一个字符都不认）；
+   *   ③ 它们**紧贴在组长块末尾**（去掉放行的 `defaultRole` 之后，`nowRest` 的最后 4 行）；
+   *   ④ 现侧 `- id: agenia-dashboard` **只出现一次**（重复一条 ⇒ 摘掉末尾这 4 行后仍对不上 ⇒ 红）。
+   *
+   * ⚠️ **"允许这一行"不是"允许这一类行"**：换个 id / 换一份包 / 换个 `root` / 多塞一个 config 键 /
+   *    挪到别处 ⇒ `LEADER-VALUE-EXTRA`（点名实得的那几行）+ `LEADER-CLOBBERED`（第一处不同照实报）。
+   * ⚠️ 这 4 行是**补丁那一侧**的原文（组合里顶格，补丁里缩进 10 格）。`name` / `root` 里那两处绝对路径是
+   *    **安装落点**（与 `FROZEN.patchTargets` 同一个理由：不是"这个工作区在哪"）—— 换机器 / 换安装落点
+   *    要三处一次改：组合那一行 + 重新生成补丁 + 这里。
+   */
+  const DASHBOARD_ROW_LINES = [
+    '          - id: agenia-dashboard',
+    "            name: 'file:///E:/Harness/presets/agenia/client-ui-dashboard/lib/index.js'",
+    '            config:',
+    "              root: 'E:/Harness'",
+  ]
+  const isDashboardIdLine = (l) => /^\s*-\s*id:\s*agenia-dashboard\s*$/.test(l)
   const indentOfLine = (l) => l.length - l.trimStart().length
   /** `persona-injector` 那一行在原文里的行号区间 + 它的 `leaderOrder:` 缩进（放行线的落点锚）。 */
   const injectorAnchor = (text) => {
@@ -896,7 +930,19 @@ export function leaderBlockProblems({
     && nowDr[0].i < anchor.end
     && indentOfLine(nowDr[0].line) === anchor.indent
   /** 放行的那一条从现侧**摘掉一次**（四条不同时成立就一行都不摘 ⇒ 下面照实报红）。 */
-  const nowCore = allowedDr ? dropFirst(nowRest, (l) => DEFAULT_ROLE_ALLOWED.test(l)) : nowRest
+  const nowNoDr = allowedDr ? dropFirst(nowRest, (l) => DEFAULT_ROLE_ALLOWED.test(l)) : nowRest
+  /** 看板那一行：**只在末尾**、**恰好 4 条**、逐字（四条同时成立才摘）。 */
+  const baseDashCount = baseRest.filter(isDashboardIdLine).length
+  const nowDashCount = nowNoDr.filter(isDashboardIdLine).length
+  const nowTail = nowNoDr.slice(-DASHBOARD_ROW_LINES.length)
+  const dashTailMatches = nowTail.length === DASHBOARD_ROW_LINES.length
+    && nowTail.every((l, i) => l === DASHBOARD_ROW_LINES[i])
+  const allowedDash = baseDashCount === 0
+    && nowDashCount === 1
+    && nowNoDr.length === baseRest.length + DASHBOARD_ROW_LINES.length
+    && dashTailMatches
+  /** 放行的那 4 条从现侧**摘掉一次**（同上面那条：任一条不成立就一条都不摘）。 */
+  const nowCore = allowedDash ? nowNoDr.slice(0, -DASHBOARD_ROW_LINES.length) : nowNoDr
   const firstDrift = baseRest.findIndex((l, i) => l !== nowCore[i])
   readings.value_lines = {
     base: baseRest.length,
@@ -911,6 +957,13 @@ export function leaderBlockProblems({
       injector_key_indent: anchor.indent,
       accepted: allowedDr,
     },
+    dashboard_row_whitelist: {
+      allowed_lines: DASHBOARD_ROW_LINES,
+      base_id_lines: baseDashCount,
+      now_id_lines: nowDashCount,
+      tail_matches: dashTailMatches,
+      accepted: allowedDash,
+    },
   }
   if (!allowedDr && (baseDr.length > 0 || nowDr.length > 0)) {
     push('LEADER-VALUE-EXTRA', '组长块的 `defaultRole` 值行只允许**恰好一条** `defaultRole: leader`'
@@ -921,12 +974,32 @@ export function leaderBlockProblems({
       + (anchor.start !== null && anchor.indent === null ? '（锚点不对：那一行里找不到 `leaderOrder:`）' : '')
       + ' —— "允许一条"是**具体那一行**，不是"允许这一类键"：多一条 / 换个值 / 塞到别处都不算')
   }
+  /**
+   * 报「看板那一行越界」的**归因边界**：只有**这一行自己**不合规才报它 ——
+   *   · 现侧多于一条 / 基线里竟然有 / 只有一条但末尾 4 行不是逐字那 4 行（被改、被挪、里面夹了别的行）；
+   * ⚠️ **长度对不上不归它**：末尾 4 行逐字、id 也只一条，而总行数不同 ⇒ 多/少的是**别的行**，
+   *    那是 `LEADER-CLOBBERED` 的事（报文会点名第一处不同）。把两件事混成一句会把读的人引错方向
+   *    （2026-11-04 实测：`defaultRole` 变异体上这条归因曾误报过一次）。
+   * ⚠️ 而且**另一处放行自己不合规时这一条不报**（`allowedDr === false`）：那时组长块已经被
+   *    `defaultRole` 那一格点名修，再把"看板行被挤离末尾"记到它头上 = 同一个错报两次、且第二次方向是错的。
+   */
+  const dashRowOutOfSpec = baseDashCount > 0
+    || nowDashCount > 1
+    || (nowDashCount === 1 && !dashTailMatches)
+  if (!allowedDash && allowedDr && dashRowOutOfSpec) {
+    push('LEADER-VALUE-EXTRA', '组长块的 `agenia-dashboard` 只允许**一条**：4 条值行逐字、且紧贴在组长块末尾'
+      + `（基线 ${baseDashCount} 条 / 现 ${nowDashCount} 条；末尾 4 行逐字 ${dashTailMatches ? '对上' : '对不上'}；`
+      + `现（去掉放行的 defaultRole 后）${nowNoDr.length} 行）`
+      + ` —— 实得的 id 行：${JSON.stringify(nowNoDr.filter(isDashboardIdLine))}`
+      + ' —— "允许这一行"是**具体那 4 行 + 那个位置**，不是"允许这一类键"：'
+      + '换个 id / 换一份包 / 换个 root / 多塞一个 config 键 / 挪到别处都不算')
+  }
   if (firstDrift !== -1 || baseRest.length !== nowCore.length) {
     push('LEADER-CLOBBERED', '组长块的值行（非注释行，去掉九条 `agentPreset` 之后，'
-      + '另去掉那**一条**放行的 `defaultRole: leader`）与基线不再逐行相同'
+      + '另去掉那**一条**放行的 `defaultRole: leader` 与**末尾那一条** `agenia-dashboard` 的 4 条值行）与基线不再逐行相同'
       + `（基线 ${baseRest.length} 行 / 现 ${nowCore.length} 行；第一处不同在 #${firstDrift === -1 ? '(长度)' : firstDrift}：`
       + `基线 ${JSON.stringify(baseRest[firstDrift] ?? null)} ≠ 现 ${JSON.stringify(nowCore[firstDrift] ?? null)}）`
-      + ' —— 除了九条 agentPreset 与那一条 defaultRole，组长块的值一个都不许动')
+      + ' —— 除了九条 agentPreset、那一条 defaultRole 与末尾看板那一行，组长块的值一个都不许动')
   }
 
   const removedAp = baseAll.filter(isPresetLine).map((l) => l.replace(/^\s*agentPreset:\s*/, '').trim())

@@ -179,7 +179,7 @@ describe('static · composition', () => {
         if (comp.rows.length !== rec.readings.staged_id_lines) push('STAGED-PARSE', `解析行数 ${comp.rows.length} ≠ 裸计数 ${rec.readings.staged_id_lines} —— 解析器丢了行`)
         const dupes = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))]
         if (dupes.length > 0) push('STAGED-DUP-ID', `组合里有重复行 id：${dupes.join(', ')}`)
-        if (comp.rows.length !== FROZEN.staged.capabilityRows) push('STAGED-ROWS', `能力行实得 ${comp.rows.length}，冻结期望 ${FROZEN.staged.capabilityRows}（38 + 4 条 job 行）`)
+        if (comp.rows.length !== FROZEN.staged.capabilityRows) push('STAGED-ROWS', `能力行实得 ${comp.rows.length}，冻结期望 ${FROZEN.staged.capabilityRows}（32 条出厂能力行 + 1 条注入器 + 5 条 team-* + 4 条 job + 1 条客户端 UI）`)
         for (const id of FROZEN.fixedTeamRowIds) if (!ids.includes(id)) push('STAGED-TEAM-ROW', `缺固定行 ${id}`)
         for (const job of FROZEN.jobs) if (!ids.includes(job.id)) push('STAGED-JOB-ROW', `缺 job 行 ${job.id}`)
 
