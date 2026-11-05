@@ -20,6 +20,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { PATHS } from './env.mjs'
 import { caseHold, runRoot } from './evidence.mjs'
+import { platformReading } from './platform.mjs'
 
 // ── 契约钉死的两个落点（改了就是重开第 2 关，见契约 §1）────────────────────────
 /**
@@ -53,72 +54,226 @@ export const DASH_CLIENT = SUT_OVERRIDE.client ?? path.join(PATHS.repo, 'presets
 export const DASH_CLIENT_PKG = SUT_OVERRIDE.client_pkg ?? path.join(PATHS.repo, 'presets', 'agenia', 'client-ui-dashboard', 'package.json')
 
 // ── 官方像素层：只读副本优先，其次 asar 解到运行根 ────────────────────────────
+/**
+ * 🔴 平台代码在 `app.asar` 里住在 **`dsh/`** 下（`platform.mjs` 读平台包用的也是
+ * `dsh/node_modules/@deepseek-ai/dsh/package.json`）。设计抽屉里那两份只读副本是从 asar 的
+ * `dsh/` 这一层解出来的 —— 所以 `extract.mjs` 的内层路径**必须带这个前缀**：
+ * 少了它，工具会打印 `MISS: …` 并 exit 0（`F5` 修参数形状时顺手抓到的第二个错）。
+ */
+const ASAR_PLATFORM_ROOT = 'dsh'
 const OFFICIAL_PACKAGE = path.join('node_modules', '@deepseek-ai', 'dsh-experimental-client-ui-agent-team', 'lib', 'client.js')
+/** asar 内的完整路径（`extract.mjs` 的位置参数 / 只读副本的相对路径都用它）。 */
+const OFFICIAL_INNER = path.join(ASAR_PLATFORM_ROOT, OFFICIAL_PACKAGE)
 /** 设计岗 2026-11-04 用 asar-cli 解出来的只读副本（`.team/` 不进 git，所以它不是唯一来源）。 */
 export const OFFICIAL_COPY_CANDIDATES = [
-  path.join(PATHS.repo, '.team', 'design', '2026-11-04', 'extracted', 'dsh', OFFICIAL_PACKAGE),
-  path.join(PATHS.repo, '.team', 'design', '2026-11-04', 'panel-ref', 'dsh', OFFICIAL_PACKAGE),
+  path.join(PATHS.repo, '.team', 'design', '2026-11-04', 'extracted', OFFICIAL_INNER),
+  path.join(PATHS.repo, '.team', 'design', '2026-11-04', 'panel-ref', OFFICIAL_INNER),
 ]
 
 const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex').toUpperCase()
 
 /**
+ * 官方件取不到的**四种原因，四种码**（`F5`：把"调用写错"说成"这台机器上没有"是这一格的病根）。
+ *
+ * 为什么要分开：这四种的修法完全不同 ——
+ *   · `NO-ASAR`       ⇒ 机器 / 安装落点的事（不是这段代码能修的）；
+ *   · `TOOL-MISSING`  ⇒ 仓库里少了 `.tools/asar-cli/extract.mjs`；
+ *   · `CALL-FAILED`   ⇒ **我们调用它的方式**不对（参数形状 / 退出码非 0）；
+ *   · `TARGET-MISSING`⇒ 调用成功但没解出目标（asar 里没有这个包，或内层路径写错）。
+ * 塌成一个 `DASH-OFFICIAL-ABSENT`，读的人会先去装工具 —— 2026-11-04 的评审就是这么被引错的。
+ */
+export const OFFICIAL_FAIL = {
+  noAsar: 'DASH-OFFICIAL-NO-ASAR',
+  toolMissing: 'DASH-OFFICIAL-TOOL-MISSING',
+  callFailed: 'DASH-OFFICIAL-CALL-FAILED',
+  targetMissing: 'DASH-OFFICIAL-TARGET-MISSING',
+  notAttempted: 'DASH-OFFICIAL-NOT-ATTEMPTED',
+}
+
+/**
  * 官方 `client.js` 的取件（**只读**）。
  *
- * @param {{ extract?: boolean }} [options] `extract: true` ⇒ 副本都不在时允许从 `.tools/asar-cli/extract.mjs`
- *   解到 `<run-root>/fixtures/dash-official/`（不碰 `app.asar` 一个字节）。
+ * @param {{ extract?: boolean, asar?: string|null, inner?: string, toolPath?: string|null }} [options]
+ *   `extract: true` ⇒ 副本都不在时从 `.tools/asar-cli/extract.mjs` 解到 `<run-root>/fixtures/dash-official/`。
+ *   `asar` / `inner` / `toolPath` 只为**尺子的自证与刀**留的注入口（默认走 `platformReading()` +
+ *   仓库里那份工具 + 官方包路径）—— 生产调用方一个都不传。
  * @returns {{ok:boolean, path:string|null, source:string|null, bytes:number|null, sha256:string|null,
- *            origin:string|null, tried:string[], reason:string|null}}
+ *            origin:string|null, tried:string[], reason:string|null,
+ *            code:string|null, failure:string|null, platform:object|null}}
  */
-export function officialClient({ extract = true } = {}) {
+export function officialClient({ extract = true, asar = null, inner = OFFICIAL_INNER, toolPath = null } = {}) {
   const tried = []
-  for (const candidate of OFFICIAL_COPY_CANDIDATES) {
-    tried.push(candidate)
-    if (existsSync(candidate)) {
-      return {
-        ok: true,
-        path: candidate,
-        source: readFileSync(candidate, 'utf8'),
-        bytes: statSync(candidate).size,
-        sha256: sha256(candidate),
-        origin: 'design-drawer-copy',
-        tried,
-        reason: null,
+  // 显式注入了 asar / 内层路径 / 工具 ⇒ 这是**尺子的自证与刀**（`F5` 的分型必须能各走各的），
+  // 跳过只读副本；生产调用方一个都不传 ⇒ 照旧"抽屉优先、asar 兜底"。
+  const forced = asar !== null || toolPath !== null || inner !== OFFICIAL_INNER
+  if (!forced) {
+    for (const candidate of OFFICIAL_COPY_CANDIDATES) {
+      tried.push(candidate)
+      if (existsSync(candidate)) {
+        return {
+          ok: true,
+          path: candidate,
+          source: readFileSync(candidate, 'utf8'),
+          bytes: statSync(candidate).size,
+          sha256: sha256(candidate),
+          origin: 'design-drawer-copy',
+          tried,
+          reason: null,
+          code: null,
+          failure: null,
+          platform: null,
+        }
       }
     }
   }
-  if (extract) {
-    const outDir = path.join(runRoot(), 'fixtures', 'dash-official')
-    const target = path.join(outDir, OFFICIAL_PACKAGE)
-    tried.push(`asar-cli extract → ${target}`)
-    if (!existsSync(target)) {
-      // 解包器自己是一次外部调用；失败就照实记（不吞）。它只读 asar。
-      try {
-        mkdirSync(path.dirname(target), { recursive: true })
-        const tool = path.join(PATHS.repo, '.tools', 'asar-cli', 'extract.mjs')
-        const r = spawnSync(process.execPath, [tool, `--out=${outDir}`, `--path=${OFFICIAL_PACKAGE.split(path.sep).join('/')}`], {
-          cwd: PATHS.repo,
-          encoding: 'utf8',
-        })
-        if ((r.status ?? 1) !== 0) tried.push(`asar-cli exit ${r.status ?? '?'}：${String(r.stderr ?? '').split('\n')[0]}`)
-      } catch (err) {
-        tried.push(`asar-cli 抛错：${String(err?.message ?? err)}`)
-      }
+  if (!extract) {
+    return {
+      ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
+      code: OFFICIAL_FAIL.notAttempted,
+      failure: 'not-attempted',
+      reason: '调用方没有允许 asar 取件，而设计抽屉的两处只读副本都不在',
+      platform: null,
     }
-    if (existsSync(target)) {
+  }
+  const tool = toolPath ?? path.join(PATHS.repo, '.tools', 'asar-cli', 'extract.mjs')
+  // 平台读数（`platform.mjs`）是 asar 路径的**唯一来源**（四级候选；④ 会自报"是猜的"）。
+  const platform = asar === null ? platformReading() : null
+  const asarFile = asar ?? platform?.asar ?? null
+  const innerPath = inner.split(path.sep).join('/')
+  // 注入口走**单独的 out 目录**，且每次都真调一次：否则"先跑过一次好取件"会让后面的坏样本
+  // 看到缓存目标就短路成 ok（`F5` 的分型自证必须各走各的，不能共享缓存）。
+  const outDir = path.join(runRoot(), 'fixtures', forced ? 'dash-official-probe' : 'dash-official')
+  const target = path.join(outDir, ...inner.split('/'))
+  tried.push(`asar-cli extract → ${target}（asar=${asarFile ?? '(无)'} · inner=${innerPath}）`)
+  if (asarFile === null || !existsSync(asarFile)) {
+    const why = asar !== null
+      ? `给的 asar 不在盘上：${asarFile}`
+      : `这台机器上找不到 app.asar（platformReading 的四级候选全不在盘：${(platform?.tried ?? []).join(' · ') || '—'}）`
+    return {
+      ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
+      code: OFFICIAL_FAIL.noAsar,
+      failure: 'no-asar',
+      reason: `${why} —— 官方件没有可比对的对象`,
+      platform,
+    }
+  }
+  if (!existsSync(tool)) {
+    return {
+      ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
+      code: OFFICIAL_FAIL.toolMissing,
+      failure: 'tool-missing',
+      reason: `取件工具不在盘上：${tool}（仓库里的 .tools/asar-cli/extract.mjs 应当随代码一起在）—— 不是"这台机器上没有官方包"`,
+      platform,
+    }
+  }
+  if (!existsSync(target) || forced) {
+    // 解包器自己是一次外部调用；失败就照实记（不吞）。它只读 asar。
+    try {
+      mkdirSync(path.dirname(target), { recursive: true })
+      // 🔴 **位置参数**：`node extract.mjs <asar> <outDir> <innerPath…>`（不是 `--out=` / `--path=`）。
+      //    2026-11-04 的调用写成两个 flag ⇒ 工具打印用法并 exit 2，却被报成"这台机器上没有"（`F5`）。
+      const r = spawnSync(process.execPath, [tool, asarFile, outDir, innerPath], {
+        cwd: PATHS.repo,
+        encoding: 'utf8',
+      })
+      const status = r.status ?? 1
+      // "工具说的那句"要能读：优先挑带诊断信息的那一行（用法 / MISS / Error / ENOENT），
+      // 否则 stderr 的第一行常常只是 `<anonymous_script>:1` 这种栈头，读的人看不出错因。
+      const firstLine = (text) => {
+        const lines = String(text ?? '').split('\n').map((s) => s.trim()).filter((s) => s !== '')
+        return lines.find((s) => /用法|MISS|Error|error|Unexpected|invalid|ENOENT|EACCES/.test(s)) ?? lines[0] ?? ''
+      }
+      if (status !== 0) {
+        const said = firstLine(r.stderr) || firstLine(r.stdout) || '(工具没有输出)'
+        return {
+          ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
+          code: OFFICIAL_FAIL.callFailed,
+          failure: 'call-failed',
+          reason: `官方 client.js 取件**调用失败**（不是"这台机器上没有"）：${path.basename(tool)} exit ${status}：${said}`
+            + `（asar=${asarFile} · inner=${innerPath}${platform === null ? '' : ` · 平台读数：asar 取自 ${platform.source ?? '—'}`}）`,
+          platform,
+        }
+      }
+      const okLine = firstLine(r.stdout)
+      if (okLine !== '') tried.push(`asar-cli exit 0：${okLine}`)
+    } catch (err) {
       return {
-        ok: true,
-        path: target,
-        source: readFileSync(target, 'utf8'),
-        bytes: statSync(target).size,
-        sha256: sha256(target),
-        origin: 'asar-extracted',
-        tried,
-        reason: null,
+        ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
+        code: OFFICIAL_FAIL.callFailed,
+        failure: 'call-failed',
+        reason: `官方 client.js 取件**调用抛错**（不是"这台机器上没有"）：${String(err?.message ?? err)}`,
+        platform,
       }
     }
   }
-  return { ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried, reason: '官方 client.js 在这台机器上找不到（只读副本与 asar 解包都没成）' }
+  if (existsSync(target)) {
+    return {
+      ok: true,
+      path: target,
+      source: readFileSync(target, 'utf8'),
+      bytes: statSync(target).size,
+      sha256: sha256(target),
+      origin: 'asar-extracted',
+      tried,
+      reason: null,
+      code: null,
+      failure: null,
+      platform,
+    }
+  }
+  return {
+    ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
+    code: OFFICIAL_FAIL.targetMissing,
+    failure: 'target-missing',
+    reason: `取件工具跑完了（exit 0），但没有解出 ${innerPath} —— asar 里没有这个包，或内层路径写错（tried=${tried.join(' · ')}）`,
+    platform,
+  }
+}
+
+/**
+ * 活树**真源根**在不在盘上 —— "判不了"与"红"的分界（`F6`）。
+ *
+ * 病根：`.team/` 与 `presets/agenia/.runtime/` 里的数据**不在提交里**。干净 clone 上它们本来就不存在，
+ * 这时 DASH-01/02 若照常判"指得到真源"，会把自己解析器的前置失败写成 `DASH-RULER-BROKEN`（RED）——
+ * 读的人会以为被评的代码坏了。真实源根不在 = **这一格判不了**（HOLD，点名缺的那几份）。
+ *
+ * 🔴 **不能拿 `.team/` 本身当分界**：`run-all.mjs` 的运行根必须落在 `<repo>/.team/test/…`（根守卫），
+ *    所以**干净 clone 上跑测试时 `.team/` 也存在** —— 拿它判"活树数据在不在"会把这条 HOLD 永远关掉。
+ *    这里看的是**四份真源的根**（route / bug / local / update），跑测试不会创建它们。
+ *
+ * ⚠️ 只判**根**：任一根在盘而某一份文件缺 ⇒ 那是真问题（RED，照旧）。
+ */
+export const LIVE_DATA_ROOTS = {
+  route: PATHS.realRouteRoot,
+  bug: path.join(PATHS.repo, '.team', 'bug'),
+  local: path.join(PATHS.repo, '.team', 'state', 'local'),
+  update: path.join(PATHS.repo, 'presets', 'agenia', '.runtime', 'state', 'update'),
+}
+/** 四份真源根的**路径清单**（判"根在不在"用这一张；调用方一般传默认值）。 */
+export const LIVE_DATA_ROOT_LIST = Object.values(LIVE_DATA_ROOTS)
+
+/**
+ * @param {string[]} [roots] 要检查的根（默认 = 四份真源根；尺子的自证可以传一个夹具目录）
+ * @returns {{roots: string[], present: boolean, clone: boolean, verdict: string,
+ *            families: Record<string, boolean>, roots_present: string[], note: string}}
+ */
+export function liveDataPresence(roots = LIVE_DATA_ROOT_LIST) {
+  const list = Array.isArray(roots) ? roots : [roots]
+  const families = {}
+  for (const [key, dir] of Object.entries(LIVE_DATA_ROOTS)) families[key] = existsSync(dir)
+  const rootsPresent = list.filter((dir) => existsSync(dir))
+  const present = rootsPresent.length > 0
+  return {
+    roots: list,
+    present,
+    clone: !present,
+    verdict: present ? 'data-root-present' : 'data-not-in-a-commit-clone',
+    families,
+    roots_present: rootsPresent,
+    note: '`.team/`（账本 / 本地状态）与 `presets/agenia/.runtime/`（相位）是数据，不进提交 —— '
+      + '干净 clone 上这四份真源的根都不存在。任一根在 = 缺文件是真问题（红）；一根都不在 = 判不了（HOLD）。'
+      + ' ⚠️ 不拿 `.team/` 本身判：运行根就在 `.team/test/` 下，clone 上跑测试时它也会被建出来。',
+  }
 }
 
 /** 数据层取件（动态 import；理由见上面 `loadDashboard` 的注释）。 */

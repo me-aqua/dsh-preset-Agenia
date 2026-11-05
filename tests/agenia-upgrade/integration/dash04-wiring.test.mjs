@@ -222,7 +222,7 @@ test('DASH-10 面板定位：useAnchoredPosition 接真锚点 + 未定位前的 
     const official = officialClient({ extract: true })
     rec.readings.official = { ok: official.ok, path: official.path, origin: official.origin, sha256: official.sha256, tried: official.tried }
     if (!official.ok) {
-      caseHold(rec, 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— 定位那一格的阳性对照与刀都判不了，只剩我们这一侧的红`)
+      caseHold(rec, official.code ?? 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— 定位那一格的阳性对照与刀都判不了，只剩我们这一侧的红`)
     } else {
       const officialProblems = positioningProblems(official.source)
       rec.readings.official_positioning = officialProblems
@@ -366,7 +366,7 @@ test('DASH-13 E29 展开钮：溢出测量 + expandToggle 按钮 + 只在溢出�
 
     const official = officialClient({ extract: true })
     if (!official.ok) {
-      caseHold(rec, 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— E29 的阳性对照与刀都判不了`)
+      caseHold(rec, official.code ?? 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— E29 的阳性对照与刀都判不了`)
     } else {
       const officialProblems = expandToggleProblems(official.source)
       rec.readings.official_e29 = officialProblems

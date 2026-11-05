@@ -21,8 +21,10 @@
  *     （官方是 2 列 ⇒ 同一个判据在官方 CSS 上为假）；渲染条件不许用 `value > 0` 把 0 那一格藏掉。
  */
 import { before, test } from 'node:test'
-import { existsSync, readFileSync } from 'node:fs'
-import { caseFail, caseHold, preflight, problem, runCase } from '../support/evidence.mjs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import { caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
+import { platformReading } from '../support/platform.mjs'
 import {
   DASH_CLIENT,
   DASH_CLIENT_PKG,
@@ -95,7 +97,7 @@ test('DASH-05 主行 = 一行（标题 + 五关同一个 taskTitle）+ 插件身
     const official = officialClient({ extract: true })
     rec.readings.official = { ok: official.ok, path: official.path, bytes: official.bytes, sha256: official.sha256, origin: official.origin, tried: official.tried }
     if (!official.ok) {
-      caseHold(rec, 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— 这一格的行形状判不了宽窄，但下面的判据仍跑`)
+      caseHold(rec, official.code ?? 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— 这一格的行形状判不了宽窄，但下面的判据仍跑`)
     } else {
       // ① 尺子自证：同一套提取器读官方那一段，必须读出 div[strong, span.taskState]
       const officialShape = taskTitleShape(official.source)
@@ -104,6 +106,36 @@ test('DASH-05 主行 = 一行（标题 + 五关同一个 taskTitle）+ 插件身
         problems.push(problem('DASH-RULER-BROKEN', `提取器在官方 client.js 上读出的形状不是 div[strong, span.taskState]：${JSON.stringify(officialShape).slice(0, 400)} —— 尺子坏了，下面的红不算数`))
       }
     }
+    // ①′ 取件兜底的自证（`F5`）：四种失败各有各的码；位置参数对齐之后**真能解出官方件**。
+    //    · "工具不在盘上"与"调用被拒"必须给两个**不同**的码 —— 塌成一个，就是把"我调错了"说成"机器上没有"；
+    //    · 平台读数指到 asar ⇒ 用位置参数调一次，必须 ok（这是那条死兜底的阳性对照；
+    //      2026-11-04 它同时错了参数形状**和内层路径前缀**，两次都表现为 HOLD "这台机器上没有"）。
+    {
+      const missingTool = officialClient({ extract: true, toolPath: path.join(runRoot(), 'no-such-asar-extract.mjs') })
+      const bogusAsar = path.join(runRoot(), 'fixtures', 'dash-official', 'not-an-asar.bin')
+      mkdirSync(path.dirname(bogusAsar), { recursive: true })
+      writeFileSync(bogusAsar, 'not an asar', 'utf8')
+      const badCall = officialClient({ extract: true, asar: bogusAsar })
+      const platform = platformReading()
+      const extracted = platform.asar === null ? null : officialClient({ extract: true, asar: platform.asar })
+      rec.readings.extractor_failure_modes = {
+        tool_missing: { code: missingTool.code, ok: missingTool.ok, reason: missingTool.reason },
+        call_failed: { code: badCall.code, ok: badCall.ok, reason: badCall.reason },
+        platform_asar: platform.asar,
+        extracted: extracted === null ? null : { ok: extracted.ok, code: extracted.code, failure: extracted.failure, bytes: extracted.bytes },
+      }
+      if (missingTool.ok || badCall.ok) {
+        problems.push(problem('DASH-RULER-BROKEN', '取件的两个坏样本居然都"成功"了 —— 失败分型是死的，HOLD 报文仍会把错因说错'))
+      } else if (missingTool.code === badCall.code) {
+        problems.push(problem('DASH-RULER-BROKEN', `"工具不在盘上"与"调用被拒"给了同一个码 ${JSON.stringify(missingTool.code)} —— 又把两种错因塌成一种`))
+      }
+      // 平台里有 asar ⇒ 取件必须走通（`call-failed` = 我们的调用形状又错了；`target-missing` = 内层路径错）。
+      // 这两种都是**尺子坏了**，不是环境；红。`no-asar` 才是"这台机器没有"（HOLD 由上面那条管）。
+      if (extracted !== null && (extracted.failure === 'call-failed' || extracted.failure === 'target-missing')) {
+        problems.push(problem('DASH-RULER-BROKEN', `平台读数指到 ${platform.asar}，但位置参数调用没解出官方件（${extracted.code}：${extracted.reason}）—— 这条兜底仍是死的`))
+      }
+    }
+
     // ② 阴性对照：拆成两行 / 换错标签的合成源码，必须被同一个判据判假（判据要能翻面）
     const NEG_TWO_ROWS = 'jsxs("div", { className: css.main, children: [ jsxs("div", { className: css.taskTitle, children: [ jsx("strong", { children: title }) ] }), jsxs("div", { className: css.taskGate, children: [ jsx("span", { children: gate }) ] }) ] })'
     const NEG_WRONG_TAG = 'jsxs("div", { className: css.taskTitle, children: [ jsx("span", { children: title }), jsx("span", { className: css.taskState, children: gate }) ] })'
@@ -176,7 +208,7 @@ test('DASH-06 没有活组员数（渲染层零 members；徽标里是相位词�
     noteSutOverride(rec)
     const problems = []
     const official = officialClient({ extract: true })
-    if (!official.ok) caseHold(rec, 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— 阴性对照那一半判不了`)
+    if (!official.ok) caseHold(rec, official.code ?? 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— 阴性对照那一半判不了`)
     if (!existsSync(DASH_CLIENT)) {
       problems.push(problem('DASH-CLIENT-MISSING', `契约 §1 的渲染层不在盘上：${DASH_CLIENT}`))
       caseFail(problems)
@@ -265,7 +297,7 @@ test('DASH-07 欠账三列（3 列网格）+ 0 不许被渲染条件藏掉', asy
     const problems = []
     const official = officialClient({ extract: true })
     const officialCss = official.ok ? extractCss(official.source) : null
-    if (officialCss === null) caseHold(rec, 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— 列数那一格的阴性对照判不了`)
+    if (officialCss === null) caseHold(rec, official.code ?? 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— 列数那一格的阴性对照判不了`)
 
     /** `roster` 那几条网格规则（官方 L360-361 是 2 列；§八.1 要 3 列）。 */
     const rosterRules = (css) => {

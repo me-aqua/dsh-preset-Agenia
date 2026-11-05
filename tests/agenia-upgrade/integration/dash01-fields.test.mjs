@@ -21,13 +21,15 @@
 import { before, test } from 'node:test'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { caseFail, caseHold, preflight, problem, runCase } from '../support/evidence.mjs'
+import { caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import { PATHS } from '../support/env.mjs'
 import {
   DASH_MODULE,
   allKeys,
   latestDaySources,
+  liveDataPresence,
   loadDashboard,
+  routeFixture,
   sourcePathsOf,
   writeSources,
   noteSutOverride,
@@ -153,7 +155,39 @@ test('DASH-01 字段映射表：13 行逐条指到活树上那四份真源（指
       if (hit.file !== file) problems.push(problem('DASH-FIELD-FILE', `${key} 那一行的 file 是 ${JSON.stringify(hit.file)}，契约 §2 是 ${file}`))
     }
 
-    // ── ② 解析器自证（尺子先量自己，再量表）───────────────────────────────
+    // ── ② 尺子自证（**夹具**，不依赖活树数据）+ 真源根在不在（"判不了"与"红"的分界）──
+    // 🔴 `F6`：干净 clone 上 `.team/` 根本不存在（数据不进提交）。旧版拿**活树 route** 当阳性，
+    //    副本上它读不到 ⇒ `DASH-RULER-BROKEN`（RED）—— 把"没有数据"报成"测试自己的解析器坏了"。
+    //    尺子的自证改在夹具上做：它证明的是解析器，不是盘上有没有账本。
+    const rulerFixture = routeFixture()
+    const positive = resolvePointer(rulerFixture, '/headline')
+    if (positive.state !== 'ok') {
+      problems.push(problem('DASH-RULER-BROKEN', `测试自己的解析器在夹具的 /headline 上就失败了（${positive.state} @ ${positive.at}）—— 后面所有"指得到了"的绿都不可信`))
+      caseFail(problems)
+    }
+    // 阴性：一个不存在的键必须判 missing（否则解析器永远说 ok）。
+    const negative = resolvePointer(rulerFixture, '/definitely_not_a_key_dash')
+    if (negative.state !== 'missing_key') problems.push(problem('DASH-RULER-BROKEN', `解析器对不存在的键给出的状态是 ${negative.state}（应当是 missing_key）—— 它不会红，就不能拿它当判据`))
+    // 翻面自证：`liveDataPresence()` 必须分得开"根在"与"根不在"（否则 clone 上的 HOLD 永远不会出现）。
+    const probeRoot = path.join(runRoot(), 'fixtures', 'dash-01-data-root-probe')
+    mkdirSync(path.join(probeRoot, '.team'), { recursive: true })
+    const rootProbe = { present: liveDataPresence(probeRoot), absent: liveDataPresence(path.join(probeRoot, 'absent')) }
+    rec.readings.live_data_root_probe = rootProbe
+    if (rootProbe.present.present !== true || rootProbe.absent.present !== false) {
+      problems.push(problem('DASH-RULER-BROKEN', '真源根判据翻不了面（有 `.team` 说不在 / 没 `.team` 说在）—— clone 上的 HOLD 会永远不出现'))
+    }
+
+    const liveRoot = liveDataPresence()
+    rec.readings.live_data_root = liveRoot
+    if (!liveRoot.present) {
+      caseHold(rec, 'DASH-LIVE-DATA-ABSENT', `四份真源根一个都不在盘上（${liveRoot.verdict}）：${liveRoot.roots.join(' · ')}`
+        + ' ⇒ "字段指得到真源"这一格判不了；'
+        + '缺的：.team/route/current.json · .team/bug/ledger.json · .team/state/local/<day>.json · presets/agenia/.runtime/state/update/<day>.json')
+      caseFail(problems)
+      return
+    }
+
+    // ── ③ 逐行在活树上解析 ────────────────────────────────────────────────
     const live = latestDaySources()
     rec.readings.live = {
       route: live.route.file,
@@ -168,15 +202,6 @@ test('DASH-01 字段映射表：13 行逐条指到活树上那四份真源（指
       local: live.local !== null && existsSync(live.local.file) ? JSON.parse(readFileSync(live.local.file, 'utf8')) : null,
       update: live.update !== null && existsSync(live.update.file) ? JSON.parse(readFileSync(live.update.file, 'utf8')) : null,
     }
-    // 阳性：活树上的 route 一定有 headline（C1 §6.1 的规矩）；解析器读不到它 ⇒ 尺子坏了，别往下判。
-    const positive = resolvePointer(values.route, '/headline')
-    if (positive.state !== 'ok') {
-      problems.push(problem('DASH-RULER-BROKEN', `测试自己的解析器在 /headline 上就失败了（${positive.state} @ ${positive.at}）—— 后面所有"指得到了"的绿都不可信`))
-      caseFail(problems)
-    }
-    // 阴性：一个不存在的键必须判 missing（否则解析器永远说 ok）。
-    const negative = resolvePointer(values.route, '/definitely_not_a_key_dash')
-    if (negative.state !== 'missing_key') problems.push(problem('DASH-RULER-BROKEN', `解析器对不存在的键给出的状态是 ${negative.state}（应当是 missing_key）—— 它不会红，就不能拿它当判据`))
 
     // ── ③ 逐行在活树上解析 ────────────────────────────────────────────────
     const resolution = []
@@ -257,14 +282,22 @@ test('DASH-02 两条负控：指向不存在的键必须红；四种读源状态
     }
 
     // ── ① 阳性：真表 + 真源 ⇒ 审计干净 ────────────────────────────────────
-    const live = latestDaySources()
-    const liveFiles = {
+    // 🔴 `F6`：真源根（`.team/`）不在盘上 = **干净 clone**。数据不进提交 ⇒ 这一格判不了，
+    //    记 HOLD（点名缺的那几份），不把"没有数据"写成"审计/表坏了"。
+    const liveRoot = liveDataPresence()
+    rec.readings.live_data_root = liveRoot
+    const live = liveRoot.present ? latestDaySources() : null
+    const liveFiles = live === null ? {} : {
       route: live.route.file,
       bug: live.bug.file,
       local: live.local?.file,
       update: live.update?.file,
     }
-    if (liveFiles.local === undefined || liveFiles.update === undefined) {
+    if (!liveRoot.present) {
+      caseHold(rec, 'DASH-LIVE-DATA-ABSENT', `四份真源根一个都不在盘上（${liveRoot.verdict}）：${liveRoot.roots.join(' · ')}`
+        + ' ⇒ "真表 + 真源"的阳性/阴性对照判不了；'
+        + '缺的：.team/route/current.json · .team/bug/ledger.json · .team/state/local/<day>.json · presets/agenia/.runtime/state/update/<day>.json')
+    } else if (liveFiles.local === undefined || liveFiles.update === undefined) {
       problems.push(problem('DASH-LIVE-SOURCE-MISSING', '活树上缺按天的那两份源（local / update）⇒ 这一格今天判不了真表'))
     } else {
       const read = readDashboardSources(sourcePathsOf(liveFiles))

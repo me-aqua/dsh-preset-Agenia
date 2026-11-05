@@ -55,7 +55,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
 import { caseDir, caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
-import { cfg, delegationToolNames, enabledDelegations, leaderBlockProblems, listMd, memberAnnotations, parseComposition, plain, presetEntries, readPresetBaseline } from '../support/composition.mjs'
+import { cfg, delegationToolNames, enabledDelegations, hostLevelRows, leaderBlockProblems, listMd, memberAnnotations, parseComposition, plain, presetEntries, readPresetBaseline } from '../support/composition.mjs'
 import {
   buildCatalog, buildContentRoot, configFromComposition, guardOrderOf, importSourceCopy,
   injectedNames, injectedText, knifeReplace, loadInjector as loadInjectorFile, namesOfCatalog,
@@ -331,11 +331,9 @@ describe('static · presets-two (任务 A)', () => {
         //   —— 组长预设必须自己声明自己那一档，否则每个组长会话都报一次"没声明"。放行的是**具体那一行**
         //   （基线 0 条 · 现侧 1 条 · 逐字 `defaultRole: leader` · 坐在 `persona-injector` 的 config 里、
         //   与 `leaderOrder:` 同级缩进）；多一条 / 换个值 / 塞到别处 ⇒ `LEADER-VALUE-EXTRA`。
-        // 🔴 **2026-11-04（看板接线行）**：再放行**末尾那一条** `agenia-dashboard` 的 4 条值行
-        //   （组合里加一条顶格行 ⇒ `make-bundle-patch.mjs:181` 拼出来的组长块必然多 4 条；没有"块外"可去）。
-        //   放行的仍是**具体那 4 行 + 那个位置**（基线 0 条 · 现侧 1 条 · 4 行逐字 · 紧贴块尾），
-        //   越界 ⇒ `LEADER-VALUE-EXTRA`。**不重冻基线** —— 那会连 `BASELINE-SELFPROOF` 一起动、
-        //   并把"组长块被改名/被删行"这一族变成永远绿。阳性对照：今天 `_probe/prs01-dashboard-flip.mjs` 10 格。
+        // 🔴 **2026-11-05（宿主级行）**：看板那一行现在标了 `# @host-level`，**不进任何预设**
+        //   ⇒ 组长块里**不许**出现它。它住回组长块 = 越界（`LEADER-VALUE-EXTRA`），
+        //   不再是"末尾多 4 行"那种可放行形状；层归属的完整腿在 `support/composition.mjs::presetEntryProblems`。
         const leaderBase = (base.value.preset_blocks ?? []).find((b) => b.preset_id === LEADER_PRESET_ID)
         const leaderNow = blocks.find((b) => b.preset_id === LEADER_PRESET_ID)
         if (leaderBase !== undefined) {
@@ -351,6 +349,9 @@ describe('static · presets-two (任务 A)', () => {
               leaderPresetId: LEADER_PRESET_ID,
               memberPresetId,
               oldMemberIds,
+              // 宿主级集合只从组合原文的 `# @host-level` 读（一个事实一个落点）——
+              // 不在 `leaderBlockProblems` 里再写死一份 id 名单。
+              hostLevelIds: hostLevelRows(ymlText).ids,
             })
             rec.readings.leader_block_base = leaderBase.sha256
             rec.readings.leader_block_now = leaderNow.sha256

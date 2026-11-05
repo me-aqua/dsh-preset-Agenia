@@ -596,6 +596,17 @@ export const BATCH_AB = ['MJUDGE-01']
  *     只有旧相位文件时 `badge` 必须是 `null`（"退回最近一天"那把刀必须红）。
  *   · `DASH-13` **E29 展开钮**：元素对照表标「抄（条件）」⇒ 溢出测量 + `button.expandToggle` +
  *     只在溢出时出现；像素归 GUI 清单第 4 条。
+ *   · `DASH-14` **读数日的位置**：第一个 `h3`（headline）必须在 `view.day` 之前、日期必须落在
+ *     欠账网格之后（第 4 关复审 `R2-1`；只判顺序与区域，像素归 GUI #3/#4/#6）。
+ *   · 🔴 **2026-11-05 · `bug-20261104-02`（`DASH-15`）——「写出来了」≠「装上了」**：
+ *     上面十四条判的都是**面板自己**（数据 / 视图 / 渲染 / 快照），**没有一条**读过
+ *     `presets/agenia/cordis.patch.yml` —— 于是一行住在 `preset-agenia.plugins` 里的接线
+ *     （只进预设层、不进宿主装载层）能一路全绿，而界面上什么都没有（组长 2026-11-04 §十四的现场）。
+ *     `DASH-15` 判四条腿：**顶层 `- insert:` 的直接成员**（不在任何 `preset-*.plugins` 里）·
+ *     行体带 `name` + `config.root` · 包声明 `dsh.client.platform: web` + `exports["./client"]` ·
+ *     **生成补丁 = `make-bundle-patch.mjs --check` 从 `agent.cordis.yml` 造出来的那一份**（跑仓库
+ *     自己的检查，不另写比较逻辑）+ 四把刀（放回预设层 / 包去掉声明 / 整行拿掉 / 副本上改一个值）。
+ *     ⚠️ 分母 **146 → 147**（由盘上发现器数出来；`GROUP_COUNTS` 同批 14 → 15）。
  *   ⚠️ 新增四格**不进** `FROZEN_IDS`（同一批政策），但**同批**进 `BATCH_AC` 与
  *   `GROUP_COUNTS['client-dashboard']`（分母 141 → 145，由盘上发现器数出来）。
  *
@@ -604,7 +615,7 @@ export const BATCH_AB = ['MJUDGE-01']
  * 官方取不到时记 `HOLD` 并点名 `tried`，不记绿。
  * ⚠️ 它们**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G…AB 的规矩。
  */
-export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 'DASH-06', 'DASH-07', 'DASH-08', 'DASH-09', 'DASH-10', 'DASH-11', 'DASH-12', 'DASH-13', 'DASH-14']
+export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 'DASH-06', 'DASH-07', 'DASH-08', 'DASH-09', 'DASH-10', 'DASH-11', 'DASH-12', 'DASH-13', 'DASH-14', 'DASH-15']
 
 /**
  * 已落笔的二十四批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
@@ -799,6 +810,11 @@ const F = {
   dash04: 'integration/dash04-wiring.test.mjs',
   /** 第 2 关重开：数据链端到端两格（`DASH-11` 快照机制 / `DASH-12` 日身份）。 */
   dash05: 'integration/dash05-snapshot.test.mjs',
+  /** `bug-20261104-02`（2026-11-05）：**面板装上了没有** —— 判**生成的** `presets/agenia/cordis.patch.yml`
+   *  里那一行在不在**宿主装载层**（顶层 `- insert:` 的直接成员，不在任何 `preset-*.plugins` 里）·
+   *  行体 + 包的 `dsh.client` 声明 · 生成补丁是 `make-bundle-patch.mjs --check` 的派生物（跑仓库自己的检查）·
+   *  四把刀（放回预设层 / 包去掉声明 / 整行拿掉 / 副本上改一个值）。**打现役**（浏览器收到的是装好的那一份）。 */
+  dash06: 'integration/dash06-mount.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1028,6 +1044,11 @@ const ROWS = [
   ['DASH-12', 'client-dashboard', F.dash05, '**日身份**（评审 F3：陈旧读数当当下）：`view.day` 必须 = **今天这个周期日**（`lib/route.mjs::dayKeyOf`，本地 04:00 切点，与全系统同一把尺子），且画面上**看得到 day**；三个现场 —— ① 注入时钟 12:00、盘上**只有前一天**的相位文件 ⇒ `day` = 今天、`badge` = `null`（契约 §3.4：当天文件不在是正常态，不报警）、回执读**今天**的 `local`；② 01:30（切点下方）⇒ `day` = 前一天（用日历日就会是本日）；③ 当天文件在 ⇒ `badge` = 当天的相位词。源码那一腿：日键必须从 `dayKeyOf(...)` 来（`index.js` 或 `latestUpdateDay` 的函数体），"按文件名排序取最后一天"那把刀当场红（`DASH-DAY-NOT-CYCLE-KEY`）；"画得到 day"另有合成正负样本自证。今天红在 `DASH-DAY-NOT-TODAY` + `DASH-BADGE-STALE` + `DASH-RECEIPT-DAY` + `DASH-DAY-NOT-SHOWN` + `DASH-DAY-NOT-CYCLE-KEY`', '批次 AC'],
   ['DASH-13', 'client-dashboard', F.dash04, '**E29 展开钮**（对照表 L148 标「抄（条件）」、在"抄 25"里；评审 §2.1 点名的唯一少画项）：① 说明段带 `ref` 且代码真读 `scrollHeight` / `clientHeight`（溢出测量）；② `clampedDescription` 的 CSS 是 2 行截断；③ 一个 `expandToggle` 按钮，带 `aria-expanded` + `onClick` + **被"只在溢出时出现"的条件守着**；④ 词典里有展开/收起那一对文案键、按钮 children 用 `t(...)` 切。**判存在与接线，不判像素**（按钮位置、展开后高度归 GUI 清单第 4 条）。判据先在官方源码上量（必须干净），再切五把刀（删测量/删类名/删 aria/删条件/删文案键），每把只翻它自己那一面 —— 今天红在 `E29-MEASURE-MISSING` + `E29-TOGGLE-MISSING` + `E29-TEXT-KEYS`（截断那一条今天是绿的）', '批次 AC'],
   ['DASH-14', 'client-dashboard', F.dash04, '**读数日的位置**（第 4 关复审 `R2-1`：日期抢了第一行）：**只判源码顺序与区域，不判像素**（看起来在底部 / 字号 / 灰条像不像归 GUI #3/#4/#6）—— ① 面板里**第一个 `h3`（headline 行）必须在 `view.day` 表达式之前**，日期抢在它前面 ⇒ `DASH-DATE-BEFORE-HEADLINE`（R2-1 的形态）；② `view.day` 必须落在**欠账网格（`.roster`）结束之后**（页脚）；还在 headline 之后、网格之前（E06/notice 那一带）⇒ `DASH-DATE-NOT-IN-FOOTER`。**不认类名**：页脚沿用 `notice` 的样式也算过。合成面板三格自证（正确形状干净 / 刀 A 日期挪回 headline 前 / 刀 B 日期塞回 notice 带），两把刀各只翻自己那一码（`DASH-KNIFE-VECTOR`）；冻结副本上今天红在 `DASH-DATE-BEFORE-HEADLINE`', '批次 AC'],
+  // ── `bug-20261104-02`（2026-11-05）：面板**装上了没有**（「写出来了」≠「装上了」）──────────
+  // 一句话：**生成的补丁里那一行必须在宿主装载层**（顶层 `- insert:` 的直接成员），不在任何
+  // `preset-*.plugins` 里；行体 + 包的 `dsh.client` 声明齐全；整份补丁是生成器的派生物。
+  // 判据口径、四把刀、安全联锁逐条写在 `integration/dash06-mount.test.mjs` 的文件头。
+  ['DASH-15', 'client-dashboard', F.dash06, '**面板装上了没有**（`bug-20261104-02`；老板 2026-11-04「我在客户端里点哪，i see nothing」· 组长当天 log §十四）：判**生成的** `presets/agenia/cordis.patch.yml` 四条腿 —— ① **位置**：`id: agenia-dashboard` 必须是**顶层 `- insert:` 的直接成员**（宿主装载层），`id` 不在任何 `preset-*.plugins` / 组里；行还在但住在预设层 ⇒ `DASH-NOT-HOST-LEVEL`（今天的形态，而且**两份预设各一份**）、整行没了 ⇒ `DASH-ROW-ABSENT`（缺 ≠ 挪）；② **行体 + 包**：`name` 必须是 `file:///…/client-ui-dashboard/lib/index.js`、`config.root` 在，且那个包自己声明 `dsh.client.platform: web` + `exports["./client"]` —— 否则浏览器没有东西可收 ⇒ `DASH-NO-CLIENT-DECL`；③ **派生物**：整份补丁必须等于 `make-bundle-patch.mjs` 从 `agent.cordis.yml` 造出来的那一份 —— **跑仓库自己的 `--check`**（逐字节比，不另写比较逻辑），不一致 ⇒ `DASH-PATCH-NOT-DERIVED`；跑之前有一道**安全联锁**（`--check` 分支必须先于写盘，否则记 `HOLD` 不跑——它加载期会写活体），跑完再量一次活体 sha256（变了 ⇒ `DASH-PATCH-CHECK-WROTE-PRESET`）；④ **翻面**：合成夹具的四把刀 —— 正确形状干净 · 放回 `preset-agenia.plugins` ⇒ **只有** `DASH-NOT-HOST-LEVEL` · 包去掉 `dsh.client` ⇒ **只有** `DASH-NO-CLIENT-DECL` · 整行拿掉 ⇒ **只有** `DASH-ROW-ABSENT` · 派生刀（生成器 + 预设树的副本上改一个值）⇒ `--check` 必须翻成 `RED`；刀翻错面 ⇒ `DASH-KNIFE-VECTOR`、跑不出判词 ⇒ `DASH-KNIFE-UNREADABLE`（尺子坏了不是对象坏了）。读数带 `{repo, head, 每份文件的字节/sha256/mtime, snapshot_at}`；**不判像素、不判浏览器真的收到包**（那归 GUI 清单，人点一次）。冻结副本上今天红在 `DASH-NOT-HOST-LEVEL`', '批次 AC'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1139,10 +1160,12 @@ export const GROUP_COUNTS = {
    *  一格一张票：副本自足 / 容量来源格 / 第三级正样本 / 桥的两张表 / 匹配描述 / 翻面读数。
    *  契约见 `.team/test/2026-11-02/CONTRACT-REVIEW-20261102.md`。 */
   'review-20261102': 6,
-  /** 批次 AC · 客户端看板（`DASH-01`…`DASH-14`：字段映射/视图三格/渲染三格 +
-   *  第 2 关重开加的四格 —— 定位 / 端到端 / 日身份 / E29 展开钮）——
-   *  契约见 `.team/test/2026-11-04/技术契约-客户端看板.md`（定形 §六.1/§六.2/§八；§11 是重开那一批）。 */
-  'client-dashboard': 14,
+  /** 批次 AC · 客户端看板（`DASH-01`…`DASH-15`：字段映射/视图三格/渲染三格 +
+   *  第 2 关重开加的四格 —— 定位 / 端到端 / 日身份 / E29 展开钮 +
+   *  `DASH-15` **面板装上了没有**（`bug-20261104-02`：宿主装载层的顶层 insert + `dsh.client` + 派生物））——
+   *  契约见 `.team/test/2026-11-04/技术契约-客户端看板.md`（定形 §六.1/§六.2/§八；§11 是重开那一批；
+   *  `DASH-15` 的定形在 bug 台账 + 组长 2026-11-04 log §十四）。 */
+  'client-dashboard': 15,
 }
 
 /**
