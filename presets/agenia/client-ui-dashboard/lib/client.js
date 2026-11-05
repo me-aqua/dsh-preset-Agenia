@@ -204,10 +204,14 @@ window.__ModuleLoader__.load({
 				}), open && (0, react_dom.createPortal)((0, react_jsx_runtime.jsxs)("div", {
 					ref: panelRef,
 					className: Dashboard_module_css_default.panel,
+					// 🔴 2026-11-06：定位还没算出来时**不许** `visibility:hidden` —— 那一刻面板是挂上的、只是看不见，
+					//    读的人会以为"点一下什么都没发生"。改成落到视口左上角附近的一个安全位置（可见），
+					//    下一帧定位算出来会把它挪到位。宁可偏一点，也不许整块看不见。
 					style: position ?? {
-						visibility: "hidden",
-						left: 0,
-						top: 0
+						position: "fixed",
+						left: 16,
+						top: 64,
+						visibility: "visible"
 					},
 					role: "dialog",
 					tabIndex: -1,
@@ -304,7 +308,18 @@ window.__ModuleLoader__.load({
 				en
 			}), "client-ui-dashboard: dictionaries");
 			const actions = { readSnapshot(sessionId) {
-				return ctx.remote.workspaceFiles.read(sessionId, SNAPSHOT_PATH, { offset: 1, limit: 200 }).then((page) => page.text);
+				// 🔴 2026-11-06：读盘这一步**不许把组件带崩**。浏览器侧抛一个同步错误，React 会把整个槽位拆掉
+				//    （实测症状：点一下按钮，按钮自己消失、面板一个字都不留）。所以这里同步/异步都兜住，
+				//    失败一律变成一条 rejected promise —— 面板会画一条红条，按钮留着。
+				try {
+					const svc = ctx.remote && ctx.remote.workspaceFiles;
+					if (!svc || typeof svc.read !== "function") {
+						return Promise.reject(new Error("remote.workspaceFiles 不可用（浏览器侧没有这个服务）"));
+					}
+					return Promise.resolve(svc.read(sessionId, SNAPSHOT_PATH, { offset: 1, limit: 200 })).then((page) => page.text);
+				} catch (err) {
+					return Promise.reject(err);
+				}
 			} };
 			ctx.slots.inject("conversation.session.header.actions", () => ctx.slots.register({
 				name: "conversation.session.header.actions",
