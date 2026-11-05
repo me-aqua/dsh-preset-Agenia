@@ -569,7 +569,10 @@
   disabled: true
 
 - id: agenia-dashboard
-  # @host-level —— 这一行不进任何预设：生成器把它写进 `cordis.patch.yml` 里单独的顶层 insert（宿主装载层）。
+  disabled: true
+  # 2026-11-05 16:2x **回滚**：这一行原来要挂宿主层（顶层 insert）。实测那样做会让整个 bundle 层在 boot 时失效 ——
+  #   重启后新会话的头是 `agentPreset: "standard"`（不是 agenia）⇒ 无角色 ⇒ 窄权限：没命令行、不能派人。
+  #   所以先 `disabled: true` 让客户端恢复正常；正确的挂载路线（走 **profile 层**，不是 bundle 层）另开一票。
   #
   # 会话头部那块看板。包有两半：Node 侧每 15 秒把视图算成一份快照
   # （`presets/agenia/.runtime/state/dashboard/view.json`），浏览器侧读那份快照。

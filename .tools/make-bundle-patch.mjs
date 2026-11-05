@@ -98,7 +98,11 @@ const FORBIDDEN_IN_MEMBER = ['model', 'tools']
  * 而盘上所有读数都绿）。这张表让"漏标"变成一次 throw。加一行宿主级的东西 = 这里加一个 id
  * + 组合里那一行加标记，两处同批改（与 `CLIENT_UI_ROWS` / `EXPECTED_ONLY_AGENIA` 同一族账）。
  */
-const HOST_LEVEL_IDS = ['agenia-dashboard']
+const HOST_LEVEL_IDS = []
+// 2026-11-05 16:2x **清空**：`agenia-dashboard` 那一行挂宿主层之后，重启实测让整个 bundle 层在 boot 时失效
+//   （新会话的 `agentPreset` 变成 `standard` ⇒ 无角色 ⇒ 窄权限）。回滚成"一行宿主级都没有"，
+//   正确的挂载路线走 **profile 层**（`~/.dsh/profiles/<档>/cordis.patch.yml`），另开票。
+//   表清空之后 `partitionHostLevel()` 不再要求"至少一行宿主级"（见下面那条 guard）。
 
 /**
  * 宿主级标记**只认一个位置**：`- id: <id>` 的**下一行**，行首两格缩进 + `# @host-level`。
@@ -182,7 +186,7 @@ function partitionHostLevel(blocks) {
   }
   const dupes = got.filter((id, i) => got.indexOf(id) !== i)
   if (dupes.length > 0) throw new Error(`宿主级行标了不止一次：${[...new Set(dupes)].join(', ')}（补丁里会出现两行同 id 的宿主级条目）`)
-  if (hostBlocks.length === 0) throw new Error(`组合里一行宿主级都没有（HOST_LEVEL_IDS = ${HOST_LEVEL_IDS.join(', ')}）—— 这一份补丁的宿主层是空的`)
+  if (hostBlocks.length === 0 && HOST_LEVEL_IDS.length > 0) throw new Error(`组合里一行宿主级都没有（HOST_LEVEL_IDS = ${HOST_LEVEL_IDS.join(', ')}）—— 这一份补丁的宿主层是空的`)
   return { hostBlocks, presetBlocks }
 }
 
