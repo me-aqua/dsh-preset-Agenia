@@ -1,5 +1,5 @@
 /**
- * **客户端 UI 行的层归属**（`DASH-16`；第 4 关评审 2026-11-05 的 `R-1`）—— 量具 + 合成夹具。
+ * **客户端 UI 行的层归属**（`DASH-15` / `DASH-16`；第 4 关评审 2026-11-05 的 `R-1`）—— 量具 + 合成夹具。
  *
  * 一句话：**一行的层归属由"它指向的包是不是客户端 UI"决定，不由"作者记不记得写标记 / 点名表"决定。**
  *
@@ -8,13 +8,23 @@
  * 组合、没写 `# @host-level`、也没进 `HOST_LEVEL_IDS` ⇒ 生成器走 `marks === 0` 分支，把它当普通行
  * 拷进**每一份预设**，浏览器收不到 —— 与 `bug-20261104-02` 同一个形状，而全套判据照样绿。
  *
- * 所以这里**不读标记、不读 `HOST_LEVEL_IDS`、不认行 id**（唯一例外是阳性腿点的"当前看板那一行"）：
- *   ① **语义面**：对**每份预设 `plugins` 里**的行，用行的 `name` 解析到盘上的 `package.json`；
- *      若那个包声明了 `dsh.client.platform: "web"` ⇒ `DASH-CLIENT-IN-PRESET`。
+ * ── 🔴 2026-11-05 晚：判据的载体从 **bundle 补丁** 换成 **profile 补丁** ─────────────
+ * 那一天 16:0x 实测"把看板那一行搬进 **bundle** 的宿主级 insert"会让整个 bundle 层 boot 失败
+ * （新会话 `agentPreset: "standard"` ⇒ 无角色 ⇒ 窄权限）⇒ 那一行回滚成 `disabled: true`，
+ * 挂载路线改成走 **profile 层**（`$DSH_PROFILE_DIR/cordis.patch.yml`）。
+ * ⇒ "bundle 补丁里有一个装着看板的宿主 insert"这个形状**再也不会出现**（生成器遇到宿主级标记就 throw），
+ *   照旧判它只会得到一条永远红的假红。所以这一份量具现在有两个入口：
+ *   · `scanProfilePlacement()` —— **现在的主判据载体**（profile 层：`- insert:` 是新增行的唯一入口）；
+ *   · `scanClientUiPlacement()` —— **bundle 层的残余量法**（只剩一句话要说：还留在预设 `plugins` 里的
+ *     客户端 UI 行**只许关着**；"必须在宿主 insert"那半句话随形状一起退役）。
+ *
+ * 两个入口都**不读标记、不读 `HOST_LEVEL_IDS`**，认行只认"它解析到的那份 `package.json`"：
+ *   ① **语义面**：行的 `name` 解析到盘上的 `package.json`；那个包声明了 `dsh.client.platform: "web"`
+ *      却不在宿主装载层（bundle 入口 = 顶层 `- insert:`；profile 入口 = 顶层 `- insert:`）⇒ 红。
  *      这一行叫什么、谁登记过它、作者有没有记得 —— 都不影响这个判断。
- *   ② **阳性腿**：语义集合（整份补丁里解析到 web 包的行）必须**非空**，且当前看板那一行必须是
- *      **顶层 `- insert:` 的直接成员**；否则 ⇒ `DASH-HOST-MISSING`。
- *      没有它，"整份补丁里一行客户端 UI 都没有"与"客户端 UI 行不在宿主层"会一起绿。
+ *   ② **阳性腿**：看板那一行自己必须在宿主装载层里。没有它，"整份补丁里一行客户端 UI 都没有"
+ *      与"客户端 UI 行不在装载层"会一起绿。🔴 profile 入口认看板行**不认 id / 名字形状** ——
+ *      靠"那份 `package.json` 声明的 `name` 是不是看板包那一份"（挂载行按设计不带 `id`）。
  *
  * 🔴 **解析面（这一格的边界，读之前先知道）** —— `name` 的两种形状：
  *   · **路径形**（`file:///…`、绝对路径）：从入口文件往上找最近的 `package.json`（真解析）；
@@ -24,19 +34,18 @@
  *   本仓自己的客户端 UI 包是路径形（看板那一行就是 `file:///…/client-ui-dashboard/lib/index.js`），
  *   这条路径不依赖任何名单 —— 未来新加的本地客户端 UI 包只要行是路径形就同样被抓到。
  *
- * 为什么 `manifestRoots` 是入参：测试要量**被测的预设树**，探针要量**活树** —— 根是输入，不是常量。
+ * 为什么 `manifestRoots` / `dashboardManifest` 是入参：测试要量**被测的补丁**，探针要量**活树** ——
+ * 根与"哪份 package.json 是看板"都是输入，不是常量。
  *
- * ⚠️ 判读边界（不归这一格）：像素 / 浏览器真的收到包归 GUI 清单；"生成补丁是不是生成器的派生物"
- *   归 `DASH-15` 的 ③；"标记与表一致"归生成期 throw 与 `DASH-15` 的 ①。
+ * ⚠️ 判读边界（不归这一格）：像素 / 浏览器真的收到包归 GUI 清单与 `BOOT-02`；
+ *   "生成补丁是不是生成器的派生物"归 `DASH-15` 的派生物那一腿；"标记与表一致"归生成期 throw。
  *
- * ── 回滚期（2026-11-05 16:2x 之后）────────────────────────────────────────────
- * 看板那一行现在是 `disabled: true`：宿主级 insert 让整个 bundle 层 boot 失败，面板先关，
- * 挂载路线改成走 profile 层（另开一票）。于是"客户端 UI 行必须住宿主 insert"这一格的**目标形状
- * 故意不在** ⇒ 这一份判据照旧报它那几条码，但**用例**要把"看板那一行自己的层归属"翻成第三态 HOLD
- * （`DISABLED_PENDING_CODE`），而不是红。判据本体不知道 HOLD —— 它只报形状；红/HOLD 的分流在用例里，
- * 因为那是**政策**不是**量法**（量法要能被夹具喂，政策要能被看见）。
- * 🔴 分流不能顺手放宽：`scope: 'other'` 的那些（别的客户端 UI 行 / 行整个不在 / 包没声明 / 补丁读不懂）
- *    在 disabled 期间**照旧红** —— 回滚只解释了"看板那一行不在宿主层"，解释不了别的。
+ * ── 🔴 "还没挂" 不是 "挂错了"（第三态）──────────────────────────────────────────
+ * profile 补丁里没有看板那一行 ⇒ 目标形状**故意不在**（挂载工具还没跑）⇒ 用例把 `scope: 'mount'`
+ * 那几条翻成第三态 HOLD（`DISABLED_PENDING_CODE`），**不是绿**。判据本体不知道 HOLD ——
+ * 它只报形状；红/HOLD 的分流在用例里，因为那是**政策**不是**量法**（量法要能被夹具喂，政策要能被看见）。
+ * 🔴 分流不能顺手放宽：`scope: 'other'` 的那些（别的客户端 UI 行 / 行体 / 包没声明 / 补丁读不懂）
+ *    **任何时刻都照旧红** —— "还没挂"解释不了"包没声明 dsh.client"。
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -48,11 +57,13 @@ import { problem } from './evidence.mjs'
 /** 框架 `ClientModuleRegistry` 认的那个值（`processOne()` 的声明门槛）。 */
 export const CLIENT_UI_PLATFORM = 'web'
 
-/** 这一格的三个码（稳定、可 grep）。 */
+/** 这一格的码（稳定、可 grep）。 */
 export const CODES = Object.freeze({
   clientInPreset: 'DASH-CLIENT-IN-PRESET',
   hostMissing: 'DASH-HOST-MISSING',
   patchUnreadable: 'DASH-PATCH-UNREADABLE',
+  /** 那一行指不到包 / 包没声明 `dsh.client` / `config.root` 不在 —— 浏览器没有东西可收。 */
+  noClientDecl: 'DASH-NO-CLIENT-DECL',
 })
 
 /**
@@ -66,6 +77,308 @@ export const CODES = Object.freeze({
  * 路由重设计（走 profile 层）落地之后，那一行不再是 `disabled` ⇒ 这一格自动回到"必须住宿主 insert"。
  */
 export const DISABLED_PENDING_CODE = 'DASH-MOUNT-DISABLED-PENDING-PROFILE-LAYER'
+
+/**
+ * ── 🔴 profile 层（2026-11-05 迁移）─────────────────────────────────────────────
+ * `DASH-15` / `DASH-16` 原本判的是**bundle 补丁**（`presets/agenia/cordis.patch.yml`）里
+ * "看板那一行必须是顶层 `- insert:` 的直接成员"。本票把挂载搬到 **profile 层**
+ * （`$DSH_PROFILE_DIR/cordis.patch.yml`，今天 = `C:\Users\DAVID\.dsh\profiles\desktop\cordis.patch.yml`）
+ * ⇒ "bundle 补丁里有一个宿主级 insert 装着看板"这个形状**再也不会出现**（生成器现在遇到 `# @host-level`
+ * 就 throw）；照旧判它只会得到一条永远红的假红。
+ *
+ * 迁过去之后，两件事没变，只是换了载体：
+ *   ① **层归属**：`- insert:` 是**新增**行的唯一入口（`- id:` 那些是"改已存在的行"的 override）；
+ *      一行装在 insert 外面 = 宿主装载层收不到它 = 浏览器没有东西可收。这一条在 profile 补丁里
+ *      同样成立，所以 `scanProfilePlacement()` 判它。
+ *   ② **行的身份按包认，不按名字形状认**：profile 补丁里挂载行**按设计不带 `id`**（定形 §五），
+ *      所以不能再拿 `id: agenia-dashboard` 找它 —— 这里靠"它解析到的那份 `package.json` 是不是
+ *      看板包那一份"来认（`dashboardManifest` 是入参，不是常量）。
+ *
+ * 🔴 **"还没挂" 不是 "挂错了"**：profile 补丁里没有看板那一行 ⇒ 这一格记第三态
+ * **HOLD `DASH-MOUNT-DISABLED-PENDING-PROFILE-LAYER`**（不是绿）。它一旦出现，本格立刻回到
+ * 红/绿两态（形状对 ⇒ 绿；住错层 / 行体不对 / 包没声明 ⇒ 红）—— 翻面靠合成夹具与真文件各证一次。
+ */
+export const PROFILE_CODES = Object.freeze({
+  /** 看板那一行在 profile 补丁里，但**不是**顶层 `- insert:` 的直接成员（宿主装载层收不到它）。 */
+  notProfileInsert: 'DASH-NOT-PROFILE-INSERT',
+  /** profile 补丁里**没有**看板那一行（今天是"还没挂"⇒ HOLD；这条码本身只作读数/报文用）。 */
+  profileMountMissing: 'DASH-PROFILE-MOUNT-MISSING',
+  /** 挂载行带了 `id`：`- insert:` 是新增，带 `id` 的顶层条目是"改已存在的行"，两者不该混。 */
+  profileRowHasId: 'DASH-PROFILE-ROW-HAS-ID',
+  /** 挂载行 `disabled: true`：一行关着的不是一次挂载。 */
+  profileRowDisabled: 'DASH-PROFILE-ROW-DISABLED',
+  /** 别的客户端 UI 行装在 `- insert:` 外面（任何行，不只当前看板）。 */
+  clientNotInProfileInsert: 'DASH-CLIENT-NOT-IN-PROFILE-INSERT',
+})
+
+/**
+ * profile 补丁里的"行"= 带 `name` 的映射（`id` 可选）。
+ * `in_top_level_insert` 用**结构**判（节点身份是不是某个顶层 `- insert:` 列表的成员），不数缩进。
+ *
+ * @param {unknown} node
+ * @param {string} where 人话的落点（报文里要能指出来）
+ * @param {boolean} inInsert 这一层是不是"顶层 `- insert:` 的直接成员"
+ * @param {object[]} out
+ */
+function collectProfileRows(node, where, inInsert, out) {
+  if (Array.isArray(node)) {
+    for (const item of node) collectProfileRows(item, where, false, out)
+    return out
+  }
+  if (!(node instanceof Map)) return out
+  const name = node.get('name')
+  const isRow = typeof name === 'string'
+  if (isRow) {
+    out.push({ map: node, where, in_top_level_insert: inInsert === true, id: node.get('id') ?? null, name, disabled: node.get('disabled') ?? null })
+  }
+  for (const [key, value] of node) {
+    if (value instanceof Map || Array.isArray(value)) collectProfileRows(value, isRow ? `${name} → ${key}` : `${where} → ${key}`, false, out)
+  }
+  return out
+}
+
+const sameFile = (a, b) => path.resolve(String(a)).toLowerCase() === path.resolve(String(b)).toLowerCase()
+
+/**
+ * **profile 层的层归属扫描**（`DASH-15` / `DASH-16` 共用的判据本体；纯函数，可喂夹具）。
+ *
+ * @param {{patchText: string, label?: string, manifestRoots?: string[],
+ *          dashboardManifest: string, requireDashboard?: boolean}} input
+ *   `dashboardManifest` = 看板包 `package.json` 的绝对路径（用来认"那一行是哪一行"，**不认 id / 名字形状**）；
+ *   `requireDashboard` = 缺了看板那一行时是否报 `profileMountMissing`（用例按"还没挂"把它记 HOLD）。
+ * @returns {{problems: object[], reading: object}}
+ */
+export function scanProfilePlacement({ patchText, label = 'profile 补丁', manifestRoots = [], dashboardManifest, requireDashboard = true }) {
+  const doc = parseYamlSubset(patchText, `${label}·profile`)
+  const reading = {
+    label,
+    warnings: [...doc.warnings],
+    top_level_items: Array.isArray(doc.value) ? doc.value.length : null,
+    top_level_kinds: (Array.isArray(doc.value) ? doc.value : []).map((op) => {
+      if (!(op instanceof Map)) return `<${Array.isArray(op) ? 'list' : typeof op}>`
+      if (Array.isArray(op.get('insert'))) return 'insert'
+      if (typeof op.get('id') === 'string') return `override:${op.get('id')}`
+      if (typeof op.get('name') === 'string') return `row:${op.get('name')}`
+      return `<map keys=${[...op.keys()].join(',')}>`
+    }),
+    rows: [],
+    insert_members: 0,
+    client_ui_rows: [],
+    violations: [],
+    dashboard: null,
+  }
+  const problems = []
+  if (reading.warnings.length > 0) {
+    problems.push(problem(CODES.patchUnreadable,
+      `${label} 有解析器读不懂的行（${reading.warnings.slice(0, 4).join(' / ')}）—— 层归属判不了（缺 ≠ 坏：这不是"行不在"）`,
+      { scope: 'other' }))
+    return { problems, reading }
+  }
+
+  const rows = []
+  for (const op of Array.isArray(doc.value) ? doc.value : []) {
+    if (!(op instanceof Map)) continue
+    const insert = op.get('insert')
+    if (Array.isArray(insert)) {
+      for (const item of insert) collectProfileRows(item, '顶层 `- insert:` 的直接成员', true, rows)
+    } else {
+      collectProfileRows(op, '顶层条目（不是 `- insert:` 的直接成员）', false, rows)
+    }
+  }
+  reading.rows = rows.map((r) => ({ name: r.name, id: r.id, disabled: r.disabled, where: r.where, in_top_level_insert: r.in_top_level_insert }))
+  reading.insert_members = rows.filter((r) => r.in_top_level_insert).length
+
+  const index = manifestIndexOf(manifestRoots)
+  reading.manifest_files = index.files.map(relOf)
+  /**
+   * 「哪一行是看板那一行」= **它解析到的那份 `package.json` 声明的 `name`**（宿主建表用的就是这个键，
+   * `BOOT-02` 的 A 腿读的也是它）或者是那份 `package.json` 本身。
+   * 🔴 不认行 id（挂载行按设计不带 id）、不认名字形状（`file:///…` 只是当前写法，不是身份）。
+   */
+  let dashboardName = null
+  if (existsSync(dashboardManifest)) {
+    try {
+      dashboardName = JSON.parse(readFileSync(dashboardManifest, 'utf8')).name ?? null
+    } catch (err) {
+      dashboardName = null
+      reading.dashboard_manifest_error = String(err?.message ?? err)
+    }
+  }
+  reading.dashboard_name = dashboardName
+  const classified = rows.map((row) => {
+    const pkg = resolveRowPackage(row.name, index)
+    const platform = pkg.ok ? (pkg.value?.dsh?.client?.platform ?? null) : null
+    return {
+      row,
+      pkg,
+      platform,
+      client: platform === CLIENT_UI_PLATFORM,
+      is_dashboard: pkg.ok && (
+        (pkg.file !== null && sameFile(pkg.file, dashboardManifest))
+        || (dashboardName !== null && pkg.value?.name === dashboardName)
+      ),
+    }
+  })
+  reading.client_ui_rows = classified.filter((c) => c.client).map((c) => ({
+    name: c.row.name,
+    id: c.row.id,
+    where: c.row.where,
+    in_top_level_insert: c.row.in_top_level_insert,
+    pkg: relOf(c.pkg.file),
+  }))
+  /**
+   * 🔴 解析面**必须留读数**：`name` 解析不到的裸名（框架包在 `app.asar` 里 / 这棵树没有 `node_modules`）
+   * 不许静默算进"不是客户端 UI" —— 那会把"读不到"伪装成"判过了"（Gate-2 那个病的同一个形状）。
+   */
+  reading.resolve = {
+    ok: classified.filter((c) => c.pkg.ok).length,
+    unresolved_bare: classified.filter((c) => !c.pkg.ok && c.pkg.how === 'unresolved-bare').length,
+    not_a_package: classified.filter((c) => !c.pkg.ok && c.pkg.how === 'not-a-package').length,
+    no_name: classified.filter((c) => !c.pkg.ok && c.pkg.how === 'no-name').length,
+    bad_path: classified.filter((c) => !c.pkg.ok && c.pkg.how === 'bad-path').length,
+    no_package_json: classified.filter((c) => !c.pkg.ok && c.pkg.how === 'no-package-json').length,
+    package_json_unreadable: classified.filter((c) => !c.pkg.ok && c.pkg.how === 'package-json-unreadable').length,
+  }
+  reading.unresolved = classified
+    .filter((c) => !c.pkg.ok && c.pkg.how === 'unresolved-bare')
+    .map((c) => ({ name: c.row.name, where: c.row.where }))
+
+  // ① 语义面：客户端 UI 行只许住 `- insert:` 里（任何行，不只当前看板）
+  for (const c of classified) {
+    if (!c.client || c.row.in_top_level_insert) continue
+    const isDash = c.is_dashboard === true
+    reading.violations.push({ name: c.row.name, id: c.row.id, where: c.row.where, pkg: relOf(c.pkg.file), dashboard: isDash })
+    problems.push(problem(isDash ? PROFILE_CODES.notProfileInsert : PROFILE_CODES.clientNotInProfileInsert,
+      `${label} 里有一行（${c.row.name}${c.row.id === null ? '' : ` · id ${c.row.id}`}）指向的包（${relOf(c.pkg.file)}）声明了 \`dsh.client.platform: web\`，`
+      + `但它住在「${c.row.where}」—— 客户端 UI 行必须是**顶层 \`- insert:\` 的直接成员**（宿主装载层），`
+      + '写在别处 = 宿主不会把它交给浏览器（与 `bug-20261104-02` 同一个形状）',
+      { scope: isDash ? 'mount' : 'other', row_name: c.row.name }))
+  }
+
+  // ② 阳性腿：看板那一行自己
+  const dash = classified.filter((c) => c.is_dashboard)
+  reading.dashboard = {
+    manifest: dashboardManifest,
+    occurrences: dash.length,
+    in_top_level_insert: dash.filter((c) => c.row.in_top_level_insert).length,
+    rows: dash.map((c) => ({ name: c.row.name, id: c.row.id, where: c.row.where, in_top_level_insert: c.row.in_top_level_insert, disabled: c.row.disabled, platform: c.platform })),
+    disabled_flags: dash.map((c) => c.row.disabled === true),
+  }
+  if (dash.length === 0) {
+    if (requireDashboard) {
+      problems.push(problem(PROFILE_CODES.profileMountMissing,
+        `${label} 里没有任何一行解析到看板包（${relOf(dashboardManifest)}）—— 这一格的目标形状（"那一行装在顶层 \`- insert:\` 里"）`
+        + '现在**还没有对象**：挂载路线正在从 bundle 层搬到 profile 层，`.tools/mount-dashboard-profile.mjs --apply` 还没跑。记 HOLD（不是绿），'
+        + '那一行出现之后这一格自动回到红/绿两态',
+        { scope: 'mount', manifest: relOf(dashboardManifest) }))
+    }
+  } else {
+    for (const c of dash) {
+      if (c.row.id !== null) {
+        problems.push(problem(PROFILE_CODES.profileRowHasId,
+          `${label} 里看板那一行带了 \`id: ${c.row.id}\` —— 挂载行的形状是"新增一行"（顶层 \`- insert:\` 的直接成员、**不带 id**，定形 §五）；`
+          + '带 `id` 的顶层条目是"改已存在的行"（override），两者的语义不同',
+          { scope: 'other', row_name: c.row.name }))
+      }
+      if (c.row.disabled === true) {
+        problems.push(problem(PROFILE_CODES.profileRowDisabled,
+          `${label} 里看板那一行是 \`disabled: true\` —— 一行关着的不是一次挂载（浏览器没有东西可收）`,
+          { scope: 'other', row_name: c.row.name }))
+      }
+      if (!c.pkg.ok) {
+        problems.push(problem(CODES.noClientDecl,
+          `${label} 里看板那一行的 \`name\` 解析不到 package.json（${c.pkg.how}：${c.pkg.error}）—— 指不到包，浏览器没有东西可收`,
+          { scope: 'other', row_name: c.row.name }))
+      } else {
+        if (c.platform !== CLIENT_UI_PLATFORM) {
+          problems.push(problem(CODES.noClientDecl,
+            `${label} 里看板那一行指向的包（${relOf(c.pkg.file)}）没有声明 \`dsh.client.platform: web\`（实得 ${JSON.stringify(c.platform)}）—— 浏览器不会收它`,
+            { scope: 'other', row_name: c.row.name }))
+        }
+        if (!Object.prototype.hasOwnProperty.call(c.pkg.value?.exports ?? {}, './client')) {
+          problems.push(problem(CODES.noClientDecl,
+            `${label} 里看板那一行指向的包（${relOf(c.pkg.file)}）没有声明 \`exports["./client"]\`（实得 ${JSON.stringify(c.pkg.value?.exports ?? null)}）—— 浏览器侧没有入口可加载`,
+            { scope: 'other', row_name: c.row.name }))
+        }
+      }
+      const cfgMap = c.row.map.get('config')
+      const root = cfgMap instanceof Map ? cfgMap.get('root') : null
+      if (typeof root !== 'string' || root.trim() === '') {
+        problems.push(problem(CODES.noClientDecl,
+          `${label} 里看板那一行的 \`config.root\` 缺失或不是字符串（实得 ${JSON.stringify(root)}）—— 插件拿它当内容根，缺了面板读不到数据`,
+          { scope: 'other', row_name: c.row.name }))
+      }
+    }
+  }
+  return { problems, reading }
+}
+
+/**
+ * **profile 形状的合成补丁**（夹具；只住调用方给的目录）。
+ *
+ * 形状照**真** profile 补丁：顶层是一串 item —— `- id: <行 id>` + `name` + `config`（改已存在的行）
+ * 与 `- insert:`（新增行）。挂载行按定形 §五：`- insert:` 的直接成员、**不带 id**、`name` 是路径形、
+ * `config.root` 在。
+ *
+ * @param {{placement: 'insert'|'override'|'nested'|'absent', row: object, otherRow?: object}} input
+ *   `row`  = `{id?, name, root, disabled?}`；`id` 给了才会写出来（量"带 id"那一格）。
+ *   `placement`：`insert`（正确）· `override`（顶层 `- id:` 条目，住错层）· `nested`（塞进另一行的
+ *   `config.plugins` 里，更深的错层）· `absent`（整行没有）。
+ */
+export function profilePatchFixture({ placement = 'insert', row, otherRow = null } = {}) {
+  const rowBlock = (indent, r) => {
+    const pad = ' '.repeat(indent)
+    const lines = [r.id === undefined || r.id === null ? `${pad}- name: '${r.name}'` : `${pad}- id: ${r.id}`]
+    if (r.id !== undefined && r.id !== null) lines.push(`${pad}  name: '${r.name}'`)
+    if (r.disabled === true) lines.push(`${pad}  disabled: true`)
+    lines.push(`${pad}  config:`, `${pad}    root: '${r.root}'`)
+    return lines
+  }
+  const lines = [
+    '# DASH-15/16 · profile 形状的合成补丁（阳性对照 / 刀）—— 只住运行根或测试抽屉，不是被测对象',
+    '- id: ui-chat',
+    '  name: "@deepseek-ai/dsh-client-ui-chat"',
+    '  config:',
+    '    transcriptView: detailed',
+  ]
+  if (placement === 'insert') {
+    lines.push('- insert:')
+    lines.push(...rowBlock(4, row))
+    if (otherRow !== null) lines.push(...rowBlock(4, otherRow))
+  }
+  if (placement === 'override') lines.push(...rowBlock(0, row))
+  if (placement === 'nested') {
+    lines.push('- id: ui-conversation', '  name: "@deepseek-ai/dsh-client-ui-conversation"', '  config:', '    busyEnter: steer', '    plugins:')
+    lines.push(...rowBlock(6, row))
+  }
+  lines.push('- id: web-search-deepseek', '  name: "@deepseek-ai/dsh-web-search-deepseek"', '  config:', '    apiKeyEnv: DEEPSEEK_API_KEY')
+  return `${lines.join('\n')}\n`
+}
+
+/**
+ * 把一段挂载块**追加**到一份真补丁文本后面（阳性对照用：真字节 + 真形状的行）。
+ * 已经有看板行时**原样返回**（修好之后这一格是恒等变换，仍然要求判据干净）—— 与 `DASH-15`
+ * 旧的 `correctedRealText()` 同一个口径。
+ *
+ * @param {string} text 真补丁原文
+ * @param {{name: string, root: string}} row
+ * @param {boolean} alreadyPresent 调用方已经量过"那一行在不在"
+ */
+export function appendMountBlock(text, { name, root }, alreadyPresent = false) {
+  if (alreadyPresent) return { text, appended: false }
+  const block = [
+    '',
+    '# >>>AGENIA-DASHBOARD-MOUNT>>>',
+    '- insert:',
+    `    - name: '${name}'`,
+    '      config:',
+    `        root: '${root}'`,
+    '# <<<AGENIA-DASHBOARD-MOUNT<<<',
+    '',
+  ].join('\n')
+  const base = String(text).endsWith('\n') ? String(text) : `${text}\n`
+  return { text: `${base}${block}`, appended: true }
+}
 
 /**
  * 组合原文里某一行自己的状态（**只看组合，不看补丁** —— 组合是源，补丁是派生物）。

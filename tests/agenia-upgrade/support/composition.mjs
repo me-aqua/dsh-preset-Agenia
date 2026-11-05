@@ -10,10 +10,19 @@
  *       `calibrate()` 再拿**活体那两个已知文件**做阳性对照（解析器哑了当场红）。
  *       来历：AGENTS.md 规矩 7 ——"静默失效的检查"和"通过的检查"长得一模一样。
  *
- * 支持的子集（正是这两个文件用到的全部形状）：
+ * 支持的子集（正是这些文件用到的全部形状）：
  *   块映射 / 块序列 / `- key: value` 起头的序列项 / 单双引号标量 / 纯标量（带 ` #` 尾注释）
- *   / 行内列表 `[a, b]` / 块标量 `|` `|-` `|+` / `!!js` 标签 / 数字与布尔。
- * 不支持（会进 warnings）：锚点 `&`/`*`、多行折叠 `>`、流式映射 `{}`、多文档 `---`。
+ *   / 行内列表 `[a, b]` / 块标量 `|` `|-` `|+` / **多行 plain scalar**（见 `readPlainScalarContinuation`）
+ *   / `!!js` 标签 / 数字与布尔。
+ * 不支持（会进 warnings）：锚点 `&`/`*`、流式映射 `{}`、多文档 `---`。
+ *
+ * 🔴 **多行 plain scalar 这一条是 Gate-2 缺陷修出来的**（2026-11-05）：现役 profile 补丁第 44–45 行
+ *   是一处 `description: … ⏎ 更深缩进的续行`，读取器当时读不懂 ⇒ 从第 45 行起**整段盲掉**
+ *   （18 条「未被解析器吃掉的行」，最后一条顶层 item `- id: web-search-deepseek` 看不见），
+ *   而 `BOOT-02` 只能永远报 `BOOT-R3-MOUNT-ABSENT`。修的时候守两条：
+ *     ① **不靠"跳过看不懂的行"** —— 那是把盲区换成静默（正是这 18 条读数的成因）；
+ *     ② 只吞**确实是续行**的那些行（更深缩进、不是 `key:` 行、不是 `- ` 序列项、不是空行/注释），
+ *        其余照旧进 `warnings`。**阳性/阴性对照**在 `boot-readings.mjs::profilePatchCoverage()` 里。
  */
 import path from 'node:path'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -77,6 +86,56 @@ function parseScalar(raw) {
   return plain
 }
 
+/**
+ * 这个值**能带续行**吗？只有 plain scalar 能：
+ * 引号标量 / 行内集合 `[…]` `{…}` / `!!js` 标签 / 块标量（`|` `>`，另走 `readBlockScalar`）都不行 ——
+ * 它们后面再出现更深缩进的行是**坏 YAML**，必须留给 `warnings`，不许被这里吞掉。
+ */
+function isPlainScalarStart(raw) {
+  const s = String(raw).trim()
+  if (s === '') return false
+  if (s.startsWith('!!js')) return false
+  if (s.startsWith("'") || s.startsWith('"')) return false
+  if (s.startsWith('[') || s.startsWith('{')) return false
+  return true
+}
+
+/**
+ * 读一个 plain scalar 的**续行**（YAML 的多行 plain scalar）。
+ *
+ * 形状（现役 profile 补丁第 44–45 行就是它）：
+ *   `description: Stronger agentic coding, …; suited`
+ *   `  to complex or quality-critical tasks at higher cost.`     ← 更深缩进、不是 `key:` 行
+ * YAML 把这种换行折成一个空格，所以这里也折成一个空格（`'… suited' + ' ' + 'to complex …'`）。
+ *
+ * **不吞**的四种行（每一种都留在原地，外层会把它们记进 `warnings` —— 「看不懂就出声」）：
+ *   · 空行（折叠到此为止；它后面若还有更深的内容行，会作为未被吃掉的行报出来）；
+ *   · 注释行（`#` 起头，不是值的一部分）；
+ *   · `key:` 行（标量后面跟一个映射键是坏 YAML）；
+ *   · `- ` / `-` 序列项（序列不能续在一个标量后面）。
+ * 缩进**不更深**的行也不吞 —— 那是同级的下一个键，或者这一块结束了。
+ *
+ * @returns {{value: string, next: number, folded: number}}  `folded` = 折了几行（0 = 原文照旧）
+ */
+function readPlainScalarContinuation(lines, i, keyIndent, first) {
+  const parts = [stripInlineComment(String(first).trim())]
+  let j = i
+  let folded = 0
+  while (j < lines.length) {
+    const line = lines[j]
+    if (isBlank(line)) break
+    if (indentOf(line) <= keyIndent) break
+    const body = line.trim()
+    if (body.startsWith('#')) break
+    if (isKeyStart(body)) break
+    if (body === '-' || body.startsWith('- ')) break
+    parts.push(stripInlineComment(body))
+    folded += 1
+    j += 1
+  }
+  return { value: parts.join(' '), next: j, folded }
+}
+
 // ── 递归下降（按缩进）──────────────────────────────────────────────────────
 function parseBlock(lines, i, minIndent) {
   const j = skipIgnorable(lines, i)
@@ -106,6 +165,11 @@ function parseList(lines, i, indent) {
     } else if (isKeyStart(inline)) {
       const r = parseMap(lines, i, indent + 2, inline)
       out.push(r.value)
+      i = r.next
+    } else if (isPlainScalarStart(inline)) {
+      // 序列项也可以是多行 plain scalar（续行比 `- ` 更深）
+      const r = readPlainScalarContinuation(lines, i, indent, inline)
+      out.push(parseScalar(r.value))
       i = r.next
     } else {
       out.push(parseScalar(inline))
@@ -151,6 +215,11 @@ function parseMap(lines, i, keyIndent, firstInline) {
     } else if (/^[|>][-+]?$/.test(rest)) {
       const r = readBlockScalar(lines, i, keyIndent)
       map.set(key, r.value)
+      i = r.next
+    } else if (isPlainScalarStart(rest)) {
+      // 多行 plain scalar：`description: … ⏎ 更深缩进的续行`（现役 profile 补丁第 44–45 行）
+      const r = readPlainScalarContinuation(lines, i, keyIndent, rest)
+      map.set(key, parseScalar(r.value))
       i = r.next
     } else {
       map.set(key, parseScalar(rest))

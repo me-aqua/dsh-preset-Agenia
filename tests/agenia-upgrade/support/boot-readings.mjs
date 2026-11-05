@@ -107,6 +107,11 @@ export const BOOT_CODES = {
   r3RevStale: 'BOOT-R3-REV-STALE-AFTER-BOOT',
   r3HalfProof: 'BOOT-R3-HALF-PROOF',
   r3PackageUnreadable: 'BOOT-R3-PACKAGE-UNREADABLE',
+  // 读取器覆盖（Gate-2 缺陷：多行 plain scalar 让读取器从第 45 行起整段盲掉）
+  patchReaderBlind: 'BOOT-PATCH-READER-BLIND',
+  patchReaderNoFold: 'BOOT-PATCH-READER-NO-FOLD',
+  patchReaderFalseAccept: 'BOOT-PATCH-READER-FALSE-ACCEPT',
+  patchReaderNoLiveFile: 'BOOT-PATCH-READER-NO-LIVE-FILE',
 }
 
 /** 期望的预设名（定形 R2）。 */
@@ -442,6 +447,227 @@ export function profilePatchPath(env = process.env) {
   if (dir !== null) return { path: path.join(dir, 'cordis.patch.yml'), source: 'DSH_PROFILE_DIR' }
   const profile = env.DSH_PROFILE ?? 'desktop'
   return { path: path.join(os.homedir(), '.dsh', 'profiles', profile, 'cordis.patch.yml'), source: 'homedir()/.dsh/profiles/<DSH_PROFILE>' }
+}
+
+/**
+ * 🔴 **读取器覆盖**（Gate-2 缺陷 · 2026-11-05）——
+ * 这一节回答一个问题：**这一跑的结论是"那行不在"，还是"读取器没看见"？**
+ *
+ * 缺陷形状：现役 profile 补丁第 44–45 行是一处**多行 plain scalar**（`description: …` + 更深缩进的续行）。
+ * 窄口径读取器 `parseYamlSubset` 当时读不懂它 ⇒ 从第 45 行起**整段盲掉**（18 条「未被解析器吃掉的行」，
+ * 最后一条顶层 item `- id: web-search-deepseek` 根本看不见）。后果不是红，是**静默**：
+ * `BOOT-02` 只能永远报 `BOOT-R3-MOUNT-ABSENT`（"挂载行不在"），`BOOT-01` 的 `oneStepRemoval()`
+ * 也对一份好文件报"不可撤"。**"读不到"与"不在"长得一模一样** ⇒ 这一格必须有它自己的读数。
+ *
+ * 三段，缺一不算自证：
+ *   ① **阳性对照（盘上真实文件）**：`profilePatchCoverage()` 对**这一跑真正读的那一份**与**现役那一份**
+ *      各量一次 —— 未解析条数必须 `0`，且**最后一条顶层 item 的键**必须与"逐行扫原文"那一把**独立的**
+ *      尺子给出同一个键（`cand-20261021-0091`：期望侧不许拿同一份来源）。对不上 ⇒
+ *      `BOOT-PATCH-READER-BLIND`（红：尺子瞎了，不是对象坏了）。
+ *   ② **功能阳性对照（合成）**：多行 plain scalar 必须真的被**折成一个空格**（不是被跳过、不是原样留着），
+ *      而且它后面那一行必须照旧读得到 ⇒ 否则 `BOOT-PATCH-READER-NO-FOLD`。
+ *   ③ **阴性对照（合成）**：三种**真坏**的行（plain scalar 后面跟更深的 `key:` / 引号标量后面跟缩进行 /
+ *      标量后面跟 `- ` 序列项）必须**仍然出声**（`warnings` 非空且点到那一行）⇒
+ *      否则 `BOOT-PATCH-READER-FALSE-ACCEPT`（"读取器什么都肯吃"与"读得懂"不许同形）。
+ *      这一格是"不许用跳过未知行来支持新语法"的机械保证。
+ *
+ * 现役文件不在（别的机器 / 干净 clone）⇒ **HOLD `BOOT-PATCH-READER-NO-LIVE-FILE`**，不绿。
+ */
+
+/** 顶层 item 的**键**（`insert` / `id:<x>` / `name:<y>`）—— 解析侧用。 */
+function topLevelKeyOfItem(item) {
+  if (!(item instanceof Map)) return `<${Array.isArray(item) ? 'list' : typeof item}>`
+  if (Array.isArray(item.get('insert'))) return 'insert'
+  for (const k of ['id', 'name', 'group']) {
+    const v = item.get(k)
+    if (typeof v === 'string' && v !== '') return `${k}:${v}`
+  }
+  return `<map keys=${[...item.keys()].join(',')}>`
+}
+
+/**
+ * 顶层 item 的键 —— **逐行扫原文**的那一把尺子（与解析器无关，用来交叉验"最后一条顶层 item 看得见"）。
+ * 只认行首顶格的 `- insert:` / `- id:` / `- name:`，与 `profilePatchPath` 那一族补丁的形状一致。
+ * ⚠️ 引号在这里剥掉（解析器给的是**值**，不是原文）—— 两边必须都拿"值"来比，否则会造出假分歧。
+ */
+export function lastTopLevelKeyByText(text) {
+  const lines = String(text).replace(/\r\n/g, '\n').split('\n')
+  let last = null
+  for (const line of lines) {
+    const m = /^- (?:insert:[ \t]*$|id:[ \t]*([^\s#]+)|name:[ \t]*([^\s#]+))/.exec(line)
+    if (m === null) continue
+    const value = (m[1] ?? m[2] ?? '').replace(/^['"]|['"]$/g, '')
+    last = m[1] !== undefined ? `id:${value}` : m[2] !== undefined ? `name:${value}` : 'insert'
+  }
+  return last
+}
+
+/**
+ * 一份补丁的**覆盖读数**：解析器吃掉了多少、最后一条顶层 item 是哪一个、两把尺子同不同意。
+ * @param {string} file
+ */
+export function profilePatchCoverage(file) {
+  const out = { path: file, exists: existsSync(file), measured_at: new Date().toISOString() }
+  if (!out.exists) return { ...out, items: null, unparsed_count: null, warnings: [], last_top_level_key: null, covers: false }
+  const text = readFileSync(file, 'utf8')
+  const st = statSync(file)
+  const doc = parseYamlSubset(text, `coverage:${path.basename(file)}`)
+  const items = Array.isArray(doc.value) ? doc.value : []
+  const names = items.map(topLevelKeyOfItem)
+  const byText = lastTopLevelKeyByText(text)
+  const byParser = names.length === 0 ? null : names[names.length - 1]
+  out.bytes = st.size
+  out.sha256 = sha256(Buffer.from(text, 'utf8'))
+  out.mtime = new Date(st.mtimeMs).toISOString()
+  out.lines = text.replace(/\r\n/g, '\n').split('\n').length
+  out.items = names.length
+  out.top_level_keys = names
+  out.warnings = doc.warnings
+  out.unparsed_count = doc.warnings.length
+  out.last_top_level_key = {
+    by_text: byText,
+    by_parser: byParser,
+    agree: byText !== null && byText === byParser,
+    why: byText === null ? '原文里找不到顶格 `- id:` / `- insert:` 行' : byText === byParser ? null : '两把尺子给出不同的最后一条顶层 item',
+  }
+  out.covers = out.unparsed_count === 0 && out.last_top_level_key.agree === true
+  return out
+}
+
+/**
+ * 读取器自证的三组**合成**夹具（只住内存，不写盘）：
+ *   · `multiline`          —— 多行 plain scalar（阳性：必须折成一个空格，且后面的行还读得到）
+ *   · `multilineInList`    —— 序列项里的多行 plain scalar（同上，另一条代码路径）
+ *   · `nestedKeyAfterScalar` / `strayAfterQuote` / `sequenceAfterScalar` —— 三种**真坏**的行（阴性：必须出声）
+ * 判据：阳性两条 `warnings` 必须为 0 且值对得上；阴性三条 `warnings` 必须非空且点到第 2 行。
+ */
+export const READER_FIXTURES = Object.freeze({
+  multiline: [
+    'top: 1',
+    'description: Stronger agentic coding, knowledge, and difficult reasoning; suited',
+    '  to complex or quality-critical tasks at higher cost.',
+    'after: 2',
+    '',
+  ].join('\n'),
+  multilineInList: [
+    'list:',
+    '  - first item text',
+    '    continued on the next line',
+    '  - second',
+    '',
+  ].join('\n'),
+  nestedKeyAfterScalar: ['a: plain value', '  nestedKey: oops', ''].join('\n'),
+  strayAfterQuote: ['b: \'quoted\'', '  stray-after-quote', ''].join('\n'),
+  sequenceAfterScalar: ['c: plain value', '  - item', ''].join('\n'),
+})
+
+/**
+ * 读取器自证（纯函数，可复算）：跑那五组合成夹具，返回读数与**不成立的原因**（不 push，调用方决定红）。
+ */
+export function patchReaderSelfProof() {
+  const parse = (key) => {
+    const doc = parseYamlSubset(READER_FIXTURES[key], `fixture:${key}`)
+    return { warnings: doc.warnings, value: doc.value instanceof Map ? doc.value : doc.value }
+  }
+  const foldedDescription = 'Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost.'
+  const multiline = parse('multiline')
+  const multilineInList = parse('multilineInList')
+  const negatives = {
+    nestedKeyAfterScalar: parse('nestedKeyAfterScalar').warnings,
+    strayAfterQuote: parse('strayAfterQuote').warnings,
+    sequenceAfterScalar: parse('sequenceAfterScalar').warnings,
+  }
+  const listValue = Array.isArray(multilineInList.value) ? null : multilineInList.value?.get?.('list')
+  const reading = {
+    measured_at: new Date().toISOString(),
+    fixtures: READER_FIXTURES,
+    multiline: {
+      warnings: multiline.warnings,
+      description: multiline.value instanceof Map ? multiline.value.get('description') : null,
+      after: multiline.value instanceof Map ? multiline.value.get('after') : null,
+      expected_description: foldedDescription,
+    },
+    multiline_in_list: {
+      warnings: multilineInList.warnings,
+      value: listValue ?? null,
+    },
+    negatives: Object.fromEntries(Object.entries(negatives).map(([k, w]) => [k, { warnings: w, reported: w.length > 0, names_line_2: w.some((x) => /行 2|line 2/.test(x)) }])),
+  }
+  const problems = []
+  if (reading.multiline.warnings.length !== 0 || reading.multiline.description !== foldedDescription || reading.multiline.after !== 2) {
+    problems.push({ code: BOOT_CODES.patchReaderNoFold, message:
+      `多行 plain scalar 的合成夹具没读对（warnings=${JSON.stringify(reading.multiline.warnings)} · description=${JSON.stringify(reading.multiline.description)} · after=${JSON.stringify(reading.multiline.after)}）`
+      + ` —— 期望折成一个空格（${JSON.stringify(foldedDescription)}）且它后面那一行照旧读得到。读取器要么没折、要么把后面的行吞了：那不是"支持多行"，那是把"读不到"换成"读错"` })
+  }
+  const listOk = Array.isArray(reading.multiline_in_list.value) && reading.multiline_in_list.value[0] === 'first item text continued on the next line'
+    && reading.multiline_in_list.value[1] === 'second' && reading.multiline_in_list.warnings.length === 0
+  if (!listOk) {
+    problems.push({ code: BOOT_CODES.patchReaderNoFold, message:
+      `序列项里的多行 plain scalar 没读对（value=${JSON.stringify(reading.multiline_in_list.value)} · warnings=${JSON.stringify(reading.multiline_in_list.warnings)}）`
+      + ` —— 期望 ${JSON.stringify(['first item text continued on the next line', 'second'])}` })
+  }
+  const silent = Object.entries(reading.negatives).filter(([, v]) => v.reported !== true)
+  if (silent.length > 0) {
+    problems.push({ code: BOOT_CODES.patchReaderFalseAccept, message:
+      `${silent.map(([k]) => k).join(' / ')} 这三组**真坏**的合成夹具里，有 ${silent.length} 组**没有出声**（${JSON.stringify(silent.map(([k, v]) => ({ [k]: v.warnings })))}）`
+      + ' —— 读取器把坏行也吃下去了：那"零未解析"就不是"读得懂"，这个判据也就不许绿' })
+  }
+  return { reading, problems }
+}
+
+/**
+ * 把"读取器覆盖"收成判词。**BOOT-01 / BOOT-02 都调它**（两条都靠读 profile 补丁下结论）。
+ *
+ * 两条阳性对照组：
+ *   · `effective` = 这一跑**真正**读的那一份（`AGENIA_PROFILE_PATCH` / `DSH_PROFILE_DIR` / homedir 那条链）；
+ *   · `live` = **现役**那一份（同一条链，只是不认 `AGENIA_PROFILE_PATCH`）——
+ *     用处是：拿一份"折叠过的副本"跑绿，不能替现役文件的那个盲区作证（实现岗的绕行动作正是这个形状）。
+ * 现役那一份不在 ⇒ `HOLD BOOT-PATCH-READER-NO-LIVE-FILE`（不绿）。
+ *
+ * @returns {{where: object, effective: object, live: object, proof: object, problems: object[], holds: object[]}}
+ */
+export function patchReaderVerdict({ env = process.env } = {}) {
+  const where = profilePatchPath(env)
+  const liveEnv = { ...env }
+  delete liveEnv.AGENIA_PROFILE_PATCH
+  const liveWhere = profilePatchPath(liveEnv)
+  const effective = profilePatchCoverage(where.path)
+  const live = liveWhere.path === where.path ? { ...effective, same_as_effective: true } : { ...profilePatchCoverage(liveWhere.path), same_as_effective: false }
+  const proof = patchReaderSelfProof()
+  const problems = []
+  const holds = []
+  const describe = (c) => `${c.path}（${c.bytes ?? '?'} B · sha256 ${String(c.sha256 ?? '?').slice(0, 12)}… · ${c.lines ?? '?'} 行）`
+  for (const [label, c] of [['这一跑读的那一份', effective], ['现役那一份', live]]) {
+    if (!c.exists) continue
+    if (c.unparsed_count !== 0 || c.last_top_level_key.agree !== true) {
+      problems.push({
+        code: BOOT_CODES.patchReaderBlind,
+        message: `${label}（${describe(c)}）**没有被解析器覆盖**：未解析 ${c.unparsed_count} 条`
+          + `${c.warnings.length > 0 ? `（${c.warnings.slice(0, 3).join(' / ')}）` : ''}`
+          + `；最后一条顶层 item：原文扫 = ${JSON.stringify(c.last_top_level_key.by_text)} 而解析器 = ${JSON.stringify(c.last_top_level_key.by_parser)}`
+          + `（${c.last_top_level_key.by_text === null ? '原文里找不到顶格 item' : '两把尺子必须给出同一个键'}）`
+          + ' —— 这份补丁里**有读取器看不见的东西** ⇒ 底下所有"那一行不在 / 撤不掉"的判词都不成立（缺 ≠ 坏 ≠ 盲）；'
+          + '这是**尺子**的问题（`parseYamlSubset` 的多行 plain scalar），不是挂载形状的问题',
+      })
+    }
+  }
+  if (!live.exists) {
+    holds.push({
+      code: BOOT_CODES.patchReaderNoLiveFile,
+      why: `现役 profile 补丁不在（${liveWhere.path}，来源 ${liveWhere.source}）⇒ 读取器对**这一台机器的现役文件**覆盖没被验过`
+        + '（别的机器 / 干净 clone 上没有它）—— 这一格记 HOLD（不是绿）；给 `AGENIA_PROFILE_PATCH` 指的副本只能替它自己作证',
+    })
+  }
+  for (const p of proof.problems) problems.push(p)
+  return {
+    measured_at: new Date().toISOString(),
+    where: { effective: where, live: liveWhere },
+    effective,
+    live,
+    proof: proof.reading,
+    problems,
+    holds,
+  }
 }
 
 /**

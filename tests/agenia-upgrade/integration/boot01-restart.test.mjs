@@ -46,6 +46,21 @@
  *   · 不判浏览器真的执行了那份 JS（那是 GUI 那一格）；
  *   · 不替 R1 写 profile 补丁（那是实现岗的活，且只能在客户端关着的时候写）。
  *
+ * ── 🔴 读取器覆盖（Gate-2 缺陷 · 2026-11-05 · 两条用例共用）────────────────────
+ * 上面**每一条**判词都建立在"读取器看得见整份 profile 补丁"之上。现役补丁第 44–45 行是一处
+ * **多行 plain scalar**，窄口径读取器曾经读不懂它 ⇒ 从第 45 行起整段盲掉（18 条未被吃掉的行），
+ * 于是 `BOOT-02` 只能永远报 `BOOT-R3-MOUNT-ABSENT`、`BOOT-01` 也会对好文件报"撤不掉"。
+ * ⇒ 两条用例都在最前面跑 `patchReaderVerdict()`（`support/boot-readings.mjs`），三段缺一不算自证：
+ *   ① **阳性（盘上真实文件）**：这一跑读的那一份 **与** 现役那一份，未解析条数必须 `0`，
+ *      且"最后一条顶层 item"必须与**逐行扫原文**那把独立的尺子给出同一个键 ⇒ 否则
+ *      `RED BOOT-PATCH-READER-BLIND`（尺子瞎了；底下"不在 / 撤不掉"的判词一律不成立）；
+ *   ② **功能阳性（合成）**：多行 plain scalar 必须真被折成一个空格、且它后面那一行还读得到
+ *      ⇒ 否则 `RED BOOT-PATCH-READER-NO-FOLD`；
+ *   ③ **阴性（合成）**：三种**真坏**的行（标量后跟更深的 `key:` / 引号标量后跟缩进行 /
+ *      标量后跟 `- ` 序列项）必须**仍然出声** ⇒ 否则 `RED BOOT-PATCH-READER-FALSE-ACCEPT`
+ *      （"什么都肯吃"不许与"读得懂"同形）。
+ * 现役文件不在（别的机器 / 干净 clone）⇒ `HOLD BOOT-PATCH-READER-NO-LIVE-FILE`，不绿。
+ *
  * 🔴 判据打的是**现役** `presets/agenia` 与**客户端自己那份** profile 补丁；每一条读数都带
  *    `{树, head, measured_at, 文件 bytes/sha256/mtime, T 与 T 的来源}`（定形 §五「命名树与时刻」）。
  */
@@ -63,6 +78,7 @@ import {
   listSessions,
   oneStepRemoval,
   packageReading,
+  patchReaderVerdict,
   pluginChunkReading,
   presetVerdict,
   profilePatchReading,
@@ -94,6 +110,24 @@ function patchSummary(patch) {
 const whereOf = (x) =>
   `${x.id ?? x.dir}（建于 ${x.createdAt_iso ?? '?'} · preset=${JSON.stringify(x.agentPreset)} · `
   + `${x.file_bytes ?? '?'} B · sha256 ${String(x.file_sha256 ?? '?').slice(0, 12)}… · 首帧 sha256 ${String(x.first_frame_sha256 ?? '?').slice(0, 12)}…）`
+
+/**
+ * 读取器覆盖的收口（`BOOT-01` / `BOOT-02` 共用同一个口径）：
+ * 红的进 `problems`、判不了的进 `HOLD`，读数整份落盘（连三组阴性夹具的原文一起，读的人不用猜）。
+ */
+function applyReader(rec, reader) {
+  rec.readings.patch_reader = {
+    measured_at: reader.measured_at,
+    where: reader.where,
+    effective: reader.effective,
+    live: reader.live,
+    proof: reader.proof,
+    red_codes: reader.problems.map((p) => p.code),
+    hold_codes: reader.holds.map((h) => h.code),
+  }
+  for (const p of reader.problems) rec.problems.push(problem(p.code, p.message))
+  for (const h of reader.holds) caseHold(rec, h.code, h.why)
+}
 
 // ── 尺子自证：两份**真实**会话流（阴性 / 阳性）────────────────────────────────
 /**
@@ -147,6 +181,8 @@ test('BOOT-01 启动后读数 A（身份）：重启之后新建的会话头 age
     rec.readings.session_root = store
     rec.readings.restart = { ok: boot.ok, at: boot.at, at_iso: boot.at_iso, source: boot.source, host: boot.host ?? null, chain: boot.chain, why: boot.why ?? null, measured_at: new Date().toISOString() }
     rec.readings.profile_patch = patchSummary(patch)
+    // 🔴 读取器自证（Gate-2 缺陷）：先验"整份补丁都被读到了"，再看那一行在不在、撤不撤得掉。
+    applyReader(rec, patchReaderVerdict())
     rec.readings.package = (() => {
       const p = packageReading(DASHBOARD_PKG_DIR())
       return { name: p.name ?? null, dir: p.dir, client_exists: p.client_exists ?? false, client_sha256: p.client_sha256 ?? null, platform: p.platform ?? null }
@@ -363,6 +399,8 @@ test('BOOT-02 启动后读数 B（包可达）：宿主 boot 载荷登记这个�
       measured_at: new Date().toISOString(),
     }
     rec.readings.profile_patch = patchSummary(patch)
+    // 🔴 读取器自证（Gate-2 缺陷）：这一跑读的那一份 + 现役那一份都必须被读全（见文件头）。
+    applyReader(rec, patchReaderVerdict())
     rec.readings.host = { ...host, measured_at: new Date().toISOString() }
     rec.readings.restart = { ok: boot.ok, at: boot.at, at_iso: boot.at_iso, source: boot.source, why: boot.why ?? null }
 
