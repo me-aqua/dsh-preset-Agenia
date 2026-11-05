@@ -629,6 +629,22 @@ export const BATCH_AB = ['MJUDGE-01']
 export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 'DASH-06', 'DASH-07', 'DASH-08', 'DASH-09', 'DASH-10', 'DASH-11', 'DASH-12', 'DASH-13', 'DASH-14', 'DASH-15', 'DASH-16']
 
 /**
+ * 批次 AD 的 2 条 —— **启动后读数**（2026-11-05 第 2 关；定形 `定形-看板挂载profile层.md` R2 / R3 / R5）。
+ *
+ * 那一票的病根不是"面板没写出来"，是**没有任何一条读数在启动之后回答过两个问题**：
+ *   预设还注册得上吗？浏览器真收到那个包了吗？ ⇒ 塌了和没塌在盘上长得一模一样。
+ *   · `BOOT-01` **身份（R2 + R5）**：`T`（这一次客户端启动的时刻）之后**新建**的顶层会话，
+ *     头里 `agentPreset` 必须是 `agenia`；`standard` ⇒ 塌了。没有 `createdAt >= T` 的会话 ⇒ **HOLD**
+ *     （`BOOT-NO-SESSION-AFTER-RESTART`，**不是绿**）。同批判 R5 的条件式（挂载行在/不在 × 身份判词）。
+ *   · `BOOT-02` **包可达（R3）**：宿主 `boot 载荷`里有没有这个**包名** + `/plugins/<包名>/client.js?rev=…`
+ *     取不取得到同一份字节；**两条都要有，缺一记 HOLD**（`BOOT-R3-HALF-PROOF`）。
+ *
+ * ⚠️ 分母 **148 → 150**（由盘上发现器数出来；`GROUP_COUNTS` 同批新增 `boot-readings: 2`）。
+ * ⚠️ 这两条**不进** `FROZEN_IDS`（同一批政策：后加批次各自以显式清单存在）。
+ */
+export const BATCH_AD = ['BOOT-01', 'BOOT-02']
+
+/**
  * 已落笔的二十四批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -652,7 +668,7 @@ export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -682,7 +698,8 @@ const BATCH_OF = (id) =>
                                                     : BATCH_AA.includes(id) ? 'AA'
                                                       : BATCH_AB.includes(id) ? 'AB'
                                                         : BATCH_AC.includes(id) ? 'AC'
-                                                          : null
+                                                          : BATCH_AD.includes(id) ? 'AD'
+                                                            : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -826,6 +843,10 @@ const F = {
    *  行体 + 包的 `dsh.client` 声明 · 生成补丁是 `make-bundle-patch.mjs --check` 的派生物（跑仓库自己的检查）·
    *  四把刀（放回预设层 / 包去掉声明 / 整行拿掉 / 副本上改一个值）。**打现役**（浏览器收到的是装好的那一份）。 */
   dash06: 'integration/dash06-mount.test.mjs',
+  /** 批次 AD（2026-11-05 第 2 关）：**启动后读数** —— `BOOT-01` 身份（R2 + R5）与
+   *  `BOOT-02` 包可达（R3）**同住一个文件**：两条是同一件事的两半（"预设还注册得上吗" /
+   *  "浏览器真收到那个包了吗"），各自独立、不互相吞。量具在 `support/boot-readings.mjs`。 */
+  bootReadings: 'integration/boot01-restart.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1064,6 +1085,11 @@ const ROWS = [
   // 一句话：一行的层归属由"它指向的包是不是客户端 UI"决定，不由作者记得的那两把钥匙决定。
   // 判据本体、解析面边界与合成夹具逐条写在 `support/client-ui-placement.mjs` 的文件头。
   ['DASH-16', 'client-dashboard', F.dash06, '**客户端 UI 行必须在宿主 insert（语义面）**（第 4 关评审 2026-11-05 `R-1`；`bug-20261104-02` 的下一次复现路径）：一行新加的 `dsh.client` 插件若**两处都忘**（没写 `# @host-level`、也没进生成器的 `HOST_LEVEL_IDS`），三个生成期 throw 都不响 —— 生成器走 `marks === 0` 分支把它拷进**每一份预设**，浏览器收不到，而全套判据照样绿。本格判两件事：① **语义面**：每份预设 `plugins` 里的行，用 `name` 解析到盘上的 `package.json`（路径形真解析；裸包名按 `manifestRoots` 里的 `package.json.name` 匹配，解析不到的记 `unresolved` 读数），只要那个包声明 `dsh.client.platform: "web"` 却不在顶层 `- insert:` ⇒ `DASH-CLIENT-IN-PRESET`（**不读标记、不读点名表、不认行 id**）；② **阳性腿**：语义集合必须非空、且当前看板那一行是顶层 `insert` 的直接成员，否则 ⇒ `DASH-HOST-MISSING`（"整份补丁里一行客户端 UI 都没有"不许绿）。刀：只在夹具里存在的合成包（`dsh.client.platform: web`）+ 合成行放进预设（无标记、无点名）⇒ **只有** `DASH-CLIENT-IN-PRESET`；同一行放进宿主 insert ⇒ 干净；看板行拿掉 ⇒ **只有** `DASH-HOST-MISSING`；看板行放回预设 ⇒ 两码（语义面 + 阳性腿）。刀翻错面 ⇒ `DASH-KNIFE-VECTOR`、扫描器没把夹具行解析到它自己的包 / 夹具行出现在生产输入里 ⇒ `DASH-KNIFE-UNREADABLE`（尺子坏了不是对象坏了）。**不判像素、不判浏览器真的收到包**（那归 GUI 清单）。判据本体与合成夹具：`support/client-ui-placement.mjs`', '批次 AC'],
+  // ── 批次 AD（2026-11-05 第 2 关）：**启动之后的读数** —— 事故（log §十三）真正的漏洞 ─────────
+  // 一句话：塌了和没塌在盘上长得一模一样，因为**没有一条读数**在启动之后问过"预设还注册得上吗 / 浏览器真收到包了吗"。
+  // 量具与口径（含"会话头是创建时快照、续跑的老会话不算证据"）逐条写在 `support/boot-readings.mjs`。
+  ['BOOT-01', 'boot-readings', F.bootReadings, '**启动后读数 A（身份）**（定形 R2 + R5，`定形-看板挂载profile层.md`）：`T` = 这一次客户端启动的时刻（`AGENIA_BOOT_AT`，否则量宿主进程启动时刻；都没有 ⇒ `BOOT-R2-RESTART-TIME-UNKNOWN` 的 HOLD）；取该工作区里**创建（`header.createdAt`）于 `T` 之后**、**顶层**（`delegationDepth === 0` 且不是 `origin: subagent` / 带 `parentSession` 的委派会话）的最新一份会话，判头里的 `agentPreset`：`agenia` ⇒ 成立 · `standard` ⇒ `BOOT-PRESET-NOT-REGISTERED`（= 事故形态：无角色 ⇒ 窄权限）· 别的值 ⇒ `BOOT-PRESET-UNEXPECTED`；**没有创建于 `T` 之后的顶层会话 ⇒ HOLD `BOOT-NO-SESSION-AFTER-RESTART`**（`mtime` 晚但 `createdAt` 早的**续跑会话**单独列进 `readings.identity.resumed_touched_after_T`，**不当证据** —— 事故现场那份 `session-cc5c68d1` 的头写于 2026-10-19，16:07 续跑起来守卫读的还是 `standard`）。**尺子自证两条**：① 拿盘上真实的两份流各喂一次（`standard` 那份必须 RED、`agenia` 那份必须 GREEN，判词不同，否则 `BOOT-R2-DETECTOR-DEAD`）；② `zstd-frames.mjs` 全解的头必须等于 `zstdDecompressSync`（只解第一帧）解出来的头，否则 `BOOT-R2-HEADER-NOT-IN-FIRST-FRAME`。同批 **R5 的条件式**（不是故事）：`profile 补丁里那一行` × 上面的判词 —— 行不在而判 RED ⇒ `BOOT-ROLLBACK-DID-NOT-RESTORE`；行在而判 RED ⇒ `BOOT-MOUNT-BROKE-IDENTITY`；行在还必须能**一步撤掉**（顶层 `- insert:` 一个 item、整块拿掉后仍解析干净、文件里再无第二处引用），否则 `BOOT-ROLLBACK-NOT-REMOVABLE`。读数带 `{repo, head, T 与来源, 每份会话的 bytes/sha256/首帧 sha256/createdAt, measured_at}`', '批次 AD'],
+  ['BOOT-02', 'boot-readings', F.bootReadings, '**启动后读数 B（包可达）**（定形 R3；「两条读数都要有，缺一不算挂上」）：宿主侧的**两条**读数 —— A **boot 载荷**：页面（`GET /` / `/index.html`）里 `window.__DSH_BOOT__` 的 entry 表有没有这个**包名**（`@agenia/dsh-client-ui-dashboard`；表键是包名，不是 cordis 行 id —— 所以 `/plugins/agenia-dashboard/client.js` 那种写法必然 404，**404 不是"不在"的证据**）；B **插件路由**：`GET /plugins/<包名>/client.js?rev=<rev>` 是否 200 **且**前 N B 与盘上那份逐字节相同（`rev` 按平台的 `artifactRevision()` 从 `[mtimeMs, ctimeMs, size]` 算；抄错了只会 404 ⇒ HOLD，不会假绿）。三态：200 证据 / 404 **判不了**（`BOOT-R3-ROUTE-404-AMBIGUOUS`，同批三个对照：未知包名 404、错 rev 404、根页面 401 ⇒ 路由在、门禁不归它管）/ 连不上（`BOOT-R3-NO-HOST`）。⇒ GREEN 只在 A、B 都拿到证据；任一条读不到 ⇒ **HOLD `BOOT-R3-HALF-PROOF`**（带两条各自的码）；只有 A 读到 200 而表里没有这个包 ⇒ `RED BOOT-R3-ENTRY-NOT-IN-BOOT`。挂载行不在 / 关着 / 住错层 ⇒ HOLD `BOOT-R3-MOUNT-ABSENT` / HOLD `BOOT-R3-MOUNT-DISABLED` / RED `BOOT-R3-MOUNT-NOT-TOP-LEVEL-INSERT`。**不判像素、不判浏览器真的执行了那份 JS**（归 GUI 清单，人点一次）', '批次 AD'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1182,6 +1208,9 @@ export const GROUP_COUNTS = {
    *  契约见 `.team/test/2026-11-04/技术契约-客户端看板.md`（定形 §六.1/§六.2/§八；§11 是重开那一批；
    *  `DASH-15` 的定形在 bug 台账 + 组长 2026-11-04 log §十四；`DASH-16` 的定形在评审报告 `R-1`）。 */
   'client-dashboard': 16,
+  /** 批次 AD · **启动后读数**（`BOOT-01` 身份 / `BOOT-02` 包可达）—— 定形
+   *  `.team/leader/2026-11-05/定形-看板挂载profile层.md`（R2 / R3 / R5）；量具 `support/boot-readings.mjs`。 */
+  'boot-readings': 2,
 }
 
 /**
@@ -1201,9 +1230,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1230,6 +1259,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
