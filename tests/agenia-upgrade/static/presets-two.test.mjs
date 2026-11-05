@@ -55,7 +55,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
 import { caseDir, caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
-import { cfg, delegationToolNames, enabledDelegations, hostLevelMarkProblems, leaderBlockProblems, listMd, memberAnnotations, parseComposition, plain, presetEntries, readPresetBaseline } from '../support/composition.mjs'
+import { cfg, delegationToolNames, enabledDelegations, hostLevelPairingProblems, leaderBlockProblems, listMd, memberAnnotations, parseComposition, plain, presetEntries, readPresetBaseline } from '../support/composition.mjs'
 import {
   buildCatalog, buildContentRoot, configFromComposition, guardOrderOf, importSourceCopy,
   injectedNames, injectedText, knifeReplace, loadInjector as loadInjectorFile, namesOfCatalog,
@@ -333,14 +333,10 @@ describe('static · presets-two (任务 A)', () => {
         //   —— 组长预设必须自己声明自己那一档，否则每个组长会话都报一次"没声明"。放行的是**具体那一行**
         //   （基线 0 条 · 现侧 1 条 · 逐字 `defaultRole: leader` · 坐在 `persona-injector` 的 config 里、
         //   与 `leaderOrder:` 同级缩进）；多一条 / 换个值 / 塞到别处 ⇒ `LEADER-VALUE-EXTRA`。
-        // 🔴 **2026-11-05（宿主级行 → 回滚）**：看板那一行一度标了 `# @host-level`、不住任何预设
-        //   ⇒ 组长块里不许出现它。**回滚之后**（16:2x）它 `disabled: true`、按生成器的形状回到组长块
-        //   —— 那一行的存在是老板拍的回滚，不是"谁顺手改了组长块" ⇒ `leaderBlockProblems()` 的
-        //   `pending_rows` 放行它（四条同时成立才放行），本用例据此记 **HOLD**（不是绿）。
-        //   行一开（`disabled` 去掉）⇒ 立刻回到 `LEADER-CLOBBERED`（红）：方向没有翻，只是窗口变了。
-        // ⚠️ "组长块里不许有宿主级行"那条判据**已删**（2026-11-05）：bundle 层不再有宿主级行集合
-        //   （`hostLevelRows()` 退休），那个集合永远是空的。"组合里不许出现 `# @host-level`"改由
-        //   `hostLevelMarkProblems()` 判（下面那一行；红，码 `HOST-LEVEL-MARK`）。
+        // 🔴 **2026-11-05 深夜（挂载搬回 bundle 层）**：看板那一行标了 `# @host-level`、住补丁顶层
+        //   `- insert:`，两份预设体里都没有它 ⇒ 组长块里**不该**出现它。
+        //   标记本身现在是**要求**（不是违规）：判法翻成"标记 ↔ 补丁里的宿主行成对"，见下面对
+        //   `hostLevelPairingProblems()` 的调用（旧方向 `hostLevelMarkProblems()` 已退休，恒红）。
         const leaderBase = (base.value.preset_blocks ?? []).find((b) => b.preset_id === LEADER_PRESET_ID)
         const leaderNow = blocks.find((b) => b.preset_id === LEADER_PRESET_ID)
         if (leaderBase !== undefined) {
@@ -350,8 +346,8 @@ describe('static · presets-two (任务 A)', () => {
             const oldMemberIds = (base.value.preset_blocks ?? [])
               .filter((b) => b.preset_id !== LEADER_PRESET_ID)
               .map((b) => b.preset_id)
-            // 组合里**不许**有 `# @host-level`（2026-11-05：bundle 层不装宿主级行，生成器见到标记就 throw）。
-            const markVerdict = hostLevelMarkProblems(ymlText)
+            // 组合里的 `# @host-level` 现在是**要求**：判"标记 ↔ 补丁顶层宿主行成对"（两件产物一起喂）。
+            const markVerdict = hostLevelPairingProblems(ymlText, patchText)
             const verdict = leaderBlockProblems({
               baseText: leaderBase.full_text,
               nowText: leaderNow.full_text,
@@ -359,23 +355,24 @@ describe('static · presets-two (任务 A)', () => {
               memberPresetId,
               oldMemberIds,
               // 组合原文：判"回滚期停在组长块里的那一行"（组合里 `disabled: true` + 不在基线里 + 值行与组合逐字相同）。
-              // ⚠️ 旧的 `hostLevelIds` 入参已删（2026-11-05）：bundle 层不再有宿主级行集合 ——
-              //    "组合里不许出现 `# @host-level`"这一条由下面的 `hostLevelMarkProblems()` 报（一个事实一个落点）。
               compositionText: ymlText,
             })
             rec.readings.leader_block_base = leaderBase.sha256
             rec.readings.leader_block_now = leaderNow.sha256
             rec.readings.leader_block = verdict.readings
-            rec.readings.host_level_marks = markVerdict.readings.marks
+            rec.readings.host_level = {
+              marks: markVerdict.readings.marks,
+              host_level_ids: markVerdict.readings.host_level_ids,
+              host_rows: markVerdict.readings.host_rows,
+              top_level_blocks: markVerdict.readings.top_level_blocks,
+            }
             for (const p of verdict.problems) push(p.code, p.message)
-            for (const p of markVerdict.problems) push('HOST-LEVEL-MARK', p)
+            // 宿主级那一族各自的码（`HOST-LEVEL-*`）—— 一个事实一个落点，别折成一个笼统的码。
+            for (const p of markVerdict.problems) push(p.code, p.message)
             /**
-             * 🔴 **第三态：回滚期这一格量不了"逐行相同"**（2026-11-05 16:2x）。
-             * 宿主级 insert 让整个 bundle 层 boot 失败 ⇒ 看板那一行 `disabled: true` 搬回组长块
-             * （= 11-04 的形状），挂载路线改成走 profile 层（另开一票）。
-             * 那一行的存在是**老板拍的回滚**，不是"谁顺手改了组长块" ⇒ 记 HOLD（**不是绿**）。
-             * 判据没有放宽：`pending_rows` 要同时满足"组合里 disabled / 不在基线里 / 值行与组合逐字相同"，
-             * 行一开（`disabled` 去掉）它立刻回到 `LEADER-CLOBBERED`；`LEADER-PENDING-ROW-DRIFT` 另报。
+             * 🔴 **第三态：回滚窗口里这一格量不了"逐行相同"**（2026-11-05 16:2x 起 · 只在组合把那一行
+             * `disabled: true` 停回预设层时出现）。今天挂载走 bundle 层 ⇒ 那一行不在组长块里 ⇒
+             * `pending_rows` 为空、这一腿不出声；留着它是给"临时停回预设层"的窗口一个**不绿**的落点。
              */
             const pending = verdict.readings.value_lines?.pending_rows ?? []
             if (pending.length > 0) {
@@ -383,7 +380,7 @@ describe('static · presets-two (任务 A)', () => {
                 `组长块里停着 ${pending.length} 行**回滚期故意停在预设层**的行：${JSON.stringify(pending.map((p) => p.id))}`
                 + `（组合里 \`disabled: true\` · 不在基线里 · 值行与组合逐字相同：${JSON.stringify(pending.map((p) => p.identical_to_composition))}）`
                 + ' ⇒ "组长块的值行与基线逐行相同"这一格在回滚窗口里不成立，记 HOLD（不是绿）。'
-                + '挂载路线（profile 层）落地、那一行不再是 disabled 之后，这一格自动回到红/绿两态')
+                + '挂载路线落地、那一行不再是 disabled 之后，这一格自动回到红/绿两态')
             }
           }
         }

@@ -338,11 +338,13 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    ⚠️ 装完这四行**一个都不变**（四条作业行是**开着的**，不算"关着的行"）⇒ 这条对装前装后都成立。
   // 🔴 2026-10-15（执行二 · I15）：`team-retro` 关掉 ⇒ **4 → 5**。这是"改事实"，不是放宽：
   //    谁把某一行从关着改成开着（或反过来），这条照样当场红。
-  // 🆕 2026-11-05：`agenia-dashboard` 关掉（宿主层挂载会把整个 bundle 层在 boot 时带塌 —— 见 bug-20261105-12）
-  //    ⇒ **5 → 6**。同样是改事实：它现在确实是一行 `disabled: true`。等挂载路线改好、这一行重新打开，
-  //    这条要跟回 5 —— 它就是那张"哪几行关着"的户口本。
+  // 🆕 2026-11-05：看板那一行（`agenia-dashboard`）是**宿主级行**、开着 —— 它住 bundle 补丁
+  //    顶层 `- insert:` 的直接成员，不再是一条 `disabled: true` 的行。
+  //    ⇒ 关着的有效行 = 4 条工具行（fork / codex / claude-code / plugin-manager）+ `team-retro`
+  //    那一条历史行 = `4 + RETIRED_ROLES.length`。这条是"哪几行关着"的户口本：
+  //    谁把某一行从关着改成开着（或反过来），这条照样当场红。
   eq('composition', 'agent.cordis.yml 里 disabled: true 的行数（有效行，不含注释）',
-    (effectiveYml.match(/^\s*disabled:\s*true\s*$/gm) ?? []).length, 5 + RETIRED_ROLES.length)
+    (effectiveYml.match(/^\s*disabled:\s*true\s*$/gm) ?? []).length, 4 + RETIRED_ROLES.length)
 
   // 🔴 2026-09-28 换版加：**workflow 那三行**。
   //    来历：0.1.7 把 `@deepseek-ai/dsh-workflow-worker-thread`（0.1.5 里那一行，带 provider: spawn）

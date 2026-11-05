@@ -47,11 +47,30 @@
  * ⚠️ `rev` 的算法是从平台源码**抄**过来的（第二份真相，`cand-20261019-0030` 点过名的病）。
  *    它抄错的后果**只能是 404 ⇒ HOLD**，不会假绿：200 是它自己证明了自己算对。
  *
- * ── ③ 挂载行与回滚（R5）──────────────────────────────────────────────────────
- * `profilePatchReading()` 读的是**客户端自己那份**补丁（`$DSH_PROFILE_DIR/cordis.patch.yml`，
- * 今天是 `C:\Users\DAVID\.dsh\profiles\desktop\cordis.patch.yml`）—— R1 要写的就是它。
- * `oneStepRemoval()` 判"那一行能不能**一步**撤掉"：它必须是顶层列表里的**一个** item，
- * 整块拿掉之后剩下的文本仍然解析得干净、且再没有别处引用这个包。
+ * ── ③ 回滚（R5）：**撤挂载 = 删标记 + 重跑生成器**（2026-11-05 深夜 · 组长裁定"重定义，不退役"）──
+ * 挂载行搬回**我们自己的包**（`presets/agenia/cordis.patch.yml` 的顶层 `- insert:`）之后，
+ * "撤掉挂载"不再是"从 profile 补丁里删一行"，而是：
+ *   ① 从组合（`presets/agenia/agent.cordis.yml`）里删掉那一行的 `# @host-level` 标记；
+ *   ② 重跑 `.tools/make-bundle-patch.mjs`（生成器）——一条命令序列，一次提交即可回滚。
+ * ⇒ R5 的判据是**两件产物 × 落点**的真值表 + 回滚后的身份读数：
+ *   · 标记**在** ⇒ 那一行只住顶层 `- insert:`（预设体里 0 次）；标记**不在** ⇒ 那一行回到**两份**预设体里
+ *     （顶层 insert 里 0 次）。两端都用 `composition.mjs::presetEntryProblems()` 判（同一个算式；
+ *     它内部含"标记 ↔ 宿主行配对"那一段）。
+ *     盘上今天只有**挂载态**（标记在）。回滚态由真字节投影出来（`withHostRowInPresetBodies()`：
+ *     把那一行从 insert 搬回两份预设体、去掉标记注释），两端都必须 0 问题 —— 否则
+ *     `RED BOOT-R5-ROLLBACK-CONTRACT-BROKEN`（是"回滚契约不成立"，**不是**"挂载行不在"）。
+ *   · **身份**：撤掉挂载、重启之后**新建**的会话头仍必须是 `agentPreset: agenia`（撤挂载不许折掉身份）。
+ *     这一半要求真的做一次"删标记 → 重跑 → 重启 → 新建会话"并留下回执：
+ *     `AGENIA_R5_REMOVAL_EXERCISE=<json 路径>`（形状见 `rollbackExerciseVerdict()` 的文件头）。
+ *     没有回执 ⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`（**不是**绿，也不是"挂载行不在"）；
+ *     回执说身份掉了 ⇒ `RED BOOT-R5-IDENTITY-COST`；回执自己的形状不对 ⇒
+ *     `RED BOOT-R5-ROLLBACK-CONTRACT-BROKEN`。
+ *   · 🔴 **旧的两条腿已退役**（不是静默消失）：`oneStepRemoval()`（"从文件里删一行"—— 那个动作
+ *     在 bundle 路线上**不存在**）与 `profilePatchReading()`（profile 层降级为备用路线，
+ *     它里面按设计没有那一行）。码 `BOOT-ROLLBACK-NO-MOUNT-ROW` / `BOOT-ROLLBACK-NOT-REMOVABLE` /
+ *     `BOOT-ROLLBACK-DID-NOT-RESTORE` / `BOOT-MOUNT-BROKE-IDENTITY` / `BOOT-PROFILE-PATCH-MISSING`
+ *     同批退役（墓碑在 `BOOT_CODES` 里）—— 尤其 `…-NO-MOUNT-ROW` 这个名字会让人把
+ *     "这一格没做回滚练习"误读成"挂载行不在"，那是两个完全相反的事实。
  *
  * ── 每一条读数都带 `{树, 时刻}` ──────────────────────────────────────────────
  * `treeIdentity()` 给 `{repo, head}`；每一份文件给 `{bytes, sha256, mtime}`；每一份会话头给
@@ -64,7 +83,13 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import zlib from 'node:zlib'
-import { parseYamlSubset } from './composition.mjs'
+import {
+  hostLevelMarks,
+  parseYamlSubset,
+  presetEntryProblems,
+  withoutHostLevelMarks,
+} from './composition.mjs'
+import { describePlacement, withHostRowInPresetBodies } from './client-ui-placement.mjs'
 import { PATHS } from './env.mjs'
 
 // ── 码（稳定、可 grep）──────────────────────────────────────────────────────
@@ -84,17 +109,42 @@ export const BOOT_CODES = {
   noSessionAfterRestart: 'BOOT-NO-SESSION-AFTER-RESTART',
   presetNotRegistered: 'BOOT-PRESET-NOT-REGISTERED',
   presetUnexpected: 'BOOT-PRESET-UNEXPECTED',
-  // 回滚（R5）
-  rollbackNoMountRow: 'BOOT-ROLLBACK-NO-MOUNT-ROW',
-  rollbackNotRemovable: 'BOOT-ROLLBACK-NOT-REMOVABLE',
-  rollbackRulerDead: 'BOOT-ROLLBACK-RULER-DEAD',
-  rollbackDidNotRestore: 'BOOT-ROLLBACK-DID-NOT-RESTORE',
-  mountBrokeIdentity: 'BOOT-MOUNT-BROKE-IDENTITY',
-  noProfilePatch: 'BOOT-PROFILE-PATCH-MISSING',
+  // 回滚（R5）—— 2026-11-05 深夜重新定义：撤挂载 = 删 `# @host-level` 标记 + 重跑生成器。
+  /**
+   * 撤挂载的**练习回执**还没交：回滚之后重启、新建会话并读它的头 —— 这一跑没做过。
+   * 🔴 名字刻意写成"练习没做"，**不是** `…-NO-MOUNT-ROW`：后者会被读成"挂载行不在"，
+   * 而盘上的事实正好相反（标记在、宿主行在顶层 insert）。HOLD，不绿。
+   */
+  rollbackExerciseMissing: 'BOOT-R5-REMOVAL-EXERCISE-MISSING',
+  /** 回滚契约不成立（两件产物的真值表 / 回执的形状不对）—— 红，不是"挂载行不在"。 */
+  rollbackContractBroken: 'BOOT-R5-ROLLBACK-CONTRACT-BROKEN',
+  /** 撤掉挂载 + 重启之后，新建会话的头不是 `agenia` —— 撤挂载折掉了身份。 */
+  rollbackIdentityCost: 'BOOT-R5-IDENTITY-COST',
+  /** R5 的尺子（回执判定器）不自证：合成的"该绿 / 该红"两份回执给不出两个不同判词。 */
+  rollbackRulerDead: 'BOOT-R5-RULER-DEAD',
+  /** 两件产物（组合 / bundle 补丁）有一份读不到 —— 前置失败，红（不是"这一档不适用"）。 */
+  rollbackArtifactsMissing: 'BOOT-R5-ARTIFACTS-MISSING',
+  /**
+   * ── 退役（墓碑，2026-11-05 深夜）─────────────────────────────────────────────
+   * 这几个码属于旧定义"从 profile 补丁里删一行"：`oneStepRemoval()` 找的是顶层列表里
+   * 一个带看板包的 item，删掉它、再确认全文没有第二处引用。
+   * 那个动作在 bundle 路线上**不存在**（撤挂载是改组合 + 重跑生成器，不是文件编辑），
+   * 而 profile 层已降级为备用路线 ⇒ 留着它们只会造出第二套"挂载没做"的码。
+   *   · `BOOT-ROLLBACK-NO-MOUNT-ROW`      —— 名字最危险：会被读成"挂载行不在"（实际是"没得撤"）
+   *   · `BOOT-ROLLBACK-NOT-REMOVABLE`     —— "一行删不掉" 这个动作没有了
+   *   · `BOOT-ROLLBACK-DID-NOT-RESTORE`   —— 旧条件式的一半（行不在 & 身份 RED）
+   *   · `BOOT-MOUNT-BROKE-IDENTITY`       —— 旧条件式的另一半（行在 & 身份 RED）；身份掉了归 `BOOT-R5-IDENTITY-COST`
+   *   · `BOOT-PROFILE-PATCH-MISSING`      —— R5 不再读 profile 补丁；bundle 补丁不在归 `BOOT-R5-ARTIFACTS-MISSING`
+   */
   // 可达（R3）
   r3NoHostUrl: 'BOOT-R3-NO-HOST-URL',
   r3NoHost: 'BOOT-R3-NO-HOST',
-  r3NoProfilePatch: 'BOOT-R3-PROFILE-PATCH-MISSING',
+  /**
+   * 挂载行所在那份补丁不在。2026-11-05 深夜：那行搬回**我们自己的包**（bundle 补丁）⇒
+   * 这个码从 `BOOT-R3-PROFILE-PATCH-MISSING` 改名为 `BOOT-R3-MOUNT-PATCH-MISSING`
+   * （旧名指着 profile 层，那一层现在是备用路线，不是判据载体）。
+   */
+  r3NoMountPatch: 'BOOT-R3-MOUNT-PATCH-MISSING',
   r3MountAbsent: 'BOOT-R3-MOUNT-ABSENT',
   r3MountDisabled: 'BOOT-R3-MOUNT-DISABLED',
   r3MountNotHostLevel: 'BOOT-R3-MOUNT-NOT-TOP-LEVEL-INSERT',
@@ -456,8 +506,10 @@ export function profilePatchPath(env = process.env) {
  * 缺陷形状：现役 profile 补丁第 44–45 行是一处**多行 plain scalar**（`description: …` + 更深缩进的续行）。
  * 窄口径读取器 `parseYamlSubset` 当时读不懂它 ⇒ 从第 45 行起**整段盲掉**（18 条「未被解析器吃掉的行」，
  * 最后一条顶层 item `- id: web-search-deepseek` 根本看不见）。后果不是红，是**静默**：
- * `BOOT-02` 只能永远报 `BOOT-R3-MOUNT-ABSENT`（"挂载行不在"），`BOOT-01` 的 `oneStepRemoval()`
- * 也对一份好文件报"不可撤"。**"读不到"与"不在"长得一模一样** ⇒ 这一格必须有它自己的读数。
+ * `BOOT-02` 只能永远报 `BOOT-R3-MOUNT-ABSENT`（"挂载行不在"），R5 也会对一份好文件报"撤不掉"。
+ * （2026-11-05 深夜：R5 已改成"删标记 + 重跑生成器"，`oneStepRemoval()` 退役；这条自证保留 ——
+ *  R5 的产物读数与 BOOT-02 的挂载读数都走同一个窄口径解析器。）
+ * **"读不到"与"不在"长得一模一样** ⇒ 这一格必须有它自己的读数。
  *
  * 三段，缺一不算自证：
  *   ① **阳性对照（盘上真实文件）**：`profilePatchCoverage()` 对**这一跑真正读的那一份**与**现役那一份**
@@ -671,133 +723,262 @@ export function patchReaderVerdict({ env = process.env } = {}) {
 }
 
 /**
- * 读那份补丁，并判看板那一行**在不在、住在哪、开没开**。
- * 形状（R1 的验收）：顶层 `- insert:` 的**直接成员**、这一行自己不带 `id`；
- * 而我们仍然按**包名**认它（`@agenia/dsh-client-ui-dashboard`）—— 行 id 可以变，包名不会。
+ * **R5 的产物侧（两件产物 × 落点）** —— 撤挂载的定义是"删 `# @host-level` 标记 + 重跑生成器"，
+ * 所以判据不是"能不能从文件里删一行"，而是**真值表的两端都成立**：
+ *
+ *   | 组合里的标记 | 那一行应当住在   | 预设体里的次数 |
+ *   | 在           | 顶层 `- insert:` | 0              |
+ *   | 不在         | 两份预设体       | 每个宿主行 2 次（组长份 + 组员份）|
+ *
+ * 盘上今天只有**挂载态**（标记在）。回滚态由**真字节投影**造出来：
+ * `withoutHostLevelMarks()` 删掉标记行 + `withHostRowInPresetBodies()` 把那一行从顶层 insert
+ * 搬回两份预设体的末尾（其余字节不动）—— 那正是"删标记 + 重跑生成器"会产出的形状。
+ * 两端都用**同一个算式**判（`presetEntryProblems()`：标记 + 顶层形状 + 配对 + 每份行集 + 行数闭合），
+ * 只要有一端不干净 ⇒ `BOOT-R5-ROLLBACK-CONTRACT-BROKEN`（**不是**"挂载行不在"）。
+ *
+ * 🔴 **盘上若已经是回滚态**（标记不在 —— 练习正做到一半 / 有人刚撤掉），这一格不红：
+ *    它改判那一端（顶层 insert 里 0 条宿主行 + 两份预设体各含那一行），`readings.state = 'rolled-back'`。
+ *    两端都合法 —— 这正是"标记 × 落点"真值表存在的意义：一列是产品该在的状态，另一列是撤掉之后该在的状态。
+ *
+ * ⚠️ 投影是**夹具**，不是"生成器真的跑过"：`DASH-15` 的派生物那一腿（`make-bundle-patch.mjs --check`）
+ *    才是"盘上这份补丁是不是生成器的派生物"。这一格只回答"两端形状是否与契约一致"。
+ *
+ * @param {{compositionText: string|null, patchText: string|null}} input
+ * @returns {{problems: {code: string, message: string}[], readings: object}}
  */
-export function profilePatchReading({ env = process.env, pkgName = null } = {}) {
-  const where = profilePatchPath(env)
-  const base = { ...where, exists: existsSync(where.path), measured_at: new Date().toISOString() }
-  if (!base.exists) return { ...base, text: null, bytes: null, sha256: null, mtime: null, rows: [], mount: { present: false, why: '补丁文件不在' }, warnings: [] }
-  const text = readFileSync(where.path, 'utf8')
-  const st = statSync(where.path)
-  const doc = parseYamlSubset(text, 'boot-profile-patch')
-  const items = Array.isArray(doc.value) ? doc.value : []
-  const rows = []
-  const wanted = pkgName ?? packageReading(DASHBOARD_PKG_DIR()).name ?? 'client-ui-dashboard'
-  const matches = (name) => typeof name === 'string' && (name.includes('client-ui-dashboard') || name === wanted)
-  for (const item of items) {
-    if (!(item instanceof Map)) continue
-    const insert = item.get('insert')
-    if (Array.isArray(insert)) {
-      for (const row of insert) {
-        if (!(row instanceof Map)) continue
-        const name = row.get('name')
-        rows.push({ placement: 'insert', id: row.get('id') ?? null, name: name ?? null, disabled: row.get('disabled') ?? null, ours: matches(name) })
-      }
-      continue
-    }
-    const name = item.get('name')
-    rows.push({ placement: 'top-level-override', id: item.get('id') ?? null, name: name ?? null, disabled: item.get('disabled') ?? null, ours: matches(name) })
+export function rollbackRouteReading({ compositionText, patchText }) {
+  const problems = []
+  const readings = { measured_at: new Date().toISOString() }
+  if (typeof compositionText !== 'string' || typeof patchText !== 'string') {
+    problems.push({
+      code: BOOT_CODES.rollbackArtifactsMissing,
+      message: `组合 / bundle 补丁有一份读不到（composition=${typeof compositionText} · patch=${typeof patchText}）`
+        + ' —— 回滚契约与身份都无从判：这两份是产品的一部分，缺了是**红**，不是"这一档不适用"',
+    })
+    return { problems, readings }
   }
-  const ours = rows.filter((r) => r.ours)
-  const inInsert = ours.filter((r) => r.placement === 'insert')
-  const mount = inInsert.length > 0
-    ? { present: true, placement: 'insert', disabled: inInsert.every((r) => r.disabled === true), row: inInsert[0], duplicates: inInsert.length }
-    : ours.length > 0
-      ? { present: true, placement: ours[0].placement, disabled: ours.some((r) => r.disabled === true), row: ours[0], duplicates: ours.length }
-      : { present: false, why: '补丁里没有指向这个包的行（按包名找的）' }
+  const marks = hostLevelMarks(compositionText)
+  const hostIds = marks.ids
+  const fmt = (p) => (typeof p === 'string' ? p : `[${p.code}] ${p.message}`)
+  const placement = describePlacement(patchText, 'bundle 补丁')
+  const inInsertOf = (id) => placement.rows.filter((r) => r.id === id && r.placement === 'insert').length
+  const inPresetOf = (id) => placement.rows.filter((r) => r.id === id && r.in_preset_body === true).length
+  /**
+   * 盘上现在是**哪一端**：标记在 ⇒ 挂载态；标记不在 ⇒ 回滚态（那一行按普通预设行住在两份预设体里）。
+   * 两端都是**合法状态**：R5 要的就是"标记 × 落点"这张表的两行都成立。区别在判法：
+   *   · 挂载态：判这一行 + 把回滚态**投影**出来判；
+   *   · 回滚态：直接判这一端（挂载那一端由别的跑 / 别的用例覆盖；这一格不造"正向投影"）。
+   */
+  const state = hostIds.length > 0 ? 'mounted' : 'rolled-back'
+  readings.state = state
+  readings.marks = marks.marks.map((m) => ({ id: m.id, line: m.line, row_exists: m.row_exists }))
+  readings.host_level_ids = hostIds
+  /**
+   * 两端用的是**同一个算式**：`presetEntryProblems()`（它内部已经含 `hostLevelMarks()` +
+   * `topLevelInserts()` + 标记↔宿主行配对 + 每份行集 + 行数闭合）。⚠️ 不再单独调
+   * `hostLevelPairingProblems()` 再拼一遍 —— 那会让同一粒事实报两次（配对问题出现两行）。
+   */
+  const entries = presetEntryProblems(compositionText, patchText)
+  const nameOfState = state === 'mounted' ? '挂载态（标记在）' : '回滚态（标记不在）'
+  readings[state === 'mounted' ? 'mounted' : 'rolled_back'] = {
+    problems: entries.problems,
+    landing: {
+      // `in_insert` 从**行表**数（不是从"应该有"推）；看板那一行按组合里的 id 认得出来时再点名。
+      in_insert: placement.rows.filter((r) => r.placement === 'insert' && r.name !== '@deepseek-ai/dsh-agent-preset').length,
+      per_id: Object.fromEntries(hostIds.map((id) => [id, { insert: inInsertOf(id), preset_bodies: inPresetOf(id) }])),
+    },
+    entry_row_counts: entries.readings.patch_preset_row_counts ?? null,
+  }
+  for (const p of entries.problems) {
+    problems.push({
+      code: BOOT_CODES.rollbackContractBroken,
+      message: `${nameOfState}本身就不合契约：${fmt(p)}`
+        + (state === 'mounted'
+          ? '（同一个事实也由 `PRS-01` / `STAT-*` 那一族判；这里出现它只说明 R5 的前提不成立）'
+          : '（回滚态是"删标记 + 重跑生成器"的产物 ⇒ 它也得合契约，否则撤挂载这条路本身不成立）'),
+    })
+  }
+  if (state === 'rolled-back') {
+    // 回滚态：那一行应当住在**两份**预设体里（`presetEntryProblems()` 的行集已按组合判过）；
+    // 顶层 insert 里一条宿主行都不许剩（`hostLevelPairingProblems()` 的 `ROW-UNMARKED` 已按同一事实判过）。
+    readings.rolled_back.expected_preset_bodies_per_row = 2
+    readings.ok = problems.length === 0
+    return { problems, readings }
+  }
+  // ── 挂载态：把回滚态**投影**出来（真字节变换：删标记 + 把那一行搬回两份预设体）──────────
+  const stripped = withoutHostLevelMarks(compositionText)
+  const projection = withHostRowInPresetBodies({ patchText, hostRowIds: hostIds })
+  readings.rollback_projection = {
+    moved: projection.moved,
+    why: projection.why,
+    added_into: projection.added_into,
+    before: projection.before === null ? null : { in_insert: projection.before.in_insert, in_preset: projection.before.in_preset },
+    after: projection.after === null ? null : { in_insert: projection.after.in_insert, in_preset: projection.after.in_preset },
+    marks_after_strip: hostLevelMarks(stripped).marks.length,
+    expected_preset_body_hits: hostIds.length * 2,
+  }
+  if (!projection.moved || projection.after === null) {
+    problems.push({
+      code: BOOT_CODES.rollbackContractBroken,
+      message: `回滚态投影造不出来（${String(projection.why ?? '没有原因')}）—— 那么"删标记之后那一行回到两份预设体里"这一句**没有被量到**`,
+    })
+    return { problems, readings }
+  }
+  if (projection.after.in_insert !== 0 || projection.after.in_preset !== hostIds.length * 2) {
+    problems.push({
+      code: BOOT_CODES.rollbackContractBroken,
+      message: `回滚态投影的落点不对：顶层 insert 里 ${projection.after.in_insert} 次（应 0）、`
+        + `预设体里 ${projection.after.in_preset} 次（应 ${hostIds.length * 2} = 每个宿主行两份预设各一次）`
+        + ' —— "撤掉挂载之后那一行回到预设体"是回滚的定义，落点不对就不是回滚',
+    })
+  }
+  const rolled = presetEntryProblems(stripped, projection.text)
+  readings.rollback_projection.problems = rolled.problems
+  readings.rollback_projection.entry_row_counts = rolled.readings.patch_preset_row_counts ?? null
+  for (const p of rolled.problems) {
+    problems.push({
+      code: BOOT_CODES.rollbackContractBroken,
+      message: `回滚态（删标记 + 那一行搬回预设体）不合契约：${fmt(p)}`
+        + ' —— 这一半只有 R5 判；它红了说明"撤挂载"这条路本身不成立',
+    })
+  }
+  readings.ok = problems.length === 0
+  return { problems, readings }
+}
+
+/**
+ * **R5 的身份侧**：撤掉挂载、重启之后新建的会话头仍是 `agentPreset: agenia`。
+ *
+ * 这一半**必须真的做过一次**才有读数，所以它认一份**练习回执**（JSON）：
+ * ```json
+ * {
+ *   "at": "2026-11-05T12:00:00.000Z",      // 这一次练习的起点（删标记之前）
+ *   "marker_removed": true,                 // 组合里的 # @host-level 删掉了
+ *   "regenerated": true,                    // 重跑了 .tools/make-bundle-patch.mjs
+ *   "row_landing": {"insert": 0, "preset_bodies": 2},   // 产物读数：那一行回到两份预设体
+ *   "restart_at": "2026-11-05T12:05:00.000Z",           // 之后那次客户端重启
+ *   "new_session": {"created_at": "2026-11-05T12:06:11.000Z", "agentPreset": "agenia"}
+ * }
+ * ```
+ * 路径由 `AGENIA_R5_REMOVAL_EXERCISE` 指过来（与 `AGENIA_BOOT_AT` 同一族的可选 env，不进冻结表）。
+ * 没给 ⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`（**不是**绿，也**不是**"挂载行不在"）；
+ * 给了但形状 / 时序 / 落点不对 ⇒ `RED BOOT-R5-ROLLBACK-CONTRACT-BROKEN`；
+ * 身份值不对 ⇒ `RED BOOT-R5-IDENTITY-COST`（撤挂载折掉了身份 —— 这正是这一格要抓的那件事）。
+ *
+ * 🔴 纯函数（不读盘）：回执由调用方读进来。这样"该绿 / 该红"两份合成回执能当**尺子自证**喂它。
+ *
+ * @param {object|null} receipt
+ * @param {{expectedPreset?: string}} [options]
+ * @returns {{verdict: 'GREEN'|'RED'|'HOLD', code: string|null, why: string, readings: object}}
+ */
+export function rollbackExerciseVerdict(receipt, { expectedPreset = EXPECTED_PRESET } = {}) {
+  if (receipt === null || receipt === undefined) {
+    return {
+      verdict: 'HOLD',
+      code: BOOT_CODES.rollbackExerciseMissing,
+      why: '还没有人做过"删标记 → 重跑生成器 → 重启 → 新建会话"这一次练习'
+        + '（`AGENIA_R5_REMOVAL_EXERCISE` 没给）—— 撤挂载之后身份会不会掉，今天**没有读数**；'
+        + '记 HOLD（**不是**"挂载行不在"，也不是绿）',
+      readings: { supplied: false },
+    }
+  }
+  const contract = []
+  const identity = []
+  const iso = (v) => (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null)
+  const land = receipt.row_landing !== null && typeof receipt.row_landing === 'object' ? receipt.row_landing : null
+  const session = receipt.new_session !== null && typeof receipt.new_session === 'object' ? receipt.new_session : null
+  if (iso(receipt.at) === null) contract.push('回执缺 `at`（练习开始的 ISO 时刻）或它不是合法时间')
+  if (receipt.marker_removed !== true) contract.push('回执说组合里的 `# @host-level` **没有**删掉（`marker_removed` 不是 true）')
+  if (receipt.regenerated !== true) contract.push('回执说生成器**没有**重跑（`regenerated` 不是 true）')
+  if (land === null) contract.push('回执缺 `row_landing`（产物读数：那一行落在哪）')
+  else {
+    if (land.insert !== 0) contract.push(`回执说顶层 insert 里还有 ${JSON.stringify(land.insert)} 次（撤掉之后应 0）`)
+    if (!(typeof land.preset_bodies === 'number' && land.preset_bodies >= 2)) {
+      contract.push(`回执说预设体里只有 ${JSON.stringify(land.preset_bodies)} 次（两份预设各一次，应 ≥ 2）`)
+    }
+  }
+  if (iso(receipt.restart_at) === null) contract.push('回执缺 `restart_at`（之后那次客户端重启的 ISO 时刻）或它不是合法时间')
+  if (session === null) contract.push('回执缺 `new_session`（重启之后新建的那个会话）')
+  else {
+    if (iso(session.created_at) === null) contract.push('回执缺 `new_session.created_at` 或它不是合法时间')
+    if (typeof session.agentPreset !== 'string' || session.agentPreset === '') contract.push('回执缺 `new_session.agentPreset`')
+  }
+  const at = iso(receipt.at)
+  const restartAt = iso(receipt.restart_at)
+  const created = session === null ? null : iso(session.created_at)
+  if (at !== null && restartAt !== null && restartAt < at) contract.push('回执里 `restart_at` 早于 `at`（重启不可能早于练习开始）')
+  if (restartAt !== null && created !== null && created < restartAt) {
+    contract.push('回执选的那个会话**不是重启之后新建的**（`created_at` 早于 `restart_at`）—— 续跑回来的老会话不算这一类读数')
+  }
+  if (contract.length === 0 && session.agentPreset !== expectedPreset) {
+    identity.push(`撤掉挂载 + 重启之后新建的会话头是 ${JSON.stringify(session.agentPreset)}，不是 ${JSON.stringify(expectedPreset)}`
+      + ' —— 撤挂载把预设身份带塌了（回滚不许折掉身份）')
+  }
+  const readings = {
+    supplied: true,
+    at: receipt.at ?? null,
+    restart_at: receipt.restart_at ?? null,
+    new_session: session === null ? null : { created_at: session.created_at ?? null, agentPreset: session.agentPreset ?? null },
+    row_landing: land,
+    contract_problems: contract,
+  }
+  if (contract.length > 0) {
+    return { verdict: 'RED', code: BOOT_CODES.rollbackContractBroken, why: contract.join('；'), readings }
+  }
+  if (identity.length > 0) {
+    return { verdict: 'RED', code: BOOT_CODES.rollbackIdentityCost, why: identity.join('；'), readings }
+  }
   return {
-    ...base,
-    text,
-    bytes: st.size,
-    sha256: sha256(Buffer.from(text, 'utf8')),
-    mtime: new Date(st.mtimeMs).toISOString(),
-    warnings: doc.warnings ?? [],
-    rows,
-    mount,
+    verdict: 'GREEN',
+    code: null,
+    why: `撤挂载之后重启、新建的会话头 = ${JSON.stringify(session.agentPreset)}（${session.created_at}），`
+      + '且产物那一侧那一行回到了两份预设体里 —— 撤挂载没有折掉身份',
+    readings,
   }
 }
 
 /**
- * "一步撤掉"—— 判据不是"有人说能删"，是**那一行能不能整块拿掉**：
- *   · 它必须住在**顶层** `- insert:` 里（宿主装载层），而且它是那一块里的**一行**；
- *   · **就删那一行**（行级删除，不是"把整块 insert 删了"）：行首缩进固定的那一项，
- *     从它那一行删到下一个同级项之前；
- *   · 删完剩下的文本仍然解析得干净（没有 warnings）；
- *   · 剩下的文本里再没有这个包名（删干净了，没留"第二处引用"）；
- *   · 顶层 item 数**不变**（那一块 insert 还在）—— 除非它本来就只有这一行，
- *     那就连空壳一起去掉（`removal_kind` 会自报是哪一种，读的人不用猜）。
+ * 读 `AGENIA_R5_REMOVAL_EXERCISE` 指的那份回执（**只读**）。
+ *   · env 没给 ⇒ `{receipt: null, supplied: false}`（调用方记 HOLD）；
+ *   · env 给了但文件不在 / 不是 JSON ⇒ `{receipt: null, supplied: true, error}`（调用方记红：
+ *     给了路径却读不出来，是回执坏了，不是"练习没做"）。
+ *
+ * @param {object} [env]
  */
-export function oneStepRemoval(patchReading) {
-  const out = { ok: false, at: new Date().toISOString(), problems: [], readings: null }
-  if (!patchReading?.text) {
-    out.problems.push('补丁读不到（或那一行不在）—— 没有可撤的东西')
-    return out
+export function readRollbackExercise({ env = process.env } = {}) {
+  const raw = typeof env.AGENIA_R5_REMOVAL_EXERCISE === 'string' ? env.AGENIA_R5_REMOVAL_EXERCISE.trim() : ''
+  if (raw === '') return { supplied: false, path: null, receipt: null, error: null }
+  const file = path.resolve(raw)
+  if (!existsSync(file)) return { supplied: true, path: file, receipt: null, error: `回执文件不在：${file}` }
+  try {
+    return { supplied: true, path: file, receipt: JSON.parse(readFileSync(file, 'utf8')), error: null }
+  } catch (err) {
+    return { supplied: true, path: file, receipt: null, error: `回执不是合法 JSON：${String(err?.message ?? err)}` }
   }
-  const lines = patchReading.text.replace(/\r\n/g, '\n').split('\n')
-  const isTop = (l) => /^- /.test(l)
-  const indentOf = (l) => (/^\s*/.exec(l) ?? [''])[0].length
-  const isRow = (l) => /^\s*- (\S|$)/.test(l)
-  // 顶层 item 的边界
-  const topStarts = []
-  for (let i = 0; i < lines.length; i += 1) if (isTop(lines[i])) topStarts.push(i)
-  const topBlocks = topStarts.map((start, idx) => ({ start, end: idx + 1 < topStarts.length ? topStarts[idx + 1] : lines.length }))
-  const home = topBlocks.find((b) => lines.slice(b.start, b.end).some((l) => l.includes('client-ui-dashboard')))
-  if (home === undefined) {
-    out.problems.push('顶层列表里没有任何一块提到这个包 —— 那一行不在（或不在顶层）')
-    return out
-  }
-  if (!/^- insert:/.test(lines[home.start])) {
-    out.problems.push(`那一块的第一行是 ${JSON.stringify(lines[home.start].slice(0, 60))}，不是顶层 \`- insert:\``)
-    return out
-  }
-  // 那一块里的行（同级 `- ` 子项）
-  const childStarts = []
-  for (let i = home.start + 1; i < home.end; i += 1) if (isRow(lines[i]) && indentOf(lines[i]) > 0) childStarts.push(i)
-  const children = childStarts.map((start, idx) => ({ start, end: idx + 1 < childStarts.length ? childStarts[idx + 1] : home.end }))
-  const row = children.find((c) => lines.slice(c.start, c.end).some((l) => l.includes('client-ui-dashboard')))
-  out.readings = { top_level_items: topBlocks.length, insert_item_children: children.length, row_line: row === undefined ? null : row.start + 1 }
-  if (row === undefined) {
-    out.problems.push(`\`- insert:\` 那一块里没有一行提到这个包（子项 ${children.length} 个）—— 那它是挂在别处的半行，不是"一行"`)
-    return out
-  }
-  if (children.filter((c) => lines.slice(c.start, c.end).some((l) => l.includes('client-ui-dashboard'))).length !== 1) {
-    out.problems.push('同一个 insert 块里指向这个包的行不止一行 —— 删一行删不干净')
-    return out
-  }
-  // 就删这一行；如果删完 insert 块空了，把空壳也去掉（自报是哪种）
-  const rowRemoved = [...lines.slice(0, row.start), ...lines.slice(row.end)]
-  const childless = children.length === 1
-  const rest = childless
-    ? [...lines.slice(0, home.start), ...lines.slice(home.end)].join('\n')
-    : rowRemoved.join('\n')
-  const removalKind = childless ? 'whole-insert-item' : 'row-inside-insert'
-  if (rest.includes('client-ui-dashboard')) {
-    out.problems.push('拿掉那一行之后，文件里**还有**这个包名（第二处引用 ⇒ 不是一步）')
-    return out
-  }
-  const doc = parseYamlSubset(rest, 'boot-profile-patch-after-removal')
-  if ((doc.warnings ?? []).length > 0) {
-    out.problems.push(`拿掉之后解析器出声了（${doc.warnings.length} 条）：${doc.warnings.slice(0, 2).join(' / ')}`)
-    return out
-  }
-  const expectedItems = removalKind === 'whole-insert-item' ? topBlocks.length - 1 : topBlocks.length
-  if (!Array.isArray(doc.value) || doc.value.length !== expectedItems) {
-    out.problems.push(`拿掉之后顶层 item 数从 ${topBlocks.length} 变成 ${Array.isArray(doc.value) ? doc.value.length : '?'}（应为 ${expectedItems}）`)
-    return out
-  }
-  out.ok = true
-  out.readings = {
-    ...out.readings,
-    removal_kind: removalKind,
-    removed_lines: row.end - row.start,
-    removed_first_line: lines[row.start],
-    after_sha256: sha256(Buffer.from(rest, 'utf8')),
-    after_items: doc.value.length,
-  }
-  return out
 }
+
+/**
+ * 🔴 **`profilePatchReading()` 已退役**（2026-11-05 深夜，随 R5 重定义）。
+ *
+ * 它读到的是**客户端自己那份** profile 补丁（`$DSH_PROFILE_DIR/cordis.patch.yml`）。
+ * 挂载搬回我们自己的 bundle 补丁之后，那条路线降级为**备用**（`.tools/mount-dashboard-profile.mjs`
+ * 自己的 `--check/--apply/--revert` 是它的检查器），R5 不再从它里面找那一行。
+ * `BOOT-02` 的挂载前置读数早一步换成了 `client-ui-placement.mjs::bundleMountReading()`（bundle 补丁）。
+ * ⇒ 这个函数没有读者了；留着它 = 一份"按设计永远找不到行"的读数。
+ * （`profilePatchPath()` / `patchReaderVerdict()` 仍在：前者给 `DASH-06` 的夹具指路，
+ * 后者是"读取器看得见整份补丁"的自证，与 R5 无关。）
+ */
+
+/**
+ * 🔴 **`oneStepRemoval()` 已退役**（2026-11-05 深夜，随 R5 重定义）。
+ *
+ * 它判的是"那一行能不能从**一个文件**里整块删掉"（找顶层 `- insert:` 里提到看板包的 item，
+ * 删掉那一行、再确认全文没有第二处引用）。挂载搬回 bundle 层之后，"撤掉挂载"这个动作
+ * **不是文件编辑**，而是"改组合（删标记）+ 重跑生成器"——一条命令序列、一次提交可回滚。
+ * ⇒ 那个函数量的动作在产品里不存在了；R5 的产物侧换成 `rollbackRouteReading()`
+ *   （两件产物 × 落点的真值表），身份侧换成 `rollbackExerciseVerdict()`（练习回执）。
+ * 名字 `BOOT-ROLLBACK-NOT-REMOVABLE` 同批退役（墓碑见 `BOOT_CODES`）。
+ */
 
 // ── ④ 包（R3 两腿的输入）─────────────────────────────────────────────────────
 /** 看板包自己声明了什么（`name` / `exports["./client"]` / `dsh.client.platform`）。 */

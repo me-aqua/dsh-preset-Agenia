@@ -614,33 +614,39 @@ export const BATCH_AB = ['MJUDGE-01']
  *     `DASH-16` 判**语义**：每行用 `name` 解析到盘上的 `package.json`，声明了 `dsh.client.platform: "web"`
  *     却不住宿主装载层 ⇒ 红。**不读标记、不读生成器的点名表、不认行 id**。
  *     ⚠️ 分母 **147 → 148**（由盘上发现器数出来；`GROUP_COUNTS` 同批 15 → 16）。
- *   · 🔴 **2026-11-05 晚 · 挂载搬到 profile 层（本票）——`DASH-15` / `DASH-16` 同批迁移**：
- *     16:0x 实测"把看板那一行搬进 **bundle** 的宿主级 insert"会让整个 bundle 层 boot 失败
- *     （新会话 `agentPreset: "standard"` ⇒ 窄权限）⇒ 那一行回滚成 `disabled: true`，挂载改走
- *     **profile 层**（`$DSH_PROFILE_DIR/cordis.patch.yml`，`AGENIA_PROFILE_PATCH` 可覆盖）。
- *     ⇒ "bundle 补丁里有一个装着看板的宿主 insert"这个形状**再也不会出现**（生成器遇到宿主级标记就 throw），
- *     照旧判它 = 一条永远红的假红。两格迁到 profile 层（判据本体 `scanProfilePlacement()`）：
- *       · `DASH-15`：挂载行必须是 profile 补丁里 **顶层 `- insert:` 的直接成员**（`DASH-NOT-PROFILE-INSERT`）·
- *         **不带 `id`**（`DASH-PROFILE-ROW-HAS-ID`，带 id 的顶层条目是"改已存在的行"）· 不是 `disabled: true`
- *         （`DASH-PROFILE-ROW-DISABLED`）· `name` 指得到包 + `config.root` 在 + 包声明 `dsh.client` /
- *         `exports["./client"]`（`DASH-NO-CLIENT-DECL`）· **那一行不在 ⇒ 红 `DASH-PROFILE-MOUNT-MISSING`**
- *         （2026-11-05 复审第 4 条：缺行是关于产品的事实，不是"我读不到"；第三态只留给读不到）。
- *         同一格另带一条**bundle 层**不变量：生成补丁 = `make-bundle-patch.mjs --check` 从
- *         `agent.cordis.yml` 造出来的那一份，而 `--check` 的 exit 1 **分开报**（复审第 1 条：
- *         不是派生物 `DASH-PATCH-NOT-DERIVED` / 是派生物但结构不对 `DASH-PATCH-STRUCTURE-WRONG` /
- *         组合过不了联锁 `DASH-PATCH-COMPOSITION-REJECTED` / 没判词 `DASH-PATCH-DERIVE-CRASH`）。
- *       · `DASH-16`：语义面搬到 profile 层（任何客户端 UI 行不住 `- insert:` ⇒ `DASH-CLIENT-NOT-IN-PROFILE-INSERT`；
- *         预设体里名字解析不到包 ⇒ HOLD `DASH-ROW-PACKAGE-UNRESOLVED`）+ **bundle 层残余腿**：
- *         "bundle 里客户端 UI 行只许住在预设 `plugins` 里且关着"（开着 ⇒ `DASH-CLIENT-IN-PRESET`；
- *         住进 bundle 顶层 ⇒ `DASH-CLIENT-IN-BUNDLE-TOP`；两侧不一致 ⇒ `DASH-DISABLED-MISMATCH`）。
- *         扫描器报的码**全部**被消费（没有"本格不判"的剔除名单）。
- *       · **行身份按包认，不按 id / 名字形状认**（挂载行按设计不带 id）—— 靠"它解析到的那份
- *         `package.json` 声明的 `name` 是不是看板包那一份"；**裸包名**那一半靠 `manifestRoots` 索引，
- *         解析不到 ⇒ HOLD（不是绿）。
- *       · **退役的码**（写清原因 + 新落点）：`DASH-NOT-HOST-LEVEL`（bundle 宿主层那个形状不存在 ⇒
- *         `DASH-NOT-PROFILE-INSERT` + `DASH-CLIENT-NOT-IN-PROFILE-INSERT`）· `DASH-ROW-ABSENT`
- *         （⇒ `DASH-PROFILE-MOUNT-MISSING`，**红**）· `DASH-HOST-MISSING`（扫描器里整段删除，不是被消费者丢掉；
- *         ⇒ profile 两个码 + `DASH-CLIENT-IN-BUNDLE-TOP`）。**分母不动（150）**：迁移与复审返修都在原有两条 ID 内完成。
+ *   · 🔴 **2026-11-05 深夜 · 挂载搬回 bundle 层（定形「补记一」）——`DASH-15` / `DASH-16` 再次同批迁移**：
+ *     早上"宿主级 insert 会让整个 bundle 层 boot 失败"的归因**已被证伪**（`bug-20261105-12` rejected）；
+ *     官方「智能体团队」面板就是挂在自己的 `dsh.bundle.patch` **顶层 `- insert:`** 里，而我们自己的包
+ *     `agenia-injector` 有同一个 `dsh.bundle.patch`。⇒ 挂载回到**我们自己的包**，形状照官方，
+ *     **C 盘一个字节都不用动**；profile 层那条路线降级为**备用**（`.tools/mount-dashboard-profile.mjs`
+ *     自己的 `--check` 是它的检查器，本套件只留一个 `{available, mounted}` 读数，**不进判词**）。
+ *     两格现在的载体是 `presets/agenia/cordis.patch.yml`，验收口径（与实现岗约定）：
+ *     `顶层 - insert: 1 个 · 直接成员 3 条（1 宿主 + 2 预设入口）` · `宿主级行 1 条` ·
+ *     `预设体内客户端 UI 行 0 条` · `agenia-dashboard` 在整份文件里**恰好 1 次**。
+ *       · `DASH-15`：那一行是顶层 insert 的**直接成员**（不是 ⇒ `DASH-NOT-HOST-LEVEL`）· 开着
+ *         （`DASH-ROW-DISABLED`）· `name` 指得到包 + 包声明 `dsh.client` / `exports["./client"]` +
+ *         `config.root` 在 + **Node 入口文件在盘上**（`DASH-NO-CLIENT-DECL`）· **缺席 ⇒ 红
+ *         `DASH-ROW-ABSENT`**（缺席是产品事实，不是"我读不到"）· 顶层形状四条（`DASH-TOP-INSERT-SHAPE`）·
+ *         真字节翻面（最近一次"那一行不在顶层 insert"的提交 = before ⇒ 红；把它搬进顶层 insert = fixture
+ *         ⇒ 绿，且四条验收读数逐条命中）· 派生物那一腿原样保留（`--check` 的 exit 1 分开报）。
+ *       · `DASH-16`：预设体里**一条客户端 UI 行都不许有**（路径形 / 裸包名都算；`disabled` 也不算合规
+ *         ⇒ `DASH-CLIENT-IN-PRESET`）· 顶层 override 里的 ⇒ `DASH-CLIENT-OUTSIDE-INSERT` ·
+ *         看板那一行**恰好一次**（`DASH-HOST-ROW-COUNT`，含文件里的文本出现次数）。
+ *         解析不到的预设行**只进读数**（六十来行框架裸包名住在 `app.asar` 里，对它们记 HOLD 会让
+ *         本格每次挂起 60 条）—— fail-closed 在生成器那一侧。
+ *       · **退役的码**（写清原因，不静默消失）见 `support/client-ui-placement.mjs` 的文件头：
+ *         `DASH-PROFILE-*` 全家（profile 层成为备用路线；两套码同时声称"挂载没做"是禁止的）·
+ *         `DASH-HOST-MISSING` · `DASH-CLIENT-IN-BUNDLE-TOP` · `DASH-DISABLED-MISMATCH` ·
+ *         `DASH-ROW-PACKAGE-UNRESOLVED`。**分母不动（150）**：迁移都在原有两条 ID 内完成。
+ *       · ⚠️ 同批**已迁**（2026-11-05 深夜）：`presets/agenia/agent.cordis.yml` 里那枚
+ *         `# @host-level` 现在是**要求**，静态口径跟着翻面 ——
+ *         `composition.mjs::hostLevelMarks()` / `hostLevelPairingProblems()` / `expectedPresetRows()`
+ *         （`hostLevelIds` 必填）/ `topLevelInserts()` 四条重写：标记与补丁顶层宿主行**成对**
+ *         （标了没搬 / 搬了没标 / 多发一次 / 标记落空 / 顶层多出别的条目 ⇒ 各自的 `HOST-LEVEL-*` 码），
+ *         宿主行从两份预设的期望行集里**减掉**、行数闭合**加回去**。
+ *         `PRS-01` 与 `STAT-01/02/03/05` / `DOC-01` 的 `preflight({calibrateLive:true})` 因此回到红/绿两态；
+ *         夹具电池在 `STAT-02`（绿对照 + 五把刀，每把刀只翻它该翻的那一粒码）。
+ *         `FROZEN.staged.disabledLiteralRows` 同批 **6 → 5**（`agenia-dashboard` 不再 `disabled: true`）。
  *   ⚠️ 新增四格**不进** `FROZEN_IDS`（同一批政策），但**同批**进 `BATCH_AC` 与
  *   `GROUP_COUNTS['client-dashboard']`（分母 141 → 145，由盘上发现器数出来）。
  *
@@ -658,7 +664,14 @@ export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 
  *   预设还注册得上吗？浏览器真收到那个包了吗？ ⇒ 塌了和没塌在盘上长得一模一样。
  *   · `BOOT-01` **身份（R2 + R5）**：`T`（这一次客户端启动的时刻）之后**新建**的顶层会话，
  *     头里 `agentPreset` 必须是 `agenia`；`standard` ⇒ 塌了。没有 `createdAt >= T` 的会话 ⇒ **HOLD**
- *     （`BOOT-NO-SESSION-AFTER-RESTART`，**不是绿**）。同批判 R5 的条件式（挂载行在/不在 × 身份判词）。
+ *     （`BOOT-NO-SESSION-AFTER-RESTART`，**不是绿**）。
+ *     **R5（2026-11-05 深夜组长裁定"重定义，不退役"）**：撤挂载 = **删 `# @host-level` 标记 + 重跑生成器**
+ *     （一条命令序列，一次提交可回滚），判两半：① 两件产物 × 落点（标记在 ⇒ 只住顶层 insert；
+ *     标记不在 ⇒ 回到两份预设体），任一端不合契约 ⇒ `RED BOOT-R5-ROLLBACK-CONTRACT-BROKEN`；
+ *     ② 撤掉挂载 + 重启之后**新建**会话的头仍是 `agentPreset: agenia` —— 需要真的做过一次练习并交回执
+ *     （`AGENIA_R5_REMOVAL_EXERCISE`），没做 ⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`
+ *     （名字刻意不是"挂载行不在"），回执说身份掉了 ⇒ `RED BOOT-R5-IDENTITY-COST`。
+ *     旧的两条腿（`oneStepRemoval()` 删一行 / profile 补丁条件式）与五个旧码同批退役（墓碑在 `BOOT_CODES`）。
  *   · `BOOT-02` **包可达（R3）**：宿主 `boot 载荷`里有没有这个**包名** + `/plugins/<包名>/client.js?rev=…`
  *     取不取得到同一份字节；**两条都要有，缺一记 HOLD**（`BOOT-R3-HALF-PROOF`）。
  *
@@ -1103,11 +1116,11 @@ const ROWS = [
 
   // `preset-*.plugins` 里；行体 + 包的 `dsh.client` 声明齐全；整份补丁是生成器的派生物。
 
-  ['DASH-15', 'client-dashboard', F.dash06, '**面板装上了没有（profile 层）**（`bug-20261104-02` 的迁移版；老板 2026-11-04「我在客户端里点哪，i see nothing」· 组长当天 log §十四）：2026-11-05 16:0x 实测"把那一行搬进 **bundle** 的宿主级 insert"会让整个 bundle 层 boot 失败（新会话 `agentPreset: "standard"` ⇒ 窄权限）⇒ 那一行回滚成 `disabled: true`，挂载改走 **profile 层**（`$DSH_PROFILE_DIR/cordis.patch.yml`，`AGENIA_PROFILE_PATCH` 可覆盖）。于是本格判的是 **profile 补丁**里的那一行（不是 bundle 补丁 —— 那个形状再也不会出现）：① **位置**：看板那一行必须是**顶层 `- insert:` 的直接成员**（宿主装载层），否则 ⇒ `DASH-NOT-PROFILE-INSERT`；② **行体 + 包**：**不带 `id`**（带 id 的顶层条目是"改已存在的行"）⇒ `DASH-PROFILE-ROW-HAS-ID` · 不是 `disabled: true` ⇒ `DASH-PROFILE-ROW-DISABLED` ·`name` 指得到包 + `config.root` 在 + 那个包自己声明 `dsh.client.platform: web` + `exports["./client"]` ⇒ 否则 `DASH-NO-CLIENT-DECL`（浏览器没有东西可收）；③ **缺席 = 红**（2026-11-05 复审第 4 条）：profile 补丁里没有这一行 ⇒ `DASH-PROFILE-MOUNT-MISSING`（**红**，不是 HOLD —— 主语是"那一行必须在"，缺席是关于产品的事实，不是"我读不到"）；第三态只留给读不到（预设体里名字解析不到包 ⇒ HOLD `DASH-ROW-PACKAGE-UNRESOLVED`，带它自己的码）；④ **翻面**：合成夹具（正确形状干净 · 顶层 override / 塞进别人 `config.plugins` ⇒ **只有** `DASH-NOT-PROFILE-INSERT` · 带 id / disabled / 包没声明 / 没 root 各自点名 · **裸包名**解析得到 web 包 ⇒ 红 · 解析不到 ⇒ HOLD）+ **真字节阳性对照**（真 profile 补丁原文 + 真形状的挂载块 ⇒ 必须干净）+ 分流政策自己的刀（缺席 ⇒ RED；读不到 ⇒ HOLD 且不许吞红）；⑤ **同格另带一条 bundle 层不变量**：生成的 `presets/agenia/cordis.patch.yml` 必须等于 `make-bundle-patch.mjs --check` 从 `agent.cordis.yml` 造出来的那一份 —— 🔴 `--check` 的 exit 1 **分开报**（复审第 1 条）：不是派生物 ⇒ `DASH-PATCH-NOT-DERIVED` · 是派生物但结构/层归属不对 ⇒ `DASH-PATCH-STRUCTURE-WRONG` · 组合过不了联锁 ⇒ `DASH-PATCH-COMPOSITION-REJECTED` · 没给出判词 ⇒ `DASH-PATCH-DERIVE-CRASH`（两把刀各造一个原因：副本上改一个值 / 副本生成器产出一条宿主级行）。另有**读取器覆盖**（`patchReaderVerdict()`，与 `BOOT-01`/`BOOT-02` 同一把尺子）：profile 补丁第 44–45 行那处多行 plain scalar 曾让窄口径读取器盲掉 18 行。读数带 `{repo, head, 每份文件的字节/sha256/mtime, snapshot_at}`；**不判像素、不判浏览器真的收到包**（那归 GUI 清单，人点一次）', '批次 AC'],
+  ['DASH-15', 'client-dashboard', F.dash06, '**面板装上了没有（bundle 层）**（`bug-20261104-02` 的迁移版；老板 2026-11-04「我在客户端里点哪，i see nothing」· 组长当天 log §十四）：挂载的载体是**我们自己的包**（`presets/agenia/cordis.patch.yml` 的顶层 `- insert:`）—— 官方「智能体团队」面板就是挂在自己的 `dsh.bundle.patch` 顶层 insert 里（`@deepseek-ai/dsh-experimental-agent-team-profile` 的 `ui-agent-team` 与两条服务行并列），而我们自己的 `agenia-injector` 有同一个 `dsh.bundle.patch`；"宿主层会把 bundle 层带塌"那个归因已被 `bug-20261105-12` 证伪。① **顶层 insert 的形状**（`DASH-TOP-INSERT-SHAPE`）：恰好 1 个、顶层没有别的条目、`@deepseek-ai/dsh-agent-preset` 恰好 2 条、宿主级行至多 1 条且必须是看板包那一份。② **看板那一行**：整份补丁里没有一行解析到看板包 ⇒ `DASH-ROW-ABSENT`（**红**，不是 HOLD：缺席是关于产品的事实）；在、但不是顶层 insert 的直接成员 ⇒ `DASH-NOT-HOST-LEVEL`；是直接成员但 `disabled: true` ⇒ `DASH-ROW-DISABLED`；`name` 指不到包 / 包没声明 `dsh.client.platform: web` / 没 `exports["./client"]` / 没 `config.root` / **包自己的 Node 入口文件不在盘上** ⇒ `DASH-NO-CLIENT-DECL`（报文各自点名）。🔴 认它**不认 id / 名字形状** —— 靠"那份 `package.json` 是不是看板包那一份"。③ **真字节翻面**：拿最近一次"那一行还没住进顶层 insert"的提交（回滚期那版真字节）当 before ⇒ **必须红**；把那一行搬进顶层 insert（`withHostRowInTopInsert()`：只搬这一行、其余字节不动）当 fixture ⇒ **必须绿**，且 `顶层 - insert: 1 个 · 直接成员 3 条（1 宿主 + 2 预设入口）` · `宿主级行 1 条` · `预设体内客户端 UI 行 0 条` · `agenia-dashboard` 恰好 1 次，逐条命中；刀翻错面 ⇒ `DASH-KNIFE-VECTOR`。④ **派生物**：生成的补丁必须等于 `make-bundle-patch.mjs --check` 从 `agent.cordis.yml` 造出来的那一份 —— exit 1 **分开报**（`E_PATCH_NOT_DERIVED` ⇒ `DASH-PATCH-NOT-DERIVED`；其余 `E_PATCH_*` ⇒ `DASH-PATCH-STRUCTURE-WRONG`；`E_BUNDLE_*` ⇒ `DASH-PATCH-COMPOSITION-REJECTED`；没判词 ⇒ `DASH-PATCH-DERIVE-CRASH`），三把刀各造一个原因，跑前有安全联锁、跑后量活体 sha256。另有**读取器覆盖**（warnings 为空 + "最后一条顶层 item"两把尺子一致）。备用路线（profile 层工具）**只落读数、不进判词**。**不判像素、不判浏览器真的收到包**（前者归 GUI 清单，后者归 `BOOT-02`）', '批次 AC'],
   // ── 第 4 关评审 `R-1`（2026-11-05）：**语义面** —— 忘写标记、忘点名表也必须红 ─────────────────
 
 
-  ['DASH-16', 'client-dashboard', F.dash06, '**客户端 UI 行的层归属（语义面 · profile 层 + bundle 层残余腿）**（第 4 关评审 2026-11-05 `R-1`；`bug-20261104-02` 的下一次复现路径）：一行的层归属由"它指向的包是不是客户端 UI"决定，不由作者记得的两把钥匙（`# @host-level` / `HOST_LEVEL_IDS`）决定。① **profile 层的语义面**（迁移后判据的载体）：profile 补丁里**每一行**用 `name` 解析到盘上的 `package.json`（路径形真解析；裸包名按 `manifestRoots` 里的 `package.json.name` 匹配），只要那个包声明 `dsh.client.platform: "web"` 却**不是**顶层 `- insert:` 的直接成员 ⇒ `DASH-CLIENT-NOT-IN-PROFILE-INSERT`（**不读标记、不读点名表、不认行 id**）；看板那一行自己的层归属归 `DASH-15`，本格只留它的 `scope: \'mount\'` 读数（还没挂 ⇒ 同一个 HOLD）。② **bundle 层的残余腿**（没跟着迁走的那半句话）：bundle 层**没有**宿主装载层了 ⇒ 客户端 UI 行在 bundle 里只有一种合法形状：**住在预设 `plugins` 里、且 `disabled: true`** —— 行**开着** ⇒ `DASH-CLIENT-IN-PRESET`（那正是 2026-11-05 16:0x boot 事故的形状）；住在**预设体之外**（顶层 `- insert:` 的直接成员 / 顶层 override）⇒ `DASH-CLIENT-IN-BUNDLE-TOP`；两侧 `disabled` 只翻一侧 ⇒ `DASH-DISABLED-MISMATCH`。🔴 **扫描器报的每一条本格都消费**（复审第 2 条）：没有"本格不判"的剔除名单。③ **翻面**：合成包（只在夹具里存在，`dsh.client.platform: web`）+ 合成行 —— 放进 profile 的 `- insert:` ⇒ 干净；写成 profile 顶层 override / 更深的 `config.plugins` ⇒**只有** `DASH-CLIENT-NOT-IN-PROFILE-INSERT`；**裸包名**（`manifestRoots` 索引解析得到 web 包）放进预设体 ⇒ 同一个码 · 名字解析不到 ⇒ HOLD `DASH-ROW-PACKAGE-UNRESOLVED`（复审第 3 条：读不到 ≠ 不是客户端 UI）；放进 bundle 预设且开着 ⇒ **只有** `DASH-CLIENT-IN-PRESET`；同一行但 `disabled: true` ⇒ **干净**；放进 bundle 顶层 ⇒ **只有** `DASH-CLIENT-IN-BUNDLE-TOP`。刀翻错面 ⇒ `DASH-KNIFE-VECTOR`、扫描器没把夹具行解析到它自己的包 / 夹具行出现在生产输入里 ⇒ `DASH-KNIFE-UNREADABLE`（尺子坏了不是对象坏了）。**退役的码**：`DASH-HOST-MISSING`（"看板行必须在 bundle 宿主 insert 里"）—— 那个形状按设计不存在，扫描器里那段阳性腿**整段删除**、`CODES` 里也没有这个键；命题的两半各有新落点（profile 的 `DASH-PROFILE-MOUNT-MISSING` / `DASH-NOT-PROFILE-INSERT` + bundle 的 `DASH-CLIENT-IN-BUNDLE-TOP`）。**不判像素、不判浏览器真的收到包**（前者归 GUI 清单，后者归 `BOOT-02`）。判据本体与合成夹具：`support/client-ui-placement.mjs`', '批次 AC'],
+  ['DASH-16', 'client-dashboard', F.dash06, '**客户端 UI 行的层归属（语义面 · bundle 层）**（第 4 关评审 2026-11-05 `R-1`；`bug-20261104-02` 的下一次复现路径）：一行的层归属由"它指向的包是不是客户端 UI"决定，不由作者记得的两把钥匙（`# @host-level` / `HOST_LEVEL_IDS`）决定。① 补丁里**每一行**用 `name` 解析到盘上的 `package.json`（路径形真解析；裸包名按 `manifestRoots` 里的 `package.json.name` 匹配），只要那个包声明 `dsh.client.platform: "web"` 却住在**任一预设的 `config.plugins` 子树**里 ⇒ `DASH-CLIENT-IN-PRESET`（**红**；`disabled: true` 也不算合规 —— 关着只是让它不跑，不是把它装上）；② 同类行住在**顶层 override**（既不在 insert、也不在预设）⇒ `DASH-CLIENT-OUTSIDE-INSERT`；③ 看板那一行必须**恰好一次**（语义计数 + 文件里 `- id: agenia-dashboard` 的文本出现次数）⇒ 否则 `DASH-HOST-ROW-COUNT`（多一份就多一个 Node 写者，"装上了没有"没有唯一答案）。🔴 解析不到的预设行**只进读数** `unresolved_in_preset`：两份预设体里六十来行框架裸包名住在 `app.asar` 里，这棵树解析不到；对它们记 HOLD 会让本格**每一次都挂起 60 条**（`cand-20261019-0042` 那个病），fail-closed 的判定在生成器那一侧（`E_BUNDLE_CLIENT_UI_UNRESOLVED` / `E_BUNDLE_CLIENT_UI_IN_PRESET`）。④ **翻面**：只存在于夹具里的合成包（声明 web）+ 合成行 —— 放进**组长 / 组员**任一预设体 ⇒ **只有** `DASH-CLIENT-IN-PRESET`；**裸包名**（`manifestRoots` 索引解析得到 web 包）放进预设体 ⇒ 同一个码；放进顶层 override ⇒ **只有** `DASH-CLIENT-OUTSIDE-INSERT`；看板行缺席 ⇒ **只有** `DASH-HOST-ROW-COUNT`；insert 一份 + 预设一份 ⇒ 同一个码 + 预设那一条。刀翻错面 ⇒ `DASH-KNIFE-VECTOR`；扫描器没把夹具行解析到它自己的包 / 夹具行出现在生产输入里 ⇒ `DASH-KNIFE-UNREADABLE`。**退役的码**（墓碑见 `support/client-ui-placement.mjs` 文件头）：`DASH-PROFILE-*` 全家（profile 层降级为备用路线，`.tools/mount-dashboard-profile.mjs` 自己的 `--check` 是它的检查器；两套码同时声称"挂载没做"是禁止的）· `DASH-HOST-MISSING` · `DASH-CLIENT-IN-BUNDLE-TOP` · `DASH-DISABLED-MISMATCH` · `DASH-ROW-PACKAGE-UNRESOLVED`。**不判像素、不判浏览器真的收到包**（前者归 GUI 清单，后者归 `BOOT-02`）。判据本体与合成夹具：`support/client-ui-placement.mjs`', '批次 AC'],
   // ── 批次 AD（2026-11-05 第 2 关）：**启动之后的读数** —— 事故（log §十三）真正的漏洞 ─────────
   // 一句话：塌了和没塌在盘上长得一模一样，因为**没有一条读数**在启动之后问过"预设还注册得上吗 / 浏览器真收到包了吗"。
   // 量具与口径（含"会话头是创建时快照、续跑的老会话不算证据"）逐条写在 `support/boot-readings.mjs`。

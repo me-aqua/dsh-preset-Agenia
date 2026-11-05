@@ -24,13 +24,20 @@
  *        · 别的值 ⇒ `RED BOOT-PRESET-UNEXPECTED`。
  *      同批落一份**反向读数**：同一个 `T` 下**不过滤**顶层会把谁选中（今天 = 委派出去的组员会话，
  *      `agenia-member`）—— 证明那个过滤器是承重的，不是装饰。
- *   ② **回滚（R5）**：两个 artifacts 的**条件式**，不是故事 ——
- *      `profile 补丁里那一行` × `BOOT-01① 的判词`：
- *        · 行**不在** 且 ①判 `RED` ⇒ `RED BOOT-ROLLBACK-DID-NOT-RESTORE`（撤了还没恢复 = 真坏）；
- *        · 行**在**   且 ①判 `RED` ⇒ `RED BOOT-MOUNT-BROKE-IDENTITY`（挂上把身份带塌了）；
- *        · 行不在 ⇒ `HOLD BOOT-ROLLBACK-NO-MOUNT-ROW`（这一格现在没得撤，"能不能一步撤"也无从量）；
- *        · 行在 ⇒ 必须能**一步撤掉**（`oneStepRemoval()`：顶层 `- insert:` 一个 item、整块拿掉后
- *          仍然解析干净、文件里再无第二处引用），撤不掉 ⇒ `RED BOOT-ROLLBACK-NOT-REMOVABLE`。
+ *   ② **回滚（R5）**：**撤挂载 = 删 `# @host-level` 标记 + 重跑生成器**（2026-11-05 深夜组长裁定：
+ *      "重定义，不退役"）。判两半，各自一个落点：
+ *      · **产物 × 落点**（`rollbackRouteReading()`）：标记**在** ⇒ 那一行只住顶层 `- insert:`
+ *        （预设体 0 次）；标记**不在** ⇒ 那一行回到**两份**预设体（顶层 insert 0 次）。
+ *        盘上只有挂载态，回滚态由真字节投影造；任一端不合契约 ⇒
+ *        `RED BOOT-R5-ROLLBACK-CONTRACT-BROKEN`（**不是**"挂载行不在"）。
+ *      · **身份**（`rollbackExerciseVerdict()`）：撤掉挂载、重启之后**新建**的会话头仍须是
+ *        `agentPreset: agenia` —— 撤挂载不许折掉身份。要求真的做过一次练习
+ *        （`AGENIA_R5_REMOVAL_EXERCISE` 回执）；没做 ⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`；
+ *        回执说身份掉了 ⇒ `RED BOOT-R5-IDENTITY-COST`。
+ *      🔴 旧的两条腿（`oneStepRemoval()` 的"从文件里删一行"、`profilePatchReading()` 的 profile
+ *      条件式）**退役**：那个动作在 bundle 路线上不存在，profile 层已是备用路线。
+ *      码 `BOOT-ROLLBACK-NO-MOUNT-ROW` 等五个同批退役（墓碑在 `BOOT_CODES` 里）——
+ *      尤其那个名字会把"练习没做"读成"挂载行不在"，正好相反。
  *
  * ── `BOOT-02` 判什么（定形 §五：**两条读数都要有，缺一不算挂上**）────────────────
  *   A **boot 载荷**：页面里 `window.__DSH_BOOT__` 的 entry 表有没有这个**包名**
@@ -39,7 +46,10 @@
  *   三态：`200`（证据）/ `404`（**判不了** —— 它同时是"没挂上"和"URL/rev 不对"的形状）/ 连不上。
  *   ⇒ GREEN 只在 A、B **都**拿到证据时；任一条读不到 ⇒ `HOLD BOOT-R3-HALF-PROOF`（带两条各自的码）；
  *     只有 A 读到 200 而表里没有这个包 ⇒ `RED BOOT-R3-ENTRY-NOT-IN-BOOT`。
- *   挂载行不在 / 关着 / 住错层 ⇒ `HOLD BOOT-R3-MOUNT-ABSENT` / `…-DISABLED` / `RED …-NOT-TOP-LEVEL-INSERT`。
+ *   挂载行（2026-11-05 深夜挂回**我们自己的包**：`presets/agenia/cordis.patch.yml` 的顶层 `- insert:`）
+ *   不在 / 关着 / 住错层 ⇒ `HOLD BOOT-R3-MOUNT-ABSENT` / `HOLD BOOT-R3-MOUNT-DISABLED` /
+ *   `RED BOOT-R3-MOUNT-NOT-TOP-LEVEL-INSERT`；那份补丁不在 ⇒ `HOLD BOOT-R3-MOUNT-PATCH-MISSING`。
+ *   ⚠️ A 腿的 401 口径不变：**401 = 读不到**（token 门禁），不是"不在"。
  *
  * ── 不判什么 ────────────────────────────────────────────────────────────────
  *   · 不判像素（"点开有没有那块面板"归 GUI 清单，人点一次）；
@@ -66,7 +76,10 @@
  */
 import { before, test } from 'node:test'
 import path from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
 import { caseDir, caseHold, preflight, problem, runCase } from '../support/evidence.mjs'
+import { PATHS } from '../support/env.mjs'
+import { bundleMountReading } from '../support/client-ui-placement.mjs'
 import {
   BOOT_CODES,
   EXPECTED_PRESET,
@@ -76,12 +89,14 @@ import {
   hostUrlReading,
   identityOf,
   listSessions,
-  oneStepRemoval,
   packageReading,
   patchReaderVerdict,
   pluginChunkReading,
   presetVerdict,
-  profilePatchReading,
+  profilePatchCoverage,
+  readRollbackExercise,
+  rollbackExerciseVerdict,
+  rollbackRouteReading,
   readSessionHeader,
   scanHeaders,
   selectNewestAfter,
@@ -100,7 +115,7 @@ function readHeader(session, tmpDir) {
   return r.ok ? { ok: true, reading: r, identity: identityOf(r) } : { ok: false, reading: r }
 }
 
-/** 补丁读数**落盘时别把整份正文塞进去**（只有 `oneStepRemoval` 需要正文）。 */
+/** 补丁读数**落盘时别把整份正文塞进去**（只有 `bundleMountReading` 的正文要用来复核字节）。 */
 function patchSummary(patch) {
   const { text, ...rest } = patch
   return { ...rest, text_chars: text === null ? null : text.length }
@@ -170,18 +185,19 @@ function findPositiveControl({ sessions, tmpDir, hintPrefix = 'session-e0ed642a'
   return best === null ? null : { source: 'scan', ...best }
 }
 
-test('BOOT-01 启动后读数 A（身份）：重启之后新建的会话头 agentPreset 必须是 agenia，standard ⇒ 塌了；R5 回滚条件式同批', async () => {
+test('BOOT-01 启动后读数 A（身份）：重启之后新建的会话头 agentPreset 必须是 agenia，standard ⇒ 塌了；R5 撤挂载 = 删标记 + 重跑生成器', async () => {
   await runCase('BOOT-01', async (rec) => {
     const tmpDir = path.join(caseDir('BOOT-01'), 'tmp')
     const tree = treeIdentity()
     const store = sessionRootReading()
     const boot = hostBootReading()
-    const patch = profilePatchReading()
     rec.readings.tree = tree
     rec.readings.session_root = store
     rec.readings.restart = { ok: boot.ok, at: boot.at, at_iso: boot.at_iso, source: boot.source, host: boot.host ?? null, chain: boot.chain, why: boot.why ?? null, measured_at: new Date().toISOString() }
-    rec.readings.profile_patch = patchSummary(patch)
-    // 🔴 读取器自证（Gate-2 缺陷）：先验"整份补丁都被读到了"，再看那一行在不在、撤不撤得掉。
+    // 🔴 读取器自证（Gate-2 缺陷）：先验"整份补丁都被读到了"。
+    //    ⚠️ 2026-11-05 深夜：BOOT-01 不再读 profile 补丁（挂载搬回 bundle 层 ⇒ profile 里按设计没有那一行，
+    //    它是备用路线）。`patchReaderVerdict()` 留在这里，是因为 R5 的产物读数也走同一份窄口径解析器 ——
+    //    它读不懂组合 / 补丁时，"那一行落在哪"的读数同样不能信。
     applyReader(rec, patchReaderVerdict())
     rec.readings.package = (() => {
       const p = packageReading(DASHBOARD_PKG_DIR())
@@ -287,90 +303,97 @@ test('BOOT-01 启动后读数 A（身份）：重启之后新建的会话头 age
       rec.problems.push(problem(v.code, `${v.why}（${whereOf(pick.newest)}；T = ${new Date(T).toISOString()}，来源 ${boot.source}）`))
     }
 
-    // ── ② R5 回滚：两个 artifacts 的条件式 ────────────────────────────────────
-    // 先给**"一步撤掉"这把尺子**做自证：盘上现在没有那一行（R1 还没落地），所以只能拿
-    // **三种合成形状**量它 —— 三种都是"R1 落地之后可能长成的样子"，不是编出来的现实：
-    //   ① 正确形状（顶层 insert 里只有看板这一行）⇒ 删得掉，`whole-insert-item`；
-    //   ② 同一块里还有一行官方插件 ⇒ 删得掉，`row-inside-insert`，**别人那行不许跟着没**；
-    //   ③ 住错层（顶层 override，不是 insert）⇒ 删不掉，且要说出"不是顶层 `- insert:`"。
-    // ⚠️ 形状**照抄官方 profile 补丁**（`@deepseek-ai/dsh-experimental-agent-team-profile/cordis.patch.yml`：
-    //    子项 4 空格缩进、每行 `name` + `config`）；看板这一行按定形 §五 的要求**不带 `id`**。
-    const REMOVAL_FIXTURES = {
-      good: [
-        '- id: ui-chat',
-        '  name: "@deepseek-ai/dsh-client-ui-chat"',
-        '  config:',
-        '    transcriptView: detailed',
-        '- insert:',
-        '    - name: file:///E:/Harness/presets/agenia/client-ui-dashboard/lib/index.js',
-        '      config:',
-        '        root: E:/Harness',
-        '',
-      ].join('\n'),
-      withSibling: [
-        '- insert:',
-        '    - name: file:///E:/Harness/presets/agenia/client-ui-dashboard/lib/index.js',
-        '      config:',
-        '        root: E:/Harness',
-        '    - id: ui-agent-team',
-        '      name: "@deepseek-ai/dsh-experimental-client-ui-agent-team"',
-        '',
-      ].join('\n'),
-      wrongPlacement: [
-        '- id: agenia-dashboard',
-        '  name: file:///E:/Harness/presets/agenia/client-ui-dashboard/lib/index.js',
-        '  config:',
-        '    root: E:/Harness',
-        '',
-      ].join('\n'),
+    // ── ② R5 回滚：**撤挂载 = 删标记 + 重跑生成器**（2026-11-05 深夜 · 组长裁定"重定义，不退役"）──
+    // 【这条路为什么不再读 profile 补丁】挂载行搬回我们自己的 bundle 补丁 ⇒ profile 层按设计没有那一行
+    //   （它已降级为备用路线），"从 profile 里删一行"这个动作在产品里不存在了。
+    // 【判据一：产物 × 落点】两件产物，两端都要合契约：
+    //   · 挂载态（标记**在**）：那一行只住顶层 `- insert:`（预设体里 0 次）；
+    //   · 回滚态（标记**不在**）：那一行回到**两份**预设体里（顶层 insert 里 0 次）。
+    //   盘上今天只有挂载态 ⇒ 回滚态由**真字节投影**造（删标记 + 把那一行搬回两份预设体，
+    //   其余字节不动）。两端走同一个算式（`rollbackRouteReading()`）；一端不成立 ⇒
+    //   RED `BOOT-R5-ROLLBACK-CONTRACT-BROKEN`（"回滚契约不成立"，**不是**"挂载行不在"）。
+    // 【判据二：身份】撤掉挂载、重启之后**新建**的会话头仍须是 `agentPreset: agenia`
+    //   —— 撤挂载不许折掉身份。这一半必须真的做过一次练习（删标记 → 重跑 → 重启 → 新建会话），
+    //   回执由 `AGENIA_R5_REMOVAL_EXERCISE` 指过来；没做 ⇒ **HOLD**
+    //   `BOOT-R5-REMOVAL-EXERCISE-MISSING`（名字刻意不是 `…-NO-MOUNT-ROW`：那个名字会被读成
+    //   "挂载行不在"，而盘上的事实正好相反）。
+    // 旧的两条腿（`oneStepRemoval()` 的"删一行"、`profilePatchReading()` 的 profile 条件式）同批退役。
+    const rollbackArtifacts = rollbackRouteReading({
+      compositionText: existsSync(PATHS.liveComposition) ? readFileSync(PATHS.liveComposition, 'utf8') : null,
+      patchText: existsSync(PATHS.livePatch) ? readFileSync(PATHS.livePatch, 'utf8') : null,
+    })
+    rec.readings.rollback_artifacts = rollbackArtifacts.readings
+    for (const p of rollbackArtifacts.problems) rec.problems.push(problem(p.code, p.message))
+
+    // 先给**回执判定器**做自证：同一把尺子喂三份合成输入，必须给出三个互相分得开的判词
+    // （该绿的绿 / 身份掉了红到 `IDENTITY-COST` / 回执形状坏了红到 `CONTRACT-BROKEN`）。
+    const EXERCISE_FIXTURES = {
+      green: {
+        at: '2026-11-05T12:00:00.000Z',
+        marker_removed: true,
+        regenerated: true,
+        row_landing: { insert: 0, preset_bodies: 2 },
+        restart_at: '2026-11-05T12:05:00.000Z',
+        new_session: { created_at: '2026-11-05T12:06:11.000Z', agentPreset: EXPECTED_PRESET },
+      },
+      identityLost: {
+        at: '2026-11-05T12:00:00.000Z',
+        marker_removed: true,
+        regenerated: true,
+        row_landing: { insert: 0, preset_bodies: 2 },
+        restart_at: '2026-11-05T12:05:00.000Z',
+        new_session: { created_at: '2026-11-05T12:06:11.000Z', agentPreset: 'standard' },
+      },
+      contractBroken: {
+        at: '2026-11-05T12:00:00.000Z',
+        marker_removed: false,
+        regenerated: true,
+        row_landing: { insert: 1, preset_bodies: 0 },
+        restart_at: '2026-11-05T12:05:00.000Z',
+        new_session: { created_at: '2026-11-05T12:06:11.000Z', agentPreset: EXPECTED_PRESET },
+      },
     }
-    const removalGood = oneStepRemoval({ text: REMOVAL_FIXTURES.good, path: '<fixture:good>' })
-    const removalSibling = oneStepRemoval({ text: REMOVAL_FIXTURES.withSibling, path: '<fixture:withSibling>' })
-    const removalWrong = oneStepRemoval({ text: REMOVAL_FIXTURES.wrongPlacement, path: '<fixture:wrongPlacement>' })
-    rec.readings.removal_ruler = {
-      measured_at: new Date().toISOString(),
-      good: { ok: removalGood.ok, kind: removalGood.readings?.removal_kind ?? null, problems: removalGood.problems },
-      with_sibling: { ok: removalSibling.ok, kind: removalSibling.readings?.removal_kind ?? null, problems: removalSibling.problems },
-      wrong_placement: { ok: removalWrong.ok, problems: removalWrong.problems },
+    const goodVerdict = rollbackExerciseVerdict(EXERCISE_FIXTURES.green)
+    const lostVerdict = rollbackExerciseVerdict(EXERCISE_FIXTURES.identityLost)
+    const brokenVerdict = rollbackExerciseVerdict(EXERCISE_FIXTURES.contractBroken)
+    rec.readings.rollback_ruler = {
+      green: { verdict: goodVerdict.verdict, code: goodVerdict.code },
+      identity_lost: { verdict: lostVerdict.verdict, code: lostVerdict.code },
+      contract_broken: { verdict: brokenVerdict.verdict, code: brokenVerdict.code },
     }
-    if (!removalGood.ok || removalGood.readings?.removal_kind !== 'whole-insert-item') {
-      rec.problems.push(problem(BOOT_CODES.rollbackRulerDead, `"一步撤掉"这把尺子对**正确形状**不成立：${removalGood.problems.join('；') || `kind=${removalGood.readings?.removal_kind}`}`))
+    if (goodVerdict.verdict !== 'GREEN' || lostVerdict.verdict !== 'RED' || lostVerdict.code !== BOOT_CODES.rollbackIdentityCost
+      || brokenVerdict.verdict !== 'RED' || brokenVerdict.code !== BOOT_CODES.rollbackContractBroken) {
+      rec.problems.push(problem(BOOT_CODES.rollbackRulerDead,
+        '回执判定器不翻面 / 两个红分不开：合成的三份回执判成 '
+        + `${JSON.stringify({ green: [goodVerdict.verdict, goodVerdict.code], identity_lost: [lostVerdict.verdict, lostVerdict.code], contract_broken: [brokenVerdict.verdict, brokenVerdict.code] })}`
+        + `；期望 GREEN/— · RED/${BOOT_CODES.rollbackIdentityCost} · RED/${BOOT_CODES.rollbackContractBroken}`
+        + ' —— 那"回滚这一格现在是 HOLD"就不是"练习没做"，是判定器坏了'))
     }
-    if (!removalSibling.ok || removalSibling.readings?.removal_kind !== 'row-inside-insert') {
-      rec.problems.push(problem(BOOT_CODES.rollbackRulerDead, `同一块 insert 里还有别的行时，尺子没能做到"只删那一行"：${removalSibling.problems.join('；') || `kind=${removalSibling.readings?.removal_kind}`}`))
-    }
-    if (removalWrong.ok || !removalWrong.problems.some((p) => p.includes('不是顶层 `- insert:`'))) {
-      rec.problems.push(problem(BOOT_CODES.rollbackRulerDead, `住错层（顶层 override）的形状**没有**被尺子拒掉（problems=${JSON.stringify(removalWrong.problems)}）—— 那它认不出"住错层"`))
-    }
-    const removal = patch.mount.present ? oneStepRemoval(patch) : null
+
+    // 身份那一半：今天有没有"练习回执"。
+    const exercise = readRollbackExercise()
+    const exerciseVerdict = exercise.supplied && exercise.receipt === null
+      ? {
+        verdict: 'RED',
+        code: BOOT_CODES.rollbackContractBroken,
+        why: `给了 \`AGENIA_R5_REMOVAL_EXERCISE\` 却读不出回执（${exercise.path}）：${exercise.error} —— 回执坏了，不是"练习没做"`,
+        readings: { supplied: true, path: exercise.path },
+      }
+      : rollbackExerciseVerdict(exercise.receipt)
     const r2 = pick.newest === null ? 'HOLD' : v.verdict
-    const rollback = {
-      measured_at: new Date().toISOString(),
-      mount: patch.mount,
-      r2_verdict: r2,
-      one_step_removal: removal === null ? null : { ok: removal.ok, problems: removal.problems, readings: removal.readings },
-      invariant: null,
+    rec.readings.rollback_exercise = {
+      path: exercise.path,
+      supplied: exercise.supplied,
+      read_error: exercise.error,
+      identity_today: r2,
+      ...exerciseVerdict,
     }
-    if (!patch.exists) {
-      caseHold(rec, BOOT_CODES.noProfilePatch, `客户端那份 profile 补丁不在（${patch.path}，来源 ${patch.source}）⇒ 挂载行与回滚都无从量 —— HOLD（不是绿）`)
-      rollback.invariant = 'profile patch missing'
-    } else if (!patch.mount.present) {
-      caseHold(rec, BOOT_CODES.rollbackNoMountRow, `profile 补丁里没有指向这个包的行（按包名找的；${patch.path} · ${patch.bytes} B · sha256 ${String(patch.sha256).slice(0, 12)}…）⇒ "能不能一步撤掉"现在没有对象 —— HOLD；`
-        + '这一格要等 R1 把那一行挂上之后才量得到')
-      if (r2 === 'RED') {
-        rec.problems.push(problem(BOOT_CODES.rollbackDidNotRestore, `那一行**不在**（${patch.path}），可身份读数还是 RED：${whereOf(pick.newest)} —— 撤掉挂载并没有把预设注册恢复回来`))
-      }
-      rollback.invariant = `row absent & R2=${r2} ⇒ ${r2 === 'RED' ? 'RED' : 'holds'}`
-    } else {
-      if (removal !== null && !removal.ok) {
-        rec.problems.push(problem(BOOT_CODES.rollbackNotRemovable, `那一行挂在 ${patch.path} 里，但**撤不掉一步**：${removal.problems.join('；')}`))
-      }
-      if (r2 === 'RED') {
-        rec.problems.push(problem(BOOT_CODES.mountBrokeIdentity, `那一行**在**（${patch.mount.placement}${patch.mount.disabled ? ' · disabled' : ''}），而身份读数是 RED：${whereOf(pick.newest)} —— 挂上把身份带塌了`))
-      }
-      rollback.invariant = `row present (${patch.mount.placement}${patch.mount.disabled ? ', disabled' : ''}) & R2=${r2} ⇒ ${r2 === 'RED' ? 'RED' : 'holds'}`
+    if (exerciseVerdict.verdict === 'HOLD') {
+      caseHold(rec, exerciseVerdict.code, exerciseVerdict.why
+        + `（今天的身份读数 = ${r2}，但那是**没撤挂载**的读数：它不回答"撤掉之后身份还在不在"）`)
+    } else if (exerciseVerdict.verdict === 'RED') {
+      rec.problems.push(problem(exerciseVerdict.code, exerciseVerdict.why))
     }
-    rec.readings.rollback = rollback
   })
 })
 
@@ -378,7 +401,15 @@ test('BOOT-02 启动后读数 B（包可达）：宿主 boot 载荷登记这个�
   await runCase('BOOT-02', async (rec) => {
     const tree = treeIdentity()
     const pkg = packageReading(DASHBOARD_PKG_DIR())
-    const patch = profilePatchReading()
+    /**
+     * 🔴 2026-11-05 深夜：挂载行搬回**我们自己的包**（`presets/agenia/cordis.patch.yml` 的顶层
+     * `- insert:`）。所以这一格的"那一行在不在 / 住在哪 / 开没开"读的是**那份补丁**，
+     * 不是 profile 补丁（那一层现在是备用路线，里面按设计没有这一行）。
+     * A / B 两条读数、`404` 的三态、`HALF-PROOF` 一个字没改。
+     */
+    const mountPatchFile = path.join(PATHS.finalPreset, 'cordis.patch.yml')
+    const patch = bundleMountReading({ file: mountPatchFile })
+    const coverage = profilePatchCoverage(mountPatchFile)
     const host = hostUrlReading()
     const boot = hostBootReading()
     const T = boot.ok ? boot.at : null
@@ -398,9 +429,22 @@ test('BOOT-02 启动后读数 B（包可达）：宿主 boot 载荷登记这个�
       problems: pkg.problems,
       measured_at: new Date().toISOString(),
     }
-    rec.readings.profile_patch = patchSummary(patch)
-    // 🔴 读取器自证（Gate-2 缺陷）：这一跑读的那一份 + 现役那一份都必须被读全（见文件头）。
-    applyReader(rec, patchReaderVerdict())
+    rec.readings.mount_patch = patchSummary(patch)
+    /**
+     * 🔴 读取器自证（**挂载行所在的那份补丁**）：`profilePatchCoverage()` 量的是"解析器吃掉了多少 /
+     * 最后一条顶层 item 两把尺子同不同意"——它对这个文件同样成立。`warnings` 非空或两把尺子打架
+     * ⇒ `BOOT-PATCH-READER-BLIND`（尺子瞎了，"不在 / 撤不掉"的判词一律不成立）。
+     * ⚠️ 三组**合成**读取器夹具（多行 plain scalar 折行 / 三种真坏行）不在这里跑第二遍：
+     *    它们在 `BOOT-01` 那一格跑（同一个 `patchReaderVerdict()`），同一个尺子不重复自证。
+     */
+    rec.readings.patch_reader = { file: mountPatchFile, source: 'bundle 补丁（挂载行所在的那份）', ...coverage }
+    if (coverage.exists && (coverage.unparsed_count !== 0 || coverage.last_top_level_key.agree !== true)) {
+      rec.problems.push(problem(BOOT_CODES.patchReaderBlind,
+        `挂载行所在那份补丁没被读全（未解析 ${coverage.unparsed_count} 行 · 最后一条顶层 item `
+        + `解析器 ${JSON.stringify(coverage.last_top_level_key.by_parser)} / 逐行扫原文 ${JSON.stringify(coverage.last_top_level_key.by_text)}）`
+        + ' ⇒ 尺子瞎了：底下"那一行在不在 / 住哪"的判词一律不成立'))
+      return
+    }
     rec.readings.host = { ...host, measured_at: new Date().toISOString() }
     rec.readings.restart = { ok: boot.ok, at: boot.at, at_iso: boot.at_iso, source: boot.source, why: boot.why ?? null }
 
@@ -445,19 +489,19 @@ test('BOOT-02 启动后读数 B（包可达）：宿主 boot 载荷登记这个�
 
     // ── 分流：先看挂载行，再看两条读数 ────────────────────────────────────────
     if (!patch.exists) {
-      caseHold(rec, BOOT_CODES.r3NoProfilePatch, `客户端那份 profile 补丁不在（${patch.path}）⇒ 挂载行不存在，两条读数没有对象 —— HOLD`)
+      caseHold(rec, BOOT_CODES.r3NoMountPatch, `挂载行所在那份补丁不在（${patch.path}）⇒ 挂载行不存在，两条读数没有对象 —— HOLD`)
       return
     }
     if (!patch.mount.present) {
       caseHold(rec, BOOT_CODES.r3MountAbsent,
-        `profile 补丁（${patch.path} · ${patch.bytes} B · sha256 ${String(patch.sha256).slice(0, 12)}…）里没有指向 ${pkg.name} 的行 `
-          + `⇒ R1 还没落地，两条读数都**不许**当绿：A=${aState.state}${aState.code ? `（${aState.code}）` : ''} · B=${bState.state}${bState.code ? `（${bState.code}）` : ''}。`
-          + '这一格要等 profile 层那一行挂上之后才量得到')
+        `bundle 补丁（${patch.path} · ${patch.bytes} B · sha256 ${String(patch.sha256).slice(0, 12)}…）里没有指向 ${pkg.name} 的行 `
+          + `⇒ 挂载还没落地，两条读数都**不许**当绿：A=${aState.state}${aState.code ? `（${aState.code}）` : ''} · B=${bState.state}${bState.code ? `（${bState.code}）` : ''}。`
+          + '（"那一行缺席"是**产品事实**，红的那一条归 `DASH-15`；这一格只记"两条读数没有对象"）')
       return
     }
     if (patch.mount.placement !== 'insert') {
       rec.problems.push(problem(BOOT_CODES.r3MountNotHostLevel,
-        `那一行在补丁里，但住在 ${patch.mount.placement}（不是顶层 \`- insert:\` 的直接成员）⇒ 宿主装载层收不到它（${patch.path}）`))
+        `那一行在补丁里，但住在 ${patch.mount.placement}（${patch.mount.row?.where ?? '?'}）—— 不是顶层 \`- insert:\` 的直接成员 ⇒ 宿主装载层收不到它（${patch.path}）`))
       return
     }
     if (patch.mount.disabled) {

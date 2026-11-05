@@ -21,16 +21,22 @@
  *   · 组员那一份**不声明** `model` / `tools`（任意深度都没有这两个键）—— 那两个键只住在
  *     角色表里。生成时**当场对账**，出现了就 throw（不是等到体检才发现）。
  *
- * ── 两层分工：bundle 补丁只放预设级行 ─────────────────────────────────────────
- * **层归属由包事实决定，不由注释标记决定**：每一条顶格行的 `name` 解析到最近的
- * `package.json`；那份 manifest 声明 `dsh.client.platform: web` ⇒ 这一行是客户端 UI 行
- * （宿主级），**不许**进预设体 —— 这里当场 throw，理由指向 profile 层。
+ * ── 两层分工：一个顶层 insert，宿主级行与预设入口并列 ─────────────────────────
+ * **层归属由包事实判，落点由 `# @host-level` 标记 + `HOST_LEVEL_IDS` 点名表定**：
+ *   · 每一条顶格行的 `name` 解析到最近的 `package.json`；那份 manifest 声明
+ *     `dsh.client.platform: web` ⇒ 这一行是客户端 UI 行 ⇒ **不许**进预设体（`throw`）。
+ *   · 客户端 UI 行只有一条合法去处：标 `# @host-level` 并进 `HOST_LEVEL_IDS`，
+ *     由本生成器发到**顶层 `- insert:` 的直接成员**。官方面板就是这个形状：
+ *     `@deepseek-ai/dsh-experimental-agent-team-profile/cordis.patch.yml` 的顶层
+ *     `- insert:` 里装着 `ui-agent-team`（与两条服务行并列）。
+ *   · 标记与点名表必须成对出现：标记在、id 不在表里 ⇒ throw；id 在表里、标记没了 ⇒ throw。
+ *     两边一起改，否则"哪一层装了什么"又变成两个作者。
+ *   · 两份预设体里**永远**没有宿主级行：一个包只有一个 Node 写者（否则每个预设各起一份、
+ *     各写一份快照）。`partitionHostLevel()` 把宿主级行从预设体里摘掉之后才组装两份预设。
  *
- * 唯一例外是一张**点名白名单**（`KNOWN_CLIENT_UI_IN_PRESET`）：已知是客户端 UI、但有意
- * 保持 `disabled: true` 的行。今天恰好一条：`agenia-dashboard`。白名单条目绑定三格
- * `{id, package, disabled: true}` —— id 对上但解析到的包名不是 `package` 那一格
- * ⇒ `E_BUNDLE_CLIENT_UI_ALLOW_MISMATCH`（复用 id 指到另一个 web 包不许过）。
- * 白名单行会被放行，并**在输出里点名**（"放行的是哪一条"不许靠读的人自己猜）。
+ * 唯一例外是一张**点名白名单**（`KNOWN_CLIENT_UI_IN_PRESET`）：客户端 UI 行若被硬塞回预设体，
+ * 只有 `{id, package, disabled: true}` 三格都对上才放行。今天表里那一条已经走宿主级路线
+ * ⇒ 真组合里它到不了这里（先被宿主级分支摘走）；白名单只在 `--interlock-control` 的夹具里翻面。
  *
  * **裸包名（`@deepseek-ai/…`）不是 `client: false`，是"判不了"**：它们住在宿主的 asar 里，
  * 这棵树没有 node_modules ⇒ 没有 `package.json` 可读。判不了就 fail-closed：
@@ -40,25 +46,26 @@
  *   · 框架自己的客户端 UI 包族（`@deepseek-ai/dsh-client-ui-*`）另有一条更早的拦截：
  *     命中包名族 ⇒ `E_BUNDLE_CLIENT_UI_IN_PRESET`（"裸名 + 客户端 UI 族"是最现实的形状）。
  *
- * `# @host-level` 标记仍然出现即 throw，但它只表示"人认为这行属于宿主层"，不再承担把关；
- * 标记拼错 / 漏写不再决定层归属（层归属由包事实判）。
+ * `# @host-level` 标记只在**顶格行**、`- id:` 的下一行、两格缩进时有效；位置不对 ⇒ throw。
+ * 标记不参与"是不是客户端 UI"的判定（那是包事实），它只声明"这一行去顶层 insert"。
  *
- * 宿主级行（客户端 UI 那类 `dsh.client.platform: web` + `exports["./client"]` 的包）写进
- * **profile 补丁**的顶层 `- insert:`，不写进这一份。
- * 这一份只放**预设级**行：两条 `@deepseek-ai/dsh-agent-preset`（`agenia` / `agenia-member`），
+ * 预设入口本身仍是两条 `@deepseek-ai/dsh-agent-preset`（`agenia` / `agenia-member`），
  * 它们的 `config.plugins` 是**会话**的组合，不进宿主树。
  *
  * 为什么：浏览器只收**宿主 Loader 树**里的条目（`@deepseek-ai/dsh-client-modules` 的
- * `ClientModuleRegistry.processOne()` 只枚举 `ctx.loader.entries()`）；bundle 层在 boot 时被
- * 合成，而预设里的行由 `@deepseek-ai/dsh-agent-preset` 注册进它自建的 Loader 树。
- * 宿主级行与预设级行混在一份 bundle 补丁里，会让“哪一层装了什么”没有单一落点。
+ * `ClientModuleRegistry.processOne()` 只枚举 `ctx.loader.entries()`）；预设里的行由
+ * `@deepseek-ai/dsh-agent-preset` 注册进它自建的 Loader 树。所以宿主级行必须住顶层 insert，
+ * 且只住一份（一个包一个 Node 写者）。
  *
- * 用法：<node> .tools/make-bundle-patch.mjs [--check | --interlock-control]
+ * 用法：<node> .tools/make-bundle-patch.mjs [--check | --interlock-control | --describe=<文件>]
  *   · 不带参数：写 `presets/agenia/cordis.patch.yml`（写完**回读**，读数取自盘上那份）
  *   · `--check`：只对账 —— 先比"盘上补丁 = 从组合造出来的那一份"，再**直接读盘上那份补丁**
- *     数结构（顶层 `- insert:` / 直接成员 / 宿主级行），不一致就退出 1（体检脚本调它）
- *   · `--interlock-control`：联锁的阴性对照 —— 标记 / 点名表 / 包事实 / 白名单四路各喂一条，
- *     该 throw 的必须 throw、该放行的必须放行（退出 1 = 有一格没翻面）
+ *     数结构（顶层 `- insert:` / 直接成员 / 宿主级行 / 预设体内客户端 UI 行 / 行 id 出现次数），
+ *     不一致就退出 1（体检脚本调它）
+ *   · `--interlock-control`：联锁的阴性/阳性对照 —— 标记 / 点名表 / 包事实 / 白名单 / 裸名 /
+ *     坏 manifest / 嵌套行各路各喂一条，该 throw 的必须 throw、该放行的必须放行（退出 1 = 有一格没翻面）
+ *   · `--describe=<文件>`：只跑**产物侧读数**（`describePatch` + `patchProblems`）打一份外部文件 ——
+ *     手工挪行之后"读数会不会翻面"就靠它量（退出 1 = 那份文件有问题）
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
@@ -111,17 +118,16 @@ const MEMBER_PERSONA = '你是这个项目组的组员。你的岗位说明书�
 const FORBIDDEN_IN_MEMBER = ['model', 'tools']
 
 /**
- * **宿主级行点名表 —— 永远为空。**
+ * **宿主级行点名表** —— 这些 id 的行由本生成器发到顶层 `- insert:` 的直接成员。
  *
- * 宿主级行不属于 bundle 补丁：它们住 profile 补丁的顶层 `- insert:`
- * （`.tools/mount-dashboard-profile.mjs` 写 / 撤）。这张表非空、或组合里出现
- * `# @host-level` 标记 ⇒ `partitionHostLevel()` 当场 throw —— 不静默生成一个空壳 insert。
- * 加一行宿主级的东西 = 去 profile 层加，不在这里加。
+ * 与组合里的 `# @host-level` 标记**互为守卫**：标记在、id 不在表里 ⇒ `E_BUNDLE_HOST_UNLISTED`；
+ * id 在表里、标记没了 ⇒ `E_BUNDLE_HOST_UNMARKED`；表里的 id 在组合里找不到 ⇒
+ * `E_BUNDLE_HOST_ROW_MISSING`。三格缺一粒都 throw —— 不静默生成一个少了宿主行的补丁。
  *
- * 注意：这张表**不是**层归属的判据（它是空的，判不了任何一行）。层归属由**包事实**判：
- * 行的 `name` 解析到最近的 `package.json`，`dsh.client.platform === 'web'` ⇒ 客户端 UI 行。
+ * 这张表**不是**层归属的判据（判据是包事实：行解析到的包声明 `dsh.client.platform: web`）。
+ * 它只回答"这一行发到哪"，并且必须与组合里的标记逐条对上。
  */
-const HOST_LEVEL_IDS = Object.freeze([])
+const HOST_LEVEL_IDS = Object.freeze(['agenia-dashboard'])
 
 /**
  * 已知是客户端 UI、但**有意**留在预设体里的行 —— 点名白名单（唯一例外）。
@@ -130,15 +136,16 @@ const HOST_LEVEL_IDS = Object.freeze([])
  * `dsh.client.platform: web`（按包事实放行，不按名字猜）；③ 这一行写着 `disabled: true`
  * （放行的是"关着的行"，不是"打开的行"）。少一条就 throw。
  *
- * 今天恰好一条：`agenia-dashboard`。它 2026-11-05 回滚成关着（bundle 顶层挂载会把预设带塌），
- * 挂载改走 profile 层；这一行留在预设体里是为了让两份预设与组合逐行一致，不是为了用。
+ * 今天表里那一条（看板面板）已经走宿主级路线（`HOST_LEVEL_IDS`），`partitionHostLevel()`
+ * 先把它摘走 ⇒ 真组合里它到不了 `classifyPresetRow()`，白名单不会开火。保留这张表是为了让
+ * "客户端 UI 行被硬塞回预设体"这件事在对照夹具里仍有一条具名出口（`_ALLOW_MISMATCH` / `_ENABLED`）。
  */
 const KNOWN_CLIENT_UI_IN_PRESET = Object.freeze([
   Object.freeze({
     id: 'agenia-dashboard',
     package: '@agenia/dsh-client-ui-dashboard',
     disabled: true,
-    why: '看板面板：回滚成关着（挂载走 profile 层）；预设体里保留这一行只为与组合逐行一致',
+    why: '看板面板：走宿主级路线（HOST_LEVEL_IDS）；这条只兜"被硬塞回预设体"的对照夹具',
   }),
 ])
 
@@ -146,7 +153,7 @@ const KNOWN_CLIENT_UI_IN_PRESET = Object.freeze([
  * 框架自己的客户端 UI 包族 —— **命中即拒**（更早于裸名分类表）。
  *
  * 为什么用包名前缀：裸名没有 manifest 可读，唯一能当场看见的是名字。这一条只做**拒绝**，
- * 不做放行：命中 ⇒ 当成客户端 UI 行（`E_BUNDLE_CLIENT_UI_IN_PRESET`），理由指向 profile 层。
+ * 不做放行：命中 ⇒ 当成客户端 UI 行（`E_BUNDLE_CLIENT_UI_IN_PRESET`），理由指向宿主级路线。
  * 它不声称覆盖所有客户端 UI 包 —— 覆盖靠下面那张 fail-closed 的裸名表。
  */
 const BARE_CLIENT_UI_FAMILY = /^@deepseek-ai\/dsh-client-ui-/
@@ -159,7 +166,7 @@ const BARE_CLIENT_UI_FAMILY = /^@deepseek-ai\/dsh-client-ui-/
  * ⇒ `E_BUNDLE_CLIENT_UI_UNRESOLVED`（fail-closed）。新增一个工具行 = 在这里加一行（一次显式
  * 分类）；不自动放行，也不按名字像不像猜。
  *
- * 🔴 别把 `@deepseek-ai/dsh-client-ui-*`（或任何客户端 UI 包）加进来：它们该住 profile 层。
+ * 🔴 别把 `@deepseek-ai/dsh-client-ui-*`（或任何客户端 UI 包）加进来：它们标成宿主级、进顶层 insert。
  */
 const BARE_ROWS_IN_PRESET = Object.freeze([
   'cordis:group',
@@ -193,13 +200,13 @@ const BARE_ROWS_IN_PRESET = Object.freeze([
 ])
 
 /**
- * `# @host-level` 标记 —— **出现即 throw**，但它不再决定层归属。
+ * `# @host-level` 标记 —— 只在顶格行的 `- id:` 下一行、两格缩进时有效。
  *
- * 标记是"人认为这行属于宿主层"的注释：写着它的行不进预设体。位置只写进错误报文
- * （`- id:` 的下一行、两格缩进 = 人最容易读的位置），**不参与判层** —— 判层的是包事实。
- * 拼错（`@hostlevel`）或忘写都不影响判定：客户端 UI 行由包事实抓；普通行本来就可以进预设体。
+ * 它声明"这一行发到顶层 `- insert:` 的直接成员"，必须与 `HOST_LEVEL_IDS` 里的同名 id 成对出现；
+ * 位置不对 / 不成对 ⇒ throw（判层本身仍由包事实做：客户端 UI 行不许进预设体）。
  */
 const HOST_MARK_LINE = /^ {2}#\s*@host-level\b/
+const HOST_MARK_ANY = /@host-level\b/
 
 /**
  * 把组合本体切成"顶格 `- ` 开头的行块"。
@@ -411,14 +418,14 @@ function classifyPresetRow({ id, name, disabled }, { where = '组合里的顶格
     if (pkg.kind === 'bare' && BARE_CLIENT_UI_FAMILY.test(pkg.raw)) {
       throw new Error(`E_BUNDLE_CLIENT_UI_IN_PRESET ${where} ${label} 的 name 是裸包名 ${JSON.stringify(name)}，`
         + '而它属于框架的客户端 UI 包族（`@deepseek-ai/dsh-client-ui-*`）—— 裸名在这棵树里解析不到 manifest，'
-        + '不能证明它不是客户端 UI。客户端 UI 行只许住 profile 补丁的顶层 `- insert:`'
-        + '（用 .tools/mount-dashboard-profile.mjs 挂 / 撤），不许进 bundle 补丁的预设体。')
+        + '不能证明它不是客户端 UI。客户端 UI 行只许住顶层 `- insert:` 的直接成员'
+        + '（在组合里标 `# @host-level` 并进 HOST_LEVEL_IDS），不许进预设体。')
     }
     throw new Error(`E_BUNDLE_CLIENT_UI_UNRESOLVED ${where} ${label} 的包解析不出来（${pkg.unresolved} · `
       + `name=${JSON.stringify(name)}${pkg.file === undefined ? '' : ` · ${pkg.file}`}`
       + `${pkg.manifest === undefined ? '' : ` · ${pkg.manifest}`}）—— `
       + (pkg.unresolved === 'broken-manifest'
-        ? 'manifest 读不成 JSON ⇒ 判不了它是不是客户端 UI，**不许当"不是"**。修好那份 package.json，或把这一行挪到 profile 层。'
+        ? 'manifest 读不成 JSON ⇒ 判不了它是不是客户端 UI，**不许当"不是"**。修好那份 package.json，或给这一行标 `# @host-level` 并进 HOST_LEVEL_IDS。'
         : pkg.unresolved === 'bare'
           ? '裸包名在这棵树里没有 package.json（框架的包装在宿主 asar 里）⇒ 判不了它是不是客户端 UI。'
             + `已知不是客户端 UI 的预设级裸名要点名进 BARE_ROWS_IN_PRESET（今天 ${BARE_ROWS_IN_PRESET.length} 条）；`
@@ -432,7 +439,7 @@ function classifyPresetRow({ id, name, disabled }, { where = '组合里的顶格
       throw new Error(`E_BUNDLE_CLIENT_UI_IN_PRESET ${where} ${label} 的 name 解析到声明 dsh.client.platform: web 的包`
         + `（${pkg.name ?? '（manifest 没有 name）'} · ${pkg.manifest}）—— 客户端 UI 行不许进 bundle 补丁的预设体：`
         + '它会被拷进两份预设，而浏览器只收宿主 Loader 树里的条目（预设里的行进的是另一棵 Loader 树）。'
-        + '把这一行写到 profile 补丁的顶层 `- insert:`（用 .tools/mount-dashboard-profile.mjs 挂 / 撤）。'
+        + '在组合里给这一行标 `# @host-level` 并把它加进 HOST_LEVEL_IDS —— 生成器会发到顶层 `- insert:`。'
         + `确实要留在预设体里且是关着的，把它加进 KNOWN_CLIENT_UI_IN_PRESET 白名单（今天只有 ${KNOWN_CLIENT_UI_IN_PRESET.map((e) => e.id).join(' / ')}）`)
     }
     if (allow.package !== pkg.name) {
@@ -443,7 +450,7 @@ function classifyPresetRow({ id, name, disabled }, { where = '组合里的顶格
     if (disabled !== 'true') {
       throw new Error(`E_BUNDLE_CLIENT_UI_ENABLED ${where} ${label} 在点名白名单里，但没写 disabled: true`
         + `（实得 ${JSON.stringify(disabled)}）—— 白名单放行的是"关着的客户端 UI 行"；`
-        + '打开它 = 两份预设各起一个写者，且它仍然到不了浏览器。要么关掉，要么挪到 profile 层。')
+        + '打开它 = 两份预设各起一个写者，且它仍然到不了浏览器。要么关掉，要么标成宿主级。')
     }
     return { id, package: pkg.name, platform: pkg.platform, manifest: pkg.manifest, why: allow.why }
   }
@@ -451,56 +458,68 @@ function classifyPresetRow({ id, name, disabled }, { where = '组合里的顶格
 }
 
 /**
- * 把组合的行块分成**预设级**与**宿主级**。宿主级在 bundle 补丁里**不被接受**。
+ * 把组合的行块分成**宿主级**与**预设级**：宿主级去顶层 `- insert:`，预设级进两份预设体。
  *
- * 三条判据（按顺序）：
- *   ① 出现 `# @host-level` 标记 ⇒ throw（人写的"这是宿主层"，不往后猜）；
- *   ② 行的 `name` 解析到 `dsh.client.platform: web` 的包 ⇒ **不许**进预设体：
- *      · 在点名白名单（`KNOWN_CLIENT_UI_IN_PRESET`）且写着 `disabled: true` ⇒ 放行并记名；
- *      · 其余（含"新加的一行没标记"）⇒ throw，理由指向 profile 层；
- *   ③ 白名单里的行却解析不到 web 包 / 没写 `disabled: true` ⇒ throw（白名单与包事实对不上）。
- *
- * 为什么 throw 而不是"生成一个空壳 insert"：空壳在盘上长得像成功（补丁照样生成、体检照样全绿、
- * 界面上什么都没有），下一个人会以为"宿主层已经留好位置了"。宿主级行有它自己的落点：
- * profile 补丁的顶层 `- insert:`（`.tools/mount-dashboard-profile.mjs`）。
+ * 判据按顺序：
+ *   ① 行里有 `# @host-level`：
+ *      · 位置必须是 `- id:` 的下一行、两格缩进 ⇒ 否则 `E_BUNDLE_HOST_MARK_POSITION`；
+ *      · id 必须在 `HOST_LEVEL_IDS` 里 ⇒ 否则 `E_BUNDLE_HOST_UNLISTED`；
+ *      · 不许写着 `disabled: true` ⇒ 否则 `E_BUNDLE_HOST_ROW_DISABLED`（宿主行关着 = 面板不启动）；
+ *      · 整块进 `hostBlocks`，**不进任何一份预设体**。
+ *   ② 没有标记但 id 在 `HOST_LEVEL_IDS` 里 ⇒ `E_BUNDLE_HOST_UNMARKED`（表与标记必须成对）。
+ *   ③ 其余行过 `classifyPresetRow()`：客户端 UI 行（包事实）不在白名单且不是"白名单三格全中"
+ *      ⇒ throw；组 `config` 里的嵌套行也过同一把尺子。
+ * 收口：表里每个 id 都必须真的出现在组合里（`E_BUNDLE_HOST_ROW_MISSING`），预设体不许为空。
  *
  * @param {string[]} blocks `splitRows()` 出来的行块
- * @param {readonly string[]} [hostLevelIds] 点名表（默认永远为空；只给阴性对照传非空值）
+ * @param {readonly string[]} [hostLevelIds] 点名表（默认 `HOST_LEVEL_IDS`；对照可传别的）
  * @param {string} [baseDir] 路径形 `name` 的解析基准（默认预设目录）
- * @returns {{hostBlocks: [], presetBlocks: string[], allowedClientRows: object[]}}
+ * @returns {{hostBlocks: string[], presetBlocks: string[], allowedClientRows: object[]}}
  */
 function partitionHostLevel(blocks, hostLevelIds = HOST_LEVEL_IDS, baseDir = PRESET) {
   if (!Array.isArray(hostLevelIds)) {
     throw new Error(`HOST_LEVEL_IDS 必须是数组，实得 ${typeof hostLevelIds}`)
   }
   const named = [...hostLevelIds]
-  if (named.length > 0) {
-    throw new Error(`E_BUNDLE_HOST_LEVEL_IDS HOST_LEVEL_IDS 必须为空（实得 ${JSON.stringify(named)}）—— 宿主级行不属于 bundle 补丁；`
-      + '把它们写进 profile 补丁的顶层 `- insert:`（用 .tools/mount-dashboard-profile.mjs 挂 / 撤），'
-      + 'bundle 补丁只放预设级行（两条 @deepseek-ai/dsh-agent-preset）')
-  }
+  const hostBlocks = []
   const presetBlocks = []
   const allowedClientRows = []
+  const seenHostIds = new Set()
   for (const block of blocks) {
     const lines = block.split('\n')
     const facts = rowFacts(block)
     const label = facts.id ?? '（没有 - id:）'
-    // ① 标记：任何一处出现都拒（位置只进报文）。漏看一格就会静默把宿主级行拷进预设。
-    const markIndex = lines.findIndex((line) => /@host-level\b/.test(line))
+    const markIndex = lines.findIndex((line) => HOST_MARK_ANY.test(line))
+    const listed = facts.id !== null && named.includes(facts.id)
     if (markIndex >= 0) {
-      const position = HOST_MARK_LINE.test(lines[markIndex]) && markIndex === 1
-        ? '位置对（`- id:` 的下一行）'
-        : `位置不对（在第 ${markIndex + 1} 行，不在 \`- id:\` 的下一行，或缩进不是两格）`
-      throw new Error(`E_BUNDLE_HOST_MARK 组合里的行 ${label} 标了 # @host-level，但 bundle 补丁不收宿主级行 —— ${position}。`
-        + '宿主级行只写 profile 补丁的顶层 `- insert:`（用 .tools/mount-dashboard-profile.mjs 挂 / 撤）；'
-        + '这一份 bundle 补丁只放预设级行（两条 @deepseek-ai/dsh-agent-preset）')
+      if (markIndex !== 1 || !HOST_MARK_LINE.test(lines[markIndex])) {
+        throw new Error(`E_BUNDLE_HOST_MARK_POSITION 组合里的行 ${label} 的 \`# @host-level\` 位置不对`
+          + `（在第 ${markIndex + 1} 行；只认 \`- id:\` 的下一行、两格缩进）—— `
+          + '标记的位置本身是判据：写歪了就等于没标，而这一行会被当成预设行拷进两份预设。')
+      }
+      if (!listed) {
+        throw new Error(`E_BUNDLE_HOST_UNLISTED 组合里的行 ${label} 标了 \`# @host-level\`，`
+          + `但它的 id 不在 HOST_LEVEL_IDS（今天 ${JSON.stringify(named)}）—— `
+          + '标记与点名表必须成对：只标不点名 ⇒ 生成器不知道该把哪一行发到顶层 insert。')
+      }
+      if (facts.disabled === 'true') {
+        throw new Error(`E_BUNDLE_HOST_ROW_DISABLED 组合里的宿主级行 ${label} 写着 disabled: true —— `
+          + '宿主级行关着 = 那一份插件不启动（面板写完了也不会出现）。要么打开，要么把它从 HOST_LEVEL_IDS 里撤掉。')
+      }
+      hostBlocks.push(block)
+      seenHostIds.add(facts.id)
+      continue
     }
-    // ② 层归属：包事实判（解析不到 = 判不了 ⇒ throw，不当"不是"）；白名单绑 id + 包名 + 关着。
+    if (listed) {
+      throw new Error(`E_BUNDLE_HOST_UNMARKED 组合里的行 ${label} 在 HOST_LEVEL_IDS 里，`
+        + '但没写 `# @host-level`（`- id:` 的下一行、两格缩进）—— '
+        + '表与标记必须成对：只点名不标 ⇒ 这一行会静默进预设体，面板就永远到不了浏览器。')
+    }
+    // ① 预设行：包事实判（解析不到 = 判不了 ⇒ throw，不当"不是"）；白名单绑 id + 包名 + 关着。
     const allowed = classifyPresetRow(facts, { where: '组合里的顶格行', baseDir })
     if (allowed !== null) allowedClientRows.push(allowed)
-    // ③ 组 `config` 里的行：`splitRows()` 只拆顶格行，这些行必须单独过同一把尺子 ——
-    //    否则一条客户端 UI 行藏在组里就能原样被拷进预设体（`describePatch` 会在产物侧看见它，
-    //    但那时补丁已经写盘了；写入侧要当第一道）。
+    // ② 组 `config` 里的行：`splitRows()` 只拆顶格行，这些行必须单独过同一把尺子 ——
+    //    否则一条客户端 UI 行藏在组里就能原样被拷进预设体。
     for (const row of nestedRowsIn(block)) {
       const nestedAllowed = classifyPresetRow(row, {
         where: `组合里 ${label} 的 config 内嵌行（块内第 ${row.line} 行）`,
@@ -510,8 +529,13 @@ function partitionHostLevel(blocks, hostLevelIds = HOST_LEVEL_IDS, baseDir = PRE
     }
     presetBlocks.push(block)
   }
+  const missing = named.filter((id) => !seenHostIds.has(id))
+  if (missing.length > 0) {
+    throw new Error(`E_BUNDLE_HOST_ROW_MISSING HOST_LEVEL_IDS 里的 ${JSON.stringify(missing)} 在组合里找不到`
+      + '（没有一行带这个 `- id:`）—— 点名表与组合漂了：要么删表项，要么把行写回来。')
+  }
   if (presetBlocks.length === 0) throw new Error('组合里一行预设级行都没有 —— 这不是一份可用的 bundle 补丁')
-  return { hostBlocks: [], presetBlocks, allowedClientRows }
+  return { hostBlocks, presetBlocks, allowedClientRows }
 }
 
 /**
@@ -562,8 +586,9 @@ export function build() {
       .replace(/^(\s*)leaderOrder:\s*$/m, (m, indent) => `${indent}contentDir: '${CONTENT_DIR}'\n${m}`)
   })
 
-  // 分组：客户端 UI 行在这里按**包事实**被拒（白名单里的关着的行除外），只留预设级行。
-  const { presetBlocks, allowedClientRows } = partitionHostLevel(blocks)
+  // 分组：宿主级行（标记 + 点名表）去顶层 insert，预设级行进两份预设体；
+  // 预设体里出现客户端 UI 行（包事实）⇒ throw（白名单三格全中的除外）。
+  const { hostBlocks, presetBlocks, allowedClientRows } = partitionHostLevel(blocks)
 
   const delegation = presetBlocks.find((block) => /^- id: delegation\s*$/m.test(block))
   if (delegation === undefined) throw new Error('agent.cordis.yml 里找不到 delegation 组 —— 组员行必须住在里面')
@@ -663,9 +688,14 @@ export function build() {
   )
 
   /**
-   * 宿主级行**不搬进这一份**：`partitionHostLevel()` 看到 `# @host-level` 就 throw。
-   * 产物里只留预设入口；宿主级行住 profile 补丁（`.tools/mount-dashboard-profile.mjs`）。
+   * 宿主级行**进顶层 `- insert:` 的直接成员**（与两条预设入口并列）—— 官方面板就是这个形状。
+   * 它们**不进**任何一份预设体：一个包只有一个 Node 写者（否则每个预设各起一份、各写一份快照）。
    */
+  const indentByFour = (text) => text
+    .split('\n')
+    .map((line) => (line.trim() === '' ? '' : `    ${line}`))
+    .join('\n')
+  const hostBody = hostBlocks.map(indentByFour).join('\n\n')
 
   // 那一行仍然写相对路径：插入行的相对路径按**这份补丁所在目录**解析，
   // 而这份补丁就在预设文件夹里（profile 里那个 junction 指回 E:\Harness\presets\agenia）。
@@ -673,14 +703,15 @@ export function build() {
   //    解析基准变回"补丁文件所在目录"，而那个目录就是预设文件夹本身，结论一样。
   const text = `# Agenia 作为一个 DSH bundle 的补丁文件 —— 这份预设的**注册入口**。
 #
-# ── 这一份里只有**预设层**（宿主级行住 profile 补丁，别混着读）────────────────
-#   这一份的 \`- insert:\` 装两条 \`@deepseek-ai/dsh-agent-preset\`（\`agenia\` / \`agenia-member\`），
-#   它们的 \`config.plugins\` 是**会话**的组合，不进宿主树。
-#   客户端 UI 那类**宿主级**行写进 profile 补丁（\`~/.dsh/profiles/<档>/cordis.patch.yml\`）
-#   的顶层 \`- insert:\`，不写进这一份 —— 浏览器只收**宿主 Loader 树**里的条目
+# ── 这一份的顶层 insert：宿主级行 + 两条预设入口（官方形状）──────────────────
+#   顶层 \`- insert:\` 的直接成员 = 宿主级行（客户端 UI 那类；组合里标了 \`# @host-level\`
+#   并在生成器的 \`HOST_LEVEL_IDS\` 里点名）+ 两条 \`@deepseek-ai/dsh-agent-preset\`
+#   （\`agenia\` / \`agenia-member\`）。后者的 \`config.plugins\` 是**会话**的组合，不进宿主树。
+#   官方面板就是这个形状：\`@deepseek-ai/dsh-experimental-agent-team-profile\` 的补丁
+#   顶层 \`- insert:\` 里装着 \`ui-agent-team\`（与两条服务行并列）。
+#   🔴 宿主级行**绝不进预设体**：浏览器只收**宿主 Loader 树**里的条目
 #   （\`@deepseek-ai/dsh-client-modules\` 只枚举 \`ctx.loader.entries()\`），而预设里的行由
-#   \`@deepseek-ai/dsh-agent-preset\` 注册进它自建的 Loader 树。
-#   组合里出现 \`# @host-level\` 标记 ⇒ 生成器当场 throw，不会把它搬进这一份。
+#   \`@deepseek-ai/dsh-agent-preset\` 注册进它自建的 Loader 树；两处都放还会各起一个 Node 写者。
 #
 # ── 为什么需要它（2026-09-28 换版）─────────────────────────────────────────
 # DSH 0.1.7 起，"用户预设"的发现机制整个换掉了：
@@ -718,10 +749,11 @@ export function build() {
 #   · 组员那一份 = 组合**去掉 delegation 组**（workflow / ralph 结构性没有，组员不能再招人）；
 #   · **别手动改这份文件** —— 改了 \`.yml\` 就跑一次生成器。
 #
-# ── 🔴 宿主级行不在这里 ──────────────────────────────────────────────────────
-# 组合里标了 \`# @host-level\` 的行**不进这一份**：生成器看到那枚标记当场 throw。
-# 宿主级行（客户端 UI 那类）写进 profile 补丁的顶层 \`- insert:\`，用
-# \`.tools/mount-dashboard-profile.mjs\` 挂 / 撤。理由见上面「这一份里只有预设层」。
+# ── 🔴 宿主级行的位置 ────────────────────────────────────────────────────────
+# 组合里标了 \`# @host-level\` 的行只出现在**顶层 \`- insert:\` 的直接成员**里，不出现在任何
+# 预设体里。标记与生成器的 \`HOST_LEVEL_IDS\` 必须成对；缺一边 / 位置写歪 ⇒ 生成器当场 throw。
+# 生成器把宿主级行从两份预设体里**摘掉**再组装 —— 一个包只有一个 Node 写者。
+# 理由见上面「这一份的顶层 insert」。
 #
 # ⚠️ 所以这份文件是 \`agent.cordis.yml\` 的**派生物**：
 #    那份仍是唯一来源，这份由 \`.tools/make-bundle-patch.mjs\` 生成 ——
@@ -733,21 +765,36 @@ export function build() {
 #      · 不写 contentDir   ⇒ 那些 .md 全读不到，**而且不报错**（静默注入 0 字符）
 #    ⇒ **换机器 / 换目录，改生成器里那两行，再跑一次生成器。**
 
-# ── 预设入口（会话的组合；不进宿主树）────────────────────────────────────────
+# ── 顶层 insert：宿主级行 + 预设入口（会话的组合；不进宿主树）────────────────
 - insert:
 ${preset(LEADER_PRESET_ID, 'Agenia 模式', '带班子的工程组长。她自己分诊、派人、验收；手下四个固定岗位按次序干活，只审不改的岗位碰不到源码。', 10, leaderBody)}
 ${memberPreset}
+
+${hostBody}
 `
-  // ── 产物侧对账（三条，都对着**字面**数，不对着"我以为写进去了"）──────────────
+  // ── 产物侧对账（四条，都对着**字面**数，不对着"我以为写进去了"）──────────────
   // ① 每一份预设 `plugins:` 里的 `- id:`（10 格缩进）—— 只数，不写死；
   // ② 预设入口恰好两条（组长 + 通用组员）；
-  // ③ 顶层 `- insert:` 恰好一个（预设入口）：宿主级行不得借道这一份补丁。
+  // ③ 顶层 `- insert:` 恰好一个：直接成员 = 2 条预设入口 + `HOST_LEVEL_IDS.length` 条宿主行；
+  // ④ 每一个宿主级 id 在整份文本里**只出现一次**（在 insert 里，不在任何预设体里）。
   const copied = (text.match(/^ {10}- id: /gm) ?? []).length
   const presetEntries = (text.match(/^ {4}- id: preset-/gm) ?? []).length
   const topInserts = (text.match(/^- insert:/gm) ?? []).length
+  const insertMembers = (text.match(/^ {4}- id: /gm) ?? []).length
   if (presetEntries !== 2) throw new Error(`补丁里应有 2 条预设入口（组长 + 通用组员），实得 ${presetEntries}`)
-  if (topInserts !== 1) throw new Error(`补丁顶层应恰好 1 个 \`- insert:\`（预设入口），实得 ${topInserts}`
-    + ' —— 宿主级行不属于 bundle 补丁；它们写 profile 补丁的顶层 `- insert:`')
+  if (topInserts !== 1) throw new Error(`补丁顶层应恰好 1 个 \`- insert:\`，实得 ${topInserts}`
+    + ' —— 宿主级行与两条预设入口都装在这一个 insert 里（官方形状）')
+  const expectedMembers = 2 + hostBlocks.length
+  if (insertMembers !== expectedMembers) {
+    throw new Error(`顶层 insert 的直接成员应有 ${expectedMembers} 条（2 条预设入口 + ${hostBlocks.length} 条宿主行），实得 ${insertMembers}`)
+  }
+  for (const id of HOST_LEVEL_IDS) {
+    const hits = text.split('\n').filter((line) => line.trim() === `- id: ${id}`).length
+    if (hits !== 1) {
+      throw new Error(`宿主级行 ${id} 在整份补丁里应出现 1 次（按 \`- id:\` 行数），实得 ${hits} 次 —— `
+        + '它只许是顶层 insert 的直接成员，不许再被拷进任何一份预设体')
+    }
+  }
   return {
     text,
     sourceRows: ids(source).length,
@@ -756,6 +803,7 @@ ${memberPreset}
     memberCount: members.length,
     allowedClientRows,
     presetRows: presetBlocks.length,
+    hostRows: hostBlocks.length,
   }
 }
 
@@ -819,7 +867,13 @@ function describePatch(text) {
       id: idRaw === null ? null : plainScalar(idRaw),
       name: plainScalar(nameRaw),
       disabled: disabledRaw === null ? null : plainScalar(disabledRaw),
-      placement: indent === 4 && topInsert ? 'insert' : indent > 4 ? 'preset-body' : 'other',
+      // 顶层 insert 的直接成员（4 格）vs 它的嵌套内容（> 4 且当前成员不是预设入口）
+      // vs 预设体（`- id: preset-*` 那一行之后、10 格的 `plugins` 行）。
+      placement: indent === 4 && topInsert
+        ? 'insert'
+        : indent > 4
+          ? (currentPreset === null ? 'insert-nested' : 'preset-body')
+          : 'other',
       parent: indent > 4 ? currentPreset : null,
     }
     row.pkg = rowPackage(row.name, PRESET)
@@ -834,7 +888,13 @@ function describePatch(text) {
   const clientInPreset = rows.filter((r) => r.placement === 'preset-body' && r.pkg.client === true)
   const clientInPresetDisabled = clientInPreset.filter((r) => r.disabled === 'true')
   const clientInPresetEnabled = clientInPreset.filter((r) => r.disabled !== 'true')
+  // 宿主级 id 在补丁里**作为行 id**出现了几次（`- id: <id>` 逐行比，不看注释）
+  const idRowHits = Object.fromEntries(HOST_LEVEL_IDS.map((id) => [
+    id,
+    rows.filter((row) => row.id === id).length,
+  ]))
   return {
+    rows,
     topInserts: (source.match(/^- insert:/gm) ?? []).length,
     topInsertMembers,
     presetEntries,
@@ -845,6 +905,7 @@ function describePatch(text) {
     clientInPresetDisabled,
     clientInPresetEnabled,
     markedRows: (source.match(/^\s*#\s*@host-level\b.*$/gm) ?? []).length,
+    idRowHits,
   }
 }
 
@@ -852,24 +913,36 @@ function describePatch(text) {
 function patchProblems(facts) {
   const problems = []
   const brief = (row) => `${row.id ?? '（无 id）'}@L${row.line}（${row.pkg?.name ?? row.name}）`
+  const expectedMembers = 2 + HOST_LEVEL_IDS.length
   if (facts.topInserts !== 1) {
-    problems.push(`E_PATCH_TOP_INSERT_SHAPE 顶层 \`- insert:\` 应恰好 1 个（预设入口），实得 ${facts.topInserts}`)
+    problems.push(`E_PATCH_TOP_INSERT_SHAPE 顶层 \`- insert:\` 应恰好 1 个（宿主级行 + 预设入口），实得 ${facts.topInserts}`)
   }
-  if (facts.topInsertMembers.length !== 2) {
-    problems.push(`E_PATCH_TOP_INSERT_SHAPE 顶层 insert 的直接成员应恰好 2 条（两条 @deepseek-ai/dsh-agent-preset），实得 ${facts.topInsertMembers.length}`)
+  if (facts.topInsertMembers.length !== expectedMembers) {
+    problems.push(`E_PATCH_TOP_INSERT_SHAPE 顶层 insert 的直接成员应恰好 ${expectedMembers} 条`
+      + `（${HOST_LEVEL_IDS.length} 条宿主行 + 2 条 @deepseek-ai/dsh-agent-preset），实得 ${facts.topInsertMembers.length}`)
   }
   if (facts.presetEntries.length !== 2) {
     problems.push(`E_PATCH_TOP_INSERT_SHAPE 顶层 insert 里 @deepseek-ai/dsh-agent-preset 应恰好 2 条，实得 ${facts.presetEntries.length}`)
   }
-  if (facts.otherMembers.length > 0) {
-    problems.push(`E_PATCH_TOP_INSERT_SHAPE 顶层 insert 里有 ${facts.otherMembers.length} 条不是 @deepseek-ai/dsh-agent-preset 的成员：`
-      + `${facts.otherMembers.map(brief).join(' · ')} —— 宿主级行不属于 bundle 补丁`)
+  for (const row of facts.otherMembers) {
+    if (row.id === null || !HOST_LEVEL_IDS.includes(row.id)) {
+      problems.push(`E_PATCH_TOP_INSERT_SHAPE 顶层 insert 里有一条既不是预设入口、也不在 HOST_LEVEL_IDS 的成员：`
+        + `${brief(row)} —— 宿主级行必须点名（表与组合里的标记成对）`)
+    }
   }
-  // 顶层 insert 里的宿主级行**没有专用码**：派生物不可能产出它（写入侧 `build()` 只写两条预设入口，
-  // 且组合里的客户端 UI 行在 `classifyPresetRow()` 就被拒）；手改补丁的第一因永远是
-  // `E_PATCH_NOT_DERIVED`，紧跟 `E_PATCH_TOP_INSERT_SHAPE`（上面那条比"是不是客户端 UI"更宽）。
-  // 专用码 `E_PATCH_HOST_ROW_IN_INSERT` 在派生物上不可达、在手改补丁上从来不是第一因 ⇒ 已删除；
-  // `宿主级行 N 条` 的读数保留（它是人看得见的数，不是判据）。
+  // 宿主级行：顶层 insert 里恰好 1 次、预设体里 0 次。两条分开报 —— 手工把它们挪进预设体
+  // 就是"两侧各一次"或"只在预设体里一次"，读数必须能指出是哪一半。
+  for (const id of HOST_LEVEL_IDS) {
+    const inInsert = facts.topInsertMembers.filter((row) => row.id === id).length
+    const inPreset = facts.rows.filter((row) => row.id === id && row.placement === 'preset-body').length
+    if (inInsert !== 1) {
+      problems.push(`E_PATCH_HOST_ROW_MISSING 宿主级行 ${id} 在顶层 insert 里应出现 1 次，实得 ${inInsert} 次`)
+    }
+    if (inPreset !== 0) {
+      problems.push(`E_PATCH_HOST_ROW_IN_PRESET 宿主级行 ${id} 出现在预设体里 ${inPreset} 次 —— `
+        + '一个包只有一个 Node 写者；宿主级行只许是顶层 insert 的直接成员')
+    }
+  }
   for (const row of facts.unresolvedRows) {
     problems.push(`E_PATCH_CLIENT_UI_UNRESOLVED 补丁里有一行的包解析不出来（${row.pkg.unresolved}）：${brief(row)}`
       + ` · name=${JSON.stringify(row.name)} —— 判不了它是不是客户端 UI，**不许当"不是"**`)
@@ -891,17 +964,22 @@ function patchProblems(facts) {
 
 /**
  * 打一份"盘上补丁"的读数（`--check` 与写盘后回读共用）。
- * 这几格就是验收格 2 要读的东西：顶层 insert / 直接成员 / 宿主级行 / 预设体内客户端 UI 行 / 包解析不出的行。
+ * 这几格就是验收格要读的东西：顶层 insert / 直接成员（宿主 + 预设入口）/ 宿主级行 /
+ * 预设体内客户端 UI 行 / 宿主级 id 出现次数 / 包解析不出的行。
  */
 function printPatchFacts(facts, label) {
   const names = facts.clientInPreset.map((row) => `${row.id ?? '（无 id）'}${row.disabled === 'true' ? '(disabled)' : '(OPEN)'}`)
+  const hostNames = facts.otherMembers.map((row) => `${row.id ?? '（无 id）'}@L${row.line}`)
   const unresolved = facts.unresolvedRows.map((row) => `${row.id ?? '（无 id）'}@L${row.line}(${row.pkg.unresolved})`)
   console.log(`       ${label}：顶层 - insert: ${facts.topInserts} 个 · 直接成员 ${facts.topInsertMembers.length} 条`
-    + `（@deepseek-ai/dsh-agent-preset ${facts.presetEntries.length} 条）· 标记 @host-level ${facts.markedRows} 行`)
-  console.log(`       ${label}：宿主级行（顶层 insert 里解析到 web 包）${facts.clientInInsert.length} 条 ·`
-    + ` 预设体内客户端 UI 行 ${facts.clientInPreset.length} 条（disabled ${facts.clientInPresetDisabled.length} / enabled ${facts.clientInPresetEnabled.length}）`
+    + `（${facts.otherMembers.length} 宿主 + ${facts.presetEntries.length} 预设入口）· 标记 @host-level ${facts.markedRows} 行`)
+  console.log(`       ${label}：宿主级行 ${facts.otherMembers.length} 条${hostNames.length === 0 ? '' : `（${hostNames.join(' · ')}）`}`
+    + ` · 预设体内客户端 UI 行 ${facts.clientInPreset.length} 条（disabled ${facts.clientInPresetDisabled.length} / enabled ${facts.clientInPresetEnabled.length}）`
     + `${names.length === 0 ? '' : ` · 点名：${names.join(' · ')}`}`
+    + ` · 顶层 insert 里解析到 web 包 ${facts.clientInInsert.length} 条`
     + ` · 包解析不出 ${facts.unresolvedRows.length} 条${unresolved.length === 0 ? '' : `（${unresolved.join(' · ')}）`}`)
+  const hits = HOST_LEVEL_IDS.map((id) => `${id} ${facts.idRowHits[id] ?? 0} 次`).join(' · ')
+  console.log(`       ${label}：宿主级 id 在文件里（按 \`- id:\` 行数）${hits}`)
 }
 
 /** 白名单放行了哪几行 —— 必须打在输出里（"放行的是哪一条"不许靠读的人猜）。 */
@@ -928,9 +1006,13 @@ function runInterlockControl() {
   const fileUrl = (file) => `file:///${toPosix(file).replace(/^\/+/, '')}`
   const dashboardRowUrl = fileUrl(join(REPO, 'presets', 'agenia', 'client-ui-dashboard', 'lib', 'index.js'))
   const clientRow = (id, extra = [], url = dashboardRowUrl) => [`- id: ${id}`, `  name: '${url}'`, ...extra].join('\n')
+  /** 宿主级行：`# @host-level` 必须在 `- id:` 的下一行（两格缩进）。 */
+  const hostRow = (id, extra = [], url = dashboardRowUrl) => [`- id: ${id}`, '  # @host-level', `  name: '${url}'`, ...extra].join('\n')
+  const personaRow = `- id: persona\n  name: '@deepseek-ai/dsh-persona'`
 
   const tmp = mkdtempSync(join(REPO, '.tools', 'interlock-tmp-'))
   let wrong = 0
+  let total = 0
   try {
     const brokenDir = join(tmp, 'broken-pkg')
     mkdirSync(join(brokenDir, 'lib'), { recursive: true })
@@ -952,22 +1034,33 @@ function runInterlockControl() {
     const otherUrl = fileUrl(join(otherDir, 'lib', 'index.js'))
 
     const cases = [
-      { name: '不带标记的客户端 UI 行（新行，不在白名单）', blocks: [clientRow('agenia-dashboard-2')], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_IN_PRESET' },
+      // ── 客户端 UI 行：不在宿主级点名的行，进预设体一律 throw（这一类必须一直是关着的）──
+      { name: '不带标记的客户端 UI 行（路径形，新 id）', blocks: [clientRow('agenia-dashboard-2')], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_IN_PRESET' },
       { name: '不带 id 的客户端 UI 行（只有 - name:）', blocks: [`- name: '${dashboardRowUrl}'`], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_IN_PRESET' },
-      { name: '标记拼错的客户端 UI 行（@hostlevel）', blocks: [clientRow('agenia-dashboard-2', ['  # @hostlevel'])], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_IN_PRESET' },
-      { name: '白名单行 agenia-dashboard（disabled: true）', blocks: [clientRow('agenia-dashboard', ['  disabled: true'])], expect: 'allow', allowId: 'agenia-dashboard' },
-      { name: '普通非客户端行（persona）', blocks: [`- id: persona\n  name: '@deepseek-ai/dsh-persona'`], expect: 'allow' },
-      { name: '组合里出现 # @host-level', blocks: [clientRow('agenia-dashboard', ['  # @host-level', '  disabled: true'])], expect: 'throw', code: 'E_BUNDLE_HOST_MARK' },
-      { name: 'HOST_LEVEL_IDS 非空', blocks: [`- id: persona\n  name: '@deepseek-ai/dsh-persona'`], named: ['agenia-dashboard'], expect: 'throw', code: 'E_BUNDLE_HOST_LEVEL_IDS' },
-      { name: '标记缩进写错（4 格）', blocks: ['- id: agenia-dashboard\n    # @host-level'], expect: 'throw', code: 'E_BUNDLE_HOST_MARK' },
-      { name: '白名单行但没写 disabled: true', blocks: [clientRow('agenia-dashboard')], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_ENABLED' },
       { name: '裸包名客户端 UI 行（@deepseek-ai/dsh-client-ui-chat）', blocks: [`- id: ui-chat-extra\n  name: '@deepseek-ai/dsh-client-ui-chat'`], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_IN_PRESET' },
-      { name: '坏 manifest 的路径形行（新 id）', blocks: [clientRow('agenia-dashboard-broken', [], brokenUrl)], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_UNRESOLVED' },
-      { name: '白名单 id 指向另一个 web 包（@fixture/other-web）', blocks: [`- id: agenia-dashboard\n  name: '${otherUrl}'\n  disabled: true`], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_ALLOW_MISMATCH' },
-      { name: '路径形行解析不到 package.json', blocks: [`- id: nowhere\n  name: 'file:///Z:/no-such-tree/lib/index.js'`], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_UNRESOLVED' },
+      { name: '标记拼错的客户端 UI 行（@hostlevel）', blocks: [clientRow('agenia-dashboard-2', ['  # @hostlevel'])], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_IN_PRESET' },
+      // ── 宿主级行：标记 + 点名表成对 ⇒ 进 insert、不进预设体（阳性对照）──────────
+      { name: '宿主级行（标记 + 点名表）', blocks: [hostRow('agenia-dashboard'), personaRow], named: ['agenia-dashboard'], expect: 'allow', host: 'agenia-dashboard' },
+      // ── 标记 / 点名表：三格缺一粒都 throw ─────────────────────────────────────
+      { name: '只标不点名（标记在、id 不在表里）', blocks: [hostRow('agenia-dashboard'), personaRow], expect: 'throw', code: 'E_BUNDLE_HOST_UNLISTED' },
+      { name: '只点名不标（id 在表里、标记没了）', blocks: [clientRow('agenia-dashboard'), personaRow], named: ['agenia-dashboard'], expect: 'throw', code: 'E_BUNDLE_HOST_UNMARKED' },
+      { name: '表里的 id 在组合里找不到', blocks: [personaRow], named: ['agenia-dashboard'], expect: 'throw', code: 'E_BUNDLE_HOST_ROW_MISSING' },
+      { name: '标记位置不对（写在 name 之后）', blocks: [`- id: agenia-dashboard\n  name: '${dashboardRowUrl}'\n  # @host-level`, personaRow], named: ['agenia-dashboard'], expect: 'throw', code: 'E_BUNDLE_HOST_MARK_POSITION' },
+      { name: '标记缩进写错（4 格）', blocks: [`- id: agenia-dashboard\n    # @host-level\n  name: '${dashboardRowUrl}'`, personaRow], named: ['agenia-dashboard'], expect: 'throw', code: 'E_BUNDLE_HOST_MARK_POSITION' },
+      { name: '宿主级行写着 disabled: true', blocks: [hostRow('agenia-dashboard', ['  disabled: true']), personaRow], named: ['agenia-dashboard'], expect: 'throw', code: 'E_BUNDLE_HOST_ROW_DISABLED' },
+      // ── 白名单（预设体里被硬塞的客户端 UI 行）：三格全中才放行 ───────────────────
+      { name: '白名单行（预设体、disabled: true）', blocks: [clientRow('agenia-dashboard', ['  disabled: true']), personaRow], expect: 'allow', allowId: 'agenia-dashboard' },
+      { name: '白名单行但没写 disabled: true', blocks: [clientRow('agenia-dashboard'), personaRow], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_ENABLED' },
+      { name: '白名单 id 指向另一个 web 包（@fixture/other-web）', blocks: [`- id: agenia-dashboard\n  name: '${otherUrl}'\n  disabled: true`, personaRow], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_ALLOW_MISMATCH' },
+      // ── 三态解析：坏 manifest / 找不到 manifest 都不是"不是客户端 UI" ────────────
+      { name: '坏 manifest 的路径形行（新 id）', blocks: [clientRow('agenia-dashboard-broken', [], brokenUrl), personaRow], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_UNRESOLVED' },
+      { name: '路径形行解析不到 package.json', blocks: [`- id: nowhere\n  name: 'file:///Z:/no-such-tree/lib/index.js'`, personaRow], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_UNRESOLVED' },
+      // ── 组 config 里的嵌套行：同一把尺子 ───────────────────────────────────────
       { name: '嵌套在组 config 里的客户端 UI 行（splitRows 拆不到）', blocks: [`- id: planning\n  name: cordis:group\n  config:\n    - id: hidden-client-row\n      name: '${dashboardRowUrl}'`], expect: 'throw', code: 'E_BUNDLE_CLIENT_UI_IN_PRESET' },
       { name: '嵌套在组 config 里的普通行（不误伤）', blocks: [`- id: planning\n  name: cordis:group\n  config:\n    - id: plan-mode\n      name: '@deepseek-ai/dsh-plan-mode'`], expect: 'allow' },
+      { name: '普通非客户端行（persona）', blocks: [personaRow], expect: 'allow' },
     ]
+    total = cases.length
     for (const c of cases) {
       let result = null
       let error = null
@@ -995,19 +1088,51 @@ function runInterlockControl() {
         wrong += 1
         continue
       }
+      if (c.host !== undefined) {
+        const inHost = result.hostBlocks.filter((block) => block.split('\n')[0].trim() === `- id: ${c.host}`)
+        const inPreset = result.presetBlocks.filter((block) => block.split('\n').some((line) => line.trim() === `- id: ${c.host}`))
+        if (inHost.length !== 1 || inPreset.length !== 0) {
+          console.log(`  RED  ${c.name}：宿主级落点不对（insert ${inHost.length} 次 · 预设体 ${inPreset.length} 次）`)
+          wrong += 1
+          continue
+        }
+      }
       console.log(`  ok   ${c.name}：放行${named.length === 0 ? '（非客户端行，不点名）' : ` · 点名 ${named.join(' / ')}`}`
-        + `（预设级 ${result.presetBlocks.length} 条 · 宿主级 ${result.hostBlocks.length} 条）`)
+        + `（预设级 ${result.presetBlocks.length} 条 · 宿主级 ${result.hostBlocks.length} 条`
+        + `${c.host === undefined ? '' : ` · 宿主行 ${c.host} 在 insert 1 次 / 预设体 0 次`}）`)
     }
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }
   if (wrong > 0) process.exit(1)
-  console.log(`INTERLOCK-CONTROL 15/15 都翻面`)
+  console.log(`INTERLOCK-CONTROL ${total}/${total} 都翻面`)
   process.exit(0)
 }
 
 const ARGV = process.argv.slice(2)
 if (ARGV.includes('--interlock-control')) runInterlockControl()
+
+// ── 产物侧读数（外部文件）：手工挪行 / 另一份 writer 的产物，读数只认文件 ────────────
+const describeArg = ARGV.find((a) => a.startsWith('--describe='))
+if (describeArg !== undefined) {
+  const target = resolve(describeArg.slice('--describe='.length))
+  let text = ''
+  try {
+    text = readFileSync(target, 'utf8')
+  } catch (err) {
+    console.log(`  RED  E_PATCH_UNREADABLE 读不到 ${target}：${String(err?.message ?? err)}`)
+    process.exit(1)
+  }
+  const facts = describePatch(text)
+  const problems = patchProblems(facts)
+  printPatchFacts(facts, target)
+  for (const problem of problems) console.log(`  RED  ${problem}`)
+  console.log(problems.length === 0
+    ? '  ok   产物侧读数：这份文件的结构 / 层归属都成立'
+    : `  RED  产物侧读数：${problems.length} 条问题`)
+  process.exit(problems.length === 0 ? 0 : 1)
+}
+
 const isCheck = ARGV.includes('--check')
 let built
 try {
@@ -1021,7 +1146,7 @@ try {
   }
   throw err
 }
-const { text, sourceRows, copied, blocks, memberCount, allowedClientRows, presetRows } = built
+const { text, sourceRows, copied, blocks, memberCount, allowedClientRows, presetRows, hostRows } = built
 
 if (isCheck) {
   let current = ''
@@ -1036,7 +1161,7 @@ if (isCheck) {
   const ok = same && fileProblems.length === 0
   if (same) {
     console.log(ok
-      ? `  ok   cordis.patch.yml 与 agent.cordis.yml 一致（${blocks} 条顶格行 → ${presetRows} 条预设级 · 2 份预设（1 组长 + 1 通用组员） · ${memberCount} 条委派行同指 ${MEMBER_PRESET_ID} · 拷进来 ${copied} 个 id）`
+      ? `  ok   cordis.patch.yml 与 agent.cordis.yml 一致（${blocks} 条顶格行 → ${presetRows} 条预设级 + ${hostRows} 条宿主级 · 2 份预设（1 组长 + 1 通用组员） · ${memberCount} 条委派行同指 ${MEMBER_PRESET_ID} · 拷进来 ${copied} 个 id）`
       : '  RED  cordis.patch.yml 与组合一致，但**盘上补丁的结构 / 层归属不对**：')
   } else {
     console.log('  RED  E_PATCH_NOT_DERIVED cordis.patch.yml 与 agent.cordis.yml 对不上 —— 改了 .yml 就跑 <node> .tools/make-bundle-patch.mjs')
@@ -1055,7 +1180,7 @@ console.log(`写出 ${TARGET}`)
 // ⚠️ 这两个数**本来就不相等**，不是一个"对不上"：
 //    `copied` 数的是**每一份预设的顶层行块**总和，`sourceRows` 数的是源文件里**全部 `- id:`**
 //    （含组内子行）。真正的对账是 `--check` 那条（整份文本逐字比）。
-console.log(`  ${blocks} 条顶格行 → ${presetRows} 条预设级 · 2 份预设（1 组长 + 1 通用组员） · ${memberCount} 条委派行同指 ${MEMBER_PRESET_ID} · 补丁里拷进来 ${copied} 条 · 源文件共 ${sourceRows} 个 id`)
+console.log(`  ${blocks} 条顶格行 → ${presetRows} 条预设级 + ${hostRows} 条宿主级 · 2 份预设（1 组长 + 1 通用组员） · ${memberCount} 条委派行同指 ${MEMBER_PRESET_ID} · 补丁里拷进来 ${copied} 条 · 源文件共 ${sourceRows} 个 id`)
 printPatchFacts(writtenFacts, '回读')
 printAllowedRows(allowedClientRows)
 if (writtenProblems.length > 0) {

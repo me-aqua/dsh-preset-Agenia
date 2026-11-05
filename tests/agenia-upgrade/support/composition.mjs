@@ -526,48 +526,229 @@ export function delegationGroupProblems(compRows, {
 }
 
 /**
- * **组合里不许有 `# @host-level` 标记**（2026-11-05 挂载搬到 profile 层之后的判法；纯文本，可喂夹具）。
+ * **宿主级行的码**（稳定、可 grep）—— 这一族判的是"组合里的标记"与"补丁顶层的宿主行"**成对**。
  *
- * ── 🔴 这里原来是 `hostLevelRows()`（2026-11-05 **退休**）──────────────────────────
- * 它回答的问题是"组合里**哪几行**是宿主级、要搬进 **bundle 补丁顶层 insert**"。那个形状现在
- * **按设计不存在**：`.tools/make-bundle-patch.mjs` 见到 `# @host-level` 就 throw
- * （`E_BUNDLE_HOST_MARK`），`HOST_LEVEL_IDS` 必须为空（`E_BUNDLE_HOST_LEVEL_IDS`）——
- * 宿主级行（客户端 UI 那一类）现在只写 **profile 补丁的顶层 `- insert:`**
- * （`.tools/mount-dashboard-profile.mjs` 挂 / 撤；判据在 `DASH-15` / `DASH-16` 的
- * `client-ui-placement.mjs::scanProfilePlacement()`）。
- * 留着那个函数会让"哪几行是宿主级"有一份**看起来还在、其实没人能用的答案**：它读出来的集合
- * 永远是空的（真出现标记时生成器已经 throw 了），下游拿它判事就是"静默判了个空"
- * （`cand-20261019-0030` / `cand-20261019-0042`）。
+ * 口径（2026-11-05 深夜 · 定形「补记一」之后重写）：`# @host-level` 现在**是要求**，不是违规 ——
+ * 它把一条组合行声明成"宿主级"：生成器把它发进 bundle 补丁的**顶层 `- insert:`**，
+ * 并从两份预设体里摘掉（`client-ui-placement.mjs::scanBundleMount()` 判的是同一条行的
+ * **包事实**与**落点细节**；这一族判的是它和组合的**对账**）。
+ *   · 标记必须落在**一行真的存在**的组合行上 ⇒ 否则 `HOST-LEVEL-MARK-ORPHAN`；
+ *   · 标记了的行在顶层 insert 里**恰好一行**（0 行 ⇒ `HOST-LEVEL-ROW-MISSING`；>1 ⇒ `HOST-LEVEL-ROW-MULTIPLE`）；
+ *   · 顶层 insert 里除了预设入口，每一行都必须被组合里的一条标记指着 ⇒ 否则 `HOST-LEVEL-ROW-UNMARKED`；
+ *   · 顶层只许有**一个** `- insert:`（= 2 条预设入口 + N 条宿主行），别的条目一律红 ⇒ `HOST-LEVEL-TOP-SHAPE`；
+ *   · 行数闭合把宿主行**加回去**（入口行 + 宿主行 = 补丁全部行）⇒ 否则 `HOST-LEVEL-ACCOUNT-UNCLOSED`。
  *
- * 现在的判法方向**翻过来**：标记本身是错的。它在组合里出现 ⇒ 那一版 bundle 生成不出来
- * ⇒ 预设整层没有 ⇒ 新会话窄权限。所以这里报的是"有标记"（红），而不是"哪几行有标记"。
+ * ⚠️ **标记的位置**（`- id:` 的下一行、两格缩进）不在这里判：那是生成器自己的联锁
+ *    （`E_BUNDLE_HOST_MARK_POSITION`，`--interlock-control` 19/19 覆盖），而"这份补丁是不是
+ *    生成器的派生物"由 `DASH-15` 的派生物那一腿（`make-bundle-patch.mjs --check`）判。
+ *    一个事实一个落点：这里只看"标记 ↔ 行"的对应，不重写生成器的位置规则。
+ *
+ * 墓碑见下面 `hostLevelMarkProblems()` 那一段。
+ */
+export const HOST_LEVEL_CODES = Object.freeze({
+  /** `# @host-level` 没有落在任何一行组合行上（标在空处 / 标在一个不存在的 id 上）。 */
+  markOrphan: 'HOST-LEVEL-MARK-ORPHAN',
+  /** 标了的行在补丁顶层 `- insert:` 里**一行都没有**（标了没搬）。 */
+  rowMissing: 'HOST-LEVEL-ROW-MISSING',
+  /** 标了的行在补丁顶层 `- insert:` 里出现**不止一行**（重复发射）。 */
+  rowMultiple: 'HOST-LEVEL-ROW-MULTIPLE',
+  /** 补丁顶层 insert 里有一行宿主行，组合里**没有标记**指着它（搬了没标）。 */
+  rowUnmarked: 'HOST-LEVEL-ROW-UNMARKED',
+  /** 顶层形状：不是恰好一个 `- insert:` / insert 里有既非预设入口又没有 `name` 的项 / 顶层还有别的条目。 */
+  topShape: 'HOST-LEVEL-TOP-SHAPE',
+  /** 行数闭合：补丁里有行既不在任何预设入口里、也不是顶层 insert 的宿主行。 */
+  accountUnclosed: 'HOST-LEVEL-ACCOUNT-UNCLOSED',
+})
+
+/**
+ * **一枚 `# @host-level` 标记行**（唯一口径：`hostLevelMarks()` 与 `withoutHostLevelMarks()` 共用）。
+ * 只认"这一行以 `#` 开头、紧跟 `@host-level`"—— 正文里提到这串字的注释不算。
+ */
+const HOST_LEVEL_MARK_LINE = /^[ \t]*#\s*@host-level\b/
+
+/**
+ * **组合里有哪些 `# @host-level` 标记、它们各自落在哪一行**（纯文本，可喂夹具）。
+ *
+ * 归属规则：从标记那一行**往上**找最近的 `- id:`，允许中间只隔着注释 / 空行
+ * （今天那枚标记就写在 `- id: agenia-dashboard` 的下一行）；找不到 ⇒ `id: null`。
+ * `row_exists` 再核一次"那个 id 是这一份组合里真的存在的一行" —— 两者缺一都算
+ * `HOST-LEVEL-MARK-ORPHAN`：标记是"这一行去顶层 insert"的**唯一声明**，标在空处等于没有声明。
+ *
+ * 🔴 **`repeat` 不判红**：同一行标两次不改变"哪几行是宿主级"这个集合（生成器按 id 集合发），
+ *    只把重复记进读数（`marks[]` 里两条同 id）。这与旧的"出现即红"不同 —— 旧判法红的是标记本身，
+ *    而标记现在是要求，能红的是**对应关系**。
+ *
+ * ⚠️ 文本口径的边界：块标量（`prefix: |-` 那种）里如果恰好有一行以 `# @host-level` 开头，
+ *    这里也会把它当成标记 —— 后果是**红**（`MARK-ORPHAN` / 配对不上），不是假绿。
+ *    fail-closed 的方向是对的；真要让那一行不被误读，改的是那一行正文，不是放宽判据。
  *
  * @param {string} compositionText 组合原文（含注释 —— 标记只在注释里）
- * @returns {{problems: string[], readings: {marks: {id: string|null, line: number, text: string}[]}}}
+ * @param {object[]|null} [compRows] `collectRows()` 的行（给了就不重复解析）
+ * @returns {{marks: {id: string|null, line: number, text: string, row_exists: boolean}[],
+ *            ids: string[], problems: {code: string, message: string}[]}}
  */
-export function hostLevelMarkProblems(compositionText) {
+export function hostLevelMarks(compositionText, compRows = null) {
   const lines = String(compositionText).replace(/\r\n/g, '\n').split('\n')
-  const problems = []
+  const rows = compRows ?? collectRows(parseYamlSubset(compositionText, 'composition').value)
+  const rowIds = new Set(rows.map((r) => r.id))
   const marks = []
+  const problems = []
   for (let i = 0; i < lines.length; i += 1) {
-    if (!/^\s*#\s*@host-level\b/.test(lines[i])) continue
-    // 报文里要能指到"它本来想标哪一行"：往上一行找最近的 `- id:`；找不到就如实说没有。
+    if (!HOST_LEVEL_MARK_LINE.test(lines[i])) continue
+    // 报文里要能指到"它本来想标哪一行"：往上找最近的 `- id:`；找不到就如实说没有。
     let owner = null
     for (let k = i - 1; k >= 0; k -= 1) {
       const m = /^\s*-\s*id:\s*([^\s#]+)/.exec(lines[k])
       if (m !== null) { owner = m[1]; break }
       if (!/^\s*(#|$)/.test(lines[k])) break
     }
-    marks.push({ id: owner, line: i + 1, text: lines[i].trim().slice(0, 120) })
+    marks.push({ id: owner, line: i + 1, text: lines[i].trim().slice(0, 120), row_exists: owner !== null && rowIds.has(owner) })
   }
   for (const mark of marks) {
-    problems.push(`第 ${mark.line} 行出现了 \`# @host-level\`${mark.id === null ? '' : `（想标的是 \`${mark.id}\`）`}`
-      + ' —— bundle 补丁**不收**宿主级行：生成器见到这枚标记当场 throw（`E_BUNDLE_HOST_MARK`），整份补丁造不出来。'
-      + '宿主级行（客户端 UI 那类）写 profile 补丁的顶层 `- insert:`，用 `.tools/mount-dashboard-profile.mjs` 挂 / 撤；'
-      + '组合里删掉这枚标记（行本身留在预设层、`disabled: true`）')
+    if (mark.row_exists) continue
+    problems.push({
+      code: HOST_LEVEL_CODES.markOrphan,
+      message: `第 ${mark.line} 行的 \`# @host-level\` 没有落在任何一行组合行上`
+        + `（${mark.id === null ? '往上找不到 `- id:`' : `往上最近的是 \`- id: ${mark.id}\`，它不是这一份组合里的行`}）`
+        + ' —— 标记是"这一行去顶层 insert"的唯一声明；标在空处 = 那一条声明没有落点，'
+        + '而它想标的行会按普通预设行被拷进两份预设体（宿主树收不到它）',
+      detail: { line: mark.line, owner: mark.id },
+    })
   }
-  return { problems, readings: { marks } }
+  const ids = [...new Set(marks.filter((m) => m.row_exists).map((m) => m.id))]
+  return { marks, ids, problems }
 }
+
+/**
+ * **删掉全部 `# @host-level` 标记行的那份组合**（夹具用：模拟"把挂载撤掉"的那一半）。
+ *
+ * 只删标记行本身，别的字节一个不动 —— 于是它和"原组合 + 那一行按普通预设行进两份预设体"
+ * 组成一对**可解析的**回滚态（`BOOT-01` 的 R5 投影 / `STAT-02` 的 `row-without-mark` 刀）。
+ * 标记行的正则只有一份（`HOST_LEVEL_MARK_LINE`），与 `hostLevelMarks()` 同源。
+ *
+ * @param {string} compositionText 组合原文
+ * @returns {string} 去掉标记行之后的原文
+ */
+export function withoutHostLevelMarks(compositionText) {
+  return String(compositionText).replace(/\r\n/g, '\n').replace(new RegExp(`${HOST_LEVEL_MARK_LINE.source}.*\\n`, 'gm'), '')
+}
+
+/**
+ * **标记 ↔ 宿主行**的对应判据（两件产物：组合原文 + 补丁原文）。
+ *
+ * 这是 `HOST_LEVEL_CODES` 那一族里**只依赖这两件产物**的全部判法：
+ * 组合侧（`hostLevelMarks()`）+ 补丁侧（`topLevelInserts()`）+ 两者的对应。
+ * 调用点：`presetEntryProblems()`（活体校准 `calibrate()` 与 staged 判据
+ * `patchStructuralProblems()` 共用；`BOOT-01` 的 R5 也走这一条 —— 它判两端时调的是
+ * `presetEntryProblems()`，**不**再单独调本函数，免得同一粒事实报两次）· `PRS-01`（现役树，直接调）。
+ *
+ * ⚠️ **不判**"补丁的行是不是生成器写的"（那要跑生成器，归 `DASH-15` 派生物那一腿）；
+ *    **不判**那一行解析到哪个包（包事实归 `DASH-15` / `DASH-16`）；**不判**行体逐字
+ *    （归 `patchStructuralProblems()` 的逐行比对，宿主行不参与 —— 它不在任何预设体里）。
+ *
+ * @param {string} compositionText 组合原文（含注释）
+ * @param {string} patchText       生成的补丁原文
+ * @param {{compRows?: object[]|null}} [options]
+ * @returns {{problems: {code: string, message: string, detail?: object}[],
+ *            readings: {marks: object[], host_level_ids: string[], host_rows: object[], host_row_count: number,
+ *                       marked_row_count: number, top_level_blocks: object[]}}}
+ */
+export function hostLevelPairingProblems(compositionText, patchText, { compRows = null } = {}) {
+  const rows = compRows ?? collectRows(parseYamlSubset(compositionText, 'composition').value)
+  const marks = hostLevelMarks(compositionText, rows)
+  const patchDoc = parseYamlSubset(patchText, 'patch')
+  const top = topLevelInserts(patchDoc)
+  const pairing = hostLevelPairingOf(marks, top)
+  const problems = [...marks.problems, ...top.problems, ...pairing.problems]
+  if (patchDoc.warnings.length > 0) {
+    problems.push({
+      code: HOST_LEVEL_CODES.topShape,
+      message: `补丁有解析器读不懂的行（${patchDoc.warnings.slice(0, 4).join(' / ')}）—— 顶层的宿主行判不了`
+        + '（"读不懂"不是"没有"）',
+      detail: { warnings: patchDoc.warnings },
+    })
+  }
+  return {
+    problems,
+    readings: {
+      marks: marks.marks,
+      host_level_ids: marks.ids,
+      top_level_blocks: top.blocks.map((b) => ({
+        insert: b.index + 1,
+        members: b.members.length,
+        preset_entries: b.entries.length,
+        host_rows: b.hosts.map((h) => h.id),
+      })),
+      ...pairing.readings,
+    },
+  }
+}
+
+/**
+ * 标记集合 × 顶层 insert 的对应（`hostLevelPairingProblems()` 与 `presetEntryProblems()` 的**唯一**算式）。
+ *
+ * @param {{marks: object[], ids: string[]}} marks `hostLevelMarks()` 的产物
+ * @param {{blocks: {index:number, hosts: object[]}[]}} top `topLevelInserts()` 的产物
+ */
+function hostLevelPairingOf(marks, top) {
+  const problems = []
+  const hostMembers = []
+  for (const block of top.blocks) {
+    for (const host of block.hosts) hostMembers.push({ ...host, insert: block.index + 1 })
+  }
+  for (const id of marks.ids) {
+    const hits = hostMembers.filter((h) => h.id === id)
+    const lines = marks.marks.filter((m) => m.id === id).map((m) => m.line)
+    if (hits.length === 0) {
+      problems.push({
+        code: HOST_LEVEL_CODES.rowMissing,
+        message: `组合第 ${lines.join(' / ')} 行标记了 \`${id}\`，但补丁顶层 \`- insert:\` 里**没有这一行**`
+          + '（宿主装载层收不到它）—— 标了没搬 = 生成器没重跑 / 搬丢了；'
+          + '"标记在、行不在"不许读成"这一行不需要在宿主层"',
+        detail: { id, mark_lines: lines },
+      })
+    } else if (hits.length > 1) {
+      problems.push({
+        code: HOST_LEVEL_CODES.rowMultiple,
+        message: `组合第 ${lines.join(' / ')} 行标记了 \`${id}\`，它在补丁顶层 \`- insert:\` 里应**恰好 1 行**，`
+          + `实得 ${hits.length} 行（insert ${hits.map((h) => h.insert).join(' / ')}）—— 同一行发两次 = 宿主树里两个写者`,
+        detail: { id, hits: hits.map((h) => ({ id: h.id, insert: h.insert })) },
+      })
+    }
+  }
+  for (const host of hostMembers) {
+    if (host.id !== null && marks.ids.includes(host.id)) continue
+    problems.push({
+      code: HOST_LEVEL_CODES.rowUnmarked,
+      message: `补丁顶层第 ${host.insert} 个 \`- insert:\` 里有这一行（id: ${JSON.stringify(host.id)} · name: ${JSON.stringify(host.name)}），`
+        + '但组合里**没有** `# @host-level` 指着它 —— 顶层 insert 只装"2 条预设入口 + 组合里标了 `# @host-level` 的宿主行"；'
+        + '多出来的行没有来源（搬了没标）',
+      detail: { id: host.id, name: host.name, insert: host.insert },
+    })
+  }
+  return {
+    problems,
+    readings: {
+      host_rows: hostMembers.map((h) => ({ id: h.id, name: h.name, insert: h.insert, disabled: h.disabled ?? null })),
+      host_row_count: hostMembers.length,
+      marked_row_count: marks.ids.length,
+    },
+  }
+}
+
+/**
+ * 🔴 **`hostLevelMarkProblems()` 已退休**（2026-11-05 深夜，与上面的 `HOST_LEVEL_CODES` 同批）。
+ *
+ * 旧的判法方向是"**标记本身是错的**"（组合里出现 `# @host-level` ⇒ 红），它对应的世界是
+ * "宿主级行住 profile 补丁、bundle 层一条宿主行都不许有"。那个归因已被 `bug-20261105-12` 证伪，
+ * 挂载搬回 bundle 层之后标记成了**要求** ⇒ 那个函数对今天的活树是**恒红**的（一条不会翻面的判据）。
+ *
+ * 新落点（各自一个事实）：
+ *   · `hostLevelMarks()`：标记落在哪一行、有没有落空（组合侧）；
+ *   · `hostLevelPairingProblems()`：标记 ↔ 补丁顶层宿主行的对应（两件产物）；
+ *   · `client-ui-placement.mjs::scanBundleMount()` / `scanClientUiPlacement()`：那一行解析到哪个包、
+ *     是不是 web 客户端、在不在宿主层（`DASH-15` / `DASH-16`）。
+ */
 
 /**
  * **每份预设入口里应当有哪几行**（0.2.1：一份组合派生 N 份预设；任务 A 之后 N = 2）—— 从组合推，不写死行数。
@@ -579,18 +760,24 @@ export function hostLevelMarkProblems(compositionText) {
  *     （不扮演任何具体角色 —— 各角色的人格住在 `ROLE_TABLE[toolName].persona`）。
  * 两条都只影响**行内容**，不影响**行 id 集合** ⇒ 这里冻的是"哪几行在哪一份里"。
  *
- * 🔴 **宿主级行不在 bundle 补丁里**（2026-11-05 起）：它们住 **profile 补丁**的顶层 `- insert:`
- *    （`.tools/mount-dashboard-profile.mjs`；判据在 `DASH-15` / `DASH-16`）。这一份补丁里出现的
- *    `# @host-level` 标记是**错**的（生成器当场 throw），由 `hostLevelMarkProblems()` 报。
+ * 🔴 **宿主级行从两份预设里减掉**（2026-11-05 深夜 · 判法翻面）：标了 `# @host-level` 的行
+ *    由生成器发进 bundle 补丁的**顶层 `- insert:`**、**不进任何一份预设体** ⇒ 期望行集里
+ *    也要把它们减掉，否则补丁与期望会各差一行（今天 = `agenia-dashboard`：组长 43→42、组员 24→23）。
+ *    减掉的那一行没有丢：`presetEntryProblems()` 的行数闭合把它**加回去**（入口行 + 宿主行 = 补丁行）。
+ *
+ * ⚠️ `hostLevelIds` **没有默认值**：省略它会让 `new Set(undefined)` 当场抛
+ *    （"没人告诉我有宿主行"不许静默退化成"没有宿主行"—— `cand-20261019-0030` 那一类病）。
+ *    唯一的调用点 `presetEntryProblems()` 用 `hostLevelMarks()` 的产物喂它。
  *
  * @param {object[]} compRows `collectRows()` 的行
- * @param {{leaderId?: string}} [options]
+ * @param {{leaderId?: string, hostLevelIds: string[]}} options
  * @returns {Map<string, string[]>} 预设 id → 那一份应有的行 id（**顺序不作为判据**，比较走多重集）
  */
-export function expectedPresetRows(compRows, { leaderId = FROZEN.patchPresets.leaderPresetId } = {}) {
+export function expectedPresetRows(compRows, { leaderId = FROZEN.patchPresets.leaderPresetId, hostLevelIds } = {}) {
+  const host = new Set(hostLevelIds)
   const drop = subtreeIds(compRows, FROZEN.patchPresets.memberDropsGroup)
-  const memberIds = compRows.filter((r) => !drop.has(r.id)).map((r) => r.id)
-  const leaderIds = compRows.map((r) => r.id)
+  const memberIds = compRows.filter((r) => !drop.has(r.id) && !host.has(r.id)).map((r) => r.id)
+  const leaderIds = compRows.filter((r) => !host.has(r.id)).map((r) => r.id)
   const out = new Map()
   for (const presetId of expectedPresetIds(compRows, { leaderId })) {
     out.set(presetId, presetId === leaderId ? leaderIds : memberIds)
@@ -603,27 +790,25 @@ export function expectedPresetRows(compRows, { leaderId = FROZEN.patchPresets.le
  *
  * 四条各自承重：
  *   ① **份数**：入口数必须 = 从组合推出来的份数（组长 1 + 带 `agentPreset` 的委派行）；
- *   ② **每份的行集**：组长份 = 组合的**全部**行、组员份 = 组合去掉 `delegation` 整组 —— **多重集**相等；
- *   ③ **顶层形状**：顶层**恰好一个** `- insert:`，它的直接成员**全是**预设入口
- *      （`@deepseek-ai/dsh-agent-preset`）—— 别的行没有落点；
- *   ④ **行数闭合**：每份入口的行加起来 = 补丁的全部行（一条不丢、一条不多）。
+ *   ② **每份的行集**：组长份 = 组合的**全部**行、组员份 = 组合去掉 `delegation` 整组，
+ *      **两份都要先减掉宿主行** —— **多重集**相等；
+ *   ③ **顶层形状**：顶层**恰好一个** `- insert:`，直接成员 = **2 条预设入口 + N 条宿主行**
+ *      （`@deepseek-ai/dsh-agent-preset` / 组合里标了 `# @host-level` 的那些行）—— 别的条目没有落点，
+ *      而且每一条宿主行都必须与组合里的一条标记**成对**（`hostLevelMarks()` / `HOST_LEVEL_CODES`）；
+ *   ④ **行数闭合**：每份入口的行加起来 **+ 顶层 insert 的直接宿主行** = 补丁的全部行（一条不丢、一条不多）。
  *
  * 为什么不是"行数相等"：259 这个数可以由无数种错法凑出来（多一份少一行、少一份多一行）。
  * 逐份对行集才抓得住"改了组合没重跑生成器"和"组员份混进了委派行"。
  *
- * ── 🔴 2026-11-05：旧的"宿主级行"那一层模型**删掉了**（复审 `N8`）───────────────────
- * 旧版还有两条腿：③ 允许顶层有 **0..N 个宿主级 insert**、④ 要求标了 `# @host-level` 的行
- * "每份预设里 0 次、顶层 insert 里恰好 1 次"。那是 **bundle 层装宿主级行**的模型。
- * 2026-11-05 挂载搬去 **profile 层**之后，那个形状**按设计不存在**：
- *   · `.tools/make-bundle-patch.mjs` 见到 `# @host-level` 当场 throw（`E_BUNDLE_HOST_MARK`）、
- *     `HOST_LEVEL_IDS` 必须为空 ⇒ 组合里根本没有"宿主级行"这个集合（`hostLevelRows()` 已删）；
- *   · 补丁顶层只许有**一个** insert 装两条预设入口（生成器自己 `--check` 的
- *     `E_PATCH_TOP_INSERT_SHAPE` 同一个口径）。
- * 留着旧模型 = 一份"永远读到空集合、所以永远不报"的判据（`cand-20261019-0042` 那个病）。
- * ⇒ ③ 从"允许宿主 insert"收紧成"只许预设入口"（**更严**，不是放宽）；④ 的宿主级腿整段删除。
- *   宿主级行（客户端 UI 那一类）现在由 **profile 层**的判据管：
- *   `DASH-15` / `DASH-16`（`client-ui-placement.mjs::scanProfilePlacement()`）。
- *   组合里**出现** `# @host-level` 这件事由 `hostLevelMarkProblems()` 报（红）。
+ * ── 宿主级行的落点（2026-11-05 深夜 · 定形「补记一」）─────────────────────────────
+ * 挂载搬回**我们自己的 bundle 补丁**（官方那个面板的同一个形状）：顶层 `- insert:` 里
+ * 宿主级行与两条预设入口并列；宿主级行**不进任何预设体**（浏览器只收宿主 Loader 树里的条目）。
+ * 组合侧的唯一声明是那枚 `# @host-level` 标记 ⇒ 标记与补丁里的宿主行必须**成对**：
+ *   · 标了没搬 ⇒ `HOST-LEVEL-ROW-MISSING`；搬了没标 ⇒ `HOST-LEVEL-ROW-UNMARKED`；
+ *   · 一行发两次 ⇒ `HOST-LEVEL-ROW-MULTIPLE`；标记落空 ⇒ `HOST-LEVEL-MARK-ORPHAN`；
+ *   · 顶层多出别的条目 / insert 里有没 `name` 的项 ⇒ `HOST-LEVEL-TOP-SHAPE`。
+ * 那一条行**解析到哪个包 / 是不是 web 客户端 / 在不在宿主层**由 `DASH-15` / `DASH-16`
+ * （`client-ui-placement.mjs`）判 —— 这里只判"标记 ↔ 行"的对应，不重复判包事实。
  *
  * @param {string} compositionText 组合原文（含注释 —— 宿主级标记只在注释里）
  * @param {string} patchText       生成的补丁原文
@@ -635,16 +820,20 @@ export function presetEntryProblems(compositionText, patchText, { leaderId = FRO
   const compRows = collectRows(parseYamlSubset(compositionText, 'composition').value)
   const patchDoc = parseYamlSubset(patchText, 'patch')
   const patchRows = collectRows(patchDoc.value)
+  /** 带码的问题在这里折成一条字符串（消费方 = `calibrate()` / `patchStructuralProblems()` 的 `string[]`）。 */
+  const fmt = (p) => `[${p.code}] ${p.message}`
   // 🔴 承重输入先自证：下面整个函数都是"从 `delegation` 组推组员份"（`M-3` / 评审 `S-2`）。
   //    组归属没人守的时候，"组合与补丁同错"会一起绿 —— 这条必须**先于**那些派生判据出声。
   problems.push(...delegationGroupProblems(compRows))
-  // 🔴 第二处承重输入：**组合里不许有宿主级标记**（2026-11-05：那个形状是 boot 杀手）。
-  const marks = hostLevelMarkProblems(compositionText)
-  problems.push(...marks.problems)
-  readings.host_level_marks = marks.readings.marks
+  // 🔴 第二处承重输入：**组合里的 `# @host-level` 标记落在哪一行**（宿主级集合的唯一来源）。
+  const marks = hostLevelMarks(compositionText, compRows)
+  problems.push(...marks.problems.map(fmt))
+  readings.host_level_marks = marks.marks
+  readings.host_level_ids = marks.ids
   const compIds = new Set(compRows.map((r) => r.id))
   readings.composition_rows_with_id = compIds.size
-  const expected = expectedPresetRows(compRows, { leaderId })
+  // ② 期望行集：宿主行从两份预设里减掉（行数闭合在 ④ 加回去）。
+  const expected = expectedPresetRows(compRows, { leaderId, hostLevelIds: marks.ids })
   const regs = registrationRows(patchRows)
   const gotPresetIds = regs.map((r) => cfg(r, 'id'))
   readings.patch_preset_ids = gotPresetIds
@@ -657,14 +846,21 @@ export function presetEntryProblems(compositionText, patchText, { leaderId = FRO
   if (missing.length > 0) problems.push(`补丁缺预设入口：${missing.join(', ')}（组合里有带 agentPreset 的行没被生成成预设？）`)
   if (extra.length > 0) problems.push(`补丁多出组合推不出的预设入口：${extra.join(', ')}（补丁是派生物，不许自己长）`)
 
-  // ── ③ 顶层形状：恰好一个 `- insert:`，成员**全是**预设入口 ───────────────────────
+  // ── ③ 顶层形状：恰好一个 `- insert:`（2 条预设入口 + N 条宿主行）＋ 标记 ↔ 宿主行成对 ──
   const top = topLevelInserts(patchDoc)
-  problems.push(...top.problems)
-  const topRows = top.blocks.flatMap((b) => b.rows)
-  const topMaps = new Set(topRows.map((r) => r.map))
-  readings.patch_top_blocks = top.blocks.map((b) => ({ insert: b.index + 1, ids: b.rows.map((r) => r.id) }))
+  problems.push(...top.problems.map(fmt))
+  const pairing = hostLevelPairingOf(marks, top)
+  problems.push(...pairing.problems.map(fmt))
+  Object.assign(readings, pairing.readings)
+  const entryMaps = new Set(top.blocks.flatMap((b) => b.entries).map((e) => e.map))
+  readings.patch_top_blocks = top.blocks.map((b) => ({
+    insert: b.index + 1,
+    ids: b.members.map((r) => r.id),
+    preset_entries: b.entries.length,
+    host_rows: b.hosts.map((h) => h.id),
+  }))
   for (const reg of regs) {
-    if (!topMaps.has(reg.map)) {
+    if (!entryMaps.has(reg.map)) {
       problems.push(`预设入口 ${reg.id} 不是顶层 \`- insert:\` 的直接成员 —— 预设入口必须住在顶层（否则它不在任何一份预设该在的层上）`)
     }
   }
@@ -683,7 +879,8 @@ export function presetEntryProblems(compositionText, patchText, { leaderId = FRO
     const more = multisetDiff(got, want)
     const less = multisetDiff(want, got)
     if (more.length > 0) {
-      problems.push(`预设 ${presetId} 多出这一份不该有的行：${more.join(', ')}（组长份 = 组合的全部行；组员份 = 组合去掉 ${FROZEN.patchPresets.memberDropsGroup} 组）`)
+      problems.push(`预设 ${presetId} 多出这一份不该有的行：${more.join(', ')}（组长份 = 组合去掉宿主行的全部行；`
+        + `组员份 = 组合去掉 ${FROZEN.patchPresets.memberDropsGroup} 组、再去掉宿主行 ⇒ 宿主行出现在预设体里就是这一条）`)
     }
     if (less.length > 0) {
       problems.push(`预设 ${presetId} 缺这一份该有的行：${less.join(', ')}（改了组合没重跑生成器？）`)
@@ -692,68 +889,84 @@ export function presetEntryProblems(compositionText, patchText, { leaderId = FRO
   readings.patch_preset_row_counts = counts
   readings.patch_rows_in_entries = rowsInEntries
 
-  // ── ④ 行数闭合：入口行 = 补丁全部行 ──────────────────────────────────────────────
-  const accounted = rowsInEntries
+  // ── ④ 行数闭合：入口行 **+ 宿主行** = 补丁全部行 ────────────────────────────────
+  const accounted = rowsInEntries + pairing.readings.host_row_count
+  readings.patch_host_rows = pairing.readings.host_row_count
   if (accounted !== patchRows.length) {
-    problems.push(`补丁有 ${patchRows.length - accounted} 行既不在任何预设入口里、也不是顶层 insert 的直接成员`
-      + `（顶层只许是这 ${regs.length} 份入口，补丁是组合的派生物）`)
+    problems.push(`[${HOST_LEVEL_CODES.accountUnclosed}] 补丁行数闭合不上：入口行 ${rowsInEntries} + 顶层宿主行 ${pairing.readings.host_row_count} = ${accounted}，`
+      + `补丁共有 ${patchRows.length} 行（差 ${patchRows.length - accounted}）—— 每一行要么在某一份预设入口里、`
+      + '要么是顶层 `- insert:` 的直接宿主行；别的地方没有落点（补丁是组合的派生物）')
   }
   return { problems, readings }
 }
 
 /**
  * 补丁**顶层**的 `- insert:` 块（`- insert:` 的直接成员，不往下钻）。
- * 判"是不是顶层"用**结构**，不数缩进：顶层序列的每一项应当是一个只带 `insert` 列表的映射。
+ * 判"是不是顶层"用**结构**，不数缩进：顶层序列的每一项应当是**只带 `insert` 列表**的映射。
  *
- * 🔴 **顶层恰好一个 insert，成员全是预设入口**（2026-11-05：bundle 层不装宿主级行）。
- *    旧版允许"0..N 个宿主级 insert + 一个空壳 insert 合法"—— 那是 bundle 层装宿主级行的模型，
- *    那个形状现在按设计不存在（见 `presetEntryProblems()` 的文件头）。这里从"允许"收紧成"只许"：
- *    · 顶层项不是映射 / 不是 `- insert:` / 是空壳（`- insert:` 底下没成员）⇒ 红；
- *    · 一个 insert 的成员不是 `@deepseek-ai/dsh-agent-preset` ⇒ 红（宿主级行不属于这一份补丁）；
+ * 🔴 **顶层恰好一个 insert，成员 = 2 条预设入口 + N 条宿主行**（2026-11-05 深夜判法翻面）：
+ *    · 顶层项不是映射 / 不是 `- insert:`（含 override：`- id:` 那种顶层条目）/ `insert` 底下不是列表 ⇒ 红；
+ *    · insert 的成员**分类**：`name` 是 `@deepseek-ai/dsh-agent-preset` ⇒ 预设入口；
+ *      其余有 `name` 的 ⇒ **宿主行**（是不是"被点名的宿主行"由 `hostLevelPairingOf()` 判，
+ *      这里不认 id、不认包 —— 那是组合标记与 `DASH-15` 的事）；
+ *      没有 `name` 的项 ⇒ 红（既不是入口也不是行）；
  *    · 顶层出现第二个 insert ⇒ 红。
+ *    · **空壳**（`insert:` 底下没有成员）结构上留一个块、不报 —— 份数 / 行数由上面那几条各自报，
+ *      这里不替它们开第二条理由。
  */
 function topLevelInserts(doc) {
   const problems = []
   const blocks = []
+  const shape = (message) => ({ code: HOST_LEVEL_CODES.topShape, message })
   if (!Array.isArray(doc.value)) {
-    problems.push('补丁顶层不是一个 `- insert:` 序列 —— 顶层只许有一个 `- insert:`，里面装预设入口')
+    problems.push(shape('补丁顶层不是一个 `- insert:` 序列 —— 顶层只许有一个 `- insert:`，里面装 2 条预设入口与 N 条宿主行'))
     return { blocks, problems }
   }
   doc.value.forEach((op, index) => {
+    const at = index + 1
     if (!(op instanceof Map)) {
-      problems.push(`补丁顶层第 ${index + 1} 项不是 \`- insert:\` 列表 —— 顶层只许有一个 \`- insert:\`，里面装预设入口`)
+      problems.push(shape(`补丁顶层第 ${at} 项不是 \`- insert:\` 列表 —— 顶层只许有一个 \`- insert:\`（2 条预设入口 + 宿主行）`))
       return
     }
     const keys = [...op.keys()]
+    if (keys.length !== 1 || keys[0] !== 'insert') {
+      const id = op.get('id')
+      problems.push(shape(`补丁顶层第 ${at} 项不是 \`- insert:\`（键：${JSON.stringify(keys)}`
+        + `${id === undefined ? '' : ` · id: ${JSON.stringify(id)}`}）—— 顶层只许有一个 \`- insert:\`；`
+        + 'override / 散行既不是预设入口也不是宿主行，没有落点'))
+      return
+    }
     const insert = op.get('insert')
     // 空壳：`- insert:` 底下没有成员 ⇒ 解析成 null。
-    if (insert === null && keys.length === 1 && keys[0] === 'insert') {
-      blocks.push({ index, rows: [], empty: true })
+    if (insert === null) {
+      blocks.push({ index, entries: [], hosts: [], members: [], empty: true })
       return
     }
     if (!Array.isArray(insert)) {
-      problems.push(`补丁顶层第 ${index + 1} 项不是 \`- insert:\` 列表 —— 顶层只许有一个 \`- insert:\`，里面装预设入口`)
+      problems.push(shape(`补丁顶层第 ${at} 个 \`insert:\` 不是列表 —— 它只装 2 条预设入口与 N 条宿主行`))
       return
     }
-    const rows = []
+    const entries = []
+    const hosts = []
     for (const item of insert) {
       if (!(item instanceof Map)) {
-        problems.push(`补丁顶层第 ${index + 1} 个 insert 里有一项不是行 —— 顶层 insert 只装预设入口`)
+        problems.push(shape(`补丁顶层第 ${at} 个 insert 里有一项不是行 —— 顶层 insert 只装预设入口与宿主行`))
         continue
       }
       const name = item.get('name')
-      if (name !== FROZEN.oracle.registrationName) {
-        problems.push(`补丁顶层第 ${index + 1} 个 insert 里有一行不是预设入口（\`name: ${JSON.stringify(name ?? null)}\`，`
-          + `\`id: ${JSON.stringify(item.get('id') ?? null)}\`）—— bundle 补丁的顶层只许有预设入口；`
-          + '宿主级行（客户端 UI 那一类）写 profile 补丁的顶层 `- insert:`')
+      const id = item.get('id') ?? null
+      if (typeof name !== 'string') {
+        problems.push(shape(`补丁顶层第 ${at} 个 insert 里有一行没有 \`name\`（id: ${JSON.stringify(id)}）`
+          + '—— 这一行既不是预设入口也不是宿主行，没有落点'))
         continue
       }
-      rows.push({ id: item.get('id') ?? null, name, map: item })
+      if (name === FROZEN.oracle.registrationName) entries.push({ id, name, map: item })
+      else hosts.push({ id, name, map: item })
     }
-    blocks.push({ index, rows, empty: rows.length === 0 })
+    blocks.push({ index, entries, hosts, members: [...entries, ...hosts], empty: entries.length + hosts.length === 0 })
   })
   if (blocks.length !== 1) {
-    problems.push(`补丁顶层应恰好 1 个 \`- insert:\`（预设入口），实得 ${blocks.length}`)
+    problems.push(shape(`补丁顶层应恰好 1 个 \`- insert:\`（2 条预设入口 + N 条宿主行），实得 ${blocks.length}`))
   }
   return { blocks, problems }
 }
@@ -963,13 +1176,14 @@ export function patchStructuralProblems(compositionText, patchText) {
   }
 
   /**
-   * ④′ **宿主级行**（bundle 层）：2026-11-05 **删除**。
+   * ④′ **宿主级行**（bundle 层）：**仍然不在这里比行体**。
    *
-   * 旧版在这里比"宿主级行的行体与组合逐字同形"（组合那边摘掉那枚 `# @host-level` 标记再比）。
-   * 那个形状按设计不存在了：宿主级行不住 bundle 补丁（生成器见到标记就 throw），
-   * 它们住 **profile 补丁**的顶层 `- insert:` —— 行体与形状由 `DASH-15` 的
-   * `scanProfilePlacement()` 判（profile 是**另一份文件**，不是这一份的派生物，所以不能在这里比行体）。
-   * 留着它 = 一段永远读到空集合的循环（`cand-20261019-0042`）。
+   * 宿主级行不在任何预设入口里（`presetEntryProblems()` 的 ② 把宿主行从期望行集里减掉），
+   * 所以上面那段"逐份入口逐行"的循环**碰不到它**。它的行体 / 落点由两处各自承重：
+   *   · `presetEntryProblems()` ③：标记 ↔ 顶层 insert 里那一行**成对**（`HOST_LEVEL_CODES`）；
+   *   · `DASH-15` 的 `scanBundleMount()`：那一行解析到哪个包、开没开、Node 入口在不在，
+   *     以及"这份补丁是不是生成器的派生物"（`make-bundle-patch.mjs --check`）。
+   * 在这里再比一遍行体 = 同一件事第二个载体，且宿主行本来就不在入口里可切（`cand-20261019-0042`）。
    */
 
   /**
@@ -1115,11 +1329,12 @@ export function leaderBlockProblems({
    * 🔴 **旧的那条"宿主级行必须不在组长块里"判据删掉了**（2026-11-05）。
    *
    * 它问的是"标了 `# @host-level` 的行有没有留在组长块里"—— 那个集合现在**永远是空的**
-   * （`hostLevelRows()` 已删；生成器见到标记就 throw），所以它是一条永远不报的判据。
-   * 那个命题的两个真实落点：
-   *   · "组合里不许出现 `# @host-level`" ⇒ `hostLevelMarkProblems()`（`PRS-01` 与 `presetEntryProblems()` 都跑）；
+   * （宿主级行按设计不住任何预设体），所以它是一条永远不报的判据。
+   * 那个命题的四个真实落点：
+   *   · "标记 ↔ 补丁顶层宿主行成对" ⇒ `hostLevelPairingProblems()`（`PRS-01` 与 `presetEntryProblems()` 都跑）；
+   *   · "标记落空 / 标记指到不存在的行" ⇒ `hostLevelMarks()` 的 `HOST-LEVEL-MARK-ORPHAN`；
    *   · "回滚期停在预设层的那一行" ⇒ 下面的 `pending_rows` 腿（组合里 `disabled: true`、值行与组合逐字相同）；
-   *   · "那一行开着" ⇒ `DASH-16` 的 bundle 残余腿（`DASH-CLIENT-IN-PRESET`）+ 生成器的白名单 throw。
+   *   · "那一行开着" ⇒ `DASH-15` 的 `DASH-ROW-DISABLED`（`disabled: true` 的宿主行不是挂载）。
    */
   const indentOfLine = (l) => l.length - l.trimStart().length
   /** `persona-injector` 那一行在原文里的行号区间 + 它的 `leaderOrder:` 缩进（放行线的落点锚）。 */
@@ -1251,7 +1466,11 @@ export function leaderBlockProblems({
       injector_key_indent: anchor.indent,
       accepted: allowedDr,
     },
-    host_level_rows: { removed: '2026-11-05：bundle 层不再有宿主级行（理由见上）' },
+    /**
+     * 宿主级行**按设计不在组长块里**（它们只住补丁顶层 insert）⇒ 这一格没有"哪几行被摘掉"可记。
+     * 留着这个键是为了让读的人看得见"这里为什么不列"（不是漏了）。
+     */
+    host_level_rows: { removed: '宿主级行只住补丁顶层 insert，不进任何预设体（2026-11-05 深夜判法翻面）' },
     pending_rows: pendingRows,
   }
   if (!allowedDr && (baseDr.length > 0 || nowDr.length > 0)) {
@@ -1306,7 +1525,7 @@ export function leaderBlockProblems({
  *   · 不许有 warnings；`- id:` 裸计数必须 == 解析出来的行数（**静默丢行当场红**）；
  *   · officeBound 必须读成一个字符串数组、五条固定 team_* 必须都在；
  *   · 补丁那个文件：**N 份预设入口逐份对上组合**（`presetEntryProblems()`：份数 / 每份的行集 /
- *     顶层恰好一个 insert 且成员全是入口 / 行数闭合），两处绝对路径都得读到。
+ *     顶层恰好一个 insert、成员 = 2 条预设入口 + N 条宿主行 / 行数闭合），两处绝对路径都得读到。
  * 行数**不断言**某个固定值：装完新版之后活体会从 38 变 42，那是预期内的（记读数、不判红）。
  */
 export function calibrate(compositionText, patchText) {
@@ -1348,9 +1567,9 @@ export function calibrate(compositionText, patchText) {
    *   · 旧①「注册行应为 1」 —— 0.2.1 起补丁里有**N 份预设入口**（组长 1 + 带 `agentPreset` 的委派行）；
    *   · 旧②「补丁行数 = 组合行数 + 1」 —— 每份入口都带自己那套行，259 行不是 43 行。
    * 换成 `presetEntryProblems()` 的四条（份数 / 每份的行集 / 顶层形状 / 行数闭合），
-   * 全部**从组合推**。2026-11-05 起那个模型只覆盖 bundle 层的预设入口（宿主级行搬去 profile 层，
-   * 那个集合在这里已经不存在了；见 `presetEntryProblems()` 的文件头）。
-   * 判据没有放宽：旧②只钉一个数，新②钉的是"哪一行在哪一份里"。
+   * 全部**从组合推**。宿主行按 2026-11-05 深夜的口径参与其中：顶层 insert = 2 条预设入口 +
+   * N 条宿主行（今天 N = 1），两份预设的期望行集各自减掉宿主行，行数闭合把它们加回去。
+   * 判据没有放宽：旧②只钉一个数，新②钉的是"哪一行在哪一份里" + "标记与宿主行成对"。
    */
   const presetCheck = presetEntryProblems(compositionText, patchText)
   Object.assign(readings, presetCheck.readings)

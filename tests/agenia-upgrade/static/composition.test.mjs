@@ -26,6 +26,8 @@ import {
   disabledKind,
   enabledDelegations,
   guardCoverageProblems,
+  HOST_LEVEL_CODES,
+  hostLevelPairingProblems,
   identityLanding,
   listDirs,
   listMd,
@@ -36,10 +38,13 @@ import {
   patchStructuralProblems,
   plain,
   presetEntries,
+  presetEntryProblems,
   readPresetBaseline,
   registrationRows,
   rowGet,
+  withoutHostLevelMarks,
 } from '../support/composition.mjs'
+import { withHostRowInPresetBodies } from '../support/client-ui-placement.mjs'
 import { caseFail, normalizeSha, oracleReadings, preflight, problem, runCase, sha256Equal, stagedVsLiveDrift, stagingReadings } from '../support/evidence.mjs'
 import { importStaged, loadStagedModule, readStagedText, stagingExists, stagingPath, writeFixtureText } from '../support/sut.mjs'
 import { countFiles, fixtureDir, writeUnder } from '../support/verify-recompute.mjs'
@@ -781,9 +786,78 @@ describe('static · composition', () => {
 
         // ── 生成补丁与组合一致（不 import 生成器，见文件头）───────────────
         if (requireStaged('cordis.patch.yml', problems)) {
-          const ps = patchStructuralProblems(compText, readStagedText('cordis.patch.yml'))
+          const patchText = readStagedText('cordis.patch.yml')
+          const ps = patchStructuralProblems(compText, patchText)
           rec.readings.patch = { patch_rows: ps.patchRowCount, composition_rows: ps.compositionRowCount }
           for (const p of ps.problems) push('PATCH-MISMATCH', p)
+
+          // ── 🔴 宿主级口径的**夹具电池**（2026-11-05 深夜：判法从"标记即错"翻成"标记 ↔ 宿主行成对"）──
+          // 【为什么放在这一格】`PRS-01` / `STAT-01..05` / `DOC-01` 背后的宿主级算式只有两份：
+          //   `hostLevelPairingProblems()`（组合 + 补丁）与 `presetEntryProblems()`（四条的第三/四条腿）。
+          //   它们今天对活树是绿的 —— 但"现在对"不证明"错的时候会红"。
+          // 【六格】绿对照 1 + 五把刀：每把刀只该翻它该翻的那一粒码，别的宿主级码不许跟着亮
+          //   （亮了 = 两个事实共用一个出口，读的人不知道哪条才是产品事实）。
+          // 【负方向】绿对照必须 0 问题：它证明"标记与宿主行成对"这条判据**认得正确的形状**
+          //   （否则上面五把刀全红也只是"判据恒红"）。
+          const CODE_VALUES = new Set(Object.values(HOST_LEVEL_CODES))
+          const codeOfProblem = (p) => {
+            if (p !== null && typeof p === 'object') return typeof p.code === 'string' ? p.code : null
+            const m = /^\[([A-Z][A-Z0-9-]+)\]/.exec(String(p))
+            return m === null ? null : m[1]
+          }
+          const hostCodes = (list) => [...new Set(list.map(codeOfProblem).filter((c) => c !== null && CODE_VALUES.has(c)))].sort()
+          const hostLevelOf = (comp, patch) => hostCodes([
+            ...hostLevelPairingProblems(comp, patch).problems,
+            ...presetEntryProblems(comp, patch).problems,
+          ])
+          const hostIds = hostLevelPairingProblems(compText, patchText).readings.host_level_ids
+          const rollback = withHostRowInPresetBodies({ patchText, hostRowIds: hostIds })
+          const withoutMark = withoutHostLevelMarks(compText)
+          const extraTopRow = `${patchText.replace(/\n+$/, '')}\n\n- id: extra-unaccounted\n  name: '@fixture/not-a-row-in-composition'\n`
+          const rowTwice = (() => {
+            const lines = patchText.replace(/\r\n/g, '\n').split('\n')
+            const isHostStart = (l) => /^ {4}- id: \S+/.test(l) && hostIds.some((id) => l.includes(id))
+            const start = lines.findIndex(isHostStart)
+            if (start < 0) return patchText
+            let end = start + 1
+            while (end < lines.length && (lines[end].trim() === '' || /^ {5,}/.test(lines[end]))) end += 1
+            while (end > start + 1 && lines[end - 1].trim() === '') end -= 1
+            return [...lines.slice(0, end), ...lines.slice(start, end), ...lines.slice(end)].join('\n')
+          })()
+          const orphanMarkComp = `${compText.replace(/\n+$/, '')}\n\n# @host-level\n`
+          const battery = [
+            { name: '绿对照：活树这份组合 + 这份补丁', comp: compText, patch: patchText, want: [] },
+            { name: 'mark-without-row：标记在、宿主行搬回两份预设体（回滚态）', comp: compText, patch: rollback.text, want: [HOST_LEVEL_CODES.rowMissing] },
+            { name: 'row-without-mark：组合删掉标记、补丁里那一行还在 insert', comp: withoutMark, patch: patchText, want: [HOST_LEVEL_CODES.rowUnmarked] },
+            { name: 'extra-unaccounted-row：顶层多一条 override（既不是入口也不是宿主行）', comp: compText, patch: extraTopRow, want: [HOST_LEVEL_CODES.topShape, HOST_LEVEL_CODES.accountUnclosed].sort() },
+            { name: 'row-twice：同一行在 insert 里发两次', comp: compText, patch: rowTwice, want: [HOST_LEVEL_CODES.rowMultiple] },
+            { name: 'mark-orphan：多一枚标记落在空处', comp: orphanMarkComp, patch: patchText, want: [HOST_LEVEL_CODES.markOrphan] },
+          ]
+          const batteryReadings = []
+          if (hostIds.length === 0) {
+            push('HOST-LEVEL-RULER-DEAD', '这份组合里一条宿主级标记都没读到 ⇒ 下面六格量的不是"标记 ↔ 行"，而是"没有标记"—— 判据在空转')
+          }
+          if (!rollback.moved || rollback.after.in_insert !== 0 || rollback.after.in_preset !== hostIds.length * 2
+            || rollback.before.in_insert !== hostIds.length || rollback.before.in_preset !== 0) {
+            push('HOST-LEVEL-RULER-DEAD', `"回滚态"投影没造对（moved=${rollback.moved} · before insert=${rollback.before?.in_insert} / preset=${rollback.before?.in_preset}`
+              + ` · after insert=${rollback.after?.in_insert} / preset=${rollback.after?.in_preset}，期望 before 每枚 ${hostIds.length} 次在 insert、after 每枚 2 次在预设体）`
+              + ` —— 那么"标了没搬"那一刀量的就不是回滚态：${String(rollback.why ?? '')}`)
+          }
+          for (const cell of battery) {
+            const got = hostLevelOf(cell.comp, cell.patch)
+            batteryReadings.push({ name: cell.name, want: cell.want, got })
+            if (JSON.stringify(got) !== JSON.stringify(cell.want)) {
+              push('HOST-LEVEL-RULER-DEAD', `夹具「${cell.name}」应翻出 ${JSON.stringify(cell.want)}，实得 ${JSON.stringify(got)}`
+                + ' —— 这一刀没咬到（或咬到了别的宿主级码；两种都说明这一格的红/绿不是判据给的）')
+            }
+          }
+          rec.readings.host_level_battery = batteryReadings
+          rec.readings.host_level_rollback_projection = {
+            moved: rollback.moved,
+            before: rollback.before === null ? null : { in_insert: rollback.before.in_insert, in_preset: rollback.before.in_preset },
+            after: rollback.after === null ? null : { in_insert: rollback.after.in_insert, in_preset: rollback.after.in_preset },
+            added_into: rollback.added_into,
+          }
         }
       }
 

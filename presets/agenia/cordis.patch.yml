@@ -1,13 +1,14 @@
 # Agenia 作为一个 DSH bundle 的补丁文件 —— 这份预设的**注册入口**。
 #
-# ── 这一份里只有**预设层**（宿主级行住 profile 补丁，别混着读）────────────────
-#   这一份的 `- insert:` 装两条 `@deepseek-ai/dsh-agent-preset`（`agenia` / `agenia-member`），
-#   它们的 `config.plugins` 是**会话**的组合，不进宿主树。
-#   客户端 UI 那类**宿主级**行写进 profile 补丁（`~/.dsh/profiles/<档>/cordis.patch.yml`）
-#   的顶层 `- insert:`，不写进这一份 —— 浏览器只收**宿主 Loader 树**里的条目
+# ── 这一份的顶层 insert：宿主级行 + 两条预设入口（官方形状）──────────────────
+#   顶层 `- insert:` 的直接成员 = 宿主级行（客户端 UI 那类；组合里标了 `# @host-level`
+#   并在生成器的 `HOST_LEVEL_IDS` 里点名）+ 两条 `@deepseek-ai/dsh-agent-preset`
+#   （`agenia` / `agenia-member`）。后者的 `config.plugins` 是**会话**的组合，不进宿主树。
+#   官方面板就是这个形状：`@deepseek-ai/dsh-experimental-agent-team-profile` 的补丁
+#   顶层 `- insert:` 里装着 `ui-agent-team`（与两条服务行并列）。
+#   🔴 宿主级行**绝不进预设体**：浏览器只收**宿主 Loader 树**里的条目
 #   （`@deepseek-ai/dsh-client-modules` 只枚举 `ctx.loader.entries()`），而预设里的行由
-#   `@deepseek-ai/dsh-agent-preset` 注册进它自建的 Loader 树。
-#   组合里出现 `# @host-level` 标记 ⇒ 生成器当场 throw，不会把它搬进这一份。
+#   `@deepseek-ai/dsh-agent-preset` 注册进它自建的 Loader 树；两处都放还会各起一个 Node 写者。
 #
 # ── 为什么需要它（2026-09-28 换版）─────────────────────────────────────────
 # DSH 0.1.7 起，"用户预设"的发现机制整个换掉了：
@@ -45,10 +46,11 @@
 #   · 组员那一份 = 组合**去掉 delegation 组**（workflow / ralph 结构性没有，组员不能再招人）；
 #   · **别手动改这份文件** —— 改了 `.yml` 就跑一次生成器。
 #
-# ── 🔴 宿主级行不在这里 ──────────────────────────────────────────────────────
-# 组合里标了 `# @host-level` 的行**不进这一份**：生成器看到那枚标记当场 throw。
-# 宿主级行（客户端 UI 那类）写进 profile 补丁的顶层 `- insert:`，用
-# `.tools/mount-dashboard-profile.mjs` 挂 / 撤。理由见上面「这一份里只有预设层」。
+# ── 🔴 宿主级行的位置 ────────────────────────────────────────────────────────
+# 组合里标了 `# @host-level` 的行只出现在**顶层 `- insert:` 的直接成员**里，不出现在任何
+# 预设体里。标记与生成器的 `HOST_LEVEL_IDS` 必须成对；缺一边 / 位置写歪 ⇒ 生成器当场 throw。
+# 生成器把宿主级行从两份预设体里**摘掉**再组装 —— 一个包只有一个 Node 写者。
+# 理由见上面「这一份的顶层 insert」。
 #
 # ⚠️ 所以这份文件是 `agent.cordis.yml` 的**派生物**：
 #    那份仍是唯一来源，这份由 `.tools/make-bundle-patch.mjs` 生成 ——
@@ -60,7 +62,7 @@
 #      · 不写 contentDir   ⇒ 那些 .md 全读不到，**而且不报错**（静默注入 0 字符）
 #    ⇒ **换机器 / 换目录，改生成器里那两行，再跑一次生成器。**
 
-# ── 预设入口（会话的组合；不进宿主树）────────────────────────────────────────
+# ── 顶层 insert：宿主级行 + 预设入口（会话的组合；不进宿主树）────────────────
 - insert:
     - id: preset-agenia # 行名按约定写 preset-<预设 id>
       name: '@deepseek-ai/dsh-agent-preset'
@@ -610,29 +612,6 @@
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
             disabled: true
-
-          - id: agenia-dashboard
-            disabled: true
-            # 2026-11-05 16:2x **回滚**：这一行原来要挂宿主层（顶层 insert）。实测那样做会让整个 bundle 层在 boot 时失效 ——
-            #   重启后新会话的头是 `agentPreset: "standard"`（不是 agenia）⇒ 无角色 ⇒ 窄权限：没命令行、不能派人。
-            #   所以先 `disabled: true` 让客户端恢复正常；正确的挂载路线（走 **profile 层**，不是 bundle 层）另开一票。
-            #
-            # 会话头部那块看板。包有两半：Node 侧每 15 秒把视图算成一份快照
-            # （`presets/agenia/.runtime/state/dashboard/view.json`），浏览器侧读那份快照。
-            #
-            # 🔴 它为什么必须是宿主级：浏览器收的是**宿主 Loader 树**里的条目 ——
-            #    `@deepseek-ai/dsh-client-modules` 的 `ClientModuleRegistry.processOne()` 只枚举
-            #    `ctx.loader.entries()`，再按包自己的 `dsh.client.platform: web` + `exports["./client"]`
-            #    决定给浏览器发哪一份；而预设里的行由 `@deepseek-ai/dsh-agent-preset` 注册进
-            #    registry 自建的 Loader 树，永远不在宿主树里 ⇒ 面板写完了也到不了界面。
-            #    `.tools/make-bundle-patch.mjs` 里那张点名表（`HOST_LEVEL_IDS`）与这个标记
-            #    互相守着：标记在、id 不在表里 ⇒ throw；id 在表里、标记没了 ⇒ throw。
-            #
-            # ⚠️ `root` 写绝对路径：插件拿 `process.cwd()` 兜底，而宿主进程的工作目录不是工作区
-            #    （与 `persona-injector` 那两处绝对路径同一个理由）—— 换机器 / 换目录要一起改。
-            name: 'file:///E:/Harness/presets/agenia/client-ui-dashboard/lib/index.js'
-            config:
-              root: 'E:/Harness'
     - id: preset-agenia-member # 行名按约定写 preset-<预设 id>
       name: '@deepseek-ai/dsh-agent-preset'
       config:
@@ -908,25 +887,28 @@
             name: '@deepseek-ai/dsh-plugin-manager/tools'
             disabled: true
 
-          - id: agenia-dashboard
-            disabled: true
-            # 2026-11-05 16:2x **回滚**：这一行原来要挂宿主层（顶层 insert）。实测那样做会让整个 bundle 层在 boot 时失效 ——
-            #   重启后新会话的头是 `agentPreset: "standard"`（不是 agenia）⇒ 无角色 ⇒ 窄权限：没命令行、不能派人。
-            #   所以先 `disabled: true` 让客户端恢复正常；正确的挂载路线（走 **profile 层**，不是 bundle 层）另开一票。
-            #
-            # 会话头部那块看板。包有两半：Node 侧每 15 秒把视图算成一份快照
-            # （`presets/agenia/.runtime/state/dashboard/view.json`），浏览器侧读那份快照。
-            #
-            # 🔴 它为什么必须是宿主级：浏览器收的是**宿主 Loader 树**里的条目 ——
-            #    `@deepseek-ai/dsh-client-modules` 的 `ClientModuleRegistry.processOne()` 只枚举
-            #    `ctx.loader.entries()`，再按包自己的 `dsh.client.platform: web` + `exports["./client"]`
-            #    决定给浏览器发哪一份；而预设里的行由 `@deepseek-ai/dsh-agent-preset` 注册进
-            #    registry 自建的 Loader 树，永远不在宿主树里 ⇒ 面板写完了也到不了界面。
-            #    `.tools/make-bundle-patch.mjs` 里那张点名表（`HOST_LEVEL_IDS`）与这个标记
-            #    互相守着：标记在、id 不在表里 ⇒ throw；id 在表里、标记没了 ⇒ throw。
-            #
-            # ⚠️ `root` 写绝对路径：插件拿 `process.cwd()` 兜底，而宿主进程的工作目录不是工作区
-            #    （与 `persona-injector` 那两处绝对路径同一个理由）—— 换机器 / 换目录要一起改。
-            name: 'file:///E:/Harness/presets/agenia/client-ui-dashboard/lib/index.js'
-            config:
-              root: 'E:/Harness'
+    - id: agenia-dashboard
+      # @host-level
+      # 会话头部那块看板。包有两半：Node 侧每 15 秒把视图算成一份快照
+      # （`presets/agenia/.runtime/state/dashboard/view.json`），浏览器侧读那份快照。
+      #
+      # 🔴 这一行是**宿主级**：生成器把它发到 `cordis.patch.yml` 的**顶层 `- insert:`**，
+      #    两份预设体里都不放它 —— 官方那个「智能体团队」面板就是同一个形状
+      #    （`@deepseek-ai/dsh-experimental-agent-team-profile/cordis.patch.yml` 的顶层
+      #    `- insert:` 里装着 `ui-agent-team`）。一个包只有一个 Node 写者：两处都放会各起一个，
+      #    每 15 秒写两份快照。
+      #
+      # 🔴 为什么必须是宿主级：浏览器收的是**宿主 Loader 树**里的条目 ——
+      #    `@deepseek-ai/dsh-client-modules` 的 `ClientModuleRegistry.processOne()` 只枚举
+      #    `ctx.loader.entries()`，再按包自己的 `dsh.client.platform: web` + `exports["./client"]`
+      #    决定给浏览器发哪一份；而预设里的行由 `@deepseek-ai/dsh-agent-preset` 注册进
+      #    registry 自建的 Loader 树，永远不在宿主树里 ⇒ 面板写完了也到不了界面。
+      #
+      # 🔴 标记与生成器里的点名表（`HOST_LEVEL_IDS`）互相守着：标记在、id 不在表里 ⇒ throw；
+      #    id 在表里、标记没了 ⇒ throw。两边一起改，别只改一处。
+      #
+      # ⚠️ `root` 写绝对路径：插件拿 `process.cwd()` 兜底，而宿主进程的工作目录不是工作区
+      #    （与 `persona-injector` 那两处绝对路径同一个理由）—— 换机器 / 换目录要一起改。
+      name: 'file:///E:/Harness/presets/agenia/client-ui-dashboard/lib/index.js'
+      config:
+        root: 'E:/Harness'
