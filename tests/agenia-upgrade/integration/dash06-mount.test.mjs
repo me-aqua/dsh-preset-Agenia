@@ -14,8 +14,8 @@
  *   ① **位置**：生成的 `presets/agenia/cordis.patch.yml` 里必须有 `id: agenia-dashboard` 这一行，
  *      而且它必须是**顶层 `- insert:` 的直接成员**（宿主装载层）—— 即 `id` **不在任何**预设入口的
  *      `plugins` 里（也不在任何组里）。两个失败码分开报，因为它们要的修法不同：
- *        · `DASH-NOT-HOST-LEVEL` —— 行还在，但住在预设层 / 组里（今天就是这个形态，而且**出现两次**：
- *          `preset-agenia` 与 `preset-agenia-member` 各一份 —— 生成器把组合的全部顶格行搬进每一份预设）；
+ *        · `DASH-NOT-HOST-LEVEL` —— 行还在，但住在预设层 / 组里（修复前的形态是**两份**：`preset-agenia`
+ *          与 `preset-agenia-member` 各一份 —— 生成器把组合的全部顶格行搬进每一份预设；现在断言它必须住在顶层）；
  *        · `DASH-ROW-ABSENT` —— 这一行整个没了（不是"挪走了"，是"消失了"）。
  *   ② **行体**：这一行必须带 `name`（`file:///…/client-ui-dashboard/lib/index.js`）与 `config.root`，
  *      且它指到的那个包必须自己声明 `dsh.client.platform === "web"` 与 `exports["./client"]`
@@ -43,6 +43,21 @@
  * 浏览器收到的是装好的那一份）。dev 会并发改 `presets/**`，所以每个读数都带
  * `{repo, head, 文件 sha256/字节/mtime, snapshot_at}`，且**一次读到的字节从头用到尾**；
  * 读前 / 读后再各量一次身份，跑动中变过就记 `tree_changed_during_case`（**读数，不冒充判据**）。
+ *
+ * ── `DASH-16`（`R-1` · 2026-11-05 第 4 关评审的残余项）──────────────────────────
+ * `DASH-15` 与三个生成期 throw 覆盖的是**标记与表不一致**。它们覆盖不到**两处都忘**：一行 `dsh.client`
+ * 的插件进了组合、没写 `# @host-level`、也没进 `HOST_LEVEL_IDS` ⇒ 生成器把它当普通行拷进每一份预设
+ * —— 与 `bug-20261104-02` 同形，而全套判据照样绿。
+ * ⇒ `DASH-16` 判的是**语义**，不是命名：对每份预设 `plugins` 里的行，用 `name` 解析到盘上的
+ * `package.json`；声明了 `dsh.client.platform: "web"` 却不在顶层 `- insert:` 里 ⇒ `DASH-CLIENT-IN-PRESET`
+ * （**不读标记、不读 `HOST_LEVEL_IDS`、不认行 id**）。另一条是**阳性腿**：当前看板那一行必须是顶层
+ * `insert` 的直接成员（语义集合为空 / 看板行不在宿主层 ⇒ `DASH-HOST-MISSING`），否则"整份补丁里
+ * 一行客户端 UI 都没有"也会绿。刀：一个**只存在于夹具里**的合成包（`dsh.client.platform: web`）+ 合成行
+ * 放进预设（无标记、无点名）⇒ **只有** `DASH-CLIENT-IN-PRESET`；同一行放进宿主 insert ⇒ 干净；
+ * 看板行拿掉 ⇒ **只有** `DASH-HOST-MISSING`；看板行放回预设 ⇒ 两码（两种读法都成立）。
+ * 判据本体与合成夹具在 `support/client-ui-placement.mjs`（探针可以拿同一份量活树）。
+ * 解析面边界：路径形名字（`file:///…`）真解析；裸包名按盘上 `package.json` 的 `name` 匹配，
+ * 解析不到的记 `unresolved` 读数（不冒充"不是客户端 UI"）。
  */
 import { before, test } from 'node:test'
 import { spawnSync } from 'node:child_process'
@@ -53,6 +68,7 @@ import { FROZEN, PATHS } from '../support/env.mjs'
 import { collectRows, parseYamlSubset } from '../support/composition.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, runRoot, sha256File } from '../support/evidence.mjs'
 import { noteSutOverride } from '../support/dashboard-surface.mjs'
+import { clientUiPatchFixture, scanClientUiPlacement, syntheticClientUiPackage } from '../support/client-ui-placement.mjs'
 
 before(() => {
   preflight()
@@ -634,6 +650,153 @@ test('DASH-15 面板装上了没有：宿主层顶层 insert 的 agenia-dashboar
     rec.readings.verdict = {
       mount: patchText === null ? null : placementOf(patchText).nested.map((r) => r.parent),
       derived: derivationVerdict === null ? null : derivationVerdict.derived,
+      problem_codes: problems.map((p) => p.code),
+    }
+
+    caseFail(problems)
+  })
+})
+
+// ── DASH-16（第 4 关评审 2026-11-05 的 R-1）：语义面 ───────────────────────────
+const DASH16 = {
+  clientInPreset: 'DASH-CLIENT-IN-PRESET',
+  hostMissing: 'DASH-HOST-MISSING',
+  patchUnreadable: 'DASH-PATCH-UNREADABLE',
+  ruler: 'DASH-RULER-BROKEN',
+  knifeVector: 'DASH-KNIFE-VECTOR',
+  knifeUnreadable: 'DASH-KNIFE-UNREADABLE',
+}
+/** 只存在于夹具里的行 id —— 它不许出现在生产树的任何一份文件里（`knife_registration` 读数盯着）。 */
+const SYNTHETIC_ROW_ID = 'future-client-ui-panel'
+
+/** DASH-16 的夹具目录（与 DASH-15 的分开，免得两格在同一次跑里互相覆盖）。 */
+const fixtureDir16 = (name) => {
+  const dir = path.join(runRoot(), 'fixtures', `dash16-${name}`)
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+test('DASH-16 客户端 UI 行必须在宿主 insert：按包清单语义扫描（不看标记/点名表）+ 阳性腿 + 未登记行的刀', async () => {
+  await runCase('DASH-16', async (rec) => {
+    noteSutOverride(rec)
+    const problems = []
+    rec.readings.tree = treeIdentity()
+    const patchSnap = snapshotOf(PATCH_FILE)
+    const compositionSnap = snapshotOf(COMPOSITION_FILE)
+    const generatorSnap = snapshotOf(GENERATOR_FILE)
+    rec.readings.files = { patch: patchSnap, composition: compositionSnap, generator: generatorSnap }
+
+    let patchText = null
+    if (!patchSnap.exists) {
+      problems.push(problem(DASH16.patchUnreadable, `生成补丁不在盘上：${whereOf(patchSnap)} —— 语义面判不了（缺 ≠ 坏 ≠ 空）`))
+      caseFail(problems)
+      return
+    }
+    try {
+      patchText = readFileSync(PATCH_FILE, 'utf8')
+    } catch (err) {
+      problems.push(problem(DASH16.patchUnreadable, `生成补丁读不出来：${whereOf(patchSnap)}（${String(err?.message ?? err)}）`))
+      caseFail(problems)
+      return
+    }
+
+    // ── ① 判据本体：现役补丁的语义面 + 阳性腿 ──────────────────────────────
+    const real = scanClientUiPlacement({ patchText, rowId: ROW_ID, label: '生成补丁', manifestRoots: [PATHS.finalPreset] })
+    rec.readings.real = real.reading
+    for (const p of real.problems) problems.push(p)
+
+    // ── ② 翻面：合成包 + 合成补丁（只住运行根；活树一个字节不动）──────────────
+    try {
+      const pkgDir = fixtureDir16('client-in-preset')
+      const syntheticPkg = syntheticClientUiPackage(pkgDir)
+      const fields = rowFieldsForFixture(patchText)
+      const dashboardRow = { id: ROW_ID, name: fields.name, root: fields.root }
+      const syntheticRow = { id: SYNTHETIC_ROW_ID, name: syntheticPkg.name, root: path.resolve(pkgDir, '..').replace(/\\/g, '/') }
+      const variants = {
+        control: { dashboard: 'host', synthetic: 'absent', label: '夹具·正确形状' },
+        syntheticInPreset: { dashboard: 'host', synthetic: 'preset', label: '夹具·合成行放进预设（无标记、无点名）' },
+        syntheticInHost: { dashboard: 'host', synthetic: 'host', label: '夹具·同一行放进宿主 insert' },
+        dashAbsent: { dashboard: 'absent', synthetic: 'absent', label: '夹具·看板行拿掉' },
+        dashInPreset: { dashboard: 'preset', synthetic: 'absent', label: '夹具·看板行放回预设' },
+      }
+      const scans = {}
+      for (const [name, variant] of Object.entries(variants)) {
+        const text = clientUiPatchFixture({ ...variant, dashboardRow, syntheticRow })
+        scans[name] = {
+          text,
+          scan: scanClientUiPlacement({ patchText: text, rowId: ROW_ID, label: variant.label, manifestRoots: [pkgDir] }),
+        }
+      }
+      const codesOf = (name) => scans[name].scan.problems.map((p) => p.code)
+      const exactly = (name, want) => JSON.stringify([...codesOf(name)].sort()) === JSON.stringify([...want].sort())
+      rec.readings.fixtures = Object.fromEntries(Object.entries(scans).map(([name, v]) => [name, {
+        codes: v.scan.problems.map((p) => p.code),
+        messages: v.scan.problems.map((p) => p.message),
+        reading: v.scan.reading,
+      }]))
+
+      // 夹具自己必须解析得动（不然刀量的是夹具坏，不是判据坏）
+      for (const [name, v] of Object.entries(scans)) {
+        if (v.scan.reading.warnings.length > 0) {
+          problems.push(problem(DASH16.ruler, `夹具 ${name} 有解析器读不懂的行（${v.scan.reading.warnings.slice(0, 3).join(' / ')}）—— 这一跑的翻面证据不成立`))
+        }
+      }
+      if (codesOf('control').length !== 0) {
+        problems.push(problem(DASH16.ruler, `合成的"正确形状"被判出 ${JSON.stringify(codesOf('control'))} —— 判据连正确形状都过不了：先修尺子`))
+      }
+      if (!exactly('syntheticInPreset', [DASH16.clientInPreset])) {
+        problems.push(problem(DASH16.knifeVector,
+          `刀（合成行放进预设：无 \`# @host-level\`、无点名表）翻出来的面是 ${JSON.stringify(codesOf('syntheticInPreset'))}，`
+          + `应当只有 ${JSON.stringify([DASH16.clientInPreset])} —— 这一把刀必须能抓住"作者从没登记过"的行`))
+      }
+      if (codesOf('syntheticInHost').length !== 0) {
+        problems.push(problem(DASH16.knifeVector, `同一个合成行放进宿主 insert 之后仍被判出 ${JSON.stringify(codesOf('syntheticInHost'))} —— 判据量的不是"层"，是别的东西`))
+      }
+      if (!exactly('dashAbsent', [DASH16.hostMissing])) {
+        problems.push(problem(DASH16.knifeVector, `刀（看板行拿掉）翻出来的面是 ${JSON.stringify(codesOf('dashAbsent'))}，应当只有 ${JSON.stringify([DASH16.hostMissing])}`))
+      }
+      if (!exactly('dashInPreset', [DASH16.clientInPreset, DASH16.hostMissing])) {
+        problems.push(problem(DASH16.knifeVector,
+          `刀（看板行放回预设）翻出来的面是 ${JSON.stringify(codesOf('dashInPreset'))}，`
+          + `应当恰好 ${JSON.stringify([DASH16.clientInPreset, DASH16.hostMissing])}（语义面与阳性腿各报一次，修法不同）`))
+      }
+      // 刀的"语义成立"自证：合成行必须靠**它自己的 package.json** 被认出来（不是靠名字像 / id 熟）
+      const classified = scans.syntheticInPreset.scan.reading.client_ui_rows.find((r) => r.id === SYNTHETIC_ROW_ID)
+      if (classified === undefined || classified.pkg === null || !String(classified.pkg).endsWith('client-ui-probe/package.json')) {
+        problems.push(problem(DASH16.knifeUnreadable,
+          `扫描器没有把合成行解析到它自己的包（实得 ${JSON.stringify(classified ?? null)}）—— 这把刀量不到"语义"那一面`))
+      }
+
+      // 证据（不是判据）：这把刀的那一行在两个生产输入里**都没有**任何登记痕迹
+      const compositionText = compositionSnap.exists ? readFileSync(COMPOSITION_FILE, 'utf8') : null
+      const generatorText = generatorSnap.exists ? readFileSync(GENERATOR_FILE, 'utf8') : null
+      const markerLines = (scans.syntheticInPreset.text.match(/#\s*@host-level/g) ?? []).length
+      const registration = {
+        synthetic_row_id: SYNTHETIC_ROW_ID,
+        synthetic_pkg_name: syntheticPkg.pkg_name,
+        fixture_marker_lines: markerLines,
+        in_real_patch: patchText.includes(SYNTHETIC_ROW_ID),
+        in_composition: compositionText === null ? null : compositionText.includes(SYNTHETIC_ROW_ID),
+        in_generator_text: generatorText === null ? null : generatorText.includes(SYNTHETIC_ROW_ID),
+      }
+      rec.readings.knife_registration = registration
+      if (markerLines !== 0 || registration.in_real_patch
+        || registration.in_composition === true || registration.in_generator_text === true) {
+        problems.push(problem(DASH16.knifeUnreadable,
+          `这把刀的夹具行不再是"谁都没登记过的行"（marker 行 ${markerLines} · 真补丁 ${registration.in_real_patch}`
+          + ` · 组合 ${String(registration.in_composition)} · 生成器 ${String(registration.in_generator_text)}）—— 刀的命题不成立`))
+      }
+    } catch (err) {
+      problems.push(problem(DASH16.ruler, `合成夹具造不出来：${String(err?.message ?? err)} —— 这一跑的翻面证据不成立`))
+    }
+
+    // ── 读数收口：跑动中活树有没有被人动过（读数，不冒充判据）──────────────
+    const after = snapshotOf(PATCH_FILE)
+    rec.readings.after = after
+    rec.readings.tree_changed_during_case = { patch: after.sha256 !== patchSnap.sha256 }
+    rec.readings.verdict = {
+      semantic_client_rows: real.reading.client_ui_rows.length,
+      preset_violations: real.reading.violations.length,
       problem_codes: problems.map((p) => p.code),
     }
 

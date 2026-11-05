@@ -607,6 +607,17 @@ export const BATCH_AB = ['MJUDGE-01']
  *     **生成补丁 = `make-bundle-patch.mjs --check` 从 `agent.cordis.yml` 造出来的那一份**（跑仓库
  *     自己的检查，不另写比较逻辑）+ 四把刀（放回预设层 / 包去掉声明 / 整行拿掉 / 副本上改一个值）。
  *     ⚠️ 分母 **146 → 147**（由盘上发现器数出来；`GROUP_COUNTS` 同批 14 → 15）。
+ *   · 🔴 **2026-11-05 · 第 4 关评审 `R-1`（`DASH-16`）——「忘两处」也没有下一次**：
+ *     上面三个生成期 throw 只覆盖**标记与表不一致**。一行新加的 `dsh.client` 插件若**两处都忘**
+ *     （没写 `# @host-level`、也没进 `HOST_LEVEL_IDS`），生成器走 `marks === 0` 分支把它拷进
+ *     **每一份预设** —— 与 `bug-20261104-02` 同形，而全套判据照样绿。
+ *     `DASH-16` 判**语义**：预设 `plugins` 里的行，用 `name` 解析到盘上的 `package.json`，声明了
+ *     `dsh.client.platform: "web"` 却不住顶层 `- insert:` ⇒ `DASH-CLIENT-IN-PRESET`；阳性腿是
+ *     "当前看板那一行必须是顶层 insert 的直接成员"（语义集合为空 / 它不在宿主层 ⇒ `DASH-HOST-MISSING`）。
+ *     **不读标记、不读生成器的点名表、不认行 id**（唯一点名的是"当前看板那一行"这条阳性腿）。
+ *     刀：一个只在夹具里存在的合成包 + 合成行放进预设 ⇒ **只有** `DASH-CLIENT-IN-PRESET`；同一行
+ *     放进宿主 insert ⇒ 干净。判据本体与夹具在 `support/client-ui-placement.mjs`。
+ *     ⚠️ 分母 **147 → 148**（由盘上发现器数出来；`GROUP_COUNTS` 同批 15 → 16）。
  *   ⚠️ 新增四格**不进** `FROZEN_IDS`（同一批政策），但**同批**进 `BATCH_AC` 与
  *   `GROUP_COUNTS['client-dashboard']`（分母 141 → 145，由盘上发现器数出来）。
  *
@@ -615,7 +626,7 @@ export const BATCH_AB = ['MJUDGE-01']
  * 官方取不到时记 `HOLD` 并点名 `tried`，不记绿。
  * ⚠️ 它们**不进** `FROZEN_IDS`（那张清单是历史冻结的 A–F 55 条），同 G…AB 的规矩。
  */
-export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 'DASH-06', 'DASH-07', 'DASH-08', 'DASH-09', 'DASH-10', 'DASH-11', 'DASH-12', 'DASH-13', 'DASH-14', 'DASH-15']
+export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 'DASH-06', 'DASH-07', 'DASH-08', 'DASH-09', 'DASH-10', 'DASH-11', 'DASH-12', 'DASH-13', 'DASH-14', 'DASH-15', 'DASH-16']
 
 /**
  * 已落笔的二十四批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
@@ -1048,7 +1059,11 @@ const ROWS = [
   // 一句话：**生成的补丁里那一行必须在宿主装载层**（顶层 `- insert:` 的直接成员），不在任何
   // `preset-*.plugins` 里；行体 + 包的 `dsh.client` 声明齐全；整份补丁是生成器的派生物。
   // 判据口径、四把刀、安全联锁逐条写在 `integration/dash06-mount.test.mjs` 的文件头。
-  ['DASH-15', 'client-dashboard', F.dash06, '**面板装上了没有**（`bug-20261104-02`；老板 2026-11-04「我在客户端里点哪，i see nothing」· 组长当天 log §十四）：判**生成的** `presets/agenia/cordis.patch.yml` 四条腿 —— ① **位置**：`id: agenia-dashboard` 必须是**顶层 `- insert:` 的直接成员**（宿主装载层），`id` 不在任何 `preset-*.plugins` / 组里；行还在但住在预设层 ⇒ `DASH-NOT-HOST-LEVEL`（今天的形态，而且**两份预设各一份**）、整行没了 ⇒ `DASH-ROW-ABSENT`（缺 ≠ 挪）；② **行体 + 包**：`name` 必须是 `file:///…/client-ui-dashboard/lib/index.js`、`config.root` 在，且那个包自己声明 `dsh.client.platform: web` + `exports["./client"]` —— 否则浏览器没有东西可收 ⇒ `DASH-NO-CLIENT-DECL`；③ **派生物**：整份补丁必须等于 `make-bundle-patch.mjs` 从 `agent.cordis.yml` 造出来的那一份 —— **跑仓库自己的 `--check`**（逐字节比，不另写比较逻辑），不一致 ⇒ `DASH-PATCH-NOT-DERIVED`；跑之前有一道**安全联锁**（`--check` 分支必须先于写盘，否则记 `HOLD` 不跑——它加载期会写活体），跑完再量一次活体 sha256（变了 ⇒ `DASH-PATCH-CHECK-WROTE-PRESET`）；④ **翻面**：合成夹具的四把刀 —— 正确形状干净 · 放回 `preset-agenia.plugins` ⇒ **只有** `DASH-NOT-HOST-LEVEL` · 包去掉 `dsh.client` ⇒ **只有** `DASH-NO-CLIENT-DECL` · 整行拿掉 ⇒ **只有** `DASH-ROW-ABSENT` · 派生刀（生成器 + 预设树的副本上改一个值）⇒ `--check` 必须翻成 `RED`；刀翻错面 ⇒ `DASH-KNIFE-VECTOR`、跑不出判词 ⇒ `DASH-KNIFE-UNREADABLE`（尺子坏了不是对象坏了）。读数带 `{repo, head, 每份文件的字节/sha256/mtime, snapshot_at}`；**不判像素、不判浏览器真的收到包**（那归 GUI 清单，人点一次）。冻结副本上今天红在 `DASH-NOT-HOST-LEVEL`', '批次 AC'],
+  ['DASH-15', 'client-dashboard', F.dash06, '**面板装上了没有**（`bug-20261104-02`；老板 2026-11-04「我在客户端里点哪，i see nothing」· 组长当天 log §十四）：判**生成的** `presets/agenia/cordis.patch.yml` 四条腿 —— ① **位置**：`id: agenia-dashboard` 必须是**顶层 `- insert:` 的直接成员**（宿主装载层），`id` 不在任何 `preset-*.plugins` / 组里；行还在但住在预设层 ⇒ `DASH-NOT-HOST-LEVEL`（修复前的形态：两份预设各一份）、整行没了 ⇒ `DASH-ROW-ABSENT`（缺 ≠ 挪）；② **行体 + 包**：`name` 必须是 `file:///…/client-ui-dashboard/lib/index.js`、`config.root` 在，且那个包自己声明 `dsh.client.platform: web` + `exports["./client"]` —— 否则浏览器没有东西可收 ⇒ `DASH-NO-CLIENT-DECL`；③ **派生物**：整份补丁必须等于 `make-bundle-patch.mjs` 从 `agent.cordis.yml` 造出来的那一份 —— **跑仓库自己的 `--check`**（逐字节比，不另写比较逻辑），不一致 ⇒ `DASH-PATCH-NOT-DERIVED`；跑之前有一道**安全联锁**（`--check` 分支必须先于写盘，否则记 `HOLD` 不跑——它加载期会写活体），跑完再量一次活体 sha256（变了 ⇒ `DASH-PATCH-CHECK-WROTE-PRESET`）；④ **翻面**：合成夹具的四把刀 —— 正确形状干净 · 放回 `preset-agenia.plugins` ⇒ **只有** `DASH-NOT-HOST-LEVEL` · 包去掉 `dsh.client` ⇒ **只有** `DASH-NO-CLIENT-DECL` · 整行拿掉 ⇒ **只有** `DASH-ROW-ABSENT` · 派生刀（生成器 + 预设树的副本上改一个值）⇒ `--check` 必须翻成 `RED`；刀翻错面 ⇒ `DASH-KNIFE-VECTOR`、跑不出判词 ⇒ `DASH-KNIFE-UNREADABLE`（尺子坏了不是对象坏了）。读数带 `{repo, head, 每份文件的字节/sha256/mtime, snapshot_at}`；**不判像素、不判浏览器真的收到包**（那归 GUI 清单，人点一次）。修复前的冻结副本（`tree-at-r3`）上红在 `DASH-NOT-HOST-LEVEL`；本副本（`25ae10d`）四条腿全绿', '批次 AC'],
+  // ── 第 4 关评审 `R-1`（2026-11-05）：**语义面** —— 忘写标记、忘点名表也必须红 ─────────────────
+  // 一句话：一行的层归属由"它指向的包是不是客户端 UI"决定，不由作者记得的那两把钥匙决定。
+  // 判据本体、解析面边界与合成夹具逐条写在 `support/client-ui-placement.mjs` 的文件头。
+  ['DASH-16', 'client-dashboard', F.dash06, '**客户端 UI 行必须在宿主 insert（语义面）**（第 4 关评审 2026-11-05 `R-1`；`bug-20261104-02` 的下一次复现路径）：一行新加的 `dsh.client` 插件若**两处都忘**（没写 `# @host-level`、也没进生成器的 `HOST_LEVEL_IDS`），三个生成期 throw 都不响 —— 生成器走 `marks === 0` 分支把它拷进**每一份预设**，浏览器收不到，而全套判据照样绿。本格判两件事：① **语义面**：每份预设 `plugins` 里的行，用 `name` 解析到盘上的 `package.json`（路径形真解析；裸包名按 `manifestRoots` 里的 `package.json.name` 匹配，解析不到的记 `unresolved` 读数），只要那个包声明 `dsh.client.platform: "web"` 却不在顶层 `- insert:` ⇒ `DASH-CLIENT-IN-PRESET`（**不读标记、不读点名表、不认行 id**）；② **阳性腿**：语义集合必须非空、且当前看板那一行是顶层 `insert` 的直接成员，否则 ⇒ `DASH-HOST-MISSING`（"整份补丁里一行客户端 UI 都没有"不许绿）。刀：只在夹具里存在的合成包（`dsh.client.platform: web`）+ 合成行放进预设（无标记、无点名）⇒ **只有** `DASH-CLIENT-IN-PRESET`；同一行放进宿主 insert ⇒ 干净；看板行拿掉 ⇒ **只有** `DASH-HOST-MISSING`；看板行放回预设 ⇒ 两码（语义面 + 阳性腿）。刀翻错面 ⇒ `DASH-KNIFE-VECTOR`、扫描器没把夹具行解析到它自己的包 / 夹具行出现在生产输入里 ⇒ `DASH-KNIFE-UNREADABLE`（尺子坏了不是对象坏了）。**不判像素、不判浏览器真的收到包**（那归 GUI 清单）。判据本体与合成夹具：`support/client-ui-placement.mjs`', '批次 AC'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1160,12 +1175,13 @@ export const GROUP_COUNTS = {
    *  一格一张票：副本自足 / 容量来源格 / 第三级正样本 / 桥的两张表 / 匹配描述 / 翻面读数。
    *  契约见 `.team/test/2026-11-02/CONTRACT-REVIEW-20261102.md`。 */
   'review-20261102': 6,
-  /** 批次 AC · 客户端看板（`DASH-01`…`DASH-15`：字段映射/视图三格/渲染三格 +
+  /** 批次 AC · 客户端看板（`DASH-01`…`DASH-16`：字段映射/视图三格/渲染三格 +
    *  第 2 关重开加的四格 —— 定位 / 端到端 / 日身份 / E29 展开钮 +
-   *  `DASH-15` **面板装上了没有**（`bug-20261104-02`：宿主装载层的顶层 insert + `dsh.client` + 派生物））——
+   *  `DASH-15` **面板装上了没有**（`bug-20261104-02`：宿主装载层的顶层 insert + `dsh.client` + 派生物）+
+   *  `DASH-16` **客户端 UI 行必须在宿主 insert（语义面）**（第 4 关评审 `R-1`：按包清单判，不看标记/点名表））——
    *  契约见 `.team/test/2026-11-04/技术契约-客户端看板.md`（定形 §六.1/§六.2/§八；§11 是重开那一批；
-   *  `DASH-15` 的定形在 bug 台账 + 组长 2026-11-04 log §十四）。 */
-  'client-dashboard': 15,
+   *  `DASH-15` 的定形在 bug 台账 + 组长 2026-11-04 log §十四；`DASH-16` 的定形在评审报告 `R-1`）。 */
+  'client-dashboard': 16,
 }
 
 /**
