@@ -54,13 +54,15 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
-import { caseDir, caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
+import { caseDir, caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import { cfg, delegationToolNames, enabledDelegations, hostLevelRows, leaderBlockProblems, listMd, memberAnnotations, parseComposition, plain, presetEntries, readPresetBaseline } from '../support/composition.mjs'
 import {
   buildCatalog, buildContentRoot, configFromComposition, guardOrderOf, importSourceCopy,
   injectedNames, injectedText, knifeReplace, loadInjector as loadInjectorFile, namesOfCatalog,
   sectionNames, withHarness, SYNTH_LEGACY_SESSION,
 } from '../support/injector-harness.mjs'
+// 回滚期那一格用的码与量具（`DASH-15` / `DASH-16` / `PRS-01` 共用**同一个**码：一个事实一个载体）。
+import { DISABLED_PENDING_CODE } from '../support/client-ui-placement.mjs'
 
 before(() => {
   preflight()
@@ -331,9 +333,11 @@ describe('static · presets-two (任务 A)', () => {
         //   —— 组长预设必须自己声明自己那一档，否则每个组长会话都报一次"没声明"。放行的是**具体那一行**
         //   （基线 0 条 · 现侧 1 条 · 逐字 `defaultRole: leader` · 坐在 `persona-injector` 的 config 里、
         //   与 `leaderOrder:` 同级缩进）；多一条 / 换个值 / 塞到别处 ⇒ `LEADER-VALUE-EXTRA`。
-        // 🔴 **2026-11-05（宿主级行）**：看板那一行现在标了 `# @host-level`，**不进任何预设**
-        //   ⇒ 组长块里**不许**出现它。它住回组长块 = 越界（`LEADER-VALUE-EXTRA`），
-        //   不再是"末尾多 4 行"那种可放行形状；层归属的完整腿在 `support/composition.mjs::presetEntryProblems`。
+        // 🔴 **2026-11-05（宿主级行 → 回滚）**：看板那一行一度标了 `# @host-level`、不住任何预设
+        //   ⇒ 组长块里不许出现它。**回滚之后**（16:2x）它 `disabled: true`、按生成器的形状回到组长块
+        //   —— 那一行的存在是老板拍的回滚，不是"谁顺手改了组长块" ⇒ `leaderBlockProblems()` 的
+        //   `pending_rows` 放行它（四条同时成立才放行），本用例据此记 **HOLD**（不是绿）。
+        //   行一开（`disabled` 去掉）⇒ 立刻回到 `LEADER-CLOBBERED`（红）：方向没有翻，只是窗口变了。
         const leaderBase = (base.value.preset_blocks ?? []).find((b) => b.preset_id === LEADER_PRESET_ID)
         const leaderNow = blocks.find((b) => b.preset_id === LEADER_PRESET_ID)
         if (leaderBase !== undefined) {
@@ -352,11 +356,29 @@ describe('static · presets-two (任务 A)', () => {
               // 宿主级集合只从组合原文的 `# @host-level` 读（一个事实一个落点）——
               // 不在 `leaderBlockProblems` 里再写死一份 id 名单。
               hostLevelIds: hostLevelRows(ymlText).ids,
+              // 组合原文：判"回滚期停在组长块里的那一行"（组合里 `disabled: true` + 不在基线里 + 值行与组合逐字相同）。
+              compositionText: ymlText,
             })
             rec.readings.leader_block_base = leaderBase.sha256
             rec.readings.leader_block_now = leaderNow.sha256
             rec.readings.leader_block = verdict.readings
             for (const p of verdict.problems) push(p.code, p.message)
+            /**
+             * 🔴 **第三态：回滚期这一格量不了"逐行相同"**（2026-11-05 16:2x）。
+             * 宿主级 insert 让整个 bundle 层 boot 失败 ⇒ 看板那一行 `disabled: true` 搬回组长块
+             * （= 11-04 的形状），挂载路线改成走 profile 层（另开一票）。
+             * 那一行的存在是**老板拍的回滚**，不是"谁顺手改了组长块" ⇒ 记 HOLD（**不是绿**）。
+             * 判据没有放宽：`pending_rows` 要同时满足"组合里 disabled / 不在基线里 / 值行与组合逐字相同"，
+             * 行一开（`disabled` 去掉）它立刻回到 `LEADER-CLOBBERED`；`LEADER-PENDING-ROW-DRIFT` 另报。
+             */
+            const pending = verdict.readings.value_lines?.pending_rows ?? []
+            if (pending.length > 0) {
+              caseHold(rec, DISABLED_PENDING_CODE,
+                `组长块里停着 ${pending.length} 行**回滚期故意停在预设层**的行：${JSON.stringify(pending.map((p) => p.id))}`
+                + `（组合里 \`disabled: true\` · 不在基线里 · 值行与组合逐字相同：${JSON.stringify(pending.map((p) => p.identical_to_composition))}）`
+                + ' ⇒ "组长块的值行与基线逐行相同"这一格在回滚窗口里不成立，记 HOLD（不是绿）。'
+                + '挂载路线（profile 层）落地、那一行不再是 disabled 之后，这一格自动回到红/绿两态')
+            }
           }
         }
       }

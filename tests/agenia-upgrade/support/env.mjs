@@ -141,8 +141,13 @@ export const FROZEN = {
     /** 活体组合 `officeBound` 的名单（**一个**判断类岗位：`review` —— 复盘岗已撤 · `memory-review` / `conversation-review`
      *  2026-10-16 先后由老板拍板移出；来历见下面 `FROZEN.staged.officeBound` 那条 🔴）。 */
     officeBound: ['review'],
-    /** 活体组合里 `disabled: true` 的**有效**行数（剔掉注释、不算 `!!js` 平台二选一那一对）。 */
-    disabledLiteralRows: 5,
+    /**
+     * 活体组合里 `disabled: true` 的**有效**行数（剔掉注释、不算 `!!js` 平台二选一那一对）。
+     * 2026-11-05：5 → 6 —— 多出来的是 `agenia-dashboard`（回滚：先关掉，挂载路线改走 profile 层）。
+     * ⚠️ 本字段**当前零读者**（被测期望是同名的 `FROZEN.staged.disabledLiteralRows`）；
+     *    留着是因为它是"活体读数"这一侧 —— 改的时候与后者**同批**改，别只改一处。
+     */
+    disabledLiteralRows: 6,
     /** 活体组合里**已启用**的具名 `dsh-tool-subagent` 实例数（`team-retro` 关着，不算）。 */
     enabledNamedDelegations: 9,
     /**
@@ -308,7 +313,15 @@ export const FROZEN = {
      *    只改名单则 `ONLY-IN-AGENIA` 的计数那一句仍红（`STAT-01` 两句各判一次）。
      */
     onlyInAgenia: 11,
-    disabledLiteralRows: 5,
+    /**
+     * 活体组合里 `disabled: true` 的**有效**行数（剔掉注释、不算 `!!js` 平台二选一那一对）。
+     * 2026-11-05：**5 → 6** —— 多出来的是 `agenia-dashboard`（宿主级 insert 让整个 bundle 层在 boot 时失效 ⇒
+     * 老板拍的回滚先把它 `disabled: true`，挂载路线改走 profile 层）。
+     * 同一批读数（`calibrate().readings.disabled_literal`）：`tool-subagent-fork` · `tool-subagent-codex` ·
+     * `tool-subagent-claude-code` · `team-retro` · `tool-plugin-manager` · `agenia-dashboard`。
+     * ⚠️ 与上面 `liveWitness.disabledLiteralRows`（活体读数、零读者）是**同一个数**：改一处 = 没改。
+     */
+    disabledLiteralRows: 6,
     /** 进提示词的 .md 类数：persona/style/leader/work-guidelines + 9 角色 = **13**。
      *  🔴 2026-10-19（`F-109`）：**14 → 13**。`me-aqua.md` 是老板 2026-10-17 决定归档的
      *     （归档落在**仓库根**的 `.team/_archive/me-aqua.md-20261017/me-aqua.md` —— 不是预设目录下的

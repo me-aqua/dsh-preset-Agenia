@@ -28,6 +28,15 @@
  *
  * ⚠️ 判读边界（不归这一格）：像素 / 浏览器真的收到包归 GUI 清单；"生成补丁是不是生成器的派生物"
  *   归 `DASH-15` 的 ③；"标记与表一致"归生成期 throw 与 `DASH-15` 的 ①。
+ *
+ * ── 回滚期（2026-11-05 16:2x 之后）────────────────────────────────────────────
+ * 看板那一行现在是 `disabled: true`：宿主级 insert 让整个 bundle 层 boot 失败，面板先关，
+ * 挂载路线改成走 profile 层（另开一票）。于是"客户端 UI 行必须住宿主 insert"这一格的**目标形状
+ * 故意不在** ⇒ 这一份判据照旧报它那几条码，但**用例**要把"看板那一行自己的层归属"翻成第三态 HOLD
+ * （`DISABLED_PENDING_CODE`），而不是红。判据本体不知道 HOLD —— 它只报形状；红/HOLD 的分流在用例里，
+ * 因为那是**政策**不是**量法**（量法要能被夹具喂，政策要能被看见）。
+ * 🔴 分流不能顺手放宽：`scope: 'other'` 的那些（别的客户端 UI 行 / 行整个不在 / 包没声明 / 补丁读不懂）
+ *    在 disabled 期间**照旧红** —— 回滚只解释了"看板那一行不在宿主层"，解释不了别的。
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -46,6 +55,37 @@ export const CODES = Object.freeze({
   patchUnreadable: 'DASH-PATCH-UNREADABLE',
 })
 
+/**
+ * **回滚期的第三态码**（2026-11-05 16:2x · 宿主层挂载被回滚之后）。
+ *
+ * 一句话：看板那一行在组合里 `disabled: true`（老板拍的回滚：宿主级 insert 让整个 bundle 层
+ * 在 boot 时失效 ⇒ 新会话 `agentPreset: "standard"` ⇒ 无角色 ⇒ 窄权限），
+ * 那么"它必须在宿主 insert"这一格的目标形状就是**故意不在**的 ——
+ * 判"没装"是错的（它本来就不该装），判"装好了"更是错的。
+ * ⇒ 这一格记 **HOLD**（第三态，`caseHold()`），**不是绿**：结算里单独一栏，读的人一眼看得见"这条没判"。
+ * 路由重设计（走 profile 层）落地之后，那一行不再是 `disabled` ⇒ 这一格自动回到"必须住宿主 insert"。
+ */
+export const DISABLED_PENDING_CODE = 'DASH-MOUNT-DISABLED-PENDING-PROFILE-LAYER'
+
+/**
+ * 组合原文里某一行自己的状态（**只看组合，不看补丁** —— 组合是源，补丁是派生物）。
+ *
+ * @param {string} compositionText `agent.cordis.yml` 原文
+ * @param {string} rowId
+ * @returns {{found: boolean, occurrences: number, disabled: boolean, disabled_values: any[]}}
+ *   `disabled` = 出现过的每一行都是字面 `true`（`disabledKind() === 'literal-true'`）；
+ *   一行都没有 ⇒ `found: false`（"行不在"与"行开着"是两件事，不合并）。
+ */
+export function compositionRowState(compositionText, rowId) {
+  const rows = collectRows(parseYamlSubset(compositionText, `${rowId}·composition`).value).filter((r) => r.id === rowId)
+  return {
+    found: rows.length > 0,
+    occurrences: rows.length,
+    disabled: rows.length > 0 && rows.every((r) => r.disabled === true),
+    disabled_values: rows.map((r) => r.disabled ?? null),
+  }
+}
+
 const GROUP_NAME = 'cordis:group'
 /** 路径形名字（与框架的 `pathLike` 同一族：`file:` / 盘符 / 斜杠 / `./` `../`）。 */
 const PATH_LIKE = /^(file:|[A-Za-z]:[\\/]|\/|\.{1,2}[\\/]|\\\\)/
@@ -53,25 +93,36 @@ const relOf = (file) => path.relative(PATHS.repo, file).replace(/\\/g, '/')
 
 /**
  * 顶层 `- insert:` 的直接成员（宿主装载层装的就是这些）—— 用**结构**判，不数缩进。
- * @returns {{hostMaps: Set<Map>, blocks: Array<{insert:number, ids:string[]}>}}
+ * 0 条宿主级行时生成器只留一个空壳 `- insert:`（YAML 读出来是 `null`）⇒ 记成 `kind: 'empty'`，
+ * 不当错误（`presetEntryProblems()` 那一侧同理：0 个宿主 insert 是合法形状）。
+ * @returns {{hostMaps: Set<Map>, blocks: Array<{insert:number, ids:string[], kind:string}>}}
  */
 function topLevelHostMaps(doc) {
   const hostMaps = new Set()
   const blocks = []
   const ops = Array.isArray(doc.value) ? doc.value : []
   ops.forEach((op, index) => {
-    if (!(op instanceof Map) || !Array.isArray(op.get('insert'))) {
-      blocks.push({ insert: index + 1, ids: [] })
+    if (!(op instanceof Map)) {
+      blocks.push({ insert: index + 1, ids: [], kind: 'not-a-map' })
+      return
+    }
+    const insert = op.get('insert')
+    if (insert === null && [...op.keys()].length === 1) {
+      blocks.push({ insert: index + 1, ids: [], kind: 'empty' })
+      return
+    }
+    if (!Array.isArray(insert)) {
+      blocks.push({ insert: index + 1, ids: [], kind: 'not-insert' })
       return
     }
     const ids = []
-    for (const item of op.get('insert')) {
+    for (const item of insert) {
       if (item instanceof Map && typeof item.get('id') === 'string') {
         hostMaps.add(item)
         ids.push(item.get('id'))
       }
     }
-    blocks.push({ insert: index + 1, ids })
+    blocks.push({ insert: index + 1, ids, kind: ids.length === 0 ? 'empty' : 'insert' })
   })
   return { hostMaps, blocks }
 }
@@ -218,7 +269,8 @@ export function scanClientUiPlacement({
   }
   if (reading.warnings.length > 0) {
     problems.push(problem(CODES.patchUnreadable,
-      `${label} 有解析器读不懂的行（${reading.warnings.slice(0, 4).join(' / ')}）—— 语义面判不了这一份的形状（缺 ≠ 坏 ≠ 空）`))
+      `${label} 有解析器读不懂的行（${reading.warnings.slice(0, 4).join(' / ')}）—— 语义面判不了这一份的形状（缺 ≠ 坏 ≠ 空）`,
+      { scope: 'other' }))
     return { problems, reading }
   }
 
@@ -291,36 +343,49 @@ export function scanClientUiPlacement({
   for (const c of classified) {
     if (!c.client || !presetOfMap.has(c.row.map)) continue
     const presetId = presetOfMap.get(c.row.map)
-    reading.violations.push({ preset: presetId, id: c.row.id, name: c.row.name, pkg: relOf(c.pkg.file) })
+    const isDash = c.row.id === rowId
+    reading.violations.push({ preset: presetId, id: c.row.id, name: c.row.name, pkg: relOf(c.pkg.file), disabled: c.row.disabled ?? null })
     problems.push(problem(CODES.clientInPreset,
       `预设 ${presetId} 的 plugins 里有一行 \`${c.row.id}\` 指向的包（${relOf(c.pkg.file)}）声明了 \`dsh.client.platform: web\``
       + ' —— 客户端 UI 行只许住补丁**顶层 `- insert:`**（宿主装载层）；装进预设 = 浏览器收不到它（与 bug-20261104-02 同形）。'
-      + '修法：在 `agent.cordis.yml` 给这一行加 `# @host-level`、并把 id 加进生成器的 `HOST_LEVEL_IDS`，然后重跑生成器'))
+      + (c.row.disabled === true
+        ? '这一行现在是 `disabled: true`（回滚期：挂载路线待重设计，走 profile 层）——\n'
+          + '        **不要**照着"加 `# @host-level` + 进 `HOST_LEVEL_IDS`"去修：那条路 2026-11-05 实测会让整个 bundle 层 boot 失败。'
+        : '修法：在 `agent.cordis.yml` 给这一行加 `# @host-level`、并把 id 加进生成器的 `HOST_LEVEL_IDS`，然后重跑生成器'),
+      { scope: isDash ? 'mount' : 'other', row_id: c.row.id, preset: presetId }))
   }
 
   // ② 阳性腿：语义集合非空，且当前看板那一行是顶层 insert 的直接成员
+  //    🔴 这一腿**整条**都是"看板那一行的层归属"这一个问题 ⇒ 它报的每一条都带 `scope: 'mount'`
+  //       （回滚期由用例按"这一行是不是 disabled"把它记成 HOLD，而不是红）。
   const dashRows = rows.filter((r) => r.id === rowId)
   const dashOutside = dashRows.filter((r) => !hostMaps.has(r.map))
+  const dashDisabledFlags = dashRows.map((r) => r.disabled === true)
   reading.dashboard = {
     id: rowId,
     occurrences: dashRows.length,
     host_members: dashRows.length - dashOutside.length,
-    outside: dashOutside.map((r) => ({ parent: typeof r.parent === 'string' ? r.parent : null, preset: presetOfMap.get(r.map) ?? null })),
+    outside: dashOutside.map((r) => ({ parent: typeof r.parent === 'string' ? r.parent : null, preset: presetOfMap.get(r.map) ?? null, disabled: r.disabled ?? null })),
     semantic_client_rows: clientAll.length,
+    disabled_flags: dashDisabledFlags,
+    all_disabled: dashRows.length > 0 && dashDisabledFlags.every(Boolean),
   }
   if (clientAll.length === 0) {
     problems.push(problem(CODES.hostMissing,
       `整份补丁里没有任何一行解析到声明 \`dsh.client.platform: web\` 的包 —— 这一格的阳性腿没有对象：`
-      + '"客户端 UI 行必须住宿主 insert"无从成立。缺 ≠ 挪（行整个不在时由 `DASH-15` 的 `DASH-ROW-ABSENT` 报）'))
+      + '"客户端 UI 行必须住宿主 insert"无从成立。缺 ≠ 挪（行整个不在时由 `DASH-15` 的 `DASH-ROW-ABSENT` 报）',
+      { scope: 'mount', row_id: rowId }))
   } else if (dashRows.length === 0) {
     problems.push(problem(CODES.hostMissing,
       `语义集合里有 ${clientAll.length} 行客户端 UI（${clientAll.map((c) => c.row.id).join(', ')}），但当前看板那一行 \`${rowId}\` `
-      + '整个不在补丁里 —— 宿主 insert 没装它（阳性腿不成立）'))
+      + '整个不在补丁里 —— 宿主 insert 没装它（阳性腿不成立）',
+      { scope: 'mount', row_id: rowId }))
   } else if (dashOutside.length > 0) {
     const where = dashOutside.map((r) => (presetOfMap.has(r.map) ? `预设 ${presetOfMap.get(r.map)}` : (r.parent ?? '顶层之外'))).join(' / ')
     problems.push(problem(CODES.hostMissing,
       `当前看板那一行 \`${rowId}\` 在补丁里出现 ${dashRows.length} 次，但只有 ${dashRows.length - dashOutside.length} 次是顶层 \`- insert:\` 的直接成员`
-      + `；其余住在 ${where} —— 宿主装载层没装它（浏览器收不到）`))
+      + `；其余住在 ${where} —— 宿主装载层没装它（浏览器收不到）`,
+      { scope: 'mount', row_id: rowId }))
   }
 
   return { problems, reading }
@@ -365,6 +430,7 @@ export function syntheticClientUiPackage(dir, { dirName = 'client-ui-probe', pkg
 /**
  * 合成补丁：`dashboard` / `synthetic` 各自是 `host`（顶层 insert 直接成员）/ `preset`（预设 plugins 里）/
  * `absent`（没有这一行）。其余结构与真补丁同形（`- insert:` + 一条注册行 + plugins）。
+ * 行对象带 `disabled: true` 时那一行会写出 `disabled: true`（分流政策那几格用它量"关着"这一态）。
  *
  * @param {{dashboard?: 'host'|'preset'|'absent', synthetic?: 'host'|'preset'|'absent',
  *          dashboardRow: object, syntheticRow: object, presetId?: string}} input
@@ -372,12 +438,14 @@ export function syntheticClientUiPackage(dir, { dirName = 'client-ui-probe', pkg
 export function clientUiPatchFixture({ dashboard = 'host', synthetic = 'absent', dashboardRow, syntheticRow, presetId = 'agenia' } = {}) {
   const rowBlock = (indent, row) => {
     const pad = ' '.repeat(indent)
-    return [
-      `${pad}- id: ${row.id}`,
+    const lines = [`${pad}- id: ${row.id}`]
+    if (row.disabled === true) lines.push(`${pad}  disabled: true`)
+    lines.push(
       `${pad}  name: '${row.name}'`,
       `${pad}  config:`,
       `${pad}    root: '${row.root}'`,
-    ]
+    )
+    return lines
   }
   const lines = [
     '# DASH-16 合成补丁（阳性对照 / 刀）—— 只住运行根或测试抽屉，不是被测对象',

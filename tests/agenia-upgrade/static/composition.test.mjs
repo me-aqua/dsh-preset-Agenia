@@ -516,7 +516,8 @@ describe('static · composition', () => {
         // ⚠️ **作用域 = 已启用的行**：关着的行（`disabled: true`）不参与装配，框架不校验它的键
         //    —— 把"关着的历史行还带 0.2.0 的键"判成红，等于给一个不存在的违规开罚单。
         //    `team-retro` 那一行组合里自己写着 🔴「别原样打开，先按 team_* 的迁移做」⇒ 只记读数（落 `rec.readings`）；
-        //    "关掉≠删掉"由 STAT-03 的 `DISABLED-COUNT`（5 行字面 true）守：真有人原样打开，那一条先红。
+        //    "关掉≠删掉"由 STAT-03 的 `DISABLED-COUNT` 守（那个数**只从** `FROZEN.staged.disabledLiteralRows` 读：
+        //    真有人原样打开，计数先红）。
         {
           const offenders = []
           for (const r of enabledDelegations(comp.rows)) {

@@ -546,7 +546,8 @@ export function expectedPresetRows(compRows, { leaderId = FROZEN.patchPresets.le
  *   ① **份数**：入口数必须 = 从组合推出来的份数（组长 1 + 带 `agentPreset` 的委派行）；
  *   ② **每份的行集**：组长份 = 组合的**非宿主级**行、组员份 = 组合去掉 `delegation` 整组再减去宿主级行
  *      —— **多重集**相等；
- *   ③ **顶层形状**：顶层只许是这几份预设入口 + 宿主级行（各占自己的 `- insert:`），多一行都不行；
+ *   ③ **顶层形状**：顶层只许是这几份预设入口 + **0..N** 个宿主级 insert，多一样都不行；
+ *      0 条宿主级行时那个空壳 `- insert:` 是**合法**的（2026-11-05 回滚之后就是它，见 `topLevelInserts()`）；
  *   ④ **宿主级行**：每个标了 `# @host-level` 的行在**每份预设的 plugins 里 0 次**、在**顶层 insert 里恰好 1 次**；
  *   ⑤ **行数闭合**：每份入口的行 + 顶层宿主级行 = 补丁的全部行（一条不丢、一条不多）。
  *
@@ -606,7 +607,14 @@ export function presetEntryProblems(compositionText, patchText, { leaderId = FRO
   readings.patch_host_top_ids = hostTopRows.map((r) => r.id)
   for (const block of top.blocks) {
     if (block.rows.length === 0) {
-      problems.push(`补丁顶层第 ${block.index + 1} 个 \`- insert:\` 是空的 —— 顶层只许是这 ${expected.size} 份预设入口 + 宿主级行，空壳没有落点`)
+      /**
+       * 🔴 空壳宿主 insert：**0 条宿主级行时它是合法形状**（生成器留着那一行抬头）。
+       *    有宿主级行时它才是错（搬空了 / 多出来一个空壳）—— 判据钉的是"这一版有没有宿主级行"，
+       *    不是"顶层必须有 insert"（2026-11-05 回滚之后宿主 insert 可以是 0 个，见 `topLevelInserts()`）。
+       */
+      if (host.ids.length > 0) {
+        problems.push(`补丁顶层第 ${block.index + 1} 个 \`- insert:\` 是空的，而这一版有 ${host.ids.length} 条宿主级行（${host.ids.join(', ')}）—— 宿主 insert 搬空了？`)
+      }
       continue
     }
     const regsHere = block.rows.filter((x) => x.name === FROZEN.oracle.registrationName)
@@ -684,28 +692,48 @@ export function presetEntryProblems(compositionText, patchText, { leaderId = FRO
 /**
  * 补丁**顶层**的 `- insert:` 块（`- insert:` 的直接成员，不往下钻）。
  * 判"是不是顶层"用**结构**，不数缩进：顶层序列的每一项应当是一个只带 `insert` 列表的映射。
+ *
+ * 🔴 **宿主 insert 可以是 0 个**（2026-11-05 回滚之后就是这个形状）。
+ *    规则是「顶层 = 预设入口 + **(0..N)** 个宿主级 insert，别的不许有」——**不是**"至少一个 insert"。
+ *    写 `- insert:` 而底下没有成员时，YAML 读出来的值是 `null`（不是空数组）：这一份补丁的第 1 个顶层项
+ *    就是那个**空壳**宿主 insert（生成器在"这一版 0 条宿主级行"时仍然留着它的抬头）。
+ *    ⇒ 空壳记成一个 `rows: []` 的块，**不当错误**；要不要报由调用方按"这一版有没有宿主级行"决定
+ *    （见 `presetEntryProblems()` 的 ③：有宿主级行时空壳才是错）。
+ *    代价写清楚：这条从"必须是一个 insert 列表"放宽到"insert 列表或空 insert"，它**没有**放宽
+ *    "顶层能放别的东西"——不是 `- insert:` 的顶层项、带别的键的顶层项，照旧各自报红。
  */
 function topLevelInserts(doc) {
   const problems = []
   const blocks = []
   if (!Array.isArray(doc.value)) {
-    problems.push('补丁顶层不是一个 `- insert:` 序列 —— 顶层只许是宿主级 insert 与预设入口')
+    problems.push('补丁顶层不是一个 `- insert:` 序列 —— 顶层只许是预设入口 + (0..N) 个宿主级 insert')
     return { blocks, problems }
   }
   doc.value.forEach((op, index) => {
-    if (!(op instanceof Map) || !Array.isArray(op.get('insert'))) {
-      problems.push(`补丁顶层第 ${index + 1} 项不是 \`- insert:\` 列表 —— 顶层只许是宿主级 insert 与预设入口（多出来的东西没有落点）`)
+    if (!(op instanceof Map)) {
+      problems.push(`补丁顶层第 ${index + 1} 项不是 \`- insert:\` 列表 —— 顶层只许是预设入口 + (0..N) 个宿主级 insert（多出来的东西没有落点）`)
+      return
+    }
+    const keys = [...op.keys()]
+    const insert = op.get('insert')
+    // 空壳宿主 insert：`- insert:` 底下没有成员 ⇒ 解析成 null。只认"这一项上只有 insert 一个键"。
+    if (insert === null && keys.length === 1 && keys[0] === 'insert') {
+      blocks.push({ index, rows: [], empty: true })
+      return
+    }
+    if (!Array.isArray(insert)) {
+      problems.push(`补丁顶层第 ${index + 1} 项不是 \`- insert:\` 列表 —— 顶层只许是预设入口 + (0..N) 个宿主级 insert（多出来的东西没有落点）`)
       return
     }
     const rows = []
-    for (const item of op.get('insert')) {
+    for (const item of insert) {
       if (item instanceof Map && typeof item.get('id') === 'string') {
         rows.push({ id: item.get('id'), name: item.get('name') ?? null, map: item })
       } else {
         problems.push(`补丁顶层第 ${index + 1} 个 insert 里有一项不是带 \`id\` 的行 —— 顶层只许是完整的行（宿主级 / 预设入口）`)
       }
     }
-    blocks.push({ index, rows })
+    blocks.push({ index, rows, empty: rows.length === 0 })
   })
   return { blocks, problems }
 }
@@ -814,8 +842,11 @@ export function guardCoverageProblems(enumerated, guardNames) {
  *
  * 为什么要它：④ 的判据从"整份文本里找得到"改成"**逐份入口逐行比**"（评审 `M-1`），
  * 需要**按行切块**而不是按顶层切块 —— 顶层只有 20 块，而一行一行的块才是补丁里真正被搬来搬去的东西。
+ *
+ * 唯一实现是 `rowBlockSpans()`（带行号区间）；`rowBlocks()` 只是它的"只要正文"视图 ——
+ * 两处各切一遍会让"哪几行属于这一行"这个规则有两个载体（`cand-20261023-0249`）。
  */
-export function rowBlocks(text) {
+export function rowBlockSpans(text) {
   const lines = String(text).replace(/\r\n/g, '\n').split('\n')
   const out = new Map()
   for (let i = 0; i < lines.length; i += 1) {
@@ -832,8 +863,15 @@ export function rowBlocks(text) {
       end += 1
     }
     while (end > i + 1 && lines[end - 1].trim() === '') end -= 1
-    out.set(m[2], lines.slice(i, end))
+    out.set(m[2], { id: m[2], start: i, end, indent, lines: lines.slice(i, end) })
   }
+  return out
+}
+
+/** `rowBlockSpans()` 的"只要正文"视图（同一个切法，别在这上面再写一份）。 */
+export function rowBlocks(text) {
+  const out = new Map()
+  for (const [id, span] of rowBlockSpans(text)) out.set(id, span.lines)
   return out
 }
 
@@ -993,6 +1031,10 @@ export function patchStructuralProblems(compositionText, patchText) {
  * @param {string} input.nowText    现在补丁里的组长块全文
  * @param {string} [input.memberPresetId] 九行同指的那一份（`memberPresetShared().id`；null = 读不出）
  * @param {string[]} [input.oldMemberIds] 升级前那九份 per-role 预设 id
+ * @param {string[]} [input.hostLevelIds] 组合里标了 `# @host-level` 的行（`hostLevelRows().ids`）
+ * @param {string|null} [input.compositionText] 组合原文 —— **给了才判"回滚期停在组长块里的那一行"**
+ *   （`pending_rows`：组合里 `disabled: true` + 不在基线里 + 值行与组合逐字相同；不给 ⇒ 这一腿不判，
+ *   行为与 2026-11-05 之前完全一样）。调用方拿 `readings.pending_rows` 非空去记 HOLD。
  * @returns {{problems: {code: string, message: string}[], readings: object}}
  */
 export function leaderBlockProblems({
@@ -1002,6 +1044,7 @@ export function leaderBlockProblems({
   memberPresetId = null,
   oldMemberIds = [],
   hostLevelIds = [],
+  compositionText = null,
 }) {
   const problems = []
   const readings = { leader_preset_id: leaderPresetId, member_preset_id: memberPresetId, old_member_ids: oldMemberIds }
@@ -1036,8 +1079,13 @@ export function leaderBlockProblems({
       + ' —— 任务 A 只并员，组长的人设 / 次序 / 边界 / 路径 / 预设属性一格都不许动')
   }
 
-  /** 值行 = 非注释、非空行（`agentPreset:` 单独挑出来看去向）。 */
-  const valueLines = (text) => String(text).split(/\r?\n/).filter((l) => l.trim() !== '' && !/^\s*#/.test(l))
+  /** 值行 = 非注释、非空行（`agentPreset:` 单独挑出来看去向）。唯一实现带行号（`valueLineEntries()`）。 */
+  const valueLineEntries = (text) => String(text)
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line, i) => ({ line, i }))
+    .filter(({ line }) => line.trim() !== '' && !/^\s*#/.test(line))
+  const valueLines = (text) => valueLineEntries(text).map((x) => x.line)
   const isPresetLine = (l) => /^\s*agentPreset:/.test(l)
   /**
    * 🔴 **⑤′-b 的第一处放行**（2026-11-01 收口 · 组长 ruling 7）：组长块里**恰好一条** `defaultRole: leader`。
@@ -1100,7 +1148,6 @@ export function leaderBlockProblems({
   const baseAll = valueLines(baseText)
   const nowAll = valueLines(nowText)
   const baseRest = baseAll.filter((l) => !isPresetLine(l))
-  const nowRest = nowAll.filter((l) => !isPresetLine(l))
   const baseDr = defaultRoleLines(baseText)
   const nowDr = defaultRoleLines(nowText)
   const anchor = injectorAnchor(nowText)
@@ -1112,12 +1159,88 @@ export function leaderBlockProblems({
     && nowDr[0].i > anchor.start
     && nowDr[0].i < anchor.end
     && indentOfLine(nowDr[0].line) === anchor.indent
-  /** 放行的那一条从现侧**摘掉一次**（四条不同时成立就一行都不摘 ⇒ 下面照实报红）。 */
-  const nowNoDr = allowedDr ? dropFirst(nowRest, (l) => DEFAULT_ROLE_ALLOWED.test(l)) : nowRest
+  /**
+   * 🔴 **第三处具名判据：回滚期"停"在组长块里的那一行**（2026-11-05 16:2x 起）。
+   *
+   * 病根：宿主级 insert 让整个 bundle 层 boot 失败 ⇒ 那一行先 `disabled: true`、搬回预设块
+   * （= 11-04 的形状），挂载路线改成走 profile 层（另开一票）。于是 ⑤′-b 的
+   * "组长块的值行 == 基线"在**回滚窗口里**必然不成立 —— 而那不是"谁顺手改了组长块"。
+   *
+   * 放行条件（**四条同时成立**，少一条就一行都不摘 ⇒ 照实报红）：
+   *   ① 这一行在**组合**里是 `disabled: true`（`literal-true` —— `!!js` 条件不算，那是另一回事）；
+   *   ② 它的 `- id:` 值行**不在基线里**（= 基线冻住之后才加进来的行；基线自己的行没有这个借口）；
+   *   ③ 它在现侧组长块里**切得出整块**（`rowBlockSpans()`，与 ④ 同一个切法）；
+   *   ④ 那一块的**值行与组合里同一行逐字相同**（补丁是派生物：`config` / `name` / `root` 一个都不许改）。
+   * ④ 不成立 ⇒ `LEADER-PENDING-ROW-DRIFT`（红，点名这一行）—— 这一段仍然按"停在这里的行"处理
+   * （照摘），于是**只有这一条码**报出来；不摘会让 `LEADER-CLOBBERED` 跟着一起响，一个事实两个落点。
+   *
+   * ⚠️ 为什么这不是"放宽"：被摘掉的只是**这一行的存在**，摘掉之后
+   *   · 它必须在组合里、必须是 `disabled`、值行必须与组合逐字相同（三条都量了）；
+   *   · 别的行一个字节都不许动（值行比较照旧逐行比）；
+   *   · 行开着（`disabled` 去掉）⇒ ① 不成立 ⇒ 立刻回到 `LEADER-CLOBBERED`（红）——
+   *     这正是"宿主级行不许回来"那条判据的正向。
+   * 调用方（`PRS-01`）在 `readings.pending_rows` 非空时记 **HOLD**（第三态，不是绿）：
+   * 这一格量不了"组长块与基线逐行相同"，因为有一行是按老板的回滚**故意停在这里**的。
+   */
+  const pendingRows = []
+  let pendingDropIdx = new Set()
+  if (typeof compositionText === 'string' && compositionText.trim() !== '') {
+    const compRowsAll = collectRows(parseYamlSubset(compositionText, 'leader-block·composition').value)
+    const compDisabled = new Set(compRowsAll.filter((r) => r.disabled === true).map((r) => r.id))
+    const compSpans = rowBlockSpans(compositionText)
+    const nowSpans = rowBlockSpans(nowText)
+    const drop = new Set()
+    for (const [id, span] of nowSpans) {
+      if (!compDisabled.has(id)) continue
+      const compSpan = compSpans.get(id)
+      if (compSpan === undefined) continue
+      const idLine = span.lines[0].trim()
+      const inBase = baseRest.some((l) => l.trim() === idLine)
+      if (inBase) continue
+      /**
+       * 比"值行"要**归一化缩进**：补丁里那一块缩进 10/12 格，组合里是 0/2 格（同一个块）。
+       * 用 `shape()` 同一口径（`[trim, indent - 块首缩进]`）—— 只比 trim 会把块标量（`|`）里的
+       * 相对缩进放掉，而那是 YAML 语义的一部分。
+       */
+      const valueShape = (s) => s.lines
+        .filter((l) => l.trim() !== '' && !/^\s*#/.test(l))
+        .map((l) => [l.trim(), indentOf(l) - s.indent])
+      const gotValue = valueShape(span)
+      const wantValue = valueShape(compSpan)
+      const identical = gotValue.length > 0 && JSON.stringify(gotValue) === JSON.stringify(wantValue)
+      pendingRows.push({
+        id,
+        value_lines: gotValue.length,
+        composition_value_lines: wantValue.length,
+        identical_to_composition: identical,
+        id_line_in_baseline: inBase,
+      })
+      if (!identical) {
+        push('LEADER-PENDING-ROW-DRIFT', `组长块里那一行 \`${id}\`（组合里 \`disabled: true\`）的值行与组合**不一致**`
+          + `（组合 ${wantValue.length} 行 / 现 ${gotValue.length} 行）—— 补丁是组合的派生物，`
+          + '`disabled` 那一行也逐字搬：name / config / root 一个都不许改'
+          + `（现：${JSON.stringify(gotValue)} · 组合：${JSON.stringify(wantValue)}）`)
+      }
+      for (let k = span.start; k < span.end; k += 1) {
+        const line = String(nowText).replace(/\r\n/g, '\n').split('\n')[k]
+        if (line.trim() === '' || /^\s*#/.test(line)) continue
+        if (isPresetLine(line)) continue
+        drop.add(k)
+      }
+    }
+    pendingDropIdx = drop
+  }
+  /** 摘掉 pending 那几行的**值行条目**（按行号摘，不按内容摘 —— `config:` 这种行别处也有）。 */
+  const nowEntries = valueLineEntries(nowText)
+    .filter((o) => !isPresetLine(o.line) && !pendingDropIdx.has(o.i))
+  const nowWithoutDr = allowedDr
+    ? dropFirst(nowEntries, (o) => DEFAULT_ROLE_ALLOWED.test(o.line))
+    : nowEntries
+  const nowFlat = nowWithoutDr.map((o) => o.line)
   /** 宿主级行：2026-11-05 起**必须不在**组长块里（方向与 `defaultRole` 那条相反）。 */
   const baseHostCount = baseRest.filter(isHostLevelRowLine).length
-  const nowHostCount = nowNoDr.filter(isHostLevelRowLine).length
-  const nowCore = nowNoDr
+  const nowHostCount = nowFlat.filter(isHostLevelRowLine).length
+  const nowCore = nowFlat
   const firstDrift = baseRest.findIndex((l, i) => l !== nowCore[i])
   readings.value_lines = {
     base: baseRest.length,
@@ -1138,6 +1261,7 @@ export function leaderBlockProblems({
       now_id_lines: nowHostCount,
       must_be_absent: true,
     },
+    pending_rows: pendingRows,
   }
   if (!allowedDr && (baseDr.length > 0 || nowDr.length > 0)) {
     push('LEADER-VALUE-EXTRA', '组长块的 `defaultRole` 值行只允许**恰好一条** `defaultRole: leader`'

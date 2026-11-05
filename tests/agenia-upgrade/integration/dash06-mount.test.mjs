@@ -39,6 +39,19 @@
  *   · 不判浏览器真的收到了包（那要真宿主；本格判的是**装载层里的那一行与包的声明**）；
  *   · 不判 `view.json` 的内容（`DASH-11` / `DASH-12` 管数据链）。
  *
+ * ── 🔴 回滚（2026-11-05 16:2x 起）：这一格现在是第三态 HOLD ──────────────────────
+ * 老板重启后实测：把看板那一行搬进**宿主级 insert** 会让整个 bundle 层 boot 失败 ——
+ * 新会话的头是 `agentPreset: "standard"` ⇒ 无角色 ⇒ 窄权限：没命令行、不能派人。
+ * ⇒ 那一行先 `disabled: true`（`HOST_LEVEL_IDS = []`、组合里没有 `# @host-level`、补丁重生成），
+ *   挂载路线改成走 profile 层（另开一票）。
+ * 于是"它必须在宿主 insert"这一格的**目标形状故意不在**：
+ *   · 行 `disabled`（**组合**与**补丁每一处出现**都这么说）⇒ 层归属那几条记
+ *     **HOLD `DASH-MOUNT-DISABLED-PENDING-PROFILE-LAYER`**（`caseHold()`；**不是绿**，结算里单独一栏）；
+ *   · 行**开着**而住在预设层 / 整个不在 ⇒ **照旧红**（`DASH-NOT-HOST-LEVEL` / `DASH-ROW-ABSENT`）——
+ *     分流只对"看板那一行的层归属"那几条生效，别的（包声明 / 派生物 / 尺子 / 刀）一条都不许跟着松；
+ *   · 只翻一侧（组合说关着、补丁说开着，或反之）⇒ `DASH-DISABLED-MISMATCH`（红）：补丁是派生物。
+ * 分流政策自己的刀见 ④ 里那四格（关着+预设层 ⇒ HOLD；同一份夹具但 `featureOff=false` ⇒ 红）。
+ *
  * 🔴 **读数绑在树上**：本格打的是**现役** `presets/agenia`（与 `PRS-*` / `RGATE-01` 同一个理由 ——
  * 浏览器收到的是装好的那一份）。dev 会并发改 `presets/**`，所以每个读数都带
  * `{repo, head, 文件 sha256/字节/mtime, snapshot_at}`，且**一次读到的字节从头用到尾**；
@@ -58,6 +71,13 @@
  * 判据本体与合成夹具在 `support/client-ui-placement.mjs`（探针可以拿同一份量活树）。
  * 解析面边界：路径形名字（`file:///…`）真解析；裸包名按盘上 `package.json` 的 `name` 匹配，
  * 解析不到的记 `unresolved` 读数（不冒充"不是客户端 UI"）。
+ *
+ * 🔴 **回滚期（2026-11-05 16:2x 起）这一格也是 HOLD**：看板那一行 `disabled: true`（宿主级 insert 让
+ * 整层 boot 失败 ⇒ 先关，改走 profile 层）。分流口径与 `DASH-15` 共用 `mountVerdict()`：
+ *   · **看板那一行自己的层归属**（语义面里它那一条 + 阳性腿那三条）⇒ **HOLD**
+ *     `DASH-MOUNT-DISABLED-PENDING-PROFILE-LAYER`（**不是绿**）；
+ *   · **别的客户端 UI 行**（`scope: 'other'`，例如一个作者从没登记过的新行）⇒ **照旧红** ——
+ *     回滚只解释了看板那一行，解释不了任何别的行（政策刀 `otherRowOff` 专门量这一格）。
  */
 import { before, test } from 'node:test'
 import { spawnSync } from 'node:child_process'
@@ -68,7 +88,7 @@ import { FROZEN, PATHS } from '../support/env.mjs'
 import { collectRows, parseYamlSubset } from '../support/composition.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, runRoot, sha256File } from '../support/evidence.mjs'
 import { noteSutOverride } from '../support/dashboard-surface.mjs'
-import { clientUiPatchFixture, scanClientUiPlacement, syntheticClientUiPackage } from '../support/client-ui-placement.mjs'
+import { clientUiPatchFixture, compositionRowState, DISABLED_PENDING_CODE, scanClientUiPlacement, syntheticClientUiPackage } from '../support/client-ui-placement.mjs'
 
 before(() => {
   preflight()
@@ -90,9 +110,40 @@ const CODE = {
   deriveUnavailable: 'DASH-PATCH-CHECK-UNAVAILABLE',
   deriveCrash: 'DASH-PATCH-DERIVE-CRASH',
   checkWrote: 'DASH-PATCH-CHECK-WROTE-PRESET',
+  disabledMismatch: 'DASH-DISABLED-MISMATCH',
   knifeVector: 'DASH-KNIFE-VECTOR',
   knifeUnreadable: 'DASH-KNIFE-UNREADABLE',
   ruler: 'DASH-RULER-BROKEN',
+}
+
+/**
+ * 🔴 **回滚期的分流政策**（2026-11-05 16:2x 起；`disabled: true` = 面板先关、挂载路线待重设计）。
+ *
+ * 分流只对**"看板那一行的层归属"**那几条（`detail.scope === 'mount'`）生效：
+ *   · `featureOff === false`（行开着）⇒ 一条都不动：该红就红（这是刀那一半，**不许放宽**）；
+ *   · `featureOff === true`（行 `disabled`）⇒ 那几条记 **HOLD**（第三态，**不是绿**），
+ *     `DASH-ROW-ABSENT` / 包声明 / 派生物 / 尺子/刀 那些**照旧红** ——
+ *     回滚只解释得了"它不该在宿主层"，解释不了"它整个没了"或"包不声明 dsh.client"。
+ *
+ * `featureOff` 必须**两侧都这么说**才算数（组合里 `disabled: true` **且** 补丁里每一次出现都 `disabled: true`）：
+ * 只翻一侧 = 手改 / 生成器坏了 ⇒ 走 `DASH-DISABLED-MISMATCH`（红）。
+ */
+function mountVerdict({ problems, featureOff }) {
+  if (!featureOff) return { red: problems, holds: [] }
+  const red = problems.filter((p) => p.detail?.scope !== 'mount')
+  const mount = problems.filter((p) => p.detail?.scope === 'mount')
+  return {
+    red,
+    holds: [{
+      code: DISABLED_PENDING_CODE,
+      why: `看板那一行 \`${ROW_ID}\` 在组合里是 \`disabled: true\`（2026-11-05 回滚：宿主级 insert 让整个 bundle 层 boot 失败）`
+        + ' ⇒ "它必须在宿主 insert"这一格的目标形状**故意不在**：这一格不判对错，记 HOLD（不是绿）。'
+        + `挂载路线改成走 profile 层之后（那一行不再是 disabled），这一格自动回到红/绿两态。`
+        + (mount.length > 0
+          ? `本来会报的层归属码：${JSON.stringify([...new Set(mount.map((p) => p.code))])}（${mount.length} 条；明细见 result.json 的 readings.mount / fixtures）`
+          : '（补丁里那一行的层归属这一跑本来没有可报的：它不在预设层）'),
+    }],
+  }
 }
 
 // ── 身份读数（树 + 时间）────────────────────────────────────────────────────
@@ -207,6 +258,8 @@ function mountProblems({ patchText, label = '生成补丁' }) {
     occurrences: place.occurrences.length,
     host_level: place.host.length,
     nested_in: place.nested.map((r) => r.parent),
+    /** 每一处出现的 `disabled`（回滚期分流要用它；`true` = 那一份里这一行关着）。 */
+    disabled_flags: place.occurrences.map((r) => r.disabled === true),
     fields: null,
     package: null,
   }
@@ -223,11 +276,12 @@ function mountProblems({ patchText, label = '生成补丁' }) {
     problems.push(problem(CODE.notHostLevel,
       `${label} 里 \`${ROW_ID}\` 出现 ${place.occurrences.length} 次，但**不是**顶层 \`- insert:\` 的直接成员`
       + `（宿主装载层）${parents.length > 0 ? `：它住在 ${parents.map((p) => `${p}.plugins`).join(' 与 ')} 里` : '：它不在任何顶层 insert 里'}`
-      + ' —— 浏览器只收宿主装载层里声明了 `dsh.client` 的包，写在预设层等于没装（bug-20261104-02）'))
+      + ' —— 浏览器只收宿主装载层里声明了 `dsh.client` 的包，写在预设层等于没装（bug-20261104-02）',
+      { scope: 'mount', row_id: ROW_ID }))
   }
   const chosen = place.host[0] ?? place.occurrences[0]
   const fields = rowFields(chosen)
-  reading.fields = { name: fields.name, root: fields.root }
+  reading.fields = { name: fields.name, root: fields.root, disabled: chosen.disabled ?? null }
   if (typeof fields.name !== 'string' || !NAME_SHAPE.test(fields.name)) {
     problems.push(problem(CODE.noClientDecl, `${label} 里那一行的 name 不是看板包入口（应当是 \`file:///…/client-ui-dashboard/lib/index.js\`）：${JSON.stringify(fields.name)} —— 指不到包，浏览器没有东西可收`))
   } else {
@@ -268,26 +322,29 @@ const fixtureDir = (name) => {
 }
 
 /** 一行 `agenia-dashboard`（`indent` 是 `- id:` 的缩进；缩进只为了让夹具像真文件，判据不读它）。 */
-function rowLines({ indent, name, root }) {
+function rowLines({ indent, name, root, disabled = false }) {
   const pad = ' '.repeat(indent)
-  return [
-    `${pad}- id: ${ROW_ID}`,
+  const lines = [`${pad}- id: ${ROW_ID}`]
+  if (disabled) lines.push(`${pad}  disabled: true`)
+  lines.push(
     `${pad}  name: '${name}'`,
     `${pad}  config:`,
     `${pad}    root: '${root}'`,
-  ]
+  )
+  return lines
 }
 
 /**
  * 合成补丁：`host` = 行在顶层 insert（正确形状）· `nested` = 行在 `preset-agenia.plugins`（刀 A）·
  * `absent` = 整行没有（刀 C）。其余结构与真补丁同形（`- insert:` + 一份预设入口 + 一条 plugins 行）。
+ * `disabled: true` ⇒ 夹具里那一行带 `disabled: true`（分流政策那四格用它量"关着"这一态）。
  */
-function patchFixture({ placement, name, root }) {
+function patchFixture({ placement, name, root, disabled = false }) {
   const lines = [
     '# DASH-15 合成补丁（判据自证 / 刀）—— 只住运行根，不是被测对象',
     '- insert:',
   ]
-  if (placement === 'host') lines.push(...rowLines({ indent: 4, name, root }))
+  if (placement === 'host') lines.push(...rowLines({ indent: 4, name, root, disabled }))
   lines.push(
     '    - id: preset-agenia # 行名按约定写 preset-<预设 id>',
     "      name: '@deepseek-ai/dsh-agent-preset'",
@@ -300,7 +357,7 @@ function patchFixture({ placement, name, root }) {
     '          - id: persona',
     "            name: '@deepseek-ai/dsh-persona'",
   )
-  if (placement === 'nested') lines.push(...rowLines({ indent: 10, name, root }))
+  if (placement === 'nested') lines.push(...rowLines({ indent: 10, name, root, disabled }))
   return `${lines.join('\n')}\n`
 }
 
@@ -521,10 +578,33 @@ test('DASH-15 面板装上了没有：宿主层顶层 insert 的 agenia-dashboar
     }
 
     // ── ② 位置 + 行体 + 包声明（真补丁）──────────────────────────────────
+    let featureOff = false
     if (patchText !== null) {
       const real = mountProblems({ patchText, label: '生成补丁' })
       rec.readings.mount = real.reading
       for (const p of real.problems) problems.push(p)
+
+      // ── ①′ 回滚期：这一行**两侧都**说 `disabled` ⇒ 层归属那几条走 HOLD（见 `mountVerdict()`）──
+      let compositionText = null
+      try {
+        compositionText = compositionSnap.exists ? readFileSync(COMPOSITION_FILE, 'utf8') : null
+      } catch (err) {
+        compositionText = null
+        rec.readings.composition_read_error = String(err?.message ?? err)
+      }
+      const compRow = compositionText === null
+        ? { found: false, occurrences: 0, disabled: false, error: '组合读不出来' }
+        : compositionRowState(compositionText, ROW_ID)
+      const patchOff = real.reading.disabled_flags.length > 0 && real.reading.disabled_flags.every(Boolean)
+      featureOff = compRow.found === true && compRow.disabled === true && patchOff
+      rec.readings.disabled_state = { composition: compRow, patch_all_disabled: patchOff, feature_off: featureOff }
+      // 只翻一侧 = 手改 / 生成器坏了：那是红，不是"这一版就是关着的"。
+      if (real.reading.occurrences > 0 && compRow.found === true && compRow.disabled !== patchOff) {
+        problems.push(problem(CODE.disabledMismatch,
+          `看板那一行的 \`disabled\` 两侧不一致：组合说 ${compRow.disabled ? '`disabled: true`' : '开着'}（${JSON.stringify(compRow.disabled_values)}）`
+          + `，补丁里每一处出现说 ${patchOff ? '`disabled: true`' : '开着'}（${JSON.stringify(real.reading.disabled_flags)}）`
+          + ` —— 补丁是派生物（改了 .yml 就跑生成器）；这一格不许拿"关着"当借口`))
+      }
 
       // ── ④ 翻面：阳性对照 + 三把刀（位置 / 包声明 / 整行；派生那把刀在 ③ 里）──────────
       const fields = rowFieldsForFixture(patchText)
@@ -561,6 +641,45 @@ test('DASH-15 面板装上了没有：宿主层顶层 insert 的 agenia-dashboar
         }
         if (!onlyOne('noDecl', CODE.noClientDecl)) {
           problems.push(problem(CODE.knifeVector, `刀 B（包去掉 dsh.client）翻出来的面是 ${JSON.stringify(codesOf('noDecl'))}，应当只有 ${JSON.stringify([CODE.noClientDecl])}`))
+        }
+
+        /**
+         * 🔴 **分流政策自己的刀**（`mountVerdict()` 是尺子的一半：它能把红翻成 HOLD，所以它必须能被量）。
+         * 四格，全部合成（活树一个字节不动）：
+         *   · 关着的行 + 放回预设层 + `featureOff`  ⇒ **HOLD 1 / RED 0**（这正是今天真树的形状）；
+         *   · 同一份夹具但 `featureOff=false`      ⇒ **RED 1 / HOLD 0**（🔴 行开着就必须红 —— 刀不许放宽）；
+         *   · 关着的行 + 在宿主层 + `featureOff`   ⇒ **HOLD 1 / RED 0**（路线对了但面板关着，仍然不是绿）；
+         *   · 行开着 + 整行拿掉（`featureOff=false`）⇒ **RED 1**（"不在"不是"关着"能解释的）。
+         */
+        const disabledRow = (placement) => mountProblems({
+          patchText: patchFixture({ placement, ...fields, disabled: true }),
+          label: `夹具·disabled·${placement}`,
+        })
+        const policyGrid = {
+          disabledNestedOff: mountVerdict({ problems: disabledRow('nested').problems, featureOff: true }),
+          disabledNestedOn: mountVerdict({ problems: disabledRow('nested').problems, featureOff: false }),
+          disabledHostOff: mountVerdict({ problems: disabledRow('host').problems, featureOff: true }),
+          absentOn: mountVerdict({ problems: fixtures.absent.problems, featureOff: false }),
+        }
+        rec.readings.policy_grid = Object.fromEntries(Object.entries(policyGrid).map(([k, v]) => [
+          k,
+          { red: v.red.map((p) => p.code), hold: v.holds.map((h) => h.code) },
+        ]))
+        const gridOf = (k) => ({ red: policyGrid[k].red.map((p) => p.code), hold: policyGrid[k].holds.map((h) => h.code) })
+        const expectGrid = (k, want) => {
+          const got = gridOf(k)
+          if (JSON.stringify(got) !== JSON.stringify(want)) {
+            problems.push(problem(CODE.knifeVector, `分流政策的刀 ${k} 翻出来的面是 ${JSON.stringify(got)}，应当是 ${JSON.stringify(want)} —— HOLD 那一半没有翻面（政策死 / 政策漏）`))
+          }
+        }
+        expectGrid('disabledNestedOff', { red: [], hold: [DISABLED_PENDING_CODE] })
+        expectGrid('disabledNestedOn', { red: [CODE.notHostLevel], hold: [] })
+        expectGrid('disabledHostOff', { red: [], hold: [DISABLED_PENDING_CODE] })
+        expectGrid('absentOn', { red: [CODE.rowAbsent], hold: [] })
+        // 夹具里的 `disabled` 必须真的被解析器读到（不然上面四格量的是同一个"开着"的行）
+        const disabledParsed = disabledRow('nested').reading.disabled_flags
+        if (JSON.stringify(disabledParsed) !== JSON.stringify([true])) {
+          problems.push(problem(CODE.knifeUnreadable, `夹具里那一行的 \`disabled: true\` 没被读成 true（实得 ${JSON.stringify(disabledParsed)}）—— 分流政策那四格量不到"关着"这一态`))
         }
       } catch (err) {
         problems.push(problem(CODE.ruler, `合成夹具造不出来：${String(err?.message ?? err)} —— 这一跑的翻面证据不成立`))
@@ -647,13 +766,17 @@ test('DASH-15 面板装上了没有：宿主层顶层 insert 的 agenia-dashboar
       composition: afterAll.composition.sha256 !== compositionSnap.sha256,
       generator: afterAll.generator.sha256 !== generatorSnap.sha256,
     }
+    // ── 出口：回滚期把"层归属"那几条分流成 HOLD（`mountVerdict()`），其余照旧红 ──────────
+    const verdict = mountVerdict({ problems, featureOff })
     rec.readings.verdict = {
       mount: patchText === null ? null : placementOf(patchText).nested.map((r) => r.parent),
       derived: derivationVerdict === null ? null : derivationVerdict.derived,
-      problem_codes: problems.map((p) => p.code),
+      feature_off: featureOff,
+      red_codes: verdict.red.map((p) => p.code),
+      hold_codes: verdict.holds.map((h) => h.code),
     }
-
-    caseFail(problems)
+    for (const h of verdict.holds) caseHold(rec, h.code, h.why)
+    caseFail(verdict.red)
   })
 })
 
@@ -704,6 +827,38 @@ test('DASH-16 客户端 UI 行必须在宿主 insert：按包清单语义扫描�
     const real = scanClientUiPlacement({ patchText, rowId: ROW_ID, label: '生成补丁', manifestRoots: [PATHS.finalPreset] })
     rec.readings.real = real.reading
     for (const p of real.problems) problems.push(p)
+
+    /**
+     * ── ①′ 回滚期：看板那一行**两侧都**说 `disabled` ⇒ "它自己的层归属"走 HOLD ────────────
+     * 口径与 `DASH-15` 同一份（`mountVerdict()`）；**范围**只到 `detail.scope === 'mount'` 那几条。
+     * 🔴 别的客户端 UI 行（`scope: 'other'`）在 disabled 期间**照旧红** —— 回滚只解释了看板那一行。
+     * 行整个不在时 `patchOff` 必然为 false（没有出现可读），所以"不在"永远不会被 HOLD 吞掉。
+     */
+    let featureOff = false
+    let compositionText = null
+    try {
+      compositionText = compositionSnap.exists ? readFileSync(COMPOSITION_FILE, 'utf8') : null
+    } catch (err) {
+      rec.readings.composition_read_error = String(err?.message ?? err)
+    }
+    const compRow = compositionText === null
+      ? { found: false, occurrences: 0, disabled: false }
+      : compositionRowState(compositionText, ROW_ID)
+    const patchOff = real.reading.dashboard.all_disabled === true
+    featureOff = compRow.found === true && compRow.disabled === true && patchOff
+    rec.readings.disabled_state = {
+      composition: compRow,
+      patch_all_disabled: patchOff,
+      patch_disabled_flags: real.reading.dashboard.disabled_flags,
+      feature_off: featureOff,
+    }
+    if (real.reading.dashboard.occurrences > 0 && compRow.found === true && compRow.disabled !== patchOff) {
+      problems.push(problem(CODE.disabledMismatch,
+        `看板那一行的 \`disabled\` 两侧不一致：组合说 ${compRow.disabled ? '`disabled: true`' : '开着'}（${JSON.stringify(compRow.disabled_values)}）`
+        + `，补丁里每一处出现说 ${patchOff ? '`disabled: true`' : '开着'}（${JSON.stringify(real.reading.dashboard.disabled_flags)}）`
+        + ' —— 补丁是派生物（改了 .yml 就跑生成器）；这一格不许拿"关着"当借口',
+        { scope: 'other' }))
+    }
 
     // ── ② 翻面：合成包 + 合成补丁（只住运行根；活树一个字节不动）──────────────
     try {
@@ -767,8 +922,47 @@ test('DASH-16 客户端 UI 行必须在宿主 insert：按包清单语义扫描�
           `扫描器没有把合成行解析到它自己的包（实得 ${JSON.stringify(classified ?? null)}）—— 这把刀量不到"语义"那一面`))
       }
 
+      /**
+       * 🔴 **分流政策的刀**（`mountVerdict()` 能把红翻成 HOLD，所以它自己必须能被量）。三格：
+       *   · 看板行 `disabled: true` + 放回预设 + `featureOff` ⇒ **HOLD 1 / RED 0**（今天真树的形状）；
+       *   · 同一份夹具但 `featureOff=false` ⇒ **RED 2 / HOLD 0**（🔴 行开着就必须红）；
+       *   · **别的**客户端 UI 行（合成行，不是看板）放进预设 + `featureOff=true`
+       *     ⇒ **RED 1（`DASH-CLIENT-IN-PRESET` 还在）+ HOLD 1** ——
+       *     🔴 这一格最容易被放宽：HOLD 只解释"看板那一行的层归属"，**不许**把别的客户端 UI 行的红一起吞掉。
+       */
+      const dashDisabledText = clientUiPatchFixture({
+        dashboard: 'preset', synthetic: 'absent', dashboardRow: { ...dashboardRow, disabled: true },
+      })
+      const dashDisabledScan = scanClientUiPlacement({ patchText: dashDisabledText, rowId: ROW_ID, label: '夹具·看板行 disabled + 放回预设', manifestRoots: [pkgDir] })
+      const policyGrid = {
+        dashDisabledOff: mountVerdict({ problems: dashDisabledScan.problems, featureOff: true }),
+        dashDisabledOn: mountVerdict({ problems: dashDisabledScan.problems, featureOff: false }),
+        otherRowOff: mountVerdict({ problems: scans.syntheticInPreset.scan.problems, featureOff: true }),
+      }
+      rec.readings.policy_grid = Object.fromEntries(Object.entries(policyGrid).map(([k, v]) => [
+        k,
+        { red: v.red.map((p) => p.code), hold: v.holds.map((h) => h.code) },
+      ]))
+      rec.readings.disabled_fixture = { codes: dashDisabledScan.problems.map((p) => p.code), reading: dashDisabledScan.reading }
+      const gridOf = (k) => ({ red: policyGrid[k].red.map((p) => p.code), hold: policyGrid[k].holds.map((h) => h.code) })
+      const sorted = (x) => JSON.stringify({ red: [...x.red].sort(), hold: [...x.hold].sort() })
+      const expectGrid = (k, want) => {
+        const got = { red: [...gridOf(k).red].sort(), hold: [...gridOf(k).hold].sort() }
+        const wanted = { red: [...want.red].sort(), hold: [...want.hold].sort() }
+        if (sorted(got) !== sorted(wanted)) {
+          problems.push(problem(DASH16.knifeVector, `分流政策的刀 ${k} 翻出来的面是 ${JSON.stringify(got)}，应当是 ${JSON.stringify(wanted)} —— HOLD 那一半没有翻面（政策死 / 政策漏 / 放得太宽）`))
+        }
+      }
+      expectGrid('dashDisabledOff', { red: [], hold: [DISABLED_PENDING_CODE] })
+      expectGrid('dashDisabledOn', { red: [DASH16.clientInPreset, DASH16.hostMissing], hold: [] })
+      // 别的客户端 UI 行那一红**必须还在**；看板那一格照旧 HOLD（功能关着 ⇒ 它的层归属判不了）
+      expectGrid('otherRowOff', { red: [DASH16.clientInPreset], hold: [DISABLED_PENDING_CODE] })
+      if (dashDisabledScan.reading.dashboard.all_disabled !== true) {
+        problems.push(problem(DASH16.knifeUnreadable,
+          `夹具里看板那一行的 \`disabled: true\` 没被读成"每一处都关着"（实得 ${JSON.stringify(dashDisabledScan.reading.dashboard.disabled_flags)}）—— 分流政策那三格量不到"关着"这一态`))
+      }
+
       // 证据（不是判据）：这把刀的那一行在两个生产输入里**都没有**任何登记痕迹
-      const compositionText = compositionSnap.exists ? readFileSync(COMPOSITION_FILE, 'utf8') : null
       const generatorText = generatorSnap.exists ? readFileSync(GENERATOR_FILE, 'utf8') : null
       const markerLines = (scans.syntheticInPreset.text.match(/#\s*@host-level/g) ?? []).length
       const registration = {
@@ -794,12 +988,16 @@ test('DASH-16 客户端 UI 行必须在宿主 insert：按包清单语义扫描�
     const after = snapshotOf(PATCH_FILE)
     rec.readings.after = after
     rec.readings.tree_changed_during_case = { patch: after.sha256 !== patchSnap.sha256 }
+    // ── 出口：回滚期把"看板那一行的层归属"分流成 HOLD；别的客户端 UI 行照旧红 ──────────
+    const verdict = mountVerdict({ problems, featureOff })
     rec.readings.verdict = {
       semantic_client_rows: real.reading.client_ui_rows.length,
       preset_violations: real.reading.violations.length,
-      problem_codes: problems.map((p) => p.code),
+      feature_off: featureOff,
+      red_codes: verdict.red.map((p) => p.code),
+      hold_codes: verdict.holds.map((h) => h.code),
     }
-
-    caseFail(problems)
+    for (const h of verdict.holds) caseHold(rec, h.code, h.why)
+    caseFail(verdict.red)
   })
 })
