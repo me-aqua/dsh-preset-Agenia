@@ -3,21 +3,31 @@
  *
  * 为什么会有这几格（第 4 关独立评审 `🟠 打回·修`，`.team/review/2026-11-04/评审报告.md`）：
  *   · 评审 `F1`：面板**没有定位代码** —— 我们只有 `position:fixed`，没有坐标、也没有 `style`；
- *     官方那一块是 `useAnchoredPosition({open, anchorRef, panelRef, gap:5, margin:16})`
- *     再把结果塞进 `style: position ?? {visibility:"hidden",left:0,top:0}`
- *     （官方 `client.js` L230-236 / L327-331）。九格红测试里**没有一条**压着它。
+ *     官方那一块是 `useAnchoredPosition({open, anchorRef, panelRef, gap:5, margin:16})` 再把结果
+ *     塞进面板的 `style`（官方 `client.js` L230-236 / L327-331）。九格红测试里**没有一条**压着它。
  *   · 评审 §2.1 的"唯一少画的抄项"：`E29 button.expandToggle`（元素对照表 L148 标「抄（条件）」，
  *     且在"抄 25"那一栏里）—— 我们画了 2 行截断的 `p`，没有溢出测量、没有展开钮。
  *   · 第 4 关复审 `R2-1`：面板顶上一行成了 `读数日 <day>`，headline 掉到第二行 —— "第一行是目标"
  *     是老板自己的句子，机器**本来能抓**（源码顺序）却没抓。`DASH-14` 补这一格。
  *
- * 🔴 **`DASH-10/13` 的"红"量在冻结评审副本上**（提交 `6dee18d` 的只读副本 —— 评审看到的那一版）：
- *   · `DASH-10` 红在 `DASH-POS-HOOK-MISSING` + `DASH-POS-NO-STYLE`；
+ * 🔴 **`DASH-10` 的兜底那一条是 2026-11-06 重写的**（老板报障：点「看板」，按钮自己消失、
+ *    面板一个字都不留）。那一次有两个成因，第二个就在兜底上：官方那套
+ *    `position ?? {visibility:"hidden",left:0,top:0}` 在"定位一直没算出来"时把面板**挂上但藏起来**——
+ *    点一下看起来什么都没发生。旧判据把那个字面量**当成期望值**（`DASH-POS-NO-FALLBACK`），
+ *    于是它锁住的正是这个缺陷。现在换成：**位置还没算出来时，面板必须可见、且落在视口里的一个
+ *    具体位置**（`DASH-POS-FALLBACK-HIDDEN` / `-UNPLACED`）。接线那四条（钩子 / 入参 / 两个真 ref /
+ *    `style` 的左手来自钩子）**原样保留**，尺子仍然是官方那一份。
+ *    ⚠️ 兜底那一条**不能**再拿官方当阳性对照 —— 官方那份就是故障形状（读数里照实记
+ *    `readings.official_fallback`）。它的阳性/阴性对照是合成样本 + **故障那一版的真字节**
+ *    （`d586215^`，见 `support/dash-client-harness.mjs`）。
+ *    🔴 **红基线**（2026-11-06 实测）：把 `d586215^` 那一版当 SUT（`AGENIA_DASH_CLIENT` 指到副本）
+ *    跑这一格 ⇒ **只**翻 `DASH-POS-FALLBACK-HIDDEN`（源码那位读者与渲染那位读者各翻一条），
+ *    接线四条**一条都不翻**（`_runs/marta-red-on-defect-sut/run`，SUT 覆盖 ⇒ 同跑记 `HOLD`）。
+ *
+ * 🔴 **`DASH-13` 的红量在冻结评审副本上**（提交 `6dee18d` 的只读副本 —— 评审看到的那一版）：
  *   · `DASH-13` 红在 `E29-MEASURE-MISSING` + `E29-TOGGLE-MISSING` + `E29-TEXT-KEYS`
  *     （截断那一条**是绿的**：`.DASHB1_clampedDescription` 已经有 `-webkit-line-clamp:2`，
  *      读数里照实分开记 —— 一条用例里绿的那几条也是读数，别当成"这格绿的"）。
- * ⚠️ 写这几格的时候 dev 正在并发改 `presets/**`（22:19–22:20 补定位 / E29；22:56 把读数日挪到页脚）
- *    ⇒ 现役树上的读数会变绿。**红读数只能绑在一棵不变的树上**（冻结副本），现役读数只当读数（见契约 §11.4）。
  *
  * 🔴 **`DASH-14` 只判顺序与区域，不判像素**：第一个 `h3`（headline 行）必须在 `view.day` 表达式**之前**；
  *    日期表达式必须落在**欠账网格（`.roster`）结束之后**。它不看类名、不看宽度/字号/上下间距 ——
@@ -25,18 +35,27 @@
  *    两种缺陷各有自己的码：日期抢在 headline 前面 ⇒ `DASH-DATE-BEFORE-HEADLINE`；
  *    日期还在 headline 之后但没走到欠账网格之后（E06/notice 那一带）⇒ `DASH-DATE-NOT-IN-FOOTER`。
  *
- * 🔴 **像素不在这里判**：`DASH-10/13` 判的是**存在与接线**（钩子有没有、接到哪个 ref、兜底在不在、
+ * 🔴 **像素不在这里判**：`DASH-10/13` 判的是**存在与接线**（钩子有没有、接到哪个 ref、兜底可不可见、
  * 按钮与测量在不在），`DASH-14` 判的是**顺序与区域**。"面板开在哪、圆角阴影对不对、展开后长什么样、
  * 读数日看起来是不是在底部"是 `.team/test/2026-11-04/GUI清单-客户端看板.md` 第 2/4/8 条
  * （`DASH-14` 那一条对应第 3/4/6 条）那一格（**人点一次**）的事。
+ * "兜底落在 16/64 这两个数上对不对"同理：本格只要求**可见 + 有具体落点**，不要求那两个数。
  *
- * 尺子：官方像素层（设计抽屉的只读副本 → asar 解包兜底）先被同一套判据量一遍 ——
+ * 尺子：官方像素层（设计抽屉的只读副本 → asar 解包兜底）先被**接线**那套判据量一遍 ——
  * 它必须**干净**（证明判据认得出"官方那套接线"），再从官方源码上切刀：`DASH-10` 四把、`DASH-13` 五把，
  * 每把只翻它自己那一面（向量对不上报 `DASH-KNIFE-VECTOR`）；`DASH-14` 的两把刀在合成面板上切。
+ * `DASH-10` 另有**两位读者**读同一个兜底：源码里那个对象字面量（静态）+ 真渲染出来的
+ * `panel.props.style`（`useAnchoredPosition` 返回 `null` 的那一帧，见 `support/dash-client-harness.mjs`）。
  */
 import { before, test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { caseFail, caseHold, preflight, problem, runCase } from '../support/evidence.mjs'
+import {
+  createDashboardHarness,
+  messageOf,
+  parseObjectLiteral,
+  preFailureClientSource,
+} from '../support/dash-client-harness.mjs'
 import {
   DASH_CLIENT,
   elementCallByClassToken,
@@ -107,25 +126,33 @@ const POS = {
   args: 'DASH-POS-HOOK-ARGS',
   style: 'DASH-POS-NO-STYLE',
   fallback: 'DASH-POS-NO-FALLBACK',
+  shape: 'DASH-POS-FALLBACK-SHAPE',
+  hidden: 'DASH-POS-FALLBACK-HIDDEN',
+  unplaced: 'DASH-POS-FALLBACK-UNPLACED',
   fromHook: 'DASH-POS-STYLE-NOT-FROM-HOOK',
   anchor: 'DASH-POS-ANCHOR-UNWIRED',
   panel: 'DASH-POS-PANEL-UNWIRED',
 }
 
 /**
- * 定位接线的判据（纯函数）：官方那一套必须**四件同时成立** ——
+ * **接线**的判据（纯函数）：官方那一套必须**四件同时成立** ——
  *   ① `useAnchoredPosition({open, anchorRef, panelRef, gap:5, margin:16})` 被调用、结果有变量接住；
- *   ② 面板 JSX 上有 `style`，且是 `<那个变量> ?? {visibility:"hidden",left:0,top:0}`；
+ *   ② 面板 JSX 上有 `style`，且里面有一条 `??` 兜底（`<那个变量> ?? <兜底>` —— 没兜底就意味着
+ *      "位置还没算出来"那一帧没有任何保证）；
  *   ③ 两个 ref 都是**真 ref**（`useRef(...)` 声明过）；
  *   ④ 锚点 ref 真的挂在触发器上、面板 ref 真的挂在面板上（不是只写在钩子入参里）。
  *
+ * ⚠️ 兜底的**内容**（可不可见、落在哪）不在这里判 —— 见下面的 `fallbackStyleProblems`。
+ *    分成两条的理由很硬：**官方那一份的兜底就是故障形状**（`{visibility:"hidden",…}`），
+ *    把"兜底内容"塞进这个函数，官方就不再是干净的阳性对照了。
+ *
  * ⚠️ 为什么判"接线"而不是判"像素"：位置算得对不对只能在界面上看（GUI 清单第 2/8 条）；
- *    机器能判的是**这一段代码在不在、接没接上** —— 评审 F1 打回的正是"这一段被省掉了"。
+ *    机器能判的是**这一段代码在不在、接没接上**。
  *
  * @param {string} source 渲染层源码
  * @returns {Array<{code:string,message:string}>}
  */
-function positioningProblems(source) {
+function wiringProblems(source) {
   const code = stripCommentLines(source)
   const problems = []
   const hook = hookCallOf(code)
@@ -165,25 +192,21 @@ function positioningProblems(source) {
     }
   }
 
-  // ② 面板 style（未定位时必须是 visibility:hidden 那一格，不是"先闪一下再归位"）
+  // ② 面板 style：必须有，且必须带一条 `??` 兜底；左手必须是钩子那个结果
   const panelEl = elementCallByClassToken(code, 'panel')
   if (panelEl === null) {
     problems.push(problem(POS.panel, '找不到 className 用到 `.panel` 的元素调用 —— 定位要落在面板那块 dialog 上'))
   } else {
     const style = propOf(panelEl.props, 'style')
     if (style === null) {
-      problems.push(problem(POS.style, '面板 JSX 上没有 `style` —— 钩子算出来的坐标没有落点（评审 F1 打回的就是这一处）'))
+      problems.push(problem(POS.style, '面板 JSX 上没有 `style` —— 钩子算出来的坐标没有落点'))
     } else {
       const normalized = stripOuterParens(normalizeExpr(style))
       const parts = normalized.split('??')
       if (parts.length < 2) {
-        problems.push(problem(POS.fallback, `面板的 style 是 ${JSON.stringify(style.slice(0, 120))} —— 没有"还没算出来时先藏起来"的兜底；官方是 \`position ?? {visibility:"hidden",left:0,top:0}\``))
+        problems.push(problem(POS.fallback, `面板的 style 是 ${JSON.stringify(style.slice(0, 120))} —— 没有"位置还没算出来时用哪一套"的兜底；钩子结果直接当 style，未定位的那一帧没有任何保证`))
       } else {
         const left = stripOuterParens(parts[0])
-        const right = stripOuterParens(parts.slice(1).join('??'))
-        if (right !== '{visibility:"hidden",left:0,top:0}') {
-          problems.push(problem(POS.fallback, `面板 style 的兜底是 ${JSON.stringify(right)}，应当是 {visibility:"hidden",left:0,top:0} —— 未定位的那一帧不许先按 (0,0) 画出来`))
-        }
         if (posName !== null && left !== posName) {
           problems.push(problem(POS.fromHook, `面板 style 的左手是 ${JSON.stringify(left)}，不是 useAnchoredPosition 的结果 ${JSON.stringify(posName)} —— 算出来的位置没被用上`))
         }
@@ -213,26 +236,116 @@ function positioningProblems(source) {
   return problems
 }
 
-test('DASH-10 面板定位：useAnchoredPosition 接真锚点 + 未定位前的 visibility 兜底（像素归 GUI）', async () => {
+/**
+ * **兜底**的判据（纯函数）：位置还没算出来（`useAnchoredPosition` → `null`）那一帧，
+ * 面板必须**看得见**、而且落在视口里的一个**具体位置**。
+ *
+ *   · 看得见：`visibility` 只许 `visible`（**缺省也算可见** —— 不要求写那个字面量）、
+ *     `display` 不许 `none`、`opacity` 不许 `0`。三种写法都是"挂上了但看不见"，同一个红因码。
+ *   · 有落点：`left` / `top` 都必须是 ≥ 0 的具体数值（`"16px"` 这种带单位也认）。
+ *     面板是 portal 到 `<body>` 末尾的 —— 没有坐标那一帧会落在页面末尾，读的人同样什么都看不到。
+ *
+ * 🔴 **它锁的是一条真故障**（2026-11-06 01:19）：旧兜底 `{visibility:"hidden",left:0,top:0}`
+ *    在"定位一直没算出来"时把面板藏起来 ⇒ 点「看板」看起来什么都没发生。
+ *
+ * ⚠️ 不判"开在哪个像素"（现在那版是 `left:16/top:64`，那是**取值**不是**契约**）：
+ *    "开在哪、圆角阴影"归 GUI 清单第 2/8 条（人点一次）。
+ *
+ * @param {unknown} style 一套样式对象（源码里那个兜底字面量，或渲染出来的 `panel.props.style`）
+ * @param {string} where 读数里指到"这一套是从哪读出来的"
+ * @returns {Array<{code:string,message:string}>}
+ */
+function fallbackStyleProblems(style, where) {
+  if (style === null || typeof style !== 'object' || Array.isArray(style)) {
+    return [problem(POS.shape, `${where}：兜底不是对象（${JSON.stringify(style)?.slice(0, 80)}）—— 面板拿不到一套能落地的样式`)]
+  }
+  /** 同一个红因码只报一条（`left`/`top` 缺两个不该变成两条 —— 刀向量要对得上）。 */
+  const messages = new Map()
+  const add = (code, message) => {
+    if (!messages.has(code)) messages.set(code, [])
+    messages.get(code).push(message)
+  }
+  const visibility = style.visibility
+  if (visibility !== undefined && String(visibility).trim() !== 'visible') {
+    add(POS.hidden, `${where}：兜底的 visibility 是 ${JSON.stringify(visibility)} —— 未定位的那一帧面板**挂上了但看不见**，点一下会像什么都没发生（2026-11-06 01:19 那个现场）`)
+  }
+  if (style.display !== undefined && String(style.display).trim() === 'none') {
+    add(POS.hidden, `${where}：兜底的 display 是 "none" —— 面板还没定位就先不画，与 visibility:hidden 是同一种"看不见"`)
+  }
+  if (style.opacity !== undefined && Number(style.opacity) === 0) {
+    add(POS.hidden, `${where}：兜底的 opacity 是 0 —— 面板在那里，但一个字都看不到`)
+  }
+  const placementOf = (key) => {
+    const value = style[key]
+    if (value === undefined || value === null) return { ok: false, why: `没有 \`${key}\`` }
+    const numeric = typeof value === 'number' ? value : Number(String(value).trim().replace(/px$/, ''))
+    if (!Number.isFinite(numeric)) return { ok: false, why: `\`${key}\` 是 ${JSON.stringify(value)}（不是具体坐标）` }
+    if (numeric < 0) return { ok: false, why: `\`${key}\` 是 ${JSON.stringify(value)}（落在视口外）` }
+    return { ok: true, why: null }
+  }
+  for (const key of ['left', 'top']) {
+    const placed = placementOf(key)
+    if (!placed.ok) {
+      add(POS.unplaced, `${where}：兜底里${placed.why} —— 面板是 portal 到 <body> 末尾的，没有坐标的那一帧会落在页面末尾（读者看不到，等同于点了个寂寞）`)
+    }
+  }
+  return [...messages.entries()].map(([code, list]) => problem(code, list.join(' · ')))
+}
+
+/** 源码里那个兜底（`style: <钩子结果> ?? <兜底>` 的右手）：真求值成对象，不做文本比对。 */
+function fallbackObjectOf(source) {
+  const code = stripCommentLines(source)
+  const panelEl = elementCallByClassToken(code, 'panel')
+  if (panelEl === null) return { ok: false, why: '找不到面板元素（`.panel`）' }
+  const style = propOf(panelEl.props, 'style')
+  if (style === null) return { ok: false, why: '面板上没有 `style`' }
+  const parts = stripOuterParens(normalizeExpr(style)).split('??')
+  if (parts.length < 2) return { ok: false, why: '`style` 里没有 `??` 兜底' }
+  return parseObjectLiteral(stripOuterParens(parts.slice(1).join('??')))
+}
+
+/** 一份**合法**的视图快照（只为让渲染载具的读盘那一支走成功路；内容不是这一格的判据）。 */
+const RENDER_VIEW = {
+  schema: 1,
+  day: '2026-11-06',
+  header: { text: '演示目标 · 执行一 · 演示', empty: false, stale: false },
+  badge: null,
+  main: null,
+  emptyNotice: '本阶段没有当前任务',
+  debts: [],
+  alerts: [],
+}
+/** 一副"读得到"的 remote（`{offset,limit}` 只读一页 ⇒ 返回 `{text}`）。 */
+const READABLE_REMOTE = { workspaceFiles: { read: async () => ({ text: JSON.stringify(RENDER_VIEW) }) } }
+
+test('DASH-10 面板定位：useAnchoredPosition 接真锚点 + 未定位前必须可见的安全兜底（像素归 GUI）', async () => {
   await runCase('DASH-10', async (rec) => {
     noteSutOverride(rec)
     const problems = []
 
-    // ① 尺子先量官方那一份：判据必须认得出"官方那套接线"
+    // ① 尺子先量官方那一份：**接线**那四条必须认得出"官方那套接线"
     const official = officialClient({ extract: true })
     rec.readings.official = { ok: official.ok, path: official.path, origin: official.origin, sha256: official.sha256, tried: official.tried }
     if (!official.ok) {
-      caseHold(rec, official.code ?? 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— 定位那一格的阳性对照与刀都判不了，只剩我们这一侧的红`)
+      caseHold(rec, official.code ?? 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— 接线那四条的阳性对照与刀都判不了，只剩我们这一侧的红`)
     } else {
-      const officialProblems = positioningProblems(official.source)
-      rec.readings.official_positioning = officialProblems
+      const officialProblems = wiringProblems(official.source)
+      rec.readings.official_wiring = officialProblems
       if (officialProblems.length > 0) {
-        problems.push(problem('DASH-RULER-BROKEN', `同一套判据在官方 client.js 上读出了 ${officialProblems.length} 个问题（${officialProblems.map((p) => p.code).join(', ')}）—— 尺子不认官方那套接线，下面的红不算数`))
+        problems.push(problem('DASH-RULER-BROKEN', `同一套**接线**判据在官方 client.js 上读出了 ${officialProblems.length} 个问题（${officialProblems.map((p) => p.code).join(', ')}）—— 尺子不认官方那套接线，下面的红不算数`))
       }
+      /**
+       * 官方那个兜底**就是这次故障的形状** ⇒ 它**只能当读数**，不能当兜底那一条的阳性对照。
+       * 记下来是为了回答"那为什么不用官方当尺子" —— 不是判据。
+       */
+      const officialFallback = fallbackObjectOf(official.source)
+      rec.readings.official_fallback = officialFallback.ok
+        ? { value: officialFallback.value, codes: fallbackStyleProblems(officialFallback.value, 'official').map((p) => p.code) }
+        : { unparsed: officialFallback.why }
 
       /**
-       * 从官方源码上切刀：每一把只拆掉**一半接线**。
-       * 判据必须逐把翻面，而且只翻它自己那一面（`vector` 读数）。
+       * 从官方源码上切刀：每一把只拆掉**接线的一半**。
+       * 判据必须逐把翻面，而且只翻它自己那一面（向量对不上报 `DASH-KNIFE-VECTOR`）。
        */
       const stripHook = (text) => {
         const at = text.indexOf('const position = (0, _deepseek_ai_dsh_client_ui_primitives.useAnchoredPosition)')
@@ -262,7 +375,7 @@ test('DASH-10 面板定位：useAnchoredPosition 接真锚点 + 未定位前的 
           problems.push(problem('DASH-RULER-BROKEN', `刀「${name}」没切动官方源码（字符串没变）—— 这把刀不能证明判据会翻面`))
           continue
         }
-        const got = positioningProblems(mutated).map((p) => p.code).sort()
+        const got = wiringProblems(mutated).map((p) => p.code).sort()
         vectors[name] = got
         const expected = [...want[name]].sort()
         if (JSON.stringify(got) !== JSON.stringify(expected)) {
@@ -272,17 +385,112 @@ test('DASH-10 面板定位：useAnchoredPosition 接真锚点 + 未定位前的 
       rec.readings.knives = vectors
     }
 
-    // ② 我们的渲染层
+    // ② 兜底那一条的尺子自证：合成样本，每格**只翻它自己那一码**
+    const FALLBACK_CELLS = {
+      可见且有落点: [{ position: 'fixed', left: 16, top: 64, visibility: 'visible' }, []],
+      不写visibility也算可见: [{ position: 'fixed', left: 16, top: 64 }, []],
+      带单位的像素也认: [{ left: '16px', top: '64px' }, []],
+      这次故障那一版: [{ visibility: 'hidden', left: 0, top: 0 }, [POS.hidden]],
+      display_none: [{ display: 'none', left: 16, top: 64 }, [POS.hidden]],
+      opacity_0: [{ opacity: 0, left: 16, top: 64 }, [POS.hidden]],
+      没有坐标: [{ visibility: 'visible' }, [POS.unplaced]],
+      坐标不是数: [{ left: 'auto', top: 'auto' }, [POS.unplaced]],
+      空对象: [{}, [POS.unplaced]],
+      不是对象: ['visible', [POS.shape]],
+    }
+    const fallbackVectors = {}
+    let cellFailures = 0
+    for (const [name, [style, expected]] of Object.entries(FALLBACK_CELLS)) {
+      const got = fallbackStyleProblems(style, name).map((p) => p.code).sort()
+      fallbackVectors[name] = got
+      if (JSON.stringify(got) !== JSON.stringify([...expected].sort())) {
+        cellFailures += 1
+        problems.push(problem('DASH-KNIFE-VECTOR', `兜底判据在合成样本「${name}」上翻出来的面是 ${JSON.stringify(got)}，应当是 ${JSON.stringify(expected)}`))
+      }
+    }
+    rec.readings.fallback_vectors = fallbackVectors
+    if (cellFailures === 0) rec.readings.fallback_ruler = 'ok'
+
+    // ③ 我们这一份：接线（静态）+ 兜底（静态；源码里的对象字面量）
     let source = null
     try {
       source = readFileSync(DASH_CLIENT, 'utf8')
     } catch (err) {
-      problems.push(problem('DASH-CLIENT-MISSING', `渲染层读不出来：${DASH_CLIENT}（${String(err?.message ?? err)}）`))
+      problems.push(problem('DASH-CLIENT-MISSING', `渲染层读不出来：${DASH_CLIENT}（${messageOf(err)}）`))
     }
     if (source !== null) {
-      const ours = positioningProblems(source)
-      rec.readings.ours = ours
+      const ours = wiringProblems(source)
+      rec.readings.ours_wiring = ours
       for (const p of ours) problems.push(p)
+      const parsed = fallbackObjectOf(source)
+      if (parsed.ok) {
+        const problemsFromSource = fallbackStyleProblems(parsed.value, '源码里那个兜底')
+        rec.readings.ours_fallback_source = { value: parsed.value, codes: problemsFromSource.map((p) => p.code) }
+        for (const p of problemsFromSource) problems.push(p)
+      } else {
+        // 不是对象字面量 ⇒ 静态这一路读不出来；**不记红** —— 兜底那一格的权威读者是渲染那一路（④）。
+        rec.readings.ours_fallback_source = { unparsed: parsed.why }
+      }
+    }
+
+    // ④ 第二位读者：真把 `client.js` 装起来、真点一次、看面板**真的**拿到了什么 `style`
+    if (source !== null) {
+      const harness = createDashboardHarness(source)
+      rec.readings.render_harness = { ok: harness.ok, reason: harness.reason ?? null }
+      if (!harness.ok) {
+        problems.push(problem('DASH-POS-RENDER-HARNESS', `渲染载具装不起来（${harness.reason}）—— 兜底"真的可见吗"这一腿判不了，不许记绿`))
+      } else {
+        const scene = await harness.scene({ remote: READABLE_REMOTE, position: null })
+        rec.readings.render = {
+          apply_threw: scene.apply_threw,
+          throws: scene.throws,
+          trigger_present: scene.trigger_present,
+          panel_style: scene.panel_style,
+          hook: scene.hook_args,
+        }
+        if (scene.apply_threw !== null) problems.push(problem('DASH-POS-RENDER-HARNESS', `apply() 抛了：${scene.apply_threw}`))
+        if (scene.throws.length > 0) problems.push(problem('DASH-POS-RENDER-HARNESS', `点一次按钮的过程中抛出了：${JSON.stringify(scene.throws)}`))
+        if (!scene.trigger_present) problems.push(problem('DASH-POS-RENDER-HARNESS', '渲染出来的树里没有触发器 —— 点不了那一次，下面几条读数不作数'))
+        if (scene.panel_style === null) {
+          problems.push(problem(POS.style, '定位没算出来（钩子返回 null）时面板没有 `style`（渲染读数里是 null）—— 未定位的那一帧没有任何保证'))
+        } else {
+          for (const p of fallbackStyleProblems(scene.panel_style, '渲染出来的兜底（useAnchoredPosition → null）')) problems.push(p)
+        }
+        const hook = scene.hook_args
+        if (hook === null) {
+          problems.push(problem(POS.hook, '渲染过程中 `useAnchoredPosition` 一次都没被调用'))
+        } else {
+          if (hook.open !== true) problems.push(problem(POS.hook, `钩子拿到的 open 是 ${JSON.stringify(hook.open)} —— 面板已经开了，钩子却不知道`))
+          if (hook.gap !== 5 || hook.margin !== 16) problems.push(problem(POS.args, `钩子拿到的 gap/margin 是 ${JSON.stringify([hook.gap, hook.margin])}，应当是 5/16`))
+          if (hook.anchor_is_trigger_ref !== true) problems.push(problem(POS.anchor, '`anchorRef` 不是触发器上那个 ref（渲染读数）—— 钩子量的是另一个东西'))
+          if (hook.panel_is_panel_ref !== true) problems.push(problem(POS.panel, '`panelRef` 不是面板上那个 ref（渲染读数）—— 钩子不知道要挪哪一块'))
+        }
+      }
+    }
+
+    // ⑤ 真刀：**故障那一版**的真字节（`d586215^`）。两条判据必须分得开那一次的两个成因。
+    const old = preFailureClientSource()
+    rec.readings.knife_old_source = { available: old.available, why: old.why, sha256: old.sha256, proves_old: old.proves_old, has_hidden_fallback: old.has_hidden_fallback, has_guard_message: old.has_guard_message }
+    if (!old.available) {
+      caseHold(rec, 'DASH-POS-KNIFE-UNAVAILABLE', `拿不到故障那一版的真字节（${old.why}）—— "这条判据抓得住那一次真故障"这一腿判不了`)
+    } else if (!old.proves_old) {
+      problems.push(problem('DASH-POS-KNIFE-NOT-OLD', `\`d586215^\` 那一版里 visibility:hidden=${old.has_hidden_fallback} / 兜底那串报错文案=${old.has_guard_message} —— 这不是"故障那一版"，这把刀证明的是别的东西`))
+    } else {
+      const oldHarness = createDashboardHarness(old.text)
+      if (!oldHarness.ok) {
+        problems.push(problem('DASH-POS-KNIFE-NOT-OLD', `故障那一版装不进载具（${oldHarness.reason}）—— 这把刀切不动`))
+      } else {
+        const scene = await oldHarness.scene({ remote: READABLE_REMOTE, position: null })
+        const oldWiring = wiringProblems(old.text).map((p) => p.code).sort()
+        const oldFallback = scene.panel_style === null ? [] : fallbackStyleProblems(scene.panel_style, '故障那一版的兜底').map((p) => p.code).sort()
+        rec.readings.knife_old = { wiring: oldWiring, fallback: oldFallback, panel_style: scene.panel_style }
+        if (JSON.stringify(oldFallback) !== JSON.stringify([POS.hidden])) {
+          problems.push(problem('DASH-KNIFE-VECTOR', `故障那一版的兜底读出来是 ${JSON.stringify(oldFallback)}，应当**只有** ${JSON.stringify([POS.hidden])} —— 这一格抓不住那次真故障（或者连别的面一起抓）`))
+        }
+        if (oldWiring.length !== 0) {
+          problems.push(problem('DASH-KNIFE-VECTOR', `故障那一版的**接线**读出来是 ${JSON.stringify(oldWiring)}，应当是 [] —— 接线判据把"接好了但兜底看不见"也算成"没接线"，两条判据分不开`))
+        }
+      }
     }
 
     caseFail(problems)
