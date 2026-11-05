@@ -1,150 +1,381 @@
 #!/usr/bin/env node
 /**
- * 把「看板」挂到客户端 profile 层的顶层插入块里 —— **只在客户端关着的时候用**。
+ * 把「看板」挂到客户端 **profile 层**的顶层插入块里 —— **只在客户端关着的时候用**。
  *
- * 为什么要它：客户端 UI 插件只有成为**宿主 Loader 树**的一行才会被发给浏览器
- * （`dsh-client-modules` 只枚举 `ctx.loader.entries()`）；而把这一行放进 **bundle 补丁**的顶层插入块
- * 会让整个 bundle 层在 boot 时失效 —— 2026-11-05 实测：两份预设都没注册，新会话掉成
- * `agentPreset: "standard"` ⇒ 无角色 ⇒ 窄权限（没命令行、不能派活）。见 `bug-20261105-12`。
+ * 为什么是 profile 层：浏览器只收**宿主 Loader 树**里的条目
+ * （`@deepseek-ai/dsh-client-modules` 的 `ClientModuleRegistry.processOne()` 只枚举
+ * `ctx.loader.entries()`）；bundle 层在 boot 时被合成，而预设里的行由
+ * `@deepseek-ai/dsh-agent-preset` 注册进它自建的 Loader 树。宿主级行住 profile 补丁，
+ * 预设级行住 bundle 补丁 —— 两层各有一个落点。
  *
  * profile 补丁是**热重载层**（`patchReload: live`）：在会话里写它 = 正在跑的工具当场掉光。
- * ⇒ 所以这个脚本**先看进程**：客户端还开着就直接拒（退出码 3），一个字节都不写。
+ * ⇒ 这个脚本**先看进程**：客户端还开着就直接拒（退出码 3），一个字节都不写。
  *
- * 用法（三条，都要显式说）：
- *   node .tools/mount-dashboard-profile.mjs --check          # 只看现在挂没挂（默认就是它）
+ * 形状的**唯一来源**是 `./lib/dashboard-mount.mjs` 的 `dashboardMountRow()`：
+ * 写进去的行、`--check` 比对的期望、`BOOT-01/02` 能 import 的那份形状，全都从它来。
+ *
+ * 用法（三条，都要显式说；默认 = check）：
+ *   node .tools/mount-dashboard-profile.mjs --check          # 只看现在挂没挂
  *   node .tools/mount-dashboard-profile.mjs --apply          # 挂上（要客户端已关）
  *   node .tools/mount-dashboard-profile.mjs --revert         # 撤掉（要客户端已关）
  *
- * 可选：--profile <名字>（默认 desktop）· --file <绝对路径>（默认本机的 desktop 档补丁）
+ * 可选：--profile <名字>（默认 desktop）· --file <绝对路径>（默认本机那份 profile 补丁；
+ *       显式给副本时不上进程锁，副本不是热重载层）
  *       --root <工作区>（默认 E:/Harness，写进那一行的 config.root）
+ *       --backup-dir <目录>（默认 .team/leader/<今天>/backup；副本实验时指到 .team/dev/…）
+ *
+ * 退出码：0 挂载成立 / 已经挂上 / 已撤掉 · 1 没挂 · 2 补丁读不到 ·
+ *         3 客户端还开着（拒绝写）· 4 形状不对（拒绝写 / 拒绝盲删）
  */
-import fs from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import {
+  compareDashboardMount,
+  dashboardMountPayload,
+  dashboardPackageFacts,
+  readDashboardMount,
+  remainingDashboardReferences,
+  stripDashboardMount,
+} from './lib/dashboard-mount.mjs'
 
-/**
- * 这一块的边界标记。🔴 两条规矩（2026-11-05 各踩过一次）：
- *  ① 标记串**不许**在正文里出现（早先正文那句「删掉 >>> … <<< 这一段」把自己的 END 变成了
- *     `indexOf` 的第一个命中 ⇒ 撤掉时只切掉半块，热补丁里剩一段孤儿 YAML）；
- *  ② END 用 `lastIndexOf` 找（块是最后加进去的），并在写回前跟备份逐字节比对。
- */
-const BEGIN = '# >>>AGENIA-DASHBOARD-MOUNT>>>'
-const END = '# <<<AGENIA-DASHBOARD-MOUNT<<<'
+// 判据那边可以直接 import 这个入口拿形状；这里原样再导出，路径只留一个。
+export {
+  MOUNT_MARKERS,
+  compareDashboardMount,
+  dashboardMountBlock,
+  dashboardMountRow,
+  dashboardPackageFacts,
+  readDashboardMount,
+  stripDashboardMount,
+} from './lib/dashboard-mount.mjs'
 
-const argv = process.argv.slice(2)
-const flag = (name) => argv.includes(name)
+const ARGV = process.argv.slice(2)
+const flag = (name) => ARGV.includes(name)
 const opt = (name, dflt) => {
-  const i = argv.indexOf(name)
-  return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt
+  const i = ARGV.indexOf(name)
+  return i >= 0 && i + 1 < ARGV.length ? ARGV[i + 1] : dflt
 }
 
-const profile = opt('--profile', 'desktop')
-const file = opt('--file', path.join(os.homedir(), '.dsh', 'profiles', profile, 'cordis.patch.yml'))
-const root = opt('--root', 'E:/Harness').replace(/\\/g, '/')
-
-const mode = flag('--apply') ? 'apply' : flag('--revert') ? 'revert' : 'check'
+const sha256 = (buf) => createHash('sha256').update(buf).digest('hex').toUpperCase()
+const localDay = () => {
+  const now = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
 
 /** 客户端还开着吗 —— 以进程名为准（这台机器上是 `DeepSeek Harness`）。 */
 function clientRunning() {
   try {
     const out = execFileSync('powershell.exe', [
-      '-NoProfile', '-Command',
-      "(Get-Process | Where-Object { $_.ProcessName -match 'DeepSeek Harness|dsh-desktop' } | Measure-Object).Count",
-    ], { encoding: 'utf8' })
-    return Number.parseInt(out.trim(), 10) > 0
+      '-NoProfile', '-NonInteractive', '-Command',
+      "(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match 'DeepSeek Harness|dsh-desktop' } | Measure-Object).Count",
+    ], { encoding: 'utf8', timeout: 15000 })
+    const count = Number.parseInt(String(out).trim(), 10)
+    return Number.isFinite(count) ? count > 0 : null
   } catch {
     // 读不到进程表 ⇒ 不能当成"没开"（"读不到"≠"没有"）
     return null
   }
 }
 
-function readText(p) {
-  try { return fs.readFileSync(p, 'utf8') } catch (e) {
-    if (e.code === 'ENOENT') return null
-    throw e
+function profilePatchPath() {
+  const explicit = opt('--file', null)
+  if (explicit !== null) return { file: path.resolve(explicit), source: '--file' }
+  const profile = opt('--profile', null)
+  if (profile !== null) {
+    return { file: path.join(os.homedir(), '.dsh', 'profiles', profile, 'cordis.patch.yml'), source: '--profile' }
+  }
+  if (typeof process.env.DSH_PROFILE_DIR === 'string' && process.env.DSH_PROFILE_DIR.trim() !== '') {
+    return { file: path.join(process.env.DSH_PROFILE_DIR, 'cordis.patch.yml'), source: 'DSH_PROFILE_DIR' }
+  }
+  const fallback = process.env.DSH_PROFILE ?? 'desktop'
+  return { file: path.join(os.homedir(), '.dsh', 'profiles', fallback, 'cordis.patch.yml'), source: 'homedir()/.dsh/profiles' }
+}
+
+function backupDirOf(root) {
+  const explicit = opt('--backup-dir', null)
+  if (explicit !== null) return path.resolve(explicit)
+  return path.join(root, '.team', 'leader', localDay(), 'backup')
+}
+
+function writeBackup(file, root, profile) {
+  const dir = backupDirOf(root)
+  mkdirSync(dir, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const dst = path.join(dir, `cordis.patch.yml.${profile}.${stamp}.bak`)
+  writeFileSync(dst, readFileSync(file))
+  return dst
+}
+
+/** 原子写：同目录临时件 → rename（半截文件不会被热重载层读到）。 */
+function writeAtomic(file, text) {
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
+  try {
+    writeFileSync(tmp, text, 'utf8')
+    renameSync(tmp, file)
+  } catch (err) {
+    try { if (existsSync(tmp)) unlinkSync(tmp) } catch { /* 清理失败不盖住原错误 */ }
+    throw err
   }
 }
 
-function block() {
-  return [
-    BEGIN,
-    '# 让「看板」成为宿主 Loader 树的一行：Node 侧每 15 秒写一份快照，浏览器侧读它。',
-    '# 由 .tools/mount-dashboard-profile.mjs 写入；撤掉用它的 --revert（别手删，删漏一行就变成孤儿 YAML）。',
-    '- insert:',
-    '    - id: agenia-dashboard',
-    `      name: 'file:///${root}/presets/agenia/client-ui-dashboard/lib/index.js'`,
-    '      config:',
-    `        root: '${root}'`,
-    END,
-    '',
-  ].join('\n')
+function findMatchingBackup(root, text) {
+  const dir = backupDirOf(root)
+  if (!existsSync(dir)) return null
+  const target = Buffer.from(text, 'utf8')
+  for (const name of readdirSync(dir).filter((n) => n.endsWith('.bak')).sort().reverse().slice(0, 50)) {
+    const candidate = path.join(dir, name)
+    try {
+      if (Buffer.compare(readFileSync(candidate), target) === 0) return candidate
+    } catch { /* 读不了的备份不算匹配 */ }
+  }
+  return null
 }
+
+const indentOf = (line) => (/^[ ]*/.exec(line) ?? [''])[0].length
+const KEY_SHAPE = /^[A-Za-z0-9_$@.\-/]+\s*:/
+const SCALAR_KEY = /^(\s*)([A-Za-z0-9_$@.\-/]+):\s+(.*\S)\s*$/
 
 /**
- * 精确切掉我们加的那一段：`--apply` 加的是 `'\n' + block()`，这里就切掉**同一段字节**。
- * 2026-11-05 实测踩过：早先那版按行 `replace(/\n+$/,'\n')` 收尾，撤完文件比原来少/多一个换行 ——
- * 「撤掉」必须**逐字节回到原样**，否则热补丁层上留一个看不见的差异，下一次没人查得出来。
+ * 把**多行 plain scalar** 折成一行 —— 只动空白，不改值。
+ *
+ * 为什么需要它：项目自己的窄口径 YAML 读取器（`tests/agenia-upgrade/support/composition.mjs`
+ * 的 `parseYamlSubset`）不支持多行 plain scalar；现役 profile 补丁里那条模型 `description`
+ * 正好是两行 ⇒ 读取器从那一行起就报"未被解析器吃掉"，后面（包括我们挂上去的那一块）
+ * 全都读不到。`--apply` 折叠它，挂载行才在读数里存在；`--revert` 用 apply 前的备份
+ * **逐字节还原**，所以"撤掉 = 回到原样"仍然成立。
+ *
+ * 只折这一种形状：上一行是 `key: 非空 plain 值`（不是引号 / 块标量 / 行内集合 / `!!js`），
+ * 下一行缩进更深、不是空行 / 注释 / 列表项 / 新 key、也没有行尾注释。
+ * 看不懂的形状一律不碰 —— 宁可让读取器出声，也不猜。
+ *
+ * @returns {{text: string, folds: {line: number, from: string[], to: string}[]}}
  */
-function stripBlock(text) {
-  // 首选：撤掉的就是 `--apply` 加进去的那**同一段字节**（`'\n' + block()`）⇒ 天然逐字节回到原样。
-  const payload = '\n' + block()
-  if (text.endsWith(payload)) return { text: text.slice(0, text.length - payload.length), removed: true }
-  // 兜底：文件在 apply 之后又被别的东西碰过 ⇒ 按标记切，切完要是跟备份对不上就报警（不静默写）。
-  const i = text.indexOf(BEGIN)
-  if (i < 0) return { text, removed: false }
-  const j = text.lastIndexOf(END)
-  if (j < i) throw new Error('找到开头标记却没有结尾标记 —— 文件被动过，拒绝盲改（先人工看）')
-  const cut = i > 0 && text[i - 1] === '\n' ? i - 1 : i
-  return { text: text.slice(0, cut) + text.slice(j + END.length), removed: true, approximate: true }
+function foldPlainContinuations(text) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  const lines = text.split(eol)
+  const folds = []
+  let blockScalarIndent = null
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]
+    if (blockScalarIndent !== null) {
+      if (line.trim() === '' || indentOf(line) > blockScalarIndent) continue
+      blockScalarIndent = null
+    }
+    if (/:\s*[|>][-+]?\s*$/.test(line)) {
+      blockScalarIndent = indentOf(line)
+      continue
+    }
+    const hit = SCALAR_KEY.exec(line)
+    if (hit === null) continue
+    const indent = hit[1].length
+    const value = hit[3]
+    if (/^['"[{]/.test(value) || value.startsWith('!!js')) continue
+    const original = [line]
+    const continuation = []
+    let j = i + 1
+    while (j < lines.length) {
+      const next = lines[j]
+      if (next.trim() === '' || /^\s*#/.test(next)) break
+      if (indentOf(next) <= indent) break
+      const rest = next.trim()
+      if (/^- /.test(rest) || KEY_SHAPE.test(rest) || rest.includes(' #')) break
+      continuation.push(next)
+      j += 1
+    }
+    if (continuation.length > 0) {
+      const folded = `${line.trimEnd()} ${continuation.map((item) => item.trim()).join(' ')}`
+      folds.push({ line: i + 1, from: [...original, ...continuation], to: folded })
+      // 把折好的那一行写回，并删掉被吃掉的续行。
+      lines.splice(i, j - i, folded)
+    }
+  }
+  return { text: lines.join(eol), folds }
 }
 
-const text = readText(file)
-if (text === null) {
-  console.log(`E_NO_PROFILE  找不到 profile 补丁：${file}`)
-  process.exit(2)
+function applyRecordPath(backupFile) {
+  return backupFile.replace(/\.bak$/, '.json')
 }
 
-const mounted = text.includes(BEGIN)
-const hasSelfRow = /^\s*- id:\s*agenia-dashboard\s*$/m.test(text)
-
-if (mode === 'check') {
-  console.log(`file    ${file}`)
-  console.log(`profile ${profile}`)
-  console.log(`挂载    ${mounted ? 'YES（有我们写的那一块）' : 'NO'}`)
-  console.log(`另有同 id 的行 ${hasSelfRow && !mounted ? 'YES（不是我写的形状，先看）' : 'NO'}`)
-  console.log(`客户端  ${(() => { const r = clientRunning(); return r === null ? '判不了（读不到进程表）' : r ? '开着' : '关着' })()}`)
-  process.exit(mounted ? 0 : 1)
+function writeApplyRecord({ backup, file, profile, original, applied, folds }) {
+  const record = {
+    schema: 1,
+    at: new Date().toISOString(),
+    file,
+    profile,
+    backup,
+    original: { bytes: Buffer.byteLength(original, 'utf8'), sha256: sha256(Buffer.from(original, 'utf8')) },
+    applied: { bytes: Buffer.byteLength(applied, 'utf8'), sha256: sha256(Buffer.from(applied, 'utf8')) },
+    folds,
+  }
+  const recordFile = applyRecordPath(backup)
+  writeFileSync(recordFile, `${JSON.stringify(record, null, 2)}\n`, 'utf8')
+  return recordFile
 }
 
-const running = clientRunning()
-// 保险只对**现役补丁**上锁：显式 `--file` 说明调用者已经在拿副本做实验（那一份不是热重载层）。
-const explicitFile = argv.includes('--file')
-if (!explicitFile && running !== false) {
-  console.log(running === null
-    ? '拒绝：读不到进程表，无法确认客户端已关（"读不到"不等于"关着"）。'
-    : '拒绝：客户端还开着。profile 补丁是热重载层，会话里写它会让正在跑的工具当场掉光 —— 先把客户端关掉再来。')
-  process.exit(3)
+function findApplyRecord(root, file, currentText) {
+  const dir = backupDirOf(root)
+  if (!existsSync(dir)) return null
+  const current = sha256(Buffer.from(currentText, 'utf8'))
+  for (const name of readdirSync(dir).filter((n) => n.endsWith('.json')).sort().reverse().slice(0, 50)) {
+    const candidate = path.join(dir, name)
+    try {
+      const record = JSON.parse(readFileSync(candidate, 'utf8'))
+      if (record?.schema === 1 && record.file === file && record.applied?.sha256 === current) return record
+    } catch { /* 坏记录不算匹配 */ }
+  }
+  return null
 }
 
-// 备份：落进工作区的日期抽屉（不写 C 盘以外以外的地方；补丁本身在 C 盘用户目录，那是它本来的位置）
-const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-const backupDir = path.join(root, '.team', 'leader', new Date().toISOString().slice(0, 10), 'backup')
-fs.mkdirSync(backupDir, { recursive: true })
-const backup = path.join(backupDir, `cordis.patch.yml.${profile}.${stamp}.bak`)
-fs.copyFileSync(file, backup)
-console.log(`备份    ${backup}`)
+const yesNo = (value) => (value === true ? 'YES' : value === false ? 'NO' : '判不了')
 
-if (mode === 'apply') {
-  if (mounted) { console.log('已经挂上了，不重复写。'); process.exit(0) }
-  const next = text.replace(/\n*$/, '\n') + '\n' + block()
-  fs.writeFileSync(file, next, 'utf8')
-  console.log('已写入这一块：')
-  console.log(block())
-} else {
-  const { text: next, removed } = stripBlock(text)
-  if (!removed) { console.log('文件里没有我们写的那一块，什么都没改。'); }
-  else { fs.writeFileSync(file, next, 'utf8'); console.log('已撤掉那一块。') }
+function printCheck({ file, source, profile, root, text, mount, facts, client }) {
+  const row = mount.mount
+  const compare = compareDashboardMount(row, { root })
+  console.log(`file      ${file}  (${source})`)
+  console.log(`profile   ${profile}`)
+  console.log(`bytes     ${Buffer.byteLength(text, 'utf8')} · sha256 ${sha256(Buffer.from(text, 'utf8'))}`)
+  console.log(`挂载 ${mount.present ? 'YES' : 'NO'}`)
+  console.log(`顶层 insert ${mount.present ? yesNo(row?.placement === 'insert') : '—'}`)
+  console.log(`disabled ${mount.present ? yesNo(row?.disabled === true) : '—'}`)
+  console.log(`id        ${mount.present ? (row?.id ?? '（无 id）') : '—'}`)
+  console.log(`name      ${mount.present ? (row?.name ?? '?') : '—'}`)
+  console.log(`root      ${mount.present ? (row?.root ?? '?') : '—'}`)
+  if (mount.present && mount.rows.length > 1) console.log(`重复      指向这个包的行有 ${mount.rows.length} 处（${mount.rows.map((r) => `${r.placement}@L${r.line}`).join(' · ')}）`)
+  if (mount.nested.length > 0) console.log(`住错层    ${mount.nested.map((r) => `${r.placement}${r.parent === null ? '' : `（${r.parent} 里）`}@L${r.line}`).join(' · ')}`)
+  console.log(`形状      ${mount.present ? (compare.ok ? '与 dashboardMountRow() 逐格相同' : `不匹配：${Object.entries(compare.checks).filter(([, ok]) => !ok).map(([k]) => k).join(', ')}`) : '—'}`)
+  console.log(`标记块    ${mount.markers.block ? `YES（BEGIN L${mount.markers.begin_lines[0]} · END L${mount.markers.end_lines[0]}）` : 'NO'}`)
+  console.log(`package   ${facts.name ?? '?'} ${facts.version ?? ''}  (${facts.dir})`)
+  console.log(`dsh.client.platform ${facts.platform ?? '?'}`)
+  console.log(`dsh.client.inject   ${facts.inject === null ? '?' : JSON.stringify(facts.inject)}`)
+  console.log(`exports["./client"] ${facts.exports_client ?? '?'} → ${facts.client_path ?? '?'}`)
+  console.log(`client    ${facts.client_exists ? `在盘 · ${facts.client_bytes} B · sha256 ${facts.client_sha256}` : '不在盘'}`)
+  console.log(`entry     ${facts.entry_exists ? `在盘 · ${facts.entry_path}` : `不在盘 · ${facts.entry_path}`}`)
+  const folds = foldPlainContinuations(text).folds
+  console.log(`窄口径解析 ${folds.length === 0 ? '可直接读（无多行 plain scalar）' : `有 ${folds.length} 处多行 plain scalar —— BOOT-01/02 的读取器读不懂；--apply 会折叠，--revert 用备份逐字节还原`}`)
+  console.log(`客户端    ${client === null ? '判不了（读不到进程表）' : client ? '开着' : '关着'}`)
+  for (const problem of facts.problems) console.log(`包问题    ${problem}`)
+  return compare
 }
 
-console.log('\n下一步（每次改完都要）：重启客户端 → 新建一个会话 → 读它的会话头 agentPreset 必须是 agenia。')
+function main() {
+  const mode = flag('--apply') ? 'apply' : flag('--revert') ? 'revert' : 'check'
+  const rootRaw = opt('--root', 'E:/Harness')
+  const root = path.resolve(rootRaw)
+  const where = profilePatchPath()
+  const profile = opt('--profile', process.env.DSH_PROFILE ?? path.basename(path.dirname(where.file)))
+  const explicitFile = flag('--file')
+
+  if (!existsSync(where.file)) {
+    console.log(`file      ${where.file}  (${where.source})`)
+    console.log('E_NO_PROFILE 找不到 profile 补丁')
+    return 2
+  }
+
+  const text = readFileSync(where.file, 'utf8')
+  const mount = readDashboardMount(text)
+  const facts = dashboardPackageFacts(root)
+  const client = clientRunning()
+  const compare = printCheck({ file: where.file, source: where.source, profile, root, text, mount, facts, client })
+
+  if (mode === 'check') {
+    if (!mount.present) return 1
+    return compare.ok && mount.duplicates === 1 ? 0 : 4
+  }
+
+  // 写之前重新量一次：打印读数与真正动手之间，客户端可能已经被打开。
+  const running = clientRunning()
+  if (!explicitFile && running !== false) {
+    console.log(running === null
+      ? '拒绝：读不到进程表，无法确认客户端已关（"读不到"不等于"关着"）。'
+      : '拒绝：客户端还开着。profile 补丁是热重载层，会话里写它会让正在跑的工具当场掉光 —— 先把客户端关掉再来。')
+    return 3
+  }
+
+  if (mode === 'apply') {
+    if (mount.present) {
+      if (compare.ok && mount.duplicates === 1) {
+        console.log('已经挂上了（形状与 dashboardMountRow() 逐格相同），不重复写。')
+        return 0
+      }
+      console.log('已经有一行指向这个包，但形状不是本工具写的那种 —— 不重复写，先人工看（或 --revert 之后再来）。')
+      return 4
+    }
+    const before = sha256(Buffer.from(text, 'utf8'))
+    const folded = foldPlainContinuations(text)
+    const next = folded.text + dashboardMountPayload({ root })
+    const backup = writeBackup(where.file, root, profile)
+    const record = writeApplyRecord({ backup, file: where.file, profile, original: text, applied: next, folds: folded.folds })
+    writeAtomic(where.file, next)
+    console.log(`备份      ${backup}`)
+    console.log(`记录      ${record}`)
+    if (folded.folds.length > 0) {
+      console.log(`格式归一化 ${folded.folds.length} 处多行 plain scalar（折叠成一行，只动空白；BOOT-01/02 的读取器才读得懂）`)
+      for (const fold of folded.folds) console.log(`          L${fold.line}: ${fold.from.map((l) => l.trim()).join(' ⏎ ')}`)
+    }
+    console.log(`已写入    ${before} → ${sha256(Buffer.from(next, 'utf8'))}（${Buffer.byteLength(next, 'utf8')} B）`)
+    console.log('\n下一步（每次改完都要）：重启客户端 → 新建一个会话 → 读它的会话头 agentPreset 必须是 agenia。')
+    return 0
+  }
+
+  // revert
+  // 正常路径：apply 时留下了记录（原文件备份 + 应用后哈希）。当前文件 = 应用后那份 ⇒
+  // 直接把备份写回去 —— 连 `--apply` 折过的 plain scalar 也逐字节还原。
+  const record = findApplyRecord(root, where.file, text)
+  if (record !== null) {
+    if (!existsSync(record.backup)) {
+      console.log(`记录指向的备份不在：${record.backup} —— 不能保证逐字节还原，先人工看。`)
+      return 4
+    }
+    const original = readFileSync(record.backup, 'utf8')
+    const originalSha = sha256(Buffer.from(original, 'utf8'))
+    if (originalSha !== record.original?.sha256) {
+      console.log(`备份与记录里的原始哈希对不上（记录 ${record.original?.sha256} · 备份 ${originalSha}）—— 拒绝盲写。`)
+      return 4
+    }
+    const backup = writeBackup(where.file, root, profile)
+    writeAtomic(where.file, original)
+    console.log(`备份      ${backup}`)
+    console.log(`已撤掉    ${sha256(Buffer.from(text, 'utf8'))} → ${originalSha}（${Buffer.byteLength(original, 'utf8')} B）`)
+    console.log(`与备份逐字节相同 YES（${record.backup}）`)
+    return 0
+  }
+
+  const stripped = stripDashboardMount(text)
+  if (stripped.error !== undefined) {
+    console.log(`拒绝：${stripped.error}`)
+    return 4
+  }
+  if (!stripped.removed) {
+    if (mount.present) {
+      console.log('文件里有一行指向这个包，但不是本工具写的块（没有边界标记）—— 拒绝删别人的行，先人工看。')
+      return 4
+    }
+    console.log('文件里没有本工具写的块，什么都没改。')
+    return 0
+  }
+  const remaining = remainingDashboardReferences(stripped.text)
+  if (remaining.length > 0) {
+    console.log(`拒绝：撤掉本工具的块之后，文件里还有 ${remaining.length} 处指向这个包（${remaining.map((r) => `${r.placement}@L${r.line}`).join(' · ')}）—— 不是"一步撤"，先人工看。`)
+    return 4
+  }
+  const before = sha256(Buffer.from(text, 'utf8'))
+  const backup = writeBackup(where.file, root, profile)
+  writeAtomic(where.file, stripped.text)
+  const after = sha256(Buffer.from(stripped.text, 'utf8'))
+  console.log(`备份      ${backup}`)
+  console.log(`已撤掉    ${before} → ${after}（${Buffer.byteLength(stripped.text, 'utf8')} B · 删 ${stripped.removed_bytes} B）`)
+  const same = findMatchingBackup(root, stripped.text)
+  console.log(`与备份逐字节相同 ${same === null ? '判不了（备份目录里没有同内容的那一份）' : `YES（${same}）`}`)
+  if (foldPlainContinuations(text).folds.length > 0) {
+    console.log('⚠️ 这一份 apply 时做过格式归一化，但没有找到对应的 apply 记录 —— 这次只删了块，没有还原折叠前的字节。')
+  }
+  return 0
+}
+
+const invokedDirectly = process.argv[1] !== undefined && path.resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase()
+if (invokedDirectly) process.exit(main())

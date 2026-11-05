@@ -1,10 +1,13 @@
 # Agenia 作为一个 DSH bundle 的补丁文件 —— 这份预设的**注册入口**。
 #
-# ── 这一份里有两层（别混着读）─────────────────────────────────────────────
-#   ① 宿主级行（第 1 个 `- insert:`）—— 直接装进**宿主 Loader 树**。浏览器收的包就是从
-#      这一层里挑的（`dsh.client` + `exports["./client"]`），预设里的行不在这一层。
-#   ② 预设入口（第 2 个 `- insert:`）—— 两条 `@deepseek-ai/dsh-agent-preset`，
-#      它们的 `config.plugins` 是**会话**的组合，不进宿主树。
+# ── 这一份里只有**预设层**（宿主级行住 profile 补丁，别混着读）────────────────
+#   这一份的 `- insert:` 装两条 `@deepseek-ai/dsh-agent-preset`（`agenia` / `agenia-member`），
+#   它们的 `config.plugins` 是**会话**的组合，不进宿主树。
+#   客户端 UI 那类**宿主级**行写进 profile 补丁（`~/.dsh/profiles/<档>/cordis.patch.yml`）
+#   的顶层 `- insert:`，不写进这一份 —— 浏览器只收**宿主 Loader 树**里的条目
+#   （`@deepseek-ai/dsh-client-modules` 只枚举 `ctx.loader.entries()`），而预设里的行由
+#   `@deepseek-ai/dsh-agent-preset` 注册进它自建的 Loader 树。
+#   组合里出现 `# @host-level` 标记 ⇒ 生成器当场 throw，不会把它搬进这一份。
 #
 # ── 为什么需要它（2026-09-28 换版）─────────────────────────────────────────
 # DSH 0.1.7 起，"用户预设"的发现机制整个换掉了：
@@ -42,12 +45,10 @@
 #   · 组员那一份 = 组合**去掉 delegation 组**（workflow / ralph 结构性没有，组员不能再招人）；
 #   · **别手动改这份文件** —— 改了 `.yml` 就跑一次生成器。
 #
-# ── 🔴 2026-11-05（宿主级行）：浏览器只认第一层 ────────────────────────────────
-# 组合里标了 `# @host-level` 的行（点名表 = 生成器的 `HOST_LEVEL_IDS`）**不进预设**，
-# 在这里被搬成第 1 个顶层 `- insert:` 的直接成员。理由不在这一份文件里猜：
-# `@deepseek-ai/dsh-client-modules` 的 `ClientModuleRegistry.processOne()` 只枚举
-# `ctx.loader.entries()`（宿主 Loader 树），而预设里的行由 `@deepseek-ai/dsh-agent-preset`
-# 注册进 registry 自建的 Loader 树 —— 装进预设 = 浏览器永远收不到。
+# ── 🔴 宿主级行不在这里 ──────────────────────────────────────────────────────
+# 组合里标了 `# @host-level` 的行**不进这一份**：生成器看到那枚标记当场 throw。
+# 宿主级行（客户端 UI 那类）写进 profile 补丁的顶层 `- insert:`，用
+# `.tools/mount-dashboard-profile.mjs` 挂 / 撤。理由见上面「这一份里只有预设层」。
 #
 # ⚠️ 所以这份文件是 `agent.cordis.yml` 的**派生物**：
 #    那份仍是唯一来源，这份由 `.tools/make-bundle-patch.mjs` 生成 ——
@@ -59,11 +60,7 @@
 #      · 不写 contentDir   ⇒ 那些 .md 全读不到，**而且不报错**（静默注入 0 字符）
 #    ⇒ **换机器 / 换目录，改生成器里那两行，再跑一次生成器。**
 
-# ── ① 宿主级行（宿主装载层；从组合里标 `# @host-level` 的那些行搬来）────────────
-- insert:
-
-
-# ── ② 预设入口（会话的组合；不进宿主树）──────────────────────────────────────
+# ── 预设入口（会话的组合；不进宿主树）────────────────────────────────────────
 - insert:
     - id: preset-agenia # 行名按约定写 preset-<预设 id>
       name: '@deepseek-ai/dsh-agent-preset'
