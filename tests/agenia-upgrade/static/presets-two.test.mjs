@@ -55,7 +55,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
 import { caseDir, caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
-import { cfg, delegationToolNames, enabledDelegations, hostLevelRows, leaderBlockProblems, listMd, memberAnnotations, parseComposition, plain, presetEntries, readPresetBaseline } from '../support/composition.mjs'
+import { cfg, delegationToolNames, enabledDelegations, hostLevelMarkProblems, leaderBlockProblems, listMd, memberAnnotations, parseComposition, plain, presetEntries, readPresetBaseline } from '../support/composition.mjs'
 import {
   buildCatalog, buildContentRoot, configFromComposition, guardOrderOf, importSourceCopy,
   injectedNames, injectedText, knifeReplace, loadInjector as loadInjectorFile, namesOfCatalog,
@@ -338,6 +338,9 @@ describe('static · presets-two (任务 A)', () => {
         //   —— 那一行的存在是老板拍的回滚，不是"谁顺手改了组长块" ⇒ `leaderBlockProblems()` 的
         //   `pending_rows` 放行它（四条同时成立才放行），本用例据此记 **HOLD**（不是绿）。
         //   行一开（`disabled` 去掉）⇒ 立刻回到 `LEADER-CLOBBERED`（红）：方向没有翻，只是窗口变了。
+        // ⚠️ "组长块里不许有宿主级行"那条判据**已删**（2026-11-05）：bundle 层不再有宿主级行集合
+        //   （`hostLevelRows()` 退休），那个集合永远是空的。"组合里不许出现 `# @host-level`"改由
+        //   `hostLevelMarkProblems()` 判（下面那一行；红，码 `HOST-LEVEL-MARK`）。
         const leaderBase = (base.value.preset_blocks ?? []).find((b) => b.preset_id === LEADER_PRESET_ID)
         const leaderNow = blocks.find((b) => b.preset_id === LEADER_PRESET_ID)
         if (leaderBase !== undefined) {
@@ -347,22 +350,25 @@ describe('static · presets-two (任务 A)', () => {
             const oldMemberIds = (base.value.preset_blocks ?? [])
               .filter((b) => b.preset_id !== LEADER_PRESET_ID)
               .map((b) => b.preset_id)
+            // 组合里**不许**有 `# @host-level`（2026-11-05：bundle 层不装宿主级行，生成器见到标记就 throw）。
+            const markVerdict = hostLevelMarkProblems(ymlText)
             const verdict = leaderBlockProblems({
               baseText: leaderBase.full_text,
               nowText: leaderNow.full_text,
               leaderPresetId: LEADER_PRESET_ID,
               memberPresetId,
               oldMemberIds,
-              // 宿主级集合只从组合原文的 `# @host-level` 读（一个事实一个落点）——
-              // 不在 `leaderBlockProblems` 里再写死一份 id 名单。
-              hostLevelIds: hostLevelRows(ymlText).ids,
               // 组合原文：判"回滚期停在组长块里的那一行"（组合里 `disabled: true` + 不在基线里 + 值行与组合逐字相同）。
+              // ⚠️ 旧的 `hostLevelIds` 入参已删（2026-11-05）：bundle 层不再有宿主级行集合 ——
+              //    "组合里不许出现 `# @host-level`"这一条由下面的 `hostLevelMarkProblems()` 报（一个事实一个落点）。
               compositionText: ymlText,
             })
             rec.readings.leader_block_base = leaderBase.sha256
             rec.readings.leader_block_now = leaderNow.sha256
             rec.readings.leader_block = verdict.readings
+            rec.readings.host_level_marks = markVerdict.readings.marks
             for (const p of verdict.problems) push(p.code, p.message)
+            for (const p of markVerdict.problems) push('HOST-LEVEL-MARK', p)
             /**
              * 🔴 **第三态：回滚期这一格量不了"逐行相同"**（2026-11-05 16:2x）。
              * 宿主级 insert 让整个 bundle 层 boot 失败 ⇒ 看板那一行 `disabled: true` 搬回组长块

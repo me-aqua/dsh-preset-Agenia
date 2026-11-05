@@ -34,24 +34,33 @@
  *        （`DASH-PROFILE-ROW-DISABLED`）· `name` 指到包 · `config.root` 在 · 包自己声明
  *        `dsh.client.platform: web` + `exports["./client"]`（合起来一个码 `DASH-NO-CLIENT-DECL`，
  *        报文里各自点名 —— 缺一样浏览器就没有东西可收）；
- *      · **还没挂**（profile 补丁里没有这一行）⇒ **HOLD `DASH-MOUNT-DISABLED-PENDING-PROFILE-LAYER`**
- *        （第三态，**不是绿**）：挂载路线今天还在搬层，`.tools/mount-dashboard-profile.mjs --apply`
- *        还没跑（客户端开着时它自己会拒写）。那一行一出现，这一格立刻回到红/绿两态。
- *        ⚠️ "还没挂"与"挂过又丢了"在本格分不开（判据没有记忆）—— 后者由 `BOOT-01` 的 R5 条件式
- *        （行不在而身份 RED ⇒ `BOOT-ROLLBACK-DID-NOT-RESTORE`）与挂载工具的 `--check` 兜；
- *        本格对这两种都只给 HOLD，**永不假绿**。
+ *      · **那一行不在** ⇒ **红** `DASH-PROFILE-MOUNT-MISSING`（2026-11-05 复审第 4 条：主语是
+ *        "那一行**必须**在 profile 补丁里"，缺席是**关于产品的事实**（挂载没做），不是"我读不到"）。
+ *        ⚠️ 第三态在这条腿上已经取消：它之前把"还没挂"记成 HOLD，等于让一条**验收要求**在
+ *        产品没做的时候不出声（`cand-20261019-0042` 那个病）。今天的读数就是红，
+ *        `AGENIA_PROFILE_PATCH` 指一份已挂载的副本 ⇒ 立刻绿（翻面见 ② 的夹具与真字节对照）。
  *   ② **翻面**（合成夹具 + 真字节，全在运行根里造，活树一个字节不动）：
- *      · 阳性：`insert` 形状干净 · `absent` 形状在"不 pending"时必须红（证明 HOLD 那一半不是装饰）·
+ *      · 阳性：`insert` 形状干净 · `absent` ⇒ **红** `DASH-PROFILE-MOUNT-MISSING` ·
  *        `override` / `nested`（住错层）⇒ **只有** `DASH-NOT-PROFILE-INSERT` ·
- *        带 `id` / `disabled` / 包没声明 / 没 `root` ⇒ 各自的码；
+ *        带 `id` / `disabled` / 包没声明 / 没 `root` ⇒ 各自的码 ·
+ *        预设体里**裸包名**且解析得到一个 web 包 ⇒ `DASH-CLIENT-NOT-IN-PROFILE-INSERT`（第 3 条刀的阳性面）·
+ *        预设体里名字**解析不到**任何包 ⇒ HOLD `DASH-ROW-PACKAGE-UNRESOLVED`（第三态，不是绿）；
  *      · **真字节阳性对照**：把真 profile 补丁原文 + **真形状的挂载块**（`appendMountBlock()`）喂一遍，
  *        必须干净 —— 修好之后它与"真文件本来就有那一行"是恒等变换，仍然要求干净。
  *   ③ **bundle 层的派生物**（这一腿**不是**挂载面，是同一份票依赖的另一条不变量，原样保留）：
  *      生成的 `presets/agenia/cordis.patch.yml` 必须**等于** `.tools/make-bundle-patch.mjs` 从
- *      `agent.cordis.yml` 造出来的那一份 —— **跑仓库自己的 `--check`**（不另写比较逻辑），
- *      不一致 ⇒ `DASH-PATCH-NOT-DERIVED`。跑之前一道**安全联锁**（`--check` 分支必须先于写盘，
- *      否则不跑、记 `HOLD DASH-PATCH-CHECK-UNAVAILABLE` —— 生成器加载期就会写活体）；跑完再量一次
- *      活体 sha256（变了 ⇒ `DASH-PATCH-CHECK-WROTE-PRESET`）。
+ *      `agent.cordis.yml` 造出来的那一份 —— **跑仓库自己的 `--check`**（不另写比较逻辑）。
+ *      🔴 `--check` 的 **exit 1 有两个意思**（2026-11-05 复审第 1 条），本格分开报：
+ *         · `E_PATCH_NOT_DERIVED`（盘上补丁 ≠ 派生物）⇒ `DASH-PATCH-NOT-DERIVED`；
+ *         · 派生物**一致但结构 / 层归属不对**（`E_PATCH_TOP_INSERT_SHAPE` / `E_PATCH_HOST_ROW_IN_INSERT` /
+ *           `E_PATCH_CLIENT_UI_ENABLED` / `E_PATCH_CLIENT_UI_UNLISTED`）⇒ `DASH-PATCH-STRUCTURE-WRONG`；
+ *         · 组合本体过不了生成器的联锁（`E_BUNDLE_*`，`build()` 就 throw）⇒ `DASH-PATCH-COMPOSITION-REJECTED`；
+ *         · 其余（带栈 / 被信号杀 / 退出码与报文打架）⇒ `DASH-PATCH-DERIVE-CRASH`（"没给出判词"）。
+ *        把"派生物但结构不对"报成"不是派生物"是**诊断错了**（红对、原因错）：修的人会去找
+ *        "谁手改了补丁"，而真正要修的是生成器产出的形状。
+ *      跑之前一道**安全联锁**（`--check` 分支必须先于写盘，否则不跑、记
+ *      `HOLD DASH-PATCH-CHECK-UNAVAILABLE` —— 生成器加载期就会写活体）；跑完再量一次活体 sha256
+ *      （变了 ⇒ `DASH-PATCH-CHECK-WROTE-PRESET`）。
  *      ⚠️ 为什么它留在这一格：用例 ID 是冻结的（分母 150，不许新增），而这条不变量今天没人判。
  *        **两个主语写在这里，不藏着**：①②是 profile 层，③是 bundle 层。
  *
@@ -61,25 +70,42 @@
  *      `package.json`；声明了 `dsh.client.platform: web` 却**不是**顶层 `- insert:` 的直接成员 ⇒
  *      `DASH-CLIENT-NOT-IN-PROFILE-INSERT`（**红**，`scope: 'other'`）。
  *      这一条要抓的正是"作者从没登记过的新行"：它叫什么、谁点名过它，都不影响判断。
- *      当前看板那一行自己的层归属归 `DASH-15` ①，这里只留 `scope: 'mount'` 的同一份读数（HOLD 口径相同）。
- *   ② **bundle 层的残余腿**（**没跟着迁走的那半句话**）：预设 `plugins` 里的客户端 UI 行**只许关着**
- *      —— 行**开着** ⇒ `DASH-CLIENT-IN-PRESET`（红：那正是 2026-11-05 16:0x boot 事故的形状）。
- *      关着的那一行（今天 = 看板）是**允许**的，但它必须**两侧都关**：组合说 `disabled: true` 而补丁里
- *      每一处出现也 `disabled: true`，只翻一侧 ⇒ `DASH-DISABLED-MISMATCH`（红：补丁是派生物）。
- *      ⇒ 这一腿一句话：**"还留着的行必须关着"**，不是"必须住在宿主 insert"（那个形状已经不存在了）。
+ *      🔴 **解析不到的行也要判**（复审第 3 条）：住在**预设体**（`plugins` 列表 / 组的 `config`）里、
+ *      `name` 解析不到包 ⇒ HOLD `DASH-ROW-PACKAGE-UNRESOLVED`（"读不到 ≠ 不是客户端 UI"）。
+ *      生成器那一侧正在用 `E_BUNDLE_CLIENT_UI_UNRESOLVED` 关同一个洞（裸包名 / 坏 manifest 不许 fail-open）。
+ *      当前看板那一行自己的层归属归 `DASH-15` ①，这里只留 `scope: 'mount'` 的同一份读数。
+ *   ② **bundle 层的残余腿**（**没跟着迁走的那半句话**）：bundle 层**没有**宿主装载层了 ⇒
+ *      客户端 UI 行在 bundle 里只有一种合法形状：**住在预设 `plugins` 里、且 `disabled: true`**。
+ *      · 行**开着** ⇒ `DASH-CLIENT-IN-PRESET`（红：那正是 2026-11-05 16:0x boot 事故的形状）；
+ *      · 行住在**预设体之外**（顶层 `- insert:` 的直接成员 / 顶层 override）⇒ `DASH-CLIENT-IN-BUNDLE-TOP`（红）。
+ *      · 关着的那一行（今天 = 看板）是**允许**的，但它必须**两侧都关**：组合说 `disabled: true` 而补丁里
+ *        每一处出现也 `disabled: true`，只翻一侧 ⇒ `DASH-DISABLED-MISMATCH`（红：补丁是派生物）。
+ *      🔴 **扫描器报的每一条本格都消费**：没有"本格不判"的剔除名单（旧版把 `DASH-HOST-MISSING` 与
+ *      `DASH-CLIENT-IN-PRESET` 从消费面剔掉、再自己重推一遍——那就是"被消费者丢掉"）。
+ *      尤其 `DASH-PATCH-UNREADABLE` 必须照旧红：不然"补丁读不懂"会让 `violations` 变成空数组
+ *      ⇒ 看起来"没有开着的行"⇒ 静默假绿（Gate-2 那个病的同一个形状）。
  *   ③ **翻面**：只存在于夹具里的合成包（`dsh.client.platform: web`）+ 合成行 ——
  *      放进 profile 的 `- insert:` ⇒ 干净；放进 profile 的顶层 override / 更深一层 ⇒ **只有**
- *      `DASH-CLIENT-NOT-IN-PROFILE-INSERT`；放进 **bundle 预设且开着** ⇒ **只有** `DASH-CLIENT-IN-PRESET`；
- *      同一行放进 bundle 预设但 `disabled: true` ⇒ **干净**（"关着可以留"这条规矩必须能翻面）。
- *      刀翻错面 ⇒ `DASH-KNIFE-VECTOR`；夹具行解析不到它自己的包 / 在生产输入里留了登记痕迹
- *      ⇒ `DASH-KNIFE-UNREADABLE`（尺子坏了不是对象坏了）。
+ *      `DASH-CLIENT-NOT-IN-PROFILE-INSERT`；**裸包名**（`manifestRoots` 索引解析得到 web 包）放进预设体
+ *      ⇒ 同一个码（证明解析面不只认路径形）；名字解析不到 ⇒ HOLD `DASH-ROW-PACKAGE-UNRESOLVED`；
+ *      放进 **bundle 预设且开着** ⇒ **只有** `DASH-CLIENT-IN-PRESET`；同一行放进 bundle 预设但
+ *      `disabled: true` ⇒ **干净**（"关着可以留"这条规矩必须能翻面）；放进 **bundle 顶层** ⇒
+ *      **只有** `DASH-CLIENT-IN-BUNDLE-TOP`。刀翻错面 ⇒ `DASH-KNIFE-VECTOR`；
+ *      夹具行解析不到它自己的包 / 在生产输入里留了登记痕迹 ⇒ `DASH-KNIFE-UNREADABLE`。
  *
- * ── 退役的码（写清原因，不静默消失）───────────────────────────────────────────────
- *   · `DASH-NOT-HOST-LEVEL` / `DASH-ROW-ABSENT`：它们断言"bundle 补丁里那一行必须住在宿主 insert /
- *     整行不许没有"。本票之后那个形状**按设计不存在**（宿主 insert 在 bundle 层是 boot 杀手）。
- *     替代：`DASH-NOT-PROFILE-INSERT` + `DASH-PROFILE-MOUNT-MISSING`（profile 层同一件事）。
- *   · `DASH-HOST-MISSING`（阳性腿"整份补丁里一行客户端 UI 都没有"）：迁到 profile 层之后，
- *     阳性腿由"看板那一行必须在 profile insert 里"承担 —— 它今天 HOLD、永不假绿，空集那半句话自动成立。
+ * ── 退役的三个码（写清原因 + 新落点，不静默消失）─────────────────────────────────
+ *   · **`DASH-NOT-HOST-LEVEL`**（bundle 补丁里那一行不是宿主级 insert 的直接成员）：
+ *     bundle 层不再有宿主装载层 ⇒ 形状没有对象。替代：`DASH-NOT-PROFILE-INSERT`（profile 层，`DASH-15`）
+ *     + `DASH-CLIENT-NOT-IN-PROFILE-INSERT`（profile 层，任何客户端 UI 行，`DASH-16`）。
+ *   · **`DASH-ROW-ABSENT`**（bundle 补丁里那一行整个不在）：同一个理由没有对象。
+ *     替代：`DASH-PROFILE-MOUNT-MISSING` —— 而且是**红**（复审第 4 条），不是 HOLD。
+ *   · **`DASH-HOST-MISSING`**（"整份补丁里没有任何 web 包" / "看板行不在 bundle 宿主 insert"）：
+ *     迁移之后那个形状**按设计不存在**，判它只会得到假红或永不开火。
+ *     它是**退役**，不是"被消费者丢掉"：`scanClientUiPlacement()` 里那三段阳性腿**整段删除**，
+ *     `client-ui-placement.mjs` 的 `CODES` 里也没有这个键（grep 得到的就是这段墓碑）。
+ *     命题的两半各有新落点：①"看板行必须在新增行的唯一入口里" ⇒ `DASH-PROFILE-MOUNT-MISSING` +
+ *     `DASH-NOT-PROFILE-INSERT`；②"任何客户端 UI 行不在装载层" ⇒ `DASH-CLIENT-NOT-IN-PROFILE-INSERT`
+ *     + `DASH-CLIENT-IN-BUNDLE-TOP`（bundle 顶层那一半，本轮补上）。
  *
  * ── 不判什么 ────────────────────────────────────────────────────────────────────
  *   · 不判像素 / 界面（"点开有没有那块面板"归 GUI 清单，人点一次）；
@@ -97,7 +123,6 @@ import { PATHS } from '../support/env.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, runRoot, sha256File } from '../support/evidence.mjs'
 import { noteSutOverride } from '../support/dashboard-surface.mjs'
 import {
-  DISABLED_PENDING_CODE,
   appendMountBlock,
   clientUiPatchFixture,
   compositionRowState,
@@ -121,10 +146,19 @@ const GENERATOR_FILE = PATHS.generator
 const DASHBOARD_MANIFEST = path.join(PATHS.finalPreset, 'client-ui-dashboard', 'package.json')
 /** bundle 层那一行（残余腿）仍按 id 认 —— 它没迁走。 */
 const ROW_ID = 'agenia-dashboard'
+/**
+ * 码（稳定、可 grep）。
+ * ⚠️ 这里**没有** `hostMissing`：`DASH-HOST-MISSING` 已退役（原因与新落点见文件头「退役的三个码」）。
+ */
 const CODE = {
   patchUnreadable: 'DASH-PATCH-UNREADABLE',
   profilePatchMissing: 'DASH-PROFILE-PATCH-MISSING',
+  /** 盘上补丁 ≠ 生成器从组合造出来的那一份（`--check` 的 `E_PATCH_NOT_DERIVED`）。 */
   notDerived: 'DASH-PATCH-NOT-DERIVED',
+  /** 补丁**等于**派生物，但派生物自己的结构 / 层归属不对（`E_PATCH_TOP_INSERT_SHAPE` 等）。 */
+  structureWrong: 'DASH-PATCH-STRUCTURE-WRONG',
+  /** 组合本体过不了生成器的联锁（`build()` 就 throw，`E_BUNDLE_*`）。 */
+  compositionRejected: 'DASH-PATCH-COMPOSITION-REJECTED',
   deriveUnavailable: 'DASH-PATCH-CHECK-UNAVAILABLE',
   deriveCrash: 'DASH-PATCH-DERIVE-CRASH',
   checkWrote: 'DASH-PATCH-CHECK-WROTE-PRESET',
@@ -135,7 +169,9 @@ const CODE = {
 }
 const DASH16 = {
   clientInPreset: 'DASH-CLIENT-IN-PRESET',
+  clientInBundleTop: 'DASH-CLIENT-IN-BUNDLE-TOP',
   clientNotInProfileInsert: 'DASH-CLIENT-NOT-IN-PROFILE-INSERT',
+  rowPackageUnresolved: 'DASH-ROW-PACKAGE-UNRESOLVED',
   patchUnreadable: CODE.patchUnreadable,
   disabledMismatch: CODE.disabledMismatch,
   ruler: CODE.ruler,
@@ -144,32 +180,26 @@ const DASH16 = {
 }
 /** 只存在于夹具里的行 id —— 它不许出现在生产树的任何一份文件里（`knife_registration` 盯着）。 */
 const SYNTHETIC_ROW_ID = 'future-client-ui-panel'
+/** 只存在于夹具里的**裸包名**（`manifestRoots` 索引解析得到；刀要用它证明解析面不只认路径形）。 */
+const SYNTHETIC_BARE_NAME = '@fixture/dsh-client-ui-probe'
+/** 一个**解析不到任何包**的裸名（第三态那一格的刀）。 */
+const UNRESOLVABLE_BARE_NAME = '@fixture/dsh-client-ui-probe-not-built'
 
 /**
- * 🔴 **"还没挂" 的分流政策**（2026-11-05 · 挂载路线搬到 profile 层之后）。
+ * 🔴 **第三态的分流政策**（2026-11-05 · 复审第 3/4 条之后）。
  *
- * 只有**一个**理由能把红翻成 HOLD：**目标形状故意不在**（`pending = true`，= profile 补丁里
- * 还没有看板那一行）。而且只对 `detail.scope === 'mount'` 那几条生效 ——
- *   ① **"还没挂"**（`pending`）⇒ 层归属那几条记 **HOLD**（第三态，**不是绿**）；
- *   ② `pending = false`（那一行在）⇒ 一条都不动：**该红就红**（这是刀要量的一半，不许放宽）；
- *   ③ 行体 / 包声明 / 读取器 / 派生物（`scope: 'other'`）**任何时候都照旧红** ——
- *      "还没挂"解释不了"包没声明 dsh.client"，也解释不了"生成的补丁不是派生物"。
+ * 第三态（HOLD）**只**留给"我读不到"：`detail.scope === 'unreadable'` 的那几条
+ * （预设体里名字解析不到包的行 / profile 补丁文件本身不在）。**每条带自己的码**，不合并成一个。
+ * 其余全部是红 —— 尤其**看板那一行缺席**：主语是"那一行必须在这里"，缺席是产品事实，不是读不到。
+ * 🔴 这条政策自己必须能被量（两个用例各有一组 `policy_grid` 刀）：缺席 ⇒ RED 0→1；
+ *    `unreadable` ⇒ HOLD 1 且**不许吞掉**同时存在的红。
  */
-function mountVerdict({ problems, pending, why = null }) {
-  if (!pending) return { red: problems, holds: [] }
-  const red = problems.filter((p) => p.detail?.scope !== 'mount')
-  const mount = problems.filter((p) => p.detail?.scope === 'mount')
+function mountVerdict({ problems }) {
+  const unreadable = problems.filter((p) => p.detail?.scope === 'unreadable')
+  const red = problems.filter((p) => p.detail?.scope !== 'unreadable')
   return {
     red,
-    holds: [{
-      code: DISABLED_PENDING_CODE,
-      why: why ?? `挂载路线正在从 bundle 层搬到 **profile 层**（2026-11-05 定形）：profile 补丁里**还没有**看板那一行，`
-        + '所以"它必须住在顶层 `- insert:` 里"这一格的目标形状**故意不在** —— 这一格不判对错，记 HOLD（不是绿）。'
-        + '`.tools/mount-dashboard-profile.mjs --apply` 跑完（那一行出现）之后，这一格自动回到红/绿两态。'
-        + (mount.length > 0
-          ? `本来会报的层归属码：${JSON.stringify([...new Set(mount.map((p) => p.code))])}（${mount.length} 条；明细见 result.json 的 readings.profile_mount / fixtures）`
-          : '（这一跑本来没有层归属可报：读取器没读到任何一行）'),
-    }],
+    holds: unreadable.map((p) => ({ code: p.code, why: p.message })),
   }
 }
 
@@ -277,7 +307,21 @@ function checkBranchSafe(generatorText) {
   }
 }
 
-/** 跑一次生成器检查（只读；`--check` 分支在写盘之前已被联锁证明）。 */
+/**
+ * 跑一次生成器检查（只读；`--check` 分支在写盘之前已被联锁证明）。
+ *
+ * 🔴 **`exit 1` 有四个意思，必须分开**（2026-11-05 复审第 1 条）—— 判词读法（退出码是主信号，
+ * 生成器打出来的**具名码**是分类依据）：
+ *   · `exit 0` ⇒ 一致且结构对（`derived`）；
+ *   · `exit 1` + `E_PATCH_NOT_DERIVED` ⇒ 盘上补丁**不是**派生物（`not_derived`）；
+ *   · `exit 1` + `E_PATCH_TOP_INSERT_SHAPE` / `E_PATCH_HOST_ROW_IN_INSERT` /
+ *     `E_PATCH_CLIENT_UI_ENABLED` / `E_PATCH_CLIENT_UI_UNLISTED` ⇒ **是**派生物，但派生物自己的
+ *     结构 / 层归属不对（`structure_wrong`）—— 这一格以前被误标成"不是派生物"（红对、诊断错）；
+ *   · `exit 1` + `E_BUNDLE_*` ⇒ 组合本体过不了生成器的联锁（`composition_rejected`，`build()` 就 throw）；
+ *   · 其余（带栈 / 被信号杀 / 退出码与报文打架）⇒ **没给出判词**（`crashed`）。
+ * 只有具名码能分这四种；只按退出码分会把两种不同的病报成同一个码。
+ */
+const PATCH_STRUCTURE_CODES = ['E_PATCH_TOP_INSERT_SHAPE', 'E_PATCH_HOST_ROW_IN_INSERT', 'E_PATCH_CLIENT_UI_ENABLED', 'E_PATCH_CLIENT_UI_UNLISTED']
 function runGeneratorCheck(generatorFile, cwd) {
   const startedAt = new Date().toISOString()
   const r = spawnSync(process.execPath, [generatorFile, '--check'], {
@@ -287,31 +331,69 @@ function runGeneratorCheck(generatorFile, cwd) {
   })
   const stdout = String(r.stdout ?? '')
   const stderr = String(r.stderr ?? '')
-  /**
-   * 判词读法（**退出码是主信号，字只是旁证**）：
-   *   · `exit 0` ⇒ 生成器说"一致"；
-   *   · `exit 1` **且 stderr 为空** ⇒ 生成器说"对不上"（它自己 `--check` 那一支的约定）；
-   *   · 其余（含 `exit 1` 带栈 / 被信号杀）⇒ **没给出判词**，那是另一件事（崩 ≠ 不一致）。
-   *   `contradiction` 抓"退出码说绿、报文说 RED"这种自相矛盾（两个信号打架时不替它选）。
-   */
-  const derived = r.status === 0
-  const notDerived = r.status === 1 && stderr.trim() === '' && /\bRED\b/.test(stdout)
-  const contradiction = derived && /\bRED\b/.test(stdout)
+  const codeHit = (code) => new RegExp(`\\b${code}\\b`).test(stdout)
+  const patchCodes = [...PATCH_STRUCTURE_CODES, 'E_PATCH_NOT_DERIVED'].filter((code) => codeHit(code))
+  const bundleCodes = [...new Set(stdout.match(/E_BUNDLE_[A-Z0-9_]+/g) ?? [])]
+  const exit = r.status
+  /** 退出码说绿、报文说 RED ⇒ 两个信号打架（不替它选）。 */
+  const contradiction = exit === 0 && /\bRED\b/.test(stdout)
+  const derived = exit === 0 && !contradiction
+  const cleanExit1 = exit === 1 && stderr.trim() === '' && /\bRED\b/.test(stdout)
+  const notDerived = cleanExit1 && codeHit('E_PATCH_NOT_DERIVED')
+  const structureWrong = cleanExit1 && !notDerived && patchCodes.some((code) => code !== 'E_PATCH_NOT_DERIVED')
+  const compositionRejected = cleanExit1 && !notDerived && !structureWrong && bundleCodes.length > 0
   return {
     generator: generatorFile,
     cwd,
-    exit: r.status,
+    exit,
     signal: r.signal ?? null,
     stdout: stdout.trim().slice(0, 2000),
     stderr: stderr.trim().slice(0, 2000),
     started_at: startedAt,
     finished_at: new Date().toISOString(),
-    derived: derived && !contradiction,
+    derived,
     not_derived: notDerived,
-    crashed: !derived && !notDerived,
+    structure_wrong: structureWrong,
+    composition_rejected: compositionRejected,
     contradiction,
+    crashed: !derived && !notDerived && !structureWrong && !compositionRejected,
+    patch_codes: patchCodes,
+    bundle_codes: bundleCodes,
     word_ok: /\bok\b/.test(stdout),
   }
+}
+
+/**
+ * **一次 `--check` 结果 → 这一格的判词**（纯函数：活体检查与两把刀走同一条映射，
+ * 所以"刀证明了分类会翻面"这句话是关于**判词**的，不只是关于分类函数的）。
+ *
+ * @param {ReturnType<typeof runGeneratorCheck>} check
+ * @param {{patch?: object, composition?: object}} [snaps] 报文里要指到"哪一份文件、什么字节"
+ * @returns {{code: string, message: string}[]}  空数组 = 补丁是派生物且结构对
+ */
+function derivationProblems(check, snaps = {}) {
+  const where = snaps.patch === undefined ? '' : `（${whereOf(snaps.patch)}）`
+  const compositionRel = snaps.composition?.rel ?? 'agent.cordis.yml'
+  if (check.derived) return []
+  if (check.not_derived) {
+    return [problem(CODE.notDerived,
+      `生成补丁与生成器从 \`${compositionRel}\` 造出来的那一份**不一致**（\`make-bundle-patch.mjs --check\` exit ${check.exit} · E_PATCH_NOT_DERIVED）`
+      + `：${check.stdout.split('\n')[0]} —— 补丁是派生物，改了 .yml 就跑生成器，别手改${where}`)]
+  }
+  if (check.structure_wrong) {
+    return [problem(CODE.structureWrong,
+      `生成补丁**等于**生成器从 \`${compositionRel}\` 造出来的那一份，但那份派生物自己的**结构 / 层归属不对**：`
+      + `${JSON.stringify(check.patch_codes)}${where} —— 这不是"谁手改了补丁"（那是 \`${CODE.notDerived}\`），`
+      + '是生成器产出的形状坏了（顶层 insert 形状 / 宿主级行混进 bundle / 预设体里开着的客户端 UI 行 / 白名单外的行）')]
+  }
+  if (check.composition_rejected) {
+    return [problem(CODE.compositionRejected,
+      `组合本体过不了生成器的联锁（\`build()\` 就 throw：${JSON.stringify(check.bundle_codes)}）—— 补丁根本造不出来。`
+      + `stdout=${JSON.stringify(check.stdout.slice(0, 400))}`)]
+  }
+  return [problem(CODE.deriveCrash,
+    `生成器检查没给出判词（exit ${String(check.exit)}${check.signal ? ` · signal ${check.signal}` : ''}${check.contradiction ? ' · 退出码说绿、报文里却有 RED' : ''}）：`
+    + `stdout=${JSON.stringify(check.stdout.slice(0, 400))} stderr=${JSON.stringify(check.stderr.slice(0, 400))} —— 判不了不是绿`)]
 }
 
 /** 递归拷一棵树（跳过数据段 / 依赖 / VCS；只往运行根写）。 */
@@ -350,7 +432,13 @@ function deriveFixture() {
   mkdirSync(path.join(dir, '.tools'), { recursive: true })
   const generator = path.join(dir, '.tools', 'make-bundle-patch.mjs')
   writeFileSync(generator, readFileSync(GENERATOR_FILE))
-  return { dir, generator, copied, target: path.join(dir, 'presets', 'agenia', 'cordis.patch.yml') }
+  return {
+    dir,
+    generator,
+    copied,
+    target: path.join(dir, 'presets', 'agenia', 'cordis.patch.yml'),
+    composition: path.join(dir, 'presets', 'agenia', 'agent.cordis.yml'),
+  }
 }
 
 /** 在副本补丁上改**一个值行**（手改形态）；找不到就看板那一行；都没有就追加一行注释。 */
@@ -376,6 +464,62 @@ function mutateCopyPatch(file) {
   return { how, bytes_delta: Buffer.byteLength(mutated, 'utf8') - Buffer.byteLength(text, 'utf8') }
 }
 
+/**
+ * 🔴 **刀 E：派生物但结构不对**（2026-11-05 复审第 1 条）—— 造一份"生成器自己产出的坏形状"。
+ *
+ * 为什么必须造在**生成器**上、而不是手改补丁：`--check` 的两个 exit 1 原因是
+ *   · `same = false`（盘上 ≠ 派生物）⇒ `E_PATCH_NOT_DERIVED`
+ *   · `same = true && fileProblems > 0`（**盘上就是派生物，而派生物自己结构不对**）
+ * 手改补丁永远落在第一种（它改完就不是派生物了）⇒ 手改**分不开**这两个原因，也就证不了"分开"这件事。
+ * 所以这一把刀改的是**副本生成器**：让它的 `build()` 在顶层 insert 里多产出一条宿主级行
+ * （= 2026-11-05 迁移前那个形状），再把**同一段文本**写进副本补丁 —— 于是 `--check` 看见
+ * `same = true`、`fileProblems > 0` ⇒ 那正是第二种。
+ *
+ * 夹具的保真度自证：`same` 只有在我们算出来的文本与生成器**逐字**相同时才成立；
+ * 若两处插的不是同一段（或生成器模板变了），`--check` 会退成 `not_derived` ——
+ * 那时这一格报 `DASH-KNIFE-UNREADABLE`（**尺子坏了不是对象坏了**），绝不假装翻面。
+ *
+ * @param {{patchText: string}} input 活树那份补丁原文（派生物；`derived === true` 时才用它）
+ */
+function wrongShapeDerivativeFixture({ patchText }) {
+  const dir = fixtureDir('derive-wrong-shape')
+  const copied = copyTree(PATHS.finalPreset, path.join(dir, 'presets', 'agenia'))
+  mkdirSync(path.join(dir, '.tools'), { recursive: true })
+  const generator = path.join(dir, '.tools', 'make-bundle-patch.mjs')
+  /**
+   * 两处**同一段**文本：
+   *   · 生成器模板：紧跟在顶层 `- insert:` 那一行后面（它的产物里就是顶层 insert 的第一条成员）；
+   *   · 补丁原文：同样跟在那个唯一的顶层 `- insert:` 后面。
+   * `./client-ui-dashboard/lib/index.js` 是**相对 `presets/agenia`** 的路径形（`rowPackage()` 会真解析），
+   * 所以这条成员会被 `describePatch()` 认成"顶层 insert 里的宿主级行"。
+   */
+  const KNIFE_ROW = [
+    '    - id: knife-host-row',
+    "      name: './client-ui-dashboard/lib/index.js'",
+  ].join('\n')
+  const source = readFileSync(GENERATOR_FILE, 'utf8')
+  const anchor = '\n- insert:\n'
+  const hits = source.split(anchor).length - 1
+  const patchHits = String(patchText).split('\n- insert:\n').length - 1
+  writeFileSync(generator, source.split(anchor).join(`\n- insert:\n${KNIFE_ROW}\n`), 'utf8')
+  const target = path.join(dir, 'presets', 'agenia', 'cordis.patch.yml')
+  writeFileSync(target, String(patchText).split('\n- insert:\n').join(`\n- insert:\n${KNIFE_ROW}\n`), 'utf8')
+  return {
+    dir,
+    generator,
+    copied,
+    target,
+    mutation: {
+      how: '副本生成器的 build() 在顶层 insert 里多产出一条宿主级行（迁移前那个形状），并把同一段文本写进副本补丁',
+      row: KNIFE_ROW,
+      generator_anchor_hits: hits,
+      patch_anchor_hits: patchHits,
+      /** 两处各**恰好**一处才算"夹具的 two sides 是同一段"；否则这把刀量不了（报 UNREADABLE）。 */
+      usable: hits === 1 && patchHits === 1,
+    },
+  }
+}
+
 /** 一个"包不声明 dsh.client"的夹具包（刀）—— 目录名保持 `client-ui-dashboard`，好让路径形 name 仍成立。 */
 function packageWithoutClientDecl() {
   const dir = fixtureDir('no-client-decl')
@@ -386,6 +530,23 @@ function packageWithoutClientDecl() {
   writeFileSync(path.join(pkgDir, 'package.json'), `${JSON.stringify({ ...rest, dsh: {} }, null, 2)}\n`, 'utf8')
   writeFileSync(path.join(pkgDir, 'lib', 'index.js'), '// fixture: 这个包没有 dsh.client\n', 'utf8')
   return { dir: pkgDir, manifest: path.join(pkgDir, 'package.json'), name: `file:///${pkgDir.replace(/\\/g, '/')}/lib/index.js` }
+}
+
+/**
+ * 🔴 **刀 F：组合本体过不了联锁**（`E_BUNDLE_*`）—— 这一类**也**曾被报成"不是派生物"。
+ *
+ * 手法：在**副本组合**末尾加一条**路径形客户端 UI 行**（不带标记、不在白名单）⇒ 副本生成器的
+ * `build()` 在 `partitionHostLevel()` 里 throw `E_BUNDLE_CLIENT_UI_IN_PRESET`，
+ * 而 `--check` 把 throw 变成 `RED …` + `exit 1`（stderr 为空）⇒ 旧读法（`exit 1 && stderr 空 && RED`）
+ * 会把它报成 `DASH-PATCH-NOT-DERIVED`；新读法按具名码报 `DASH-PATCH-COMPOSITION-REJECTED`。
+ *
+ * @param {{dir: string, composition: string}} fixture `deriveFixture()` 的产物
+ */
+function compositionRejectedFixture(fixture) {
+  const text = readFileSync(fixture.composition, 'utf8')
+  const injected = `${text.endsWith('\n') ? text : `${text}\n`}- id: knife-bundle-client-ui\n  name: './client-ui-dashboard/lib/index.js'\n`
+  writeFileSync(fixture.composition, injected, 'utf8')
+  return { how: '副本组合末尾加一条路径形客户端 UI 行（不带标记、不在白名单）⇒ build() throw', bytes_delta: Buffer.byteLength(injected, 'utf8') - Buffer.byteLength(text, 'utf8') }
 }
 
 // ── 用例 ────────────────────────────────────────────────────────────────────
@@ -405,12 +566,11 @@ test('DASH-15 面板装上了没有（profile 层）：顶层 insert 里那一�
     rec.readings.files = { patch: patchSnap, composition: compositionSnap, generator: generatorSnap, profile_patch: profile.snap }
     rec.readings.dashboard_package = dashboardPackageFacts(DASHBOARD_MANIFEST)
 
-    let profilePending = false
     if (!profile.snap.exists) {
       caseHold(rec, CODE.profilePatchMissing,
         `客户端那份 profile 补丁不在（${profile.where.path}，来源 ${profile.where.source}）⇒ 挂载形状判不了 —— HOLD（不是绿）。`
         + '别的机器 / 干净 clone 上它本来就不在；这一格只能在装着客户端的那台机器上量')
-      profilePending = true // 没有文件 = 目标形状不在（不许把"判不了"读成"红"）
+      // 没有文件 = **读不到**（第三态唯一的合法理由之一）；文件在 ⇒ 一条 HOLD 都不给。
     } else {
       // ── ① profile 层：位置 + 行体 + 包 ──────────────────────────────────────
       const real = scanProfilePlacement({
@@ -421,7 +581,6 @@ test('DASH-15 面板装上了没有（profile 层）：顶层 insert 里那一�
       })
       rec.readings.profile_mount = real.reading
       for (const p of real.problems) problems.push(p)
-      profilePending = real.reading.dashboard.occurrences === 0
 
       // ── ② 翻面：合成夹具 + 真字节阳性对照 ────────────────────────────────────
       const realPkg = dashboardPackageFacts(DASHBOARD_MANIFEST)
@@ -430,6 +589,8 @@ test('DASH-15 面板装上了没有（profile 层）：顶层 insert 里那一�
         root: path.resolve(PATHS.repo).replace(/\\/g, '/'),
       }
       rec.readings.fixture_row = goodRow
+      // 🔴 这一格**没有** pending 了：看板行缺席是红（`DASH-PROFILE-MOUNT-MISSING`）。
+      //    第三态只留给 `scope: 'unreadable'`（读不到），由 `mountVerdict()` 统一分流。
       try {
         const scan = (text, label, extraRoots = []) => scanProfilePlacement({
           patchText: text, label, manifestRoots: [PATHS.finalPreset, ...extraRoots], dashboardManifest: DASHBOARD_MANIFEST,
@@ -450,12 +611,40 @@ test('DASH-15 面板装上了没有（profile 层）：顶层 insert 里那一�
             [noDecl.dir],
           ),
           noRoot: scan(profilePatchFixture({ placement: 'insert', row: { name: goodRow.name, root: '' } }), '夹具·没有 config.root'),
-          // 还没挂：整行没有（这一格今天就是真树的形状）
+          // 还没挂：整行没有（这一格今天就是真树的形状）⇒ **红**，不是 HOLD
           absent: scan(profilePatchFixture({ placement: 'absent', row: goodRow }), '夹具·整行没有'),
         }
+        /**
+         * 第 3 条的两把刀（2026-11-05 复审）—— **解析面**必须能被量：
+         *   · `bareInPreset`：预设体里一行**裸包名**，`manifestRoots` 索引解析得到 web 包 ⇒ **红**
+         *     （证明"按包认行"不只认路径形名字）；`manifestRoots` 不含它、或者解析失败 ⇒ **不红但不是绿**；
+         *   · `unresolvedNested`：同一个位置，名字**解析不到任何包** ⇒ HOLD `DASH-ROW-PACKAGE-UNRESOLVED`
+         *     （"读不到 ≠ 不是客户端 UI"）。
+         */
+        const probePkgDir = fixtureDir('bare-name', 'dash15')
+        const probePkg = syntheticClientUiPackage(probePkgDir, { pkgName: SYNTHETIC_BARE_NAME })
+        fixtures.bareInPreset = scan(
+          profilePatchFixture({
+            placement: 'insert',
+            row: goodRow,
+            nestedRow: { id: SYNTHETIC_ROW_ID, name: probePkg.pkg_name, root: goodRow.root },
+          }),
+          '夹具·预设体里的裸包名（解析得到 web 包）',
+          [probePkgDir],
+        )
+        fixtures.unresolvedNested = scan(
+          profilePatchFixture({
+            placement: 'insert',
+            row: goodRow,
+            nestedRow: { id: SYNTHETIC_ROW_ID, name: UNRESOLVABLE_BARE_NAME, root: goodRow.root },
+          }),
+          '夹具·预设体里的裸包名（解析不到任何包）',
+          [probePkgDir],
+        )
         rec.readings.fixtures = Object.fromEntries(Object.entries(fixtures).map(([k, v]) => [
           k, { codes: v.problems.map((p) => p.code), messages: v.problems.map((p) => p.message), reading: v.reading },
         ]))
+        rec.readings.fixture_probe_package = { dir: probePkg.dir, pkg_name: probePkg.pkg_name, manifest: probePkg.manifest_file }
 
         // 真字节阳性对照：真补丁原文 + 真形状的挂载块 ⇒ 必须干净（真文件的形状与夹具同形）
         // ⚠️ 真文件里**已经有**那一行时，"追加"这件事不适用：那一跑的真扫描自己就是阳性/阴性面，
@@ -503,6 +692,18 @@ test('DASH-15 面板装上了没有（profile 层）：顶层 insert 里那一�
         if (!onlyOne('absent', 'DASH-PROFILE-MOUNT-MISSING')) {
           problems.push(problem(CODE.knifeVector, `夹具（整行没有）翻出来的面是 ${JSON.stringify(codesOf('absent'))}，应当只有 ${JSON.stringify(['DASH-PROFILE-MOUNT-MISSING'])}`))
         }
+        // 🔴 第 3 条的阳性面：裸包名**解析得到 web 包** ⇒ 必须红（解析面不只认路径形）
+        if (!onlyOne('bareInPreset', 'DASH-CLIENT-NOT-IN-PROFILE-INSERT')) {
+          problems.push(problem(CODE.knifeVector,
+            `刀（预设体里放一行**裸包名**，解析到 ${SYNTHETIC_BARE_NAME} 这个声明了 web 的包）翻出来的面是 ${JSON.stringify(codesOf('bareInPreset'))}，`
+            + `应当只有 ${JSON.stringify(['DASH-CLIENT-NOT-IN-PROFILE-INSERT'])} —— 否则就是"裸名 fail-open"（与生成器侧 E_BUNDLE_CLIENT_UI_UNRESOLVED 同一个洞）`))
+        }
+        // 🔴 第 3 条的第三态面：名字解析不到 ⇒ HOLD（不是绿、也不是红）
+        if (!onlyOne('unresolvedNested', 'DASH-ROW-PACKAGE-UNRESOLVED')) {
+          problems.push(problem(CODE.knifeVector,
+            `刀（预设体里放一行解析不到的裸包名 ${UNRESOLVABLE_BARE_NAME}）翻出来的面是 ${JSON.stringify(codesOf('unresolvedNested'))}，`
+            + '应当只有 DASH-ROW-PACKAGE-UNRESOLVED —— 读不到不许静默算进"不是客户端 UI"')); // eslint-disable-line no-irregular-whitespace
+        }
         // 夹具自己必须解析得动（不然刀量的是夹具坏，不是判据坏）
         for (const [name, v] of Object.entries(fixtures)) {
           if (v.reading.warnings.length > 0) {
@@ -513,27 +714,27 @@ test('DASH-15 面板装上了没有（profile 层）：顶层 insert 里那一�
         if (realPkg.exists !== true || realPkg.platform !== 'web' || realPkg.exports_client !== true) {
           problems.push(problem(CODE.ruler, `看板包自己的声明读不到（${JSON.stringify(realPkg)}）—— 行体那一刀的阳性面不成立`))
         }
+        // 解析面的阳性腿：那把裸名刀之所以能红，是因为 `manifestRoots` 里真的有那份 package.json
+        if (typeof probePkg.manifest_file !== 'string' || !existsSync(probePkg.manifest_file)) {
+          problems.push(problem(CODE.ruler, `裸名刀的合成包没落盘（${String(probePkg.manifest_file)}）—— 那把刀量不到解析面`))
+        }
 
         /**
-         * 🔴 **分流政策自己的刀**（`mountVerdict()` 能把红翻成 HOLD，所以它必须能被量）。三格：
-         *   · 整行没有 + `pending` ⇒ **HOLD 1 / RED 0**（这正是今天真树的形状）；
-         *   · 同一份夹具但 `pending=false` ⇒ **RED 1 / HOLD 0**（🔴 那一行在就必须红 —— 政策不许放宽）；
-         *   · 住错层 + `pending=false` ⇒ **RED 1 / HOLD 0**；住错层 + `pending` ⇒ 也 HOLD（目标形状不在，
-         *     层归属本来就判不了）；而 `disabled` 那一格（`scope: 'other'`）**即使 pending 也照旧红**。
+         * 🔴 **分流政策自己的刀**（`mountVerdict()` 只把 `scope: 'unreadable'` 翻成 HOLD，所以它必须能被量）。
+         *   · 看板行**缺席** ⇒ **RED 1 / HOLD 0**（今天真树的形状：挂载没做就是红）；
+         *   · 住错层 ⇒ **RED 1 / HOLD 0**；
+         *   · 预设体里**读不到**的行 ⇒ **RED 0 / HOLD 1**（码是它自己的，不是合并成一个 pending 码）；
+         *   · 两者同时出现 ⇒ **RED 1 + HOLD 1**（第三态**不许**吞掉红，红也**不许**吞掉第三态）。
          */
         const policyGrid = {
-          absentPending: mountVerdict({ problems: fixtures.absent.problems, pending: true }),
-          absentOn: mountVerdict({ problems: fixtures.absent.problems, pending: false }),
-          overridePending: mountVerdict({ problems: fixtures.override.problems, pending: true }),
-          overrideOn: mountVerdict({ problems: fixtures.override.problems, pending: false }),
-          disabledOn: mountVerdict({ problems: fixtures.disabled.problems, pending: false }),
-          // 纯函数级的刀：`pending` 只许吸收 `scope: 'mount'` 那几条，`scope: 'other'` 一条都不许吞
-          mixedScopePending: mountVerdict({
+          absent: mountVerdict({ problems: fixtures.absent.problems }),
+          override: mountVerdict({ problems: fixtures.override.problems }),
+          unreadable: mountVerdict({ problems: fixtures.unresolvedNested.problems }),
+          mixed: mountVerdict({
             problems: [
-              problem('DASH-PROFILE-MOUNT-MISSING', '合成的 mount 面问题（本来会报）', { scope: 'mount' }),
-              problem('DASH-NO-CLIENT-DECL', '合成的 other 面问题（绝不许被 HOLD 吞掉）', { scope: 'other' }),
+              problem('DASH-PROFILE-MOUNT-MISSING', '合成的 mount 面问题（缺席 ⇒ 红）', { scope: 'mount' }),
+              problem('DASH-ROW-PACKAGE-UNRESOLVED', '合成的 unreadable 面问题（⇒ HOLD，且不许吞红）', { scope: 'unreadable' }),
             ],
-            pending: true,
           }),
         }
         rec.readings.policy_grid = Object.fromEntries(Object.entries(policyGrid).map(([k, v]) => [
@@ -546,12 +747,10 @@ test('DASH-15 面板装上了没有（profile 层）：顶层 insert 里那一�
             problems.push(problem(CODE.knifeVector, `分流政策的刀 ${k} 翻出来的面是 ${JSON.stringify(got)}，应当是 ${JSON.stringify(want)} —— HOLD 那一半没有翻面（政策死 / 政策漏 / 放得太宽）`))
           }
         }
-        expectGrid('absentPending', { red: [], hold: [DISABLED_PENDING_CODE] })
-        expectGrid('absentOn', { red: ['DASH-PROFILE-MOUNT-MISSING'], hold: [] })
-        expectGrid('overridePending', { red: [], hold: [DISABLED_PENDING_CODE] })
-        expectGrid('overrideOn', { red: ['DASH-NOT-PROFILE-INSERT'], hold: [] })
-        expectGrid('disabledOn', { red: ['DASH-PROFILE-ROW-DISABLED'], hold: [] })
-        expectGrid('mixedScopePending', { red: ['DASH-NO-CLIENT-DECL'], hold: [DISABLED_PENDING_CODE] })
+        expectGrid('absent', { red: ['DASH-PROFILE-MOUNT-MISSING'], hold: [] })
+        expectGrid('override', { red: ['DASH-NOT-PROFILE-INSERT'], hold: [] })
+        expectGrid('unreadable', { red: [], hold: ['DASH-ROW-PACKAGE-UNRESOLVED'] })
+        expectGrid('mixed', { red: ['DASH-PROFILE-MOUNT-MISSING'], hold: ['DASH-ROW-PACKAGE-UNRESOLVED'] })
       } catch (err) {
         problems.push(problem(CODE.ruler, `合成夹具造不出来：${String(err?.message ?? err)} —— 这一跑的翻面证据不成立`))
       }
@@ -581,17 +780,8 @@ test('DASH-15 面板装上了没有（profile 层）：顶层 insert 里那一�
         const liveCheck = runGeneratorCheck(GENERATOR_FILE, PATHS.repo)
         derivationVerdict = liveCheck
         rec.readings.derivation.live = liveCheck
-        if (liveCheck.derived) {
-          // 期望态：补丁 = 生成器从 agent.cordis.yml 造出来的那一份。
-        } else if (liveCheck.not_derived) {
-          problems.push(problem(CODE.notDerived,
-            `生成补丁与生成器从 \`${compositionSnap.rel}\` 造出来的那一份**不一致**（\`make-bundle-patch.mjs --check\` exit ${liveCheck.exit}）`
-            + `：${liveCheck.stdout.split('\n')[0]} —— 补丁是派生物，改了 .yml 就跑生成器，别手改（${whereOf(patchSnap)}）`))
-        } else {
-          problems.push(problem(CODE.deriveCrash,
-            `生成器检查没给出判词（exit ${String(liveCheck.exit)}${liveCheck.signal ? ` · signal ${liveCheck.signal}` : ''}${liveCheck.contradiction ? ' · 退出码说绿、报文里却有 RED' : ''}）：`
-            + `stdout=${JSON.stringify(liveCheck.stdout.slice(0, 400))} stderr=${JSON.stringify(liveCheck.stderr.slice(0, 400))} —— 判不了不是绿`))
-        }
+        // 期望态（`derived`）⇒ 空数组；其余四种各有自己的码（`derivationProblems()` 是唯一映射）。
+        for (const p of derivationProblems(liveCheck, { patch: patchSnap, composition: compositionSnap })) problems.push(p)
         // 跑完再量一次：这一格绝对不能写活体（写了就是最坏的那件事）。
         const after = snapshotOf(PATCH_FILE)
         rec.readings.derivation.patch_after = after
@@ -601,7 +791,15 @@ test('DASH-15 面板装上了没有（profile 层）：顶层 insert 里那一�
             + ' —— 这个用例只许只读；先查生成器的 `--check` 分支（安全联锁没拦住）'))
         }
 
-        // 刀 D：在**副本**上改一个值行 ⇒ `--check` 必须翻成 RED（判据得翻得动面）。
+        /**
+         * 🔴 **两把刀，各造一个 exit 1 的原因**（2026-11-05 复审第 1 条）：
+         *   · 刀 D（`notDerived`）：在副本上**手改一个值** ⇒ `same = false` ⇒ `E_PATCH_NOT_DERIVED`
+         *     ⇒ 判词必须是 `DASH-PATCH-NOT-DERIVED`；
+         *   · 刀 E（`structureWrong`）：改**副本生成器**让它产出一个坏形状、并把同一段文本写进副本补丁
+         *     ⇒ `same = true`、`fileProblems > 0` ⇒ `E_PATCH_TOP_INSERT_SHAPE` 等
+         *     ⇒ 判词必须是 `DASH-PATCH-STRUCTURE-WRONG`，**且不许**是 `DASH-PATCH-NOT-DERIVED`。
+         * 两把刀**都必须走 `derivationProblems()`**（不是只看分类字段）—— 证的是**判词**会翻面。
+         */
         try {
           const fix = deriveFixture()
           const silent = runGeneratorCheck(fix.generator, fix.dir)
@@ -617,9 +815,70 @@ test('DASH-15 面板装上了没有（profile 层）：顶层 insert 里那一�
               problems.push(problem(CODE.knifeUnreadable,
                 `刀 D（${mutation.how}）没有让 \`--check\` 翻成 RED（exit ${String(flipped.exit)} · stdout=${JSON.stringify(flipped.stdout.slice(0, 200))}`
                 + ` · stderr=${JSON.stringify(flipped.stderr.slice(0, 200))}）—— 死判据：手改补丁也照绿`))
+            } else if (JSON.stringify(derivationProblems(flipped).map((p) => p.code)) !== JSON.stringify([CODE.notDerived])) {
+              problems.push(problem(CODE.knifeVector,
+                `刀 D（手改一个值）经判词映射得到 ${JSON.stringify(derivationProblems(flipped).map((p) => p.code))}，应当只有 ${JSON.stringify([CODE.notDerived])}`))
             }
           } else {
             caseHold(rec, CODE.knifeUnreadable, '这一跑的补丁本来就不是派生物（真补丁已经红了）⇒ 刀 D 分不清"手改"与"还没重跑生成器"，不拿它当证据')
+          }
+
+          // 刀 E：派生物**一致**但结构不对 ⇒ 必须是 structureWrong，不许是 notDerived。
+          const shapeFix = wrongShapeDerivativeFixture({ patchText: readFileSync(PATCH_FILE, 'utf8') })
+          const shapeCheck = shapeFix.mutation.usable ? runGeneratorCheck(shapeFix.generator, shapeFix.dir) : null
+          rec.readings.derivation.knife_structure = {
+            fixture: shapeFix.dir,
+            mutation: shapeFix.mutation,
+            check: shapeCheck,
+            verdict_codes: shapeCheck === null ? null : derivationProblems(shapeCheck).map((p) => p.code),
+            /**
+             * **对照读数（不是判据）**：旧读法 `exit 1 && stderr 空 && RED` 会把这个结果报成什么。
+             * 同一个 `--check` 结果、两种读法 ⇒ 这就是第 1 条那个"红对、诊断错"的 before/after。
+             */
+            legacy_rule: shapeCheck === null ? null : {
+              rule: 'exit === 1 && stderr.trim() === "" && /\\bRED\\b/ ⇒ not_derived',
+              would_report: shapeCheck.exit === 1 && shapeCheck.stderr.trim() === '' && /\bRED\b/.test(shapeCheck.stdout)
+                ? CODE.notDerived
+                : '(没给出判词)',
+            },
+          }
+          if (!shapeFix.mutation.usable) {
+            problems.push(problem(CODE.knifeUnreadable,
+              `刀 E 的夹具造不出来：两处锚点（副本生成器的模板 / 补丁原文的顶层 \`- insert:\`）各应恰好 1 处，`
+              + `实得 ${shapeFix.mutation.generator_anchor_hits} / ${shapeFix.mutation.patch_anchor_hits} —— 这一把刀量不了`))
+          } else if (!shapeCheck.structure_wrong) {
+            problems.push(problem(CODE.knifeUnreadable,
+              `刀 E（副本生成器产出一条宿主级行在顶层 insert）没有让 \`--check\` 报"是派生物、但结构不对"：`
+              + `exit ${String(shapeCheck.exit)} · not_derived=${shapeCheck.not_derived} · codes=${JSON.stringify(shapeCheck.patch_codes)}`
+              + ` · stdout=${JSON.stringify(shapeCheck.stdout.slice(0, 300))} —— 两处插的不是同一段文本，或者生成器的 "--check" 判法变了`))
+          } else {
+            const codes = derivationProblems(shapeCheck).map((p) => p.code)
+            if (JSON.stringify(codes) !== JSON.stringify([CODE.structureWrong])) {
+              problems.push(problem(CODE.knifeVector,
+                `刀 E（派生物但结构不对）经判词映射得到 ${JSON.stringify(codes)}，应当只有 ${JSON.stringify([CODE.structureWrong])}`
+                + ' —— 这一格正是 2026-11-05 复审第 1 条：不许把"结构不对"报成"不是派生物"'))
+            }
+          }
+
+          // 刀 F：组合本体过不了联锁 ⇒ 第三个原因（也曾经被报成"不是派生物"）
+          const compFix = deriveFixture()
+          const compMutation = compositionRejectedFixture(compFix)
+          const compCheck = runGeneratorCheck(compFix.generator, compFix.dir)
+          const compCodes = derivationProblems(compCheck).map((p) => p.code)
+          rec.readings.derivation.knife_composition = {
+            fixture: compFix.dir,
+            mutation: compMutation,
+            check: compCheck,
+            verdict_codes: compCodes,
+          }
+          if (!compCheck.composition_rejected) {
+            problems.push(problem(CODE.knifeUnreadable,
+              `刀 F（${compMutation.how}）没有让 \`--check\` 报"组合过不了联锁"：exit ${String(compCheck.exit)}`
+              + ` · not_derived=${compCheck.not_derived} · bundle_codes=${JSON.stringify(compCheck.bundle_codes)}`
+              + ` · stdout=${JSON.stringify(compCheck.stdout.slice(0, 300))} —— 这一把刀量不了`))
+          } else if (JSON.stringify(compCodes) !== JSON.stringify([CODE.compositionRejected])) {
+            problems.push(problem(CODE.knifeVector,
+              `刀 F（组合过不了联锁）经判词映射得到 ${JSON.stringify(compCodes)}，应当只有 ${JSON.stringify([CODE.compositionRejected])}`))
           }
         } catch (err) {
           problems.push(problem(CODE.knifeUnreadable, `派生刀跑不起来：${String(err?.message ?? err)}`))
@@ -641,11 +900,13 @@ test('DASH-15 面板装上了没有（profile 层）：顶层 insert 里那一�
       generator: afterAll.generator.sha256 !== generatorSnap.sha256,
       profile_patch: afterAll.profile_patch.sha256 !== profile.snap.sha256,
     }
-    // ── 出口：把"还没挂"那几条翻成 HOLD（`mountVerdict()`），其余照旧红 ──────────
-    const verdict = mountVerdict({ problems, pending: profilePending })
+    // ── 出口：`scope: 'unreadable'` 那几条记 HOLD，其余**全部**照旧红 ──────────
+    const verdict = mountVerdict({ problems })
     rec.readings.verdict = {
-      profile_mount_pending: profilePending,
+      profile_mount_present: profile.snap.exists ? rec.readings.profile_mount?.dashboard?.occurrences > 0 : null,
       derived: derivationVerdict === null ? null : derivationVerdict.derived,
+      derivation_outcome: derivationVerdict === null ? null : Object.fromEntries(['derived', 'not_derived', 'structure_wrong', 'composition_rejected', 'crashed']
+        .filter((k) => derivationVerdict[k] === true).map((k) => [k, true])),
       red_codes: verdict.red.map((p) => p.code),
       hold_codes: verdict.holds.map((h) => h.code),
     }
@@ -669,11 +930,9 @@ test('DASH-16 客户端 UI 行的层归属（语义面）：profile 补丁里按
     rec.readings.files = { patch: patchSnap, composition: compositionSnap, profile_patch: profile.snap }
 
     // ── ① profile 层的语义面 ──────────────────────────────────────────────────
-    let profilePending = false
     if (!profile.snap.exists) {
       caseHold(rec, CODE.profilePatchMissing,
         `客户端那份 profile 补丁不在（${profile.where.path}，来源 ${profile.where.source}）⇒ 层归属判不了 —— HOLD（不是绿）`)
-      profilePending = true
     } else {
       const real = scanProfilePlacement({
         patchText: profile.text,
@@ -682,8 +941,9 @@ test('DASH-16 客户端 UI 行的层归属（语义面）：profile 补丁里按
         dashboardManifest: DASHBOARD_MANIFEST,
       })
       rec.readings.profile = real.reading
+      // 全部消费：`scope: 'unreadable'` 的由 `mountVerdict()` 记 HOLD（带它自己的码），其余是红。
+      // 🔴 这里**没有**"本格不判"的剔除名单 —— 一个码要么被判，要么退役并从扫描器里删掉。
       for (const p of real.problems) problems.push(p)
-      profilePending = real.reading.dashboard.occurrences === 0
     }
 
     // ── ② bundle 层的残余腿：预设 plugins 里的客户端 UI 行**只许关着** ────────────
@@ -709,28 +969,21 @@ test('DASH-16 客户端 UI 行的层归属（语义面）：profile 补丁里按
     if (residual !== null) {
       rec.readings.bundle = residual.reading
       /**
-       * 残余腿只消费 `reading.violations`（换成"开着的才红"），所以扫描器自己报的那两条
-       * **本格不判**的码要显式剔掉：`DASH-HOST-MISSING`（"看板必须在 bundle 宿主 insert"——形状已退役）
-       * 与 `DASH-CLIENT-IN-PRESET`（本格只认"开着的"那一半）。
-       * 🔴 其余一律照旧红 —— 尤其 `DASH-PATCH-UNREADABLE`：不然"补丁读不懂"会让
-       * `violations` 变成空数组 ⇒ 看起来"没有开着的行"⇒ 静默假绿（Gate-2 那个病的同一个形状）。
+       * 🔴 **扫描器报的每一条都消费**（2026-11-05 复审第 2 条）。
+       *
+       * 旧版把 `DASH-HOST-MISSING` 与 `DASH-CLIENT-IN-PRESET` 从消费面**剔掉**，再自己用
+       * `reading.violations` 重推一遍"开着的才红" —— 那正是"被消费者丢掉"：扫描器还在发，
+       * 生产判词不用它，谁也不知道它算不算数。现在：
+       *   · `DASH-HOST-MISSING` **退役了**（扫描器里整段删除，理由与新落点见文件头）；
+       *   · `DASH-CLIENT-IN-PRESET` / `DASH-CLIENT-IN-BUNDLE-TOP` / `DASH-PATCH-UNREADABLE`
+       *     全部原样进判词 —— 尤其 `DASH-PATCH-UNREADABLE`：不然"补丁读不懂"会让
+       *     `violations` 变成空数组 ⇒ 看起来"没有开着的行"⇒ 静默假绿（Gate-2 那个病的同一个形状）。
        */
-      const NOT_JUDGED_HERE = new Set(['DASH-HOST-MISSING', 'DASH-CLIENT-IN-PRESET'])
       rec.readings.bundle.scanner_codes = residual.problems.map((p) => p.code)
-      for (const p of residual.problems) {
-        if (NOT_JUDGED_HERE.has(p.code)) continue
-        problems.push(p)
-      }
-      // 语义面：装在预设层里、**开着**的客户端 UI 行 = 2026-11-05 16:0x boot 事故的形状 ⇒ 红
+      for (const p of residual.problems) problems.push(p)
+      // 读数（不是判据）：哪几行开着 / 哪几行在 bundle 顶层 —— 判词已经在上面那一步里了。
       const enabledInPreset = residual.reading.violations.filter((v) => v.disabled !== true)
       rec.readings.bundle.enabled_in_preset = enabledInPreset
-      for (const v of enabledInPreset) {
-        problems.push(problem(DASH16.clientInPreset,
-          `生成的 bundle 补丁里，预设层那一行 \`${v.id ?? v.name}\` 指向的包（${v.pkg}）声明了 \`dsh.client.platform: web\` 而它是**开着**的`
-          + ` —— 预设层的客户端 UI 行宿主装载层收不到，而这一行开着就是 2026-11-05 16:0x 那个 boot 事故的形状（整层 boot 失败 ⇒ 新会话窄权限）。`
-          + '挂载走 profile 层之后，这一行只许保持 `disabled: true`（或者整行删掉）',
-          { scope: 'other', row_id: v.id ?? null }))
-      }
       // 两侧一致：组合说 disabled ⇒ 补丁每一处出现也必须 disabled（补丁是派生物）
       const compRow = compositionText === null
         ? { found: false, occurrences: 0, disabled: false, disabled_values: [], error: '组合读不出来' }
@@ -761,6 +1014,10 @@ test('DASH-16 客户端 UI 行的层归属（语义面）：profile 补丁里按
         root: path.resolve(PATHS.repo).replace(/\\/g, '/'),
       }
       const syntheticRow = { id: SYNTHETIC_ROW_ID, name: syntheticPkg.name, root: path.resolve(pkgDir, '..').replace(/\\/g, '/') }
+      /** 同一个合成包的**裸包名**那一半（解析面：`manifestRoots` 按 `package.json.name` 索引）。 */
+      const syntheticBareRow = { id: SYNTHETIC_ROW_ID, name: syntheticPkg.pkg_name, root: syntheticRow.root }
+      /** 一个解析不到任何包的裸名（第三态那一格）。 */
+      const unresolvableRow = { id: SYNTHETIC_ROW_ID, name: UNRESOLVABLE_BARE_NAME, root: syntheticRow.root }
 
       // ③a profile 层：合成行放在哪儿都能被认出来（靠它自己的 package.json）
       const scanProfile = (text, label) => scanProfilePlacement({
@@ -773,37 +1030,46 @@ test('DASH-16 客户端 UI 行的层归属（语义面）：profile 补丁里按
           `- name: '${syntheticRow.name}'\n  config:\n    root: '${syntheticRow.root}'\n- id: web-search-deepseek`,
         ), '夹具·profile·合成行写成顶层 override'),
         syntheticNested: scanProfile(profilePatchFixture({ placement: 'nested', row: dashboardRow, otherRow: null }), '夹具·profile·看板行塞进别人 config.plugins'),
+        // 🔴 第 3 条的两把裸名刀：**看板行照常住在 insert 里**，只把被测的那一行放进预设体
+        //    （同一个位置、同一行，只换 `name` 的写法 —— 这样"看板缺席"不会混进判词）
+        bareInPreset: scanProfile(profilePatchFixture({ placement: 'insert', row: dashboardRow, nestedRow: syntheticBareRow }), '夹具·profile·预设体里的裸包名（解析得到 web 包）'),
+        unresolvedInPreset: scanProfile(profilePatchFixture({ placement: 'insert', row: dashboardRow, nestedRow: unresolvableRow }), '夹具·profile·预设体里的裸包名（解析不到任何包）'),
       }
       rec.readings.fixtures_profile = Object.fromEntries(Object.entries(profileScans).map(([k, v]) => [
         k, { codes: v.problems.map((p) => p.code), messages: v.problems.map((p) => p.message), reading: v.reading },
       ]))
 
-      // ③b bundle 层残余腿：合成行放进预设（开着 ⇒ 红；关着 ⇒ 干净）
+      // ③b bundle 层残余腿：合法形状 = **只在预设体里、且关着**；开着的 / 写在顶层的都红
       const bundleScan = (text, label) => scanClientUiPlacement({ patchText: text, rowId: ROW_ID, label, manifestRoots: [pkgDir] })
+      const dashOff = { ...dashboardRow, disabled: true }
       const bundleScans = {
-        control: bundleScan(clientUiPatchFixture({ dashboard: 'host', synthetic: 'absent', dashboardRow, syntheticRow }), '夹具·bundle·正确形状'),
-        syntheticInPresetOn: bundleScan(clientUiPatchFixture({ dashboard: 'host', synthetic: 'preset', dashboardRow, syntheticRow }), '夹具·bundle·合成行放进预设（开着）'),
+        control: bundleScan(clientUiPatchFixture({ dashboard: 'preset', synthetic: 'absent', dashboardRow: dashOff }), '夹具·bundle·正确形状（看板行在预设体里、关着）'),
+        dashInPresetOn: bundleScan(clientUiPatchFixture({ dashboard: 'preset', synthetic: 'absent', dashboardRow, syntheticRow }), '夹具·bundle·看板行在预设层、开着'),
+        syntheticInPresetOn: bundleScan(clientUiPatchFixture({ dashboard: 'preset', synthetic: 'preset', dashboardRow: dashOff, syntheticRow }), '夹具·bundle·合成行放进预设（开着）'),
         syntheticInPresetOff: bundleScan(clientUiPatchFixture({
-          dashboard: 'host', synthetic: 'preset', dashboardRow, syntheticRow: { ...syntheticRow, disabled: true },
+          dashboard: 'preset', synthetic: 'preset', dashboardRow: dashOff, syntheticRow: { ...syntheticRow, disabled: true },
         }), '夹具·bundle·合成行放进预设但 disabled'),
-        dashInPreset: bundleScan(clientUiPatchFixture({ dashboard: 'preset', synthetic: 'absent', dashboardRow, syntheticRow }), '夹具·bundle·看板行在预设层'),
+        syntheticInBundleTop: bundleScan(clientUiPatchFixture({ dashboard: 'preset', synthetic: 'bundle-top', dashboardRow: dashOff, syntheticRow }), '夹具·bundle·合成行写在顶层 override'),
+        dashInBundleInsert: bundleScan(clientUiPatchFixture({ dashboard: 'host', synthetic: 'absent', dashboardRow, syntheticRow }), '夹具·bundle·看板行在顶层 insert（迁移前那个形状）'),
       }
       rec.readings.fixtures_bundle = Object.fromEntries(Object.entries(bundleScans).map(([k, v]) => [
         k, { codes: v.problems.map((p) => p.code), messages: v.problems.map((p) => p.message), reading: v.reading },
       ]))
 
-      // 判据（残余腿）要把"开着的预设行"翻成红、"关着的"放过去
-      const residualCodes = (text) => {
+      // 判据（残余腿）三把刀：开着的预设行 ⇒ 红；关着的 ⇒ 干净；bundle 顶层的 ⇒ 红
+      const scannerCodes = (text) => {
         const scan = scanClientUiPlacement({ patchText: text, rowId: ROW_ID, label: '刀', manifestRoots: [pkgDir] })
-        return scan.reading.violations.filter((v) => v.disabled !== true).map(() => DASH16.clientInPreset)
+        return scan.problems.map((p) => p.code)
       }
-      const knifePresetOn = residualCodes(clientUiPatchFixture({ dashboard: 'host', synthetic: 'preset', dashboardRow, syntheticRow }))
-      const knifePresetOff = residualCodes(clientUiPatchFixture({
-        dashboard: 'host', synthetic: 'preset', dashboardRow, syntheticRow: { ...syntheticRow, disabled: true },
+      const knifePresetOn = scannerCodes(clientUiPatchFixture({ dashboard: 'preset', synthetic: 'preset', dashboardRow: dashOff, syntheticRow }))
+      const knifePresetOff = scannerCodes(clientUiPatchFixture({
+        dashboard: 'preset', synthetic: 'preset', dashboardRow: dashOff, syntheticRow: { ...syntheticRow, disabled: true },
       }))
-      rec.readings.bundle_knife = { on_codes: knifePresetOn, off_codes: knifePresetOff }
+      const knifeBundleTop = scannerCodes(clientUiPatchFixture({ dashboard: 'preset', synthetic: 'bundle-top', dashboardRow: dashOff, syntheticRow }))
+      rec.readings.bundle_knife = { on_codes: knifePresetOn, off_codes: knifePresetOff, bundle_top_codes: knifeBundleTop }
 
       const pCodesOf = (name) => profileScans[name].problems.map((p) => p.code)
+      const bCodesOf = (name) => bundleScans[name].problems.map((p) => p.code)
       const exactly = (got, want) => JSON.stringify([...got].sort()) === JSON.stringify([...want].sort())
       if (pCodesOf('control').length !== 0) {
         problems.push(problem(DASH16.ruler, `profile 夹具的"正确形状"（两行都在顶层 insert）被判出 ${JSON.stringify(pCodesOf('control'))} —— 判据连正确形状都过不了：先修尺子`))
@@ -823,11 +1089,38 @@ test('DASH-16 客户端 UI 行的层归属（语义面）：profile 补丁里按
       if (knifePresetOff.length !== 0) {
         problems.push(problem(DASH16.knifeVector, `残余腿的刀（同一行但 \`disabled: true\`）还判出 ${JSON.stringify(knifePresetOff)} —— "关着的行可以留"这条规矩不成立，那把刀量的不是"开关"`))
       }
-      // 扫描器自己那半条阳性腿（本格不拿它判词，但它必须还能翻面 —— 否则残余腿借的是死代码）
-      if (!bundleScans.dashInPreset.problems.some((p) => p.code === 'DASH-HOST-MISSING')) {
+      // 🔴 第 2 条的刀：bundle 顶层（不是 insert、不是预设）的客户端 UI 行 ⇒ 自己的码（那条旧码 `DASH-HOST-MISSING` 的替代面之一）
+      if (!exactly(knifeBundleTop, [DASH16.clientInBundleTop])) {
+        problems.push(problem(DASH16.knifeVector,
+          `刀（合成行写在 bundle 顶层 override —— 不是 "- insert:" 的直接成员、也不在预设里）翻出来的面是 ${JSON.stringify(knifeBundleTop)}，`
+          + `应当只有 ${JSON.stringify([DASH16.clientInBundleTop])} —— bundle 层没有宿主装载层了，写在顶层的那一行没有人管`))
+      }
+      // 🔴 第 3 条的两把裸名刀：同一个位置，只换 `name` 的写法
+      if (!exactly(pCodesOf('bareInPreset'), [DASH16.clientNotInProfileInsert])) {
+        problems.push(problem(DASH16.knifeVector,
+          `刀（预设体里一行**裸包名**，解析到 ${syntheticPkg.pkg_name} 这个声明了 web 的包）翻出来的面是 ${JSON.stringify(pCodesOf('bareInPreset'))}，`
+          + `应当只有 ${JSON.stringify([DASH16.clientNotInProfileInsert])} —— 否则裸名 fail-open`))
+      }
+      if (!exactly(pCodesOf('unresolvedInPreset'), [DASH16.rowPackageUnresolved])) {
+        problems.push(problem(DASH16.knifeVector,
+          `刀（预设体里一行解析不到的裸包名 ${UNRESOLVABLE_BARE_NAME}）翻出来的面是 ${JSON.stringify(pCodesOf('unresolvedInPreset'))}，`
+          + `应当只有 ${JSON.stringify([DASH16.rowPackageUnresolved])}`))
+      }
+      // 扫描器必须**还**能对"看板行开着住在预设层"出声（新码；旧 `DASH-HOST-MISSING` 已退役，见文件头）
+      if (!bundleScans.dashInPresetOn.problems.some((p) => p.code === DASH16.clientInPreset)) {
         problems.push(problem(DASH16.knifeUnreadable,
-          `\`scanClientUiPlacement()\` 对"看板行在预设层"的夹具已经报不出 \`DASH-HOST-MISSING\`（实得 ${JSON.stringify(bundleScans.dashInPreset.problems.map((p) => p.code))}）`
+          `\`scanClientUiPlacement()\` 对"看板行在预设层、开着"的夹具报不出 \`${DASH16.clientInPreset}\`（实得 ${JSON.stringify(bundleScans.dashInPresetOn.problems.map((p) => p.code))}）`
           + ' —— 残余腿借的那台扫描器自己哑了，它报的"没有开着的行"就不能当读数'))
+      }
+      // 🔴 迁移前那个形状（看板行住在 **bundle 顶层 insert**）现在必须是红 —— 它取代的正是旧码的命题
+      if (!exactly(bCodesOf('dashInBundleInsert'), [DASH16.clientInBundleTop])) {
+        problems.push(problem(DASH16.knifeVector,
+          `刀（看板行住在 bundle 顶层 insert —— 2026-11-05 迁移前那个形状）翻出来的面是 ${JSON.stringify(bCodesOf('dashInBundleInsert'))}，`
+          + `应当只有 ${JSON.stringify([DASH16.clientInBundleTop])}`))
+      }
+      if (bCodesOf('control').length !== 0) {
+        problems.push(problem(DASH16.ruler,
+          `bundle 夹具的"正确形状"（客户端 UI 行只在预设体里、且 \`disabled: true\`）被判出 ${JSON.stringify(bCodesOf('control'))} —— 判据连正确形状都过不了：先修尺子`))
       }
       if (bundleScans.control.reading.warnings.length > 0 || profileScans.control.reading.warnings.length > 0) {
         problems.push(problem(DASH16.ruler, '合成夹具自己就有解析器读不懂的行 —— 这一跑的翻面证据不成立'))
@@ -856,18 +1149,23 @@ test('DASH-16 客户端 UI 行的层归属（语义面）：profile 补丁里按
           + ` · profile 补丁 ${String(registration.in_profile_patch)} · 真实 profile 里的包名 ${String(registration.in_real_profile)}）—— 刀的命题不成立`))
       }
       /**
-       * 🔴 **分流政策的刀**（`mountVerdict()` 能把红翻成 HOLD，所以它自己必须能被量）。三格：
-       *   · 看板行还没挂 + `pending` ⇒ **HOLD 1 / RED 0**（今天真树的形状；`scope: 'mount'` 才翻）；
-       *   · 同一份夹具但 `pending=false` ⇒ **RED 1 / HOLD 0**（🔴 那一行在就必须红）；
-       *   · **别的**客户端 UI 行（合成行，`scope: 'other'`）放进 profile 的 override + `pending=true`
-       *     ⇒ **RED 1 + HOLD 1** —— 🔴 这一格最容易被放宽：HOLD 只解释"看板那一行还没挂"，
-       *     **不许**把别的客户端 UI 行的红一起吞掉。
+       * 🔴 **分流政策的刀**（`mountVerdict()` 只把 `scope: 'unreadable'` 翻成 HOLD，所以它必须能被量）：
+       *   · 看板行**缺席** ⇒ **RED 1 / HOLD 0**（今天真树的形状：挂载没做就是红，第三态不再吸收它）；
+       *   · **别的**客户端 UI 行（合成行，`scope: 'other'`）放进 profile 的 override ⇒ **RED 1 / HOLD 0**；
+       *   · 预设体里**读不到**的行 ⇒ **RED 0 / HOLD 1**（码是它自己的）；
+       *   · 缺席 + 读不到同时出现 ⇒ **RED 1 + HOLD 1**（第三态不许吞红，红也不许吞第三态）。
        */
       const absent = scanProfile(profilePatchFixture({ placement: 'absent', row: dashboardRow }), '夹具·看板行还没挂')
       const policyGrid = {
-        absentPending: mountVerdict({ problems: absent.problems, pending: true }),
-        absentOn: mountVerdict({ problems: absent.problems, pending: false }),
-        otherRowPending: mountVerdict({ problems: profileScans.syntheticInOverride.problems, pending: true }),
+        absent: mountVerdict({ problems: absent.problems }),
+        otherRow: mountVerdict({ problems: profileScans.syntheticInOverride.problems }),
+        unreadable: mountVerdict({ problems: profileScans.unresolvedInPreset.problems }),
+        mixed: mountVerdict({
+          problems: [
+            problem('DASH-PROFILE-MOUNT-MISSING', '合成的缺席问题（⇒ 红）', { scope: 'mount' }),
+            problem('DASH-ROW-PACKAGE-UNRESOLVED', '合成的读不到问题（⇒ HOLD，且不许吞红）', { scope: 'unreadable' }),
+          ],
+        }),
       }
       rec.readings.policy_grid = Object.fromEntries(Object.entries(policyGrid).map(([k, v]) => [
         k, { red: v.red.map((p) => p.code), hold: v.holds.map((h) => h.code) },
@@ -880,9 +1178,10 @@ test('DASH-16 客户端 UI 行的层归属（语义面）：profile 补丁里按
           problems.push(problem(DASH16.knifeVector, `分流政策的刀 ${k} 翻出来的面是 ${JSON.stringify(got)}，应当是 ${JSON.stringify(wanted)} —— HOLD 那一半没有翻面（政策死 / 政策漏 / 放得太宽）`))
         }
       }
-      expectGrid('absentPending', { red: [], hold: [DISABLED_PENDING_CODE] })
-      expectGrid('absentOn', { red: ['DASH-PROFILE-MOUNT-MISSING'], hold: [] })
-      expectGrid('otherRowPending', { red: [DASH16.clientNotInProfileInsert], hold: [DISABLED_PENDING_CODE] })
+      expectGrid('absent', { red: ['DASH-PROFILE-MOUNT-MISSING'], hold: [] })
+      expectGrid('otherRow', { red: [DASH16.clientNotInProfileInsert], hold: [] })
+      expectGrid('unreadable', { red: [], hold: [DASH16.rowPackageUnresolved] })
+      expectGrid('mixed', { red: ['DASH-PROFILE-MOUNT-MISSING'], hold: ['DASH-ROW-PACKAGE-UNRESOLVED'] })
     } catch (err) {
       problems.push(problem(DASH16.ruler, `合成夹具造不出来：${String(err?.message ?? err)} —— 这一跑的翻面证据不成立`))
     }
@@ -895,10 +1194,10 @@ test('DASH-16 客户端 UI 行的层归属（语义面）：profile 补丁里按
       patch: after.sha256 !== patchSnap.sha256,
       profile_patch: afterProfile.sha256 !== profile.snap.sha256,
     }
-    // ── 出口：把"还没挂"那条看板层归属翻成 HOLD；别的客户端 UI 行照旧红 ──────────
-    const verdict = mountVerdict({ problems, pending: profilePending })
+    // ── 出口：`scope: 'unreadable'` 那几条记 HOLD（带自己的码），其余**全部**照旧红 ──────────
+    const verdict = mountVerdict({ problems })
     rec.readings.verdict = {
-      profile_mount_pending: profilePending,
+      profile_mount_present: profile.snap.exists ? rec.readings.profile?.dashboard?.occurrences > 0 : null,
       bundle_semantic_client_rows: residual === null ? null : residual.reading.client_ui_rows.length,
       bundle_enabled_in_preset: residual === null ? null : residual.reading.violations.filter((v) => v.disabled !== true).length,
       red_codes: verdict.red.map((p) => p.code),

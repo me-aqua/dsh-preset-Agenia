@@ -526,56 +526,47 @@ export function delegationGroupProblems(compRows, {
 }
 
 /**
- * **一份组合里哪几行是宿主级**（`# @host-level`）—— 唯一读法，不 import 生成器。
+ * **组合里不许有 `# @host-level` 标记**（2026-11-05 挂载搬到 profile 层之后的判法；纯文本，可喂夹具）。
  *
- * 为什么不能读 `.tools/make-bundle-patch.mjs` 的 `HOST_LEVEL_IDS`：那是**实现里的点名表**。
- * 判据若从它拿集合，"标对了"与"标错了但表也抄错"长得一模一样（判据变成代码的镜子）。
- * 这里的唯一来源是**组合原文里的标记**：`- id: <id>` 的**下一行**、行首两格缩进、
- * `# @host-level` —— 与生成器文件头声明的那条标记契约同形（不能 import：它在加载期会写活体）。
+ * ── 🔴 这里原来是 `hostLevelRows()`（2026-11-05 **退休**）──────────────────────────
+ * 它回答的问题是"组合里**哪几行**是宿主级、要搬进 **bundle 补丁顶层 insert**"。那个形状现在
+ * **按设计不存在**：`.tools/make-bundle-patch.mjs` 见到 `# @host-level` 就 throw
+ * （`E_BUNDLE_HOST_MARK`），`HOST_LEVEL_IDS` 必须为空（`E_BUNDLE_HOST_LEVEL_IDS`）——
+ * 宿主级行（客户端 UI 那一类）现在只写 **profile 补丁的顶层 `- insert:`**
+ * （`.tools/mount-dashboard-profile.mjs` 挂 / 撤；判据在 `DASH-15` / `DASH-16` 的
+ * `client-ui-placement.mjs::scanProfilePlacement()`）。
+ * 留着那个函数会让"哪几行是宿主级"有一份**看起来还在、其实没人能用的答案**：它读出来的集合
+ * 永远是空的（真出现标记时生成器已经 throw 了），下游拿它判事就是"静默判了个空"
+ * （`cand-20261019-0030` / `cand-20261019-0042`）。
  *
- * 🔴 **标记位置钉死**（与生成器 `HOST_MARK_LINE` 同一口径）：写在 `- id:` 上面、缩进差一格、
- *    块里别处 —— 都**不算**这一行的标记，并且当作错误报出来。放宽位置会静默把"给下一行写的说明"
- *    认成这一行的标记（生成器也会 throw），洞正好开在"哪一行是宿主级"这件承重事实上。
+ * 现在的判法方向**翻过来**：标记本身是错的。它在组合里出现 ⇒ 那一版 bundle 生成不出来
+ * ⇒ 预设整层没有 ⇒ 新会话窄权限。所以这里报的是"有标记"（红），而不是"哪几行有标记"。
  *
- * @param {string} compositionText 组合原文（含注释）
- * @returns {{ids: string[], problems: string[], readings: object}}
+ * @param {string} compositionText 组合原文（含注释 —— 标记只在注释里）
+ * @returns {{problems: string[], readings: {marks: {id: string|null, line: number, text: string}[]}}}
  */
-export function hostLevelRows(compositionText) {
+export function hostLevelMarkProblems(compositionText) {
   const lines = String(compositionText).replace(/\r\n/g, '\n').split('\n')
   const problems = []
-  const ids = []
-  const positions = []
-  const marked = new Set()
-  const topLevel = []
-  for (let i = 0; i < lines.length; i += 1) {
-    const m = /^- id:\s*([^\s#]+)\s*(?:#.*)?$/.exec(lines[i])
-    if (m === null) continue
-    topLevel.push(m[1])
-    // 标记只认 `- id:` 的下一行（生成器也是这样读的）。
-    if (i + 1 < lines.length && /^ {2}#\s*@host-level\b/.test(lines[i + 1])) {
-      ids.push(m[1])
-      marked.add(i + 1)
-      positions.push({ id: m[1], id_line: i + 1, mark_line: i + 2 })
-    }
-  }
-  // 写了标记但不在合法位置：出声，不静默忽略（否则"这一行到底进不进预设"没有读数）。
+  const marks = []
   for (let i = 0; i < lines.length; i += 1) {
     if (!/^\s*#\s*@host-level\b/.test(lines[i])) continue
-    if (marked.has(i)) continue
-    const prev = i > 0 ? lines[i - 1].trim() : '(文件开头)'
-    problems.push(`第 ${i + 1} 行的 \`# @host-level\` 不在任何顶格 \`- id:\` 的下一行`
-      + `（它上一行是「${prev.slice(0, 80)}」）—— 标记必须紧跟在 \`- id: <id>\` 的下一行、行首两格缩进；`
-      + '写错位置 = 生成器不认这一行是宿主级，补丁会把它又拷回每一份预设')
+    // 报文里要能指到"它本来想标哪一行"：往上一行找最近的 `- id:`；找不到就如实说没有。
+    let owner = null
+    for (let k = i - 1; k >= 0; k -= 1) {
+      const m = /^\s*-\s*id:\s*([^\s#]+)/.exec(lines[k])
+      if (m !== null) { owner = m[1]; break }
+      if (!/^\s*(#|$)/.test(lines[k])) break
+    }
+    marks.push({ id: owner, line: i + 1, text: lines[i].trim().slice(0, 120) })
   }
-  const dupes = ids.filter((id, i) => ids.indexOf(id) !== i)
-  if (dupes.length > 0) {
-    problems.push(`这些行有不止一个宿主级标记：${[...new Set(dupes)].join(', ')}（每个 id 只认一条顶格行 + 一枚标记）`)
+  for (const mark of marks) {
+    problems.push(`第 ${mark.line} 行出现了 \`# @host-level\`${mark.id === null ? '' : `（想标的是 \`${mark.id}\`）`}`
+      + ' —— bundle 补丁**不收**宿主级行：生成器见到这枚标记当场 throw（`E_BUNDLE_HOST_MARK`），整份补丁造不出来。'
+      + '宿主级行（客户端 UI 那类）写 profile 补丁的顶层 `- insert:`，用 `.tools/mount-dashboard-profile.mjs` 挂 / 撤；'
+      + '组合里删掉这枚标记（行本身留在预设层、`disabled: true`）')
   }
-  return {
-    ids,
-    problems,
-    readings: { host_level_ids: ids, top_level_rows: topLevel, markers: positions },
-  }
+  return { problems, readings: { marks } }
 }
 
 /**
@@ -588,18 +579,18 @@ export function hostLevelRows(compositionText) {
  *     （不扮演任何具体角色 —— 各角色的人格住在 `ROLE_TABLE[toolName].persona`）。
  * 两条都只影响**行内容**，不影响**行 id 集合** ⇒ 这里冻的是"哪几行在哪一份里"。
  *
- * 🔴 宿主级行（`hostLevelRows()` 读出来的那些）**不在任何一份里**：它们住补丁顶层的宿主 insert。
- *    这件事不能靠"补丁里没有"倒推 —— 否则生成器把宿主级行又拷回每份预设时，这里会跟着一起绿。
+ * 🔴 **宿主级行不在 bundle 补丁里**（2026-11-05 起）：它们住 **profile 补丁**的顶层 `- insert:`
+ *    （`.tools/mount-dashboard-profile.mjs`；判据在 `DASH-15` / `DASH-16`）。这一份补丁里出现的
+ *    `# @host-level` 标记是**错**的（生成器当场 throw），由 `hostLevelMarkProblems()` 报。
  *
  * @param {object[]} compRows `collectRows()` 的行
- * @param {{leaderId?: string, hostLevelIds?: string[]}} [options] `hostLevelIds` **必须**来自 `hostLevelRows()`
+ * @param {{leaderId?: string}} [options]
  * @returns {Map<string, string[]>} 预设 id → 那一份应有的行 id（**顺序不作为判据**，比较走多重集）
  */
-export function expectedPresetRows(compRows, { leaderId = FROZEN.patchPresets.leaderPresetId, hostLevelIds = [] } = {}) {
+export function expectedPresetRows(compRows, { leaderId = FROZEN.patchPresets.leaderPresetId } = {}) {
   const drop = subtreeIds(compRows, FROZEN.patchPresets.memberDropsGroup)
-  const host = new Set(hostLevelIds)
-  const memberIds = compRows.filter((r) => !drop.has(r.id) && !host.has(r.id)).map((r) => r.id)
-  const leaderIds = compRows.filter((r) => !host.has(r.id)).map((r) => r.id)
+  const memberIds = compRows.filter((r) => !drop.has(r.id)).map((r) => r.id)
+  const leaderIds = compRows.map((r) => r.id)
   const out = new Map()
   for (const presetId of expectedPresetIds(compRows, { leaderId })) {
     out.set(presetId, presetId === leaderId ? leaderIds : memberIds)
@@ -608,25 +599,31 @@ export function expectedPresetRows(compRows, { leaderId = FROZEN.patchPresets.le
 }
 
 /**
- * 补丁的**预设入口级**对账（0.2.0 的「注册行恰好 1 行 / 补丁行数 = 组合行数 + 1」的 0.2.1 口径，
- * 2026-11-05 起再加**宿主级层**）。
+ * 补丁的**预设入口级**对账（0.2.0 的「注册行恰好 1 行 / 补丁行数 = 组合行数 + 1」的 0.2.1 口径）。
  *
- * 五条各自承重：
+ * 四条各自承重：
  *   ① **份数**：入口数必须 = 从组合推出来的份数（组长 1 + 带 `agentPreset` 的委派行）；
- *   ② **每份的行集**：组长份 = 组合的**非宿主级**行、组员份 = 组合去掉 `delegation` 整组再减去宿主级行
- *      —— **多重集**相等；
- *   ③ **顶层形状**：顶层只许是这几份预设入口 + **0..N** 个宿主级 insert，多一样都不行；
- *      0 条宿主级行时那个空壳 `- insert:` 是**合法**的（2026-11-05 回滚之后就是它，见 `topLevelInserts()`）；
- *   ④ **宿主级行**：每个标了 `# @host-level` 的行在**每份预设的 plugins 里 0 次**、在**顶层 insert 里恰好 1 次**；
- *   ⑤ **行数闭合**：每份入口的行 + 顶层宿主级行 = 补丁的全部行（一条不丢、一条不多）。
+ *   ② **每份的行集**：组长份 = 组合的**全部**行、组员份 = 组合去掉 `delegation` 整组 —— **多重集**相等；
+ *   ③ **顶层形状**：顶层**恰好一个** `- insert:`，它的直接成员**全是**预设入口
+ *      （`@deepseek-ai/dsh-agent-preset`）—— 别的行没有落点；
+ *   ④ **行数闭合**：每份入口的行加起来 = 补丁的全部行（一条不丢、一条不多）。
  *
  * 为什么不是"行数相等"：259 这个数可以由无数种错法凑出来（多一份少一行、少一份多一行）。
  * 逐份对行集才抓得住"改了组合没重跑生成器"和"组员份混进了委派行"。
  *
- * 🔴 ③④ 是 2026-11-05 的模型迁移（`bug-20261104-02` 之后）：旧模型的两条腿**字面互斥** ——
- *    "每份预设必须含组合的每一行"与"宿主级行不许进预设"不能同时成立。宿主级集合**只从组合原文的
- *    `# @host-level` 标记读**（`hostLevelRows()`），不读生成器的 `HOST_LEVEL_IDS`：读实现里的点名表，
- *    判据就成了那份表的镜子，"标对了"与"表也抄错了"在读数上长得一样。
+ * ── 🔴 2026-11-05：旧的"宿主级行"那一层模型**删掉了**（复审 `N8`）───────────────────
+ * 旧版还有两条腿：③ 允许顶层有 **0..N 个宿主级 insert**、④ 要求标了 `# @host-level` 的行
+ * "每份预设里 0 次、顶层 insert 里恰好 1 次"。那是 **bundle 层装宿主级行**的模型。
+ * 2026-11-05 挂载搬去 **profile 层**之后，那个形状**按设计不存在**：
+ *   · `.tools/make-bundle-patch.mjs` 见到 `# @host-level` 当场 throw（`E_BUNDLE_HOST_MARK`）、
+ *     `HOST_LEVEL_IDS` 必须为空 ⇒ 组合里根本没有"宿主级行"这个集合（`hostLevelRows()` 已删）；
+ *   · 补丁顶层只许有**一个** insert 装两条预设入口（生成器自己 `--check` 的
+ *     `E_PATCH_TOP_INSERT_SHAPE` 同一个口径）。
+ * 留着旧模型 = 一份"永远读到空集合、所以永远不报"的判据（`cand-20261019-0042` 那个病）。
+ * ⇒ ③ 从"允许宿主 insert"收紧成"只许预设入口"（**更严**，不是放宽）；④ 的宿主级腿整段删除。
+ *   宿主级行（客户端 UI 那一类）现在由 **profile 层**的判据管：
+ *   `DASH-15` / `DASH-16`（`client-ui-placement.mjs::scanProfilePlacement()`）。
+ *   组合里**出现** `# @host-level` 这件事由 `hostLevelMarkProblems()` 报（红）。
  *
  * @param {string} compositionText 组合原文（含注释 —— 宿主级标记只在注释里）
  * @param {string} patchText       生成的补丁原文
@@ -641,19 +638,13 @@ export function presetEntryProblems(compositionText, patchText, { leaderId = FRO
   // 🔴 承重输入先自证：下面整个函数都是"从 `delegation` 组推组员份"（`M-3` / 评审 `S-2`）。
   //    组归属没人守的时候，"组合与补丁同错"会一起绿 —— 这条必须**先于**那些派生判据出声。
   problems.push(...delegationGroupProblems(compRows))
-  // 🔴 第二处承重输入：**哪几行是宿主级**。只从组合原文的标记读（理由见函数头）。
-  const host = hostLevelRows(compositionText)
-  problems.push(...host.problems)
-  readings.host_level_ids = host.ids
-  readings.host_level_markers = host.readings.markers
-  const hostSet = new Set(host.ids)
+  // 🔴 第二处承重输入：**组合里不许有宿主级标记**（2026-11-05：那个形状是 boot 杀手）。
+  const marks = hostLevelMarkProblems(compositionText)
+  problems.push(...marks.problems)
+  readings.host_level_marks = marks.readings.marks
   const compIds = new Set(compRows.map((r) => r.id))
-  for (const id of host.ids) {
-    if (!compIds.has(id)) {
-      problems.push(`\`- id: ${id}\` 标了 \`# @host-level\`，但组合解析不出这一行 —— 标记没有对象（改 id 时两处要一起改）`)
-    }
-  }
-  const expected = expectedPresetRows(compRows, { leaderId, hostLevelIds: host.ids })
+  readings.composition_rows_with_id = compIds.size
+  const expected = expectedPresetRows(compRows, { leaderId })
   const regs = registrationRows(patchRows)
   const gotPresetIds = regs.map((r) => cfg(r, 'id'))
   readings.patch_preset_ids = gotPresetIds
@@ -666,68 +657,33 @@ export function presetEntryProblems(compositionText, patchText, { leaderId = FRO
   if (missing.length > 0) problems.push(`补丁缺预设入口：${missing.join(', ')}（组合里有带 agentPreset 的行没被生成成预设？）`)
   if (extra.length > 0) problems.push(`补丁多出组合推不出的预设入口：${extra.join(', ')}（补丁是派生物，不许自己长）`)
 
-  // ── ③ 顶层形状：只许「预设入口 insert」与「宿主级 insert」，各住各的 ────────────────
+  // ── ③ 顶层形状：恰好一个 `- insert:`，成员**全是**预设入口 ───────────────────────
   const top = topLevelInserts(patchDoc)
   problems.push(...top.problems)
   const topRows = top.blocks.flatMap((b) => b.rows)
   const topMaps = new Set(topRows.map((r) => r.map))
-  const hostTopRows = topRows.filter((r) => hostSet.has(r.id))
   readings.patch_top_blocks = top.blocks.map((b) => ({ insert: b.index + 1, ids: b.rows.map((r) => r.id) }))
-  readings.patch_host_top_ids = hostTopRows.map((r) => r.id)
-  for (const block of top.blocks) {
-    if (block.rows.length === 0) {
-      /**
-       * 🔴 空壳宿主 insert：**0 条宿主级行时它是合法形状**（生成器留着那一行抬头）。
-       *    有宿主级行时它才是错（搬空了 / 多出来一个空壳）—— 判据钉的是"这一版有没有宿主级行"，
-       *    不是"顶层必须有 insert"（2026-11-05 回滚之后宿主 insert 可以是 0 个，见 `topLevelInserts()`）。
-       */
-      if (host.ids.length > 0) {
-        problems.push(`补丁顶层第 ${block.index + 1} 个 \`- insert:\` 是空的，而这一版有 ${host.ids.length} 条宿主级行（${host.ids.join(', ')}）—— 宿主 insert 搬空了？`)
-      }
-      continue
-    }
-    const regsHere = block.rows.filter((x) => x.name === FROZEN.oracle.registrationName)
-    const hostsHere = block.rows.filter((x) => hostSet.has(x.id))
-    if (regsHere.length === block.rows.length) continue
-    if (hostsHere.length === block.rows.length) continue
-    const others = block.rows.filter((x) => !regsHere.includes(x) && !hostsHere.includes(x)).map((x) => x.id)
-    if (regsHere.length > 0) {
-      problems.push(`补丁顶层第 ${block.index + 1} 个 insert 把预设入口跟别的行混在一起：入口 ${JSON.stringify(regsHere.map((x) => x.id))}`
-        + ` · 别的 ${JSON.stringify([...hostsHere.map((x) => x.id), ...others])}`
-        + ' —— 预设入口自己一个 insert，宿主级行另起一个 insert')
-    } else if (hostsHere.length > 0) {
-      problems.push(`补丁顶层第 ${block.index + 1} 个 insert 把宿主级行跟别的行混在一起：宿主级 ${JSON.stringify(hostsHere.map((x) => x.id))}`
-        + ` · 别的 ${JSON.stringify(others)} —— 宿主级行只许跟宿主级行住同一个 insert`)
-    } else {
-      problems.push(`补丁顶层第 ${block.index + 1} 个 insert 里这几行既不是预设入口、也不是标了 \`# @host-level\` 的宿主级行：${JSON.stringify(others)}`
-        + ' —— 顶层只许是预设入口 + 宿主级行；别的行没有落点（生成器把哪一行搬错了层？）')
-    }
-  }
   for (const reg of regs) {
     if (!topMaps.has(reg.map)) {
       problems.push(`预设入口 ${reg.id} 不是顶层 \`- insert:\` 的直接成员 —— 预设入口必须住在顶层（否则它不在任何一份预设该在的层上）`)
     }
   }
 
-  // ── ② 每份入口的行集（宿主级行已在 expected 里剔掉）+ ④ 宿主级行不许漏进预设 ──────────
+  // ── ② 每份入口的行集 ────────────────────────────────────────────────────────────
   const counts = {}
   let rowsInEntries = 0
-  const hostLeaks = []
   for (const r of regs) {
     const presetId = cfg(r, 'id')
     const entryRows = collectRows(cfg(r, 'plugins'))
     rowsInEntries += entryRows.length + 1
     counts[presetId] = entryRows.length
-    for (const x of entryRows) {
-      if (hostSet.has(x.id)) hostLeaks.push({ preset: presetId, id: x.id })
-    }
     const want = expected.get(presetId)
     if (want === undefined) continue
     const got = entryRows.map((x) => x.id)
     const more = multisetDiff(got, want)
     const less = multisetDiff(want, got)
     if (more.length > 0) {
-      problems.push(`预设 ${presetId} 多出这一份不该有的行：${more.join(', ')}（组长份 = 组合的全部非宿主级行；组员份 = 组合去掉 ${FROZEN.patchPresets.memberDropsGroup} 组、再减去宿主级行）`)
+      problems.push(`预设 ${presetId} 多出这一份不该有的行：${more.join(', ')}（组长份 = 组合的全部行；组员份 = 组合去掉 ${FROZEN.patchPresets.memberDropsGroup} 组）`)
     }
     if (less.length > 0) {
       problems.push(`预设 ${presetId} 缺这一份该有的行：${less.join(', ')}（改了组合没重跑生成器？）`)
@@ -735,25 +691,12 @@ export function presetEntryProblems(compositionText, patchText, { leaderId = FRO
   }
   readings.patch_preset_row_counts = counts
   readings.patch_rows_in_entries = rowsInEntries
-  readings.host_level_leaks = hostLeaks
-  for (const leak of hostLeaks) {
-    problems.push(`预设 ${leak.preset} 的 plugins 里出现了宿主级行 ${leak.id}（它标了 \`# @host-level\`）`
-      + ' —— 宿主级行只能住补丁顶层的 insert；装进预设 = 浏览器收不到（每一份预设各一份更是成倍错误）')
-  }
-  for (const id of host.ids) {
-    const atTop = hostTopRows.filter((x) => x.id === id).length
-    if (atTop === 0) {
-      problems.push(`宿主级行 ${id} 标了 \`# @host-level\`，但补丁顶层没有它 —— 这一行没有装进宿主装载层（面板写了也到不了界面）`)
-    } else if (atTop > 1) {
-      problems.push(`宿主级行 ${id} 在补丁顶层出现 ${atTop} 次（应恰好 1 次）—— 同 id 两行，加载器会怎么算没有定义`)
-    }
-  }
 
-  // ── ⑤ 行数闭合：入口行 + 顶层宿主级行 = 补丁全部行 ────────────────────────────────
-  const accounted = rowsInEntries + hostTopRows.length
+  // ── ④ 行数闭合：入口行 = 补丁全部行 ──────────────────────────────────────────────
+  const accounted = rowsInEntries
   if (accounted !== patchRows.length) {
-    problems.push(`补丁有 ${patchRows.length - accounted} 行既不在任何预设入口里、也不是顶层宿主级 insert 的直接成员`
-      + `（顶层只许是这 ${regs.length} 份入口 + ${hostTopRows.length} 条宿主级行，补丁是组合的派生物）`)
+    problems.push(`补丁有 ${patchRows.length - accounted} 行既不在任何预设入口里、也不是顶层 insert 的直接成员`
+      + `（顶层只许是这 ${regs.length} 份入口，补丁是组合的派生物）`)
   }
   return { problems, readings }
 }
@@ -762,48 +705,56 @@ export function presetEntryProblems(compositionText, patchText, { leaderId = FRO
  * 补丁**顶层**的 `- insert:` 块（`- insert:` 的直接成员，不往下钻）。
  * 判"是不是顶层"用**结构**，不数缩进：顶层序列的每一项应当是一个只带 `insert` 列表的映射。
  *
- * 🔴 **宿主 insert 可以是 0 个**（2026-11-05 回滚之后就是这个形状）。
- *    规则是「顶层 = 预设入口 + **(0..N)** 个宿主级 insert，别的不许有」——**不是**"至少一个 insert"。
- *    写 `- insert:` 而底下没有成员时，YAML 读出来的值是 `null`（不是空数组）：这一份补丁的第 1 个顶层项
- *    就是那个**空壳**宿主 insert（生成器在"这一版 0 条宿主级行"时仍然留着它的抬头）。
- *    ⇒ 空壳记成一个 `rows: []` 的块，**不当错误**；要不要报由调用方按"这一版有没有宿主级行"决定
- *    （见 `presetEntryProblems()` 的 ③：有宿主级行时空壳才是错）。
- *    代价写清楚：这条从"必须是一个 insert 列表"放宽到"insert 列表或空 insert"，它**没有**放宽
- *    "顶层能放别的东西"——不是 `- insert:` 的顶层项、带别的键的顶层项，照旧各自报红。
+ * 🔴 **顶层恰好一个 insert，成员全是预设入口**（2026-11-05：bundle 层不装宿主级行）。
+ *    旧版允许"0..N 个宿主级 insert + 一个空壳 insert 合法"—— 那是 bundle 层装宿主级行的模型，
+ *    那个形状现在按设计不存在（见 `presetEntryProblems()` 的文件头）。这里从"允许"收紧成"只许"：
+ *    · 顶层项不是映射 / 不是 `- insert:` / 是空壳（`- insert:` 底下没成员）⇒ 红；
+ *    · 一个 insert 的成员不是 `@deepseek-ai/dsh-agent-preset` ⇒ 红（宿主级行不属于这一份补丁）；
+ *    · 顶层出现第二个 insert ⇒ 红。
  */
 function topLevelInserts(doc) {
   const problems = []
   const blocks = []
   if (!Array.isArray(doc.value)) {
-    problems.push('补丁顶层不是一个 `- insert:` 序列 —— 顶层只许是预设入口 + (0..N) 个宿主级 insert')
+    problems.push('补丁顶层不是一个 `- insert:` 序列 —— 顶层只许有一个 `- insert:`，里面装预设入口')
     return { blocks, problems }
   }
   doc.value.forEach((op, index) => {
     if (!(op instanceof Map)) {
-      problems.push(`补丁顶层第 ${index + 1} 项不是 \`- insert:\` 列表 —— 顶层只许是预设入口 + (0..N) 个宿主级 insert（多出来的东西没有落点）`)
+      problems.push(`补丁顶层第 ${index + 1} 项不是 \`- insert:\` 列表 —— 顶层只许有一个 \`- insert:\`，里面装预设入口`)
       return
     }
     const keys = [...op.keys()]
     const insert = op.get('insert')
-    // 空壳宿主 insert：`- insert:` 底下没有成员 ⇒ 解析成 null。只认"这一项上只有 insert 一个键"。
+    // 空壳：`- insert:` 底下没有成员 ⇒ 解析成 null。
     if (insert === null && keys.length === 1 && keys[0] === 'insert') {
       blocks.push({ index, rows: [], empty: true })
       return
     }
     if (!Array.isArray(insert)) {
-      problems.push(`补丁顶层第 ${index + 1} 项不是 \`- insert:\` 列表 —— 顶层只许是预设入口 + (0..N) 个宿主级 insert（多出来的东西没有落点）`)
+      problems.push(`补丁顶层第 ${index + 1} 项不是 \`- insert:\` 列表 —— 顶层只许有一个 \`- insert:\`，里面装预设入口`)
       return
     }
     const rows = []
     for (const item of insert) {
-      if (item instanceof Map && typeof item.get('id') === 'string') {
-        rows.push({ id: item.get('id'), name: item.get('name') ?? null, map: item })
-      } else {
-        problems.push(`补丁顶层第 ${index + 1} 个 insert 里有一项不是带 \`id\` 的行 —— 顶层只许是完整的行（宿主级 / 预设入口）`)
+      if (!(item instanceof Map)) {
+        problems.push(`补丁顶层第 ${index + 1} 个 insert 里有一项不是行 —— 顶层 insert 只装预设入口`)
+        continue
       }
+      const name = item.get('name')
+      if (name !== FROZEN.oracle.registrationName) {
+        problems.push(`补丁顶层第 ${index + 1} 个 insert 里有一行不是预设入口（\`name: ${JSON.stringify(name ?? null)}\`，`
+          + `\`id: ${JSON.stringify(item.get('id') ?? null)}\`）—— bundle 补丁的顶层只许有预设入口；`
+          + '宿主级行（客户端 UI 那一类）写 profile 补丁的顶层 `- insert:`')
+        continue
+      }
+      rows.push({ id: item.get('id') ?? null, name, map: item })
     }
     blocks.push({ index, rows, empty: rows.length === 0 })
   })
+  if (blocks.length !== 1) {
+    problems.push(`补丁顶层应恰好 1 个 \`- insert:\`（预设入口），实得 ${blocks.length}`)
+  }
   return { blocks, problems }
 }
 
@@ -1012,24 +963,14 @@ export function patchStructuralProblems(compositionText, patchText) {
   }
 
   /**
-   * ④′ **宿主级行**：行体也必须与组合逐字同形。
+   * ④′ **宿主级行**（bundle 层）：2026-11-05 **删除**。
    *
-   * 宿主级行搬出预设之后，④ 那一圈（只走预设入口）就**管不到它了** —— 层变了，行体逐字的那条腿
-   * 不能跟着消失（否则"宿主行叫什么名 / 指哪个包 / root 写哪"在 STAT-02 就没有落点，
-   * 只能靠 DASH-15 的生成器 `--check` 兜）。生成器**只摘掉那枚标记行**（`- id:` 的下一行），
-   * 其余逐字搬 ⇒ 比之前把组合侧那一行摘掉。
-   * 缺行 / 重复由 `presetEntryProblems()` 的 ③④ 报（一个事实一个落点），这里只在两侧都切得出块时比行体。
+   * 旧版在这里比"宿主级行的行体与组合逐字同形"（组合那边摘掉那枚 `# @host-level` 标记再比）。
+   * 那个形状按设计不存在了：宿主级行不住 bundle 补丁（生成器见到标记就 throw），
+   * 它们住 **profile 补丁**的顶层 `- insert:` —— 行体与形状由 `DASH-15` 的
+   * `scanProfilePlacement()` 判（profile 是**另一份文件**，不是这一份的派生物，所以不能在这里比行体）。
+   * 留着它 = 一段永远读到空集合的循环（`cand-20261019-0042`）。
    */
-  for (const rowId of entryCheck.readings.host_level_ids ?? []) {
-    const want = compBlocks.get(rowId)
-    const got = patchBlocks.get(rowId)
-    if (want === undefined || got === undefined) continue
-    const wantNoMark = want.filter((_, i) => i !== 1)
-    if (JSON.stringify(shape(got)) !== JSON.stringify(shape(wantNoMark))) {
-      problems.push(`宿主级行 ${rowId} 的行体与组合不一致（宿主级行也必须是组合的派生物；`
-        + '生成器只许摘掉那枚 `# @host-level` 标记行，其余逐字搬 —— 名字 / config / 别的键都不许动）')
-    }
-  }
 
   /**
    * ⑤ **每一份**入口里的 `persona-injector` 行：绝对路径 + 冻结落点 + 注入清单三样逐字不变。
@@ -1100,7 +1041,6 @@ export function patchStructuralProblems(compositionText, patchText) {
  * @param {string} input.nowText    现在补丁里的组长块全文
  * @param {string} [input.memberPresetId] 九行同指的那一份（`memberPresetShared().id`；null = 读不出）
  * @param {string[]} [input.oldMemberIds] 升级前那九份 per-role 预设 id
- * @param {string[]} [input.hostLevelIds] 组合里标了 `# @host-level` 的行（`hostLevelRows().ids`）
  * @param {string|null} [input.compositionText] 组合原文 —— **给了才判"回滚期停在组长块里的那一行"**
  *   （`pending_rows`：组合里 `disabled: true` + 不在基线里 + 值行与组合逐字相同；不给 ⇒ 这一腿不判，
  *   行为与 2026-11-05 之前完全一样）。调用方拿 `readings.pending_rows` 非空去记 HOLD。
@@ -1112,7 +1052,6 @@ export function leaderBlockProblems({
   leaderPresetId = FROZEN.patchPresets.leaderPresetId,
   memberPresetId = null,
   oldMemberIds = [],
-  hostLevelIds = [],
   compositionText = null,
 }) {
   const problems = []
@@ -1173,24 +1112,15 @@ export function leaderBlockProblems({
   const DEFAULT_ROLE_ALLOWED = /^\s*defaultRole:\s*leader\s*$/
   const isDefaultRoleLine = (l) => /^\s*defaultRole\s*:/.test(l)
   /**
-   * 🔴 **⑤′-b 的第二处具名判据（方向是"必须不在"，不是放行）**（2026-11-05 · 宿主级行）。
+   * 🔴 **旧的那条"宿主级行必须不在组长块里"判据删掉了**（2026-11-05）。
    *
-   * 病根：2026-11-04 这一行曾住在组长块末尾，这里当时放行**末尾那 4 条值行**。
-   * 2026-11-05 起它标了 `# @host-level`，生成器把它搬进顶层宿主 insert ⇒ 组长块里**一行都不该有**。
-   * 若还留着那条放行，最危险的那次回归（"又被拷回预设层"）会**被这条白名单静默吞掉** ——
-   * 而那正是 `bug-20261104-02` 的原形。所以这条从"允许"翻成"必须没有"：
-   *   · 现侧出现宿主级行（`hostLevelIds`，由调用方从组合原文的 `# @host-level` 读出来传进来）⇒
-   *     `LEADER-VALUE-EXTRA`（点名），并继续走值行比较；两侧都没有 ⇒ 与基线逐行相同。
-   *
-   * ⚠️ 宿主级集合的**唯一来源**是组合里的 `# @host-level` 标记（`hostLevelRows()`）；
-   *    本函数**不自己写死 id**（那会是第二处载体）；调用方不传 ⇒ 这一腿不判（空集合），
-   *    完整层归属在 `presetEntryProblems()`（不依赖本函数、也不依赖 `DASH-15`）。
+   * 它问的是"标了 `# @host-level` 的行有没有留在组长块里"—— 那个集合现在**永远是空的**
+   * （`hostLevelRows()` 已删；生成器见到标记就 throw），所以它是一条永远不报的判据。
+   * 那个命题的两个真实落点：
+   *   · "组合里不许出现 `# @host-level`" ⇒ `hostLevelMarkProblems()`（`PRS-01` 与 `presetEntryProblems()` 都跑）；
+   *   · "回滚期停在预设层的那一行" ⇒ 下面的 `pending_rows` 腿（组合里 `disabled: true`、值行与组合逐字相同）；
+   *   · "那一行开着" ⇒ `DASH-16` 的 bundle 残余腿（`DASH-CLIENT-IN-PRESET`）+ 生成器的白名单 throw。
    */
-  const HOST_LEVEL_ROW_IDS = hostLevelIds
-  const isHostLevelRowLine = (l) => {
-    const m = /^\s*-\s*id:\s*([^\s#]+)\s*$/.exec(l)
-    return m !== null && HOST_LEVEL_ROW_IDS.includes(m[1])
-  }
   const indentOfLine = (l) => l.length - l.trimStart().length
   /** `persona-injector` 那一行在原文里的行号区间 + 它的 `leaderOrder:` 缩进（放行线的落点锚）。 */
   const injectorAnchor = (text) => {
@@ -1306,9 +1236,6 @@ export function leaderBlockProblems({
     ? dropFirst(nowEntries, (o) => DEFAULT_ROLE_ALLOWED.test(o.line))
     : nowEntries
   const nowFlat = nowWithoutDr.map((o) => o.line)
-  /** 宿主级行：2026-11-05 起**必须不在**组长块里（方向与 `defaultRole` 那条相反）。 */
-  const baseHostCount = baseRest.filter(isHostLevelRowLine).length
-  const nowHostCount = nowFlat.filter(isHostLevelRowLine).length
   const nowCore = nowFlat
   const firstDrift = baseRest.findIndex((l, i) => l !== nowCore[i])
   readings.value_lines = {
@@ -1324,12 +1251,7 @@ export function leaderBlockProblems({
       injector_key_indent: anchor.indent,
       accepted: allowedDr,
     },
-    host_level_rows: {
-      ids: HOST_LEVEL_ROW_IDS,
-      base_id_lines: baseHostCount,
-      now_id_lines: nowHostCount,
-      must_be_absent: true,
-    },
+    host_level_rows: { removed: '2026-11-05：bundle 层不再有宿主级行（理由见上）' },
     pending_rows: pendingRows,
   }
   if (!allowedDr && (baseDr.length > 0 || nowDr.length > 0)) {
@@ -1342,15 +1264,8 @@ export function leaderBlockProblems({
       + ' —— "允许一条"是**具体那一行**，不是"允许这一类键"：多一条 / 换个值 / 塞到别处都不算')
   }
   /**
-   * 宿主级行越界的**具名报法**：只要组长块里出现 `- id: agenia-dashboard` 就报（不再要求"在末尾"）——
-   * 方向已经翻了：2026-11-05 之前它在末尾是合法的，现在它**一行都不该在**。
-   * 值行比较（`LEADER-CLOBBERED`）同时会把"多出来的值行"逐行报出来，两条各自指认不同的东西。
+   * （2026-11-05：这里原本还有一条"You must put nothing here"的具名报法 —— 见正上方删除说明。）
    */
-  if (nowHostCount > 0) {
-    push('LEADER-VALUE-EXTRA', `组长预设块里出现了宿主级行 ${JSON.stringify(HOST_LEVEL_ROW_IDS)}（${nowHostCount} 条）`
-      + ' —— 标了 `# @host-level` 的行只许住补丁顶层的宿主 insert；住进预设 = 浏览器收不到，'
-      + '而且每一份预设都会各有一份（`bug-20261104-02` 的原形）')
-  }
   if (firstDrift !== -1 || baseRest.length !== nowCore.length) {
     push('LEADER-CLOBBERED', '组长块的值行（非注释行，去掉九条 `agentPreset` 之后，'
       + '另去掉那**一条**放行的 `defaultRole: leader`）与基线不再逐行相同'
@@ -1391,7 +1306,7 @@ export function leaderBlockProblems({
  *   · 不许有 warnings；`- id:` 裸计数必须 == 解析出来的行数（**静默丢行当场红**）；
  *   · officeBound 必须读成一个字符串数组、五条固定 team_* 必须都在；
  *   · 补丁那个文件：**N 份预设入口逐份对上组合**（`presetEntryProblems()`：份数 / 每份的行集 /
- *     顶层只许入口与宿主级行 / 宿主级行恰在顶层 / 行数闭合），两处绝对路径都得读到。
+ *     顶层恰好一个 insert 且成员全是入口 / 行数闭合），两处绝对路径都得读到。
  * 行数**不断言**某个固定值：装完新版之后活体会从 38 变 42，那是预期内的（记读数、不判红）。
  */
 export function calibrate(compositionText, patchText) {
@@ -1432,8 +1347,9 @@ export function calibrate(compositionText, patchText) {
    * 🔴 两条 0.2.0 恒等式在这里**退休**（2026-10-19 · DSH 0.2.1 迁移）：
    *   · 旧①「注册行应为 1」 —— 0.2.1 起补丁里有**N 份预设入口**（组长 1 + 带 `agentPreset` 的委派行）；
    *   · 旧②「补丁行数 = 组合行数 + 1」 —— 每份入口都带自己那套行，259 行不是 43 行。
-   * 换成 `presetEntryProblems()` 的五条（份数 / 每份的行集 / 顶层形状 / 宿主级行的层 / 行数闭合），
-   * 全部**从组合推**；宿主级集合由它内部从 `# @host-level` 标记读（不读生成器的点名表）。
+   * 换成 `presetEntryProblems()` 的四条（份数 / 每份的行集 / 顶层形状 / 行数闭合），
+   * 全部**从组合推**。2026-11-05 起那个模型只覆盖 bundle 层的预设入口（宿主级行搬去 profile 层，
+   * 那个集合在这里已经不存在了；见 `presetEntryProblems()` 的文件头）。
    * 判据没有放宽：旧②只钉一个数，新②钉的是"哪一行在哪一份里"。
    */
   const presetCheck = presetEntryProblems(compositionText, patchText)

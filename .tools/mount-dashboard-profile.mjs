@@ -16,8 +16,13 @@
  *
  * 用法（三条，都要显式说；默认 = check）：
  *   node .tools/mount-dashboard-profile.mjs --check          # 只看现在挂没挂（形状 / 包事实 / 标记块三格都参与退出码）
- *   node .tools/mount-dashboard-profile.mjs --apply          # 挂上（要客户端已关）
+ *   node .tools/mount-dashboard-profile.mjs --apply          # 挂上（要客户端已关；只追加那一块，**不做格式改动**）
  *   node .tools/mount-dashboard-profile.mjs --revert         # 撤掉（要客户端已关；**只写"能逐字节还原"的那一次**）
+ *
+ * `--apply` 只做一件事：在文件末尾追加 `\n` + 挂载块。**不再折叠多行 plain scalar** ——
+ * 测试侧的窄口径读取器已经支持那种形状（`tests/agenia-upgrade/support/composition.mjs`）；
+ * 折叠是当年绕读取器盲区的兼容动作，已经退休。旧记录（`folds` 非空、盘上那份是折叠过的）
+ * 仍然能逐字节还原：记录命中走备份；记录丢失走 `findPreApplyBackup()` 的"折叠后"那一支。
  *
  * `--revert` 两种情形分开：
  *   · apply 记录命中 ⇒ 把备份写回去（写完回读验 sha）；
@@ -25,15 +30,30 @@
  *     与当前全文逐字节相同才写（逐字节还原）；否则**拒绝写盘、退 4**，并打出"要删哪几行"的 diff。
  *     绝不做"删块留折叠"的半还原。
  *
- * 可选：--profile <名字>（默认 desktop）· --file <绝对路径>（默认本机那份 profile 补丁；
- *       **必须带值**：裸 `--file` 是参数错，退 6，不当"现役"；显式给副本时不上进程锁，
- *       但**解析出的路径等于现役路径时照样上锁**）
- *       --root <工作区>（默认 E:/Harness，写进那一行的 config.root）
- *       --backup-dir <目录>（默认 .team/leader/<今天>/backup；副本实验时指到 .team/dev/…）
+ * 备份目录是**稳定**的（默认 `<root>/.team/leader/backup`，不按天分）⇒ 23:59 apply / 00:01 revert
+ * 也能找到同一份记录 / 备份。`--apply` 把**备份文件路径**与**记录文件路径**逐条打出来（给人抄），
+ * `--revert` 第一行打**它到底在哪个目录里找**（`查找目录 …`）—— 找不到时不用猜。
+ *
+ * 可选：`--profile <名字>`（默认 desktop）· `--file <绝对路径>` / `--file=<绝对路径>`
+ *       （默认本机那份 profile 补丁；**必须带值**：裸 `--file` / `--file=` 是参数错，退 6；
+ *         `--file` 后面跟另一个 flag 也是参数错；**任何其它 `--file*` 形状**（`--files`、`--filex`…）
+ *         **一律拒绝**（`E_PARAM_FILE_UNKNOWN_FORM`），不静默回落到现役；
+ *         显式给副本时不上进程锁，但**解析出的路径等于现役路径时照样上锁**）
+ *       `--root <工作区>`（默认 E:/Harness，写进那一行的 config.root；也是默认备份目录的根）
+ *       `--backup-dir <目录>`（默认 `<root>/.team/leader/backup`；跨天 / 旧版按天目录时显式指过来）
  *
  * 退出码：0 挂载成立 / 已经挂上 / 已撤掉 · 1 没挂 · 2 补丁读不到 ·
  *         3 客户端还开着（拒绝写）· 4 形状 / 包事实 / 标记块不对，或回退做不到逐字节（拒绝写）·
- *         6 参数错（裸 `--file`，或 `--file` 的值像另一个 flag）
+ *         6 参数错（裸 `--file` / `--file=` / 值像另一个 flag / 重复给 `--file` / 不认识的 `--file*`）
+ *
+ * ── 已知边界（**不是保证**，别把它们当判据读）──────────────────────────────────
+ * ① **路径比较是字符串比较，不认链接**：`isLivePath` 只比 `path.resolve(...).toLowerCase()`。
+ *    一个 junction / symlink / 硬链接指到现役那份文件时，这里会把它当"副本"（`scope 副本`、
+ *    不上进程锁）—— 写穿到现役仍然可能发生。要堵这一格得比 `realpath` / 文件身份（dev+ino），
+ *    这一版没做。
+ * ② **进程保险按进程名**：`clientRunning()` 只匹配 `DeepSeek Harness|dsh-desktop`。换入口、改名、
+ *    或另一个 `node` 宿主持有同一份 profile 时，它返回"关着"，apply 照写。
+ * ③ 上面两条都**不在 `.tools` 这一层能关死**；能用的是人工前提"客户端真的关着"。
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -69,16 +89,33 @@ const opt = (name, dflt) => {
 }
 
 /**
- * `--file` 的取值。**裸 `--file`（最后一个参数 / 后面跟另一个 flag）是参数错**：
- * 旧版 `opt()` 在缺值时返回 null ⇒ `profilePatchPath()` 落回现役路径 ——
- * 一个手滑就会写热重载层，而且不看进程。这里把"缺值"与"给了路径"分开。
+ * `--file` 的取值。**只认两种写法**：`--file <值>` 与 `--file=<值>`。
+ *
+ * 裸 `--file` / `--file=` / 值像另一个 flag 都是参数错；**任何其它 `--file*` 形状**
+ * （`--files` / `--filex` / `--file-…`）也是参数错。旧版让这些形状"不是 `--file`"，
+ * 于是静默回落到现役路径 —— 写热重载层，而且不看进程。这里把"没给"和"给了但形状不认"分开。
+ *
+ * @returns {{given: boolean, value: string|null, form?: string, error?: string, arg?: string}}
  */
 function fileArg() {
-  if (!flag('--file')) return { given: false, value: null }
-  const i = ARGV.indexOf('--file')
-  const value = i + 1 < ARGV.length ? ARGV[i + 1] : null
-  if (value === null || value.startsWith('--')) return { given: true, value: null }
-  return { given: true, value }
+  const exact = []
+  for (let i = 0; i < ARGV.length; i += 1) if (ARGV[i] === '--file') exact.push(i)
+  const eq = ARGV.filter((a) => /^--file=/.test(a))
+  const unknown = ARGV.filter((a) => /^--file/.test(a) && a !== '--file' && !/^--file=/.test(a))
+  if (unknown.length > 0) return { given: true, value: null, error: 'E_PARAM_FILE_UNKNOWN_FORM', arg: unknown[0] }
+  if (exact.length + eq.length > 1) return { given: true, value: null, error: 'E_PARAM_FILE_REPEATED' }
+  if (exact.length + eq.length === 0) return { given: false, value: null }
+  if (eq.length === 1) {
+    const value = /^--file=([\s\S]*)$/.exec(eq[0])[1]
+    return value.trim() === ''
+      ? { given: true, value: null, form: '--file=', error: 'E_PARAM_FILE_WITHOUT_VALUE' }
+      : { given: true, value, form: '--file=' }
+  }
+  const value = exact[0] + 1 < ARGV.length ? ARGV[exact[0] + 1] : null
+  if (value === null || value.startsWith('--')) {
+    return { given: true, value: null, form: '--file', error: 'E_PARAM_FILE_WITHOUT_VALUE' }
+  }
+  return { given: true, value, form: '--file' }
 }
 
 /** 现役 profile 补丁路径（**不看 `--file`**）—— 进程锁按它判"这一份是不是热重载层"。 */
@@ -96,20 +133,15 @@ function liveProfilePatchPath() {
 
 function profilePatchPath(file = fileArg()) {
   if (file.given) {
-    if (file.value === null) return { file: null, source: '--file', error: 'E_PARAM_FILE_WITHOUT_VALUE' }
-    return { file: path.resolve(file.value), source: '--file' }
+    if (file.value === null) return { file: null, source: file.form ?? '--file', error: file.error ?? 'E_PARAM_FILE_WITHOUT_VALUE' }
+    return { file: path.resolve(file.value), source: file.form ?? '--file' }
   }
   return liveProfilePatchPath()
 }
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex').toUpperCase()
-const localDay = () => {
-  const now = new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-}
 
-/** 客户端还开着吗 —— 以进程名为准（这台机器上是 `DeepSeek Harness`）。 */
+/** 客户端还开着吗 —— 以进程名为准（这台机器上是 `DeepSeek Harness`；**这是已知边界**，见文件头）。 */
 function clientRunning() {
   try {
     const out = execFileSync('powershell.exe', [
@@ -124,10 +156,29 @@ function clientRunning() {
   }
 }
 
+/**
+ * 备份 / 记录目录 —— **稳定**目录，不按天分。
+ *
+ * 按天分目录会让"23:59 apply / 00:01 revert"找不到同一份记录（旧版就是这样退 4）。
+ * 现在默认 `<root>/.team/leader/backup`；文件名里带 apply 的时刻，记录里也有 `at`。
+ * `--backup-dir` 仍然可以显式指到别处（副本实验 / 旧版按天目录）。
+ */
 function backupDirOf(root) {
   const explicit = opt('--backup-dir', null)
   if (explicit !== null) return path.resolve(explicit)
-  return path.join(root, '.team', 'leader', localDay(), 'backup')
+  return path.join(root, '.team', 'leader', 'backup')
+}
+
+/** 这个目录里现在有什么（`--revert` 打给人看：它到底看了哪个目录、看到几份）。 */
+function backupDirReading(dir) {
+  if (!existsSync(dir)) return { dir, exists: false, records: 0, backups: 0 }
+  const names = readdirSync(dir)
+  return {
+    dir,
+    exists: true,
+    records: names.filter((name) => name.endsWith('.json')).length,
+    backups: names.filter((name) => name.endsWith('.bak')).length,
+  }
 }
 
 function writeBackup(file, root, profile) {
@@ -158,11 +209,10 @@ const SCALAR_KEY = /^(\s*)([A-Za-z0-9_$@.\-/]+):\s+(.*\S)\s*$/
 /**
  * 把**多行 plain scalar** 折成一行 —— 只动空白，不改值。
  *
- * 为什么需要它：项目自己的窄口径 YAML 读取器（`tests/agenia-upgrade/support/composition.mjs`
- * 的 `parseYamlSubset`）不支持多行 plain scalar；现役 profile 补丁里那条模型 `description`
- * 正好是两行 ⇒ 读取器从那一行起就报"未被解析器吃掉"，后面（包括我们挂上去的那一块）
- * 全都读不到。`--apply` 折叠它，挂载行才在读数里存在；`--revert` 用 apply 前的备份
- * **逐字节还原**，所以"撤掉 = 回到原样"仍然成立。
+ * 今天唯一的用途是**旧记录兼容**：2026-11-05 之前的 `--apply` 会先把这种形状折成一行再挂
+ * （当年测试侧的窄口径读取器还不支持多行 plain scalar）。读取器修好之后 `--apply` 不再折叠；
+ * 但"记录丢了、盘上那份是折叠过的"这种旧文件，`findPreApplyBackup()` 仍要靠这一支把备份
+ * 还原成当时的应用后文本，再**逐字节**判定。新代码路径不再调用它的写盘侧。
  *
  * 只折这一种形状：上一行是 `key: 非空 plain 值`（不是引号 / 块标量 / 行内集合 / `!!js`），
  * 下一行缩进更深、不是空行 / 注释 / 列表项 / 新 key、也没有行尾注释。
@@ -232,8 +282,7 @@ function writeApplyRecord({ backup, file, profile, original, applied, folds }) {
   return recordFile
 }
 
-function findApplyRecord(root, file, currentText) {
-  const dir = backupDirOf(root)
+function findApplyRecord(root, file, currentText, dir = backupDirOf(root)) {
   if (!existsSync(dir)) return null
   const current = sha256(Buffer.from(currentText, 'utf8'))
   const samePath = (a, b) => typeof a === 'string' && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
@@ -250,14 +299,16 @@ function findApplyRecord(root, file, currentText) {
 /**
  * 记录没命中时，去找"apply 前原文"的备份 —— **逐字节**判定，不靠文件名 / 时间猜。
  *
- * 对每一份 `.bak` 试两种重建（不折叠 / 折叠后）再拼上本次 apply 会追加的那段 payload；
- * 与当前全文逐字节相同 ⇒ 那份 `.bak` 就是 apply 前的原文，可以安全写回去。
+ * 对每一份 `.bak` 试两种重建再拼上本次 apply 会追加的那段 payload，与当前全文逐字节相同
+ * ⇒ 那份 `.bak` 就是 apply 前的原文，可以安全写回去：
+ *   · `未折叠`：现行 apply 只追加那一块；
+ *   · `折叠后`：**旧记录兼容** —— 当年 apply 会先把多行 plain scalar 折成一行（已退休），
+ *     那种记录丢了的旧文件只有把候选备份按同一支折叠再拼 payload 才对得上。
  * 一份都对不上 ⇒ null（调用方**拒绝写盘**，不删块留折叠）。
  *
  * @returns {{file: string, text: string, how: string}|null}
  */
-function findPreApplyBackup({ root, currentText, mount }) {
-  const dir = backupDirOf(root)
+function findPreApplyBackup({ root, currentText, mount, dir = backupDirOf(root) }) {
   if (!existsSync(dir)) return null
   const rowRoot = mount?.mount?.root
   const payload = dashboardMountPayload({ root: rowRoot ?? root })
@@ -268,7 +319,7 @@ function findPreApplyBackup({ root, currentText, mount }) {
       candidate = readFileSync(file, 'utf8')
     } catch { continue }
     if (`${candidate}${payload}` === currentText) return { file, text: candidate, how: '未折叠' }
-    if (`${foldPlainContinuations(candidate).text}${payload}` === currentText) return { file, text: candidate, how: '折叠后' }
+    if (`${foldPlainContinuations(candidate).text}${payload}` === currentText) return { file, text: candidate, how: '折叠后（旧记录兼容）' }
   }
   return null
 }
@@ -346,8 +397,12 @@ function printCheck({ mode, file, source, profile, root, text, mount, facts, cli
   console.log(`exports["./client"] ${facts.exports_client ?? '?'} → ${facts.client_path ?? '?'}`)
   console.log(`client    ${facts.client_exists ? `在盘 · ${facts.client_bytes} B · sha256 ${facts.client_sha256}` : '不在盘'}`)
   console.log(`entry     ${facts.entry_exists ? `在盘 · ${facts.entry_path}` : `不在盘 · ${facts.entry_path}`}`)
+  // 多行 plain scalar 只是一条**读数**：测试侧的窄口径读取器已经支持这种形状，
+  // 它不参与 `--check` 的退出码，`--apply` 也不再折叠它（折叠已退休，旧记录仍可逐字节还原）。
   const folds = foldPlainContinuations(text).folds
-  console.log(`窄口径解析 ${folds.length === 0 ? '可直接读（无多行 plain scalar）' : `有 ${folds.length} 处多行 plain scalar —— BOOT-01/02 的读取器读不懂；--apply 会折叠，--revert 用备份逐字节还原`}`)
+  if (folds.length > 0) {
+    console.log(`多行 plain scalar ${folds.length} 处（${folds.map((fold) => `L${fold.line}`).join(' / ')}）—— 读取器已支持；--apply 不折叠`)
+  }
   console.log(`客户端    ${client === null ? '判不了（读不到进程表）' : client ? '开着' : '关着'}`)
   for (const problem of facts.problems) console.log(`包问题    ${problem}`)
   // `--check` 的判词（只在 check 模式打；apply / revert 自己会打结果）。
@@ -365,8 +420,13 @@ function main() {
   const rootRaw = opt('--root', 'E:/Harness')
   const root = path.resolve(rootRaw)
   const file = fileArg()
-  if (file.given && file.value === null) {
-    console.log('E_PARAM_FILE_WITHOUT_VALUE 裸 --file 没有值 —— 它不是"用现役路径"，是参数错；要给路径（或整条 --file 去掉）。')
+  if (file.given && file.error !== undefined) {
+    const message = {
+      E_PARAM_FILE_WITHOUT_VALUE: `${file.form ?? '--file'} 没有值 —— 它不是"用现役路径"，是参数错；要给路径（或整条 --file 去掉）。`,
+      E_PARAM_FILE_UNKNOWN_FORM: `不认识的 --file 形状：${file.arg} —— 只认 \`--file <路径>\` 与 \`--file=<路径>\`；不会回落到现役路径。`,
+      E_PARAM_FILE_REPEATED: '`--file` 给了不止一次 —— 不知道该用哪一个；只给一次。',
+    }[file.error] ?? '`--file` 参数错'
+    console.log(`${file.error} ${message}`)
     return 6
   }
   const where = profilePatchPath(file)
@@ -419,17 +479,17 @@ function main() {
       return 4
     }
     const before = sha256(Buffer.from(text, 'utf8'))
-    const folded = foldPlainContinuations(text)
-    const next = folded.text + dashboardMountPayload({ root })
+    // 只追加那一块：**不做格式改动**。折叠当年是为绕测试读取器的盲区，读取器已经支持那种形状，
+    // 折叠在 2026-11-05 这一版退休（旧记录里带 folds 的那一份仍然能逐字节还原）。
+    const next = text + dashboardMountPayload({ root })
+    const dir = backupDirOf(root)
     const backup = writeBackup(where.file, root, profile)
-    const record = writeApplyRecord({ backup, file: where.file, profile, original: text, applied: next, folds: folded.folds })
+    const record = writeApplyRecord({ backup, file: where.file, profile, original: text, applied: next, folds: [] })
     writeAtomic(where.file, next)
     console.log(`备份      ${backup}`)
     console.log(`记录      ${record}`)
-    if (folded.folds.length > 0) {
-      console.log(`格式归一化 ${folded.folds.length} 处多行 plain scalar（折叠成一行，只动空白；BOOT-01/02 的读取器才读得懂）`)
-      for (const fold of folded.folds) console.log(`          L${fold.line}: ${fold.from.map((l) => l.trim()).join(' ⏎ ')}`)
-    }
+    console.log(`备份目录  ${dir}（稳定目录，不按天分；--revert 默认看同一个目录）`)
+    console.log(`折叠      不做（只追加挂载块；旧记录里的折叠仍能逐字节还原）`)
     console.log(`已写入    ${before} → ${sha256(Buffer.from(next, 'utf8'))}（${Buffer.byteLength(next, 'utf8')} B）`)
     console.log('\n下一步（每次改完都要）：重启客户端 → 新建一个会话 → 读它的会话头 agentPreset 必须是 agenia。')
     return 0
@@ -437,8 +497,12 @@ function main() {
 
   // revert
   // 正常路径：apply 时留下了记录（原文件备份 + 应用后哈希）。当前文件 = 应用后那份 ⇒
-  // 直接把备份写回去 —— 连 `--apply` 折过的 plain scalar 也逐字节还原。写完**回读**量 sha。
-  const record = findApplyRecord(root, where.file, text)
+  // 直接把备份写回去 —— 连旧版 `--apply` 折过的 plain scalar 也逐字节还原。写完**回读**量 sha。
+  const dir = backupDirOf(root)
+  const dirReading = backupDirReading(dir)
+  console.log(`查找目录  ${dir}${dirReading.exists ? `（记录 ${dirReading.records} 份 · 备份 ${dirReading.backups} 份）` : '（目录不存在）'}`
+    + ' —— 跨天不变；旧版按天目录用 --backup-dir 指过来')
+  const record = findApplyRecord(root, where.file, text, dir)
   if (record !== null) {
     if (!existsSync(record.backup)) {
       console.log(`记录指向的备份不在：${record.backup} —— 不能保证逐字节还原，先人工看。`)
@@ -488,7 +552,7 @@ function main() {
   // ⇒ 那份 `.bak` 就是 apply 前的原文，写回去 = 逐字节还原。找不到就**拒绝写盘**：
   // 删块留折叠会退 0，而验收承诺的是"与备份逐字节相同"—— 半还原比不还原更难发现。
   const beforeSha = sha256(Buffer.from(text, 'utf8'))
-  const preApply = findPreApplyBackup({ root, currentText: text, mount })
+  const preApply = findPreApplyBackup({ root, currentText: text, mount, dir })
   if (preApply !== null) {
     const originalSha = sha256(Buffer.from(preApply.text, 'utf8'))
     const backup = writeBackup(where.file, root, profile)
@@ -506,7 +570,11 @@ function main() {
     return 0
   }
   console.log('E_REVERT_NOT_BYTE_EXACT 记录没命中，且备份目录里没有与"apply 前原文"逐字节相同的一份 —— 拒绝写盘；文件一个字节没动。')
+  console.log(`查找目录  ${dir}（记录 ${dirReading.records} 份 · 备份 ${dirReading.backups} 份）`)
   console.log(`当前      ${beforeSha}（${Buffer.byteLength(text, 'utf8')} B · ${where.file}）`)
+  if (!dirReading.exists) {
+    console.log(`提示      这个目录不存在。若 apply 是旧版（按天目录）跑的，用 --backup-dir <那一天的目录> 指过来。`)
+  }
   const folds = foldPlainContinuations(text).folds
   if (folds.length > 0) {
     console.log(`⚠️ 这一份 apply 时做过格式归一化：现在第 ${folds.map((fold) => `L${fold.line}`).join(' / ')} 行是折叠后的一行（原文是两行）。`
