@@ -763,6 +763,35 @@ def prev_day_key(day):
         return None
 
 
+def disposition_of(entry):
+    """把 findings-map 的一个落点值翻成（处置, 落点文字）。
+
+    🔴 2026-11-06 修（技术评审 §4.4 / 登记请求 #2）：原来是「落点非空 ⇒ 印采纳」——
+    于是落点写「不采纳：前提不成立」也会印成「采纳」，一张给老板看的卡把否决说成了采纳。
+    现在只有两种可接受形状，认不出就印「未登记口径」，**不许猜**：
+      · 字符串，以「采纳」或「不采纳」开头（`采纳 · <票号> …` / `不采纳 · <原因>`）；
+      · 对象 `{disposition: "adopted"|"rejected", landing|reason: "…"}`。
+    """
+    if entry is None:
+        return ("🔴 未登记落点", "（组长还没写 findings-map.json —— 不许猜）")
+    if isinstance(entry, dict):
+        d = str(entry.get("disposition") or "").strip().lower()
+        text = entry.get("landing") or entry.get("reason") or ""
+        if d in ("adopted", "adopt", "采纳"):
+            return ("采纳", str(text) or "（采纳，但没写落点）")
+        if d in ("rejected", "reject", "不采纳"):
+            return ("不采纳", str(text) or "（不采纳，但没写原因）")
+        return ("🔴 未登记口径", "（对象里 disposition 不是 adopted/rejected —— 认不出就不猜）")
+    if isinstance(entry, str):
+        text = entry.strip()
+        if text.startswith("不采纳"):
+            return ("不采纳", text)
+        if text.startswith("采纳"):
+            return ("采纳", text)
+        return ("🔴 未登记口径", "（落点没以「采纳／不采纳」开头：%s）" % text[:60])
+    return ("🔴 未登记口径", "（形状认不出：%r）" % (entry,))
+
+
 def review_dirs(ws, day, extra_days=()):
     """评审产物的候选抽屉（**按存在性逐个看**，不是只认一个）。
 
@@ -1318,9 +1347,14 @@ def main():
     if pending_rows:
         for r in pending_rows:
             ws4.append((str(r.get("事", "")), str(r.get("为什么", "")), str(r.get("代价", ""))))
-    else:
-        ws4.append(("（今天 0 件 · 没有登记待拍的事）",
+    elif os.path.isfile(pending_path):
+        # 文件在、但是空数组 —— 这才是"真 0 件"（组长明确登记了没有）。
+        ws4.append(("（今天 0 件 · 组长登记了「没有要拍的事」）",
                     "两张卡按定好的形状交齐；明天那一批 %d 条候选自动开庭。" % len(pool), "—"))
+    else:
+        # 🔴 文件不在 —— **不是** 0 件，是"没人登记"。这两件事必须长得不一样（评审 §4.4）。
+        ws4.append(("🔴 没有人登记（待你拍.json 不存在）",
+                    "不代表今天没有要拍的事 —— 只代表组长没写这一页：%s" % pending_path, "—"))
     for cell in ws4[ws4.max_row]: cell.alignment = WRAP
     widths(ws4, [("A", 26), ("B", 66), ("C", 40)])
 
@@ -1393,9 +1427,10 @@ def main():
             n += 1
             fid = f.get("id", "?")
             landing = per.get(fid)
+            disposition, landing_text = disposition_of(landing)
             w.append((tag + " · " + str(fid), f.get("severity", "?"), f.get("title", ""),
-                      "采纳" if landing else "🔴 未登记落点",
-                      landing or "（组长还没写 findings-map.json —— 不许猜）",
+                      disposition,
+                      landing_text,
                       f.get("next_step", "")))
         if per.get("_ticket"):
             w.append(("", "", "▲ " + tag + "：" + per["_ticket"], "", "", ""))

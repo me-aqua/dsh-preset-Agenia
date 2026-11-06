@@ -443,7 +443,7 @@ export function auditFields(fields, input) {
 
 // ── 快照落点（与渲染层共用的那一个路径常量）────────────────────────────────
 /** 快照文件名（工作区相对路径；渲染层经 `workspaceFiles` 读同一个路径）。 */
-export const DASHBOARD_SNAPSHOT_REL = 'presets/agenia/.snapshot/dashboard-view.json'
+export const DASHBOARD_SNAPSHOT_REL = '.tools/_scratch/dashboard/view.json'
 
 /** 本票四份真源在**一个根**下的落点（`<day>` 由调用方填）。 */
 export function dashboardSourcePaths(root, day) {

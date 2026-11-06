@@ -270,11 +270,7 @@ export const FROZEN = {
   targetLag: {
     schema: 1,
     markers: ['commonSenseOf', 'timeLineOf', 'lastBoardPosted', 'proposalFileEnabled', 'boardChanged'],
-    // 🔴 2026-11-06 加 `.snapshot`：看板快照的**派生缓存**（写手每 15 秒重写一次），
-    //    与 `.runtime` 同一类 —— 它不是交付物，同步进靶子只会让「靶子=现役」每 15 秒自己翻红
-    //    （实测：`F57-TARGET` 差 1 份 `.snapshot/dashboard-view.json`）。
-    //    ⚠️ 这不是放宽：跳出的是**数据目录**，代码/配置/文档那份逐文件枚举一格没动。
-    dataSegments: ['.runtime', '.snapshot'],
+    dataSegments: ['.runtime'],
   },
 
   /** staged 组合的冻结期望（提案 §B2.4 + 2026-10-15 批次 I15 撤复盘岗后的事实）。 */

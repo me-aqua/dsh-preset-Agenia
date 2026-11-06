@@ -175,7 +175,15 @@ window.__ModuleLoader__.load({
 						setAbsent(result.absent);
 						return;
 					}
-					setView(JSON.parse(result.text));
+					let parsed;
+					try {
+						parsed = JSON.parse(result.text);
+					} catch (err) {
+						throw new Error(`快照不是合法 JSON：${err && err.message ? err.message : String(err)}`);
+					}
+					const problem = viewProblem(parsed);
+					if (problem !== null) throw new Error(problem);
+					setView(parsed);
 				}).catch((reason) => {
 					setFailure(String(reason && reason.message ? reason.message : reason));
 				});
@@ -311,7 +319,7 @@ window.__ModuleLoader__.load({
 		//#endregion
 		//#region lib/types/client/mount.js
 		/** 视图快照在工作区里的相对路径（Node 侧写它；本插件只读它）。 */
-		const SNAPSHOT_PATH = "presets/agenia/.snapshot/dashboard-view.json";
+		const SNAPSHOT_PATH = ".tools/_scratch/dashboard/view.json";
 		/** 本插件用到的浏览器服务：槽位 + 词典 + 会话 + 读文件的那条 Remote。 */
 		const inject = [
 			"sessions",
@@ -324,6 +332,28 @@ window.__ModuleLoader__.load({
 			"remote",
 			"remote.workspaceFiles"
 		];
+		/**
+		 * 快照**解析成功但形状不对**时，(a) 判定，返回一句人话；(b) 形状对，返回 null。
+		 *
+		 * 🔴 2026-11-06 技术评审 §2.2 抓到的：原来只验 `schema === 1`，然后 `view.debts.map(...)`、
+		 * `view.alerts.length`、`view.header.text` 直接取 —— 参数一缺就在**渲染期**抛，
+		 * React 把整个槽位拆掉（＝ 2026-11-06 01:19 那个「点一下按钮就没了」的症状，触发条件更窄）。
+		 * 现在把形状判定前移到**解析那一步**：认不出就画一条红条，槽位留着。
+		 */
+		function viewProblem(view) {
+			if (view === null || typeof view !== "object" || Array.isArray(view)) {
+				return `快照不是对象（拿到的是 ${view === null ? "null" : Array.isArray(view) ? "array" : typeof view}）`;
+			}
+			if (view.schema !== VIEW_SCHEMA) {
+				return `视图版本不认识（schema ${String(view.schema)}，这一层只认 ${VIEW_SCHEMA}）—— 底层不渲染，要同批改`;
+			}
+			const bad = [];
+			if (view.header === null || typeof view.header !== "object") bad.push("header 不是对象");
+			if (!Array.isArray(view.debts)) bad.push("debts 不是数组");
+			if (!Array.isArray(view.alerts)) bad.push("alerts 不是数组");
+			if (bad.length > 0) return `快照形状不对：${bad.join(" · ")}（键=[${Object.keys(view).join(", ")}]）`;
+			return null;
+		}
 		/**
 		 * 从 `remote.workspaceFiles.read` 的返回值里**取出正文**。
 		 *
