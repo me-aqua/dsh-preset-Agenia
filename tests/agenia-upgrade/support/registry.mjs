@@ -686,7 +686,30 @@ export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 
 export const BATCH_AD = ['BOOT-01', 'BOOT-02']
 
 /**
- * 已落笔的二十四批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
+ * 批次 AE 的 2 条 —— **回执卡的两族判据**（`ticket-20261106-02` · 复审 §7 的 E5 + E6，batch 6）。
+ *
+ * 复审对这两格的判词是同一句：**输出的句子对了，但没有任何测试读这一页** ——
+ * 把三条腿合成一句、把 `disposition_of` 换回旧的"落点非空 ⇒ 采纳" ⇒ 全量照绿。
+ * 两格各是一条**能翻面**的判据（刀在用例内每次真跑，不是"我跑过一次是绿的"）：
+ *   · `CARD-07` **`待你拍` 三态**（E5）：有行 / `[]` / 文件不在**必须印三句不同的话**，
+ *     而且每句都要说得对（`[]` 是"组长登记了没有要拍的事"、不在是"没有人登记 / 不代表今天没有"）。
+ *     刀 = 把 `daily-cards.py` 里那三条腿合成一句写死的「（今天 0 件）」——**副本**上改，生产零字节。
+ *   · `CARD-08` **「处置」列三错值 + 两好形状**（E6）：对象带 `ticket` 要把票号印出来；
+ *     `"采纳不了：…"` 不许印成采纳；`findings-map.json` **在但没这一条** 与 **文件不在** 必须两句话。
+ *     刀 = `e7bdbbe^` 那一版真字节（`disposition_of` 旧实现，只把签名补上 `map_present`）——
+ *     **钉住的红基线**，不是手编的"某条规则"。
+ *
+ * 两格都靠 `--workspace` 夹具 + 真子进程驱动**生产那一份**生成器，再从产出的 `.xlsx` 读回人读页：
+ * `待你拍` 与 `每条的落点`。⚠️ 这两格**没有机器格**（`C2 · 验收格` / `C2 · 回执格` 里没有它们），
+ * 所以判据钉的是**老板读的那两页**；页名与列序在本批的 `card07`/`card08` 文件头里各写一次。
+ *
+ * ⚠️ 分母 **150 → 152**（由盘上发现器数出来；`GROUP_COUNTS['memory-update-card']` 同批 6 → 8）。
+ * ⚠️ 这两条**不进** `FROZEN_IDS`（同一批政策：后加批次各自以显式清单存在）。
+ */
+export const BATCH_AE = ['CARD-07', 'CARD-08']
+
+/**
+ * 已落笔的二十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
  * 批次 L 是 `F-148` 思考链过滤（同日 · 紧急票），批次 M 是 `F-152` 板子三态（同日），
@@ -709,7 +732,7 @@ export const BATCH_AD = ['BOOT-01', 'BOOT-02']
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -740,7 +763,8 @@ const BATCH_OF = (id) =>
                                                       : BATCH_AB.includes(id) ? 'AB'
                                                         : BATCH_AC.includes(id) ? 'AC'
                                                           : BATCH_AD.includes(id) ? 'AD'
-                                                            : null
+                                                            : BATCH_AE.includes(id) ? 'AE'
+                                                              : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -851,6 +875,12 @@ const F = {
   card04: 'report/card04-severity-row.test.mjs',
   card05: 'report/card05-status-bar.test.mjs',
   card06: 'report/card06-capacity-receipts.test.mjs',
+  /** 批次 AE（2026-11-06 · `ticket-20261106-02` · 复审 §7 E5/E6）—— **回执卡的两族判据**：
+   *  `CARD-07` `待你拍` 三态（有行 / `[]` / 文件不在）· `CARD-08` 「处置」列三错值 + 两好形状。
+   *  两格都真跑**生产**生成器（`--workspace` 夹具）再从 `.xlsx` 读回人读页；刀在用例内真跑（副本，
+   *  生产零字节）：`CARD-07` 把三条腿合成一句、`CARD-08` 换回 `e7bdbbe^` 那一版 `disposition_of`。 */
+  card07: 'report/card07-pending-panel.test.mjs',
+  card08: 'report/card08-disposition-column.test.mjs',
   /** 批次 Z · 技术评审 2026-11-02 的 F2–F7 六张票（一格一张票一个文件）——
    *  `F2` 只读副本自足 / `F3` 容量参考线来源格 / `F4` 第三级（cwd）正样本 /
    *  `F5` 桥的两张表有上限 + scope.id 兜底 / `F6` brg01 的匹配描述 / `F7` BRG-07 翻面读数点名本提交。 */
@@ -1131,6 +1161,11 @@ const ROWS = [
   // 量具与口径（含"会话头是创建时快照、续跑的老会话不算证据"）逐条写在 `support/boot-readings.mjs`。
   ['BOOT-01', 'boot-readings', F.bootReadings, '**启动后读数 A（身份）**（定形 R2 + R5，`定形-看板挂载profile层.md`）：`T` = 这一次客户端启动的时刻（`AGENIA_BOOT_AT`，否则量宿主进程启动时刻；都没有 ⇒ `BOOT-R2-RESTART-TIME-UNKNOWN` 的 HOLD）；取该工作区里**创建（`header.createdAt`）于 `T` 之后**、**顶层**（`delegationDepth === 0` 且不是 `origin: subagent` / 带 `parentSession` 的委派会话）的最新一份会话，判头里的 `agentPreset`：`agenia` ⇒ 成立 · `standard` ⇒ `BOOT-PRESET-NOT-REGISTERED`（= 事故形态：无角色 ⇒ 窄权限）· 别的值 ⇒ `BOOT-PRESET-UNEXPECTED`；**没有创建于 `T` 之后的顶层会话 ⇒ HOLD `BOOT-NO-SESSION-AFTER-RESTART`**（`mtime` 晚但 `createdAt` 早的**续跑会话**单独列进 `readings.identity.resumed_touched_after_T`，**不当证据** —— 事故现场那份 `session-cc5c68d1` 的头写于 2026-10-19，16:07 续跑起来守卫读的还是 `standard`）。**尺子自证两条**：① 拿盘上真实的两份流各喂一次（`standard` 那份必须 RED、`agenia` 那份必须 GREEN，判词不同，否则 `BOOT-R2-DETECTOR-DEAD`）；② `zstd-frames.mjs` 全解的头必须等于 `zstdDecompressSync`（只解第一帧）解出来的头，否则 `BOOT-R2-HEADER-NOT-IN-FIRST-FRAME`。同批 **R5 的条件式**（不是故事）：`profile 补丁里那一行` × 上面的判词 —— 行不在而判 RED ⇒ `BOOT-ROLLBACK-DID-NOT-RESTORE`；行在而判 RED ⇒ `BOOT-MOUNT-BROKE-IDENTITY`；行在还必须能**一步撤掉**（顶层 `- insert:` 一个 item、整块拿掉后仍解析干净、文件里再无第二处引用），否则 `BOOT-ROLLBACK-NOT-REMOVABLE`。读数带 `{repo, head, T 与来源, 每份会话的 bytes/sha256/首帧 sha256/createdAt, measured_at}`', '批次 AD'],
   ['BOOT-02', 'boot-readings', F.bootReadings, '**启动后读数 B（包可达）**（定形 R3；「两条读数都要有，缺一不算挂上」）：宿主侧的**两条**读数 —— A **boot 载荷**：页面（`GET /` / `/index.html`）里 `window.__DSH_BOOT__` 的 entry 表有没有这个**包名**（`@agenia/dsh-client-ui-dashboard`；表键是包名，不是 cordis 行 id —— 所以 `/plugins/agenia-dashboard/client.js` 那种写法必然 404，**404 不是"不在"的证据**）；B **插件路由**：`GET /plugins/<包名>/client.js?rev=<rev>` 是否 200 **且**前 N B 与盘上那份逐字节相同（`rev` 按平台的 `artifactRevision()` 从 `[mtimeMs, ctimeMs, size]` 算；抄错了只会 404 ⇒ HOLD，不会假绿）。三态：200 证据 / 404 **判不了**（`BOOT-R3-ROUTE-404-AMBIGUOUS`，同批三个对照：未知包名 404、错 rev 404、根页面 401 ⇒ 路由在、门禁不归它管）/ 连不上（`BOOT-R3-NO-HOST`）。⇒ GREEN 只在 A、B 都拿到证据；任一条读不到 ⇒ **HOLD `BOOT-R3-HALF-PROOF`**（带两条各自的码）；只有 A 读到 200 而表里没有这个包 ⇒ `RED BOOT-R3-ENTRY-NOT-IN-BOOT`。挂载行不在 / 关着 / 住错层 ⇒ HOLD `BOOT-R3-MOUNT-ABSENT` / HOLD `BOOT-R3-MOUNT-DISABLED` / RED `BOOT-R3-MOUNT-NOT-TOP-LEVEL-INSERT`。**不判像素、不判浏览器真的执行了那份 JS**（归 GUI 清单，人点一次）', '批次 AD'],
+  // ── 批次 AE（2026-11-06 · `ticket-20261106-02`）：**回执卡的两族判据**（复审 §7 的 E5 + E6）──
+  // 复审的判词是同一句：**输出的句子对了，但没有任何测试读这一页**。两格各补一条能翻面的判据；
+  // 刀在用例里每次真跑（副本 / 钉住的旧字节），所以"红"这件事不必靠一次性的现场。
+  ['CARD-07', 'memory-update-card', F.card07, '**`待你拍` 三态**（复审 §7 E5；判词是「文件不在 vs `[]` 真分开了，但零测试读这一页」）：`A` **有行** —— 夹具里两行的（事 / 为什么 / 代价）三列必须逐字出现在卡 1 的 `待你拍` 页，且**不许**印成任何一句占位语；`B` **文件在、`[]`** —— 必须是「今天 0 件 · 组长登记了『没有要拍的事』」这一族（含 `0 件` + `登记`），**不许**说 `不存在` / `没有人登记`；`C` **文件不在** —— 必须是「没有人登记 / 待你拍.json 不存在」+「**不代表**今天没有要拍的事」（**不许**印 `0 件`）；`D` **三态三句两两不同**（合成一句 ⇒ 这一条单独红）；`E` **刀**：把生成器**副本**里那三条腿（`daily-cards.py` 的 `:1347-1357`）合成一句写死的「（今天 0 件）」—— 只改副本、生产零字节，刀必须让 `A/B/C/D` 四条同时翻（`CARD07-PENDING-KNIFE` 是尺子坏了 / `-KNIFE-VECTOR` 是翻错了面），而**真源码那一跑 0 项**；`F` 两跑都 exit 0（刀是行为差异，不是崩溃）；`G` 生产 `daily-cards.py` 的 sha256 前后一字不变。⚠️ 这一格钉的是**人读页**：机器格 `C2 · 验收格` 里没有这一格，老板读的就是这一页', '批次 AE'],
+  ['CARD-08', 'memory-update-card', F.card08, '**「处置」列三错值 + 两好形状**（复审 §7 E6 / §3.3 的 (a)(b)(c)；`bug-*-12` 的修复原来只活了产品半边）：真跑生成器 + `findings-map.json` 夹具，读卡 2 的 `每条的落点` 页（列 = `# / 级别 / 发现（一句话） / 处置 / 票号 / 落点 / 下一步`）；七条发现各一格：`F-1` `{disposition:"adopted", ticket:"T"}` ⇒ 处置 `采纳` **且**落点里真的有 `T`（票号也是落点）；`F-2` `"采纳不了：前提不成立"` ⇒ 处置**不是** `采纳`（期望 `🔴 未登记口径`）；`F-3` `"采纳 · ticket-F-172 · …"` / `F-4` `{rejected, reason}` ⇒ 两条**好形状**必须仍绿；`F-5` map **在但没这一条** ⇒ `🔴 未登记落点` 且那句说 `findings-map.json 在`、**不许**说「还没写」；`F-6` 对象 `disposition` 认不出 / `F-7` 数字 ⇒ `🔴 未登记口径`（"其它一律不猜"）；`F-5` 另跑一副**没有 map 文件**的同形夹具 ⇒ 同一格必须印**另一句**（`还没写`）且与上面那句**不相等**（`CARD08-MAP-MESSAGES-SAME`）；刀 = `e7bdbbe^` 那一版 `disposition_of` 的**真字节**（只把签名补上 `map_present`，其余逐字），它必须恰好翻 `F-1 票号丢失` + `F-2 印成采纳` + `F-5 原因错/两句同形` 这六条码，而两条好形状与 `F-6/F-7` **一条都不许翻**（`CARD08-KNIFE-VECTOR`）；生产 `daily-cards.py` 的 sha256 前后不变、两跑都 exit 0', '批次 AE'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1237,7 +1272,7 @@ export const GROUP_COUNTS = {
   'toolname-bridge': 7,
   /** 任务 C2 · 卡（记忆更新报告）—— 六格：路线格 / 票区 / bug 开放数与 50-30 / 严重度那一排 /
    *  状态条十二格 / 容量与回执与卡本身。契约见 `.team/test/CONTRACT-C2.md`。 */
-  'memory-update-card': 6,
+  'memory-update-card': 8,
   /** 批次 Z · 技术评审 2026-11-02 的 F2–F7 六张票（`ticket-20261102-03`…`-08`）——
    *  一格一张票：副本自足 / 容量来源格 / 第三级正样本 / 桥的两张表 / 匹配描述 / 翻面读数。
    *  契约见 `.team/test/2026-11-02/CONTRACT-REVIEW-20261102.md`。 */
@@ -1274,9 +1309,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1303,6 +1338,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }

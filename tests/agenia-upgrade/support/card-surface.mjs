@@ -1191,3 +1191,102 @@ export function writeRouteSource(ws) {
   return to
 }
 
+// ── 批次 AE：回执卡的两格（`待你拍` / 「处置」列）—— 夹具、读页、副本上的刀 ─────────────
+/**
+ * 卡 1 的「待你拍」页（**逐字**；生成器 `wb.create_sheet("待你拍")`）。
+ * 版式（今天）：r1 = 标题、r2 = 空行、r3 = 表头「事 / 为什么 / 代价」、r4 起 = 数据行。
+ * 这一页**没有机器格**（`C2 · 验收格` 里没有它）—— 老板读的就是这一页（复审 §7 E5）。
+ */
+export const PENDING_SHEET = '待你拍'
+/** 卡 2 的人读页：每条发现的「处置」「票号 / 落点」两列都在这一页（复审 §7 E6 / §3.3）。 */
+export const DISPOSITION_SHEET = '每条的落点'
+/** 技术评审 findings 的文件名 —— `tag` 靠它认出「第一场」（`daily-cards.py::1435`）。 */
+export const FINDINGS_FILE = '技术评审.findings.json'
+/** 「处置」列的四个词（契约侧的字面量只在这里出现一次：`adopted` / `rejected` / 两种未登记）。 */
+export const DISPOSITION_WORDS = Object.freeze({
+  adopted: '采纳',
+  rejected: '不采纳',
+  unregistered_landing: '🔴 未登记落点',
+  unregistered_shape: '🔴 未登记口径',
+})
+
+/** 技术评审 findings 夹具（`<WS>/.team/technical-review/<day>/<file>`；`code_fingerprint` 给一份合法值）。 */
+export function writeFindings(ws, day, findings, { file = FINDINGS_FILE } = {}) {
+  return writeJsonAt(path.join(ws, '.team', 'technical-review', day, file), {
+    code_fingerprint: { equal: true },
+    findings,
+  })
+}
+
+/** `findings-map.json` 夹具（生成器按 `out_dir` = `<WS>/.team/leader/<day>/` 读它）。 */
+export function writeFindingsMap(ws, day, map, { raw = null } = {}) {
+  const file = path.join(ws, '.team', 'leader', day, 'findings-map.json')
+  if (raw !== null) return writeJsonAtText(file, raw)
+  return writeJsonAt(file, { schema: 1, map })
+}
+
+/** `待你拍.json` 夹具（`rows === null` ⇒ **不写** = "没有人登记"那个现场）。 */
+export function writePending(ws, day, rows) {
+  if (rows === null) return null
+  return writeJsonAt(path.join(ws, '.team', 'leader', day, '待你拍.json'), rows)
+}
+
+/**
+ * 一整页的单元格值：`{ok, rows, error, dump}`。页名不在 ⇒ `rows: null` + `E_NO_SHEET`。
+ * 读的是**产出**（`dumpXlsx` 走 `card-xlsx.py` = 生成器同一个 openpyxl），不是实现内部的返回值。
+ */
+export function sheetRows(file, name) {
+  const { ok, dump, error } = dumpXlsx(file)
+  if (!ok) return { ok: false, rows: null, error, sheet_names: dump?.sheet_names ?? null }
+  const sheet = sheetOf(dump, name)
+  return {
+    ok: sheet !== null,
+    rows: sheet?.rows ?? null,
+    error: sheet === null ? `E_NO_SHEET: ${name}（页名实得 ${JSON.stringify(dump?.sheet_names ?? null)}）` : null,
+    sheet_names: dump?.sheet_names ?? null,
+  }
+}
+
+/**
+ * 把**生产那一份**生成器复制到 `<dir>/tools/daily-cards.py`，再按 `patch` 逐条改这份**副本**。
+ *
+ * 🔴 每一条 `{from, to, why}` 都要求 `from` 在文本里**恰好出现一次**：零次 = 刀没打上（锚点漂了），
+ *    多次 = 刀口不唯一（改到的不一定是想改的那处）。两种都当场抛，**不许**静默跑一个"半刀"。
+ * 🔴 打完必须能看见 `marker`（刀自己的标记）—— 否则"跑的是刀后的行为"这句话不可核。
+ * 🔴 只写 `<dir>/tools/daily-cards.py`（副本）；生产文件由调用方在跑前跑后各量一次 sha256。
+ */
+export function copyGeneratorWithPatch(dir, { patch = [], marker = null, why = '' } = {}) {
+  const script = copyGeneratorInto(dir)
+  const production = generatorScriptPath()
+  const text0 = readFileSync(script, 'utf8')
+  let text = text0
+  const applied = []
+  for (const item of patch) {
+    const count = text.split(item.from).length - 1
+    if (count !== 1) {
+      throw new Error(`KNIFE-PATCH${why ? `(${why})` : ''}: 锚点出现 ${count} 次（要求恰好 1 次）—— 刀没打上：${JSON.stringify(String(item.from).slice(0, 120))}`)
+    }
+    text = text.split(item.from).join(item.to)
+    applied.push({
+      why: item.why ?? null,
+      from_bytes: Buffer.byteLength(item.from, 'utf8'),
+      to_bytes: Buffer.byteLength(item.to, 'utf8'),
+    })
+  }
+  if (typeof marker === 'string' && marker !== '' && !text.includes(marker)) {
+    throw new Error(`KNIFE-PATCH${why ? `(${why})` : ''}: 副本里找不到标记 ${JSON.stringify(marker)} —— 刀没打上`)
+  }
+  writeFileSync(script, text, 'utf8')
+  return {
+    script,
+    production,
+    applied,
+    marker,
+    bytes: Buffer.byteLength(text, 'utf8'),
+    production_bytes: Buffer.byteLength(text0, 'utf8'),
+    sha256: sha256Of(script),
+    production_sha256: sha256Of(production),
+    changed: text !== text0,
+  }
+}
+
