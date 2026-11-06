@@ -763,20 +763,31 @@ def prev_day_key(day):
         return None
 
 
-def disposition_of(entry):
+_ADOPT_PREFIXES = ("采纳 ·", "采纳·", "采纳 · ", "采纳· ")
+_REJECT_PREFIXES = ("不采纳 ·", "不采纳·")
+
+
+def disposition_of(entry, map_present=True):
     """把 findings-map 的一个落点值翻成（处置, 落点文字）。
 
-    🔴 2026-11-06 修（技术评审 §4.4 / 登记请求 #2）：原来是「落点非空 ⇒ 印采纳」——
-    于是落点写「不采纳：前提不成立」也会印成「采纳」，一张给老板看的卡把否决说成了采纳。
-    现在只有两种可接受形状，认不出就印「未登记口径」，**不许猜**：
-      · 字符串，以「采纳」或「不采纳」开头（`采纳 · <票号> …` / `不采纳 · <原因>`）；
-      · 对象 `{disposition: "adopted"|"rejected", landing|reason: "…"}`。
+    🔴 2026-11-06 修（技术评审 §4.4 / 登记请求 #2；复审第 3 轮又点名三个错值，见 bug-20261106-16）：
+    早先的判法是「落点非空 ⇒ 印采纳」—— 落点写「不采纳：…」也印成「采纳」，一张给老板看的卡把否决说成了采纳。
+    现在三条硬口径：
+      ① **字符串必须带分隔符**：`采纳 · …` / `不采纳 · …`。只有 `startswith("采纳")` 不够 ——
+         「采纳不了：前提不成立」会因此被印成采纳（复审抓到的第 ② 个错值）。
+      ② **对象里票号也算落点**：`{disposition:"adopted", ticket:"T"}` 要把 `T` 印出来，
+         不许印成「（采纳，但没写落点）」（复审抓到的第 ① 个错值）。
+      ③ **「map 不在」与「map 在但没这一条」必须两句话**（复审抓到的第 ③ 个错值）——
+         `map_present` 由调用方告诉本函数。
+    认不出一律「未登记口径」，**不许猜**。
     """
     if entry is None:
-        return ("🔴 未登记落点", "（组长还没写 findings-map.json —— 不许猜）")
+        if not map_present:
+            return ("🔴 未登记落点", "（组长还没写 findings-map.json —— 不许猜）")
+        return ("🔴 未登记落点", "（findings-map.json 在，但没有这一条的落点 —— 不许猜）")
     if isinstance(entry, dict):
         d = str(entry.get("disposition") or "").strip().lower()
-        text = entry.get("landing") or entry.get("reason") or ""
+        text = entry.get("landing") or entry.get("reason") or entry.get("ticket") or ""
         if d in ("adopted", "adopt", "采纳"):
             return ("采纳", str(text) or "（采纳，但没写落点）")
         if d in ("rejected", "reject", "不采纳"):
@@ -784,11 +795,11 @@ def disposition_of(entry):
         return ("🔴 未登记口径", "（对象里 disposition 不是 adopted/rejected —— 认不出就不猜）")
     if isinstance(entry, str):
         text = entry.strip()
-        if text.startswith("不采纳"):
+        if text.startswith(_REJECT_PREFIXES):
             return ("不采纳", text)
-        if text.startswith("采纳"):
+        if text.startswith(_ADOPT_PREFIXES):
             return ("采纳", text)
-        return ("🔴 未登记口径", "（落点没以「采纳／不采纳」开头：%s）" % text[:60])
+        return ("🔴 未登记口径", "（落点没有「采纳 ·」/「不采纳 ·」这个形状：%s）" % text[:60])
     return ("🔴 未登记口径", "（形状认不出：%r）" % (entry,))
 
 
@@ -1416,7 +1427,10 @@ def main():
     w["A2"].font = NOTE; w["A2"].alignment = WRAP
     w.append(()); w.append(("#", "级别", "发现（一句话）", "处置", "票号 / 落点", "下一步")); head(w, 6)
     n = 0
-    fmap = (jload(os.path.join(out_dir, "findings-map.json"), {}) or {}).get("map", {})
+    _fmap_path = os.path.join(out_dir, "findings-map.json")
+    _fmap_doc = jload(_fmap_path, {}) or {}
+    _fmap_present = os.path.isfile(_fmap_path)
+    fmap = _fmap_doc.get("map", {}) if isinstance(_fmap_doc, dict) else {}
     for name, d in findings:
         tag = "第一场" if name == "技术评审.findings.json" else ("第二场" if name.startswith("技术评审.2") else name)
         # 🔴 2026-11-06：`name` 现在可能带「（<被评日> 的评审产物）」后缀（评审天生评前一天），
@@ -1427,7 +1441,7 @@ def main():
             n += 1
             fid = f.get("id", "?")
             landing = per.get(fid)
-            disposition, landing_text = disposition_of(landing)
+            disposition, landing_text = disposition_of(landing, map_present=_fmap_present)
             w.append((tag + " · " + str(fid), f.get("severity", "?"), f.get("title", ""),
                       disposition,
                       landing_text,
