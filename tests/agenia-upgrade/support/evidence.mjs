@@ -145,9 +145,10 @@ export function treeHash(root, { excludeTopLevel = null } = {}) {
  * 且**不受内容 churn 影响**。
  *
  * 🔴 **覆盖边界**（别把它读成"脑根被写就一定红"）：**已存在文件被就地覆盖**（内容改、路径不变）
- *    **不在**本见证的覆盖范围。那一层由 `--real-mode` ⇒ `E_ROOT_REAL_BRAIN`（`DR-01`）
- *    + 受控命令清单（`lib/cli-inventory.mjs`）兜。这段边界同批写进
- *    `rec.readings.real_roots.content_uncovered` 与结算那一行，读的人不必去翻决定书。
+ *    **不在**本见证的覆盖范围。兜它的是 `--real-mode` ⇒ `E_ROOT_REAL_BRAIN`（`DR-01`）；
+ *    `lib/cli-inventory.mjs` 只是**枚举**有哪些命令、不判它会写哪儿 —— **它不是闸**。
+ *    另一方向的**残余误报**：别的会话在窗口内新增 / 删除一个路径，同样会被判成路径集合变化
+ *    ⇒ 假红（不是假绿）。这段边界同批写进 `rec.readings.real_roots.content_uncovered` 与结算那一行。
  *
  * ⚠️ 只记**常规文件**（目录由文件隐含；空目录不单独记）—— 与 `treeHash` 的 `files` 同一个 walk 口径。
  */
@@ -168,14 +169,34 @@ export function treePaths(root) {
 }
 
 /**
+ * `treePaths` 快照的**形状判据**（2026-11-07 MF-2）。
+ *
+ * `pathSetDiff` 过去写的是 `paths ?? []`：一个 **`treeHash` 形状**的快照（键是 `files`，没有 `paths`）
+ * 会被读成**两个空集合** ⇒ `same:true` ⇒ 这条全量见证永远绿。形状不对时，差集**根本算不出来**，
+ * 调用方不许把它当"没变"。返回 `null` = 形状合格；否则返回人话原因（红报文直接用它点名）。
+ *
+ * 判什么：`paths` 必须是数组；`count === paths.length`；`exists` 与 `paths` 的空/非空必须一致
+ * （**真根存在 ⇒ 路径不许是空集**：空集"没变"不是证据，那是没量到）。
+ */
+export function pathSetShapeProblem(snap) {
+  if (snap === null || typeof snap !== 'object') return `快照不是对象（实得 ${snap === null ? 'null' : typeof snap}）`
+  if (!Array.isArray(snap.paths)) return `快照里没有 paths 数组（实得 ${snap.paths === undefined ? 'undefined' : typeof snap.paths}）—— treeHash 形状的键是 files ⇒ 两侧会变成两个空集`
+  if (snap.count !== snap.paths.length) return `count ${snap.count} ≠ paths.length ${snap.paths.length}`
+  if (snap.exists === true && snap.paths.length === 0) return 'exists=true 但 paths 是空的 —— 真根存在时"空集合没变"不是证据'
+  if (snap.exists === false && snap.paths.length !== 0) return `exists=false 但 paths 有 ${snap.paths.length} 条`
+  return null
+}
+
+/**
  * 两份 `treePaths` 的差集 —— **一个定义，两处读**（`DR-02` ④ 的真跑 · 结算里"真实根前后"那一行）。
  * `same` 同时要求**存在性**相同：根出现 / 消失即使路径都是空，也是变化。
- * 返回 `null` = 判不了（缺一相位）⇒ 调用方不许当绿。
+ * 返回 `null` = 判不了（缺一相位 / 形状不对）⇒ 调用方不许当绿。
  */
 export function pathSetDiff(before, after) {
   if (!before || !after) return null
-  const b = new Set(before.paths ?? [])
-  const a = new Set(after.paths ?? [])
+  if (pathSetShapeProblem(before) !== null || pathSetShapeProblem(after) !== null) return null
+  const b = new Set(before.paths)
+  const a = new Set(after.paths)
   const added = [...a].filter((p) => !b.has(p)).sort()
   const removed = [...b].filter((p) => !a.has(p)).sort()
   return {
@@ -210,12 +231,15 @@ export function pathSetSummary(diff, limit = 8) {
  *   （今天是 `['.runtime']`）—— 这里**不许**再写第二份清单，也不许在调用方传一份。
  *   派生成语：数据段每 15 秒/每次作业就变，算进"安全哈希"= 只要有人正常干活这条安全判据就必红。
  * `livePresetRoot` 可注入（缺省 = 现役）—— **刀**要在副本上量同一把尺子，而不是另写一份。
+ * 🔴 `brainRoot` 也可注入（2026-11-07 MF-2）：**刀必须走产品这条路**取 `before.brain`。
+ *    刀自己调 `treePaths()` 造快照的那一版，把"产品把 `brain` 改回 `treeHash`"这个回归整个藏住了
+ *    （刀仍绿，洞只在真跑那一格）。注入根 ⇒ 刀与真跑的**快照构造是同一份代码**。
  */
-export function realRootsSnapshot({ livePresetRoot = PATHS.finalPreset } = {}) {
+export function realRootsSnapshot({ brainRoot = PATHS.realBrainRoot, livePresetRoot = PATHS.finalPreset } = {}) {
   const snap = {
     at: new Date().toISOString(),
     /** 🔴 **路径集合**，不是内容哈希（2026-11-07 MF-1）—— 见 `treePaths` 的覆盖边界。 */
-    brain: treePaths(PATHS.realBrainRoot),
+    brain: treePaths(brainRoot),
     route: treeHash(PATHS.realRouteRoot),
     livePreset: treeHash(livePresetRoot, { excludeTopLevel: FROZEN.targetLag.dataSegments }),
   }
@@ -636,7 +660,7 @@ export function writeRealRootsPhase(phase, snap = realRootsSnapshot()) {
 export function realRootsDiff(before, after) {
   const diffs = []
   const brain = pathSetDiff(before?.brain, after?.brain)
-  if (brain === null) diffs.push('brain：（缺一相位，判不了）')
+  if (brain === null) diffs.push('brain：（缺一相位或快照形状不对，判不了）')
   else if (brain.exists.before !== brain.exists.after) diffs.push(`brain：存在性 ${brain.exists.before} → ${brain.exists.after}`)
   else if (!brain.same) diffs.push(`brain：路径集合变了（${pathSetSummary(brain)}）`)
   for (const key of ['route']) {
@@ -871,14 +895,17 @@ export function settle() {
       diff,
       security_violation: diff === null ? null : diff.length > 0,
       /**
-       * 🔴 **这一格没盖住什么**（读的人不必去翻决定书）：已存在文件被**就地覆盖**（内容改、路径不变）
-       * 不会被 `brain` 的路径集合判据抓到 —— 兜它的是 `--real-mode` 的 `E_ROOT_REAL_BRAIN`（`DR-01`）
-       * 与受控命令清单（`lib/cli-inventory.mjs`）。
+       * 🔴 **这一格没盖住什么 / 会误伤什么**（2026-11-07 MF-2 更正；读的人不必去翻决定书）：
+       *   · 没盖住：已存在文件被**就地覆盖**（内容改、路径不变）—— 兜它的是 `--real-mode` 的
+       *     `E_ROOT_REAL_BRAIN`（`DR-01`）。`lib/cli-inventory.mjs` 只是枚举命令，**不是闸**。
+       *   · 会误伤：别的会话在这段**窗口**里新增 / 删除一个路径，同样红 —— 假红，不是假绿。
        */
       content_uncovered: {
         root: 'brain',
         what: '已存在文件被就地覆盖（内容改、路径不变）',
-        covered_by: ['DR-01 --real-mode ⇒ E_ROOT_REAL_BRAIN', 'lib/cli-inventory.mjs 的受控命令清单'],
+        covered_by: ['DR-01 --real-mode ⇒ E_ROOT_REAL_BRAIN'],
+        cli_inventory: 'lib/cli-inventory.mjs 只是枚举命令，不判它会写哪儿 —— 不是闸',
+        residual_false_positive: '别的会话在窗口内新增 / 删除路径仍会被判成 SECURITY-VIOLATION（假红，不是假绿）',
       },
     },
     oracle: oracleReadings(),
@@ -942,7 +969,7 @@ export function settleMarkdown(s) {
   lines.push(`- 真实根前后：before=${s.real_roots.before ? '有' : '缺'} · after=${s.real_roots.after ? '有' : '缺'} · 差异=${s.real_roots.diff === null ? '（判不了：缺一相位）' : (s.real_roots.diff.length === 0 ? '**无**' : `**有**：${s.real_roots.diff.join('；')}`)}`)
   {
     const uncovered = s.real_roots.content_uncovered
-    lines.push(`  - 🔴 覆盖边界（2026-11-07 MF-1）：【${uncovered?.what ?? '（这一节不在：老 settlement）'}】不会被 \`brain\` 的路径集合判据抓到 —— 兜它的是 ${(uncovered?.covered_by ?? ['（未声明）']).join(' + ')}。`)
+    lines.push(`  - 🔴 覆盖边界（2026-11-07 MF-2）：【${uncovered?.what ?? '（这一节不在：老 settlement）'}】不会被 \`brain\` 的路径集合判据抓到 —— 兜它的是 ${(uncovered?.covered_by ?? ['（未声明）']).join(' + ')}；\`cli-inventory\` 只是枚举、不是闸。另一方向：别的会话在窗口内新增 / 删除路径仍会红（残余误报，窗口 = 每个 CLI 子调用）。`)
   }
   lines.push(`- oracle：${s.oracle.exists ? `在盘（SHA ${s.oracle.actual_sha256}）` : '**不在盘**'} · 声明版本 ${s.oracle.declared_version ?? '(未给)'} · 路径 ${s.oracle.path ?? '(未给)'}`)
   lines.push(`- staging：${s.staging.exists ? '在盘' : '**不在盘**'}（${s.staging.path ?? '(未给)'}）`)
