@@ -50,7 +50,7 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════
  */
 import { before, describe, test } from 'node:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { ENV, FROZEN, PATHS, requireEnv } from '../support/env.mjs'
 import {
@@ -149,6 +149,57 @@ function badRootPostures(realRoot) {
     ['UNC', { mode: 'value', value: '\\\\127.0.0.1\\share\\agenia-dr' }],
     ['运行根之外', { mode: 'value', value: outside }],
   ].map(([label, spec]) => ({ label, spec, real, reg }))
+}
+
+/**
+ * 活体预设的**安全违规**判定 —— 一把尺子，两处读：`DR-02` ④ 的真跑，和下面那把**副本刀**。
+ *
+ * 覆盖口径（组长 2026-11-06 决定，见 `.team/leader/2026-11-06/决定-DR02覆盖口径.md` §三）：
+ * 哈希的是**整棵 `presets/agenia` 减去数据段**；数据段只有一个来源 `FROZEN.targetLag.dataSegments`，
+ * 且只认**顶层**那一层（顶层 `.runtime` 是数据；`lib/.runtime/x` 是代码 —— `fingerprint.mjs:26-27`）。
+ *
+ * 为什么要抽成函数：那把刀要证明的是"**这一条比较**会响"，不是"我另写了一遍比较"。
+ * 两处读同一个函数 ⇒ 刀响 = ④ 响。
+ */
+function livePresetViolation(before, after, label = 'DR-02 期间') {
+  const b = before?.livePreset
+  const a = after?.livePreset
+  if (!b || !a) return problem('SECURITY-VIOLATION', `活体预设缺一相位（${label}）—— 判不了不许当绿`)
+  if (b.exists !== a.exists) return problem('SECURITY-VIOLATION', `活体预设的存在性在${label}变了（${b.exists} → ${a.exists}）`)
+  if (b.sha256 !== a.sha256) {
+    return problem('SECURITY-VIOLATION', `活体预设树哈希在${label}变了（${b.sha256} → ${a.sha256}）—— 立即停测并报事故`)
+  }
+  return null
+}
+
+/**
+ * 把**会被哈希的那一层**拷进运行根（刀用的副本）—— 顶层数据段**不拷**（它正是被排除的东西，
+ * 由用例在副本里自己摆一份，好让"数据变了而哈希不变"这一格量得到）。
+ * 只读源树；返回拷了多少份、跳了哪几个顶层名字。
+ */
+function copyLivePresetForKnife(to) {
+  let files = 0
+  const walk = (srcDir, dstDir) => {
+    mkdirSync(dstDir, { recursive: true })
+    for (const name of readdirSync(srcDir).sort()) {
+      const src = path.join(srcDir, name)
+      const dst = path.join(dstDir, name)
+      const st = statSync(src)
+      if (st.isDirectory()) walk(src, dst)
+      else if (st.isFile()) { copyFileSync(src, dst); files += 1 }
+    }
+  }
+  mkdirSync(to, { recursive: true })
+  const skipped = []
+  for (const name of readdirSync(PATHS.finalPreset).sort()) {
+    if (FROZEN.targetLag.dataSegments.includes(name)) { skipped.push(name); continue }
+    const src = path.join(PATHS.finalPreset, name)
+    const dst = path.join(to, name)
+    const st = statSync(src)
+    if (st.isDirectory()) walk(src, dst)
+    else if (st.isFile()) { copyFileSync(src, dst); files += 1 }
+  }
+  return { files, skipped }
 }
 
 describe('integration · data-root (DR)', () => {
@@ -1008,6 +1059,150 @@ describe('integration · data-root (DR)', () => {
         }
       }
 
+      // ── ③c 活体预设那条判据的**覆盖口径** + 一把副本刀（组长 2026-11-06 决定 §四.1–§四.3）──
+      // 【钉什么】
+      //   · **单源**：`livePreset` 的排除集**就是** `FROZEN.targetLag.dataSegments` 那一个数组
+      //     （不是内容相等的第二份 —— 分叉过一次就漏过一项：`.snapshot` 事件，`STAT-01` 当场红）；
+      //   · **内容钉死**：那个数组今天**恰为** `['.runtime']`。将来谁想把某个**产品文件**塞进排除表
+      //     好让这条安全判据闭嘴，这一格就红 ⇒ 加数据段必须是一次显式、有人看的编辑；
+      //   · **覆盖真的生效**：哈希里不许出现顶层数据段的文件，且样本不许是空的（`inject.js` 必须在）。
+      // 【怎么翻面】把排除集换成一份本地字面量 ⇒ ① 红；往 `dataSegments` 里加一项 ⇒ ② 红；
+      //   把 `realRootsSnapshot` 的排除删掉 ⇒ ③ 红（顶层 `.runtime` 又进了哈希）。
+      // 【刀】④ 那一组在**副本**里量：`lib/` 写一个字节 ⇒ 哈希必须变 ⇒ ④ 用的**同一个函数**
+      //   （`livePresetViolation`）必须报 `SECURITY-VIOLATION`。没有这把刀，这条判据可能因为
+      //   "量的是同一个东西"而永远绿。副本在运行根里，`presets/agenia` 一个字节都不碰。
+      const rulerCells = []
+      const cell = (label, ok, code, detail) => {
+        rulerCells.push({ label, ok, detail })
+        if (!ok) problems.push(problem(code, detail))
+      }
+      const exclusions = before.livePreset.excluded ?? null
+      cell(
+        '排除集与 `FROZEN.targetLag.dataSegments` 是**同一个数组**（单源，不是第三份字面量）',
+        exclusions === FROZEN.targetLag.dataSegments,
+        'DR02-EXCLUSION-NOT-SINGLE-SOURCE',
+        `实得 ${JSON.stringify(exclusions)}（同一性 ${exclusions === FROZEN.targetLag.dataSegments}）；应为 \`FROZEN.targetLag.dataSegments\` = ${JSON.stringify(FROZEN.targetLag.dataSegments)} 那一个数组 —— 排除表只许一个来源，第二份字面量就是第三个真相`,
+      )
+      // ⚠️ 下面这个是**期望值**（判据），不是哈希用的排除集（那一份只能来自 `FROZEN`）。
+      const PINNED_DATA_SEGMENTS = ['.runtime']
+      cell(
+        '排除集的内容恰为 `[\'.runtime\']`（加一项就要显式改这一条）',
+        JSON.stringify(exclusions) === JSON.stringify(PINNED_DATA_SEGMENTS),
+        'DR02-EXCLUSION-CONTENT',
+        `实得 ${JSON.stringify(exclusions)}，应为 ${JSON.stringify(PINNED_DATA_SEGMENTS)} —— 把产品文件塞进排除表来躲开这条安全判据，会在这里红`,
+      )
+      const topLevelDataHits = (before.livePreset.files ?? []).filter((f) => PINNED_DATA_SEGMENTS.includes(String(f.rel).split('/')[0]))
+      cell(
+        '顶层数据段的文件不在哈希里（排除真的生效了）',
+        topLevelDataHits.length === 0 && existsSync(path.join(PATHS.finalPreset, '.runtime')),
+        'DR02-EXCLUSION-NOT-APPLIED',
+        `哈希里还有 ${topLevelDataHits.length} 份顶层数据段文件（例：${topLevelDataHits.slice(0, 3).map((f) => f.rel).join(', ')}）`
+        + `；盘上 \`presets/agenia/.runtime\` 存在 = ${existsSync(path.join(PATHS.finalPreset, '.runtime'))}`
+        + ' —— 数据段没被排除 ⇒ 只要有人正常干活这条安全判据就必红（先例 `cand-20261019-0042`）',
+      )
+      const presentRels = new Set((before.livePreset.files ?? []).map((f) => f.rel))
+      cell(
+        '哈希不是空样本：既有文件，又有产品文件 `inject.js`',
+        before.livePreset.exists === true && before.livePreset.count > 0 && presentRels.has('inject.js'),
+        'DR02-EXCLUSION-ZERO-SAMPLE',
+        `count=${before.livePreset.count} · exists=${before.livePreset.exists} · 含 inject.js=${presentRels.has('inject.js')} —— 空树的哈希"没变"不是证据`,
+      )
+
+      // ④ 那把刀：**副本**里逐次只多一个字节，两两相比（每一对只差**那一处**写）。
+      const knifeRoot = path.join(canonical(requireEnv(ENV.RUN_ROOT)), 'dr02-livepreset-copy')
+      const copied = copyLivePresetForKnife(knifeRoot)
+      // 副本里摆一份顶层数据段 + 一份**嵌套**的 `.runtime`（后者的内容是代码，不许被跳）
+      // 外加一份**临时段** `.snapshot`（下面用它验"排除集真的是从 `FROZEN` 读的"）
+      mkdirSync(path.join(knifeRoot, '.runtime'), { recursive: true })
+      mkdirSync(path.join(knifeRoot, 'lib', '.runtime'), { recursive: true })
+      mkdirSync(path.join(knifeRoot, '.snapshot'), { recursive: true })
+      writeFileSync(path.join(knifeRoot, '.runtime', 'probe.txt'), 'v0\n', 'utf8')
+      writeFileSync(path.join(knifeRoot, 'lib', '.runtime', 'x.mjs'), '// a\n', 'utf8')
+      writeFileSync(path.join(knifeRoot, '.snapshot', 'probe.json'), '{"seg":"临时加进 dataSegments 的那一段"}\n', 'utf8')
+      const snapAt = (label) => {
+        const snap = realRootsSnapshot({ livePresetRoot: knifeRoot })
+        rec.readings[`knife_${label}`] = { path: snap.livePreset.path, count: snap.livePreset.count, sha256: snap.livePreset.sha256 }
+        return snap
+      }
+      const k0 = snapAt('k0')
+      cell(
+        '副本是副本（不是活体那棵树），而且量的就是它',
+        canonical(knifeRoot) !== canonical(PATHS.finalPreset)
+          && k0.livePreset.path === canonical(knifeRoot)
+          && k0.livePreset.count === copied.files + 2,
+        'DR02-KNIFE-NOT-A-COPY',
+        `副本 ${knifeRoot} · 与活体同名=${canonical(knifeRoot) === canonical(PATHS.finalPreset)}`
+        + ` · 快照量的路径=${k0.livePreset.path} · 份数=${k0.livePreset.count}`
+        + `（拷贝 ${copied.files} 份 + 嵌套代码 1 份 + 临时段 \`.snapshot\` 1 份；顶层数据段 ${JSON.stringify(copied.skipped)} 不算）`
+        + ' —— 量错树 / 量空树都会让下面四格失去意义',
+      )
+      // (a) 产品代码：`lib/` 里写一个字节 ⇒ 哈希必须变 ⇒ 违规必须响
+      //     ⚠️ 先确认副本里**真有** `lib/*.mjs`：把产品目录塞进排除表的人，会让这一格在这里就打不出去
+      //     （那不是崩溃，那是一条读数 —— 排除表吃掉了产品目录，刀自然插不进去）。
+      const libFiles = existsSync(path.join(knifeRoot, 'lib'))
+        ? readdirSync(path.join(knifeRoot, 'lib')).filter((n) => n.endsWith('.mjs')).sort()
+        : []
+      const libFile = libFiles[0] ?? null
+      let k1 = null
+      let vLib = null
+      if (libFile !== null) {
+        writeFileSync(path.join(knifeRoot, 'lib', libFile), `${readFileSync(path.join(knifeRoot, 'lib', libFile), 'utf8')}// \n`, 'utf8')
+        k1 = snapAt('k1')
+        vLib = livePresetViolation(k0, k1, '副本 `lib/` 写一个字节之后')
+      }
+      cell(
+        libFile === null
+          ? '副本 `lib/*.mjs` 写一个字节 ⇒ 哈希必变 ⇒ `SECURITY-VIOLATION` 必须响（**副本里没有 lib/**：排除表把产品目录吃掉了）'
+          : `副本 \`lib/${libFile}\` 写一个字节 ⇒ 哈希必变 ⇒ \`SECURITY-VIOLATION\` 必须响`,
+        libFile !== null && vLib?.code === 'SECURITY-VIOLATION',
+        'DR02-KNIFE-NOFLIP',
+        libFile === null
+          ? `副本 ${knifeRoot} 里没有 \`lib/*.mjs\`（拷贝 ${copied.files} 份，跳过 ${JSON.stringify(copied.skipped)}）—— 产品目录被排除表吃掉，这把刀打不出去`
+          : `k0 ${String(k0.livePreset.sha256).slice(0, 12)} → k1 ${String(k1.livePreset.sha256).slice(0, 12)}；判定=${vLib?.code ?? '(没响)'} —— 不响说明这条比较早就死了，绿是假的`,
+      )
+      // (b) 顶层数据段：内容变了，哈希**不许**变（否则常驻红）
+      writeFileSync(path.join(knifeRoot, '.runtime', 'probe.txt'), 'v1\n', 'utf8')
+      const k2 = snapAt('k2')
+      const vData = livePresetViolation(k1 ?? k0, k2, '副本顶层 `.runtime` 内容变了之后')
+      cell(
+        '副本顶层 `.runtime/probe.txt` 内容变了 ⇒ 哈希不变、不许报违规',
+        vData === null,
+        'DR02-KNIFE-DATA-NOT-EXCLUDED',
+        `k1 ${String((k1 ?? k0).livePreset.sha256).slice(0, 12)} → k2 ${String(k2.livePreset.sha256).slice(0, 12)}；判定=${vData?.code ?? '(没响 = 对)'} —— 数据段进了安全哈希，正常干活就会把这格刷红`,
+      )
+      // (c) 嵌套的 `.runtime`：那是**代码**（`fingerprint.mjs:26-27` 的同一课），变了必须报
+      writeFileSync(path.join(knifeRoot, 'lib', '.runtime', 'x.mjs'), '// b\n', 'utf8')
+      const k3 = snapAt('k3')
+      const vNested = livePresetViolation(k2, k3, '副本 `lib/.runtime/x.mjs` 改了之后')
+      cell(
+        '副本 `lib/.runtime/x.mjs` 改了 ⇒ 哈希必变（嵌套的是代码，不许按名字一路跳）',
+        vNested?.code === 'SECURITY-VIOLATION',
+        'DR02-KNIFE-NESTED-SKIPPED',
+        `k2 ${String(k2.livePreset.sha256).slice(0, 12)} → k3 ${String(k3.livePreset.sha256).slice(0, 12)}；判定=${vNested?.code ?? '(没响)'} —— 按目录名在任何深度跳「.runtime」，等于给代码开了一个不被哈希的洞`,
+      )
+      // (d) 排除集**真的来自 `FROZEN`**：源上临时加一段 `.snapshot` ⇒ 哈希立刻不算那一份
+      //     （同一性那一格只能证明"它报的是哪个数组"，证明不了"走的是它"—— 这是本票第一次跑红的形态）
+      const sentinel = '.snapshot'
+      const kSegIn = snapAt('seg_in')
+      const segLenBefore = FROZEN.targetLag.dataSegments.length
+      let kSegOut = null
+      FROZEN.targetLag.dataSegments.push(sentinel)
+      try {
+        kSegOut = snapAt('seg_out')
+      } finally {
+        FROZEN.targetLag.dataSegments.pop()
+      }
+      const segRestored = FROZEN.targetLag.dataSegments.length === segLenBefore && !FROZEN.targetLag.dataSegments.includes(sentinel)
+      cell(
+        `顶层 \`${sentinel}\` 进了排除集 ⇒ 哈希立刻不算它（排除集只有 \`FROZEN.targetLag.dataSegments\` 那一份）`,
+        segRestored && kSegOut.livePreset.count === kSegIn.livePreset.count - 1,
+        'DR02-EXCLUSION-NOT-FROM-FROZEN',
+        `同一份副本：默认排除集下份数 ${kSegIn.livePreset.count}，临时 push ${JSON.stringify(sentinel)} 后份数 ${kSegOut.livePreset.count}（应 −1）`
+        + ` · sha ${String(kSegIn.livePreset.sha256).slice(0, 12)} → ${String(kSegOut.livePreset.sha256).slice(0, 12)}`
+        + ` · 排除集已还原=${segRestored} —— 写死一份清单的实现在这里不会跟着变`,
+      )
+      rec.readings.live_preset_ruler = { exclusions: exclusions ?? null, pinned: PINNED_DATA_SEGMENTS, cells: rulerCells }
+
       // ④ 真实根逐字节不变（安全不变量）
       const after = realRootsSnapshot()
       rec.readings.real_roots = { before, after }
@@ -1018,8 +1213,17 @@ describe('integration · data-root (DR)', () => {
           push('SECURITY-VIOLATION', `真实根 ${key} 在 DR-02 期间被改动（${b.exists ? b.sha256 : '不存在'} → ${a.exists ? a.sha256 : '不存在'}）—— 立即停测并报事故`)
         }
       }
-      if (before.livePreset.sha256 !== after.livePreset.sha256) {
-        push('SECURITY-VIOLATION', `活体预设树哈希在 DR-02 期间变了（${before.livePreset.sha256} → ${after.livePreset.sha256}）`)
+      const liveProblem = livePresetViolation(before, after)
+      if (liveProblem !== null) problems.push(liveProblem)
+      // ④' 这一段的自守（`F-142` 的形状，边界也一样）：**整段删掉**时 `problems` 仍是 0 ⇒ 全绿。
+      // 只判"这一段跑过没有"（格数）；某一条 `push` 被单独抽掉不归它管（那一层要源码对账，
+      // 会退化成"改一句实现就红"的变更探测器）。
+      {
+        const cells = rec.readings.live_preset_ruler?.cells
+        if (!Array.isArray(cells) || cells.length !== 9) {
+          push('DR02-RULER-UNGUARDED', `活体预设那一段（③c）没跑：读数格数 ${Array.isArray(cells) ? cells.length : '(无读数)'}（应为 9）—— `
+            + '这一段整段删掉时 problems 仍是 0，所以它必须留下读数、并由这里读一次')
+        }
       }
       rec.readings.controlled_env = {
         temp: process.env.TEMP ?? null,

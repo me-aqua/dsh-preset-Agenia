@@ -133,11 +133,13 @@ export function measureOne(root, file) {
  * 现在：**每份文件的相对路径 + 字节 sha256 在量测那一刻现枚举**（两棵树取并集）——
  * 名单加长过不了"同一新路径上两棵树内容不同"那一格，枚举过得了。
  *
- * 数据目录（`FROZEN.targetLag.dataSegments`，现在是 `.runtime`）**任一段命中即跳过**：
+ * 数据目录（`FROZEN.targetLag.dataSegments`，现在是 `.runtime`）**只在顶层**跳过：
  * 那是共享记忆库的数据，本来就不该同步进靶子；不排除 ⇒ 判据常驻红（`cand-20261019-0042`）。
- * ⚠️ 与 `.tools/fingerprint.mjs` 那把尺子的口径**故意不同**：那边判"是不是被算成代码"，
+ * 🔴 `lib/.runtime/x` 是**代码**，不许按名字一路跳（`.tools/fingerprint.mjs:26-27` 的同一课）。
+ * ⚠️ `.tools/fingerprint.mjs` 那把尺子的口径**故意不同**：那边判"是不是被算成代码"，
  *    所以只排**根相对**的 `.runtime/`（`lib/.runtime/…` 这种该算代码）；
- *    这里判"算不算漂移"，与 `evidence.mjs::stagedVsLiveDrift`（STAT-01 那条）逐字同口径 —— 两个读者必须说同一句话。
+ *    这里判"算不算漂移"，与 `evidence.mjs::stagedVsLiveDrift`（STAT-01 那条）逐字同口径 ——
+ *    **两个读者必须说同一句话**（同一条单源 + 同一个顶层规则，`E7` / `E8`）。
  *
  * 根可注入 ⇒ 阳性对照能在沙盒里跑**同一份**量测（不是另写一份）。
  */
@@ -161,13 +163,13 @@ export function measureTarget({
 }
 
 /**
- * 枚举一棵树的普通文件（相对路径 `/` 分隔 ⇒ 绝对路径），**跳过数据目录**。
+ * 枚举一棵树的普通文件（相对路径 `/` 分隔 ⇒ 绝对路径），**只在顶层**跳过数据目录。
  * 只读；读不动 / 不存在的根 ⇒ 空表（"量不到"由 `actuals` 的 `missing_*` 说出来）。
  */
 function walkTree(root, dataSegments) {
   const out = new Map()
   if (root === undefined || root === null || !existsSync(root)) return out
-  const go = (dir) => {
+  const go = (dir, depth) => {
     let names = []
     try {
       names = readdirSync(dir).sort()
@@ -175,7 +177,7 @@ function walkTree(root, dataSegments) {
       return
     }
     for (const name of names) {
-      if (dataSegments.includes(name)) continue
+      if (depth === 0 && dataSegments.includes(name)) continue
       const full = path.join(dir, name)
       let st = null
       try {
@@ -183,11 +185,11 @@ function walkTree(root, dataSegments) {
       } catch {
         continue
       }
-      if (st.isDirectory()) go(full)
+      if (st.isDirectory()) go(full, depth + 1)
       else if (st.isFile()) out.set(path.relative(root, full).replace(/\\/g, '/'), full)
     }
   }
-  go(root)
+  go(root, 0)
   return out
 }
 

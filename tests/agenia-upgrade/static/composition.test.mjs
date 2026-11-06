@@ -227,6 +227,89 @@ describe('static · composition', () => {
         const drift = stagedVsLiveDrift()
         rec.readings.staged_vs_live = drift
         for (const p of stagedLiveDriftProblems(drift)) problems.push(p)
+
+        // ── ③b 这把尺子自己的两件事（E7 单源 / E8 深度规则，2026-11-06 batch 7）──────
+        // 【E7 单源】`SKIP` 从前是**手写的字面量** `new Set(['.runtime'])`：与
+        //   `FROZEN.targetLag.dataSegments` 各写一份，一边加了 `.snapshot`、另一边没加
+        //   ⇒ `STAT-01` 当场红（红因指向"两棵树不同步"，而真正分叉的是排除表）。
+        //   钉法**不是**看返回值里报了哪个数组（那是尺子自己写的读数，字面量照样能报对），
+        //   而是**改源、看行为**：往 `FROZEN.targetLag.dataSegments` 里临时加一段 `.snapshot`，
+        //   再摆一棵"顶层 `.snapshot/` 只在活体一侧"的树 —— 真读了那个来源 ⇒ 立刻跳过它。
+        // 【E8 深度】`.runtime` **只在顶层**是数据；`lib/.runtime/x` 是代码。按目录名在**任何深度**
+        //   都跳，等于给代码开了一个"不会被看见"的洞 —— `.tools/fingerprint.mjs:26-27` 已经吃过这一脚
+        //   （`--root presets\agenia` 时整棵脑库混进 CODE；`lib/.runtime/…` 不许被排除）。
+        // 【怎么翻面】· 把 `SKIP` 写回本地字面量 ⇒ ① 红（临时那一段不会被跳）；
+        //   · 把顶层排除删掉 ⇒ ② 红（顶层 `.runtime` 又算漂移）；
+        //   · 把排除改回"任何深度" ⇒ ③ 红（嵌套 `.runtime` 里的差异被藏起来）。
+        // 【夹具自证】三对夹具树都先量**盘上有几份**，否则"跳掉了"与"根本没造出来"读数一样。
+        const cells = []
+        const cell = (label, ok, code, detail) => {
+          cells.push({ label, ok, detail })
+          if (!ok) problems.push(problem(code, detail))
+        }
+        // ① 源上临时加一段 ⇒ 行为必须跟着变（改完**必须还原**；还原不回去就把后面每一格都带歪）
+        const sentinel = '.snapshot'
+        const segStaged = fixtureDir('STAT-01', 'drift-segment-staged')
+        const segLive = fixtureDir('STAT-01', 'drift-segment-live')
+        writeUnder(segStaged, 'inject.js', '// depth fixture\n')
+        writeUnder(segLive, 'inject.js', '// depth fixture\n')
+        writeUnder(segLive, `${sentinel}/y.json`, '{"seg":"临时加进 dataSegments 的那一段"}\n')
+        const segFiles = [countFiles(segStaged), countFiles(segLive)]
+        const segLenBefore = FROZEN.targetLag.dataSegments.length
+        let seg = null
+        FROZEN.targetLag.dataSegments.push(sentinel)
+        try {
+          seg = stagedVsLiveDrift({ ...process.env, AGENIA_STAGING_PRESET: segStaged }, { liveRoot: segLive })
+        } finally {
+          FROZEN.targetLag.dataSegments.pop()
+        }
+        const segRestored = FROZEN.targetLag.dataSegments.length === segLenBefore && !FROZEN.targetLag.dataSegments.includes(sentinel)
+        cell(
+          '往 `FROZEN.targetLag.dataSegments` 里加一段 ⇒ 这把尺子**立刻**跳过它（排除集只有那一个来源）',
+          segRestored && segFiles[1] === 2 && seg !== null && seg.live_files === 1
+            && seg.same === true && seg.only_live.length === 0 && seg.different.length === 0,
+          'STAT01-SKIP-NOT-FROM-FROZEN',
+          `盘上份数 ${JSON.stringify(segFiles)}（活体应为 2 = inject.js + 顶层 ${sentinel}）· 枚举到 staged ${seg?.staged_files} / 活体 ${seg?.live_files}`
+          + ` · same=${seg?.same} · only_live=${JSON.stringify(seg?.only_live ?? null)} · 排除集已还原=${segRestored}`
+          + ` —— 实得读数里的 \`skip\`=${JSON.stringify(seg?.skip ?? null)} 只是**尺子自报的读数**，字面量也能报对；`
+          + '这一格判的是"改了来源、行为跟不跟"，不是"它报了哪个数组"',
+        )
+        // ② 顶层 `.runtime` 只在活体一侧 ⇒ **不算漂移**（数据段不参与"两棵树同不同"）
+        const topDataStaged = fixtureDir('STAT-01', 'drift-depth-topdata-staged')
+        const topDataLive = fixtureDir('STAT-01', 'drift-depth-topdata-live')
+        writeUnder(topDataStaged, 'inject.js', '// depth fixture\n')
+        writeUnder(topDataLive, 'inject.js', '// depth fixture\n')
+        writeUnder(topDataLive, '.runtime/y.txt', '只在活体一侧的脑数据\n')
+        const topData = stagedVsLiveDrift({ ...process.env, AGENIA_STAGING_PRESET: topDataStaged }, { liveRoot: topDataLive })
+        const topDataFiles = [countFiles(topDataStaged), countFiles(topDataLive)]
+        cell(
+          '顶层 `.runtime/y.txt` 只在活体一侧 ⇒ 仍判"同一棵树"，且数据段不在任何差集里',
+          topDataFiles[1] === 2 && topData.live_files === 1 && topData.same === true
+            && topData.only_staged.length === 0 && topData.only_live.length === 0 && topData.different.length === 0,
+          'STAT01-DEPTH-TOP-DATA',
+          `盘上份数 ${JSON.stringify(topDataFiles)}（活体应为 2 = inject.js + 顶层数据段）· 枚举到 staged ${topData.staged_files} / 活体 ${topData.live_files}`
+          + ` · same=${topData.same} · only_live=${JSON.stringify(topData.only_live)} —— `
+          + '顶层 `.runtime` 是数据（每 15 秒就变），算进漂移 = 这条判据常驻红，而常驻红会淹掉真红',
+        )
+        // ③ `lib/.runtime/x.mjs` 两侧不同 ⇒ **必须**报漂移（嵌套的是代码）
+        const nestedStaged = fixtureDir('STAT-01', 'drift-depth-nested-staged')
+        const nestedLive = fixtureDir('STAT-01', 'drift-depth-nested-live')
+        writeUnder(nestedStaged, 'inject.js', '// depth fixture\n')
+        writeUnder(nestedLive, 'inject.js', '// depth fixture\n')
+        writeUnder(nestedStaged, 'lib/.runtime/x.mjs', '// staged 版\n')
+        writeUnder(nestedLive, 'lib/.runtime/x.mjs', '// 活体版（差一个字节）\n')
+        const nested = stagedVsLiveDrift({ ...process.env, AGENIA_STAGING_PRESET: nestedStaged }, { liveRoot: nestedLive })
+        const nestedFiles = [countFiles(nestedStaged), countFiles(nestedLive)]
+        cell(
+          '`lib/.runtime/x.mjs` 两侧内容不同 ⇒ 必须报漂移（嵌套的 `.runtime` 是代码）',
+          nestedFiles[0] === 2 && nestedFiles[1] === 2 && nested.live_files === 2
+            && nested.same === false && nested.different.includes('lib/.runtime/x.mjs'),
+          'STAT01-DEPTH-NESTED-CODE',
+          `盘上份数 ${JSON.stringify(nestedFiles)} · 枚举到 staged ${nested.staged_files} / 活体 ${nested.live_files}`
+          + ` · same=${nested.same} · different=${JSON.stringify(nested.different)} —— `
+          + '按目录名在任何深度跳 `.runtime`，这一段代码就永远不会被比（同一课见 `.tools/fingerprint.mjs:26-27`）',
+        )
+        rec.readings.staged_live_ruler = { skip: drift.skip ?? null, sentinel, cells }
       }
 
       // ── ③' 🔴 两棵树"都读得到、但都是 0 份文件" ⇒ 这一格必须红（`F-141`）──────────────
@@ -374,6 +457,17 @@ describe('static · composition', () => {
         if (broken.length > 0) {
           push('STAGED-LIVE-EMPTY-SHAPE-UNGUARDED', `③′ 那一段判据不在、或没跑出读数：${broken.join(' / ')} 缺「same:false + 恰好一条红因」—— `
             + '这一段原来整段删掉仍全绿（`F-142`）。它守的是"零样本 / 单侧空 / 没设"三种空必须两两不同、且都不许被读成"相同"')
+        }
+      }
+
+      // ── ③b 的自守（同 `F-142` 的形状，边界也一样）：**整段删掉**时 `problems` 仍是 0 ─────────
+      //   只判"这一段跑过没有"（格数）；**某一条 `push` 被单独抽掉**不归它管 —— 那一层要源码对账，
+      //   会退化成"改一句实现就红"的变更探测器（`F-142` 的同一条边界）。
+      {
+        const cells = rec.readings.staged_live_ruler?.cells
+        if (!Array.isArray(cells) || cells.length !== 3) {
+          push('STAT01-RULER-UNGUARDED', `③b（尺子的 SKIP 单源 + 深度规则）没跑：读数格数 ${Array.isArray(cells) ? cells.length : '(无读数)'}（应为 3）`
+            + '—— 这一段整段删掉时 problems 仍是 0，所以它必须留下读数、并由这里读一次')
         }
       }
 

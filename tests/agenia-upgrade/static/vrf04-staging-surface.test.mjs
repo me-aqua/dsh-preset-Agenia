@@ -9,6 +9,8 @@
  * 判据（七格，全部在**夹具树**上跑 `measureTarget` / `targetVerdict` —— 根可注入，
  * 所以它是同一份量测、不是另写一份；**真 staging / 真活体一个字节都不动**）：
  *   D0 `数据不是漂移` 两棵树只在 `.runtime/` 上不同 ⇒ 必须 `equal`（数据目录排除；否则判据常驻红）
+ *   D0b `嵌套的不是数据` `lib/.runtime/x.mjs` 差一个字节 ⇒ 必须**非 equal** 且点名那份文件
+ *                     （排除只认**顶层**那一段；同一课见 `.tools/fingerprint.mjs:26-27`）
  *   D1 `非 inject.js`  `lib/receipt.mjs` 差一个字符 ⇒ 必须**非 equal** 且点名那份文件 ← **今天红的就是这一格**
  *   D2 `一模一样的树` ⇒ 必须 `equal`（防"永远非 equal"）
  *   D3 `新路径`       两棵树都在同一个**新路径**上新增文件且内容不同 ⇒ 必须非 equal ← **今天红**
@@ -19,6 +21,7 @@
  *                     「TARGET-ZERO-SAMPLE」这两个可指认串 ← **`F-128` 这一票**
  *   D6 `单侧空`       只有一侧枚举得出文件 ⇒ 仍走 `TARGET-SURFACE-MISSING`，
  *                     **不许**被 D5 那条顶掉（两种空的红因必须不一样）
+ *   D7 `份数下限`     两棵树一起缩成 1 份、内容还对得上 ⇒ 给了下限必须红（`F-140`）
  */
 import { before, describe, test } from 'node:test'
 import { writeFileSync } from 'node:fs'
@@ -26,7 +29,7 @@ import path from 'node:path'
 import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
 import { PATHS } from '../support/env.mjs'
 import { measureTarget, targetVerdict } from '../support/target.mjs'
-import { fixtureDir, writeUnder } from '../support/verify-recompute.mjs'
+import { countFiles, fixtureDir, writeUnder } from '../support/verify-recompute.mjs'
 
 before(() => {
   preflight()
@@ -230,6 +233,39 @@ describe('static · verify-recompute (VRF) · F-123 staging 树覆盖面', () =>
       }
       if (d7Floor.min_files !== FLOOR) {
         push('TARGET-COUNT-FLOOR-READING', `D7：判词里必须带回调用方给的下限（\`min_files\` = ${FLOOR}），实得 ${JSON.stringify(d7Floor.min_files)} —— "这一关判没判"要看得见`)
+      }
+
+      // ── D0b 🔴 `E8` 的同一课搬到这里：**嵌套**的 `.runtime` 是**代码**，不许被跳 ──────
+      //    D0 钉的是"顶层 `.runtime/` 是数据"。那一课在 `.tools/fingerprint.mjs:26-27` 已经吃过：
+      //    按目录名在**任何深度**都跳，等于给代码开一个不被看见的洞（`lib/.runtime/x.mjs` 是代码）。
+      //    这一格与 D0 成对：**顶层**跳过（D0）、**嵌套**照比（D0b）—— 缺任一半，另一个方向就会退化。
+      //    【怎么翻面】把 `walkTree` 写回"任何深度都跳" ⇒ 下面 `state` 变 equal ⇒ 这一格红。
+      {
+        const d0bPair = buildPair('VRF-04', 'nested-runtime-code')
+        writeUnder(d0bPair.stagedRoot, 'lib/.runtime/x.mjs', '// 嵌套 .runtime 里的代码（staged 版）\nexport const NESTED = 1\n')
+        writeUnder(d0bPair.baselineRoot, 'lib/.runtime/x.mjs', '// 嵌套 .runtime 里的代码（活体版，差一个字节）\nexport const NESTED = 2\n')
+        // 夹具自证：盘上真有这两份（否则"跳掉了"与"没造出来"读数一样）
+        // 夹具自证分两层：**盘上有几份**（夹具造没造出来）与**尺子枚举到几份**（尺子有没有跳过它）。
+        // 合成一个数会把"夹具没造出来"与"尺子把它藏起来了"读成同一句话。
+        const d0bProbe = measureTarget({ stagedRoot: d0bPair.stagedRoot, baselineRoot: d0bPair.baselineRoot })
+        const d0bDisk = [countFiles(d0bPair.stagedRoot), countFiles(d0bPair.baselineRoot)]
+        const d0bWant = Object.keys(PAIR).length + 1
+        const d0b = targetVerdict({ measured: d0bProbe, declaration: NO_DECLARATION })
+        rec.readings.d0b_nested_runtime = {
+          disk_files: d0bDisk,
+          fixture_files: [d0bProbe.staged_files, d0bProbe.baseline_files],
+          enumerates_nested: d0bProbe.files.map((f) => f.file).filter((f) => f.includes('.runtime')),
+          ok: d0b.ok, state: d0b.state, codes: [...new Set(d0b.problems.map((p) => p.code))],
+        }
+        if (d0bDisk[0] !== d0bWant || d0bDisk[1] !== d0bWant) {
+          push('TARGET-FIXTURE-NOT-EMPTY', `D0b 的夹具没造出来：盘上本该两棵树各 ${d0bWant} 份（夹具 ${Object.keys(PAIR).length} 份 + 嵌套 \`lib/.runtime/x.mjs\`），实测 ${JSON.stringify(d0bDisk)}`)
+        } else if (d0bProbe.staged_files !== d0bWant || d0bProbe.baseline_files !== d0bWant) {
+          push('TARGET-NESTED-RUNTIME-SKIPPED', `D0b：盘上两棵树各 ${d0bWant} 份，尺子只枚举到 ${JSON.stringify([d0bProbe.staged_files, d0bProbe.baseline_files])} 份 —— 它按目录名**在任何深度**跳过了 \`.runtime\`，嵌套那一份代码根本没进对账（同一课见 \`.tools/fingerprint.mjs:26-27\`）`)
+        } else if (d0b.state === 'equal') {
+          push('TARGET-NESTED-RUNTIME-SKIPPED', `D0b：两棵树在 \`lib/.runtime/x.mjs\` 上内容不同（\`NESTED\` 1 → 2），判据却报 state=equal / ok=${d0b.ok} —— 嵌套的是代码，不是数据`)
+        } else if (!d0b.problems.some((p) => String(p.message).includes('lib/.runtime/x.mjs'))) {
+          push('TARGET-NAMING', `D0b：红因里必须**点名** \`lib/.runtime/x.mjs\`，实得 ${JSON.stringify(d0b.problems.map((p) => p.message)).slice(0, 400)}`)
+        }
       }
 
       // ── 读数：现役那两棵真树"今天差多少"（只读，一个字节都不动）────────

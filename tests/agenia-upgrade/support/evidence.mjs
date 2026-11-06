@@ -94,16 +94,24 @@ export function sha256Equal(a, b) {
 /**
  * 树哈希 —— 确定性：相对路径升序 + 每个文件 sha256 + 汇总。
  * 不存在 ⇒ `exists:false`（当前真实 `.runtime` / 真实路线就是这种态，**如实写"不存在"**）。
+ *
+ * `excludeTopLevel`：**只跳过顶层**这几个名字（目录或文件）。它存在的唯一理由是数据段
+ * （`FROZEN.targetLag.dataSegments`）：顶层 `.runtime` 是每 15 秒就变的脑数据，不算"代码有没有被动过"。
+ * 🔴 **只认顶层那一段** —— `lib/.runtime/x` 是代码（`.tools/fingerprint.mjs:26-27` 的同一课，
+ *    那边按**根相对前缀**排 `.runtime/`，`lib/.runtime/…` 照样算代码）。按名字一路跳会开一个洞。
+ * 返回值里带上 `excluded`（**那一个数组本身**，不是副本）⇒ 调用方可以判"排除集是不是单源"。
  */
-export function treeHash(root) {
+export function treeHash(root, { excludeTopLevel = null } = {}) {
   const abs = canonical(root)
-  if (!existsSync(abs)) return { path: abs, exists: false, count: 0, sha256: null, files: [] }
+  if (!existsSync(abs)) return { path: abs, exists: false, count: 0, sha256: null, files: [], excluded: excludeTopLevel }
+  const skip = Array.isArray(excludeTopLevel) ? excludeTopLevel : []
   const files = []
-  const walk = (dir) => {
+  const walk = (dir, depth) => {
     for (const name of readdirSync(dir).sort()) {
+      if (depth === 0 && skip.includes(name)) continue
       const full = path.join(dir, name)
       const st = statSync(full)
-      if (st.isDirectory()) walk(full)
+      if (st.isDirectory()) walk(full, depth + 1)
       else if (st.isFile()) {
         files.push({
           rel: path.relative(abs, full).replace(/\\/g, '/'),
@@ -113,23 +121,37 @@ export function treeHash(root) {
       }
     }
   }
-  walk(abs)
+  walk(abs, 0)
   const digest = createHash('sha256')
   for (const f of files) digest.update(`${f.rel}\u0000${f.sha256}\u0000${f.bytes}\n`, 'utf8')
-  return { path: abs, exists: true, count: files.length, sha256: digest.digest('hex'), files }
+  return {
+    path: abs,
+    exists: true,
+    count: files.length,
+    sha256: digest.digest('hex'),
+    files,
+    /** 排除集（**同一个数组对象**；`null` = 这一格没排除任何东西）。`DR-02` 判它与 `FROZEN` 是不是同一个。 */
+    excluded: Array.isArray(excludeTopLevel) ? excludeTopLevel : null,
+  }
 }
 
 /**
  * 真实根快照 —— 契约 §2.4 第 5 条：执行前后各量一次，任何变化 = 立即停测。
  * 只读。**真实脑根 2026-10-15 起是"存在"的**（`--op init-real` 亲手开过，exit 0），
  * 真实路线仍然不存在 —— 两格都**如实写盘上是什么**，不预设"应该不存在"。
+ *
+ * 🔴 `livePreset` 的覆盖口径（组长 2026-11-06 决定，`决定-DR02覆盖口径.md` §三）：
+ *   = **整棵 `presets/agenia` 减去数据段**，数据段**只从** `FROZEN.targetLag.dataSegments` 取
+ *   （今天是 `['.runtime']`）—— 这里**不许**再写第二份清单，也不许在调用方传一份。
+ *   派生成语：数据段每 15 秒/每次作业就变，算进"安全哈希"= 只要有人正常干活这条安全判据就必红。
+ * `livePresetRoot` 可注入（缺省 = 现役）—— **刀**要在副本上量同一把尺子，而不是另写一份。
  */
-export function realRootsSnapshot() {
+export function realRootsSnapshot({ livePresetRoot = PATHS.finalPreset } = {}) {
   const snap = {
     at: new Date().toISOString(),
     brain: treeHash(PATHS.realBrainRoot),
     route: treeHash(PATHS.realRouteRoot),
-    livePreset: treeHash(PATHS.finalPreset),
+    livePreset: treeHash(livePresetRoot, { excludeTopLevel: FROZEN.targetLag.dataSegments }),
   }
   return snap
 }
@@ -380,8 +402,16 @@ export async function runCase(id, fn) {
  * 🔴 口径（组长 `T-R1-04` 逐字定）：**必须是"两棵树"比**；**不许做成"放进 55 条里跑绿就算完"**
  *    —— 它得能在「只改了活体、没改 staged」的那一瞬**当场翻面**（阳性对照见 `_runs` 里那次变异体跑）。
  *
- * `SKIP`：`.runtime/` 是**数据**（真实记忆库），不是代码 —— 它**本来就不该**同步进 staging
- * （活体 61 文件 / staged 48 文件，差的那 13 个全是它）。拿它当"漂移"就是每天都红的假红。
+ * `SKIP`：**顶层**的 `.runtime/` 是**数据**（真实记忆库），不是代码 —— 它**本来就不该**同步进 staging
+ * （活体 55 份代码 / staged 55 份，差的那 165 份全是它）。拿它当"漂移"就是每天都红的假红。
+ * 🔴 **排除集只有一份来源**：`FROZEN.targetLag.dataSegments`（这是 `E7`；从前这里是手写的
+ *    `new Set(['.runtime'])`，与 `env.mjs` 各写一份 ⇒ 一边加了 `.snapshot`、另一边没加，
+ *    `STAT-01` 当场红，红因却指向"两棵树不同步"）。返回值里的 `skip` 只是**读数**；
+ *    判据在 `STAT-01` 那边按**行为**钉：临时往那个来源里加一段，这把尺子必须立刻跳过它
+ *    （读数可以撒谎 —— 手写字面量照样能报出那个数组）。
+ * 🔴 **只跳过顶层那一段**（`E8`）：`lib/.runtime/x` 是**代码**，按目录名在任何深度跳
+ *    = 给代码开一个不被看见的洞（同一课见 `.tools/fingerprint.mjs:26-27` 与 `:92`：
+ *    那边按**根相对前缀**排，`lib/.runtime/…` 照样算代码）。
  *
  * `liveRoot`：活体那一棵树（缺省 = `PATHS.finalPreset`）。它存在是为了**夹具** ——
  *   两棵树都得能指到一根临时根上，否则"两侧都读得到、但都是 0 份文件"那一格造不出来（`F-141`）。
@@ -392,22 +422,23 @@ export async function runCase(id, fn) {
  *   不给 ⇒ 这一关不判（`floor: null`，读数里看得出来）。
  * @returns {{staged:string|null, live:string, staged_files:number, live_files:number,
  *            only_staged:string[], only_live:string[], different:string[], same:boolean,
- *            floor:{min_files:number,staged_ok:boolean,live_ok:boolean}|null, note:string}}
+ *            skip:string[], floor:{min_files:number,staged_ok:boolean,live_ok:boolean}|null, note:string}}
  */
 export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPreset, minFiles = null } = {}) {
-  const SKIP = new Set(['.runtime'])
+  const dataSegments = FROZEN.targetLag.dataSegments
+  const SKIP = new Set(dataSegments)
   const live = canonical(liveRoot)
   const stagedRaw = optionalEnv(ENV.STAGING_PRESET, env)
   const staged = stagedRaw ? canonical(stagedRaw) : null
   const walkOf = (root) => {
     const out = new Map()
     if (root === null || !existsSync(root)) return out
-    const go = (dir) => {
+    const go = (dir, depth) => {
       for (const name of readdirSync(dir).sort()) {
-        if (SKIP.has(name)) continue
+        if (depth === 0 && SKIP.has(name)) continue
         const full = path.join(dir, name)
         const st = statSync(full)
-        if (st.isDirectory()) go(full)
+        if (st.isDirectory()) go(full, depth + 1)
         else if (st.isFile()) {
           out.set(path.relative(root, full).replace(/\\/g, '/'), {
             bytes: st.size,
@@ -416,7 +447,7 @@ export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPre
         }
       }
     }
-    go(root)
+    go(root, 0)
     return out
   }
   const a = walkOf(staged)
@@ -451,8 +482,10 @@ export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPre
     only_live: onlyLive,
     different,
     same: staged !== null && haveSamples && floorOk && onlyStaged.length === 0 && onlyLive.length === 0 && different.length === 0,
+    /** 排除集 —— `FROZEN.targetLag.dataSegments`（**读数**：这一跑用的是哪一份；`STAT-01` 判的是**行为**，不是这个字段）。 */
+    skip: dataSegments,
     floor,
-    note: '比的是**两棵树**（跳过 `.runtime/` = 数据，不是代码）；差一个字节就算漂移；'
+    note: '比的是**两棵树**（跳过**顶层** `.runtime/` = 数据，不是代码；`lib/.runtime/…` 照样比）；差一个字节就算漂移；'
       + '**两侧都得有样本**（任一侧 0 份文件 ⇒ `same: false` —— 零样本不是"相同"）；'
       + '**给了份数下限时两侧都得够**（`F-140`：一起缩水不是"相同"；`floor: null` = 这一关没判）',
   }
