@@ -43,7 +43,9 @@ export function refreshSnapshot({ root, now = clockNow() } = {}) {
   if (typeof root !== 'string' || root === '') throw new Error('refreshSnapshot: 必须给 root（工作区绝对路径）')
   const day = dayKeyOf(now)
   const { input } = readDashboardSources({ ...dashboardSourcePaths(root, day), day })
-  const written = writeDashboardSnapshot({ input, outFile: path.join(root, DASHBOARD_SNAPSHOT_REL) })
+  // `generated_at` 由**写手**给（`dashboardOf` 不读时钟）：面板据此说"这份读数有多旧"。
+  const stamped = { ...input, generated_at: new Date(now).toISOString() }
+  const written = writeDashboardSnapshot({ input: stamped, outFile: path.join(root, DASHBOARD_SNAPSHOT_REL) })
   return { ok: true, day, file: written.file, bytes: written.bytes }
 }
 

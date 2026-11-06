@@ -337,6 +337,9 @@ export function dashboardOf(input) {
   return {
     schema: DASHBOARD_SCHEMA,
     day: typeof source.day === 'string' ? source.day : null,
+    // 🔴 生成时刻：没有它，写手停摆时面板会把旧数据画成"此刻"（实测 mtime 有 20 秒不动过）。
+    //    形状 = ISO8601 带毫秒；由写手给（`dashboardOf` 不读时钟，`now` 是调用方给的）。
+    generated_at: typeof source.generated_at === 'string' ? source.generated_at : null,
     header,
     badge,
     main,
@@ -440,7 +443,7 @@ export function auditFields(fields, input) {
 
 // ── 快照落点（与渲染层共用的那一个路径常量）────────────────────────────────
 /** 快照文件名（工作区相对路径；渲染层经 `workspaceFiles` 读同一个路径）。 */
-export const DASHBOARD_SNAPSHOT_REL = 'presets/agenia/.runtime/state/dashboard/view.json'
+export const DASHBOARD_SNAPSHOT_REL = '.team/dashboard/view.json'
 
 /** 本票四份真源在**一个根**下的落点（`<day>` 由调用方填）。 */
 export function dashboardSourcePaths(root, day) {

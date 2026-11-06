@@ -196,7 +196,7 @@ function runPlugin({ pluginIndex, ws, mode = 'normal', clockFile = null }) {
 }
 
 // ── 视图形状（契约 §3）──────────────────────────────────────────────────────
-const VIEW_KEYS = ['alerts', 'badge', 'day', 'debts', 'emptyNotice', 'header', 'main', 'schema']
+const VIEW_KEYS = ['alerts', 'badge', 'day', 'debts', 'emptyNotice', 'generated_at', 'header', 'main', 'schema']
 const HEADER_KEYS = ['empty', 'stale', 'text']
 const MAIN_KEYS = ['gate', 'note', 'taskId', 'title']
 const DEBT_KEYS = ['key', 'label', 'state', 'text', 'value']

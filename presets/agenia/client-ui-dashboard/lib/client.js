@@ -280,7 +280,7 @@ window.__ModuleLoader__.load({
 						readable && (0, react_jsx_runtime.jsxs)("div", {
 							className: Dashboard_module_css_default.notice,
 							role: "status",
-							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }), `读数日 ${view.day ?? "未知"}`]
+							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }), `读数日 ${view.day ?? "未知"}${ageSuffix(view.generated_at)}`]
 						})]
 					})]
 				}), document.body)]
@@ -311,7 +311,7 @@ window.__ModuleLoader__.load({
 		//#endregion
 		//#region lib/types/client/mount.js
 		/** 视图快照在工作区里的相对路径（Node 侧写它；本插件只读它）。 */
-		const SNAPSHOT_PATH = "presets/agenia/.runtime/state/dashboard/view.json";
+		const SNAPSHOT_PATH = ".team/dashboard/view.json";
 		/** 本插件用到的浏览器服务：槽位 + 词典 + 会话 + 读文件的那条 Remote。 */
 		const inject = [
 			"sessions",
@@ -345,9 +345,20 @@ window.__ModuleLoader__.load({
 			}
 			throw new Error(`读回来的东西里没有正文（${describeShape(page)}）`);
 		}
+		/**
+		 * 快照有多旧（`· N 分钟前`）。读不出时刻就不写 —— **不许猜 0**：
+		 * 「不知道多旧」和「刚刚」长得一样是最坏的一种谎。
+		 */
+		function ageSuffix(generatedAt) {
+			if (typeof generatedAt !== "string" || generatedAt === "") return "";
+			const at = Date.parse(generatedAt);
+			if (Number.isNaN(at)) return "";
+			const minutes = Math.floor((Date.now() - at) / 60000);
+			if (!Number.isFinite(minutes) || minutes < 0) return "";
+			return minutes < 1 ? " · 刚刚" : ` · ${minutes} 分钟前`;
+		}
 		/** 把"拿到的是个什么东西"说人话：类型 + 顶层键 + 一段短预览。 */
-		function describeShape(value) {
-			if (value === undefined) return "undefined";
+		function describeShape(value) {			if (value === undefined) return "undefined";
 			if (value === null) return "null";
 			const type = typeof value;
 			if (type !== "object") return previewOf(type, value);
