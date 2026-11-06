@@ -16,6 +16,8 @@
  *        `🔴 未登记落点` + `还没写`（**不许替组长编一个处置**），而且与上面那句**不相等**
  *        （`CARD08-MAP-MESSAGES-SAME`）。⚠️ 这一跑里"票号 / 否定句 / 好形状 / 认不出的形状"四条现场
  *        **不可判**（它们量的是"登记了但写错了"，而这一跑没有任何登记）—— 所以那几条只在 map 在的那一跑判。
+ *        ⚠️ 两句"不相等"只在**两跑都真拿到那一句**时才判：版式门一挡就是"没量到"（读数
+ *        `CARD08-MAP-MESSAGES-UNMEASURED`），不许写成"两句相同"（复审 batch6r2 §1③-1）。
  *
  * ── 刀 = `e7bdbbe^` 那一版 `disposition_of` 的**真字节**（不是手编的规则）──────────────────
  * 从 git 取旧实现全文，**只把签名补上 `map_present=True`**（调用点不动），其余逐字塞进**副本**。
@@ -84,11 +86,20 @@ function layoutProblems(sheet) {
     detail = `${where}是**数据起始行**，现在却是一个空行（在数据前插一个空行也要红）`
   } else if (layout.why === 'hole') {
     detail = `数据区里**不许夹空行**，第 ${(layout.rows ?? []).join(' · ')} 行是空行（版式 = 连续的数据区）`
+  } else if (layout.why === 'header-extra') {
+    detail = `${where}（表头）在 ${DISPOSITION_LAYOUT.header.length} 列之后还有非空格 ${JSON.stringify(layout.extra ?? [])}`
+      + ` —— 表头必须**恰好** ${DISPOSITION_LAYOUT.header.length} 列：多出来的列没有任何判据读它，等于夹带`
+  } else if (layout.why === 'row-extra') {
+    const wide = (layout.rows ?? []).map((r) => `第 ${r.row} 行 ${JSON.stringify(r.extra)}`).join(' · ')
+    detail = `数据区在 ${DISPOSITION_LAYOUT.header.length} 列之外还有非空格：${wide}`
+      + ' —— 多出来的列必须红（这一族判据只读前 5 格；不红就等于那一列没人管）'
   }
   return {
     problems: [problem('CARD08-LAYOUT',
       `CARD-08：${detail} —— 版式钉在 \`support/card-surface.mjs::DISPOSITION_LAYOUT\`；`
-      + '版式一改（多一行说明 / 换列名 / 插空行）这一条就红，那是"判据要跟着改"，不是产品坏了')],
+      + '版式钉的是「表头逐字 + 数据起始行非空 + 数据区无空洞 + 不多不少这几列」——'
+      + '红了先分清是哪一边动了：**产品改了版式**（那就同批改版式常量）还是**页被写坏**'
+      + '（多行 / 少行 / 插空行 / 多一列）；这一条只报"形状不对"，**不替人判**是哪一种')],
     data: [],
   }
 }
@@ -221,6 +232,42 @@ function dispositionProblems(sheet, { mapPresent }) {
   return { problems: out, texts }
 }
 
+/**
+ * F-5 那两句（「map 在但没这一条」/「map 不在」）**比不比得了** —— 只有两跑都真拿到那一格（string）才比。
+ *
+ * 🔴 原来写的是 `verdict.texts.f5 ?? null` + `present !== undefined`：版式门一挡，两跑都是 `null`
+ *    ⇒ 判成"两句相同"，报文印「（null）」—— **"没量到"被写成了"它一样"**（复审 batch6r2 §1③-1）。
+ *    现在：没量到就不比，只落一条 `skip_code` 读数；别处已经有红（版式 / 页不在）时不叠红，
+ *    否则报一条有名有姓的 `CARD08-MAP-MESSAGES-UNMEASURED`。
+ */
+function compareF5Texts({ present, absent }, { alreadyRed, push, where = 'F-5' }) {
+  const ok = typeof present === 'string' && typeof absent === 'string'
+  const reading = {
+    compared: ok,
+    skip_code: ok ? null : 'CARD08-MAP-MESSAGES-UNMEASURED',
+    present: present ?? null,
+    absent: absent ?? null,
+    same: ok ? present === absent : null,
+  }
+  if (!ok) {
+    if (!alreadyRed) {
+      push('CARD08-MAP-MESSAGES-UNMEASURED',
+        `CARD-08[${where}]：没拿到"map 在但没这一条 / map 不在"那两句（present=${JSON.stringify(present ?? null)} · absent=${JSON.stringify(absent ?? null)}）`
+        + ' —— 没量到不是"两句相同"（复审 batch6r2 §1③-1）')
+    }
+    return { problems: [], reading }
+  }
+  if (present === absent) {
+    return {
+      problems: [problem('CARD08-MAP-MESSAGES-SAME',
+        `CARD-08[${where}]：「map 在但没这一条」与「map 不在」用**同一句话**（${JSON.stringify(present)}）—— `
+        + '这两件事必须长得不一样，否则读卡的人分不出"组长还没写"与"写了但漏了这一条"（复审 §3.3(c)）')],
+      reading,
+    }
+  }
+  return { problems: [], reading }
+}
+
 /** 跑一副夹具 → 读回卡 2 的 `每条的落点` 页。`script` 给刀后的副本；不给 = 生产那一份。 */
 function dispositionScene(tag, { withMap, script = null, nowIso = NOW } = {}) {
   const roots = makeCardRoots('CARD-08', tag)
@@ -323,20 +370,65 @@ test('CARD-08 处置列：ticket 也算落点 · 「采纳不了」不许印成�
       if (scene.run.exit_code !== 0) continue
       const verdict = dispositionProblems(scene.sheet, { mapPresent: scene.withMap })
       real.problems.push(...verdict.problems)
-      if (scene.withMap) real.texts.present = verdict.texts.f5 ?? null
-      else real.texts.absent = verdict.texts.f5 ?? null
-    }
-    // (c) 两句必须**不相等** —— 只有两跑都拿到那一格时才判（页不在由 SHEET-MISSING 说）
-    if (real.texts.present !== undefined && real.texts.absent !== undefined) {
-      readings.f5_texts = real.texts
-      if (real.texts.present === real.texts.absent) {
-        real.problems.push(problem('CARD08-MAP-MESSAGES-SAME',
-          `CARD-08[F-5]：「map 在但没这一条」与「map 不在」用**同一句话**（${JSON.stringify(real.texts.present)}）—— `
-          + '这两件事必须长得不一样，否则读卡的人分不出"组长还没写"与"写了但漏了这一条"（复审 §3.3(c)）'))
+      // 只收**真拿到的那一句**（string）：`?? null` 会把"没量到"写成"它一样"（复审 batch6r2 §1③-1）。
+      if (typeof verdict.texts.f5 === 'string') {
+        if (scene.withMap) real.texts.present = verdict.texts.f5
+        else real.texts.absent = verdict.texts.f5
       }
     }
+    // (c) 两句必须**不相等** —— 只有两跑都拿到那一格时才判（页不在 / 版式红由各自那条码说）
+    readings.f5_texts = { present: real.texts.present ?? null, absent: real.texts.absent ?? null }
+    const realSame = compareF5Texts(real.texts, { alreadyRed: real.problems.length > 0, push })
+    real.problems.push(...realSame.problems)
+    readings.f5_compare = realSame.reading
     problems.push(...real.problems)
     readings.real_codes = real.problems.map((p) => p.code)
+
+    // ── 1b. F-5 守卫的**对照表**（纯函数喂假输入：`cand-20261020-0064`）─────────────────────
+    //      版式门一挡，两跑都拿不到那一句 —— 旧写法判成"两句相同（null）"。这一格证明两件事：
+    //      ① 没量到**不判**相同（只落 `skip_code`）；② 真相同**仍然**翻 SAME（守卫不许被改成永远不报）。
+    const guardRows = [
+      {
+        name: '版式门挡住（两跑 undefined）',
+        input: { present: undefined, absent: undefined },
+        alreadyRed: true,
+        want: { problems: 0, same: null, skip: 'CARD08-MAP-MESSAGES-UNMEASURED' },
+      },
+      {
+        name: '没量到、且别处不红（两跑 null）',
+        input: { present: null, absent: null },
+        alreadyRed: false,
+        want: { problems: 1, code: 'CARD08-MAP-MESSAGES-UNMEASURED' },
+      },
+      {
+        name: '两句真相同',
+        input: { present: '同一句', absent: '同一句' },
+        alreadyRed: false,
+        want: { problems: 1, code: 'CARD08-MAP-MESSAGES-SAME', same: true },
+      },
+      {
+        name: '两句不同',
+        input: { present: '甲', absent: '乙' },
+        alreadyRed: false,
+        want: { problems: 0, same: false },
+      },
+    ]
+    const guardRuns = guardRows.map((row) => {
+      const got = []
+      const verdict = compareF5Texts(row.input, { alreadyRed: row.alreadyRed, push: (code) => got.push(code) })
+      const codes = got.concat(verdict.problems.map((p) => p.code))
+      const pass = codes.length === row.want.problems
+        && (row.want.code === undefined || (codes.length === 1 && codes[0] === row.want.code))
+        && (row.want.same === undefined || verdict.reading.same === row.want.same)
+        && (row.want.skip === undefined || verdict.reading.skip_code === row.want.skip)
+      return { name: row.name, want: row.want, got: { codes, reading: verdict.reading }, pass }
+    })
+    readings.f5_guard_control = guardRuns
+    for (const row of guardRuns.filter((x) => !x.pass)) {
+      push('CARD08-F5-GUARD-TABLE',
+        `CARD-08[F-5 守卫对照]：「${row.name}」判错了 —— 期望 ${JSON.stringify(row.want)}，实得 ${JSON.stringify(row.got)}`
+        + ' —— 这一格量的是"没量到 ≠ 它一样"，守卫两边都要能承重')
+    }
 
     // ── 2. 刀：把**副本**里的 `disposition_of` 换回 `e7bdbbe^` 的真字节（只补签名）─────────
     //     先核"钉住的那段字节没被改过"：本文件里的 `OLD_DISPOSITION` 与 sha256 是同一个契约的两半，
@@ -404,13 +496,14 @@ test('CARD-08 处置列：ticket 也算落点 · 「采纳不了」不许印成�
         }
         const verdict = dispositionProblems(scene.sheet, { mapPresent: withMap })
         knifeProblems.push(...verdict.problems)
-        if (withMap) knifeTexts.present = verdict.texts.f5 ?? null
-        else knifeTexts.absent = verdict.texts.f5 ?? null
+        if (typeof verdict.texts.f5 === 'string') {
+          if (withMap) knifeTexts.present = verdict.texts.f5
+          else knifeTexts.absent = verdict.texts.f5
+        }
       }
-      if (knifeTexts.present !== undefined && knifeTexts.absent !== undefined && knifeTexts.present === knifeTexts.absent) {
-        knifeProblems.push(problem('CARD08-MAP-MESSAGES-SAME',
-          `CARD-08[刀/F-5]：刀后两句相同（${JSON.stringify(knifeTexts.present)}）`))
-      }
+      const knifeSame = compareF5Texts(knifeTexts, { alreadyRed: knifeProblems.length > 0, push, where: '刀/F-5' })
+      knifeProblems.push(...knifeSame.problems)
+      readings.knife.f5_compare = knifeSame.reading
       const unique = [...new Set(knifeProblems.map((p) => p.code))].sort()
       readings.knife.runs_texts = knifeTexts
       readings.knife.codes = knifeProblems.map((p) => p.code)

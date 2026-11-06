@@ -1319,19 +1319,31 @@ export const DISPOSITION_LAYOUT = Object.freeze({
 
 /** 一行是不是"全空"（`null` / 空串 / 纯空白都算空）。 */
 const blankRow = (row) => (Array.isArray(row) ? row : []).every((c) => c === null || String(c).trim() === '')
+/**
+ * 第 `width` 列之后的**非空**单元格（`null` / 空串 / 纯空白都不算）。
+ * 为什么需要它：表头比较是**前缀**（`slice(0, width)`），`rowCells` 也只读前几格 ⇒ 多出来的第 4 列
+ * 既不红也不被扫，等于夹带（复审 batch6r2 §1①-2）。
+ */
+const cellsBeyond = (row, width) => (Array.isArray(row) ? row.slice(width) : [])
+  .map((c) => String(c ?? '').trim())
+  .filter((s) => s !== '')
 
 /**
  * 按版式切数据区。**不滤空行** —— 空行是缺陷（`why:'hole'`，带 1 基行号），滤掉它就看不见了。
  *
- * 判三件：
+ * 判四件：
  *   ① **表头**那一行逐字等于 `layout.header`（换列名 / 换列序 ⇒ `why:'header'`）；
+ *   ①' **表头不多列**：`layout.header.length` 之后出现非空格 ⇒ `why:'header-extra'`（带那几个值）；
  *   ② **数据起始行**：钉住的那一行必须存在且不是空行（在数据前插一个空行 ⇒ `why:'blank-start'`）；
  *   ③ **数据区无空洞**：数据区 = `data_row` 起 `expected_rows` 行；那几行里每个空行都记进 `holes`
- *      （1 基行号）。页码比期望短时**不报版式**（缺行由用例自己的"行数 / 行键"判据说，那更具体）。
+ *      （1 基行号）。页码比期望短时**不报版式**（缺行由用例自己的"行数 / 行键"判据说，那更具体）；
+ *   ③' **数据行不多列**：窗口内某一行在 `layout.header.length` 之后出现非空格 ⇒ `why:'row-extra'`。
  *
  * 🔴 `expected_rows` 而不是"到最后一个非空行"：卡 2 的 `每条的落点` 页在 findings 下面**还有第二段**
  *    （一行空行 + `会话评审回执（第二段）`）—— "到最后一行都不许有空行"会把**产品的正常版式**判红。
  *    待你拍那一页用"期望行数"同样成立（2 行 / 1 行 / 1 行）。
+ * 🔴 窗口**只管洞**：窗口右端以外的行不在 `data` 里 —— "整页恰好 N 行"必须由调用方另量整页
+ *    （`card07` 从 `data_row` 切到页尾再数），这里不替它数页数。
  *
  * 尾部整行空行不算洞：`support/card-xlsx.py` 已经把它们剪掉了，这里再兼容一次。
  * 返回 `{ok:true, data, row_count}` 或 `{ok:false, why, …}`；只有 `ok:true` 才给 `data`。
@@ -1342,6 +1354,10 @@ export function layoutData(rows, layout = PENDING_LAYOUT, { expected_rows = null
   const got = rawHeader.slice(0, layout.header.length).map((c) => String(c ?? '').trim())
   if (got.length !== layout.header.length || got.join('\u0000') !== layout.header.join('\u0000')) {
     return { ok: false, why: 'header', row: layout.header_row + 1, expect: layout.header, got, data: [] }
+  }
+  const extraHeader = cellsBeyond(rawHeader, layout.header.length)
+  if (extraHeader.length > 0) {
+    return { ok: false, why: 'header-extra', row: layout.header_row + 1, header: layout.header, extra: extraHeader, data: [] }
   }
   if (list.length <= layout.data_row) {
     return { ok: false, why: 'no-data', row: layout.data_row + 1, total_rows: list.length, data: [] }
@@ -1361,8 +1377,17 @@ export function layoutData(rows, layout = PENDING_LAYOUT, { expected_rows = null
     end = Math.min(wanted, list.length - 1)
   }
   const holes = []
-  for (let i = layout.data_row; i <= end; i += 1) if (blankRow(list[i])) holes.push(i + 1)
+  const wide = []
+  for (let i = layout.data_row; i <= end; i += 1) {
+    if (blankRow(list[i])) {
+      holes.push(i + 1)
+      continue
+    }
+    const extra = cellsBeyond(list[i], layout.header.length)
+    if (extra.length > 0) wide.push({ row: i + 1, extra })
+  }
   if (holes.length > 0) return { ok: false, why: 'hole', rows: holes, data: [] }
+  if (wide.length > 0) return { ok: false, why: 'row-extra', rows: wide, data: [] }
   return { ok: true, data: list.slice(layout.data_row, end + 1), row_count: end - layout.data_row + 1 }
 }
 

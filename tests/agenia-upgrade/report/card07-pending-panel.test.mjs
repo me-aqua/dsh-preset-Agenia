@@ -27,6 +27,18 @@
  * 起始行到最后一个非空行之间无空洞 —— 三件都在 `support/card-surface.mjs::PENDING_LAYOUT` /
  * `layoutData()` 里钉一次。原来"硬切行偏移再滤空行"会让**插入一个空行照样绿**。
  *
+ * ── 行数：窗口只管洞，页数归整页（复审 batch6r2 §3①）──────────────────────────────
+ * 版式窗口（`layoutData(..., { expected_rows })`）的右端是"这一批应有的行数" —— 窗口**外面**的行
+ * 谁也看不见。所以"恰好 N 行"这一条必须**整页量**：`rawDataRows(sheet.rows).length` 从数据起始行
+ * 切到页尾（不滤空行、不截窗口），再与 `expectedRowsOf(state)` 逐态比。
+ * 原来三处都拿窗口切出来的 `data.length` 数 ⇒ 复制一条数据行仍然绿，而报文还写着「恰好一行」。
+ * 正控 `I`：把第二条数据行**复制成第三行** ⇒ `CARD07-ROWS-LOST` 必须红。
+ *
+ * ── 词的否定 / 第 4 列（复审 batch6r2 §1① 的两条仍绿假态）────────────────────────────
+ * `J` 「登记」的**否定形态**不许算"登记了"（「组长没有登记」比禁语「没有人登记」只少一个字；
+ *    词表**一个不放宽**，只加一条否定形态）；`K` 表头 / 数据行在声明的列数之外出现非空格 ⇒ 版式红
+ *    （原来表头是**前缀**比较、`rowCells` 只读 0..2 ⇒ 第 4 列既不红也不被扫）。
+ *
  * ── 为什么读的是人读页 ────────────────────────────────────────────────────────────
  * `待你拍` 这一页**没有机器格**（`C2 · 验收格` 的 39 个 key 里没有它）。老板读的就是这一页，
  * 所以判据钉这一页：页名 `待你拍` 逐字、表头 `事 / 为什么 / 代价`、数据从第 4 行起。
@@ -69,11 +81,20 @@ function layoutProblems(sheet, expected_rows) {
     detail = `${where}是**数据起始行**，现在却是一个空行（在数据前插一个空行也要红）`
   } else if (layout.why === 'hole') {
     detail = `数据区里**不许夹空行**，第 ${(layout.rows ?? []).join(' · ')} 行是空行（版式 = 连续的数据区）`
+  } else if (layout.why === 'header-extra') {
+    detail = `${where}（表头）在 ${PENDING_LAYOUT.header.length} 列之后还有非空格 ${JSON.stringify(layout.extra ?? [])}`
+      + ` —— 表头必须**恰好** ${PENDING_LAYOUT.header.length} 列：多出来的列没有任何判据读它，等于夹带`
+  } else if (layout.why === 'row-extra') {
+    const wide = (layout.rows ?? []).map((r) => `第 ${r.row} 行 ${JSON.stringify(r.extra)}`).join(' · ')
+    detail = `数据区在 ${PENDING_LAYOUT.header.length} 列之外还有非空格：${wide}`
+      + ' —— 多出来的列必须红（判据只读前三列；不红就等于那一列没人管）'
   }
   return {
     problems: [problem('CARD07-LAYOUT',
       `CARD-07：${detail} —— 版式钉在 \`support/card-surface.mjs::PENDING_LAYOUT\`；`
-      + '版式一改（多一行说明 / 换列名 / 插空行）这一条就红，那是"判据要跟着改"，不是产品坏了')],
+      + '版式钉的是「表头逐字 + 数据起始行非空 + 数据区无空洞 + 不多不少这几列」——'
+      + '红了先分清是哪一边动了：**产品改了版式**（那就同批改版式常量）还是**页被写坏**'
+      + '（多行 / 少行 / 插空行 / 多一列）；这一条只报"形状不对"，**不替人判**是哪一种')],
     data: [],
   }
 }
@@ -81,12 +102,28 @@ function layoutProblems(sheet, expected_rows) {
 /** 三态各自应当有几行数据：有行 = 夹具行数；`[]` / 文件不在 = 恰好一行登记语。 */
 const expectedRowsOf = (state) => (state === 'rows' ? FIXTURE_ROWS.length : 1)
 
-/** 证据里的行：从数据起始行**原样**切（不滤空行 —— 空洞要能在读数里看见）。 */
+/**
+ * 从**数据起始行**切到页尾：**不截窗口、不滤空行**（尾部空行由 `card-xlsx.py` 剪掉）。
+ * 两个用途：① 证据里逐行印出来（空洞要能在读数里看见）；② **整页行数** = `.length`。
+ *
+ * 🔴 与 `layoutData()` 的分工（复审 batch6r2 §3①）：窗口只管"数据区里有没有洞"，**页数归整页** ——
+ *    窗口右端 = `data_row + expected_rows - 1`，窗口外面多出来的行谁也看不见；而这一条要的是
+ *    "这一页**恰好**印了这一批应有的行数"，少一行和多一行都是缺陷。
+ */
 const rawDataRows = (rows) => (Array.isArray(rows) ? rows.slice(PENDING_LAYOUT.data_row) : [])
+
 const rowCells = (row) => [0, 1, 2].map((i) => String(row?.[i] ?? '').trim())
 const rowText = (row) => rowCells(row).join(' | ')
 const anyText = (data) => data.map(rowText).join(' || ')
 const isPlaceholder = (text) => text.includes('0 件') || text.includes('没有人登记')
+/**
+ * 「登记」的**否定形态**（复审 batch6r2 §1①）：`saysRegistered = includes('登记')` 会把
+ * 「（今天 0 件 · 组长**没有登记**）」判成"登记了" —— 它比禁语「没有人登记」只少一个字，不用动版面。
+ *
+ * 🔴 词表**一个不放宽**：这里只加"否定"这一条形态（否定词 + 至多 6 个非标点字符 + `登记`），
+ *    不往必备语里加新词。产品那句「组长登记了「没有要拍的事」」里 `没有` 在 `登记` **之后**，不命中。
+ */
+const NEGATED_REGISTER = /(?:没有|没|未|尚未|未曾|不曾|无人|没人|无|非|不)[^，。；、,.;：:\n]{0,6}登记/
 
 /**
  * 判一副夹具印出来的那一页。返回 `problem[]`；`rows === null`（页不在）单独一条。
@@ -103,11 +140,12 @@ function pendingProblems(state, sheet) {
   const shaped = layoutProblems(sheet, expectedRowsOf(state))
   if (shaped.problems.length > 0) return shaped.problems
   const data = shaped.data
+  const pageRows = rawDataRows(sheet.rows)
   if (state === 'rows') {
-    if (data.length !== FIXTURE_ROWS.length) {
+    if (pageRows.length !== FIXTURE_ROWS.length) {
       out.push(problem('CARD07-ROWS-LOST',
-        `CARD-07[A]：夹具里登记了 ${FIXTURE_ROWS.length} 行待拍，卡上数据行实得 ${data.length} 行（${JSON.stringify(data.map(rowText))}）`
-        + ' —— 有行没印出来'))
+        `CARD-07[A]：夹具里登记了 ${FIXTURE_ROWS.length} 行待拍，卡上**整页**数据行实得 ${pageRows.length} 行（${JSON.stringify(pageRows.map(rowText))}）`
+        + ' —— 少了 = 有行没印出来；多了 = 多出来的行没人管（窗口只判洞，页数必须整页数）'))
       return out
     }
     for (const [i, want] of FIXTURE_ROWS.entries()) {
@@ -128,9 +166,9 @@ function pendingProblems(state, sheet) {
     return out
   }
   if (state === 'empty') {
-    if (data.length !== 1) {
+    if (pageRows.length !== 1) {
       out.push(problem('CARD07-EMPTY-NOT-REGISTERED',
-        `CARD-07[B]：待你拍.json 是 ` + '`[]`' + `（组长登记了"没有要拍的事"），卡上数据行实得 ${data.length} 行 —— 应当是**恰好一行**那句登记语`))
+        `CARD-07[B]：待你拍.json 是 ` + '`[]`' + `（组长登记了"没有要拍的事"），卡上**整页**数据行实得 ${pageRows.length} 行 —— 应当是**恰好一行**那句登记语`))
       return out
     }
     // 🔴 扫**全部数据列**（A/B/C），与上面 `A` 那一支的 `anyText()` 同宽：只扫 A 列时，
@@ -138,19 +176,20 @@ function pendingProblems(state, sheet) {
     const text = rowText(data[0])
     const saysZero = text.includes('0 件')
     const saysRegistered = text.includes('登记')
+    const negatedRegister = NEGATED_REGISTER.test(text)
     const claimsAbsent = text.includes('不存在') || text.includes('没有人登记')
-    if (!saysZero || !saysRegistered || claimsAbsent) {
+    if (!saysZero || !saysRegistered || negatedRegister || claimsAbsent) {
       out.push(problem('CARD07-EMPTY-NOT-REGISTERED',
-        `CARD-07[B]：\`[]\` 是"组长明确登记了没有要拍的事" ⇒ 那一行要说 \`0 件\` **且**说 \`登记\`，`
-        + `**不许**（任何一列）说"不存在 / 没有人登记"；实得 ${JSON.stringify(rowCells(data[0]))}`
-        + `（0件=${saysZero} · 登记=${saysRegistered} · 缺登记=${claimsAbsent}）`))
+        `CARD-07[B]：\`[]\` 是"组长明确登记了没有要拍的事" ⇒ 那一行要说 \`0 件\` **且**说 \`登记\`（**肯定**形态），`
+        + `**不许**（任何一列）说"不存在 / 没有人登记 / 没有登记"；实得 ${JSON.stringify(rowCells(data[0]))}`
+        + `（0件=${saysZero} · 登记=${saysRegistered} · 否定登记=${negatedRegister} · 缺登记=${claimsAbsent}）`))
     }
     return out
   }
   if (state === 'absent') {
-    if (data.length !== 1) {
+    if (pageRows.length !== 1) {
       out.push(problem('CARD07-ABSENT-AS-ZERO',
-        `CARD-07[C]：待你拍.json **不在**，卡上数据行实得 ${data.length} 行 —— 应当是**恰好一行**那句"没有人登记"`))
+        `CARD-07[C]：待你拍.json **不在**，卡上**整页**数据行实得 ${pageRows.length} 行 —— 应当是**恰好一行**那句"没有人登记"`))
       return out
     }
     // 同上：**全部数据列**。只扫 A 列时，"今天 0 件"写进 B 列（且「不代表…」那半句还在）照样绿。
@@ -196,6 +235,80 @@ function pendingScene(tag, { pending, script = null, nowIso = NOW } = {}) {
   const run = runCards(roots, { day: DAY, nowIso, script })
   const sheet = sheetRows(cardFile(roots.ws, DAY), PENDING_SHEET)
   return { tag, roots, run, sheet, card: cardFile(roots.ws, DAY), script }
+}
+
+/**
+ * 一条新刀（`I` / `J` / `K`）的最小跑法：补丁只打**副本**，跑指定的那几副夹具，收每副翻出来的码。
+ *
+ * 🔴 返回里的 `runs[*]` 是**输入**的读数（`page_data_rows` / `header_cells` / `summary`）——
+ *    "刀真的造出了那个输入吗"要能被读到，否则"翻了面"可能只是刀把生成器改成了另一个样子。
+ * 🔴 `knife === null` ⇒ 刀没打上（`error` 说为什么）；调用方记"尺子坏了"，不许静默跳过。
+ */
+function probeKnife(tag, knifeDir, { why, marker, patch, states }) {
+  let knife = null
+  let error = null
+  try {
+    knife = copyGeneratorWithPatch(knifeDir, { why, marker, patch })
+  } catch (err) {
+    error = String(err?.message ?? err)
+  }
+  const runs = []
+  const codes = []
+  for (const state of states) {
+    if (knife === null) break
+    const pending = state === 'rows' ? FIXTURE_ROWS : (state === 'empty' ? [] : null)
+    const scene = pendingScene(`pending-${tag}-${state}`, { pending, script: knife.script })
+    const pageRows = rawDataRows(scene.sheet.rows)
+    const problems = scene.run.exit_code === 0 ? pendingProblems(state, scene.sheet) : []
+    if (scene.run.exit_code !== 0) codes.push('GENERATOR-FAILED')
+    for (const p of problems) codes.push(p.code)
+    runs.push({
+      state,
+      exit_code: scene.run.exit_code,
+      stderr: String(scene.run.stderr ?? '').trim().slice(0, 400),
+      sheet_error: scene.sheet.error,
+      header_cells: (scene.sheet.rows?.[PENDING_LAYOUT.header_row] ?? []).map((c) => String(c ?? '').trim()).filter((s) => s !== ''),
+      page_data_rows: pageRows.length,
+      data_rows: pageRows.map(rowCells),
+      summary: pageRows.map(rowText).join(' || '),
+      codes: problems.map((p) => p.code),
+    })
+  }
+  return { knife, error, runs, codes, unique: [...new Set(codes)].sort() }
+}
+
+/**
+ * 一条新刀的判词：尺子坏了 / 副本没变 / 生成器崩了 / 输入没造出来 / 一条没翻 / 翻错面 —— 六种各一条码。
+ * `expect` = **恰好**该翻的码（排序后逐项比）；`landed(runs)` = "刀真的造出了那个输入"。
+ */
+function judgeKnife(push, code, label, probe, expect, { productionSha, landed, landedHint, hint }) {
+  const { knife, error, runs, unique } = probe
+  if (knife === null) {
+    push(code, `CARD-07[${label}]：刀没打上（${error}）—— 这一格的红因此不可核：判据可能只是"永远绿"`)
+    return
+  }
+  if (knife.changed !== true || knife.production_sha256 !== productionSha) {
+    push(code, `CARD-07[${label}]：刀后的副本与生产那一份逐字节相同、或者副本不是从这一份生产文件复制的`
+      + `（changed=${knife.changed} · production_sha256=${knife.production_sha256} ≠ ${productionSha}）—— 刀没落地`)
+    return
+  }
+  const broke = runs.filter((r) => r.exit_code !== 0)
+  if (broke.length > 0) {
+    push(code, `CARD-07[${label}]：刀后生成器 exit≠0（${broke.map((r) => `${r.state}=${r.exit_code}`).join(' · ')}）—— `
+      + `刀把生成器弄崩了，那不是"翻面"（stderr=${JSON.stringify(broke[0].stderr)}）`)
+    return
+  }
+  if (landed(runs) !== true) {
+    push(code, `CARD-07[${label}]：刀**没造出目标输入**（${landedHint}；读数=${JSON.stringify(runs.map((r) => ({ state: r.state, page_data_rows: r.page_data_rows, header_cells: r.header_cells, summary: r.summary })))})`)
+    return
+  }
+  if (unique.length === 0) {
+    push(code, `CARD-07[${label}]：刀后**一条判据都没翻** —— ${hint}`)
+    return
+  }
+  if (unique.join(',') !== expect.join(',')) {
+    push(`${code}-VECTOR`, `CARD-07[${label}]：刀翻错了面 —— 期望恰好 ${JSON.stringify(expect)}，实得 ${JSON.stringify(unique)}（逐条：${JSON.stringify(probe.codes)}）`)
+  }
 }
 
 /** 一副夹具的读数（证据里要能逐字看见卡上印了什么）。 */
@@ -511,6 +624,105 @@ test('CARD-07 待你拍三态：有行 / [] / 文件不在 必须印三句不同
           + `（逐条：${JSON.stringify(got)}）`)
       }
     }
+
+    // ── 2d. 行数刀：把第二条数据行**复制成第三行**（复审 batch6r2 §3① 的正控）────────────
+    //      "整页恰好 N 行"这一条如果只拿版式窗口切出来的行数来数，多出来的行落在窗口外 ⇒
+    //      复制一条数据行**照样绿**。期望：`CARD07-ROWS-LOST` **恰好一条**（另两副夹具不动）。
+    const dupKnife = probeKnife(
+      'knife-dup',
+      path.join(scenes[0].roots.runRoot, 'knife', 'card-07-dup'),
+      {
+        why: 'CARD-07 复制一条数据行',
+        marker: 'KNIFE-DUP-ROW',
+        states: ['rows', 'empty', 'absent'],
+        patch: [{
+          from: '        for r in pending_rows:\n            ws4.append((str(r.get("事", "")), str(r.get("为什么", "")), str(r.get("代价", ""))))\n',
+          to: '        for _knife_i, r in enumerate(pending_rows):\n'
+            + '            ws4.append((str(r.get("事", "")), str(r.get("为什么", "")), str(r.get("代价", ""))))\n'
+            + '            if _knife_i == 1:\n'
+            + '                ws4.append((str(r.get("事", "")), str(r.get("为什么", "")), str(r.get("代价", ""))))  # KNIFE-DUP-ROW\n',
+          why: '第二条数据行印两次 ⇒ 整页 3 行（应当 2 行）',
+        }],
+      },
+    )
+    const DUP_EXPECTED = ['CARD07-ROWS-LOST']
+    readings.knife_dup = {
+      error: dupKnife.error,
+      knife: dupKnife.knife,
+      runs: dupKnife.runs,
+      codes: dupKnife.codes,
+      expected: DUP_EXPECTED,
+    }
+    judgeKnife(push, 'CARD07-PENDING-KNIFE-DUP', 'I', dupKnife, DUP_EXPECTED, {
+      productionSha: productionBefore.sha256,
+      landed: (rs) => rs.find((r) => r.state === 'rows')?.page_data_rows === FIXTURE_ROWS.length + 1,
+      landedHint: `\`rows\` 那副应当印出 ${FIXTURE_ROWS.length + 1} 行数据`,
+      hint: '整页多出来的那一行没人数（窗口只切 2 行）—— "页数归整页"这一条是假的（复审 batch6r2 §3① 的原缺陷）',
+    })
+
+    // ── 2e. 否定刀：`[]` 那态的 A 列改成「（今天 0 件 · 组长没有登记）」────────────────────
+    //      它含 `0 件` + `登记`、不含禁语「不存在 / 没有人登记」⇒ 旧写法（`includes('登记')`）判绿。
+    //      期望：`CARD07-EMPTY-NOT-REGISTERED` **恰好一条**（词表不放宽，只加"否定形态"）。
+    const negKnife = probeKnife(
+      'knife-neg',
+      path.join(scenes[0].roots.runRoot, 'knife', 'card-07-neg'),
+      {
+        why: 'CARD-07 否定登记',
+        marker: 'KNIFE-NEGATED-REGISTER',
+        states: ['empty'],
+        patch: [{
+          from: '        ws4.append(("（今天 0 件 · 组长登记了「没有要拍的事」）",\n',
+          to: '        ws4.append(("（今天 0 件 · 组长没有登记）",  # KNIFE-NEGATED-REGISTER\n',
+          why: '`[]` 那态的 A 列改成否定句 —— 比禁语「没有人登记」只少一个字',
+        }],
+      },
+    )
+    const NEG_EXPECTED = ['CARD07-EMPTY-NOT-REGISTERED']
+    readings.knife_neg = {
+      error: negKnife.error,
+      knife: negKnife.knife,
+      runs: negKnife.runs,
+      codes: negKnife.codes,
+      expected: NEG_EXPECTED,
+    }
+    judgeKnife(push, 'CARD07-PENDING-KNIFE-NEG', 'J', negKnife, NEG_EXPECTED, {
+      productionSha: productionBefore.sha256,
+      landed: (rs) => String(rs[0]?.summary ?? '').includes('没有登记'),
+      landedHint: '`[]` 那副的第一行里应当出现「没有登记」',
+      hint: '「登记」的否定形态被当成了"登记了"（`includes(\'登记\')` 的边界；复审 batch6r2 §1①-1）',
+    })
+
+    // ── 2f. 多列刀：表头加第 4 列（`("事","为什么","代价","多出来的一列")`）──────────────────
+    //      表头比较是**前缀**（`slice(0, header.length)`）、`rowCells` 只读 0..2 ⇒ 第 4 列既不红也不扫。
+    //      期望：`CARD07-LAYOUT` **恰好一条**（版式一红就早退，别的判据不重复报）。
+    const extraColKnife = probeKnife(
+      'knife-extra-col',
+      path.join(scenes[0].roots.runRoot, 'knife', 'card-07-extra-col'),
+      {
+        why: 'CARD-07 表头多一列',
+        marker: 'KNIFE-EXTRA-COLUMN',
+        states: ['rows'],
+        patch: [{
+          from: '    ws4.append(()); ws4.append(("事", "为什么", "代价")); head(ws4, 3)\n',
+          to: '    ws4.append(()); ws4.append(("事", "为什么", "代价", "多出来的一列")); head(ws4, 3)  # KNIFE-EXTRA-COLUMN\n',
+          why: '表头加第 4 列 ⇒ 前缀比较会把它切掉（旧写法既不红也不扫）',
+        }],
+      },
+    )
+    const EXTRA_COL_EXPECTED = ['CARD07-LAYOUT']
+    readings.knife_extra_col = {
+      error: extraColKnife.error,
+      knife: extraColKnife.knife,
+      runs: extraColKnife.runs,
+      codes: extraColKnife.codes,
+      expected: EXTRA_COL_EXPECTED,
+    }
+    judgeKnife(push, 'CARD07-PENDING-KNIFE-EXTRA-COL', 'K', extraColKnife, EXTRA_COL_EXPECTED, {
+      productionSha: productionBefore.sha256,
+      landed: (rs) => (rs[0]?.header_cells ?? []).length === PENDING_LAYOUT.header.length + 1,
+      landedHint: `表头那行应当有 ${PENDING_LAYOUT.header.length + 1} 个非空格`,
+      hint: '第 4 列既不红也不被扫（表头前缀比较 + `rowCells` 只读 0..2；复审 batch6r2 §1①-2）',
+    })
 
     // ── 3. 生产那一份一个字节都不许动 ───────────────────────────────────────────
     const productionAfter = { file: productionFile, sha256: sha256Of(productionFile) }
