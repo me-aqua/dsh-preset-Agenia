@@ -395,7 +395,10 @@ export async function runCase(id, fn) {
  *            floor:{min_files:number,staged_ok:boolean,live_ok:boolean}|null, note:string}}
  */
 export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPreset, minFiles = null } = {}) {
-  const SKIP = new Set(['.runtime'])
+  // 🔴 2026-11-06：这份 SKIP 与 `env.mjs::FROZEN.targetLag.dataSegments` 是**同一个口径**，
+  //    两份各写一份迟早分叉（今天就分叉了：那边加了 `.snapshot`，这边没有 ⇒ STAT-01 照红）。
+  //    单源 = `FROZEN.targetLag.dataSegments`，这里只做兜底合并，别再各写各的。
+  const SKIP = new Set([...(FROZEN.targetLag?.dataSegments ?? []), '.runtime', '.snapshot'])
   const live = canonical(liveRoot)
   const stagedRaw = optionalEnv(ENV.STAGING_PRESET, env)
   const staged = stagedRaw ? canonical(stagedRaw) : null

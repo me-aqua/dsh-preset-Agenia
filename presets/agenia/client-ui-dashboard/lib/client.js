@@ -311,7 +311,7 @@ window.__ModuleLoader__.load({
 		//#endregion
 		//#region lib/types/client/mount.js
 		/** 视图快照在工作区里的相对路径（Node 侧写它；本插件只读它）。 */
-		const SNAPSHOT_PATH = ".team/dashboard/view.json";
+		const SNAPSHOT_PATH = "presets/agenia/.snapshot/dashboard-view.json";
 		/** 本插件用到的浏览器服务：槽位 + 词典 + 会话 + 读文件的那条 Remote。 */
 		const inject = [
 			"sessions",
