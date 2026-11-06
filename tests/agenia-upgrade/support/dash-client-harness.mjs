@@ -248,6 +248,11 @@ export const findTrigger = (tree) => findAll(tree, (node) => node.props?.['aria-
 export const findAlert = (tree) => findAll(tree, (node) => node.props?.role === 'alert')[0] ?? null
 /** 那个槽位自己的根（`data-dashboard-action`）。 */
 export const findRoot = (tree) => findAll(tree, (node) => node.props?.['data-dashboard-action'] === true)[0] ?? null
+/**
+ * 「这个工作区还没有快照」那条**状态**通知（`data-dashboard-absent`）。
+ * 它与 `role="alert"` 是两个世界：一个是"这里本来就没有"，一个是"出事了" —— 判据必须分得开。
+ */
+export const findAbsent = (tree) => findAll(tree, (node) => node.props?.['data-dashboard-absent'] === true)[0] ?? null
 
 /**
  * 装一份渲染层，之后可以反复开"现场"。
@@ -336,6 +341,7 @@ export function createDashboardHarness(source) {
       trigger_present: false,
       root_present: false,
       alert_text: null,
+      absent: null,
       panel_style: null,
       hook_args: null,
       texts: [],
@@ -384,6 +390,13 @@ export function createDashboardHarness(source) {
     reading.root_present = findRoot(tree) !== null
     const alert = findAlert(tree)
     reading.alert_text = alert === null ? null : textsOf(alert).join('').trim()
+    const absent = findAbsent(tree)
+    reading.absent = absent === null ? null : {
+      role: absent.props?.role ?? null,
+      text: textsOf(absent).join('').trim(),
+      /** `code` 子节点里的文字（口径写的是"一句人话 + `<code>path</code>`；这里只记读数，不断言）。 */
+      code: findAll(absent, (node) => node.type === 'code').map((node) => textsOf(node).join('').trim()),
+    }
     const panel = findPanel(tree)
     reading.panel_style = panel === null ? null : panel.props.style ?? null
     reading.hook_args = reactor.lastHookArgs === null ? null : {
@@ -446,6 +459,26 @@ export async function probeCall(call) {
 }
 
 /**
+ * 取**某一版**渲染层的真字节（刀用）。
+ *
+ * 为什么要有它：合成变异体只能证明"判据会翻面"，证明不了"它抓得住那一版真正做过的事"。
+ * 拿历史提交里那一版**真字节**装进载具跑一遍，抓到的才是那个行为本身。
+ * `commit` 逐字给（`abc1234` 与 `abc1234^` 都行）；拿不到就如实说为什么，由调用方判 HOLD。
+ *
+ * @returns {{available:boolean, why:string|null, sha256:string|null, text:string|null}}
+ */
+export function clientSourceAtCommit({ repo = PATHS.repo, commit, rel = CLIENT_REL } = {}) {
+  const empty = { available: false, why: null, sha256: null, text: null }
+  if (typeof commit !== 'string' || commit.trim() === '') return { ...empty, why: '没给提交（`commit` 是空的）—— 取哪一版无从说起' }
+  if (!existsSync(path.join(repo, '.git'))) return { ...empty, why: '这棵树没有 `.git`（只读副本 / 导出树）⇒ 拿不到历史字节' }
+  const shown = spawnSync('git', ['show', `${commit}:${rel}`], { cwd: repo, encoding: 'utf8' })
+  if (shown.status !== 0) return { ...empty, why: `git show ${commit}:${rel} 失败（exit ${shown.status}）：${String(shown.stderr ?? '').trim().slice(0, 200)}` }
+  const text = String(shown.stdout ?? '')
+  if (text.trim() === '') return { ...empty, why: `git show ${commit}:${rel} 拿到空正文` }
+  return { available: true, why: null, sha256: createHash('sha256').update(text, 'utf8').digest('hex'), text }
+}
+
+/**
  * 取**故障那一版**的渲染层真字节（`d586215^:presets/agenia/client-ui-dashboard/lib/client.js`）。
  *
  * 两件事一起交回来：
@@ -458,17 +491,15 @@ export async function probeCall(call) {
  */
 export function preFailureClientSource({ repo = PATHS.repo, commit = PRE_FAILURE_COMMIT } = {}) {
   const empty = { available: false, why: null, sha256: null, text: null, has_hidden_fallback: false, has_guard_message: false, proves_old: false }
-  if (!existsSync(path.join(repo, '.git'))) return { ...empty, why: '这棵树没有 `.git`（只读副本 / 导出树）⇒ 拿不到历史字节' }
-  const shown = spawnSync('git', ['show', `${commit}^:${CLIENT_REL}`], { cwd: repo, encoding: 'utf8' })
-  if (shown.status !== 0) return { ...empty, why: `git show ${commit}^:${CLIENT_REL} 失败（exit ${shown.status}）：${String(shown.stderr ?? '').trim().slice(0, 200)}` }
-  const text = String(shown.stdout ?? '')
-  if (text.trim() === '') return { ...empty, why: `git show ${commit}^:${CLIENT_REL} 拿到空正文` }
+  const at = clientSourceAtCommit({ repo, commit: `${commit}^` })
+  if (!at.available) return { ...empty, why: at.why }
+  const text = at.text
   const hasHidden = /visibility\s*:\s*["']hidden["']/.test(text)
   const hasGuard = text.includes('remote.workspaceFiles 不可用')
   return {
     available: true,
     why: null,
-    sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+    sha256: at.sha256,
     text,
     has_hidden_fallback: hasHidden,
     has_guard_message: hasGuard,

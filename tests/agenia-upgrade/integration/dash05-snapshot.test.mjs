@@ -23,15 +23,23 @@
  *     （`_runs/zof-dash-redonfrozen-final-2253`）。⚠️ 写这格时 dev 正在并发改 `presets/**`
  *     （22:19–22:20 把日键改成了 `dayKeyOf(now)`）⇒ 现役树上的读数会变绿；**红只能绑在不变的树上**。
  *
- * 🔴 **2026-11-06 重写了两腿**（老板报障：点「看板」，按钮自己消失、面板一个字都不留）：
- *   · **读调用那一条**：旧断言是 `/workspaceFiles\.read\s*\(\s*sessionId\s*,\s*SNAPSHOT_PATH/` ——
- *     一个**文本形状**。为了让同步抛变成一条 rejected promise，实现改成先取服务
- *     （`const svc = ctx.remote && ctx.remote.workspaceFiles`）再 `svc.read(...)`，这句就红在
- *     `DASH11-SNAPSHOT-PATH-DRIFT` 上 —— 红因说的是"路径漂了"，其实路径一个字都没动。
- *     现在改成**两位读者**：① 源码里那个 `SNAPSHOT_PATH` 字面量 = `DASHBOARD_SNAPSHOT_REL`（静态）；
- *     ② **真装 `client.js`、真点一次**，把 `read` 被调用时的实参抓下来（行为）—— 第二读者比字面量比对硬：
- *     它认的是**运行时真的传了什么**，不是"文件里有没有那句话"。
- *   · **新的一腿「读盘失败只画红条」**：`readSnapshot` 在"服务不在 / 同步抛 / 返回 rejected"三种情形下
+ * 🔴 **读盘这一条现在的样子**（`read` 返回的那一页由 `pickPageText` 取正文；`readSnapshot` resolve
+ * `{text}`，远端报 `workspace-file/not-found` 时 resolve `{absent:<path>}`）：组件成功那一支是
+ * `setView(JSON.parse(result.text))`，没有快照那一支画一条灰的 `role="status"` 通知
+ * （`data-dashboard-absent`）。⇒ 四条判据各钉一件事：
+ *   ① **静态**（`-SNAPSHOT-PATH-DRIFT`）：`SNAPSHOT_PATH` 与 `DASHBOARD_SNAPSHOT_REL` 两半同源，
+ *      且渲染层**解析的是它读回来的那份文本**（`JSON.parse(text)` 或 `JSON.parse(<读盘结果>.text)`）——
+ *      不是自己算出来的对象；"不自己做账本数学"由 `-LEDGER-TOUCHED` 那一族看。
+ *      ⚠️ 静态只判文本形状；**运行时真的传了什么**由 ⑦ 那次真跑说了算（第二读者比字面量比对硬）。
+ *   ② **成功那一支**（`-SUCCESS-BROKEN`）：三种页形状（扁平 `{offset,text,lines,eof}` /
+ *      `{value:{text}}` / `{result:{text}}`）都必须渲染出快照里的 headline，且 `readSnapshot`
+ *      resolve 出 `{text}`（正文逐字是那一页的）。
+ *   ③ **认不出的页形状**（`-SHAPE-UNNAMED` / `-SHAPE-SWALLOWED`）：红条必须**点名形状**
+ *      （类型 + 顶层键 + 预览），不许退化成 `"undefined" is not valid JSON`（现场那句）。
+ *   ④ **没有快照那一格**（`-ABSENT-*`）：`workspace-file/not-found` ⇒ `[data-dashboard-absent]` 在、
+ *      `role="status"`、文字里带着它找的那个路径、**没有** `role="alert"`、按钮与根都还在。
+ *     红基线是 `46ddea6` 那一版真字节（`pickPageText` 有了、`absent` 那一支还没有）。
+ *   · **那一腿「读盘失败只画红条」**：`readSnapshot` 在"服务不在 / 同步抛 / 返回 rejected"三种情形下
  *     都必须是**一条 rejected promise**（不是同步抛），组件必须**还画得出按钮**并多出一条 `role="alert"`
  *     的错误条，条上带的是**那一条原因**。这一腿的红形态由**故障那一版的真字节**（`d586215^`）给出。
  *     载具见 `support/dash-client-harness.mjs`（假 React 的边界写在那份文件的文件头）。
@@ -51,7 +59,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
-import { createDashboardHarness, messageOf, preFailureClientSource } from '../support/dash-client-harness.mjs'
+import { createDashboardHarness, clientSourceAtCommit, messageOf, preFailureClientSource } from '../support/dash-client-harness.mjs'
 import { PATHS } from '../support/env.mjs'
 import {
   DASH_CLIENT,
@@ -83,6 +91,14 @@ const pluginIndexOf = () => path.join(path.dirname(DASH_CLIENT), 'index.js')
  */
 const LIVE_CLIENT = path.join(PATHS.repo, 'presets', 'agenia', 'client-ui-dashboard', 'lib', 'client.js')
 const SUT_IS_COPY = DASH_CLIENT !== LIVE_CLIENT
+/**
+ * **缺 `absent` 那一支**的那一版（`46ddea6` = 认了包装页形状、还没有"这个工作区没有快照"那一支）。
+ *
+ * 为什么把哈希写在这里：这一格的红基线要能证明"它抓得住现场那次真缺陷" —— 合成变异体只能证明
+ * 判据会翻面，抓不住"我造的那个假缺陷与现场那个真缺陷是不是同一个"。`46ddea6` 是**不变的历史**。
+ * ⚠️ 拿不到它（副本没有 `.git`）⇒ 那一腿记 **HOLD**，不当绿。
+ */
+const PRE_ABSENT_COMMIT = '46ddea6'
 
 // ── 夹具（只写运行根）───────────────────────────────────────────────────────
 /** 每一个现场一个目录；**拒绝 C 盘 / 拒绝跑出运行根**（与 `root-guard` 同一条纪律）。 */
@@ -232,6 +248,29 @@ function viewShapeProblems(view, where) {
     }
   }
   return problems
+}
+
+// ── 渲染层：解析的是"读回来的那份文本"（静态腿）────────────────────────────────
+/**
+ * 静态腿：**渲染层解析的是它读回来的那份文本**，不是自己算出来的对象（"不自己做账本数学"
+ * 由下面 `-LEDGER-TOUCHED` 那一族看）。
+ *
+ * 认两种写法：
+ *   · `JSON.parse(text)` —— 正文已经取到变量里；
+ *   · `JSON.parse(<读盘结果>.text)` —— 正文还挂在读盘结果上（`result.text` 就是这一种）。
+ * **不认** `JSON.parse(<对象>)` / `JSON.parse(<字面量>)`：那说明被解析的东西不是"读回来的文本"。
+ *
+ * ⚠️ 这一条只判**文本形状**（点得快、红了也容易看）；运行时真的传了什么、真的画出什么，
+ * 由 ⑦ 那次"真装 `client.js`、真点一次"说了算 —— 第二读者比字面量比对硬。
+ */
+function parseLegProblems(clientCode) {
+  const args = [...clientCode.matchAll(/JSON\.parse\s*\(\s*([^()]*?)\s*\)/g)].map((match) => match[1].trim())
+  const reading = { json_parse_args: args, ok: args.some((arg) => /^(?:[A-Za-z_$][\w$]*\s*\.\s*)?text$/.test(arg)) }
+  if (reading.ok) return { reading, problems: [] }
+  return {
+    reading,
+    problems: [problem(SHAPE_CODES.path, `渲染层没有解析"它读回来的那份文本"（实得 \`JSON.parse\` 的实参：${args.length === 0 ? '一处都没有' : JSON.stringify(args)}）—— 认的写法是 \`JSON.parse(text)\` 或 \`JSON.parse(<读盘结果>.text)\``)],
+  }
 }
 
 // ── 原子写机制（源码那一半；行为那一半在下面的 crash 现场）──────────────────
@@ -488,7 +527,9 @@ test('DASH-11 Node 半边端到端：apply() 落 view.json（原子/形状/覆�
     if (!serviceMentioned) {
       problems.push(problem(SHAPE_CODES.path, '渲染层里没有 `workspaceFiles` —— 它读的不是那条 Remote 服务（绕过服务读盘 = 浏览器侧根本拿不到内容）'))
     }
-    if (!/JSON\.parse\s*\(\s*text\s*\)/.test(clientCode)) problems.push(problem(SHAPE_CODES.path, '渲染层没有 `JSON.parse(text)` —— 读到的是文本却没用上'))
+    const parseLeg = parseLegProblems(clientCode)
+    rec.readings.renderer_parse = parseLeg.reading
+    for (const p of parseLeg.problems) problems.push(p)
     const ledgerHits = ['\\.team[\\\\/](route|bug|state)', 'state[\\\\/]update', 'node:fs', 'readFileSync\\s*\\(', 'openCounts\\s*\\(', 'ticketStatusOf\\s*\\(']
       .flatMap((pattern) => {
         const re = new RegExp(pattern)
@@ -500,12 +541,15 @@ test('DASH-11 Node 半边端到端：apply() 落 view.json（原子/形状/覆�
     }
     // ⑦ 读盘失败只许画红条：**不许把组件带走**，也不许同步抛（2026-11-06 01:19 那个现场）
     await clientFailureLeg({ rec, clientSource, rel, problems })
+    // ⑧ 没有快照（`workspace-file/not-found`）只许画一条灰的 status 通知，不许画成红错
+    await clientAbsentLeg({ rec, clientSource, rel, problems })
 
     caseFail(problems)
   })
 })
 
 // ── `DASH-11` ⑦：渲染层的读盘失败路径（行为那一腿）────────────────────────────
+/** 读盘失败 / 成功 / 页形状 那一族的红因码。 */
 const CLIENT_CODES = {
   unloadable: 'DASH11-CLIENT-UNLOADABLE',
   threw: 'DASH11-CLIENT-THREW',
@@ -515,9 +559,23 @@ const CLIENT_CODES = {
   noAlert: 'DASH11-CLIENT-NO-ERROR-STATE',
   buttonGone: 'DASH11-CLIENT-BUTTON-GONE',
   successBroken: 'DASH11-CLIENT-SUCCESS-BROKEN',
+  /** 认不出的页形状：红条没点名形状（说不出拿到的是个什么东西）。 */
+  shapeUnnamed: 'DASH11-CLIENT-SHAPE-UNNAMED',
+  /** 认不出的页形状被吞了：没有红条 / readSnapshot 没被拒。 */
+  shapeSwallowed: 'DASH11-CLIENT-SHAPE-SWALLOWED',
   pathDrift: 'DASH11-CLIENT-READ-PATH-DRIFT',
   knife: 'DASH11-KNIFE-VECTOR',
   knifeUnavailable: 'DASH11-KNIFE-UNAVAILABLE',
+}
+
+/** 「这个工作区还没有快照」那一族的红因码（一条子断言一个码）。 */
+const ABSENT_CODES = {
+  noNotice: 'DASH11-CLIENT-ABSENT-NO-NOTICE',
+  notStatus: 'DASH11-CLIENT-ABSENT-NOT-STATUS',
+  noPath: 'DASH11-CLIENT-ABSENT-NO-PATH',
+  asAlert: 'DASH11-CLIENT-ABSENT-AS-ALERT',
+  buttonGone: 'DASH11-CLIENT-ABSENT-BUTTON-GONE',
+  knifeUnavailable: 'DASH11-ABSENT-KNIFE-UNAVAILABLE',
 }
 
 /** 一份最小但**合法**的视图快照（`schema` 必须是渲染层认识的那一版；内容只为让成功那一支画出来）。 */
@@ -604,13 +662,129 @@ function failureVisitProblems(name, got, spec) {
 }
 
 /**
+ * 一个现场：把远端包一层，`read` 被调用时把实参抓下来（**运行时**同源只能在这里看），
+ * 需要时把返回值钉成一页。
+ *
+ * @param {{scene:Function}} on 载具
+ * @param {unknown} remote 远端服务
+ * @param {unknown} [page] 非 null ⇒ `read` 直接 resolve 这一页（不碰服务自己的 `read`）
+ */
+async function sceneOf(on, remote, page = null) {
+  const calls = []
+  const wrapped = remote === undefined || remote === null || typeof remote !== 'object'
+    ? remote
+    : {
+        ...remote,
+        ...(remote.workspaceFiles && typeof remote.workspaceFiles === 'object' && typeof remote.workspaceFiles.read === 'function'
+          ? {
+              workspaceFiles: {
+                ...remote.workspaceFiles,
+                read: (...args) => {
+                  calls.push(args)
+                  return page === null ? remote.workspaceFiles.read(...args) : Promise.resolve(page)
+                },
+              },
+            }
+          : {}),
+      }
+  const reading = await on.scene({ remote: wrapped })
+  reading.read_calls = calls
+  return reading
+}
+
+/**
+ * 一个"服务永远返回这一页"的远端。
+ *
+ * `read` 故意**同步抛**：这一格的返回值必须由 `sceneOf` 的采集层接住 —— 接不住就当场变成
+ * `-THREW`，而不是悄悄落回服务自己的 `read` 又"碰巧"成功（那种绿是假的）。
+ */
+const pageService = (page) => ({
+  workspaceFiles: {
+    read() {
+      throw new Error('PAGE-SERVICE-READ-CALLED —— 采集层没接住返回值（这一格判不了，不许记绿）')
+    },
+  },
+})
+
+/**
+ * 「读成功」那一支的判据（**纯函数**；三种页形状共用一份）。
+ *
+ * 每格四样同时成立：
+ *   ① `readSnapshot` resolve 出**新契约**的 `{text}`（不是裸字符串、也不是把页原样交出来）；
+ *   ② `text` **逐字**等于那一页的正文（"取正文"这一步不许改字节）；
+ *   ③ 树里画得出快照里的 headline —— 说明那段文本真的被解析成了视图；
+ *   ④ 树里**没有** `role="alert"` —— 好读数不许报成坏读数。
+ * ①里还带一条：**不许同时带 `absent`** —— 成功与"这个工作区没有快照"是互斥的两支。
+ *
+ * @param {string} name 现场名（红因里点名用）
+ * @param {object} got 载具读数
+ * @param {string} wantText 那一页的正文（逐字）
+ */
+function successProblems(name, got, wantText) {
+  const problems = []
+  const value = got.direct === null ? null : got.direct.value
+  const isObject = value !== null && typeof value === 'object'
+  if (got.direct === null || got.direct.status !== 'resolved') {
+    problems.push(problem(CLIENT_CODES.successBroken, `成功现场「${name}」：readSnapshot 没有 resolve（${JSON.stringify(got.direct)}）`))
+  } else if (!isObject || typeof value.text !== 'string') {
+    problems.push(problem(CLIENT_CODES.successBroken, `成功现场「${name}」：resolve 出来的不是 {text}（${JSON.stringify(value)?.slice(0, 160)}）—— 读盘的两支是 {text} / {absent}`))
+  } else if (value.text !== wantText) {
+    problems.push(problem(CLIENT_CODES.successBroken, `成功现场「${name}」：{text} 不是那一页的正文 —— 取正文时被改了（实得 ${JSON.stringify(value.text).slice(0, 120)}）`))
+  } else if ('absent' in value) {
+    problems.push(problem(CLIENT_CODES.successBroken, `成功现场「${name}」：读成功却带着 absent=${JSON.stringify(value.absent)} —— 成功与"没有快照"两支同时成立`))
+  }
+  if (!got.texts.includes(CLIENT_VIEW.header.text)) {
+    problems.push(problem(CLIENT_CODES.successBroken, `成功现场「${name}」：快照里的 headline ${JSON.stringify(CLIENT_VIEW.header.text)} 没画出来 —— 这段文本没有被解析成视图（树里的文字：${JSON.stringify(got.texts.slice(0, 8))}）`))
+  }
+  if (got.alert_text !== null) {
+    problems.push(problem(CLIENT_CODES.successBroken, `成功现场「${name}」：画出了一条错误条（${JSON.stringify(got.alert_text)}）—— 好读数被报成了坏读数`))
+  }
+  return problems
+}
+
+/**
+ * 「认不出的页形状」那一格：**那条红条就是量具**。
+ *
+ * 它必须告诉读的人"拿到的是个什么东西"（类型 + 顶层键 + 一段预览）；`{ok:false}` 这一页
+ * 认不出正文，所以 `pickPageText` 要抛一条**点名形状**的错误。**不许**退化成
+ * `"undefined" is not valid JSON` —— 那句只说 JSON 坏了，说不出拿到的是空、是对象、还是被包了一层
+ * （2026-11-06 现场就是这一句，它把"形状不对"伪装成了"JSON 坏了"）。
+ */
+function shapeNamedProblems(got) {
+  const problems = []
+  const seen = new Set()
+  /** 同一个红因码只报一条（与 `failureVisitProblems` 同一条口径）。 */
+  const report = (code, message) => {
+    if (seen.has(code)) return
+    seen.add(code)
+    problems.push(problem(code, message))
+  }
+  const alert = got.alert_text
+  if (got.direct === null || got.direct.status !== 'rejected') {
+    report(CLIENT_CODES.shapeSwallowed, `认不出的页形状没有被拒（readSnapshot 是 ${JSON.stringify(got.direct === null ? null : got.direct.status)}）—— 形状错误被吞成了"读到了"`)
+  }
+  if (alert === null) {
+    report(CLIENT_CODES.shapeSwallowed, '认不出的页形状没有画成红条（树里没有 role="alert"）—— 读者看不到"读回来的东西认不出"')
+    return problems
+  }
+  if (!/键|object/.test(alert)) {
+    report(CLIENT_CODES.shapeUnnamed, `红条没有点名形状（文字=${JSON.stringify(alert)}）—— 应当含"键"或 object（类型 + 顶层键 + 预览那一句）`)
+  }
+  if (alert.includes('"undefined" is not valid JSON')) {
+    report(CLIENT_CODES.shapeUnnamed, '红条就是现场那句 "undefined" is not valid JSON —— 它说不出拿到的是个什么东西（这一格整条的来历）')
+  }
+  return problems
+}
+
+/**
  * `DASH-11` 的那一腿：**读盘失败必须变成错误态，而且不许把组件带走**。
  *
  * 判据是本文件上面那个 `failureVisitProblems`（纯函数）—— 三个读者，同一份判据：
  *   · **真源码**：五种失败现场（服务不在 / 没有 `workspaceFiles` / `read` 不是函数 / `read` 同步抛 /
  *     `read` 返回 rejected）逐个走一遍；
- *   · **成功那一支**的反面：`read` 返回 `{text: JSON.stringify(view)}` ⇒ 树里画得出快照里的 headline，
- *     且**没有**错误条；`read` 被调用时第二个实参必须逐字等于 `DASHBOARD_SNAPSHOT_REL`（运行时同源）；
+ *   · **成功那一支**的反面：三种页形状（扁平 / `{value:{text}}` / `{result:{text}}`）都要落成同一张视图
+ *     （`successProblems`），且 `read` 被调用时第二个实参必须逐字等于 `DASHBOARD_SNAPSHOT_REL`（运行时同源）；
+ *   · **认不出的页形状**：`{ok:false}` 那一页的红条必须点名形状（`shapeNamedProblems`）；
  *   · **刀**：三条只改内存里源码的变异 + **故障那一版真字节**（`d586215^`）—— 每条都只说清一件事：
  *       刀 A `setFailure("")`（抓到了但不写原因）⇒ 只翻 `-NO-ERROR-STATE`；
  *       刀 B 失败时 `return null`（把整个槽位不画）⇒ 翻 `-NO-ERROR-STATE` + `-BUTTON-GONE`（两个都该翻：
@@ -629,31 +803,11 @@ async function clientFailureLeg({ rec, clientSource, rel, problems }) {
   /**
    * 一个现场：`read` 被调用时把实参抓下来（**运行时**同源只能在这里看）。
    * @param {unknown} remote
-   * @param {{text?:string}} [reply]
+   * @param {unknown} [page] 给了就把 `read` 的**返回值**钉成这一页（成功 / 认不出 那几格喂页形状）；
+   *   不给 ⇒ 真调服务自己的 `read`（失败现场用）
    * @param {object} [on] 换一副载具（刀用；缺省就是真源码那一副）
    */
-  const scene = async (remote, reply = null, on = harness) => {
-    const calls = []
-    const wrapped = remote === undefined || remote === null || typeof remote !== 'object'
-      ? remote
-      : {
-          ...remote,
-          ...(remote.workspaceFiles && typeof remote.workspaceFiles === 'object' && typeof remote.workspaceFiles.read === 'function'
-            ? {
-                workspaceFiles: {
-                  ...remote.workspaceFiles,
-                  read: (...args) => {
-                    calls.push(args)
-                    return reply === null ? remote.workspaceFiles.read(...args) : Promise.resolve({ text: reply.text })
-                  },
-                },
-              }
-            : {}),
-        }
-    const reading = await on.scene({ remote: wrapped })
-    reading.read_calls = calls
-    return reading
-  }
+  const scene = (remote, page = null, on = harness) => sceneOf(on, remote, page)
 
   const failures = {}
   for (const [name, spec] of Object.entries(FAILING_SERVICES)) {
@@ -670,30 +824,35 @@ async function clientFailureLeg({ rec, clientSource, rel, problems }) {
   }
   rec.readings.client_failures = failures
 
-  // ⑤ 成功那一支：仍然解析那一份快照（`read` 的实参同源也在这一格里量）
-  const happy = await scene(
-    { workspaceFiles: { read: async () => ({ text: JSON.stringify(CLIENT_VIEW) }) } },
-    { text: JSON.stringify(CLIENT_VIEW) },
-  )
-  rec.readings.client_success = {
-    direct_status: happy.direct?.status ?? null,
-    resolved_is_text: happy.direct?.status === 'resolved' && happy.direct.value === JSON.stringify(CLIENT_VIEW),
-    throws: happy.throws,
-    alert_text: happy.alert_text,
-    headline_drawn: happy.texts.includes(CLIENT_VIEW.header.text),
-    read_calls: happy.read_calls,
+  // ⑤ 成功那一支：**三种页形状**都必须落成同一张视图（`read` 的实参同源也在这一格里量）
+  const SNAPSHOT_TEXT = JSON.stringify(CLIENT_VIEW)
+  /**
+   * 服务返回的那一页有三种成功形状 —— 喂的是**页本身**，不是我们替它包好的 `{text}`：
+   * 浏览器那边拿到哪种形状是服务说了算，`pickPageText` 就是为这三种而存在。
+   */
+  const PAGE_SHAPES = {
+    扁平页: { page: { offset: 1, text: SNAPSHOT_TEXT, lines: 1, eof: true }, shape: '{offset,text,lines,eof}' },
+    包一层value: { page: { value: { text: SNAPSHOT_TEXT } }, shape: '{value:{text}}' },
+    包一层result: { page: { result: { text: SNAPSHOT_TEXT } }, shape: '{result:{text}}' },
   }
-  if (happy.direct === null || happy.direct.status !== 'resolved') {
-    problems.push(problem(CLIENT_CODES.successBroken, `成功现场：「readSnapshot」没有 resolve 出文本（${JSON.stringify(happy.direct)}）`))
-  } else if (happy.direct.value !== JSON.stringify(CLIENT_VIEW)) {
-    problems.push(problem(CLIENT_CODES.successBroken, '成功现场：`readSnapshot` resolve 出来的不是 `page.text` —— 读到的正文丢了'))
+  const successReadings = {}
+  /** 第一个成功现场：三种形状走的是同一条 `read` 调用，读盘实参只在它身上量一次。 */
+  let happy = null
+  for (const [name, spec] of Object.entries(PAGE_SHAPES)) {
+    const got = await scene(pageService(spec.page), spec.page)
+    successReadings[name] = {
+      page: spec.shape,
+      direct_status: got.direct?.status ?? null,
+      resolved: got.direct?.value ?? null,
+      headline_drawn: got.texts.includes(CLIENT_VIEW.header.text),
+      alert_text: got.alert_text,
+      throws: got.throws,
+      read_calls: got.read_calls,
+    }
+    for (const p of successProblems(`${name}（${spec.shape}）`, got, SNAPSHOT_TEXT)) problems.push(p)
+    if (happy === null) happy = got
   }
-  if (!happy.texts.includes(CLIENT_VIEW.header.text)) {
-    problems.push(problem(CLIENT_CODES.successBroken, `成功现场：快照里的 headline ${JSON.stringify(CLIENT_VIEW.header.text)} 没画出来 —— 成功路径不再「JSON.parse」那一份了（树里的文字：${JSON.stringify(happy.texts.slice(0, 8))}）`))
-  }
-  if (happy.alert_text !== null) {
-    problems.push(problem(CLIENT_CODES.successBroken, `成功现场：画出了一条错误条（${JSON.stringify(happy.alert_text)}）—— 好读数被报成了坏读数`))
-  }
+  rec.readings.client_success = successReadings
   if (happy.read_calls.length === 0) {
     problems.push(problem(CLIENT_CODES.pathDrift, '成功现场：组件一次都没调用 `read` —— 那它画的东西不是从那份快照来的'))
   } else {
@@ -710,6 +869,18 @@ async function clientFailureLeg({ rec, clientSource, rel, problems }) {
       problems.push(problem(CLIENT_CODES.pathDrift, `组件读盘的第三个实参是 ${JSON.stringify(args[2])}，应当是 {offset:1, limit:200} —— 那一份快照只读第一页`))
     }
   }
+
+  // ⑥ 认不出的页形状：红条必须**点名形状**（这整格的来历就是现场那句 `"undefined" is not valid JSON`）
+  const badPage = { ok: false }
+  const bad = await scene(pageService(badPage), badPage)
+  rec.readings.client_bad_shape = {
+    page: '{ok:false}',
+    direct: bad.direct,
+    alert_text: bad.alert_text,
+    trigger_present: bad.trigger_present,
+    root_present: bad.root_present,
+  }
+  for (const p of shapeNamedProblems(bad)) problems.push(p)
 
   // ── 刀：同一份判据（`failureVisitProblems`）在变异体 / 故障那一版上必须点名 ──────────────
   // 🔴 两把变异刀切的是**活树**那一份（`LIVE_CLIENT`），不是 SUT —— 见 `LIVE_CLIENT` 那一行注释。
@@ -773,6 +944,128 @@ async function clientFailureLeg({ rec, clientSource, rel, problems }) {
     problems.push(problem(CLIENT_CODES.knife, `故障那一版装不进载具（${oldKnife.why}）—— 这把刀切不动`))
   } else if (JSON.stringify(oldKnife.codes) !== JSON.stringify(wantOld)) {
     problems.push(problem(CLIENT_CODES.knife, `故障那一版在"服务不在"现场翻出来的是 ${JSON.stringify(oldKnife.codes)}，应当恰好是 ${JSON.stringify(wantOld)}（同步抛 + 没有红条）—— 这一腿对那次真故障是瞎的，或者连别的面一起抓`))
+  }
+}
+
+// ── `DASH-11` ⑧：`workspace-file/not-found` 是一条状态，不是故障 ────────────────────
+/**
+ * 「这个工作区还没有快照」那一格的判据（**纯函数**；两个现场共用一份）。
+ *
+ * 一条子断言一个码，缺哪条说哪条：
+ *   ① `-ABSENT-NO-NOTICE`：树里没有 `[data-dashboard-absent]` 那条通知；
+ *      有通知之后再判两样 —— `-ABSENT-NOT-STATUS`（`role` 必须是 `status`，不是告警、也不是对话框）、
+ *      `-ABSENT-NO-PATH`（通知里带着**远端报的那个路径**，读的人知道该去哪儿找）；
+ *   ② `-ABSENT-AS-ALERT`：树里**没有** `role="alert"` —— 没有快照不是故障，画成红条就是"看板崩了"；
+ *   ③ `-ABSENT-BUTTON-GONE`：槽位的根与触发器**都还在** —— 这一下不许把组件带走。
+ *
+ * @param {string} label 现场名
+ * @param {object} got 载具读数
+ * @param {string} wantPath 通知里该出现的那个路径
+ */
+function absentVisitProblems(label, got, wantPath) {
+  const problems = []
+  const notice = got.absent ?? null
+  if (notice === null) {
+    problems.push(problem(ABSENT_CODES.noNotice, `现场「${label}」：树里没有 [data-dashboard-absent] 通知（readSnapshot=${JSON.stringify(got.direct === null ? null : got.direct.status)} · 红条=${JSON.stringify(got.alert_text)}）—— "这个工作区还没有快照"被画成了别的东西`))
+  } else {
+    if (notice.role !== 'status') {
+      problems.push(problem(ABSENT_CODES.notStatus, `现场「${label}」：通知的 role 是 ${JSON.stringify(notice.role)}，应当是 status —— 它是一条读盘状态，不是告警、也不是对话框`))
+    }
+    if (!String(notice.text ?? '').includes(wantPath)) {
+      problems.push(problem(ABSENT_CODES.noPath, `现场「${label}」：通知里没有它找的那个路径 ${JSON.stringify(wantPath)}（实得 ${JSON.stringify(notice.text)}）—— 读的人不知道该去哪儿找那份快照`))
+    }
+  }
+  if (got.alert_text !== null) {
+    problems.push(problem(ABSENT_CODES.asAlert, `现场「${label}」：同时画出了一条 role="alert" 的红条（${JSON.stringify(got.alert_text)}）—— 没有快照是状态，不是故障`))
+  }
+  if (!got.root_present || !got.trigger_present) {
+    problems.push(problem(ABSENT_CODES.buttonGone, `现场「${label}」：通知之后槽位的根 / 触发器不见了（root=${got.root_present} · trigger=${got.trigger_present}）—— 这一下把组件带走了`))
+  }
+  return problems
+}
+
+/**
+ * `DASH-11` 的那一腿：**没有快照 = 一条状态**。
+ *
+ * 现场：另一个工作区（`RealisticAccessories`）里那份快照**根本不存在**（账本没在那儿跑过），
+ * 远端用 `workspace-file/not-found` 拒；面板却画了一条红错 —— 读的人会把它读成"看板坏了"。
+ * 口径要的是：一条灰的 `role="status"` 通知（一句人话 + 它找的那个路径），**没有** `role="alert"`，
+ * 按钮照旧在。
+ *
+ * 两个读者：
+ *   · **真源码**：两个现场（远端报了路径 / 远端没报路径 ⇒ 用 `SNAPSHOT_PATH`）；远端报的路径
+ *     **故意不等于** `SNAPSHOT_PATH` —— 不然判据分不开"用上了远端报的那一条"与"抄了自己的常量"；
+ *   · **红基线**：`46ddea6` 那一版真字节（`pickPageText` 有了、`absent` 那一支还没有）——
+ *     它必须**只**翻 `-ABSENT-NO-NOTICE` + `-ABSENT-AS-ALERT`（按钮那一码不许跟着翻：
+ *     判据要分得开"画错了"与"组件没了"）。
+ *
+ * @param {{rec:object, clientSource:string, rel:string, problems:Array}} args
+ */
+async function clientAbsentLeg({ rec, clientSource, rel, problems }) {
+  const harness = createDashboardHarness(clientSource)
+  if (!harness.ok) {
+    problems.push(problem(CLIENT_CODES.unloadable, `渲染层装不进载具（${harness.reason}）—— "没有快照要画状态"这一路判不了，不许记绿`))
+    return
+  }
+  /** 远端用 `workspace-file/not-found` 拒了。`details.path` 给不给是两种现场。 */
+  const notFoundService = ({ path: filePath } = {}) => ({
+    workspaceFiles: {
+      read: async () => {
+        const err = new Error('SIMULATED-WORKSPACE-FILE-NOT-FOUND')
+        err.code = 'workspace-file/not-found'
+        if (filePath !== undefined) err.details = { path: filePath }
+        throw err
+      },
+    },
+  })
+  /** 远端报的路径（与组件里那个 `SNAPSHOT_PATH` 常量**不同**）。 */
+  const REMOTE_PATH = 'E:/RealisticAccessories/presets/agenia/.runtime/state/dashboard/view.json'
+  const scenes = [
+    { label: '远端报了路径', remote: notFoundService({ path: REMOTE_PATH }), want: REMOTE_PATH },
+    { label: '远端没报路径', remote: notFoundService(), want: rel },
+  ]
+  const readings = {}
+  for (const spec of scenes) {
+    const got = await sceneOf(harness, spec.remote)
+    readings[spec.label] = {
+      read_calls: got.read_calls,
+      direct_status: got.direct === null ? null : got.direct.status,
+      direct_message: got.direct === null ? null : got.direct.message,
+      notice: got.absent,
+      alert_text: got.alert_text,
+      trigger_present: got.trigger_present,
+      root_present: got.root_present,
+      throws: got.throws,
+      /** 读数（不断言）：那条远端错误的原因有没有被整段倒进通知里。 */
+      dumps_error: got.absent !== null && String(got.absent.text ?? '').includes('SIMULATED-WORKSPACE-FILE-NOT-FOUND'),
+    }
+    for (const p of absentVisitProblems(spec.label, got, spec.want)) problems.push(p)
+  }
+  rec.readings.client_absent = readings
+
+  // 红基线：**缺 `absent` 那一支**的那一版真字节
+  const old = clientSourceAtCommit({ commit: PRE_ABSENT_COMMIT })
+  const provesPre = old.available && old.text.includes('pickPageText') && !old.text.includes('data-dashboard-absent')
+  rec.readings.client_absent_knife_source = { commit: PRE_ABSENT_COMMIT, available: old.available, why: old.why, sha256: old.sha256, proves_pre_absent: provesPre }
+  if (!old.available) {
+    caseHold(rec, ABSENT_CODES.knifeUnavailable, `拿不到 ${PRE_ABSENT_COMMIT} 那一版的真字节（${old.why}）—— "这一格抓得住那次真缺陷"判不了`)
+    return
+  }
+  if (!provesPre) {
+    problems.push(problem(CLIENT_CODES.knife, `${PRE_ABSENT_COMMIT} 那一版不是"缺 absent 那一支"的那一版（指纹对不上：pickPageText=${old.text.includes('pickPageText')} · data-dashboard-absent=${old.text.includes('data-dashboard-absent')}）—— 这把刀证明的是别的东西`))
+    return
+  }
+  const oldHarness = createDashboardHarness(old.text)
+  if (!oldHarness.ok) {
+    problems.push(problem(CLIENT_CODES.knife, `${PRE_ABSENT_COMMIT} 那一版装不进载具（${oldHarness.reason}）—— 这把刀切不动`))
+    return
+  }
+  const oldGot = await sceneOf(oldHarness, notFoundService({ path: REMOTE_PATH }))
+  const opened = absentVisitProblems(`红基线·${PRE_ABSENT_COMMIT}`, oldGot, REMOTE_PATH).map((p) => p.code).sort()
+  const want = [ABSENT_CODES.asAlert, ABSENT_CODES.noNotice].sort()
+  rec.readings.client_absent_knife = { codes: opened, want, notice: oldGot.absent, alert_text: oldGot.alert_text }
+  if (JSON.stringify(opened) !== JSON.stringify(want)) {
+    problems.push(problem(CLIENT_CODES.knife, `${PRE_ABSENT_COMMIT} 那一版在"没有快照"现场翻出来的是 ${JSON.stringify(opened)}，应当恰好是 ${JSON.stringify(want)}（没有通知 + 画成红条；按钮那一码不许跟着翻）—— 这一格对那次真缺陷是瞎的，或者连别的面一起抓`))
   }
 }
 

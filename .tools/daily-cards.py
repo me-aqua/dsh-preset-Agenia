@@ -1299,7 +1299,28 @@ def main():
     ws4 = wb.create_sheet("待你拍")
     ws4["A1"] = "只有还要你点头的才在这儿"; ws4["A1"].font = TITLE
     ws4.append(()); ws4.append(("事", "为什么", "代价")); head(ws4, 3)
-    ws4.append(("（今天 0 件）", "两张卡按定好的形状交齐；明天那一批 %d 条候选自动开庭。" % len(pool), "—"))
+    # 🔴 2026-11-06：原来这一行是**写死的字符串**「（今天 0 件）」—— 有事情要拍也照样印 0。
+    #    现在的读面：`<ws>/.team/leader/<day>/待你拍.json`（组长手写，形状 = [{事, 为什么, 代价}]）。
+    #    文件不在 / 是空数组 ⇒ 印「0 件 · 没有登记」，**不是**「0 件 · 今天没事」——
+    #    「没登记」和「真没有」必须长得不一样，否则这一格永远绿。
+    pending_path = os.path.join(WS, ".team", "leader", day, "待你拍.json")
+    pending_rows = []
+    if os.path.isfile(pending_path):
+        try:
+            # utf-8-sig：别的工具写出来的那份可能带 BOM，`json.loads` 见到 \ufeff 会当场失败，
+            # 而失败的样子和"这个文件坏了"一模一样 —— 这里先把 BOM 吃掉再判。
+            with open(pending_path, encoding="utf-8-sig") as fh:
+                loaded = json.loads(fh.read())
+            if isinstance(loaded, list):
+                pending_rows = [r for r in loaded if isinstance(r, dict)]
+        except Exception as exc:
+            pending_rows = [{"事": "待你拍.json 读不出来（不是合法 JSON）", "为什么": "%s（%s）" % (pending_path, exc), "代价": "这一格不可信"}]
+    if pending_rows:
+        for r in pending_rows:
+            ws4.append((str(r.get("事", "")), str(r.get("为什么", "")), str(r.get("代价", ""))))
+    else:
+        ws4.append(("（今天 0 件 · 没有登记待拍的事）",
+                    "两张卡按定好的形状交齐；明天那一批 %d 条候选自动开庭。" % len(pool), "—"))
     for cell in ws4[ws4.max_row]: cell.alignment = WRAP
     widths(ws4, [("A", 26), ("B", 66), ("C", 40)])
 
@@ -1364,7 +1385,10 @@ def main():
     fmap = (jload(os.path.join(out_dir, "findings-map.json"), {}) or {}).get("map", {})
     for name, d in findings:
         tag = "第一场" if name == "技术评审.findings.json" else ("第二场" if name.startswith("技术评审.2") else name)
-        per = fmap.get(name, {})
+        # 🔴 2026-11-06：`name` 现在可能带「（<被评日> 的评审产物）」后缀（评审天生评前一天），
+        #    而 findings-map 的键是**文件名本身** ⇒ 先按全名找、找不到再按文件名找 —— 否则
+        #    11 条会发现明明登记了也照印「未登记落点」。
+        per = fmap.get(name) or fmap.get(str(name).split("（")[0].strip()) or {}
         for f in (d.get("findings") or []):
             n += 1
             fid = f.get("id", "?")

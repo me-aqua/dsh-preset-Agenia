@@ -144,13 +144,17 @@ window.__ModuleLoader__.load({
 		 *
 		 * 🔴 **定位**照抄官方（官方 L230-236 + L327-331）：`useAnchoredPosition` 拿触发器的
 		 * `getBoundingClientRect()` 算 `{left, top}`（`gap:5` / `margin:16`，越界夹回视口内），
-		 * 结果塞进面板的 `style`；**还没算出来**（`null`）⇒ `visibility:hidden;left:0;top:0` 的兜底 ——
-		 * 面板是 portal 到 `<body>` 末尾的，没有兜底的那一帧会落在页面末尾。
+		 * 结果塞进面板的 `style`；**还没算出来**（`null`）⇒ 兜底是**可见**的安全位置
+		 * （`position:fixed; left:16; top:64`），下一帧再挪到位 ——
+		 * 🔴 **不许**用 `visibility:hidden` 兜底：面板是 portal 到 `<body>` 末尾的，隐藏着等定位
+		 * 在实测里表现为"挂上了、永远看不见"。没有兜底的那一帧会落在页面末尾，但那样看得见。
 		 */
 		function DashboardAction({ sessionId, t, readSnapshot }) {
 			const [open, setOpen] = (0, react.useState)(false);
 			const [view, setView] = (0, react.useState)(null);
 			const [failure, setFailure] = (0, react.useState)(null);
+			/** 这个工作区还没有快照（`workspace-file/not-found`）—— 一条状态，不是故障；值是它找的那个路径。 */
+			const [absent, setAbsent] = (0, react.useState)(null);
 			const rootRef = (0, react.useRef)(null);
 			const triggerRef = (0, react.useRef)(null);
 			const panelRef = (0, react.useRef)(null);
@@ -165,8 +169,13 @@ window.__ModuleLoader__.load({
 			(0, react.useEffect)(() => {
 				if (!open) return;
 				setFailure(null);
-				readSnapshot(sessionId).then((text) => {
-					setView(JSON.parse(text));
+				setAbsent(null);
+				readSnapshot(sessionId).then((result) => {
+					if (result && typeof result.absent === "string") {
+						setAbsent(result.absent);
+						return;
+					}
+					setView(JSON.parse(result.text));
 				}).catch((reason) => {
 					setFailure(String(reason && reason.message ? reason.message : reason));
 				});
@@ -219,12 +228,23 @@ window.__ModuleLoader__.load({
 					"data-dashboard-panel": true,
 					children: [(0, react_jsx_runtime.jsxs)("div", {
 						className: Dashboard_module_css_default.body,
-						children: [view === null && failure === null && (0, react_jsx_runtime.jsxs)("div", {
+						children: [view === null && failure === null && absent === null && (0, react_jsx_runtime.jsxs)("div", {
 							// 官方 E06 那一格（`div.notice[role=status]`）只装**读盘状态**：只有"读的中途"这一行；
 							// 读完了（成功或失败）它就什么也不画 —— 空分支 = 没有提示。日期不在这一格。
 							className: Dashboard_module_css_default.notice,
 							role: "status",
 							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }), t("loading")]
+						}), absent !== null && (0, react_jsx_runtime.jsxs)("div", {
+							// 「这个工作区还没有快照」= 一条状态：灰点 + 一句人话 + 找的是哪个路径。
+							// 它不是故障，不许用 `role=alert`，也不许把远端错误对象整段倒出来。
+							className: Dashboard_module_css_default.notice,
+							role: "status",
+							"data-dashboard-absent": true,
+							children: (0, react_jsx_runtime.jsxs)("span", {
+								children: [t("absent"), " ", (0, react_jsx_runtime.jsx)("code", {
+									children: absent
+								})]
+							})
 						}), failure !== null && (0, react_jsx_runtime.jsxs)("div", {
 							className: Dashboard_module_css_default.error,
 							role: "alert",
@@ -274,6 +294,7 @@ window.__ModuleLoader__.load({
 			trigger: "看板",
 			loading: "正在读账本…",
 			unavailable: "账本暂不可用",
+			absent: "这个工作区还没有看板快照（账本还没在这儿跑过），找的是",
 			debts: "欠着的东西",
 			expand: "展开",
 			collapse: "收起"
@@ -282,6 +303,7 @@ window.__ModuleLoader__.load({
 			trigger: "Dashboard",
 			loading: "Reading the ledger…",
 			unavailable: "Ledger unavailable",
+			absent: "This workspace has no dashboard snapshot yet (the ledger has never run here); looked for",
 			debts: "Outstanding",
 			expand: "Show more",
 			collapse: "Show less"
@@ -359,7 +381,24 @@ window.__ModuleLoader__.load({
 					if (!svc || typeof svc.read !== "function") {
 						return Promise.reject(new Error("remote.workspaceFiles 不可用（浏览器侧没有这个服务）"));
 					}
-					return Promise.resolve(svc.read(sessionId, SNAPSHOT_PATH, { offset: 1, limit: 200 })).then(pickPageText);
+					return Promise.resolve(svc.read(sessionId, SNAPSHOT_PATH, { offset: 1, limit: 200 })).then(pickPageText).then((text) => {
+						return {
+							text
+						};
+					}).catch((reason) => {
+						// 🔴 2026-11-06：「这个工作区还没有快照」**不是故障**，是一条状态。
+						//    实测另一个工作区（RealisticAccessories）点开看板会拿到 `workspace-file/not-found`：
+						//    那边的 `.runtime/state/dashboard/view.json` 根本不存在（账本没在那儿跑过）。
+						//    这种情况要画一句人话（+ 找的是哪个路径），**不许**画成一条红错。
+						const code = reason && (reason.code || (reason.details && reason.details.code));
+						const path = reason && reason.details && reason.details.path;
+						if (code === "workspace-file/not-found") {
+							return {
+								absent: path || SNAPSHOT_PATH
+							};
+						}
+						throw reason;
+					});
 				} catch (err) {
 					return Promise.reject(err);
 				}
