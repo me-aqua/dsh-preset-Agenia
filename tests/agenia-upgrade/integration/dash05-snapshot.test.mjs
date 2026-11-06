@@ -53,10 +53,44 @@
  *   · 夹具**只落在运行根里**（`<run-root>/fixtures/…`，运行根在 E: 盘；C 盘一个字节都不写）。
  *   · 插件跑的是**真** `presets/agenia/client-ui-dashboard/lib/index.js`（`AGENIA_DASH_CLIENT`
  *     指到别处时跑那一棵树 —— 那一跑会在 `DASH-SUT-OVERRIDE` 下记 HOLD，只当对照/刀用）。
+ *
+ * ── 2026-11-06 第 4 关复审 §7（「四修复、零判据」E1–E4）补的四组判据 ─────────────────────
+ * 复审的形状是：**每一条修复都能只改一处、全量照绿**。下面四组各自干掉一条（编号接着 ⑧ 往下排）：
+ *
+ *   ⑨ **落点不在被测树里**（E1/E2）—— `DASHBOARD_SNAPSHOT_REL`（数据层）与 `SNAPSHOT_PATH`
+ *      （渲染层自己的字面量）**逐字相同**，**且**都不在 `presets/agenia` / 任一 `.runtime` /
+ *      任一 `.team` 之下；形状不是"工作区相对路径"（绝对路径 / `..`）另给一码。
+ *      复审的输入：两半**同批**改成 `presets/agenia/.snap/view.json` ⇒ 原来那三处判据全绿，
+ *      而 DR-02 的 `livePreset` 树哈希 / `F57-TARGET` / CODE 全部回到旧病（15 秒写手每天翻它几十次）。
+ *      🔴 **红基线是真字节**：`84bdddb`（搬走落点之前那一版）两半都是
+ *      `presets/agenia/.snapshot/dashboard-view.json` —— 就在 `presets/agenia` 这棵被测树里；
+ *      判据在它身上必须翻 `-SNAPSHOT-UNDER-MEASURED-TREE`（拿不到那一版 ⇒ HOLD，不当绿）。
+ *      三把刀只改**内存里的字符串 / 传进判据的那个值**，每把只翻自己那一面：
+ *      只改渲染层·仍在树外 ⇒ 漂移码；只改渲染层·搬进树内 ⇒ 漂移 + 被测树；两半同改 ⇒ 被测树码。
+ *
+ *   ⑩ **视图守卫的十种现场**（E3）—— 「合法 JSON、形状不对」十种：缺 `alerts` / 缺 `header` /
+ *      `header:null` / `debts:null` / `debts:[null]` / `alerts:[null]` / 缺 `badge` / 缺 `main` /
+ *      `null`（`JSON.parse("null")`）/ 顶层数组。每种都必须：按钮还在、出现 `role="alert"` 的红条、
+ *      红条**点名那个缺陷**。复审的输入：把 `viewProblem` 的函数体换成 `return null` ⇒ 全绿。
+ *      🔴 写这格那一刻的读数（2026-11-06）：**六种过、四种仍抛** —— `debts:[null]` / `alerts:[null]` /
+ *      缺 `badge` / 缺 `main` 记 `-VIEW-SHAPE-THREW` + `-VIEW-SHAPE-NO-ALERT`。那四格是**产品缺口**
+ *      （`viewProblem` 只判容器类型，不判元素与 `badge`/`main`），不是判据坏；红基线是 `84bdddb`
+ *      那一版真字节（加 `viewProblem` 之前的最后一版：十种现场**全部**翻，一格都过不去）。
+ *
+ *   ⑪ **`generated_at` 的值与「多久以前」**（D3 / E11 的值那一半）—— 注入时钟直接跑
+ *      `refreshSnapshot({root, now})`：`generated_at` 必须解析得了、且等于那个时刻（±1 s）；
+ *      面板页脚（`role="status"` 那条「读数日 …」）必须带「· N 分钟前」；
+ *      **没有** `generated_at` ⇒ 页脚**不许**出现「刚刚」/「N 分钟前」（"不知道多旧"和"刚刚"
+ *      长得一样是最坏的一种谎）。三把刀：去掉写手的盖章（拷一份 `lib/` + 改过的 `index.mjs` 到运行根里跑）
+ *      / 删掉 `ageSuffix(...)` / 让 `ageSuffix` 在缺章时猜「刚刚」，每把只翻它自己那一码。
+ *
+ *   ⑫ **键数从唯一载体读**：快照九个键（含 `generated_at`）；`registry.mjs` 的 DASH-11 那一行
+ *      不再自报份数，改为指向契约 §3 与这里的 `VIEW_KEYS`（一个数三份载体是这一批的通病）。
  */
 import { before, test } from 'node:test'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import { createDashboardHarness, clientSourceAtCommit, messageOf, preFailureClientSource } from '../support/dash-client-harness.mjs'
@@ -99,6 +133,14 @@ const SUT_IS_COPY = DASH_CLIENT !== LIVE_CLIENT
  * ⚠️ 拿不到它（副本没有 `.git`）⇒ 那一腿记 **HOLD**，不当绿。
  */
 const PRE_ABSENT_COMMIT = '46ddea6'
+/**
+ * **加 `viewProblem` 之前的最后一版**（`84bdddb` = `b14381c` 的父；`b14381c` 才引入那个守卫）。
+ *
+ * 为什么把哈希写在这里：`⑩` 要证明"十种形状不对的现场在**零守卫**那一版上全红" ——
+ * 合成变异体只能证明判据会翻面，证明不了它抓得住"这一批真正缺的那件东西"。`84bdddb` 是**不变的历史**。
+ * ⚠️ 拿不到它（副本没有 `.git`）⇒ 那一腿记 **HOLD**，不当绿。
+ */
+const PRE_VIEW_GUARD_COMMIT = '84bdddb'
 
 // ── 夹具（只写运行根）───────────────────────────────────────────────────────
 /** 每一个现场一个目录；**拒绝 C 盘 / 拒绝跑出运行根**（与 `root-guard` 同一条纪律）。 */
@@ -273,6 +315,158 @@ function parseLegProblems(clientCode) {
   }
 }
 
+// ── 落点：在不在被测树里（E1/E2）──────────────────────────────────────────────
+/**
+ * **被测树** —— 这一条判据存在的全部理由：快照落点一旦落进其中任何一棵，15 秒写手就开始驱动别人的尺子。
+ *
+ *   · `presets/agenia` —— DR-02 的 `livePreset` 树哈希（**零排除**）+ 安装落点（`PATHS.finalPreset`）；
+ *   · 任一 `.runtime` —— 真实脑根（`root-guard.mjs:46` 就是 `presets/agenia/.runtime`）；
+ *   · 任一 `.team` —— 账本 / 本地状态 / 测试运行根。
+ *
+ * 复审 §7 E1 的原话：原来只量了"两半是不是同一个常量"，**没量**"这个常量在不在被测树里" ——
+ * 两半同批改成 `presets/agenia/.snap/view.json` 时三处判据全绿，而 DR-02 / F57-TARGET / CODE
+ * 全部回到旧病。所以这一条不是"再判一次相等"，判的是**落点的位置**。
+ */
+const MEASURED_TREE_SEGMENTS = ['.runtime', '.team']
+const LOCATION_CODES = {
+  /** 两半漂了（与 ⑦ 的**运行时**同源是两件事：这条判的是两个**声明**）。 */
+  drift: SHAPE_CODES.path,
+  under: 'DASH11-SNAPSHOT-UNDER-MEASURED-TREE',
+  badShape: 'DASH11-SNAPSHOT-REL-BAD-SHAPE',
+  rendererMissing: 'DASH11-SNAPSHOT-RENDERER-LITERAL-MISSING',
+  knife: 'DASH11-SNAPSHOT-LOCATION-KNIFE',
+}
+
+/**
+ * 一份**工作区相对**路径落在哪一棵被测树里 —— 或者它压根不是"工作区相对路径"（`null` ⇒ 干净）。
+ *
+ * 绝对路径 / `..` 也归 `badShape`：那种写法落到哪个工作区不由这条常量决定，"不在被测树里"就无从成立
+ * （判据要么判得动，要么说判不动 —— 不许把它当成"外面"）。
+ *
+ * @param {unknown} rel
+ * @returns {{code:string, why:string}|null}
+ */
+function measuredTreeHit(rel) {
+  const text = typeof rel === 'string' ? rel.trim() : ''
+  if (text === '') return { code: LOCATION_CODES.badShape, why: `不是非空字符串（${JSON.stringify(rel)}）` }
+  const normalized = text.replace(/\\/g, '/')
+  if (/^[a-zA-Z]:/.test(normalized) || normalized.startsWith('/')) {
+    return { code: LOCATION_CODES.badShape, why: `是绝对路径（${JSON.stringify(text)}）—— 落到哪个工作区不由这条常量决定，'不在被测树里'无从成立` }
+  }
+  const segments = normalized.split('/').filter((s) => s !== '' && s !== '.')
+  if (segments.includes('..')) {
+    return { code: LOCATION_CODES.badShape, why: `带 ..（${JSON.stringify(text)}）—— 相对路径能爬出工作区，落点不可对账` }
+  }
+  if (segments[0] === 'presets' && segments[1] === 'agenia') {
+    return { code: LOCATION_CODES.under, why: `落在 presets/agenia（DR-02 的 livePreset 树哈希 / 安装落点）之下：${JSON.stringify(text)}` }
+  }
+  for (const segment of MEASURED_TREE_SEGMENTS) {
+    if (segments.includes(segment)) {
+      return { code: LOCATION_CODES.under, why: `落在 ${segment} 之下（${JSON.stringify(text)}）—— 那是数据根，不是快照该住的地方` }
+    }
+  }
+  return null
+}
+
+/** 渲染层里那个 `const SNAPSHOT_PATH = "…"`（只认字面量；取不到 ⇒ `null`）。 */
+const SNAPSHOT_LITERAL = /const\s+SNAPSHOT_PATH\s*=\s*["']([^"']+)["']/
+
+/**
+ * 快照落点的判据（**入参是两个值**，所以能喂"两半同批改坏"的拷贝 —— 相等与位置是两条独立的事实）：
+ *   (a) 两半**逐字相同**（`DASH11-SNAPSHOT-PATH-DRIFT`）；
+ *   (b) **都不在**被测树里（`DASH11-SNAPSHOT-UNDER-MEASURED-TREE`），形状不对另给 `-REL-BAD-SHAPE`。
+ *
+ * @param {{moduleRel:unknown, rendererSource:string}} args
+ * @returns {{readings:object, problems:Array<{code:string,message:string}>}}
+ */
+function snapshotLocationProblems({ moduleRel, rendererSource }) {
+  const readings = { module_rel: typeof moduleRel === 'string' ? moduleRel : null, renderer_path: null, halves: {} }
+  const problems = []
+  const hit = SNAPSHOT_LITERAL.exec(String(rendererSource ?? ''))
+  const rendererPath = hit === null ? null : hit[1]
+  readings.renderer_path = rendererPath
+  if (rendererPath === null) {
+    problems.push(problem(LOCATION_CODES.rendererMissing, '渲染层里没有 const SNAPSHOT_PATH = "…" —— 它读哪个文件无从对账，也就没法证明那个文件不在被测树里'))
+  }
+  for (const [label, value] of [['数据层 DASHBOARD_SNAPSHOT_REL', moduleRel], ['渲染层 SNAPSHOT_PATH', rendererPath]]) {
+    if (value === null || value === undefined) continue
+    const at = measuredTreeHit(value)
+    readings.halves[label] = { path: value, hit: at === null ? null : at.code }
+    if (at !== null) problems.push(problem(at.code, `${label} ${at.why}`))
+  }
+  if (rendererPath !== null && typeof moduleRel === 'string' && rendererPath !== moduleRel) {
+    problems.push(problem(LOCATION_CODES.drift, `渲染层读 ${JSON.stringify(rendererPath)}，数据层写 ${JSON.stringify(moduleRel)} —— 两半写的不是同一份文件`))
+  }
+  return { readings, problems }
+}
+
+/**
+ * `DASH-11` ⑨：**落点不在被测树里**（复审 E1/E2）。
+ *
+ * 真源码那一跑要三样同时成立：两半逐字相同、两半都在被测树外、渲染层那条字面量读得出来。
+ * 三把刀只改**内存里的字符串 / 传进判据的那个值**（每把的向量逐条写出来 —— 判据翻的必须是**该翻的那一面**）：
+ *   · 只改渲染层·搬到**树外**的另一个路径 ⇒ 只翻漂移码（证明相等那一条独立承重）；
+ *   · 只改渲染层·搬进 `presets/agenia` ⇒ 翻漂移 + 被测树（证明位置那一条**单独**读得出渲染层那一半）；
+ *   · **两半同批**搬进 `presets/agenia`（复审的原输入）⇒ 只翻被测树码（相等仍然成立 —— 正是它翻不了面的原因）。
+ *
+ * @param {{rec:object, rel:string, clientSource:string, problems:Array}} args
+ */
+function snapshotLocationLeg({ rec, rel, clientSource, problems }) {
+  const real = snapshotLocationProblems({ moduleRel: rel, rendererSource: clientSource })
+  rec.readings.snapshot_location = real.readings
+  for (const p of real.problems) problems.push(p)
+  /** 复审 §7 E1 那个坏落点（`presets/agenia/.snapshot/x.json` 的同族；用 `view.json` 免得像两个文件）。 */
+  const BAD_REL = 'presets/agenia/.snapshot/view.json'
+  /** 树外另一个路径（只为了让"漂移码"单独翻一次）。 */
+  const ELSEWHERE_REL = '.tools/_scratch/dashboard/other.json'
+  const moved = (target) => clientSource.split(rel).join(target)
+  const codeVector = (args) => [...new Set(snapshotLocationProblems(args).problems.map((p) => p.code))].sort()
+  /**
+   * 三把刀只在**真源码那一对是干净的**时候跑：刀的期望值以"原来那一对是两个干净的声明"为前提，
+   * 前提不成立时跑出来的向量差异是**前提坏了**，不是判据坏了（真源码那一对已经有红了 —— 红本身就是证据）。
+   */
+  if (real.problems.length > 0) {
+    rec.readings.snapshot_location_knives = { skipped: '真源码那一对已经不是两个干净的声明 —— 三把刀的期望值不成立，见上面的红' }
+  } else {
+    const readings = {}
+    const expect = [
+      ['只改渲染层·树外另一处', moved(ELSEWHERE_REL), rel, [LOCATION_CODES.drift]],
+      ['只改渲染层·搬进被测树', moved(BAD_REL), rel, [LOCATION_CODES.drift, LOCATION_CODES.under]],
+      ['两半同批搬进被测树', moved(BAD_REL), BAD_REL, [LOCATION_CODES.under]],
+    ]
+    for (const [label, rendererSource, moduleRel, want] of expect) {
+      if (rendererSource === clientSource) {
+        problems.push(problem(LOCATION_CODES.knife, `刀「${label}」没切动源码（渲染层里找不到那个路径字面量 ${JSON.stringify(rel)}）—— 这把刀不能证明判据会翻面`))
+        continue
+      }
+      const codes = codeVector({ moduleRel, rendererSource })
+      readings[label] = codes
+      if (JSON.stringify(codes) !== JSON.stringify(want)) {
+        problems.push(problem(LOCATION_CODES.knife, `刀「${label}」翻出来的面是 ${JSON.stringify(codes)}，应当是 ${JSON.stringify(want)} —— 判据分不开"两半漂了"与"两半一起搬进被测树"`))
+      }
+    }
+    rec.readings.snapshot_location_knives = readings
+  }
+
+  // 红基线：**搬走落点之前**那一版真字节（`84bdddb`：两半都在 `presets/agenia/.snapshot/` 下）
+  const oldClient = clientSourceAtCommit({ commit: PRE_VIEW_GUARD_COMMIT })
+  const oldModule = clientSourceAtCommit({ commit: PRE_VIEW_GUARD_COMMIT, rel: 'presets/agenia/lib/dashboard.mjs' })
+  const oldRelHit = oldModule.text === null ? null : /export\s+const\s+DASHBOARD_SNAPSHOT_REL\s*=\s*['"]([^'"]+)['"]/.exec(oldModule.text)
+  const oldRel = oldRelHit === null ? null : oldRelHit[1]
+  const history = { commit: PRE_VIEW_GUARD_COMMIT, available: oldClient.available && oldModule.available, why: oldClient.why ?? oldModule.why, module_rel: oldRel, renderer_sha256: oldClient.sha256, codes: null }
+  if (!history.available || oldClient.text === null || oldRel === null) {
+    rec.readings.snapshot_location_history = history
+    caseHold(rec, LOCATION_CODES.knife, `拿不到 ${PRE_VIEW_GUARD_COMMIT} 那一版的数据层 / 渲染层真字节（${history.why ?? '没解出 DASHBOARD_SNAPSHOT_REL'}）—— "这一条判据抓得住搬走之前那个落点"判不了`)
+  } else {
+    const codes = codeVector({ moduleRel: oldRel, rendererSource: oldClient.text })
+    history.codes = codes
+    rec.readings.snapshot_location_history = history
+    if (!codes.includes(LOCATION_CODES.under)) {
+      problems.push(problem(LOCATION_CODES.knife, `${PRE_VIEW_GUARD_COMMIT} 那一版（落点 = ${JSON.stringify(oldRel)}，就在 presets/agenia 里）没有被判据抓到（实得 ${JSON.stringify(codes)}）—— 这一条对"落点住在被测树里"是瞎的`))
+    }
+  }
+}
+
 // ── 原子写机制（源码那一半；行为那一半在下面的 crash 现场）──────────────────
 /**
  * `writeDashboardSnapshot` 的机制：**中间名 + rename**，且不许直接写活文件。
@@ -346,6 +540,390 @@ function nonAtomicSource(source) {
     '  return { file: outFile, bytes: Buffer.byteLength(text, "utf8") }',
   ].join('\n'))
   return mutated
+}
+
+// ── 视图守卫：十种「合法 JSON、形状不对」的现场（E3）──────────────────────────────
+/**
+ * 十种现场的红因码 —— 每一码说一件事（"抛了" / "没有红条" / "红条说不出是什么" / "组件没了"）。
+ *
+ * 复审 §7 E3 的原话：这一条修复**零样本** —— 客户端那一腿从来只喂"合法视图"，
+ * 所以把 `viewProblem` 的函数体换成 `return null` 全量照绿。这里补的就是样本。
+ */
+const VIEW_SHAPE_CODES = {
+  readBroken: 'DASH11-CLIENT-VIEW-SHAPE-READ-BROKEN',
+  threw: 'DASH11-CLIENT-VIEW-SHAPE-THREW',
+  noAlert: 'DASH11-CLIENT-VIEW-SHAPE-NO-ALERT',
+  unnamed: 'DASH11-CLIENT-VIEW-SHAPE-UNNAMED',
+  buttonGone: 'DASH11-CLIENT-VIEW-SHAPE-BUTTON-GONE',
+  control: 'DASH11-CLIENT-VIEW-SHAPE-CONTROL',
+  knife: 'DASH11-CLIENT-VIEW-SHAPE-KNIFE',
+  knifeUnavailable: 'DASH11-CLIENT-VIEW-SHAPE-KNIFE-UNAVAILABLE',
+}
+
+/**
+ * 十种"合法 JSON、形状不对"的现场。`names` = 红条上必须点到的那个缺陷名（命中任一个算点名）。
+ *
+ * ⚠️ 后四种（`debts:[null]` / `alerts:[null]` / 缺 `badge` / 缺 `main`）今天仍然会在渲染期抛 ——
+ *    那正是复审 §4.2 的四个反例。判据照旧要求它们过关（先红后修的次序），**不许**把要求降到"今天就这德行"。
+ *
+ * @returns {Record<string, {view:unknown, names:string[]}>}
+ */
+function viewShapeSamples() {
+  const omit = (key) => {
+    const view = { ...CLIENT_VIEW }
+    delete view[key]
+    return view
+  }
+  return {
+    缺alerts: { view: omit('alerts'), names: ['alerts'] },
+    缺header: { view: omit('header'), names: ['header'] },
+    header是null: { view: { ...CLIENT_VIEW, header: null }, names: ['header'] },
+    debts是null: { view: { ...CLIENT_VIEW, debts: null }, names: ['debts'] },
+    debts里有null: { view: { ...CLIENT_VIEW, debts: [null] }, names: ['debts'] },
+    alerts里有null: { view: { ...CLIENT_VIEW, alerts: [null] }, names: ['alerts'] },
+    缺badge: { view: omit('badge'), names: ['badge'] },
+    缺main: { view: omit('main'), names: ['main'] },
+    null视图: { view: null, names: ['null'] },
+    顶层是数组: { view: [], names: ['array'] },
+  }
+}
+
+/**
+ * 一种现场该成立什么（**纯函数**：真源码 / 红基线 / 好视图对照三个读者共用同一份判据）。
+ *
+ * 每样同时成立，缺哪样说哪样：
+ *   ① `readSnapshot` resolve（这一页是**合法 JSON**，"形状不对"不许被读盘那一层吞成失败）；
+ *   ② **渲染期不抛** —— 抛一下在 React 里就是整个槽位被拆掉、按钮跟着消失（`bug-20261106-13` 的关闭词）；
+ *   ③ 树里有 `role="alert"` 的红条，而且**点得出是哪个缺陷**（不许只说"形状不对"）；
+ *   ④ 槽位的根与触发器都还在。
+ *
+ * @param {string} label 现场名
+ * @param {object} got 载具读数
+ * @param {{names:string[], wantAlert?:boolean}} spec
+ */
+function viewSampleProblems(label, got, spec) {
+  const problems = []
+  const rendered = got.settled?.render_threw ?? null
+  const threw = (got.throws ?? []).length > 0 || rendered !== null
+  const alert = got.alert_text
+  if (got.direct === null || got.direct.status !== 'resolved') {
+    problems.push(problem(VIEW_SHAPE_CODES.readBroken, `现场「${label}」：这一页是**合法 JSON**，readSnapshot 却不是 resolved（${JSON.stringify(got.direct === null ? null : got.direct.status)}）—— 形状不对被读盘那一层吞成了失败`))
+  }
+  if (threw) {
+    const first = (got.throws ?? [])[0] ?? rendered
+    problems.push(problem(VIEW_SHAPE_CODES.threw, `现场「${label}」：形状不对的视图在**渲染期抛了**（${JSON.stringify(first)}）—— 在 React 里这就是"整个槽位被拆掉、按钮跟着消失"；渲染期的守卫必须在这之前把它接住`))
+  }
+  if (spec.wantAlert !== false) {
+    if (alert === null) {
+      problems.push(problem(VIEW_SHAPE_CODES.noAlert, `现场「${label}」：没有 role="alert" 的红条 —— 面板既不画内容也不说形状不对，等于"什么都没发生"`))
+    } else if (!spec.names.some((name) => alert.toLowerCase().includes(name.toLowerCase()))) {
+      problems.push(problem(VIEW_SHAPE_CODES.unnamed, `现场「${label}」：红条没有点名那个缺陷（文字=${JSON.stringify(alert)}；要点到 ${JSON.stringify(spec.names)} 之一）`))
+    }
+  }
+  if (!got.trigger_present || !got.root_present) {
+    problems.push(problem(VIEW_SHAPE_CODES.buttonGone, `现场「${label}」：槽位的根 / 触发器不见了（root=${got.root_present} · trigger=${got.trigger_present}）—— 这一下把组件带走了`))
+  }
+  return problems
+}
+
+/**
+ * `DASH-11` ⑩：**十种现场 + 好视图对照 + 零守卫那一版真字节**。
+ *
+ * 三个读者同一份判据（`viewSampleProblems`）：
+ *   · 真源码十种现场 —— 每种都必须过（今天四种不过，红着；那是产品缺口，不是判据坏）；
+ *   · **对照**：一份好视图必须**一格都不报**（否则这把尺子永远红，读的人分不清"产品坏了"与"判据坏了"）；
+ *   · **红基线**（`84bdddb` = 加 `viewProblem` 之前的最后一版）：十种现场**必须全部**翻至少一码 ——
+ *     一条在"零守卫"那一版上全绿的判据，等于没有判据。
+ *
+ * @param {{rec:object, clientSource:string, problems:Array}} args
+ */
+async function clientViewShapeLeg({ rec, clientSource, problems }) {
+  const harness = createDashboardHarness(clientSource)
+  if (!harness.ok) {
+    problems.push(problem(CLIENT_CODES.unloadable, `渲染层装不进载具（${harness.reason}）—— 视图守卫的十种现场判不了，不许记绿`))
+    return
+  }
+  const samples = viewShapeSamples()
+  const readings = {}
+  const vectors = {}
+  for (const [name, spec] of Object.entries(samples)) {
+    const text = JSON.stringify(spec.view)
+    const page = { offset: 1, text, lines: 1, eof: true }
+    const got = await sceneOf(harness, pageService(page), page)
+    vectors[name] = viewSampleProblems(name, got, spec)
+    readings[name] = {
+      json: text.slice(0, 120),
+      direct_status: got.direct === null ? null : got.direct.status,
+      alert_text: got.alert_text,
+      throws: got.throws,
+      trigger_present: got.trigger_present,
+      root_present: got.root_present,
+    }
+    for (const p of vectors[name]) problems.push(p)
+  }
+  // 对照：**好视图**必须干净（判据不是"永远红"）
+  const goodPage = { offset: 1, text: JSON.stringify(CLIENT_VIEW), lines: 1, eof: true }
+  const good = await sceneOf(harness, pageService(goodPage), goodPage)
+  const goodProblems = viewSampleProblems('对照·好视图', good, { names: [], wantAlert: false })
+  const goodClean = goodProblems.length === 0 && good.texts.includes(CLIENT_VIEW.header.text)
+  if (!goodClean) {
+    problems.push(problem(VIEW_SHAPE_CODES.control, `对照：一份**合法视图**被这一条判据报了 ${goodProblems.length} 项（${JSON.stringify(goodProblems.map((p) => p.code))}）或 headline 没画出来（${good.texts.includes(CLIENT_VIEW.header.text)}）—— 那是**判据坏了**，不是产品坏了`))
+  }
+  rec.readings.view_shapes = {
+    cases: readings,
+    codes: Object.fromEntries(Object.entries(vectors).map(([name, list]) => [name, list.map((p) => p.code).sort()])),
+    control_clean: goodClean,
+    control_problems: goodProblems.map((p) => p.code),
+  }
+
+  // 红基线：**零守卫**那一版真字节（加 `viewProblem` 之前的最后一版）
+  const old = clientSourceAtCommit({ commit: PRE_VIEW_GUARD_COMMIT })
+  const hasGuard = old.text === null ? null : old.text.includes('viewProblem')
+  rec.readings.view_shapes_knife_source = { commit: PRE_VIEW_GUARD_COMMIT, available: old.available, why: old.why, sha256: old.sha256, has_view_problem: hasGuard }
+  if (!old.available) {
+    caseHold(rec, VIEW_SHAPE_CODES.knifeUnavailable, `拿不到 ${PRE_VIEW_GUARD_COMMIT} 那一版的真字节（${old.why}）—— "这一条判据抓得住零守卫那一版"判不了`)
+    return
+  }
+  if (hasGuard !== false) {
+    problems.push(problem(VIEW_SHAPE_CODES.knife, `${PRE_VIEW_GUARD_COMMIT} 那一版里已经有 viewProblem 了 —— 这把刀证明不了"零守卫时十种现场全是红的"`))
+    return
+  }
+  const oldHarness = createDashboardHarness(old.text)
+  if (!oldHarness.ok) {
+    problems.push(problem(VIEW_SHAPE_CODES.knife, `${PRE_VIEW_GUARD_COMMIT} 那一版装不进载具（${oldHarness.reason}）—— 这把刀切不动`))
+    return
+  }
+  const oldVectors = {}
+  for (const [name, spec] of Object.entries(samples)) {
+    const text = JSON.stringify(spec.view)
+    const page = { offset: 1, text, lines: 1, eof: true }
+    const got = await sceneOf(oldHarness, pageService(page), page)
+    oldVectors[name] = viewSampleProblems(`红基线·${name}`, got, spec).map((p) => p.code).sort()
+  }
+  const blind = Object.entries(oldVectors).filter(([, codes]) => codes.length === 0).map(([name]) => name)
+  rec.readings.view_shapes_knife = { commit: PRE_VIEW_GUARD_COMMIT, codes: oldVectors, blind }
+  if (blind.length > 0) {
+    problems.push(problem(VIEW_SHAPE_CODES.knife, `红基线（${PRE_VIEW_GUARD_COMMIT}，零守卫）上这些现场**一格都没翻**：${JSON.stringify(blind)} —— 这一条对"渲染期抛"是瞎的（它会在产品修好与没修好两种情况下一样绿）`))
+  }
+}
+
+// ── `generated_at` 的值 + 「多久以前」（D3 / E11 的值那一半）──────────────────────────
+/** 注入时钟（写手要盖的那个章就是这个时刻）。 */
+const GENERATED_AT_ISO = '2026-11-04T12:34:56+08:00'
+/** 页脚那一行的开头（`读数日 <day>`）。 */
+const FOOTER_PREFIX = '读数日 '
+/** 「有多旧」那段后缀（空串 = 没有这一段）。 */
+const AGE_SUFFIX = /(?:· 刚刚|· \d+ 分钟前)$/
+const GENERATED_AT_CODES = {
+  missing: 'DASH11-GENERATED-AT-MISSING',
+  unparseable: 'DASH11-GENERATED-AT-UNPARSEABLE',
+  drift: 'DASH11-GENERATED-AT-DRIFT',
+  footerMissing: 'DASH11-CLIENT-AGE-FOOTER-MISSING',
+  suffixMissing: 'DASH11-CLIENT-AGE-SUFFIX-MISSING',
+  suffixWrong: 'DASH11-CLIENT-AGE-SUFFIX-WRONG',
+  suffixGuessed: 'DASH11-CLIENT-AGE-SUFFIX-GUESSED',
+  knife: 'DASH11-GENERATED-AT-KNIFE',
+}
+
+/**
+ * `generated_at` 的**值**判据（复审 D3 的原输入：删掉盖章 ⇒ 写 `null` ⇒ `DASH-11` 全绿）。
+ *
+ * 三样分开：键在不在（`-MISSING`）· 解析不解析得了（`-UNPARSEABLE`）· 是不是**注入的那个时刻**
+ * （`-DRIFT`，允许 ±1 s —— 写手把 `now` 转成 ISO 字符串会掉到毫秒以下，不该为此判红）。
+ *
+ * @param {{generated_at?:unknown}|null} view 快照
+ * @param {string} wantIso 注入时钟（ISO8601 带偏移）
+ */
+function generatedAtProblems(view, wantIso) {
+  const problems = []
+  const value = view === null || typeof view !== 'object' ? undefined : view.generated_at
+  if (typeof value !== 'string' || value.trim() === '') {
+    problems.push(problem(GENERATED_AT_CODES.missing, `快照里没有 generated_at（实得 ${JSON.stringify(value)}）—— 面板说不出"这份读数有多旧"；写手停摆时旧数据会被画成"此刻"`))
+    return problems
+  }
+  const at = Date.parse(value)
+  if (Number.isNaN(at)) {
+    problems.push(problem(GENERATED_AT_CODES.unparseable, `generated_at 解析不了（实得 ${JSON.stringify(value)}）—— 面板的「N 分钟前」会静默退化成"没有后缀"，而读者看不出来`))
+    return problems
+  }
+  const want = Date.parse(wantIso)
+  if (Number.isNaN(want)) {
+    problems.push(problem(GENERATED_AT_CODES.knife, `判据自己的注入时钟解析不了（${JSON.stringify(wantIso)}）—— 这一格判不了，不许记绿`))
+    return problems
+  }
+  if (Math.abs(at - want) > 1000) {
+    problems.push(problem(GENERATED_AT_CODES.drift, `generated_at = ${JSON.stringify(value)}（${new Date(at).toISOString()}），注入的时钟是 ${wantIso}（${new Date(want).toISOString()}）—— 差 ${Math.round(Math.abs(at - want) / 1000)} s（允许 ±1 s）：盖的不是"现在"`))
+  }
+  return problems
+}
+
+/** 页脚那一条 `role="status"` 的文字（`读数日 …`）；没有 ⇒ `[]`。 */
+const footerTextsOf = (got) => (got.status_texts ?? []).filter((text) => String(text).startsWith(FOOTER_PREFIX))
+
+/**
+ * 「有多旧」这一段该不该有（**纯函数**；真源码 / 两把刀共用）。
+ *
+ * `spec.minutes === null` ⇒ 这一份快照**没有** `generated_at`：页脚**不许**出现「刚刚」或「N 分钟前」
+ * （"不知道多旧"与"刚刚"长得一样是最坏的一种谎 —— 那是 `ageSuffix` 注释里自己写的口径，这里是它的执行点）。
+ * 给了分钟数 ⇒ 必须**恰好**是这一段（证明它是算出来的，不是一个常量「· 刚刚」）。
+ *
+ * @param {string} label 现场名
+ * @param {object} got 载具读数
+ * @param {{minutes:number|null}} spec
+ */
+function ageSuffixProblems(label, got, spec) {
+  const problems = []
+  const footers = footerTextsOf(got)
+  if (footers.length === 0) {
+    problems.push(problem(GENERATED_AT_CODES.footerMissing, `现场「${label}」：树里没有以「${FOOTER_PREFIX}」开头的 status 节点 —— 那一行是"这堆数字是哪一天"的唯一载体（页脚）`))
+    return problems
+  }
+  const footer = footers[0]
+  const hasSuffix = AGE_SUFFIX.test(footer)
+  if (spec.minutes === null) {
+    if (hasSuffix) {
+      problems.push(problem(GENERATED_AT_CODES.suffixGuessed, `现场「${label}」：快照里没有 generated_at，页脚却写了「${footer}」—— 不知道多旧被写成了「刚刚」/「N 分钟前」（猜 0 是最坏的一种谎）`))
+    }
+  } else if (!hasSuffix) {
+    problems.push(problem(GENERATED_AT_CODES.suffixMissing, `现场「${label}」：页脚是「${footer}」—— 没有「· N 分钟前」这段相对年龄（写手停摆时读者仍以为这是最新读数）`))
+  } else if (!footer.endsWith(`· ${spec.minutes} 分钟前`)) {
+    problems.push(problem(GENERATED_AT_CODES.suffixWrong, `现场「${label}」：页脚是「${footer}」，按注入时刻应当是「· ${spec.minutes} 分钟前」—— 相对年龄不是按 generated_at 算出来的`))
+  }
+  return problems
+}
+
+/**
+ * 刀 C：**去掉写手的盖章**（`generated_at: new Date(now).toISOString()` 删掉）—— 复审 §7 E4 的原输入。
+ *
+ * 做法：把真 `lib/` 与一份改过的 `index` 拷进**运行根**（产品树一个字节不动），进程内 import 那一份，
+ * 用同一个夹具工作区 + 同一个注入时钟再跑一次 ⇒ `generated_at` 必须变成 `null`，判据必须点名。
+ * ⚠️ 拷贝里的入口写成 `.mjs`：那块临时目录没有 `package.json`，`.js` 会被当成 CommonJS 而 import 不了。
+ *
+ * @param {{rec:object, pluginIndex:string, problems:Array}} args
+ */
+async function engineStampingKnife({ rec, pluginIndex, problems }) {
+  const indexSource = readFileSync(pluginIndex, 'utf8')
+  const mutated = indexSource.replace(', generated_at: new Date(now).toISOString()', '')
+  if (mutated === indexSource) {
+    problems.push(problem(GENERATED_AT_CODES.knife, '刀 C（去掉写手的盖章）没切动源码 —— 这一格分不开"写手盖了章"与"写手没盖章"'))
+    return
+  }
+  const fixture = path.join(runRoot(), 'fixtures', 'dash11-stamping-knife-sut')
+  try {
+    cpSync(path.join(PATHS.repo, 'presets', 'agenia', 'lib'), path.join(fixture, 'lib'), { recursive: true })
+    const knifeIndex = path.join(fixture, 'client-ui-dashboard', 'lib', 'index.mjs')
+    mkdirSync(path.dirname(knifeIndex), { recursive: true })
+    writeFileSync(knifeIndex, mutated, 'utf8')
+    const ws = workspaceOf('DASH-11', 'stamping-knife')
+    seedWorkspace(ws, {
+      route: routeFixture({ headline: '刀 · 没有盖章 · 演示' }),
+      localDays: { [DAY]: localFixture({ day: DAY, technical: { state: 'done' }, conversation: { state: 'done' } }) },
+      updateDays: { [DAY]: { schema: 1, day: DAY, generation: 1, phase: 'done', updated_at: `${DAY}T09:00:00+08:00` } },
+    })
+    const engine = await import(pathToFileURL(knifeIndex).href)
+    const written = engine.refreshSnapshot({ root: ws, now: new Date(GENERATED_AT_ISO) })
+    // 读**这一份写手自己报的那个文件**：SUT 被指到别处时（`AGENIA_DASH_MODULE`）`rel` 是那一棵树的值，
+    // 拿 `snapshotOf(ws, rel)` 去读会读到"另一个落点没写"——那变成在量 SUT，不是在量这把刀。
+    const target = typeof written?.file === 'string' ? written.file : null
+    const state = target === null ? { exists: false, json: null } : fileState(target)
+    const codes = state.json === null ? ['(快照没写出来)'] : generatedAtProblems(state.json, GENERATED_AT_ISO).map((p) => p.code)
+    rec.readings.generated_at_knife = { source: knifeIndex, cut: true, wrote: target, exists: state.exists, value: state.json?.generated_at ?? null, codes }
+    if (!codes.includes(GENERATED_AT_CODES.missing)) {
+      problems.push(problem(GENERATED_AT_CODES.knife, `刀 C（去掉写手的盖章）没有被 generated_at 判据抓到（实得 ${JSON.stringify(codes)}）—— 这一格对"写手盖没盖章"是瞎的`))
+    }
+  } catch (err) {
+    problems.push(problem(GENERATED_AT_CODES.knife, `刀 C 跑不起来（${messageOf(err)}）—— 这一格判不了，不许记绿`))
+  }
+}
+
+/**
+ * `DASH-11` ⑪：**盖章的值 + 页脚相对年龄 + 没有章时不许猜**。
+ *
+ * 四样并排（复审 D3/E4 与 E11 的值那一半）：
+ *   (i) 注入时钟直接跑 `refreshSnapshot({root, now})` ⇒ 盘上 `generated_at` 等于那个时刻（±1 s）；
+ *   (ii) 带章的快照 ⇒ 页脚有「· N 分钟前」（按注入时刻算出来的那一段）；
+ *   (iii) 没有章的快照 ⇒ 页脚**没有**任何年龄后缀（不许「刚刚」）；
+ *   (iv) 三把刀每把只翻自己那一码：去掉盖章 ⇒ `-GENERATED-AT-MISSING`；删 `ageSuffix(...)` ⇒ `-AGE-SUFFIX-MISSING`；
+ *        缺章时猜「刚刚」⇒ `-AGE-SUFFIX-GUESSED`。
+ *
+ * @param {{rec:object, clientSource:string, rel:string, pluginIndex:string, problems:Array}} args
+ */
+async function generatedAtLeg({ rec, clientSource, rel, pluginIndex, problems }) {
+  // (i) 值：注入时钟、进程内真跑写手
+  const ws = workspaceOf('DASH-11', 'generated-at')
+  seedWorkspace(ws, {
+    route: routeFixture({ headline: '盖章现场 · 执行一 · 演示' }),
+    localDays: { [DAY]: localFixture({ day: DAY, technical: { state: 'done' }, conversation: { state: 'running' } }) },
+    updateDays: { [DAY]: { schema: 1, day: DAY, generation: 1, phase: 'done', updated_at: `${DAY}T09:00:00+08:00` } },
+  })
+  let written = null
+  try {
+    const engine = await import(pathToFileURL(pluginIndex).href)
+    written = engine.refreshSnapshot({ root: ws, now: new Date(GENERATED_AT_ISO) })
+  } catch (err) {
+    problems.push(problem(GENERATED_AT_CODES.missing, `进程内调 refreshSnapshot({root, now}) 抛了（${messageOf(err)}）—— generated_at 的值这一腿判不了`))
+    return
+  }
+  const state = fileState(snapshotOf(ws, rel))
+  rec.readings.generated_at = { written, exists: state.exists, value: state.json === null ? null : state.json.generated_at }
+  if (!state.exists || state.json === null) {
+    problems.push(problem(GENERATED_AT_CODES.missing, `注入时钟跑完之后快照不在盘上 / 解析不了（${rel}）—— 值这一腿没有对象，不许记绿`))
+    return
+  }
+  for (const p of generatedAtProblems(state.json, GENERATED_AT_ISO)) problems.push(p)
+
+  // (ii)(iii) 页脚：带章 / 不带章
+  const harness = createDashboardHarness(clientSource)
+  if (!harness.ok) {
+    problems.push(problem(CLIENT_CODES.unloadable, `渲染层装不进载具（${harness.reason}）—— 页脚「多久以前」判不了，不许记绿`))
+    return
+  }
+  /** 带章视图：`generated_at` = 现在减 5 分钟（每次现算，免得"套件跑久了"把分钟数挪掉）。 */
+  const stampedViewOf = () => ({ ...CLIENT_VIEW, generated_at: new Date(Date.now() - 5 * 60 * 1000).toISOString() })
+  const sceneWith = async (view, on = harness) => {
+    const page = { offset: 1, text: JSON.stringify(view), lines: 1, eof: true }
+    return sceneOf(on, pageService(page), page)
+  }
+  const stamped = await sceneWith(stampedViewOf())
+  const unstamped = await sceneWith({ ...CLIENT_VIEW })
+  rec.readings.age_footer = {
+    stamped: { footers: footerTextsOf(stamped), alert_text: stamped.alert_text },
+    unstamped: { footers: footerTextsOf(unstamped), alert_text: unstamped.alert_text },
+  }
+  for (const p of ageSuffixProblems('带盖章（5 分钟前）', stamped, { minutes: 5 })) problems.push(p)
+  for (const p of ageSuffixProblems('没有盖章', unstamped, { minutes: null })) problems.push(p)
+
+  // (iv) 两把客户端刀：只改内存里的源码
+  const knifeReadings = {}
+  const runKnife = async (label, mutated, view, spec, want) => {
+    if (mutated === clientSource) {
+      problems.push(problem(GENERATED_AT_CODES.knife, `刀「${label}」没切动源码（那段字符串没找到）—— 这把刀不能证明判据会翻面`))
+      return
+    }
+    const knifeHarness = createDashboardHarness(mutated)
+    if (!knifeHarness.ok) {
+      problems.push(problem(GENERATED_AT_CODES.knife, `刀「${label}」装不进载具（${knifeHarness.reason}）`))
+      return
+    }
+    const got = await sceneWith(view, knifeHarness)
+    const codes = ageSuffixProblems(`刀·${label}`, got, spec).map((p) => p.code)
+    knifeReadings[label] = { codes, footers: footerTextsOf(got) }
+    if (JSON.stringify(codes) !== JSON.stringify(want)) {
+      problems.push(problem(GENERATED_AT_CODES.knife, `刀「${label}」翻出来的面是 ${JSON.stringify(codes)}，应当是 ${JSON.stringify(want)} —— 判据分不开这几件事`))
+    }
+  }
+  await runKnife('删掉相对年龄', clientSource.replace('${ageSuffix(view.generated_at)}', ''), stampedViewOf(), { minutes: 5 }, [GENERATED_AT_CODES.suffixMissing])
+  await runKnife(
+    '缺章时猜刚刚',
+    clientSource.replace('if (typeof generatedAt !== "string" || generatedAt === "") return "";', 'if (typeof generatedAt !== "string" || generatedAt === "") return " · 刚刚";'),
+    { ...CLIENT_VIEW },
+    { minutes: null },
+    [GENERATED_AT_CODES.suffixGuessed],
+  )
+  rec.readings.age_footer_knives = knifeReadings
+
+  // 刀 C：写手那一半（拷贝进运行根，产品树一个字节不动）
+  await engineStampingKnife({ rec, pluginIndex, problems })
 }
 
 // ── `DASH-11` ───────────────────────────────────────────────────────────────
@@ -506,13 +1084,6 @@ test('DASH-11 Node 半边端到端：apply() 落 view.json（原子/形状/覆�
     // ⑥ 渲染层只读这一份文件（快照路径两半同源；不碰四份账本；不自己算）
     const clientSource = readFileSync(DASH_CLIENT, 'utf8')
     const clientCode = stripCommentLines(clientSource)
-    const snapshotPath = /const\s+SNAPSHOT_PATH\s*=\s*["']([^"']+)["']/.exec(clientSource)
-    rec.readings.renderer = { snapshot_path: snapshotPath === null ? null : snapshotPath[1], module_rel: rel }
-    if (snapshotPath === null) {
-      problems.push(problem(SHAPE_CODES.path, '渲染层里没有 `const SNAPSHOT_PATH = "…"` —— 它读哪个文件无从对账'))
-    } else if (snapshotPath[1] !== rel) {
-      problems.push(problem(SHAPE_CODES.path, `渲染层读 ${JSON.stringify(snapshotPath[1])}，Node 侧写 ${JSON.stringify(rel)} —— 两半写的不是同一份文件（这就是评审 §五·F2 的那个洞）`))
-    }
     /**
      * 读调用这一条**不判文本形状**（`workspaceFiles.read(...)` 还是先取服务再 `svc.read(...)` 都行），
      * 判两件事实：① 引用了那条 Remote 服务（`workspaceFiles`）；② 有一个 `.read(…)` 的**前两个实参**是
@@ -543,6 +1114,12 @@ test('DASH-11 Node 半边端到端：apply() 落 view.json（原子/形状/覆�
     await clientFailureLeg({ rec, clientSource, rel, problems })
     // ⑧ 没有快照（`workspace-file/not-found`）只许画一条灰的 status 通知，不许画成红错
     await clientAbsentLeg({ rec, clientSource, rel, problems })
+    // ⑨ 落点**不在被测树里**（复审 E1/E2：两半同源还不够，那个常量本身也不许住在被测树里）
+    snapshotLocationLeg({ rec, rel, clientSource, problems })
+    // ⑩ 视图守卫的十种「合法 JSON、形状不对」现场（复审 E3：这一条修复原来零样本）
+    await clientViewShapeLeg({ rec, clientSource, problems })
+    // ⑪ `generated_at` 的**值** + 页脚的「多久以前」+ 没有章时不许猜（复审 D3 / E11 的值那一半）
+    await generatedAtLeg({ rec, clientSource, rel, pluginIndex, problems })
 
     caseFail(problems)
   })

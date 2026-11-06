@@ -348,9 +348,24 @@ window.__ModuleLoader__.load({
 				return `视图版本不认识（schema ${String(view.schema)}，这一层只认 ${VIEW_SCHEMA}）—— 底层不渲染，要同批改`;
 			}
 			const bad = [];
-			if (view.header === null || typeof view.header !== "object") bad.push("header 不是对象");
-			if (!Array.isArray(view.debts)) bad.push("debts 不是数组");
-			if (!Array.isArray(view.alerts)) bad.push("alerts 不是数组");
+			if (!Object.hasOwn(view, "header") || view.header === null || typeof view.header !== "object") {
+				bad.push("header 不是对象");
+			}
+			// 🔴 `badge` / `main` 允许是 null（契约里它们本来就可以为空），**但必须存在** ——
+			//    渲染层要读 `badge.word` / `main.note`，缺键就是 TypeError ⇒ 槽位被拆。
+			if (!Object.hasOwn(view, "badge")) bad.push("缺 badge 键（可以是 null，不许没有这个键）");
+			if (!Object.hasOwn(view, "main")) bad.push("缺 main 键（同上）");
+			if (!Array.isArray(view.debts)) {
+				bad.push("debts 不是数组");
+			} else if (view.debts.some((d) => d === null || typeof d !== "object")) {
+				// 元素是 null / 不是对象 ⇒ 后面读 `debt.key` 会抛（2026-11-06 复审第 2 轮实测四种抛法之一）。
+				bad.push("debts 里有不是对象的元素");
+			}
+			if (!Array.isArray(view.alerts)) {
+				bad.push("alerts 不是数组");
+			} else if (view.alerts.some((a) => a === null || typeof a !== "object")) {
+				bad.push("alerts 里有不是对象的元素");
+			}
 			if (bad.length > 0) return `快照形状不对：${bad.join(" · ")}（键=[${Object.keys(view).join(", ")}]）`;
 			return null;
 		}

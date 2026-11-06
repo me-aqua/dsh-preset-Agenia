@@ -253,6 +253,13 @@ export const findRoot = (tree) => findAll(tree, (node) => node.props?.['data-das
  * 它与 `role="alert"` 是两个世界：一个是"这里本来就没有"，一个是"出事了" —— 判据必须分得开。
  */
 export const findAbsent = (tree) => findAll(tree, (node) => node.props?.['data-dashboard-absent'] === true)[0] ?? null
+/**
+ * 树里所有 `role="status"` 节点（页脚「读数日 …」/ 读盘中 / 缺席通知都用它）。
+ *
+ * 为什么要元素级、不只扫全树文字：页脚是「读数日 <day> + 相对年龄」这条读数的**唯一载体**，
+ * 拿 `texts` 里任意一条字符串去匹配，分不开"画在页脚"与"画在别处"（`cand-20261025-0363` 的同一条口径）。
+ */
+export const findStatusNodes = (tree) => findAll(tree, (node) => node.props?.role === 'status')
 
 /**
  * 装一份渲染层，之后可以反复开"现场"。
@@ -342,6 +349,8 @@ export function createDashboardHarness(source) {
       root_present: false,
       alert_text: null,
       absent: null,
+      /** 每个 `role="status"` 节点自己的文字（页脚 / 读盘中 / 缺席通知各一条）。 */
+      status_texts: [],
       panel_style: null,
       hook_args: null,
       texts: [],
@@ -390,6 +399,8 @@ export function createDashboardHarness(source) {
     reading.root_present = findRoot(tree) !== null
     const alert = findAlert(tree)
     reading.alert_text = alert === null ? null : textsOf(alert).join('').trim()
+    // 每个 status 节点**各自**一段文字：页脚那条「读数日 …」与"读盘中 / 没有快照"是三个世界。
+    reading.status_texts = findStatusNodes(tree).map((node) => textsOf(node).join('').trim())
     const absent = findAbsent(tree)
     reading.absent = absent === null ? null : {
       role: absent.props?.role ?? null,
