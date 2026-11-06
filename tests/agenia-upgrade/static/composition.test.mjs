@@ -184,7 +184,7 @@ describe('static · composition', () => {
         if (comp.rows.length !== rec.readings.staged_id_lines) push('STAGED-PARSE', `解析行数 ${comp.rows.length} ≠ 裸计数 ${rec.readings.staged_id_lines} —— 解析器丢了行`)
         const dupes = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))]
         if (dupes.length > 0) push('STAGED-DUP-ID', `组合里有重复行 id：${dupes.join(', ')}`)
-        if (comp.rows.length !== FROZEN.staged.capabilityRows) push('STAGED-ROWS', `能力行实得 ${comp.rows.length}，冻结期望 ${FROZEN.staged.capabilityRows}（32 条出厂能力行 + 1 条注入器 + 5 条 team-* + 4 条 job + 1 条客户端 UI）`)
+        if (comp.rows.length !== FROZEN.staged.capabilityRows) push('STAGED-ROWS', `能力行实得 ${comp.rows.length}，冻结期望 ${FROZEN.staged.capabilityRows}（31 条出厂能力行 —— 32 条里减掉上游已取消的 \`tool-subagent-list-agents\` + 1 条注入器 + 5 条 team-* + 4 条 job + 1 条客户端 UI = 42）`)
         for (const id of FROZEN.fixedTeamRowIds) if (!ids.includes(id)) push('STAGED-TEAM-ROW', `缺固定行 ${id}`)
         for (const job of FROZEN.jobs) if (!ids.includes(job.id)) push('STAGED-JOB-ROW', `缺 job 行 ${job.id}`)
 
@@ -196,7 +196,16 @@ describe('static · composition', () => {
           rec.readings.only_in_standard = onlyStd
           rec.readings.only_in_agenia = onlyAge
           const expectOnly = [...FROZEN.liveWitness.onlyInAgenia, ...FROZEN.jobs.map((j) => j.id)].sort()
-          if (onlyStd.length !== 0) push('ONLY-IN-STANDARD', `onlyInStandard 必须为空（standard 有的必须有），实得 ${JSON.stringify(onlyStd)}`)
+          /**
+           * `onlyInStandard` 的期望 = **点名的那几行上游已取消的能力行**（`FROZEN.staged.onlyInStandard`）。
+           * 2026-11-06：原来是"必须为空"，现在 oracle（冻在 0.2.0-rc.2）仍列着 `tool-subagent-list-agents`，
+           * 而 0.2.2 上游把它删了 —— 组合里不能写回来（写了那一行 `never started` ⇒ 整份预设 broken）。
+           * ⚠️ 比的是**集合相等**，不是"至多"：名单外多一行 / 这一行回到组合里，两种都红。
+           */
+          const expectOnlyStd = [...FROZEN.staged.onlyInStandard].sort()
+          if (JSON.stringify([...onlyStd].sort()) !== JSON.stringify(expectOnlyStd)) {
+            push('ONLY-IN-STANDARD', `onlyInStandard 必须恰好是上游已取消的那几行（standard 有的必须有 —— 除了 oracle 冻在旧版仍列着、而 0.2.2 上游已删的行）：期望 ${JSON.stringify(expectOnlyStd)}，实得 ${JSON.stringify(onlyStd)}`)
+          }
           if (onlyAge.length !== FROZEN.staged.onlyInAgenia) push('ONLY-IN-AGENIA', `onlyInAgenia 项数实得 ${onlyAge.length}，冻结期望 ${FROZEN.staged.onlyInAgenia}`)
           if (JSON.stringify(onlyAge) !== JSON.stringify(expectOnly)) push('ONLY-IN-AGENIA', `onlyInAgenia 明细实得 ${JSON.stringify(onlyAge)}，冻结 ${JSON.stringify(expectOnly)}`)
 

@@ -17,6 +17,7 @@
   "dsh": {
     "client": {
       "inject": [
+        "remote",
         "remote.workspaceFiles",
         "sessions",
         "uiWorkspace",

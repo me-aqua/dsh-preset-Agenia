@@ -134,9 +134,11 @@ export const FROZEN = {
   /** 活体 agenia 组合的当前读数（AGENTS.md 3b / 契约 §0.2.2）—— 只作解析器校准，不是被测期望。 */
   liveWitness: {
     /** 活体组合的 `- id:` 行数（能力行口径，含 persona-injector、五条 team-* 行与点名的那条客户端 UI 行）。
-     *  2026-11-04：42 → 43（看板面板 `agenia-dashboard` 落进组合）。⚠️ 本字段**当前零读者** ——
-     *  它是校准读数不是被测期望；改它只是让它别在读者出现那天当场撒谎。 */
-    capabilityRows: 43,
+     *  2026-11-04：42 → 43（看板面板 `agenia-dashboard` 落进组合）。
+     *  2026-11-06：43 → 42 —— 删掉上游已取消的 `tool-subagent-list-agents`（DSH 0.2.2 没了那个
+     *  子路径导出，`list_agents` 并进主插件；留着它整份预设会被判不可用）。
+     *  ⚠️ 本字段**当前零读者** —— 它是校准读数不是被测期望；改它只是让它别在读者出现那天当场撒谎。 */
+    capabilityRows: 42,
     teamToolRows: 5,
     /** 活体组合 `officeBound` 的名单（**一个**判断类岗位：`review` —— 复盘岗已撤 · `memory-review` / `conversation-review`
      *  2026-10-16 先后由老板拍板移出；来历见下面 `FROZEN.staged.officeBound` 那条 🔴）。 */
@@ -161,8 +163,9 @@ export const FROZEN = {
     onlyInAgenia: ['persona-injector', 'team-design', 'team-dev', 'team-test', 'team-review', 'team-retro', 'agenia-dashboard'],
     /**
      * 解析器对照**允许**看到的活体行数（同一个量的两个时刻读数）：
-     *   · **42** = `agenia-dashboard` 那一行落下去**之前**的活体读数（2026-11-04 这一批的装前）；
-     *   · **43** = 现在（这一批装之后）。
+     *   · **42** = 现在的读数（2026-11-06 删掉上游已取消的 `tool-subagent-list-agents` 之后）；
+     *     ⚠️ 它当年也正好是"看板那一行落下去之前"的读数 —— **同一个数、两个来历**，别串着读；
+     *   · **43** = 2026-11-04 那一批装之后、2026-11-06 删行之前的读数（历史读数，今天量不出来了）。
      * 只用来抓"解析器坏了 / 有人手改了活体"，**不是**对被测对象的期望。
      *
      * 🔴 **38 不在这一对里**（2026-11-04 re-baseline 的裁定）：它是 AGENTS.md 3b 记的"装前"历史值，
@@ -217,22 +220,25 @@ export const FROZEN = {
     /** 组员那一份要**整组去掉**的那个 `cordis:group` 的 id —— 组员没有委派工具。 */
     memberDropsGroup: 'delegation',
     /**
-     * 🔴 **`delegation` 组里必须有的那 6 个包名**（`F-109` 第 4 关评审 `M-3` / 现场 `S-2`）。
+     * 🔴 **`delegation` 组里必须有的那 5 个包名**（`F-109` 第 4 关评审 `M-3` / 现场 `S-2`）。
      *
      * 为什么要有它：`expectedPresetRows()` 的第二行输入是 `subtreeIds(compRows, 'delegation')` ——
      * **组员预设的工具集 = 组合减去这一组**。也就是说"哪几行在组里"是**承重事实**，
      * 而在这一条之前它**零断言**（`row.parent` 只写不读、`subtreeIds` 只在 `composition.mjs` 里被调用）。
      * 现场：把 `tool-fs` 误缩进进组、重跑生成器 ⇒ 九个岗位全线失去它，所有派生判据照旧绿。
      *
-     * 为什么钉 6 个**包名**、不钉 19 个**行 id**：钉 id 的话，加一条委派行就要改这张表
+     * 为什么钉 5 个**包名**、不钉 18 个**行 id**：钉 id 的话，加一条委派行就要改这张表
      * （`mig-test-whitelist-vs-blacklist-01`：加一个合法的项它就会红 = change-detector）；
      * 钉包名的话，**加几条委派行都绿**，而"`tool-fs` 挪进组"或"`tool-workflow` 挪出组"当场红。
      * 判据本体：`support/composition.mjs::delegationGroupProblems()`。
+     *
+     * ⚠️ 2026-11-06：`@deepseek-ai/dsh-tool-subagent-control/list-agents` 从这张表里删掉 ——
+     * DSH 0.2.2 起 `list_agents` 并进了上面那个主包，子路径导出没了（留着它，
+     * 预设会被判不可用、新建会话直接失败）。
      */
     delegationToolNames: [
       '@deepseek-ai/dsh-tool-subagent',
       '@deepseek-ai/dsh-tool-subagent-control',
-      '@deepseek-ai/dsh-tool-subagent-control/list-agents',
       '@deepseek-ai/dsh-tool-workflow',
       '@deepseek-ai/dsh-tool-ralph',
       '@deepseek-ai/dsh-workflow-ptc',
@@ -274,8 +280,12 @@ export const FROZEN = {
      *    （`.tools/make-bundle-patch.mjs` 从组合派生两份预设，组合多一行 ⇒ 两份各多一行；
      *    读数 `calibrate().readings.patch_preset_row_counts` 与 `STAT-01` 的 `staged_id_lines` 同源）。
      *    它是**顶格行**，不是 delegation 组成员。
+     *    2026-11-06：**43 → 42** —— 删掉上游已取消的 `tool-subagent-list-agents`（DSH 0.2.2 没有
+     *    那个子路径导出，`list_agents` 并进主插件；留着它 `never started` ⇒ 整份预设 broken）。
+     *    算式：31 条出厂能力行（oracle 冻在 0.2.0-rc.2，32 里减掉那一条上游已取消的）
+     *    + 1 条注入器 + 5 条 team-* + 4 条 job + 1 条客户端 UI = 42。
      */
-    capabilityRows: 43,
+    capabilityRows: 42,
     /** `team/<角色>.md` 的份数：四个固定岗位 + `hire` + 四类一次性作业（复盘岗已撤，没有 `retro.md`）。 */
     teamFiles: 9,
     jobBriefFiles: 4,
@@ -301,15 +311,32 @@ export const FROZEN = {
      * 两件保护（无命令行 / 写只落 `.team/`）**只剩 `review` 一个岗位有**：复盘岗已撤
      * （`team/retro.md` 不存在、`team-retro` 那一行关着）；`memory-review` 2026-10-16 上午移出 ·
      * `conversation-review` 2026-10-16 同日下午移出（为什么与代价见上面那条 🔴）。
-     * 来历：`officeBound: 1` 是**计数**（同族 `capabilityRows: 43` / `teamFiles: 9` 都是计数），
+     * 来历：`officeBound: 1` 是**计数**（同族 `capabilityRows: 42` / `teamFiles: 9` 都是计数），
      * 而 STAT-02 / REV-02 拿它当名单去 `for...of` ⇒ 实现做对的那一刻当场 `TypeError: not iterable`，
      * 把整条被测面挡在后面（证据：实现岗 `dev/2026-10-14/log.md` §11）。
      */
     officeBoundRoles: ['review'],
-    onlyInStandard: [],
+    /**
+     * `onlyInStandard` 的**名单**（standard 有、agania 没有的行 id）。
+     *
+     * 2026-11-06：**空 → 一条**。那一行是 `tool-subagent-list-agents`：oracle 冻在 **0.2.0-rc.2**，
+     * 它当然还列着；而客户端升到 **0.2.2** 后那个子路径导出**没了**，`list_agents` 并进主插件
+     * `@deepseek-ai/dsh-tool-subagent-control`。组合里再写它 ⇒ 那一行 `never started`
+     * ⇒ 整份预设判 broken ⇒ 新建会话直接失败（2026-11-06 上午的故障）。
+     *
+     * ⚠️ 这是**点名放行**，不是放宽成"standard 少几行都行"：断言比的是**集合相等** ——
+     *   · 名单外再多一行 standard 有、agania 没有 ⇒ `ONLY-IN-STANDARD` 照旧红；
+     *   · 这一行**回到**组合里（差集里不再有它）⇒ 同样红（期望是"恰好这一条"，不是"至多一条"）。
+     *   同一份事实在体检脚本里叫 `ORACLE_UPSTREAM_RETIRED`（`.tools/check-notes.mjs`）：
+     *   总数算式与差集两处都点名减掉它 —— 两个读者必须说同一句话。
+     */
+    onlyInStandard: ['tool-subagent-list-agents'],
     /**
      * `onlyInAgenia` 的**项数**（`standard` 没有、agania 有的行 id 有几个）。
      * 2026-11-04：**10 → 11** —— 多出来的是 `agenia-dashboard` 那一行。
+     * 2026-11-06：**11 不动** —— 删掉的 `tool-subagent-list-agents` 在 standard 与 agenia **两侧都有**，
+     * 它进的是 `onlyInStandard` 那一侧（见上），不进这里；算式仍是
+     * `42 行 − (32 − 1) 条出厂能力行 = 11`（`liveWitness.capabilityRows` 同批 43 → 42）。
      * 算式（同一批读数）：6 条岗位/注入行（`liveWitness.onlyInAgenia`）+ 4 条 `tool-job-*` + 1 条客户端 UI。
      * ⚠️ 这一格与 `liveWitness.onlyInAgenia` 是**一对**：只改计数会漏掉"一进一出同数"，
      *    只改名单则 `ONLY-IN-AGENIA` 的计数那一句仍红（`STAT-01` 两句各判一次）。

@@ -1600,6 +1600,11 @@ export function calibrate(compositionText, patchText) {
  *   · 组长块全文（`preset_blocks[agenia].full_text`，`PRS-01` ⑤′ 的对照物 + 退休注释提取器的阳性对照样本）；
  *   · 旧九个 per-role 预设 id（`PRS-01` ⑤′ 的"它们必须全删、组长块里一个都不许再引用"）。
  *
+ * 2026-11-06 组长块重定基线：删掉 `tool-subagent-list-agents` 那两行值行 —— DSH 0.2.2 起
+ * `list_agents` 并进主插件、那个子路径导出已不存在，组合里再写它整份预设判 broken。
+ * 该块 `sha256` 同批重算；**其余 9 块一个字节没动**（`PRS-01` 的 `BASELINE-SELFPROOF` 逐块自证）。
+ * 这是**事实变了**：基线的严格度不变 —— 别的行差一个字符照样 `LEADER-CLOBBERED`。
+ *
  * @returns {{ok: boolean, why: string|null, value: object|null}}
  */
 export function readPresetBaseline() {

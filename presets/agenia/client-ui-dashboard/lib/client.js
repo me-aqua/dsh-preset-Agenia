@@ -296,6 +296,10 @@ window.__ModuleLoader__.load({
 			"uiWorkspace",
 			"slots",
 			"locale",
+			// 🔴 2026-11-06：**父级键也要写**。只写 `remote.workspaceFiles` 会报
+			//    `cannot get property 'remote' without inject` —— 拿不到 `ctx.remote`，那一步就抛，
+			//    面板读不到快照（症状：按钮在、点开什么都没有）。官方 `dsh-client-ui-sidebar-files` 也是父子都写。
+			"remote",
 			"remote.workspaceFiles"
 		];
 		/**

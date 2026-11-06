@@ -1127,9 +1127,14 @@ test('PFL-09 冻结契约同步：冻结 ID 一条不少 · 体检指名 · 增�
     //    那是钉在 `tool-proposal-file` 这一行上的 change-detector：**任何别的行**合法加进组合
     //    （今天的 `agenia-dashboard`），它都会把 11 判成"漂移"，而它守的那条义务其实成立
     //    （`mig-test-criterion-drift-01`：判据不许钉在会变的东西上）。改成从**同一份组合**推：
-    //    增量 = 组合的 `- id:` 行数 − 出厂能力行数（`FROZEN.oracle.capabilityRows` = 32；
-    //    "standard 有的必须有"由 `STAT-01` 另判 ⇒ 这里只比这个差）。
-    //    今天：43 − 32 = 11 = 常量。加一行而不改常量 ⇒ 当场红；只改常量不加行 ⇒ 也红。
+    //    增量 = 组合的 `- id:` 行数 − **真的对得上号的**出厂能力行数
+    //    （"standard 有的必须有"由 `STAT-01` 另判 ⇒ 这里只比这个差）。
+    // 🔴 2026-11-06（上游取消 `tool-subagent-list-agents`）：公式里"减去标准侧全部能力行"不再成立 ——
+    //    oracle（冻在 0.2.0-rc.2）仍列着那一行，而组合里不能写它（写了那一行 `never started` ⇒
+    //    整份预设 broken；2026-11-06 上午新建会话失败就是这么来的）。
+    //    标准侧**对得上号的**行数 = 32 − 1（`FROZEN.staged.onlyInStandard` 点名的那一条）。
+    //    今天：42 − (32 − 1) = 11 = 常量（`.tools/check-notes.mjs` 的 `EXPECTED_ONLY_AGENIA`）。
+    //    这是**事实变了**，不是放宽：减掉的是**点名的那一行**；别的行多一条 / 少一条照样红。
     //    ⚠️ 仍然读 `.tools/check-notes.mjs`（组长的格子）：它不在树里就 HOLD，不许拿树外那份冒充。
     const yml = readText(YML)
     if (yml === null) push('SUT-SURFACE-MISSING', `读不到 ${YML}`)
@@ -1138,14 +1143,21 @@ test('PFL-09 冻结契约同步：冻结 ID 一条不少 · 体检指名 · 增�
       const compRows = parseComposition(yml, 'live-composition').rows.length
       const m = /const EXPECTED_ONLY_AGENIA\s*=\s*(\d+)/.exec(notes)
       const expected = m === null ? null : Number(m[1])
-      const want = compRows - FROZEN.oracle.capabilityRows
+      const retiredStdRows = FROZEN.staged.onlyInStandard.length
+      const want = compRows - (FROZEN.oracle.capabilityRows - retiredStdRows)
       rec.readings.expected_only_agenia = expected
-      rec.readings.only_agenia_from_composition = { composition_rows: compRows, standard_capability_rows: FROZEN.oracle.capabilityRows, delta: want }
+      rec.readings.only_agenia_from_composition = {
+        composition_rows: compRows,
+        standard_capability_rows: FROZEN.oracle.capabilityRows,
+        upstream_retired_standard_rows: retiredStdRows,
+        delta: want,
+      }
       rec.readings.has_proposal_row = newRow !== undefined
       if (expected === null) push('CONST-MISSING', '读不出体检里的 EXPECTED_ONLY_AGENIA 常量')
       else if (expected !== want) {
         push('CONST-DRIFT', `EXPECTED_ONLY_AGENIA 应为 ${want}`
-          + `（组合 ${compRows} 行 − 出厂能力行 ${FROZEN.oracle.capabilityRows} = ${want}；公式前提"onlyInStandard 为空"由 STAT-01 判）`
+          + `（组合 ${compRows} 行 −（出厂能力行 ${FROZEN.oracle.capabilityRows} − 上游已取消的 ${retiredStdRows} 条）= ${want}；`
+          + `差集那一侧由 STAT-01 的 ONLY-IN-STANDARD 判）`
           + `，实得 ${expected}`)
       }
       // ④ 委派名单的反例：它不是 dsh-tool-subagent 实例 ⇒ 放进 delegationTools 会让体检红

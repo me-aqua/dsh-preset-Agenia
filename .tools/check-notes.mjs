@@ -311,6 +311,16 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    persona-injector / team-* / tool-job-* 任何一类；照旧规矩"多出来的每一项都必须写下来"，
   //    写下来 = 在下面那个常量里点名。43 = 32 + 1 + 5 + 4 + 1。
   //    ⚠️ 这条只放行**点了名的那几行**；组合里冒出别的不认识的行，仍然红。
+  // 🔴 2026-11-06：**上游删掉的能力行**（oracle 里还写着，我们不能写）。
+  //    来历：`@deepseek-ai/dsh-tool-subagent-control/list-agents` 是 0.1.x / 0.2.0 里的
+  //    独立子路径导出；客户端升到 **0.2.2** 后那个导出没了，`list_agents` 并进了主插件
+  //    `@deepseek-ai/dsh-tool-subagent-control`（与 `send_message` / `interrupt_agent` 一起注册），
+  //    出厂 `standard` 预设也只剩主插件那一行。
+  //    ⇒ 我们再把那一行写回去，那一行就装不起来（`never started`）⇒ 整份预设被判不可用
+  //      ⇒ 新建会话直接失败（2026-11-06 就是这么挂的）。
+  //    ⚠️ oracle 冻的是 0.2.0-rc.2 那份，它当然还列着这一行 —— 所以两处（总数算式 / 差集）
+  //      都要**点名减掉它**，不是放宽成"少几行都行"。表外的行少一条照样红。
+  const ORACLE_UPSTREAM_RETIRED = ['tool-subagent-list-agents']
   const jobRowIds = agenia.filter((r) => r.startsWith('tool-job-'))
   // 第四类增量（2026-11-04 加）：宿主级客户端 UI 行 —— **点名**，不是"凡 dsh.client 都放行"。
   // ⚠️ 它同时被下面 `declared`（"多出来的每一项都写下来了"那条）和 `EXPECTED_ONLY_AGENIA` 用。
@@ -321,7 +331,7 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   } else {
     eq('composition', 'agenia 能力行总数 = 出厂能力行 + 组合声明的增量（不写死 38 / 42）',
       agenia.length,
-      idLines(read(ORACLE_FILE)).filter((r) => !PRESET_DECL.test(r)).length + 1
+      idLines(read(ORACLE_FILE)).filter((r) => !PRESET_DECL.test(r)).length - ORACLE_UPSTREAM_RETIRED.length + 1
         + FIXED_ROLES.length + RETIRED_ROLES.length + jobRowIds.length + CLIENT_UI_ROWS.length)
   }
   // ⚠️ 期望值含**已撤岗那一行**：`team-retro` 是"关掉不删"，行还在 ⇒ 5 条。
@@ -374,7 +384,8 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       + '⚠️ 这几条**不许从分母里消失**：2026-09-28 那次就是"找不到来源"的一条红把整支集合比对吃掉了，'
       + '它既绿不了也红不了 —— 那比红更坏。')
   } else {
-    const std = idLines(read(ORACLE_FILE)).filter((r) => !PRESET_DECL.test(r))
+    const std = idLines(read(ORACLE_FILE))
+      .filter((r) => !PRESET_DECL.test(r) && !ORACLE_UPSTREAM_RETIRED.includes(r))
     // 🔴 2026-09-28 补：**文件在、方言变了** ⇒ 正则可以一条都不命中，于是数出 0 行、
     //    差集变成"agenia 多出 38 项"，下面每一条都红得莫名其妙。这条把病因直接点出来。
     yes('composition', 'oracle 数得出能力行（防"文件在、正则全哑"）',

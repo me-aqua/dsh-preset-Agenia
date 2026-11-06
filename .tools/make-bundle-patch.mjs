@@ -192,7 +192,6 @@ const BARE_ROWS_IN_PRESET = Object.freeze([
   '@deepseek-ai/dsh-tool-skill',
   '@deepseek-ai/dsh-tool-subagent',
   '@deepseek-ai/dsh-tool-subagent-control',
-  '@deepseek-ai/dsh-tool-subagent-control/list-agents',
   '@deepseek-ai/dsh-tool-todo',
   '@deepseek-ai/dsh-tool-web',
   '@deepseek-ai/dsh-tool-workflow',

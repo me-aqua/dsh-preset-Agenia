@@ -334,9 +334,14 @@
             config:
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
-
-              - id: tool-subagent-list-agents
-                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+                # ⚠️ 2026-11-06：这一行**已经包含** `list_agents` 工具，不要再单开一行。
+                #
+                # 以前这里还有一行 `@deepseek-ai/dsh-tool-subagent-control/list-agents`（单独注册
+                # `list_agents`）。客户端升到 DSH 0.2.2 后，那个子路径导出**没了** —— `list_agents`
+                # 并进了这个主插件，跟 `send_message` / `interrupt_agent` 一起注册。
+                # 留着一行旧写法 ⇒ 那一行装不起来（`never started`）⇒ 整份预设被判不可用
+                # ⇒ **新建会话直接失败**，而菜单里那一份还会被界面藏掉，很难查。
+                # 出厂 `standard` 预设现在也只有上面这一行，照它。
 
               # 临时外聘的通道：组长写一份招聘要求，起一个用一次就散的人。
               #
