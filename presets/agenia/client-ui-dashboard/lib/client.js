@@ -303,6 +303,45 @@ window.__ModuleLoader__.load({
 			"remote.workspaceFiles"
 		];
 		/**
+		 * 从 `remote.workspaceFiles.read` 的返回值里**取出正文**。
+		 *
+		 * 🔴 为什么要这一层：2026-11-06 实测，点开面板报 `"undefined" is not valid JSON`
+		 * —— 说明拿到的**不是** `WorkspaceFileText`（或它被包了一层），`page.text` 是 `undefined`。
+		 * 我们看不到浏览器的返回值，所以这里**先认几种可能的形状，认不出就把实际形状说出来** ——
+		 * 面板那条红条就是量具：它必须告诉我们"拿到的是个什么东西"，而不是只说"JSON 坏了"。
+		 */
+		function pickPageText(page) {
+			if (typeof page === "string") return page;
+			const shapes = [
+				page,
+				page && page.value,
+				page && page.result
+			];
+			for (const shape of shapes) {
+				if (shape && typeof shape.text === "string") return shape.text;
+				if (shape && Array.isArray(shape.chunks)) return shape.chunks.join("\n");
+			}
+			throw new Error(`读回来的东西里没有正文（${describeShape(page)}）`);
+		}
+		/** 把"拿到的是个什么东西"说人话：类型 + 顶层键 + 一段短预览。 */
+		function describeShape(value) {
+			if (value === undefined) return "undefined";
+			if (value === null) return "null";
+			const type = typeof value;
+			if (type !== "object") return previewOf(type, value);
+			const keys = Object.keys(value);
+			let preview = "";
+			try {
+				preview = JSON.stringify(value).slice(0, 160);
+			} catch {
+				preview = String(value).slice(0, 160);
+			}
+			return `object · 键=[${keys.join(", ")}] · 预览=${preview}`;
+		}
+		function previewOf(type, value) {
+			return `${type} · 值=${String(value).slice(0, 120)}`;
+		}
+		/**
 		 * 注册看板：词典 + 会话头部的那个槽位（官方 `agent-team` 的同位）。
 		 * 这一层**不读账本** —— 它只把 Node 侧算好的那一份快照读进来。
 		 */
@@ -320,7 +359,7 @@ window.__ModuleLoader__.load({
 					if (!svc || typeof svc.read !== "function") {
 						return Promise.reject(new Error("remote.workspaceFiles 不可用（浏览器侧没有这个服务）"));
 					}
-					return Promise.resolve(svc.read(sessionId, SNAPSHOT_PATH, { offset: 1, limit: 200 })).then((page) => page.text);
+					return Promise.resolve(svc.read(sessionId, SNAPSHOT_PATH, { offset: 1, limit: 200 })).then(pickPageText);
 				} catch (err) {
 					return Promise.reject(err);
 				}
