@@ -24,17 +24,20 @@
  *
  * ── 为什么读的是人读页 ────────────────────────────────────────────────────────────
  * 「处置」「票号 / 落点」两列只在卡 2 的 `每条的落点` 页上（`C2 · 回执格` 的 6 个机器格不含它们）。
- * 老板读的就是这一页 ⇒ 判据钉这一页：页名逐字、表头 `# / 级别 / 发现（一句话） / 处置 / 票号 / 落点 / 下一步`、
+ * 老板读的就是这一页 ⇒ 判据钉这一页：页名逐字、**表头 6 列**
+ * （`# / 级别 / 发现（一句话） / 处置 / 票号 / 落点 / 下一步`，其中 `票号 / 落点` 印在**同一格**）、
  * 数据从第 5 行起、行键 = `第一场 · <finding id>`。版式常量只在 `support/card-surface.mjs` 里出现一次。
+ * ⚠️ 判据读前 5 格（A–E）；第 6 格 `下一步` 不进这一族判据（`rowCells` 只取 5 格）。
+ * ⚠️ 数据起始行被钉住、数据区里不许夹空行（`CARD08-LAYOUT`）—— 原来"切行偏移再滤空行"会让插一个空行照样绿。
  */
 import { before, test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { caseFail, caseHold, preflight, problem, runCase, sha256Text } from '../support/evidence.mjs'
 import {
-  DAY, DISPOSITION_SHEET, DISPOSITION_WORDS, FINDINGS_FILE, NOW, card2File, copyGeneratorWithPatch,
-  generatorScriptPath, makeCardRoots, runCards, sha256Of, sheetRows, writeDataRoot, writeFindings,
-  writeFindingsMap, writeMemorySource,
+  DAY, DISPOSITION_LAYOUT, DISPOSITION_SHEET, DISPOSITION_WORDS, FINDINGS_FILE, NOW, card2File,
+  copyGeneratorWithPatch, generatorScriptPath, layoutData, makeCardRoots, runCards, sha256Of, sheetRows,
+  writeDataRoot, writeFindings, writeFindingsMap, writeMemorySource,
 } from '../support/card-surface.mjs'
 
 before(() => {
@@ -64,8 +67,37 @@ const MAP = Object.freeze({
   }),
 })
 
-/** 数据行：`每条的落点` 版式 = r1 标题 / r2 作业书 / r3 空行 / r4 表头 / r5 起数据。 */
-const dataRows = (rows) => (rows ?? []).slice(4).filter((r) => (r ?? []).some((c) => c !== null && String(c).trim() !== ''))
+/**
+ * 版式诊断：`CARD08-LAYOUT`。版式不对 ⇒ 行会错位，这一页的其它判据都不可信（只报这一条）。
+ * 钉的三件事在 `support/card-surface.mjs::DISPOSITION_LAYOUT` / `layoutData()` 里只写一次。
+ */
+function layoutProblems(sheet) {
+  const layout = layoutData(sheet.rows, DISPOSITION_LAYOUT, { expected_rows: FINDINGS.length })
+  if (layout.ok) return { problems: [], data: layout.data }
+  const where = `\`${DISPOSITION_SHEET}\` 第 ${layout.row ?? '?'} 行`
+  let detail = `版式不对（${layout.why}）`
+  if (layout.why === 'header') {
+    detail = `${where}必须是表头 ${JSON.stringify(layout.expect)}（列名与列序逐字），实得 ${JSON.stringify(layout.got)}`
+  } else if (layout.why === 'no-data') {
+    detail = `${where}起必须是数据行，但整页只有 ${layout.total_rows ?? 0} 行`
+  } else if (layout.why === 'blank-start') {
+    detail = `${where}是**数据起始行**，现在却是一个空行（在数据前插一个空行也要红）`
+  } else if (layout.why === 'hole') {
+    detail = `数据区里**不许夹空行**，第 ${(layout.rows ?? []).join(' · ')} 行是空行（版式 = 连续的数据区）`
+  }
+  return {
+    problems: [problem('CARD08-LAYOUT',
+      `CARD-08：${detail} —— 版式钉在 \`support/card-surface.mjs::DISPOSITION_LAYOUT\`；`
+      + '版式一改（多一行说明 / 换列名 / 插空行）这一条就红，那是"判据要跟着改"，不是产品坏了')],
+    data: [],
+  }
+}
+
+/** 证据里的行：从数据起始行**原样**切（不滤空行 —— 空洞要能在读数里看见）。 */
+const rawDataRows = (rows) => (Array.isArray(rows) ? rows.slice(DISPOSITION_LAYOUT.data_row) : [])
+/** 判据用的数据区：只有版式成立时才给（不成立时由 `CARD08-LAYOUT` 说）。 */
+const dataRows = (rows) => layoutData(rows, DISPOSITION_LAYOUT, { expected_rows: FINDINGS.length }).data
+/** 判据读前 5 格（A–E）：第 6 格 `下一步` 不进这一族判据。 */
 const rowCells = (row) => [0, 1, 2, 3, 4].map((i) => String(row?.[i] ?? '').trim())
 const byFinding = (rows) => {
   const out = new Map()
@@ -88,6 +120,8 @@ function dispositionProblems(sheet, { mapPresent }) {
       `CARD-08：卡 2 上没有 \`${DISPOSITION_SHEET}\` 这一页（${sheet.error}；页名实得 ${JSON.stringify(sheet.sheet_names)}）—— 「处置」列就住在这页上`))
     return { problems: out, texts }
   }
+  const shaped = layoutProblems(sheet)
+  if (shaped.problems.length > 0) return { problems: shaped.problems, texts }
   const found = byFinding(sheet.rows)
   const missing = FINDINGS.filter((f) => !found.has(f.id)).map((f) => f.id)
   if (missing.length > 0) {
@@ -266,7 +300,11 @@ test('CARD-08 处置列：ticket 也算落点 · 「采纳不了」不许印成�
         stderr: String(scene.run.stderr ?? '').trim().slice(0, 400),
         card: scene.card,
         sheet_error: scene.sheet.error,
-        data_rows: dataRows(scene.sheet.rows).map(rowCells),
+        layout: scene.sheet.rows === null ? null : (() => {
+          const l = layoutData(scene.sheet.rows, DISPOSITION_LAYOUT, { expected_rows: FINDINGS.length })
+          return { ok: l.ok, why: l.why ?? null, row: l.row ?? null, holes: l.rows ?? null }
+        })(),
+        data_rows: rawDataRows(scene.sheet.rows).map(rowCells),
       }
       if (scene.run.python?.ok === false) {
         caseHold(rec, 'CARD08-NO-PYTHON', `这一档要真跑 daily-cards.py，但找不到能 import openpyxl 的 python：${scene.run.python.note}`)

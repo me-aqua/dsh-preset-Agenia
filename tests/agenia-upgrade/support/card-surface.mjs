@@ -1290,3 +1290,79 @@ export function copyGeneratorWithPatch(dir, { patch = [], marker = null, why = '
   }
 }
 
+// ── 版式（`sheetRows().rows` 的**行位**）────────────────────────────────────────
+/**
+ * `待你拍` 的版式（**0 基索引**，索引的是 `sheetRows().rows` 那个数组；屏幕上第几行 = +1）。
+ * 今天：r1 标题 · r2 空行 · r3 表头 · r4 起数据。
+ *
+ * 🔴 为什么把"表头行 / 数据起始行 / 列名"都钉在这里：原来两格都是 `rows.slice(3)` **再滤空行**
+ *    （复审 batch6 §4.3）⇒ 在数据前插一个空行、或在数据区里插一个空行，**照样绿**；
+ *    而插一个非空行才红。两个方向都教人下次去放宽它。空行是缺陷，不是排版 —— 滤掉它等于把缺陷藏起来。
+ */
+export const PENDING_LAYOUT = Object.freeze({
+  header_row: 2,
+  data_row: 3,
+  header: Object.freeze(['事', '为什么', '代价']),
+})
+
+/**
+ * 卡 2 `每条的落点` 的版式（0 基）：r1 标题 · r2 作业书 · r3 空行 · r4 表头 · r5 起数据。
+ *
+ * ⚠️ 表头是 **6 列**：`票号 / 落点` 在**同一格**（`daily-cards.py` 的 `w.append(("#", "级别", …))`
+ *    只 append 了 6 个值）。判据读前 5 格（A–E），第 6 格 `下一步` 不进这一族判据。
+ */
+export const DISPOSITION_LAYOUT = Object.freeze({
+  header_row: 3,
+  data_row: 4,
+  header: Object.freeze(['#', '级别', '发现（一句话）', '处置', '票号 / 落点', '下一步']),
+})
+
+/** 一行是不是"全空"（`null` / 空串 / 纯空白都算空）。 */
+const blankRow = (row) => (Array.isArray(row) ? row : []).every((c) => c === null || String(c).trim() === '')
+
+/**
+ * 按版式切数据区。**不滤空行** —— 空行是缺陷（`why:'hole'`，带 1 基行号），滤掉它就看不见了。
+ *
+ * 判三件：
+ *   ① **表头**那一行逐字等于 `layout.header`（换列名 / 换列序 ⇒ `why:'header'`）；
+ *   ② **数据起始行**：钉住的那一行必须存在且不是空行（在数据前插一个空行 ⇒ `why:'blank-start'`）；
+ *   ③ **数据区无空洞**：数据区 = `data_row` 起 `expected_rows` 行；那几行里每个空行都记进 `holes`
+ *      （1 基行号）。页码比期望短时**不报版式**（缺行由用例自己的"行数 / 行键"判据说，那更具体）。
+ *
+ * 🔴 `expected_rows` 而不是"到最后一个非空行"：卡 2 的 `每条的落点` 页在 findings 下面**还有第二段**
+ *    （一行空行 + `会话评审回执（第二段）`）—— "到最后一行都不许有空行"会把**产品的正常版式**判红。
+ *    待你拍那一页用"期望行数"同样成立（2 行 / 1 行 / 1 行）。
+ *
+ * 尾部整行空行不算洞：`support/card-xlsx.py` 已经把它们剪掉了，这里再兼容一次。
+ * 返回 `{ok:true, data, row_count}` 或 `{ok:false, why, …}`；只有 `ok:true` 才给 `data`。
+ */
+export function layoutData(rows, layout = PENDING_LAYOUT, { expected_rows = null } = {}) {
+  const list = Array.isArray(rows) ? rows : []
+  const rawHeader = Array.isArray(list[layout.header_row]) ? list[layout.header_row] : []
+  const got = rawHeader.slice(0, layout.header.length).map((c) => String(c ?? '').trim())
+  if (got.length !== layout.header.length || got.join('\u0000') !== layout.header.join('\u0000')) {
+    return { ok: false, why: 'header', row: layout.header_row + 1, expect: layout.header, got, data: [] }
+  }
+  if (list.length <= layout.data_row) {
+    return { ok: false, why: 'no-data', row: layout.data_row + 1, total_rows: list.length, data: [] }
+  }
+  if (blankRow(list[layout.data_row])) {
+    return { ok: false, why: 'blank-start', row: layout.data_row + 1, data: [] }
+  }
+  // 数据区的右端：给了期望行数就从那一行截（短了就截到页尾）；没给就截到最后一个非空行。
+  let end
+  if (expected_rows === null) {
+    end = list.length - 1
+    while (end >= layout.data_row && blankRow(list[end])) end -= 1
+  } else {
+    // 给了期望行数：窗口右端就是那一行（短了就截到页尾）—— **不在这里剪尾部的空行**：
+    // 期望窗口里的空行正是"数据区里的洞"，剪掉它等于把缺陷藏起来。
+    const wanted = layout.data_row + Math.max(expected_rows, 1) - 1
+    end = Math.min(wanted, list.length - 1)
+  }
+  const holes = []
+  for (let i = layout.data_row; i <= end; i += 1) if (blankRow(list[i])) holes.push(i + 1)
+  if (holes.length > 0) return { ok: false, why: 'hole', rows: holes, data: [] }
+  return { ok: true, data: list.slice(layout.data_row, end + 1), row_count: end - layout.data_row + 1 }
+}
+

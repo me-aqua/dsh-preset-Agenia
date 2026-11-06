@@ -11,12 +11,21 @@
  *   `B` **文件在、`[]`**：组长**明确登记了**"没有要拍的事" ⇒ 必须是「今天 0 件 · 组长登记了」这一族
  *      （含 `0 件` **且** 含 `登记`），**不许**说 `不存在` / `没有人登记`（那是另一件事）。
  *   `C` **文件不在**：没有人登记 ⇒ 必须说 `不存在` / `没有人登记`（点名 `待你拍.json`）
- *      **且** B 列要有「不代表…」那半句（缺席 ≠ 真没有），**不许**印 `0 件`（那是替人编了一个"零"）。
+ *      **且**要有「不代表…」那半句（缺席 ≠ 真没有），**不许**印 `0 件`（那是替人编了一个"零"）。
+ *      ⚠️ 必备语与禁止语一律看**全部数据列**（A/B/C）：只扫 A 列时，错句子写进 B 列照样绿。
  *   `D` **三句两两不同**：三态被合成一句 ⇒ 这一条单独红（复审给的正是这个输入）。
  *   `E` **刀（每次真跑）**：把**生产那一份**生成器复制到运行根，只对**副本**把那三条腿换成一句写死的
  *      「（今天 0 件）」—— 复审 §7 的原输入。刀后的三副夹具必须让 `A/B/C/D` **四条同时翻**；
  *      而**真源码**那一跑 0 项。刀不许把生成器弄崩（那只是"改坏了"，不是"翻面"）。
  *   `F` 生产 `.tools/daily-cards.py` 的 sha256 前后一致（这一格**不许**为了造红去改被测文件）。
+ *   `G` **B 列刀**（复审 batch6 §4.1）：把**错句子**塞进 **B 列** —— `[]` 那态塞「没有人登记」、
+ *      文件不在那态塞「今天 0 件」。禁止语 / 必备语都按**全部数据列**判（与 `A` 那一支的 `anyText` 同宽），
+ *      所以这两条必须各翻一次；只扫 A 列时这一跑 **0 条**（那把刀当场红：判据对这一形态是哑的）。
+ *
+ * ── 版式（复审 batch6 §4.3）────────────────────────────────────────────────────────
+ * 数据**起始行**被钉住，数据区里**不许夹空行**（`CARD07-LAYOUT`）：表头行逐字 + 起始行不是空行 +
+ * 起始行到最后一个非空行之间无空洞 —— 三件都在 `support/card-surface.mjs::PENDING_LAYOUT` /
+ * `layoutData()` 里钉一次。原来"硬切行偏移再滤空行"会让**插入一个空行照样绿**。
  *
  * ── 为什么读的是人读页 ────────────────────────────────────────────────────────────
  * `待你拍` 这一页**没有机器格**（`C2 · 验收格` 的 39 个 key 里没有它）。老板读的就是这一页，
@@ -28,8 +37,8 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { caseFail, caseHold, preflight, problem, runCase } from '../support/evidence.mjs'
 import {
-  DAY, NOW, PENDING_SHEET, cardFile, copyGeneratorWithPatch, generatorScriptPath, makeCardRoots,
-  runCards, sha256Of, sheetRows, writeDataRoot, writeMemorySource, writePending,
+  DAY, NOW, PENDING_LAYOUT, PENDING_SHEET, cardFile, copyGeneratorWithPatch, generatorScriptPath, layoutData,
+  makeCardRoots, runCards, sha256Of, sheetRows, writeDataRoot, writeMemorySource, writePending,
 } from '../support/card-surface.mjs'
 
 before(() => {
@@ -42,8 +51,38 @@ const FIXTURE_ROWS = Object.freeze([
   Object.freeze({ 事: '夹具·事·要不要开票', 为什么: '夹具·为什么·影响下一步', 代价: '夹具·代价·—' }),
 ])
 
-/** 数据行：`待你拍` 的版式 = r1 标题 / r2 空行 / r3 表头 / r4 起数据（版式随生成器变 ⇒ 这里也要跟着改）。 */
-const dataRows = (rows) => (rows ?? []).slice(3).filter((r) => (r ?? []).some((c) => c !== null && String(c).trim() !== ''))
+/**
+ * 版式诊断：`CARD07-LAYOUT`。版式不对 ⇒ 这一页的其它判据都不可信（行会错位），只报这一条。
+ * 钉的三件事在 `support/card-surface.mjs::PENDING_LAYOUT` / `layoutData()` 里只写一次。
+ * `expected_rows`：三态各有几行数据（有行 = 夹具行数；`[]` / 文件不在 = 恰好 1 行）。
+ */
+function layoutProblems(sheet, expected_rows) {
+  const layout = layoutData(sheet.rows, PENDING_LAYOUT, { expected_rows })
+  if (layout.ok) return { problems: [], data: layout.data }
+  const where = `\`${PENDING_SHEET}\` 第 ${layout.row ?? '?'} 行`
+  let detail = `版式不对（${layout.why}）`
+  if (layout.why === 'header') {
+    detail = `${where}必须是表头 ${JSON.stringify(layout.expect)}（列名与列序逐字），实得 ${JSON.stringify(layout.got)}`
+  } else if (layout.why === 'no-data') {
+    detail = `${where}起必须是数据行，但整页只有 ${layout.total_rows ?? 0} 行`
+  } else if (layout.why === 'blank-start') {
+    detail = `${where}是**数据起始行**，现在却是一个空行（在数据前插一个空行也要红）`
+  } else if (layout.why === 'hole') {
+    detail = `数据区里**不许夹空行**，第 ${(layout.rows ?? []).join(' · ')} 行是空行（版式 = 连续的数据区）`
+  }
+  return {
+    problems: [problem('CARD07-LAYOUT',
+      `CARD-07：${detail} —— 版式钉在 \`support/card-surface.mjs::PENDING_LAYOUT\`；`
+      + '版式一改（多一行说明 / 换列名 / 插空行）这一条就红，那是"判据要跟着改"，不是产品坏了')],
+    data: [],
+  }
+}
+
+/** 三态各自应当有几行数据：有行 = 夹具行数；`[]` / 文件不在 = 恰好一行登记语。 */
+const expectedRowsOf = (state) => (state === 'rows' ? FIXTURE_ROWS.length : 1)
+
+/** 证据里的行：从数据起始行**原样**切（不滤空行 —— 空洞要能在读数里看见）。 */
+const rawDataRows = (rows) => (Array.isArray(rows) ? rows.slice(PENDING_LAYOUT.data_row) : [])
 const rowCells = (row) => [0, 1, 2].map((i) => String(row?.[i] ?? '').trim())
 const rowText = (row) => rowCells(row).join(' | ')
 const anyText = (data) => data.map(rowText).join(' || ')
@@ -61,7 +100,9 @@ function pendingProblems(state, sheet) {
       + '这一页是老板读"今天要拍什么"的地方，页不在就没得判'))
     return out
   }
-  const data = dataRows(sheet.rows)
+  const shaped = layoutProblems(sheet, expectedRowsOf(state))
+  if (shaped.problems.length > 0) return shaped.problems
+  const data = shaped.data
   if (state === 'rows') {
     if (data.length !== FIXTURE_ROWS.length) {
       out.push(problem('CARD07-ROWS-LOST',
@@ -92,14 +133,17 @@ function pendingProblems(state, sheet) {
         `CARD-07[B]：待你拍.json 是 ` + '`[]`' + `（组长登记了"没有要拍的事"），卡上数据行实得 ${data.length} 行 —— 应当是**恰好一行**那句登记语`))
       return out
     }
-    const [a, b] = rowCells(data[0])
-    const saysZero = a.includes('0 件') || b.includes('0 件')
-    const saysRegistered = a.includes('登记') || b.includes('登记')
-    const claimsAbsent = a.includes('不存在') || a.includes('没有人登记')
+    // 🔴 扫**全部数据列**（A/B/C），与上面 `A` 那一支的 `anyText()` 同宽：只扫 A 列时，
+    //    「没有人登记」写进 B 列照样绿（复审 batch6 §4.1）；那一形态由 B 列刀每次真跑证明。
+    const text = rowText(data[0])
+    const saysZero = text.includes('0 件')
+    const saysRegistered = text.includes('登记')
+    const claimsAbsent = text.includes('不存在') || text.includes('没有人登记')
     if (!saysZero || !saysRegistered || claimsAbsent) {
       out.push(problem('CARD07-EMPTY-NOT-REGISTERED',
         `CARD-07[B]：\`[]\` 是"组长明确登记了没有要拍的事" ⇒ 那一行要说 \`0 件\` **且**说 \`登记\`，`
-        + `**不许**说"不存在 / 没有人登记"；实得 ${JSON.stringify([a, b])}（0件=${saysZero} · 登记=${saysRegistered} · 缺登记=${claimsAbsent}）`))
+        + `**不许**（任何一列）说"不存在 / 没有人登记"；实得 ${JSON.stringify(rowCells(data[0]))}`
+        + `（0件=${saysZero} · 登记=${saysRegistered} · 缺登记=${claimsAbsent}）`))
     }
     return out
   }
@@ -109,15 +153,16 @@ function pendingProblems(state, sheet) {
         `CARD-07[C]：待你拍.json **不在**，卡上数据行实得 ${data.length} 行 —— 应当是**恰好一行**那句"没有人登记"`))
       return out
     }
-    const [a, b] = rowCells(data[0])
-    const saysAbsent = a.includes('不存在') || a.includes('没有人登记')
-    const namesFile = a.includes('待你拍.json') || b.includes('待你拍.json')
-    const saysNotZero = !a.includes('0 件')
-    const warns = b.includes('不代表')
+    // 同上：**全部数据列**。只扫 A 列时，"今天 0 件"写进 B 列（且「不代表…」那半句还在）照样绿。
+    const text = rowText(data[0])
+    const saysAbsent = text.includes('不存在') || text.includes('没有人登记')
+    const namesFile = text.includes('待你拍.json')
+    const saysNotZero = !text.includes('0 件')
+    const warns = text.includes('不代表')
     if (!saysAbsent || !namesFile || !saysNotZero || !warns) {
       out.push(problem('CARD07-ABSENT-AS-ZERO',
-        'CARD-07[C]：文件**不在** ⇒ 那一行必须说"没有人登记 / 待你拍.json 不存在"，B 列要有「不代表…」'
-        + `（缺席 ≠ 真没有），而且**不许**印 \`0 件\`；实得 ${JSON.stringify([a, b])}`
+        'CARD-07[C]：文件**不在** ⇒ 那一行必须说"没有人登记 / 待你拍.json 不存在"，要有「不代表…」那半句'
+        + `（缺席 ≠ 真没有），而且**不许**（任何一列）印 \`0 件\`；实得 ${JSON.stringify(rowCells(data[0]))}`
         + `（说缺席=${saysAbsent} · 点名文件=${namesFile} · 没有冒零=${saysNotZero} · 有反面话=${warns}）`))
     }
     return out
@@ -133,6 +178,13 @@ function indistinctProblem(summaries) {
   return [problem('CARD07-PENDING-INDISTINCT',
     `CARD-07[D]：有行 / \`[]\` / 文件不在**必须印三句不同的话**，实得 ${unique.size} 种（${JSON.stringify(summaries)}）`
     + ' —— 三态糊成一句之后，这一格就永远绿了（复审 §7-E5 的原输入）')]
+}
+
+/** 一副夹具的"那一句"（三态可区分性用）。版式不成立 ⇒ `null`（由 `CARD07-LAYOUT` 说，不重复报）。 */
+function sceneSummary(sheet, state) {
+  if (sheet.rows === null) return null
+  const layout = layoutData(sheet.rows, PENDING_LAYOUT, { expected_rows: expectedRowsOf(state) })
+  return layout.ok ? anyText(layout.data) : null
 }
 
 /** 跑一副夹具 → 读回 `待你拍` 那一页。`script` 给刀后的副本；不给 = 生产那一份。 */
@@ -170,7 +222,10 @@ test('CARD-07 待你拍三态：有行 / [] / 文件不在 必须印三句不同
       scene.state = item.state
       scene.pendingTag = item.state
       scenes.push(scene)
-      readings.cases.push({ state: item.state, pending: item.pending, exit_code: scene.run.exit_code, stderr: String(scene.run.stderr ?? '').trim().slice(0, 400), data_rows: dataRows(scene.sheet.rows).map(rowCells) })
+      const layoutReading = scene.sheet.rows === null
+        ? { ok: false, why: 'no-sheet' }
+        : (() => { const l = layoutData(scene.sheet.rows, PENDING_LAYOUT, { expected_rows: expectedRowsOf(item.state) }); return { ok: l.ok, why: l.why ?? null } })()
+      readings.cases.push({ state: item.state, pending: item.pending, layout: layoutReading, exit_code: scene.run.exit_code, stderr: String(scene.run.stderr ?? '').trim().slice(0, 400), data_rows: rawDataRows(scene.sheet.rows).map(rowCells) })
       if (scene.run.python?.ok === false) {
         caseHold(rec, 'CARD07-NO-PYTHON', `这一档要真跑 daily-cards.py，但找不到能 import openpyxl 的 python：${scene.run.python.note}`)
         readings.python = scene.run.python
@@ -185,7 +240,7 @@ test('CARD-07 待你拍三态：有行 / [] / 文件不在 必须印三句不同
       for (const p of pendingProblems(item.state, scene.sheet)) problems.push(p)
     }
     // 三态的可区分性：三副夹具都出了页才判（页都不在时三条 SHEET-MISSING 已经说清）
-    const summaries = Object.fromEntries(scenes.map((s) => [s.state, s.sheet.rows === null ? null : anyText(dataRows(s.sheet.rows))]))
+    const summaries = Object.fromEntries(scenes.map((s) => [s.state, sceneSummary(s.sheet, s.state)]))
     readings.summaries = summaries
     if (Object.values(summaries).every((s) => s !== null)) problems.push(...indistinctProblem(summaries))
 
@@ -253,7 +308,7 @@ test('CARD-07 待你拍三态：有行 / [] / 文件不在 必须印三句不同
         }
         for (const p of pendingProblems(item.state, scene.sheet)) knifeCodes.push(p)
       }
-      const knifeSummaries = Object.fromEntries(knifeScenes.map((s) => [s.state, s.sheet.rows === null ? null : anyText(dataRows(s.sheet.rows))]))
+      const knifeSummaries = Object.fromEntries(knifeScenes.map((s) => [s.state, sceneSummary(s.sheet, s.state)]))
       knifeCodes.push(...indistinctProblem(knifeSummaries))
       const got = knifeCodes.map((p) => p.code)
       const unique = [...new Set(got)].sort()
@@ -263,8 +318,8 @@ test('CARD-07 待你拍三态：有行 / [] / 文件不在 必须印三句不同
         exit_code: s.run.exit_code,
         stderr: String(s.run.stderr ?? '').trim().slice(0, 400),
         sheet_error: s.sheet.error,
-        data_rows: dataRows(s.sheet.rows).map(rowCells),
-        summary: anyText(dataRows(s.sheet.rows)),
+        data_rows: rawDataRows(s.sheet.rows).map(rowCells),
+        summary: sceneSummary(s.sheet, s.state),
       }))
       readings.knife.codes = got
       readings.knife.expected = EXPECTED
@@ -274,6 +329,185 @@ test('CARD-07 待你拍三态：有行 / [] / 文件不在 必须印三句不同
       } else if (unique.join(',') !== EXPECTED.join(',')) {
         push('CARD07-PENDING-KNIFE-VECTOR',
           `CARD-07[E]：刀翻错了面 —— 期望恰好 ${JSON.stringify(EXPECTED)}，实得 ${JSON.stringify(unique)}`
+          + `（逐条：${JSON.stringify(got)}）`)
+      }
+    }
+
+    // ── 2b. B 列刀：把**错句子**塞进 B 列（复审 batch6 §4.1）──────────────────────
+    //      `[]` 那态的 B 列塞「没有人登记」、文件不在那态的 B 列塞「今天 0 件」——
+    //      两条都是这一格必须抓到的假绿：**只扫 A 列时这一跑 0 条**（判据对这一形态是哑的）。
+    const knifeBDir = path.join(scenes[0].roots.runRoot, 'knife', 'card-07-b')
+    const KNIFE_B_MARKER = 'KNIFE-B-WRONG-COLUMN'
+    const KNIFE_B_EXPECTED = ['CARD07-ABSENT-AS-ZERO', 'CARD07-EMPTY-NOT-REGISTERED'].sort()
+    let knifeB = null
+    let knifeBError = null
+    try {
+      knifeB = copyGeneratorWithPatch(knifeBDir, {
+        why: 'CARD-07 错句子塞进 B 列',
+        marker: KNIFE_B_MARKER,
+        patch: [
+          {
+            from: '"两张卡按定好的形状交齐；明天那一批 %d 条候选自动开庭。" % len(pool)',
+            to: '"🔴 没有人登记（KNIFE-B-WRONG-COLUMN：这一句被塞进了 B 列）"',
+            why: '`[]` 那态：B 列写「没有人登记」（A 列照旧说 0 件 · 登记了）',
+          },
+          {
+            from: '"不代表今天没有要拍的事 —— 只代表组长没写这一页：%s" % pending_path',
+            to: '"今天 0 件 · 不代表今天没有要拍的事 —— 只代表组长没写这一页：%s" % pending_path',
+            why: '文件不在那态：B 列**多带一句**「今天 0 件」（「不代表…」那半句仍在 —— 只替换 B 会被 `warns` 抓到，'
+              + '复审 §4.1 的假绿形态是"错句子与必备句**同在** B 列"）',
+          },
+        ],
+      })
+    } catch (err) {
+      knifeBError = String(err?.message ?? err)
+    }
+    readings.knife_b = knifeB === null
+      ? { error: knifeBError }
+      : {
+          error: null,
+          dir: knifeBDir,
+          script: knifeB.script,
+          applied: knifeB.applied,
+          marker: knifeB.marker,
+          changed: knifeB.changed,
+          bytes: knifeB.bytes,
+          sha256: knifeB.sha256,
+          production_sha256: knifeB.production_sha256,
+        }
+
+    if (knifeB === null) {
+      push('CARD07-PENDING-KNIFE-B',
+        `CARD-07[G]：B 列刀没打上（${knifeBError}）—— 这一形态的红因此不可核（"错句子塞进 B 列"可能永远绿）`)
+    } else if (knifeB.changed !== true || knifeB.production_sha256 !== productionBefore.sha256) {
+      push('CARD07-PENDING-KNIFE-B',
+        `CARD-07[G]：B 列刀后的副本与生产那一份逐字节相同、或者副本不是从这一份生产文件复制的`
+        + `（changed=${knifeB.changed} · production_sha256=${knifeB.production_sha256} ≠ ${productionBefore.sha256}）—— 刀没落地`)
+    } else {
+      const knifeBScenes = []
+      const knifeBCodes = []
+      for (const item of cases) {
+        const scene = pendingScene(`pending-${item.state}-knife-b`, { pending: item.pending, script: knifeB.script })
+        scene.state = item.state
+        knifeBScenes.push(scene)
+        if (scene.run.exit_code !== 0) {
+          push('CARD07-PENDING-KNIFE-B',
+            `CARD-07[G]：B 列刀后生成器 exit=${scene.run.exit_code}（${item.state}）—— 刀把生成器弄崩了，`
+            + `那不是"翻面"（stderr=${JSON.stringify(String(scene.run.stderr ?? '').trim().slice(0, 400))}）`)
+          continue
+        }
+        for (const p of pendingProblems(item.state, scene.sheet)) knifeBCodes.push(p)
+      }
+      const knifeBSummaries = Object.fromEntries(knifeBScenes.map((s) => [s.state, sceneSummary(s.sheet, s.state)]))
+      knifeBCodes.push(...indistinctProblem(knifeBSummaries))
+      const got = knifeBCodes.map((p) => p.code)
+      const unique = [...new Set(got)].sort()
+      readings.knife_b.runs = knifeBScenes.map((s) => ({
+        state: s.state,
+        exit_code: s.run.exit_code,
+        stderr: String(s.run.stderr ?? '').trim().slice(0, 400),
+        sheet_error: s.sheet.error,
+        data_rows: rawDataRows(s.sheet.rows).map(rowCells),
+        summary: sceneSummary(s.sheet, s.state),
+        codes: pendingProblems(s.state, s.sheet).map((p) => p.code),
+      }))
+      readings.knife_b.codes = got
+      readings.knife_b.expected = KNIFE_B_EXPECTED
+      if (unique.length === 0) {
+        push('CARD07-PENDING-KNIFE-B',
+          'CARD-07[G]：**错句子塞进 B 列，一条判据都没翻** —— 这一形态是假绿'
+          + '（禁止语 / 必备语只扫了 A 列；复审 batch6 §4.1 的原缺陷）')
+      } else if (unique.join(',') !== KNIFE_B_EXPECTED.join(',')) {
+        push('CARD07-PENDING-KNIFE-B-VECTOR',
+          `CARD-07[G]：B 列刀翻错了面 —— 期望恰好 ${JSON.stringify(KNIFE_B_EXPECTED)}，实得 ${JSON.stringify(unique)}`
+          + `（逐条：${JSON.stringify(got)}）`)
+      }
+    }
+
+    // ── 2c. 版式刀：在数据前插一行空行 / 在数据区里夹一行空行（复审 batch6 §4.3）──────────
+    //      两把刀口合成一个副本：`[]` 那态在数据前插空行（`blank-start`）、有行那态在第一条
+    //      数据后夹空行（`hole`）。空行是缺陷 —— 旧写法"切行偏移再滤空行"会把它藏起来。
+    //      期望：翻 **恰好一条** `CARD07-LAYOUT`（`rows` 与 `empty` 各一条，`absent` 不响）。
+    const layoutKnifeDir = path.join(scenes[0].roots.runRoot, 'knife', 'card-07-layout')
+    const LAYOUT_KNIFE_MARKER = 'KNIFE-LAYOUT-ROW'
+    const LAYOUT_EXPECTED = ['CARD07-LAYOUT']
+    let layoutKnife = null
+    let layoutKnifeError = null
+    try {
+      layoutKnife = copyGeneratorWithPatch(layoutKnifeDir, {
+        why: 'CARD-07 版式空行',
+        marker: LAYOUT_KNIFE_MARKER,
+        patch: [
+          {
+            from: '        ws4.append(("（今天 0 件 · 组长登记了「没有要拍的事」）",\n',
+            to: `        ws4.append(())  # ${LAYOUT_KNIFE_MARKER}（数据前的空行）\n`
+              + '        ws4.append(("（今天 0 件 · 组长登记了「没有要拍的事」）",\n',
+            why: '`[]` 那态：数据前多一个空行 ⇒ 数据起始行是空行（`blank-start`）',
+          },
+          {
+            from: '        for r in pending_rows:\n            ws4.append((str(r.get("事", "")), str(r.get("为什么", "")), str(r.get("代价", ""))))\n',
+            to: '        for _knife_i, r in enumerate(pending_rows):\n'
+              + '            ws4.append((str(r.get("事", "")), str(r.get("为什么", "")), str(r.get("代价", ""))))\n'
+              + `            if _knife_i == 0:\n                ws4.append(())  # ${LAYOUT_KNIFE_MARKER}（数据区里的空行）\n`,
+            why: '有行那态：第一条数据后夹一个空行 ⇒ 数据区有洞（`hole`）',
+          },
+        ],
+      })
+    } catch (err) {
+      layoutKnifeError = String(err?.message ?? err)
+    }
+    readings.layout_knife = layoutKnife === null
+      ? { error: layoutKnifeError }
+      : {
+          error: null,
+          dir: layoutKnifeDir,
+          script: layoutKnife.script,
+          applied: layoutKnife.applied,
+          marker: layoutKnife.marker,
+          changed: layoutKnife.changed,
+          sha256: layoutKnife.sha256,
+          production_sha256: layoutKnife.production_sha256,
+        }
+
+    if (layoutKnife === null) {
+      push('CARD07-PENDING-KNIFE-LAYOUT',
+        `CARD-07[H]：版式刀没打上（${layoutKnifeError}）—— "空行会红"这件事不可核`)
+    } else if (layoutKnife.changed !== true || layoutKnife.production_sha256 !== productionBefore.sha256) {
+      push('CARD07-PENDING-KNIFE-LAYOUT',
+        `CARD-07[H]：版式刀后的副本与生产那一份逐字节相同、或者副本不是从这一份生产文件复制的`
+        + `（changed=${layoutKnife.changed} · production_sha256=${layoutKnife.production_sha256} ≠ ${productionBefore.sha256}）—— 刀没落地`)
+    } else {
+      const layoutRuns = []
+      const layoutCodes = []
+      for (const item of cases) {
+        const scene = pendingScene(`pending-${item.state}-knife-layout`, { pending: item.pending, script: layoutKnife.script })
+        const layout = scene.sheet.rows === null ? null : layoutData(scene.sheet.rows, PENDING_LAYOUT, { expected_rows: expectedRowsOf(item.state) })
+        layoutRuns.push({
+          state: item.state,
+          exit_code: scene.run.exit_code,
+          stderr: String(scene.run.stderr ?? '').trim().slice(0, 400),
+          layout: layout === null ? null : { ok: layout.ok, why: layout.why ?? null, row: layout.row ?? null, holes: layout.rows ?? null },
+          data_rows: rawDataRows(scene.sheet.rows).map(rowCells),
+        })
+        if (scene.run.exit_code !== 0) {
+          push('CARD07-PENDING-KNIFE-LAYOUT',
+            `CARD-07[H]：版式刀后生成器 exit=${scene.run.exit_code}（${item.state}）—— 刀把生成器弄崩了，`
+            + `那不是"翻面"（stderr=${JSON.stringify(String(scene.run.stderr ?? '').trim().slice(0, 400))}）`)
+          continue
+        }
+        for (const p of pendingProblems(item.state, scene.sheet)) layoutCodes.push(p)
+      }
+      const got = layoutCodes.map((p) => p.code)
+      const unique = [...new Set(got)].sort()
+      readings.layout_knife.runs = layoutRuns
+      readings.layout_knife.codes = got
+      readings.layout_knife.expected = LAYOUT_EXPECTED
+      if (unique.length === 0) {
+        push('CARD07-PENDING-KNIFE-LAYOUT',
+          'CARD-07[H]：版式刀后**一条判据都没翻** —— 插一个空行照样绿（复审 batch6 §4.3 的原缺陷）')
+      } else if (unique.join(',') !== LAYOUT_EXPECTED.join(',')) {
+        push('CARD07-PENDING-KNIFE-LAYOUT-VECTOR',
+          `CARD-07[H]：版式刀翻错了面 —— 期望恰好 ${JSON.stringify(LAYOUT_EXPECTED)}，实得 ${JSON.stringify(unique)}`
           + `（逐条：${JSON.stringify(got)}）`)
       }
     }
