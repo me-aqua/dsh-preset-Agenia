@@ -1540,7 +1540,7 @@ export function calibrate(compositionText, patchText) {
     problems.push(`解析行数 ${readings.composition_rows} ≠ 裸计数 ${readings.composition_id_lines} —— 解析器丢了行`)
   }
   if (!FROZEN.liveWitness.acceptableLiveRows.includes(rows.length)) {
-    problems.push(`活体组合行数 ${rows.length} 既不是装前的 ${FROZEN.liveWitness.acceptableLiveRows[0]} 也不是装后的 ${FROZEN.liveWitness.acceptableLiveRows[1]} —— 有人改了活体，或解析器坏了`)
+    problems.push(`活体组合行数 ${rows.length} 不在允许的集合里（${FROZEN.liveWitness.acceptableLiveRows.join(' / ')}）—— 有人改了活体，或解析器坏了`)
   }
   const injRow = rows.find((r) => r.id === 'persona-injector')
   const office = injRow ? cfg(injRow, 'officeBound') : undefined

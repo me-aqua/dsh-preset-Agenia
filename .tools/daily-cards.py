@@ -754,20 +754,36 @@ def read_identity(ws, day):
     }
 
 
-def review_dirs(ws, day):
-    """当日评审产物的候选抽屉（**按存在性逐个看**，不是只认一个）。
+def prev_day_key(day):
+    """前一天（按 `--day` 的同一口径算，不碰钟点）。算不出来 ⇒ None。"""
+    try:
+        import datetime as _dt
+        return (_dt.date.fromisoformat(day) - _dt.timedelta(days=1)).isoformat()
+    except Exception:
+        return None
+
+
+def review_dirs(ws, day, extra_days=()):
+    """评审产物的候选抽屉（**按存在性逐个看**，不是只认一个）。
 
     四类一次性作业各有自己的落点（`.team/retro/` · `.team/technical-review/` ·
     `.team/conversation-review/` · `.team/memory-review/` —— 见 `leader.md` 的目录图，
     作业在哪个抽屉由 `job-briefs/<角色>.md` 点名），而 `--day` 决定的是"哪一天"、
     不是"哪个抽屉"：只认一个抽屉 ⇒ 评审按派工卡落进另一个抽屉时，卡上会印成"作业没交"。
     ⚠️ 这张表是**容错**，不是"报告可以随便落"：写者只有一个落点，读者认四个。
+
+    🔴 2026-11-06：**再加一天**（`extra_days`，调用点传"被评的那一天"＝前一天）。
+    理由：每日评审天生评的是**前一天**，产物按规矩落在**被评那天**的抽屉里
+    （`retro/<被评日>/` 那套）。只认 `--day` ⇒ 今天早上刚交的评审，卡上会印成
+    "findings 0 条 / 作业没交"（2026-11-06 实测：11-05 的技术评审 11 条发现，卡上印 0）。
+    ⇒ 命中额外那一天时**必须把日期打出来**，否则读的人分不清"今天交的"和"昨天那份"。
     """
     out = []
-    for sub in ("retro", "technical-review", "conversation-review", "memory-review"):
-        base = os.path.join(ws, ".team", sub, day)
-        if os.path.isdir(base):
-            out.append(base)
+    for d in [day, *[x for x in extra_days if x and x != day]]:
+        for sub in ("retro", "technical-review", "conversation-review", "memory-review"):
+            base = os.path.join(ws, ".team", sub, d)
+            if os.path.isdir(base):
+                out.append((base, d))
     return out
 
 
@@ -793,11 +809,13 @@ def review_carriers(ws, day):
             anchor[field] = False
 
     names = set()
-    for base in review_dirs(ws, day):
+    for base, d in review_dirs(ws, day, extra_days=(prev_day_key(day),)):
         try:
             names.update(n for n in os.listdir(base) if n.endswith(".md"))
         except OSError:
             continue
+        if d != day:
+            names.update("%s（%s 的产物）" % (n, d) for n in os.listdir(base) if n.endswith(".md"))
 
     def has(prefix):
         field = "technical" if prefix == "技术评审" else "conversation"
@@ -985,10 +1003,11 @@ def main():
     pool   = jlines(os.path.join(DR, "proposals", "pool.jsonl"))
     arch   = jload(os.path.join(DR, "proposals", "archive", "MANIFEST.json"), {}) or {}
     findings = []
-    for base in review_dirs(WS, day):
+    for base, rday in review_dirs(WS, day, extra_days=(prev_day_key(day),)):
         for p in sorted(glob.glob(os.path.join(base, "*.findings.json"))):
             d = jload(p, {}) or {}
-            findings.append((os.path.basename(p), d))
+            name = os.path.basename(p) if rday == day else "%s（%s 的评审产物）" % (os.path.basename(p), rday)
+            findings.append((name, d))
 
     frozen = [j for j in judged if j.get("day") == day]
     acc = [j for j in frozen if j.get("verdict") == "accepted"]
