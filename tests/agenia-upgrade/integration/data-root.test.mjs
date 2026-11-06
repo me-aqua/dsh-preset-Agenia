@@ -11,6 +11,11 @@
  *   · **正例必须存在**：只有"合法测试根写成功"这一侧过了，"拒绝"才不是"命令坏掉蒙对"（§9.5 第 1 条）。
  *   · 真实库前后**内容**随每个会碰它的子用例量（§2.4 第 5 条）：树哈希 + `audit.jsonl` 行数
  *     + `v0.json` 哈希；任何变化 = **安全违规**，不是普通红。
+ *     ⚠️ **例外：`DR-02` 的 `brain` 判据是路径集合，不是内容**（2026-11-07 MF-1）。真实脑根
+ *     = `presets/agenia/.runtime`，它有多个**合法**的写入来源（别的 workspace 在同一个预设级共享
+ *     数据根上干活 · `bg-notify` · 日常作业）⇒ 内容哈希会把别人的正常干活算到这一跑头上。
+ *     覆盖边界（就地覆盖不判）写在 `DR-02` 的 `rec.readings.real_roots.content_uncovered` 里；
+ *     `DR-01` 这一侧的内容级读数**没有改**。
  *     ⚠️ 判据**不是**"它必须不存在"。旧断言 `existsSync(REAL_BRAIN_ROOT) ⇒ SECURITY-VIOLATION`
  *     的前提（"本轮真实根必须不存在"）**2026-10-15 已作废**：真实库那天起就是**真数据**。
  *     留着那条会变成"每天都红、而红的原因与有没有人写它无关"的假红。
@@ -56,6 +61,8 @@ import { ENV, FROZEN, PATHS, requireEnv } from '../support/env.mjs'
 import {
   caseFail,
   caseHold,
+  pathSetDiff,
+  pathSetSummary,
   preflight,
   problem,
   realRootContent,
@@ -65,6 +72,7 @@ import {
   sha256File,
   stagingReadings,
   treeHash,
+  treePaths,
 } from '../support/evidence.mjs'
 import { canonical, driveOf, ensureMarkedDir, isUnc, REAL_BRAIN_ROOT, REAL_ROUTE_ROOT } from '../support/root-guard.mjs'
 import { brainPaths, loadStagedModule, routePaths, runBrain, runCli, runRoute, stagingExists, writeFixture } from '../support/sut.mjs'
@@ -149,6 +157,54 @@ function badRootPostures(realRoot) {
     ['UNC', { mode: 'value', value: '\\\\127.0.0.1\\share\\agenia-dr' }],
     ['运行根之外', { mode: 'value', value: outside }],
   ].map(([label, spec]) => ({ label, spec, real, reg }))
+}
+
+/**
+ * 真实脑根的**安全违规**判定 —— 判的是**路径集合**，不是内容哈希（组长 2026-11-07 决定，
+ * `决定-DR02的brain见证.md` §二/§三）：
+ *
+ *   · **抓什么**：`brain` 的路径集合（新增 / 删除）前后必须相等；差集非空 ⇒ `SECURITY-VIOLATION`
+ *     并**点名**新增 / 删除了哪个路径。一次"迷路的写"最典型的结果就是多一个文件（或少一个）。
+ *   · **不抓什么**：已存在文件的**内容变化** —— 它有好几个**合法**来源（别的 workspace 在同一个
+ *     预设级共享数据根上干活、`bg-notify` 投递、日常作业），哈希分不清是谁写的
+ *     ⇒ 拿它当"这一跑写了"的证据 = 间歇红 + 归因错（batch 7 评审 MF-1 的正是这条）。
+ *     ⚠️ 覆盖边界：一次**就地覆盖**（内容改、路径不变）不在这里 —— 由 `--real-mode` 的
+ *     `E_ROOT_REAL_BRAIN`（`DR-01`）+ 受控命令清单兜；这段边界同批写进 `rec.readings.real_roots.content_uncovered`。
+ *
+ * 为什么要抽成函数：④c 的两把**副本刀**必须读**同一条比较** —— 刀响 = ④ 响。
+ * 另写一份比较，刀证明的就只是"我另写的那份会响"。
+ */
+function brainWitnessViolation(before, after, label = 'DR-02 期间') {
+  const diff = pathSetDiff(before?.brain, after?.brain)
+  if (diff === null) return problem('SECURITY-VIOLATION', `真实脑根缺一相位（${label}）—— 判不了不许当绿`)
+  if (diff.exists.before !== diff.exists.after) {
+    return problem('SECURITY-VIOLATION', `真实脑根的**存在性**在${label}变了（${diff.exists.before} → ${diff.exists.after}）—— 立即停测并报事故`)
+  }
+  if (!diff.same) {
+    return problem('SECURITY-VIOLATION', `真实脑根的**路径集合**在${label}变了（${pathSetSummary(diff)}）—— 立即停测并报事故，不许自行清理现场`)
+  }
+  return null
+}
+
+/**
+ * 把**真实脑根**拷进运行根（刀用的副本）—— 只读源树，真根一个字节都不碰。
+ * 拷**全部**文件：脑根整棵就是数据，排除任何一段都是给"迷路的写"开一个洞。
+ */
+function copyRealBrainForKnife(to) {
+  let files = 0
+  const walk = (srcDir, dstDir) => {
+    mkdirSync(dstDir, { recursive: true })
+    for (const name of readdirSync(srcDir).sort()) {
+      const src = path.join(srcDir, name)
+      const dst = path.join(dstDir, name)
+      const st = statSync(src)
+      if (st.isDirectory()) walk(src, dst)
+      else if (st.isFile()) { copyFileSync(src, dst); files += 1 }
+    }
+  }
+  if (existsSync(PATHS.realBrainRoot)) walk(PATHS.realBrainRoot, to)
+  else mkdirSync(to, { recursive: true })
+  return { files }
 }
 
 /**
@@ -985,7 +1041,7 @@ describe('integration · data-root (DR)', () => {
     })
   })
 
-  test('DR-02 所有可写命令只落测试根；真实根逐字节不变；临时件全在 E 盘', async () => {
+  test('DR-02 所有可写命令只落测试根；真实脑路径集合不变（内容不判）；临时件全在 E 盘', async () => {
     await runCase('DR-02', async (rec) => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -1203,18 +1259,37 @@ describe('integration · data-root (DR)', () => {
       )
       rec.readings.live_preset_ruler = { exclusions: exclusions ?? null, pinned: PINNED_DATA_SEGMENTS, cells: rulerCells }
 
-      // ④ 真实根逐字节不变（安全不变量）
+      // ── ④ 真实根的见证（`brain` = **路径集合**；`route` = 内容哈希）────────────────────
+      // 【`brain` 为什么换判据】真实脑根就是 `presets/agenia/.runtime`，它天天在变，而且合法来源
+      //   不止本会话（别的 workspace 在同一个预设级共享数据根上干活 · `bg-notify` 投递 · 日常作业）。
+      //   拿"内容变了"当"这一跑写了"的证据 ⇒ 把别人的正常干活算到这一跑头上 = 间歇红 + 归因错（MF-1）。
+      // 【抓什么】新增 / 删除的**路径**（一次迷路的写最典型的结果是多一个文件）。
+      // ⚠️ **覆盖边界**：就地覆盖（内容改、路径不变）**不在这条判据的覆盖范围** —— 见 ④b 的读数。
+      // 【`route` 一个字没动】它保持内容哈希：真实路线根很小、只有本会话写，没有"别人也在写"的来源。
       const after = realRootsSnapshot()
       rec.readings.real_roots = { before, after }
-      for (const key of ['brain', 'route']) {
-        const b = before[key]
-        const a = after[key]
+      const brainDiff = pathSetDiff(before.brain, after.brain)
+      rec.readings.real_roots.path_diff = brainDiff
+      const brainProblem = brainWitnessViolation(before, after)
+      if (brainProblem !== null) problems.push(brainProblem)
+      {
+        const b = before.route
+        const a = after.route
         if (b.exists !== a.exists || (b.exists && b.sha256 !== a.sha256)) {
-          push('SECURITY-VIOLATION', `真实根 ${key} 在 DR-02 期间被改动（${b.exists ? b.sha256 : '不存在'} → ${a.exists ? a.sha256 : '不存在'}）—— 立即停测并报事故`)
+          push('SECURITY-VIOLATION', `真实根 route 在 DR-02 期间被改动（${b.exists ? b.sha256 : '不存在'} → ${a.exists ? a.sha256 : '不存在'}）—— 立即停测并报事故`)
         }
       }
       const liveProblem = livePresetViolation(before, after)
       if (liveProblem !== null) problems.push(liveProblem)
+
+      // ── ④b 残余风险的**登记**（决定 §三.3）────────────────────────────────────────────
+      // 读的人不必去翻决定书：`brain` 这一格**没盖住**"就地覆盖"。兜它的是另外两道闸，同句点名。
+      rec.readings.real_roots.content_uncovered = {
+        root: 'brain',
+        what: '已存在文件被就地覆盖（内容改、路径不变）',
+        note: '`brain` 的见证是**路径集合**（新增 / 删除）；已存在文件被就地覆盖（内容改、路径不变）不在这条判据的覆盖范围。',
+        covered_by: ['DR-01 --real-mode ⇒ E_ROOT_REAL_BRAIN', 'lib/cli-inventory.mjs 的受控命令清单'],
+      }
       // ④' 这一段的自守（`F-142` 的形状，边界也一样）：**整段删掉**时 `problems` 仍是 0 ⇒ 全绿。
       // 只判"这一段跑过没有"（格数）；某一条 `push` 被单独抽掉不归它管（那一层要源码对账，
       // 会退化成"改一句实现就红"的变更探测器）。
@@ -1222,6 +1297,87 @@ describe('integration · data-root (DR)', () => {
         const cells = rec.readings.live_preset_ruler?.cells
         if (!Array.isArray(cells) || cells.length !== 9) {
           push('DR02-RULER-UNGUARDED', `活体预设那一段（③c）没跑：读数格数 ${Array.isArray(cells) ? cells.length : '(无读数)'}（应为 9）—— `
+            + '这一段整段删掉时 problems 仍是 0，所以它必须留下读数、并由这里读一次')
+        }
+      }
+      // ── ④c `brain` 见证的两把刀（**副本**脑根；真根一个字节都不许碰）──────────────────
+      // 刀与真跑读**同一个** `brainWitnessViolation()` ⇒ 刀响 = ④ 响。
+      //   · A（正向）：副本里**新建**一个文件 ⇒ 必须 `SECURITY-VIOLATION`，且报文**点名**那个路径；
+      //   · B（反向）：副本里既有文件**只改内容**、路径不变（sha 前 ≠ 后）⇒ **必须不报** ——
+      //     这一格是"内容不再是 `brain` 的判据"的证明；没有它，把内容哈希偷偷加回来也照样全绿。
+      const brainCells = []
+      const bcell = (label, ok, code, detail) => {
+        brainCells.push({ label, ok, detail })
+        if (!ok) problems.push(problem(code, detail))
+      }
+      const brainKnifeRoot = path.join(canonical(requireEnv(ENV.RUN_ROOT)), 'dr02-brain-copy')
+      // 🔴 硬闸：目标不是副本就**不拷、不写** —— "真根只读"是本文件的死命令（见文件头）。
+      const knifeIsCopy = canonical(brainKnifeRoot) !== canonical(PATHS.realBrainRoot)
+      const brainCopied = knifeIsCopy ? copyRealBrainForKnife(brainKnifeRoot) : { files: 0 }
+      const b0 = knifeIsCopy ? treePaths(brainKnifeRoot) : { path: null, exists: false, count: 0, paths: [] }
+      bcell(
+        '刀量的是**副本**（不是真实脑根），而且这份副本与真根同形',
+        knifeIsCopy && b0.path === canonical(brainKnifeRoot) && b0.count === brainCopied.files,
+        'DR02-BRAIN-KNIFE-NOT-A-COPY',
+        `副本 ${brainKnifeRoot} · 与真根同名=${!knifeIsCopy}`
+          + ` · 快照量的路径=${b0.path} · 份数=${b0.count}（拷贝 ${brainCopied.files} 份）`
+          + ' —— 量错树 / 量空树都会让下面两格失去意义',
+      )
+      // A 正向刀：新建一个文件
+      const STRAY_REL = 'dr02-stray-write.txt'
+      if (knifeIsCopy) writeFileSync(path.join(brainKnifeRoot, STRAY_REL), 'stray\n', 'utf8')
+      const b1 = knifeIsCopy ? treePaths(brainKnifeRoot) : b0
+      const vAdd = knifeIsCopy ? brainWitnessViolation({ brain: b0 }, { brain: b1 }, '副本里新建一个文件之后') : null
+      bcell(
+        '副本里新建一个文件 ⇒ `SECURITY-VIOLATION` 必须响，且报文点名那个路径',
+        knifeIsCopy && existsSync(path.join(brainKnifeRoot, STRAY_REL))
+          && vAdd?.code === 'SECURITY-VIOLATION'
+          && String(vAdd.message).includes(STRAY_REL),
+        'DR02-BRAIN-KNIFE-ADD-NOFLIP',
+        `b0 ${b0.count} 份 → b1 ${b1.count} 份；判定=${vAdd?.code ?? '(没响)'}`
+          + ` · 报文点名 \`${STRAY_REL}\`=${String(vAdd?.message ?? '').includes(STRAY_REL)}`
+          + ' —— 不响说明"多一个文件"这条判据早就死了，绿是假的',
+      )
+      // B 反向刀：只改内容（路径不变）
+      const victim = b0.paths[0] ?? null
+      let shaBefore = null
+      let shaAfter = null
+      let vContent = null
+      let b2 = null
+      if (victim !== null) {
+        const victimFile = path.join(brainKnifeRoot, victim)
+        shaBefore = sha256File(victimFile)
+        writeFileSync(victimFile, `${readFileSync(victimFile, 'utf8')}\n// dr02-knife\n`, 'utf8')
+        shaAfter = sha256File(victimFile)
+        b2 = treePaths(brainKnifeRoot)
+        vContent = brainWitnessViolation({ brain: b1 }, { brain: b2 }, '副本里只改一个既有文件的内容之后')
+      }
+      bcell(
+        victim === null
+          ? '副本里**没有既有文件** ⇒ 反向刀打不出去（"只改内容不许报"这一格量不到）'
+          : `副本 \`${victim}\` 只改内容（sha 变了）、路径不变 ⇒ **不许报**违规`,
+        victim !== null && shaBefore !== shaAfter && vContent === null,
+        'DR02-BRAIN-KNIFE-CONTENT-FLIPS',
+        victim === null
+          ? `副本 ${brainKnifeRoot} 里 0 份文件（拷贝 ${brainCopied.files} 份）—— 反向刀打不出去`
+          : `\`${victim}\` sha ${String(shaBefore).slice(0, 12)} → ${String(shaAfter).slice(0, 12)}`
+            + ` · 路径份数 ${b1.count} → ${b2?.count} · 判定=${vContent?.code ?? '(没响 = 对)'}`
+            + ' —— 响了就是把"别人的正常干活"算到这一跑头上（内容不许再当 `brain` 的判据）',
+      )
+      rec.readings.brain_witness = {
+        real_root: PATHS.realBrainRoot,
+        copy: brainKnifeRoot,
+        copy_files: brainCopied.files,
+        copy_is_not_real_root: knifeIsCopy,
+        stray_rel: STRAY_REL,
+        content_victim: victim,
+        cells: brainCells,
+      }
+      // 这一段的自守（`F-142` 的形状，边界同 ④'）：整段删掉时 problems 仍是 0 ⇒ 全绿。
+      {
+        const cells = rec.readings.brain_witness?.cells
+        if (!Array.isArray(cells) || cells.length !== 3) {
+          push('DR02-BRAIN-WITNESS-UNGUARDED', `brain 见证那一段（④c）没跑：读数格数 ${Array.isArray(cells) ? cells.length : '(无读数)'}（应为 3）—— `
             + '这一段整段删掉时 problems 仍是 0，所以它必须留下读数、并由这里读一次')
         }
       }

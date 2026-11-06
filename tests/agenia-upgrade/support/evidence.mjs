@@ -136,9 +136,74 @@ export function treeHash(root, { excludeTopLevel = null } = {}) {
 }
 
 /**
+ * 路径集合读数 —— **只记路径，一个字节内容都不读**（`DR-02` 的 `brain` 见证，组长 2026-11-07 决定）。
+ *
+ * 为什么不是树哈希：真实脑根就是 `presets/agenia/.runtime`，而它**天天在变** ——
+ * 本会话的作业/状态/报告、**别的 workspace**（数据根是预设级共享的）、`bg-notify` 投递，
+ * 都是**合法**变化。内容哈希分不清"是谁写的"，拿它当"这一跑写了"的证据 ⇒ 间歇红 + 归因错。
+ * 路径集合（新增 / 删除）能抓住"一次迷路的写"最典型的结果（多一个文件 / 少一个），
+ * 且**不受内容 churn 影响**。
+ *
+ * 🔴 **覆盖边界**（别把它读成"脑根被写就一定红"）：**已存在文件被就地覆盖**（内容改、路径不变）
+ *    **不在**本见证的覆盖范围。那一层由 `--real-mode` ⇒ `E_ROOT_REAL_BRAIN`（`DR-01`）
+ *    + 受控命令清单（`lib/cli-inventory.mjs`）兜。这段边界同批写进
+ *    `rec.readings.real_roots.content_uncovered` 与结算那一行，读的人不必去翻决定书。
+ *
+ * ⚠️ 只记**常规文件**（目录由文件隐含；空目录不单独记）—— 与 `treeHash` 的 `files` 同一个 walk 口径。
+ */
+export function treePaths(root) {
+  const abs = canonical(root)
+  if (!existsSync(abs)) return { path: abs, exists: false, count: 0, paths: [] }
+  const paths = []
+  const walk = (dir) => {
+    for (const name of readdirSync(dir).sort()) {
+      const full = path.join(dir, name)
+      const st = statSync(full)
+      if (st.isDirectory()) walk(full)
+      else if (st.isFile()) paths.push(path.relative(abs, full).replace(/\\/g, '/'))
+    }
+  }
+  walk(abs)
+  return { path: abs, exists: true, count: paths.length, paths }
+}
+
+/**
+ * 两份 `treePaths` 的差集 —— **一个定义，两处读**（`DR-02` ④ 的真跑 · 结算里"真实根前后"那一行）。
+ * `same` 同时要求**存在性**相同：根出现 / 消失即使路径都是空，也是变化。
+ * 返回 `null` = 判不了（缺一相位）⇒ 调用方不许当绿。
+ */
+export function pathSetDiff(before, after) {
+  if (!before || !after) return null
+  const b = new Set(before.paths ?? [])
+  const a = new Set(after.paths ?? [])
+  const added = [...a].filter((p) => !b.has(p)).sort()
+  const removed = [...b].filter((p) => !a.has(p)).sort()
+  return {
+    exists: { before: before.exists === true, after: after.exists === true },
+    added,
+    removed,
+    same: before.exists === after.exists && added.length === 0 && removed.length === 0,
+  }
+}
+
+/** 差集的人话（点名路径；超过 `limit` 条只点名前几条，但**总数始终给**）。 */
+export function pathSetSummary(diff, limit = 8) {
+  const fmt = (arr) => (arr.length <= limit ? arr.join(', ') : `${arr.slice(0, limit).join(', ')} …（共 ${arr.length} 条）`)
+  const parts = []
+  if (diff.added.length > 0) parts.push(`新增 ${diff.added.length} 份：${fmt(diff.added)}`)
+  if (diff.removed.length > 0) parts.push(`删除 ${diff.removed.length} 份：${fmt(diff.removed)}`)
+  return parts.join('；')
+}
+
+/**
  * 真实根快照 —— 契约 §2.4 第 5 条：执行前后各量一次，任何变化 = 立即停测。
  * 只读。**真实脑根 2026-10-15 起是"存在"的**（`--op init-real` 亲手开过，exit 0），
  * 真实路线仍然不存在 —— 两格都**如实写盘上是什么**，不预设"应该不存在"。
+ *
+ * 🔴 三格的**判据不同**（2026-11-07 MF-1）：
+ *   · `brain` = **路径集合**（`treePaths`）—— 脑根天天被合法地改（别的会话 / 作业），内容不判；
+ *   · `route` = **内容哈希**（`treeHash`）—— 真实路线根很小、只有本会话写，没有"别人也在写"的来源；
+ *   · `livePreset` = **内容哈希 + 排除顶层数据段**。
  *
  * 🔴 `livePreset` 的覆盖口径（组长 2026-11-06 决定，`决定-DR02覆盖口径.md` §三）：
  *   = **整棵 `presets/agenia` 减去数据段**，数据段**只从** `FROZEN.targetLag.dataSegments` 取
@@ -149,7 +214,8 @@ export function treeHash(root, { excludeTopLevel = null } = {}) {
 export function realRootsSnapshot({ livePresetRoot = PATHS.finalPreset } = {}) {
   const snap = {
     at: new Date().toISOString(),
-    brain: treeHash(PATHS.realBrainRoot),
+    /** 🔴 **路径集合**，不是内容哈希（2026-11-07 MF-1）—— 见 `treePaths` 的覆盖边界。 */
+    brain: treePaths(PATHS.realBrainRoot),
     route: treeHash(PATHS.realRouteRoot),
     livePreset: treeHash(livePresetRoot, { excludeTopLevel: FROZEN.targetLag.dataSegments }),
   }
@@ -559,10 +625,21 @@ export function writeRealRootsPhase(phase, snap = realRootsSnapshot()) {
   return snap
 }
 
-/** 两相位对照：任何变化 ⇒ 安全违规（不是普通红）。 */
+/**
+ * 两相位对照（结算那一行 / 契约 §2.4 第 5 条）。
+ *
+ * 🔴 两格**不是同一个判据**（2026-11-07 MF-1）：
+ *   · `brain`：**路径集合**差集 —— 内容变是合法变化，不报（细节见 `treePaths`）；
+ *   · `route`：**内容哈希** —— 真实路线根只有本会话写。
+ * `brain` 那一格的覆盖边界由 `real_roots.content_uncovered` 同批报出，别把"差异无"读成"脑根没被写"。
+ */
 export function realRootsDiff(before, after) {
   const diffs = []
-  for (const key of ['brain', 'route']) {
+  const brain = pathSetDiff(before?.brain, after?.brain)
+  if (brain === null) diffs.push('brain：（缺一相位，判不了）')
+  else if (brain.exists.before !== brain.exists.after) diffs.push(`brain：存在性 ${brain.exists.before} → ${brain.exists.after}`)
+  else if (!brain.same) diffs.push(`brain：路径集合变了（${pathSetSummary(brain)}）`)
+  for (const key of ['route']) {
     const b = before[key]
     const a = after[key]
     if (b.exists !== a.exists) diffs.push(`${key}：exists ${b.exists} → ${a.exists}`)
@@ -784,8 +861,26 @@ export function settle() {
      */
     reporter_check_ok: partialFiles.length === 0 && unexpected.length === 0 && red + green + holdCases.length === cases.filter((c) => c.settled).length && discoveryProblems.length === 0,
     full_coverage: missing.length === 0,
-    /** 安全不变量：真实脑 / 真实路线前后必须一字不变（契约 §2.4 第 5 条）。 */
-    real_roots: { before, after, diff, security_violation: diff === null ? null : diff.length > 0 },
+    /**
+     * 安全不变量：真实脑 / 真实路线前后必须同值（契约 §2.4 第 5 条）。
+     * 🔴 覆盖边界（2026-11-07 MF-1）：`brain` 判的是**路径集合**，内容不判 —— 见下面的 `content_uncovered`。
+     */
+    real_roots: {
+      before,
+      after,
+      diff,
+      security_violation: diff === null ? null : diff.length > 0,
+      /**
+       * 🔴 **这一格没盖住什么**（读的人不必去翻决定书）：已存在文件被**就地覆盖**（内容改、路径不变）
+       * 不会被 `brain` 的路径集合判据抓到 —— 兜它的是 `--real-mode` 的 `E_ROOT_REAL_BRAIN`（`DR-01`）
+       * 与受控命令清单（`lib/cli-inventory.mjs`）。
+       */
+      content_uncovered: {
+        root: 'brain',
+        what: '已存在文件被就地覆盖（内容改、路径不变）',
+        covered_by: ['DR-01 --real-mode ⇒ E_ROOT_REAL_BRAIN', 'lib/cli-inventory.mjs 的受控命令清单'],
+      },
+    },
     oracle: oracleReadings(),
     staging: stagingReadings(),
     /**
@@ -845,6 +940,10 @@ export function settleMarkdown(s) {
   lines.push(`- 报告器核对（跑到的文件里不许缺结算 + 不许跑到未写的）：${s.reporter_check_ok ? '通过' : '**不通过**'}${s.settled.partial_files.length ? ` · 文件内缺结算：${s.settled.partial_files.map((p) => `${p.file}(${p.missing.join(',')})`).join('；')}` : ''}${s.settled.unexpected.length ? ` · 意外多出：${s.settled.unexpected.join(', ')}` : ''}`)
   lines.push(`- 未跑到的已写用例（分批跑时正常，明写在此）：${s.run_scope.not_run_cases.length === 0 ? '无（本次全覆盖）' : `${s.run_scope.not_run_cases.length} 条 —— ${s.run_scope.not_run_files.join(' · ')}`}`)
   lines.push(`- 真实根前后：before=${s.real_roots.before ? '有' : '缺'} · after=${s.real_roots.after ? '有' : '缺'} · 差异=${s.real_roots.diff === null ? '（判不了：缺一相位）' : (s.real_roots.diff.length === 0 ? '**无**' : `**有**：${s.real_roots.diff.join('；')}`)}`)
+  {
+    const uncovered = s.real_roots.content_uncovered
+    lines.push(`  - 🔴 覆盖边界（2026-11-07 MF-1）：【${uncovered?.what ?? '（这一节不在：老 settlement）'}】不会被 \`brain\` 的路径集合判据抓到 —— 兜它的是 ${(uncovered?.covered_by ?? ['（未声明）']).join(' + ')}。`)
+  }
   lines.push(`- oracle：${s.oracle.exists ? `在盘（SHA ${s.oracle.actual_sha256}）` : '**不在盘**'} · 声明版本 ${s.oracle.declared_version ?? '(未给)'} · 路径 ${s.oracle.path ?? '(未给)'}`)
   lines.push(`- staging：${s.staging.exists ? '在盘' : '**不在盘**'}（${s.staging.path ?? '(未给)'}）`)
   lines.push(`- **被测 staging 树哈希（T-RUN-1）**：\`${s.staged_tree_sha256 ?? '(算不出)'}\` · ${s.staged_tree_files ?? 0} 个文件 —— 与上面那行 oracle SHA 并列，就是"这一轮被测的是哪一版"的锚`)
@@ -877,7 +976,7 @@ if (process.argv[1] && canonical(process.argv[1]) === canonical(fileURLToPath(im
   if (rr >= 0) {
     const phase = argv[rr + 1] ?? 'before'
     const snap = writeRealRootsPhase(phase)
-    console.log(`real-roots.${phase}: brain=${snap.brain.exists ? snap.brain.sha256 : 'ABSENT'} route=${snap.route.exists ? snap.route.sha256 : 'ABSENT'} livePreset=${snap.livePreset.exists ? snap.livePreset.sha256 : 'ABSENT'}`)
+    console.log(`real-roots.${phase}: brain_paths=${snap.brain.exists ? snap.brain.count : 'ABSENT'} route=${snap.route.exists ? snap.route.sha256 : 'ABSENT'} livePreset=${snap.livePreset.exists ? snap.livePreset.sha256 : 'ABSENT'}`)
   } else {
     const s = settle()
     writeJson(path.join(evidenceRoot(), 'settlement.json'), s)
