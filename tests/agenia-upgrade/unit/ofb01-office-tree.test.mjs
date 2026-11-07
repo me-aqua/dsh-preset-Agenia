@@ -1,5 +1,5 @@
 /**
- * `OFB-01`…`OFB-07` —— **office 的基准是"落点自己所在的那棵树的 `.team`"**（`ticket-20261102-02`）。
+ * `OFB-01`…`OFB-08` —— **office 的基准是"落点自己所在的那棵树的 `.team`"**（`ticket-20261102-02`）。
  *
  * 契约：`.team/test/2026-11-07/CONTRACT-batch14.md`（§一 接口 / §二 用例与刀 / §三 夹具拓扑 / §四 边界）。
  * 定形：`.team/leader/2026-11-07/定形-ticket-20261102-02.md`（§二 是组长拍的，不在这里重新讨论）。
@@ -24,9 +24,18 @@
  *            实现后：同一段自动改跑真 staged 源码。
  *   `OFB-07` §二.6 **门禁层必须出声**：真 `apply()` 的 `tools.guard` 放行异树写，
  *            并且 `console.error` 那一行带 `OFFICE_TREE_DIFFERS` 与两个 office 路径。
+ *   `OFB-08` **窄会话的写边界仍是最严的那道**（契约 §六 / gate-4 返修 MF-2）：窄会话写**另一棵树**的
+ *            `.team/` ⇒ **拒**；写自己树的 `.team/` ⇒ 放行；写两棵树的项目处 ⇒ 拒；**同一笔**跨树写从
+ *            非窄的 `review` 走 ⇒ 放行 + `OFFICE_TREE_DIFFERS`（证明门只在窄那一侧变窄）。
+ *            刀 `K7`：把 `strict` 当 falsy（`if (strict === true)` → `if (false)`）⇒ 跨树那一腿必须翻。
+ *            另带 **N1** 的 oracle 两向校准（目标就是 `.team` / 树根 ⇒ `expected_office:null`；
+ *            `B/src/x.js` ⇒ `B/.team`）。
  *
- * ## 口径边界（这七格**不**判什么；同契约 §四）
- *   · **不判** `narrowVerdict` 的 `write_scope=team`（它共用 `landsInOffice`，行为跟着变，但没有一条格钉它）；
+ * ## 口径边界（这些格**不**判什么；同契约 §四）
+ *   · **不判**窄会话的另外两格（工具白名单 / 提案拒）与"门禁真的会调 `narrowVerdict`"那一层
+ *     （`PRS-02` 的 row 5 工具拒覆盖同一条路由；`OFB-08` 只判 `write_scope` 这一格）；
+ *   · **不判** strict 分支的**读数**（`office_root` / `warning` 等六个字段是 §1.1 非严格规则的；
+ *     窄会话只判 allow/reject 与拒绝码）；
  *   · **不判**真实挂载（R1：框架有没有真的调这个 guard）；
  *   · **不判** `DEFAULT_OFFICE_BOUND` 与 yml `officeBound` 的逐项一致（`REV-02` / `STAT-02` 已有）；
  *   · **不判**「相对路径按**活体当前目录**（`working_directory` 改过之后）解析」——本层只拿得到会话头 cwd，
@@ -47,8 +56,8 @@ import { FROZEN, PATHS } from '../support/env.mjs'
 import { importStaged, readStagedText } from '../support/sut.mjs'
 import { buildCatalog, buildContentRoot, configFromComposition, importSourceCopy, withHarness } from '../support/injector-harness.mjs'
 import {
-  CONTROL_SOURCE, KNIVES, canonicalOf, decisionBody, digestOf, ensureOfficeFixtures, expectedOfficeOf,
-  headerOfficeOf, normKey, officeOfPath, officeRunId, sampleProblems, swapDecisionBody,
+  CONTROL_SOURCE, KNIVES, NARROW_KNIFE, canonicalOf, decisionBody, digestOf, ensureOfficeFixtures, expectedOfficeOf,
+  headerOfficeOf, normKey, officeOfPath, officeRunId, oracleProblems, sampleProblems, strictOff, swapDecisionBody,
 } from '../support/office-fixtures.mjs'
 
 const BOUND = new Set(FROZEN.staged.officeBoundRoles)
@@ -96,7 +105,7 @@ function fixtureReadings() {
       run_root_ancestor_office: officeOfPath(runRoot()),
       note: '运行根在 <repo>/.team 里面 ⇒ ③⑤ 的拒绝只能在仓库之外的两棵临时树上量（契约 §三）。',
     },
-    scope_note: '不判 narrowVerdict / 真挂载 / officeBound 名单一致 / 活体 cwd（working_directory）/ symlink 攻击；只判契约 §一 的落点与读数。',
+    scope_note: '不判窄会话的另外两格（白名单 / 提案拒）与门禁路由 / 真挂载 / officeBound 名单一致 / 活体 cwd（working_directory）/ symlink 攻击；只判契约 §一、§六 的落点、读数与窄会话写范围。',
   }
 }
 
@@ -264,6 +273,60 @@ function row5(mod) {
 }
 
 const ROWS = { '①': row1, '②': row2, '③': row3, '④': row4, '⑤': row5 }
+
+/**
+ * ⑧ **窄会话的写边界仍是最严的那道**（契约 §六；gate-4 返修 MF-2）。
+ *
+ * 判四件事 + 一个对照：
+ *   · 窄会话写**另一棵树**的 `.team/` ⇒ **拒**（`OFFB-NARROW-CROSS-TREE`）—— 这条是本格的主判词；
+ *   · 窄会话写**自己那棵树**的 `.team/` ⇒ 放行（`OFFB-NARROW-OWN-TREE`）；
+ *   · 窄会话写自己树 / 另一棵树的项目处 ⇒ 拒（`OFFB-NARROW-OUTSIDE`）；
+ *   · **同一笔**跨树写从非窄的受限岗位（`review`）走 ⇒ **放行 + `OFFICE_TREE_DIFFERS`**（`OFFB-NARROW-CONTRAST`）——
+ *     证明"门变窄"只发生在窄会话那一侧，不是把所有人都关在外面。
+ *
+ * 口径边界：这里判的是**执行者**（`narrowVerdict`，导出纯函数）；"门禁真的会调它"那一层由
+ * `PRS-02` 的 row 5 工具拒覆盖（同一条 `narrowVerdict`，只是另一条腿）。strict 的读数**不在契约里**
+ * （§1.1 的六个字段是非严格规则的；窄会话只判判决），所以这里只判 allow/reject 与拒绝码。
+ */
+function narrowRow(mod) {
+  const out = []
+  const push = (code, message) => out.push(problem(code, message))
+  const wantCode = mod.NARROW_CODES !== null && mod.NARROW_CODES !== undefined && typeof mod.NARROW_CODES.write === 'string'
+    ? mod.NARROW_CODES.write
+    : null
+  if (wantCode === null) push('OFFB-NARROW-SURFACE', '模块没有导出 NARROW_CODES.write —— 窄拒绝的码无从对账')
+  const agent = agentAt(FX.a)
+  const cross = path.join(FX.b, '.team', 'bug', 'ledger.json')
+  const own = path.join(FX.a, '.team', 'bug', 'ledger.json')
+  const leg = (label, target, want, code) => {
+    let verdict
+    try {
+      verdict = mod.narrowVerdict('write', { file_path: target }, agent)
+    } catch (err) {
+      push('OFFB-NARROW-THREW', `${label}：调用抛了（${String(err?.message ?? err)}）—— 拒绝必须是判词，不是异常`)
+      return
+    }
+    const kind = kindOf(verdict)
+    if (kind !== want) {
+      push(code, `${label}（${target}）应当${want === 'allow' ? '放行' : '拒绝'}，实得 ${kind}/${verdict?.code}`)
+      return
+    }
+    if (want === 'reject' && wantCode !== null && verdict?.code !== wantCode) {
+      push(code, `${label}：拒绝码应为 ${wantCode}，实得 ${JSON.stringify(verdict?.code)}`)
+    }
+  }
+  leg('窄会话写另一棵树的 .team', cross, 'reject', 'OFFB-NARROW-CROSS-TREE')
+  leg('窄会话写自己树的 .team', own, 'allow', 'OFFB-NARROW-OWN-TREE')
+  leg('窄会话写自己树的项目根', path.join(FX.a, 'x.md'), 'reject', 'OFFB-NARROW-OUTSIDE')
+  leg('窄会话写另一棵树的项目处', path.join(FX.b, 'src', 'x.js'), 'reject', 'OFFB-NARROW-OUTSIDE')
+  const contrast = callOffice(mod, { target: cross, agent })
+  if (kindOf(contrast.out) !== 'allow' || contrast.readings.warning !== 'OFFICE_TREE_DIFFERS') {
+    push('OFFB-NARROW-CONTRAST', `同一笔跨树写从非窄的 review 会话走：必须放行且记 OFFICE_TREE_DIFFERS，`
+      + `实得 ${kindOf(contrast.out)}/${contrast.out?.code} warning=${JSON.stringify(contrast.readings.warning)}`)
+  }
+  return out
+}
+
 
 /** 一次跑完五格：返回 `{ ①: [problems], … }`（刀架用它比翻面集）。 */
 function judgeAll(mod) {
@@ -470,6 +533,84 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
             }
             if (!normKey(line).includes(normKey(headerOfficeOf(FX.a)))) {
               push('OFFB-WARN-OFFICE-MISSING', `那一行里没有会话头 cwd 的 office ${headerOfficeOf(FX.a)}：${line.slice(0, 240)}`)
+            }
+          }
+        }
+      }
+      caseFail(out)
+    })
+  })
+
+  test('OFB-08 窄会话的 .team 写边界仍是最严的那道：另一棵树的 .team 必须拒，同一笔写从 review 走放行+warning', async () => {
+    await runCase('OFB-08', async (rec) => {
+      const out = []
+      const push = (code, message) => out.push(problem(code, message))
+      rec.readings.fixtures = fixtureReadings()
+      sample(push)
+      // N1 的落点：oracle 自己的两向校准（目标就是 .team / 树根 ⇒ null；B/src/x.js ⇒ B/.team）
+      for (const [code, message] of oracleProblems(FX)) push(code, message)
+      const base = path.join(caseDir('OFB-08'), 'ofb08')
+
+      // ── ① 阳性对照：strict 接上的最小实现 ⇒ 四条窄腿全绿（这一格的要求是可满足的）──
+      const control = await importSourceCopy({ dir: path.join(base, 'control'), source: CONTROL_SOURCE })
+      if (!control.ok) {
+        push('OFFB-NARROW-CONTROL-UNAVAILABLE', `阳性对照 import 不了：${control.code} ${control.why}`)
+      } else {
+        const controlProblems = narrowRow(control.mod)
+        rec.readings.control = { codes: controlProblems.map((p) => p.code) }
+        if (controlProblems.length > 0) {
+          push('OFFB-NARROW-CONTROL-NOT-GREEN', `阳性对照自己没有全绿（${JSON.stringify(controlProblems.map((p) => p.code))}）—— 判据不可满足，先修尺子`)
+        }
+        // ── ② 刀 K7（对照上）：strict 当 falsy ⇒ 只翻"跨树写"那一腿 ──
+        const cut = strictOff(CONTROL_SOURCE)
+        if (!cut.ok) {
+          push('OFFB-NARROW-KNIFE-ANCHOR', `${NARROW_KNIFE.id} 在阳性对照上没有落点：${cut.code} ${cut.why}`)
+        } else {
+          const mutant = await importSourceCopy({ dir: path.join(base, `knife-${NARROW_KNIFE.id}-control`), source: cut.source })
+          if (!mutant.ok) {
+            push('OFFB-NARROW-KNIFE-IMPORT', `${NARROW_KNIFE.id}@control：切过的副本 import 不了：${mutant.why}`)
+          } else {
+            const codes = narrowRow(mutant.mod).map((p) => p.code)
+            rec.readings.knife_control = codes
+            if (JSON.stringify(codes) !== JSON.stringify(NARROW_KNIFE.want)) {
+              const onlyActual = codes.filter((c) => !NARROW_KNIFE.want.includes(c))
+              const onlyWant = NARROW_KNIFE.want.filter((c) => !codes.includes(c))
+              push('OFFB-NARROW-KNIFE-VECTOR', `${NARROW_KNIFE.id}@control：多翻 ${JSON.stringify(onlyActual)} · 少翻 ${JSON.stringify(onlyWant)}（实测 ${JSON.stringify(codes)}）`
+                + ' —— 多翻 = 刀切宽了，少翻 = 窄的那一面没人守')
+            }
+          }
+        }
+      }
+
+      // ── ③ 真 staged 源码：这一格判的主体 ──────────────────────────────────
+      const mod = await loadSubject(push)
+      if (mod !== null) {
+        const real = narrowRow(mod)
+        rec.readings.row8 = real.map((p) => p.code)
+        out.push(...real)
+        // ── ④ 刀 K7（真源码）—— 只在基线成立（跨树拒、同树允）时才有可比对象 ──
+        const baselineOk = !real.some((p) => ['OFFB-NARROW-CROSS-TREE', 'OFFB-NARROW-OWN-TREE', 'OFFB-NARROW-THREW', 'OFFB-NARROW-SURFACE'].includes(p.code))
+        if (!baselineOk) {
+          rec.readings.knife_real = { skipped: 'baseline-not-strict（跨树写没被拒 ⇒ 刀没有可比对象；不是刀坏了）', codes: null }
+        } else {
+          const source = (() => { try { return readStagedText('inject.js') } catch (err) { push('OFFB-SURFACE-MISSING', `读不到 staged inject.js：${String(err?.message ?? err).slice(0, 160)}`); return null } })()
+          if (source !== null) {
+            const cut = strictOff(source)
+            if (!cut.ok) {
+              push('OFFB-NARROW-KNIFE-ANCHOR', `${NARROW_KNIFE.id} 在真 staged 源码上没有落点：${cut.code} ${cut.why}`)
+            } else {
+              const mutant = await importSourceCopy({ dir: path.join(base, `knife-${NARROW_KNIFE.id}-real`), source: cut.source })
+              if (!mutant.ok) {
+                push('OFFB-NARROW-KNIFE-IMPORT', `${NARROW_KNIFE.id}@real：切过的副本 import 不了：${mutant.why}`)
+              } else {
+                const codes = narrowRow(mutant.mod).map((p) => p.code)
+                rec.readings.knife_real = { skipped: null, codes }
+                if (JSON.stringify(codes) !== JSON.stringify(NARROW_KNIFE.want)) {
+                  const onlyActual = codes.filter((c) => !NARROW_KNIFE.want.includes(c))
+                  const onlyWant = NARROW_KNIFE.want.filter((c) => !codes.includes(c))
+                  push('OFFB-NARROW-KNIFE-VECTOR', `${NARROW_KNIFE.id}@real：多翻 ${JSON.stringify(onlyActual)} · 少翻 ${JSON.stringify(onlyWant)}（实测 ${JSON.stringify(codes)}）`)
+                }
+              }
             }
           }
         }

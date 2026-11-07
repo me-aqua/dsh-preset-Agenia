@@ -74,16 +74,53 @@ export function headerOfficeOf(cwd) {
 /**
  * **oracle：拒绝时「它本该在哪」** —— `landing` 往上最近一个**自己有 `.team` 子目录**的目录 + `/.team`。
  * 找不到 ⇒ null（报文必须说清"找不到带 `.team` 的树"）。
+ *
+ * 🔴 2026-11-07 gate-4 返修 **N1**：这一条按契约 §1.1 的 `expected_office` 行改过（产物对、oracle 错）：
+ *   · 契约写的是「拒绝时……`landing` **往上**……」⇒ ① 它只是**拒绝时**的字段（放行时可为 `null`、不判）；
+ *     ② 「往上」= **严格祖先**，landing 自己不算自己的祖先。
+ *   旧版从 landing 自己算起 ⇒ 目标**就是** `.team` 目录 / 是一棵树的根时会多给一个 `B/.team`，
+ *   而产物（放行 ⇒ `null`；树根 ⇒ 严格祖先里没有 `.team` ⇒ `null`）是对的。
+ *   两向的人工校准见 `oracleProblems()`（新格子里每次真跑）。
  */
 export function expectedOfficeOf(landing) {
+  if (officeOfPath(landing) !== null) return null
   const parts = String(landing ?? '').replace(/\\/g, '/').split('/')
-  for (let i = parts.length - 1; i >= 1; i -= 1) {
+  for (let i = parts.length - 2; i >= 1; i -= 1) {
     const dir = parts.slice(0, i + 1).join('/')
     const candidate = `${dir}/.team`
     if (existsSync(candidate) && statSync(candidate).isDirectory()) return candidate
   }
   return null
 }
+
+/**
+ * **oracle 自己的两向校准**（N1 的落点；`OFB-08` 每次真跑）。
+ * 只判"这个函数在契约 §1.1 的两侧各给什么"，不判产物 —— 产物由 `OFB-03/05/08` 的读数对账。
+ * @returns {Array<[string, string]>} `[code, message]`
+ */
+export function oracleProblems(fx) {
+  const out = []
+  const norm = (p) => normKey(p)
+  const teamDir = path.join(fx.b, '.team')
+  if (expectedOfficeOf(teamDir) !== null) {
+    out.push(['OFFB-OFFICE-ORACLE', `目标**就是** .team 目录时 expected_office 必须是 null（契约 §1.1：拒绝时才有它），实得 ${JSON.stringify(expectedOfficeOf(teamDir))}`])
+  }
+  if (expectedOfficeOf(fx.b) !== null) {
+    out.push(['OFFB-OFFICE-ORACLE', `目标是一棵树的根时 expected_office 必须是 null（「往上」= 严格祖先，根自己没有 .team 祖先），实得 ${JSON.stringify(expectedOfficeOf(fx.b))}`])
+  }
+  const srcExpected = expectedOfficeOf(path.join(fx.b, 'src', 'x.js'))
+  if (norm(srcExpected) !== norm(path.join(fx.b, '.team'))) {
+    out.push(['OFFB-OFFICE-ORACLE', `B/src/x.js 的 expected_office 应为 ${path.join(fx.b, '.team')}，实得 ${JSON.stringify(srcExpected)}`])
+  }
+  // 老越界样例：相对目标按 cwd=A 解析 ⇒ landing = `<A>/x.txt`；它**在** A 这棵树里（严格祖先是 `<A>`，
+  // 而有 `.team` 子目录）⇒ expected_office = `A/.team`（"它本该待在 A 的 office 里"）。
+  const escapeLanding = path.resolve(fx.a, '.team/review/../../x.txt')
+  if (norm(expectedOfficeOf(escapeLanding)) !== norm(path.join(fx.a, '.team'))) {
+    out.push(['OFFB-OFFICE-ORACLE', `老越界样例的落点 ${escapeLanding} 的 expected_office 应为 ${path.join(fx.a, '.team')}，实得 ${JSON.stringify(expectedOfficeOf(escapeLanding))}`])
+  }
+  return out
+}
+
 
 /** 树的确定性摘要（相对路径 + 每个文件 sha256 + 汇总）—— 只给读数用，不当判据。 */
 export function digestOf(root) {
@@ -214,6 +251,14 @@ export function decisionBody(opts = {}) {
   lines.push(`  const base = ${relativeBase === 'process' ? "resolve('.')" : 'cwd'}`)
   lines.push('  const landing = canon(resolve(base, targetText))')
   if (!dropDriveGuard) lines.push("  if (driveOf(landing) === 'C:') return refuse(landing, header)")
+  // 窄会话那一支（契约 §六）：`strict === true` ⇒ 退回最严的老 containment（只认会话头那棵树的 `.team`）。
+  lines.push(
+    '  if (strict === true) {',
+    "    const insideStrict = (child, parent) => { const c = norm(child); const p = norm(parent); return c === p || c.startsWith(p + '/') }",
+    '    const allowStrict = insideStrict(landing, header)',
+    '    return { allow: allowStrict, landing, office_root: header, header_office: header, expected_office: header, differs: false, warning: null }',
+    '  }',
+  )
   if (rule === 'header') {
     lines.push(
       "  const inside = (child, parent) => { const c = norm(child); const p = norm(parent); return c === p || c.startsWith(p + '/') }",
@@ -241,7 +286,7 @@ export const CONTROL_SOURCE = [
   "import { resolve } from 'node:path'",
   "const SHELL = ['bash', 'pwsh']",
   "const WRITE_TARGET = { write: 'file_path', edit: 'file_path' }",
-  'function officeLandingVerdict(target, agent) {',
+  'function officeLandingVerdict(target, agent, strict) {',
   decisionBody({}),
   '}',
   'export function landsInOffice(target, agent) { return officeLandingVerdict(target, agent).allow }',
@@ -270,6 +315,21 @@ export const CONTROL_SOURCE = [
   '    ? \'往上找不到带 .team 的树（期望的 office 路径判不出来）。\'',
   '    : \'期望的 office 是「\' + verdict.expected_office + \'」。\'',
   "  return { code: 'E_GUARD_OFFICE_WRITE', message: prefix + '落点「' + verdict.landing + '」不在一棵树的 .team 里；' + tail + '要改什么，写成意见交回组长。' }",
+  '}',
+  '',
+  '// 窄权限（契约 §六）：闭三元组 —— 白名单 / 写范围 / 提案拒；写范围走 `officeLandingVerdict(…, true)`。',
+  "export const NARROW_PERMISSION = Object.freeze({ tools: Object.freeze(['read', 'write', 'edit']), write_scope: 'team', proposal: 'deny' })",
+  "export const NARROW_CODES = Object.freeze({ tool: 'E_GUARD_NARROW_TOOL', write: 'E_GUARD_NARROW_WRITE', proposal: 'E_GUARD_NARROW_PROPOSAL' })",
+  'export function narrowVerdict(toolName, args, agent) {',
+  "  const name = typeof toolName === 'string' ? toolName : ''",
+  "  if (NARROW_PERMISSION.proposal === 'deny' && name === 'proposal_file') return { code: NARROW_CODES.proposal, message: '窄：提案调用被拒。' }",
+  '  if (!NARROW_PERMISSION.tools.includes(name)) return { code: NARROW_CODES.tool, message: \'窄：工具不在白名单。\' }',
+  '  const key = WRITE_TARGET[name]',
+  "  if (NARROW_PERMISSION.write_scope === 'team' && key !== undefined) {",
+  "    const target = args === null || typeof args !== 'object' ? undefined : args[key]",
+  '    if (!officeLandingVerdict(target, agent, true).allow) return { code: NARROW_CODES.write, message: \'窄：只能写队伍目录。\' }',
+  '  }',
+  '  return null',
   '}',
   '',
 ].join('\n')
@@ -326,6 +386,37 @@ export const KNIVES = [
     want: ['OFFB-ROW4-EMPTY', 'OFFB-ROW4-CWD'],
   },
 ]
+
+/**
+ * **窄会话那一格的刀**（契约 §六）：把 `strict` 当 falsy ——
+ * `if (strict === true) {` → `if (false) {`（只改这一处；strict 那一支还在，只是永远走不到）。
+ * 只在**基线成立**（窄会话的跨树写确实被拒）时才有可比对象；基线不成立时调用方记 skip（读数，不加红因）。
+ */
+export const NARROW_KNIFE = {
+  id: 'K7',
+  label: '把 strict 当 falsy（`if (strict === true)` → `if (false)`）',
+  want: ['OFFB-NARROW-CROSS-TREE'],
+}
+
+/**
+ * @param {string} source 真源码或阳性对照
+ * @returns {{ok:boolean, code:string|null, why:string|null, source:string|null}}
+ */
+export function strictOff(source) {
+  const text = String(source)
+  const needle = 'if (strict === true) {'
+  const count = text.split(needle).length - 1
+  if (count === 0) {
+    return { ok: false, code: 'KNIFE-ANCHOR-MISSING', why: '找不到 `if (strict === true) {`（契约 §六 的那一支）', source: null }
+  }
+  if (count > 1) {
+    return { ok: false, code: 'KNIFE-ANCHOR-AMBIGUOUS', why: `\`if (strict === true) {\` 出现 ${count} 次（必须恰好 1 次）`, source: null }
+  }
+  const out = text.replace(needle, 'if (false) {')
+  if (out === text) return { ok: false, code: 'KNIFE-NO-CUT', why: '替换没改动一个字节', source: null }
+  return { ok: true, code: null, why: null, source: out }
+}
+
 
 /**
  * 把 `officeLandingVerdict` 的**函数体**换成 `body`（其余字节一个不动）。

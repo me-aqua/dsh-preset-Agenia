@@ -667,7 +667,8 @@ export function narrowVerdict(toolName, args, agent) {
   const key = WRITE_TARGET[name]
   if (NARROW_PERMISSION.write_scope === 'team' && key !== undefined) {
     const target = args === null || typeof args !== 'object' ? undefined : args[key]
-    if (!landsInOffice(target, agent)) {
+    // 🔴 窄会话（这一道门）比别的岗位更严：只认**会话头那棵树**的 `.team/`（`strict === true`）。
+    if (!officeLandingVerdict(target, agent, true).allow) {
       return {
         code: NARROW_CODES.write,
         message: `${why}：只能写项目里 .team/ 下面的东西。`
@@ -2627,7 +2628,7 @@ export async function apply(ctx, config = {}) {
       ? undefined
       : call.arguments[where]
     // 落在 .team/ 里的写入是队里的本子，不是项目文件动了。
-    if (officeLandingVerdict(target, call.agent, true).allow) return
+    if (officeLandingVerdict(target, call.agent).allow) return
     ledger.afterTest += 1
     ledger.afterReview += 1
   })
