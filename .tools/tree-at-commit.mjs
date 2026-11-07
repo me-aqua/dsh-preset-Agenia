@@ -645,15 +645,19 @@ function doExport(args) {
   //    为什么必须拒：副本要是落在被测树里，导出自己写下的每一份文件都会被下一次 `--verify` 算成"动了"，
   //    而那份"动了"会挂在别人头上（一条假红，而且查不出是谁的）。
   const outCanon = canonicalOut(out)
+  // 🔴 两侧都要规范化（M-2a）：`repoAbs` 只有词法形态时，`--repo` 走 junction、`--out` 走同一个 junction
+  //    会让前缀判据不成立 ⇒ 连尺子都不问就把副本写进被测树（那是本轮引入的回归）。
+  const repoCanon = canonicalOut(repoAbs)
   const outCanonLower = outCanon.toLowerCase()
-  if (outCanonLower.startsWith(`${repoAbs.toLowerCase()}${path.sep}`) || outCanonLower === repoAbs.toLowerCase()) {
+  const repoCanonLower = repoCanon.toLowerCase()
+  if (outCanonLower.startsWith(`${repoCanonLower}${path.sep}`) || outCanonLower === repoCanonLower) {
     // 🔴 问的**不是落点自己**，而是"它下面的文件算不算" —— 落点可能恰好叫 `x.pyc`，
     //    它自己被后缀规则排除，可它**里面**的文件不排除（M2 的 (A)）。
     const probeChild = path.join(outCanon, '__agenia_probe__')
-    const asked = askIsCode(repoAbs, probeChild)
+    const asked = askIsCode(repoCanon, probeChild)
     if (asked !== null && asked.code === true) {
       return fail('E_OUT_INSIDE_AUDITED',
-        `--out 落在被测树 ${repoAbs} 的 CODE 名单里：${asked.rel}（${asked.why}；落点规范形态 ${outCanon}）。`
+        `--out 落在被测树 ${repoAbs} 的 CODE 名单里：${asked.rel}（${asked.why}；落点规范形态 ${outCanon}；被测根规范形态 ${repoCanon}）。`
         + '副本必须写在被测树之外，或者写进 `.team/` 这种被排除表挡住的前缀；'
         + '否则导出自己写下的文件会被下一次 `--verify` 算成"动了"，那一条红会挂在别人头上。')
     }
