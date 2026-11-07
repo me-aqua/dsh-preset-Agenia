@@ -22,7 +22,7 @@ import { FROZEN, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, stagingReadings } from '../support/evidence.mjs'
 import { importStaged, readStagedText, stagingExists, stagingPath } from '../support/sut.mjs'
 import { annotationLeaks, cfg, identityLanding, listMd, memberAnnotations, memberPresetShared, parseComposition, readPresetBaseline } from '../support/composition.mjs'
-import { optionalEnv } from '../support/env.mjs'
+import { ensureOfficeFixtures } from '../support/office-fixtures.mjs'
 
 before(() => {
   preflight()
@@ -289,7 +289,16 @@ describe('static · roles (REV-02)', () => {
         caseFail(problems)
       }
       const boundSet = new Set(FROZEN.staged.officeBoundRoles)
-      const ws = optionalEnv('AGENIA_TEST_WORKSPACE') ?? PATHS.repo
+      /**
+       * 🔴 2026-11-07（batch 14 · `ticket-20261102-02`）：写边界那几格的工作区**换成一棵
+       * `.team`-free 的临时树**（`support/office-fixtures.mjs`）。
+       * 为什么：新的 office 口径是「落点自己所在那棵树的 `.team`」（最近 `.team` 祖先）。
+       * 运行根按守卫只能落在 `<repo>/.team/test/<日期>/_runs/<ID>`，它**本身就在 `<repo>/.team` 里面**
+       * ⇒ 旧夹具基数（`AGENIA_TEST_WORKSPACE`，= 运行根里的 workspace）会让 `项目根 / 穿越` 那几格
+       * 被真实的 `<repo>/.team` 放行 ⇒ 这三格变成**假红**。断言的期望值一条没改（仍在 `.team/` 里放行、
+       * 出了 `.team` 拒绝），只把"哪棵树"换成生产形状：一个工作区，`.team` 在它里面，而不是它在一个 `.team` 里面。
+       */
+      const ws = ensureOfficeFixtures().root
       const agentAt = (cwd) => ({ id: 'agent-1', session: { header: { cwd } } })
       const at = agentAt(ws)
       const v = (role, toolName, args, agent = at) => {

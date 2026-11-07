@@ -569,10 +569,15 @@ export const FROZEN = {
   /** AGENTS.md 3e 的报文判据：门禁报文一定带这个前缀（用来与"工具自己的报错"分开）。 */
   officeBoundMessagePrefix: '你的岗位（',
   /**
-   * 活体 `inject.js` 里写权限判定的现成语义（**从活体只读核出**，纯函数必须"语义一字不改"）：
+   * 活体 `inject.js` 里写权限判定的现成语义（**从活体只读核出**）：
    *   `WRITE_TARGET = { write: 'file_path', edit: 'file_path' }` · `SHELL = ['bash','pwsh']`
-   *   `landsInOffice()` 用 `resolve(cwd, target)` 算**落点**再判 `.team/`（`..` 穿越因此被吃掉）
-   *   `agent.session.header.cwd` 就是那个 cwd
+   *   `agent.session.header.cwd` 是解析相对目标时用的那个 cwd
+   *
+   * 🔴 2026-11-07（batch 14 · `ticket-20261102-02`，定形 §二）：**office 的基准换了** ——
+   *   不再是"会话头 cwd 的 `.team`"，而是「**落点自己所在那棵树的 `.team`**」（最近 `.team` 祖先，含落点自己）。
+   *   来历与口径：`.team/test/2026-11-07/CONTRACT-batch14.md`；`REV-02` 的期望值没变（在 `.team/` 里放行、
+   *   出了 `.team` 拒绝），它的夹具基数换成了 `.team`-free 的临时树（运行根本身在 `<repo>/.team` 里面）。
+   *   ⚠️ 这一条**不再是**"语义一字不改"的冻结口径：它是组长 2026-11-07 拍定的改动，别按旧注释回推。
    */
   officeBoundSemantics: {
     writeTarget: { write: 'file_path', edit: 'file_path' },

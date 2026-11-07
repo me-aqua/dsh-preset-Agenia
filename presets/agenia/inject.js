@@ -1663,14 +1663,44 @@ function driveOfPath(p) {
  *
  * ⚠️ 它与活体那版（段匹配）**语义不同**，是有意的收紧，安装后由 R1 验。
  */
-function landsInOffice(target, agent) {
-  if (typeof target !== 'string' || target.length === 0) return false
-  const cwd = agent === null || agent === undefined ? undefined : agent.session?.header?.cwd
-  if (typeof cwd !== 'string' || cwd.trim().length === 0) return false
-  const landing = canonicalPath(resolve(cwd, target))
-  if (driveOfPath(landing) === 'C:') return false
-  return isUnder(landing, canonicalPath(resolve(cwd, OFFICE_DIR)))
+function officeLandingVerdict(target, agent) {
+  const norm = (p) => { let s = String(p ?? '').replace(/\\/g, '/'); while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1); return s.toLowerCase() }
+  const canon = (p) => { const r = resolve(p); try { return realpathSync.native(r) } catch (err) { return r } }
+  const driveOf = (p) => { const m = /^([A-Za-z]):/.exec(String(p ?? '')); return m === null ? null : m[1].toUpperCase() + ':' }
+  const partsOf = (p) => String(p ?? '').replace(/\\/g, '/').split('/')
+  const officeOf = (p) => { const parts = partsOf(p); for (let i = parts.length - 1; i >= 1; i -= 1) { if (parts[i].toLowerCase() === '.team') return parts.slice(0, i + 1).join('/') } return null }
+  const expectedOf = (landing) => { const parts = partsOf(landing); for (let i = parts.length - 1; i >= 1; i -= 1) { const dir = parts.slice(0, i).join('/'); if (existsSync(dir + '/' + OFFICE_DIR)) return dir.replace(/\\/g, '/') + '/' + OFFICE_DIR } return null }
+  const headerOfficeOf = (cwd) => { const hit = officeOf(canon(cwd)); return hit === null ? resolve(cwd, OFFICE_DIR) : hit }
+  const headerOf = (agent) => { const raw = agent === null || agent === undefined ? undefined : (agent.session === null || agent.session === undefined ? undefined : agent.session.header === null || agent.session.header === undefined ? undefined : agent.session.header.cwd); return typeof raw === 'string' && raw.trim().length > 0 ? raw : undefined }
+  const refuse = (landing, header) => ({ allow: false, landing, office_root: null, header_office: header, expected_office: null, differs: false, warning: null })
+  const cwdRaw = headerOf(agent)
+  if (cwdRaw === undefined) return refuse(null, null)
+  const cwd = cwdRaw
+  const header = headerOfficeOf(cwd)
+  if (typeof target !== 'string' || target.length === 0) return refuse(null, header)
+  const targetText = target
+  const base = cwd
+  const landing = canon(resolve(base, targetText))
+  if (driveOf(landing) === 'C:') return refuse(landing, header)
+  const office = officeOf(landing)
+  const allow = office !== null
+  const differs = office !== null && norm(office) !== norm(header)
+  const expected = office === null ? expectedOf(landing) : null
+  return { allow, landing, office_root: office, header_office: header, expected_office: expected, differs, warning: differs ? 'OFFICE_TREE_DIFFERS' : null }
 }
+
+/**
+ * 这个路径落在团队的办公桌上吗？
+ *
+ * 🔴 2026-11-07 改（`ticket-20261102-02` / F3）：office 不再是"会话头 cwd 那棵树的 `.team`"，
+ * 而是**落点自己所在那棵树的 `.team`** —— 从落点**向上**找最近的、名字恰好是 `.team` 的祖先。
+ * 理由：会话头 cwd 是**出生时定死**的，而本机有 `working_directory`、也有 worktree 这种活法 ⇒
+ * 拿它当 office 基准会同时错两次：绝对路径写进另一棵树的 `.team/` 被拒（写不了自己的交付件），
+ * 相对路径落进原树的 `.team/` 被放行（写错树）。
+ * 三条老口径**一条没放宽**：空目标 / 解析不出 cwd / 落点在 C 盘 ⇒ 一律"不在组内"。
+ * ⚠️ `officeLandingVerdict` 这个名字与函数体形状是**冻的**：刀按花括号整段替换切它。
+ */
+function landsInOffice(target, agent) { return officeLandingVerdict(target, agent).allow }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 委派门禁（**纯函数**）：名单从组合 config 读，代码里不硬编码。
@@ -1824,7 +1854,7 @@ export function subagentBackgroundVerdict(toolName, args, policy) {
  *    ⚠️ 别把 `officeBound: ['review']` 从组合里删掉去"消灭第二个作者"：那份配置与这个函数
  *       被 `REV-02` / `PFL-06` / `STAT-02` 三处冻结判据钉着，删它要改测试 —— 那不是本票能单方面做的。
  */
-export function officeBoundVerdict(role, toolName, args, agent, officeBoundSet) {
+export function officeBoundVerdict(role, toolName, args, agent, officeBoundSet, readings) {
   const bound = officeBoundSet instanceof Set
     ? officeBoundSet
     : new Set(Array.isArray(officeBoundSet) ? officeBoundSet : DEFAULT_OFFICE_BOUND)
@@ -1841,12 +1871,32 @@ export function officeBoundVerdict(role, toolName, args, agent, officeBoundSet) 
   const key = WRITE_TARGET[toolName]
   if (key === undefined) return null
   const target = args === null || typeof args !== 'object' ? undefined : args[key]
-  if (landsInOffice(target, agent)) return null
+  const verdict = officeLandingVerdict(target, agent)
+  // 第六参是**读数**，不是判词：给了就填六个字段（谁要看这一格就自己传一个空对象进来）。
+  if (readings !== null && readings !== undefined && typeof readings === 'object') {
+    readings.landing = verdict.landing
+    readings.office_root = verdict.office_root
+    readings.header_office = verdict.header_office
+    readings.expected_office = verdict.expected_office
+    readings.differs = verdict.differs
+    readings.warning = verdict.warning
+  }
+  if (verdict.allow) return null
 
+  const prefix = `你的岗位（${role}）只能写项目里 .team/ 下面的东西。`
+  if (verdict.landing === null) {
+    return {
+      code: 'E_GUARD_OFFICE_WRITE',
+      message: prefix + `你这次要写的是「${String(target)}」，按落点算在你的地盘外面。`
+        + '要改什么，写成意见交回组长。',
+    }
+  }
+  const tail = verdict.expected_office === null
+    ? '往上找不到带 .team 的树（期望的 office 路径判不出来）。'
+    : `期望的 office 是「${verdict.expected_office}」。`
   return {
     code: 'E_GUARD_OFFICE_WRITE',
-    message: `你的岗位（${role}）只能写项目里 .team/ 下面的东西。`
-      + `你这次要写的是「${String(target)}」，按落点算在你的地盘外面。`
+    message: prefix + `落点「${verdict.landing}」不在一棵树的 .team 里；` + tail
       + '要改什么，写成意见交回组长。',
   }
 }
@@ -2628,7 +2678,17 @@ export async function apply(ctx, config = {}) {
           // 判决岗「提案调用被拒」：注册与拒同源（`ROLE_TABLE` 那一条的 `deny`）。
           const proposal = proposalVerdict(role, toolName)
           if (proposal !== null) return `${proposal.code}：${proposal.message}`
-          const office = officeBoundVerdict(role, toolName, args, who, officeBound)
+          const officeReadings = {}
+          const office = officeBoundVerdict(role, toolName, args, who, officeBound, officeReadings)
+          // 🔴 2026-11-07（`ticket-20261102-02`）：**放行但写错了树** 必须出声。
+          //    典型形状：会话头 cwd 在 A 树、相对路径把交付件写进 A 树的 `.team/`，
+          //    而这一轮真正干活的是 B 树。判词是放行（它确实落在某个 `.team/` 里），
+          //    但这一行必须留下两个 office 路径 —— 不许悄悄发生。
+          if (office === null && officeReadings.warning === 'OFFICE_TREE_DIFFERS') {
+            console.error(`[agenia] OFFICE_TREE_DIFFERS：这次写的树与会话头不是同一棵`
+              + `（落点「${String(officeReadings.landing)}」· 那棵树的 office「${String(officeReadings.office_root)}」`
+              + `· 会话头那棵树的 office「${String(officeReadings.header_office)}」）—— 放行了，但你确认一下是不是想写这棵树。`)
+          }
           if (office !== null) return office.message
           // 🔴 两份每日评审要等**今天的记忆判决**落盘（老板 2026-11-03 定的硬门）。
           const reviewGate = dailyReviewGateVerdict(toolName, contentDir)

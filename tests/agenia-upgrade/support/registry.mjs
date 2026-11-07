@@ -754,6 +754,32 @@ export const BATCH_AE = ['CARD-07', 'CARD-08']
 export const BATCH_AF = ['DASH-17', 'MKP-01']
 
 /**
+ * 批次 AG 的 7 条 —— **`ticket-20261102-02` / 11-02 技术评审 `F3`**（2026-11-07 · batch 14）。
+ *
+ * 一句话：**office 不是"我这棵树的 `.team`"，而是"落点自己所在那棵树的 `.team`"**
+ * （定形 `.team/leader/2026-11-07/定形-ticket-20261102-02.md` §二；契约
+ * `.team/test/2026-11-07/CONTRACT-batch14.md`）。两半是同一个动作的两种写法：
+ *   · **绝对路径**写进另一棵树的 `.team/` ⇒ 原来被拒（具名岗位写不了自己的交付件）；
+ *   · **相对路径**按会话头 cwd 解析 ⇒ 落进原树的 `.team/` ⇒ 原来被放行（写错了树）。
+ * 七格各判一面（同文件 `unit/ofb01-office-tree.test.mjs`，判据口径逐条写在文件头）：
+ *   `OFB-01` ① 同树相对/绝对都放行 + `office_root` 独立复算相同 ·
+ *   `OFB-02` ② 异树放行 + `OFFICE_TREE_DIFFERS`（两个 office 路径）·
+ *   `OFB-03` ③ 异树非 `.team` 处拒绝 + 报文含落点与期望的 office ·
+ *   `OFB-04` ④ C 盘 / 空目标 / cwd 不可用三条老口径各一格（三格都是非空样本）·
+ *   `OFB-05` ⑤ 老样例 `.team/../../x` 仍拒绝（串匹配放不过它）·
+ *   `OFB-06` **刀架**：阳性对照五格全绿 + 六把刀各翻自己那几面（实现前真源码是"锚缺失"红）·
+ *   `OFB-07` 门禁层必须出声：真 `apply()` 放行异树写 + `console.error` 那行带码与两个 office。
+ *
+ * ⚠️ 一条**接口新增**（契约 §〇.1）：`officeBoundVerdict` 加可选第 6 参数 `readings`（`office_root` /
+ * `header_office` / `expected_office` / `differs` / `warning` / `landing`）；5 参时的返回形状与语义不变。
+ * ⚠️ 一条**夹具连带**（契约 §三）：`REV-02` 的工作区基数换成 `.team`-free 的临时树 ——
+ *    运行根按守卫只能在 `<repo>/.team/test/<日期>/_runs/<ID>`，它本身就在 `<repo>/.team` 里面，
+ *    不换的话新口径会把 `项目根 / 穿越` 那几格放行（假红）。
+ * ⚠️ 这七条**不进** `FROZEN_IDS`（同一批政策：后加批次各自以显式清单存在）。
+ */
+export const BATCH_AG = ['OFB-01', 'OFB-02', 'OFB-03', 'OFB-04', 'OFB-05', 'OFB-06', 'OFB-07']
+
+/**
  * 已落笔的二十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -777,7 +803,7 @@ export const BATCH_AF = ['DASH-17', 'MKP-01']
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -810,7 +836,8 @@ const BATCH_OF = (id) =>
                                                           : BATCH_AD.includes(id) ? 'AD'
                                                             : BATCH_AE.includes(id) ? 'AE'
                                                               : BATCH_AF.includes(id) ? 'AF'
-                                                                : null
+                                                                : BATCH_AG.includes(id) ? 'AG'
+                                                                  : null
 
 const F = {
   composition: 'static/composition.test.mjs',
@@ -969,6 +996,11 @@ const F = {
    *  （对真组合跑生成器，数两份预设体里的客户端 UI 行）。 */
   dash07: 'integration/dash07-read-window.test.mjs',
   mkp01: 'integration/mkp01-partition-control.test.mjs',
+  /** 批次 AG · `ticket-20261102-02`（F3）—— **一格一个 test、七格同住一个文件**：
+   *  五格是定形 §四 的五条口径（① 同树 / ② 异树 / ③ 越界 / ④ 三条老口径 / ⑤ 老越界样例），
+   *  一格是**刀架**（阳性对照 + 六把刀），一格是**门禁层必须出声**（真 `apply()` 的日志）。
+   *  同住一个文件：翻面读数（刀 → 哪几格红）要在一处读得出来。 */
+  ofb: 'unit/ofb01-office-tree.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1222,6 +1254,18 @@ const ROWS = [
   // 一格在**生成期**（`partitionHostLevel()` 之后两份预设体里一个宿主级行都不许剩）。
   ['DASH-17', 'client-dashboard', F.dash07, '**读盘窗口：两个数要有名字 + `eof === false` 必须有出口 + 再开不许把旧看板留在屏上**（定形 §一①；`client.js` 的 `{offset:1,limit:200}`）：`A` **静态** —— 读盘调用第三个实参里的 `offset` / `limit` 必须是**本文件里的 `const <名> = <整数>`**（判据**从源码的常量里读**上限值，不钉 `200`）：字面数字 ⇒ `RDW-WINDOW-MAGIC-NUMBER`、名字读不出值 ⇒ `RDW-CONST-UNRESOLVED`、取值不成立 ⇒ `RDW-WINDOW-SHAPE`、找不到那条调用 ⇒ `RDW-WINDOW-CALL-MISSING`；`B` **行为**（真装 `client.js`、真点一次、真让读盘落定；夹具按宿主 `WorkspaceFileText` 的真形状 `stat + {offset,text,lines,eof}` 给；`resolveLocale` 解插件**自己注册的字典**）：`eof === false`（`limit+1` 行快照的前 `limit` 行 = **半份 JSON**）⇒ 面板必须说「快照超过 **N** 行，读不全（**路径**）」（N = 实现自己那个上限、路径 = `SNAPSHOT_PATH`）⇒ 否则 `RDW-TRUNCATED-UNANNOUNCED`；半份 JSON **被喂给解析器** ⇒ `RDW-TRUNCATED-PARSER-BLAMED`；槽位被带走 ⇒ `RDW-TRUNCATED-PANEL-GONE`；`C` **两条对照输入** —— `eof === false` 但正文**能解析** ⇒ 仍然必须说"读不全"（`RDW-EOF-FLAG-IGNORED`）；上限以内（`limit-1` / 恰好 `limit` 行，`eof === true`）⇒ 行为不变（`RDW-FULL-PAGE-BROKEN`）；`C2` **`reopen` 腿**（第 4 关评审 M2；`client.js` 打开时没清 `view`）：**同一个 mount** 开→关→再开 —— 第一拍读到 `limit-1` 行**完整**快照（旧 headline + 旧数字 `老数 7` 必须真的画出来，否则 `RDW-REOPEN-FIRST-READ-UNCAUGHT`）、第二拍读到截断页 ⇒ 只说"读不全" **且旧看板痕迹一个都不许在**（`RDW-STALE-VIEW-ON-REOPEN`）；`RDW-REOPEN-SAMPLE` 只兜"开/读次数不对"（**不是** fail-closed 那道闸：每次重挂载的载具照样开两次读两次 —— 复审第二轮点名）；`f558f63` 那一版**真字节**装进同一具载具必须**恰好**翻 `RDW-STALE-VIEW-ON-REOPEN`，拿不到记 HOLD `RDW-VINTAGE-BYTES-UNAVAILABLE`；`D` **尺子自证 + 样本下限** —— 五棵合成树把三面单独造出来（含"两句同时在" / "数字不对" / "路径不对"）⇒ `RDW-FACES-RULER-BROKEN`；截断页必须真的 `limit` 行且 `JSON.parse` 会抛、完整页必须真的合法 ⇒ `RDW-SAMPLE-NOT-TRUNCATED` / `RDW-SAMPLE-NOT-A-SNAPSHOT`；上限读不出 ⇒ `RDW-LIMIT-UNREADABLE`；载具装不起来 ⇒ `RDW-HARNESS-UNAVAILABLE`；`E` **阳性对照 + 四把刀**（产品零字节）—— 照契约写的**合成最小实现**必须全绿，**未变异的对照四条腿都跑**（含 `reopen`，K3/K4 的绿底）：锚点对不上 ⇒ `RDW-CONTROL-UNAVAILABLE`、对照自己不绿 ⇒ `RDW-CONTROL-NOT-GREEN`（两个都真的能吐出来）；K1 `limit` 改回字面数字 ⇒ 只翻 `RDW-WINDOW-MAGIC-NUMBER`；K2 源码里 `eof` 整体改掉 ⇒ 恰好 `{UNANNOUNCED, BLAMED, EOF-FLAG-IGNORED}`；K3 抽掉对照里打开时的 `setView(null)` ⇒ **只**翻 `RDW-STALE-VIEW-ON-REOPEN`（其余单次打开的腿一条不动；它同时是"载具改成每次重挂载"那道回归的闸）；K4 第一拍不画视图 ⇒ **只**翻 `RDW-REOPEN-FIRST-READ-UNCAUGHT`；刀翻错面 ⇒ `RDW-KNIFE-VECTOR`、刀没咬住 ⇒ `RDW-KNIFE-NOT-BITING`；`F` **码的目录两端**（复审第三/四轮；尺子 `support/emission-catalog.mjs`）：`CODE` 表里**声明**的每一个码都必须有一个**码位发射点** —— 只认 `problem(…)` 第 1 个 / `caseHold(…)` 第 2 个 / `codes.push(…)` 第 1 个实参里的整词（含三元的码位）；**提示文本里提到不算**，文件头 / `expected_codes:` / leg 的 `codes:` 都不算 ⇒ 否则 `RDW-CATALOGUE-UNREACHABLE`；`CODE` 声明表读不出来（`table_ok:false`）⇒ `RDW-CATALOGUE-SOURCE-UNPARSED`（读成空表不许静默变绿）；`registry.mjs` 的 `DASH-17` 题面必须点名每一个声明过的码 ⇒ 否则 `RDW-CATALOGUE-ROW-STALE`；尺子自证用**另一种声明形状**（`Object.freeze` + 双引号）+ 一个只在提示文本里出现的码；`G` **自守在块外**：`rec.readings.legs` 按 id 成员覆盖 `LEG_IDS`（14 格，`RDW-LEGS-INCOMPLETE`）。读数里带 `scope_note`：`no_emission: []` 只说明"没有找到缺码位的字面发射点"，**不等于**每个码都发得出来（死代码 / 走不到的分支照算；码位是变量 / 模板串 / map 查表时看不见 —— 会误红，不会假绿）。不判上限该是几、不判像素', '批次 AF'],
   ['MKP-01', 'bundle-patch', F.mkp01, '**生成器的安全联锁：判控制流，不判"词的位置"**（定形 §一②；`make-bundle-patch.mjs` 的 `partitionHostLevel()` / `classifyPresetRow()`）：对**真组合的逐字节副本**跑**生成器的逐字节副本**（都住运行根，产品零字节；`source_is_real` 自证 sha256 = 产品那份），读它吐出来的那份补丁。🔴 **判读半段不另造尺子**（第 4 关评审 M1）：层归属的判决只有一个码族 —— `support/client-ui-placement.mjs` 的 `describePlacement()` / `scanBundleMount()` / `scanClientUiPlacement()` / `withHostRowInPresetBodies()`（包事实走它的 `manifestIndexOf()` / `resolveRowPackage()`）；本格自己的码只回答"这次观察成不成立"（`MKP-GEN-REJECTED` / `MKP-EMPTY-SAMPLE` / `MKP-EMPTY-BODY` / `MKP-PARSER-CONTROL` / `MKP-SOURCE-NOT-REAL` / `MKP-FIXTURE-BROKEN` / `MKP-LIVE-PATCH-TOUCHED` / `MKP-KNIFE-*` / `MKP-LEGS-INCOMPLETE`）。① **两份预设体里客户端 UI 行 = 0** ⇒ `DASH-CLIENT-IN-PRESET`（尺子的码；报文点名"哪份预设 / 哪一行 / 哪个包"）；② 期望的宿主级行必须是 insert 的直接成员 ⇒ `DASH-NOT-HOST-LEVEL`（在、但在别处）/ `DASH-ROW-ABSENT`（整个不在 —— 0 次 = 靠删掉它让 ① 变绿）；③ **样本下限**（产品组合里必须真有客户端 UI 行、产品补丁里必须有期望的宿主级行、两份预设体必须非空 ⇒ `MKP-EMPTY-SAMPLE` / `MKP-EMPTY-BODY`）；④ **尺子自证**（拿真补丁 + `withHostRowInPresetBodies()` 把那一行搬进两份预设体 ⇒ 尺子必须数出 ≥2 条客户端 UI 行、insert 里剩 0 条 ⇒ `MKP-PARSER-CONTROL`）；⑤ **三把刀**（副本，产品零字节；每把的码集合逐把钉死）：K1 关掉宿主级过滤分支 ⇒ 生成器当场拒（`E_BUNDLE_CLIENT_UI_*` ⇒ `MKP-GEN-REJECTED`）· K2 **词的位置全对、行为不对**（撤 `# @host-level` + 补 `disabled: true` + `HOST_LEVEL_IDS` 清空 ⇒ 白名单三格全中、生成器**不报错**、补丁照写 ⇒ `DASH-CLIENT-IN-PRESET` + `DASH-NOT-HOST-LEVEL`）· K3 把那一行整块删掉（预设体里**确实** 0 条 ⇒ 只有 `DASH-ROW-ABSENT` 抓住它）；刀没咬住 ⇒ `MKP-KNIFE-NOT-BITING`，翻错面 ⇒ `MKP-KNIFE-VECTOR`；⑥ **自守在块外**（`SCENARIO_IDS` 按 id 成员，`MKP-LEGS-INCOMPLETE`）+ 产品三份文件跑前跑后**字节相同**（`MKP-LIVE-PATCH-TOUCHED`）。🔴 本格补的是**可观察性不是覆盖**（评审 M3）：本票之前没有一格观察生成器的控制流，`DASH-15`/`DASH-16` 读的是产物，产物级的红要等**生成器重跑之后**才出现（重跑 DASH-16 红、不重跑则 DASH-15 的派生物那一腿红）—— K2 不是"没有格子会红的世界"，它是本格的刀，造出的正是"重跑之后才会响"的那一步。⚠️ 真组合今天**就是对的** ⇒ 本格今天 **RED 0**，是**回归锁**；红的合法性来自三把刀', '批次 AF'],
+
+  // ── 批次 AG（2026-11-07 · `ticket-20261102-02` / 11-02 技术评审 `F3`）──────────────────────────
+  // 一句话：**office = 落点自己所在那棵树的 `.team`**（最近 `.team` 祖先），不是"会话头 cwd 的 `.team`"。
+  // 判据口径 / 夹具拓扑（运行根在 `.team` 里面 ⇒ 拒绝那两格只能建在仓库之外）/ 刀的翻面集
+  // 逐条写在 `unit/ofb01-office-tree.test.mjs` 文件头 + `.team/test/2026-11-07/CONTRACT-batch14.md`。
+  ['OFB-01', 'office-tree', F.ofb, '① **同树**（定形 §四①）：`header.cwd` = A 树，目标 `<A>/.team/review/x.md` 的**相对写法**（`.team/review/note.md`）与**绝对写法**都放行；`readings.office_root` 必须等于判据侧**独立复算**的 `A/.team`（不是"两次都非空"）、且相对/绝对两次**相同**；`header_office` 同值、`differs:false`、`warning:null`。这一格判"相对和绝对走同一个门"', '批次 AG'],
+  ['OFB-02', 'office-tree', F.ofb, '② **异树**（定形 §四②）：`header.cwd` = A 树、落点在 **B 树的 `.team/`** ⇒ **放行**（`write` 与 `edit` 两条写入通道都量），`readings.office_root` = `B/.team`、`header_office` = `A/.team`、`differs:true`、`warning:"OFFICE_TREE_DIFFERS"`。这一格判"允许，但**绝不允许悄悄发生**"——只放行不记 warning 同样红', '批次 AG'],
+  ['OFB-03', 'office-tree', F.ofb, '③ **越界**（定形 §四③）：目标在 B 树的**非 `.team`** 处（`B/src/x.js`）⇒ **拒绝** `E_GUARD_OFFICE_WRITE` + 冻结前缀 + 报文**同时**含落点与**期望的 office**（`B/.team`）；`readings.expected_office` 也必须是它（报文与读数两个读者）。样本自证：落点链上真的没有 `.team`、`B/.team` 真的是独立复算出来的期望值', '批次 AG'],
+  ['OFB-04', 'office-tree', F.ofb, '④ **三条老口径各一格**（定形 §四④）：C 盘 / 空目标 / cwd 不可用（缺 header.cwd、空串、非字符串三种形状）⇒ 各拒绝 + 同一个码 + 前缀；**抛异常不算拒绝**。三格都是**非空样本**：C 盘负例自身带 `.team` 分量（C 盘闸没了就会被放行）、空目标那格的 cwd 在 `.team` 里（空目标闸没了就会放行）、cwd 不可用那格的目标绝对指向 `B/.team`（cwd 闸没了就会放行/抛）', '批次 AG'],
+  ['OFB-05', 'office-tree', F.ofb, '⑤ **老越界样例不许被放宽**（定形 §四⑤）：`.team/review/../../x.txt` 仍**拒绝** + 同一个码 + 前缀 + 报文点名**落点**（`<A>/../x.txt`，定形 §二.4 的两个路径那一半）；样本自证：raw target 里**有** `.team/`（串匹配会放过它）、而落点链上**没有** `.team`（按落点判才拒得住）', '批次 AG'],
+  ['OFB-06', 'office-tree', F.ofb, '**刀架**（定形 §五.1 + 本批纪律）：① **阳性对照** —— 照契约写的最小实现五格必须**全绿**（不可满足的判据先修尺子：`OFFB-CONTROL-NOT-GREEN` / `OFFB-CONTROL-UNAVAILABLE`）；② **六把刀**（`K1` 退化回"只跟会话头 cwd 的 `.team` 比" ⇒ ②③ 必翻 · `K2` raw target 含 `.team` 就算的串匹配 ⇒ ⑤ · `K3` 去掉 C 盘闸 ⇒ ④-C · `K4` 相对目标按 `process.cwd()` 解析 ⇒ ①⑤ · `K5` `expected_office` 恒 null ⇒ ③ · `K6` 去掉空目标/cwd 闸 ⇒ ④-空/④-cwd），每把**只许翻它那几面**（多翻 = 刀切宽了，少翻 = 那一面没人守；`OFFB-KNIFE-VECTOR`）；③ 刀锚在 `officeLandingVerdict` 的函数体上 —— 实现前真源码没有它 ⇒ `OFFB-KNIFE-ANCHOR` **红**（预期的首跑红）；实现后同一段自动改跑真 staged 源码；切过的副本 import 不了 ⇒ `OFFB-KNIFE-IMPORT`（不是"咬到了"）', '批次 AG'],
+  ['OFB-07', 'office-tree', F.ofb, '**门禁层必须出声**（定形 §二.6 的"必须 speak"）：真跑 `inject.js` 的 `apply()`（假 ctx + 合成内容根，载具 `support/injector-harness.mjs`），`tools.guard` 对"cwd=A、落点 B 树 `.team`"的 `write` 必须**放行**，且 `console.error` 里有一行同时含 `OFFICE_TREE_DIFFERS` 与**两个 office 路径**（`B/.team` 与 `A/.team`）。只有读数没有日志 ⇒ `OFFB-SILENT`；门禁没挂上 ⇒ `OFFB-GATE-NOT-MOUNTED`（分开报）', '批次 AG'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1350,6 +1394,10 @@ export const GROUP_COUNTS = {
    *  单开一组而不是并进 `client-dashboard`：它判的是**生成期**（`.tools/make-bundle-patch.mjs` 的
    *  `partitionHostLevel()` 之后），不是渲染层/数据层；红的时候一眼看得出是哪一层坏了。 */
   'bundle-patch': 1,
+  /** 批次 AG · **office 的基准 = 落点所在树的 `.team`**（`OFB-01`…`OFB-07`，`ticket-20261102-02`）。
+   *  单开一组而不是并进 `guard`：它判的是**写落点这个纯函数**（`officeBoundVerdict` / 读数 / 报文），
+   *  `guard` 那一族判的是门禁的装配与次序；红的时候一眼看得出是"判定算错了"还是"门禁没挂上"。 */
+  'office-tree': 7,
 }
 
 /**
@@ -1369,9 +1417,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1398,6 +1446,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
