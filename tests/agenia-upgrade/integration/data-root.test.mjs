@@ -171,8 +171,9 @@ function badRootPostures(realRoot) {
  *   · **不抓什么**：已存在文件的**内容变化** —— 它有好几个**合法**来源（别的 workspace 在同一个
  *     预设级共享数据根上干活、`bg-notify` 投递、日常作业），哈希分不清是谁写的
  *     ⇒ 拿它当"这一跑写了"的证据 = 间歇红 + 归因错（batch 7 评审 MF-1 的正是这条）。
- *     ⚠️ 覆盖边界：一次**就地覆盖**（内容改、路径不变）不在这里 —— 由 `--real-mode` 的
- *     `E_ROOT_REAL_BRAIN`（`DR-01`）+ 受控命令清单兜；这段边界同批写进 `rec.readings.real_roots.content_uncovered`。
+ *     ⚠️ 覆盖边界：一次**就地覆盖**（内容改、路径不变）不在这里 —— 兜它的**只有** `--real-mode` 的
+ *     `E_ROOT_REAL_BRAIN`（`DR-01`）。受控命令清单（`lib/cli-inventory.mjs`）只是**枚举**命令、
+ *     不判它会写哪儿 —— **不是闸**。这段边界同批写进 `rec.readings.real_roots.content_uncovered`。
  *
  * 为什么要抽成函数：④c 的两把**副本刀**必须读**同一条比较** —— 刀响 = ④ 响。
  * 另写一份比较，刀证明的就只是"我另写的那份会响"。
@@ -1063,8 +1064,8 @@ describe('integration · data-root (DR)', () => {
       // 见证 = 下面每个真正碰 CLI 的子调用各自那一对快照（MF-2 / 决定 §五.2：窗口从 15.9 s 压到子调用）。
       const before = realRootsSnapshot()
       // 🔴 **形状评估计数器**（2026-11-07 MF-3）：形状格的每一次输入检查都从这里过。
-      // 形状格自守读的是**评估次数**，不是它自报的 `ok` —— 零窗口时 `ok:true` 是真的（没有坏窗口），
-      // 但"空样本上没发现坏形状"不是证据（评审 §三.3 / §六）。
+      // 形状格自守读**两样**：评估次数（零窗口时 `ok:true` 是真的，但"空样本上没发现坏形状"不是证据，
+      // 评审 §三.3）**和判决**（MF-4：`ok:false` 必须真的进了 `problems`，否则报告那一行被摘掉就 0 红）。
       let shapeCellEvaluations = 0
       const evalShape = (snap) => {
         shapeCellEvaluations += 1
@@ -1160,15 +1161,20 @@ describe('integration · data-root (DR)', () => {
       if (commands === null) {
         push('SUT-SURFACE-MISSING', 'staged/lib/cli-inventory.mjs（或它的 COMMANDS）不在 ⇒ DR-02 的清单分母拿不到（预期的首跑红）')
       }
-      // 🔴 ④ 的**期望窗口数**（2026-11-07 MF-3 的 floor）—— **从"真正发调用的那几处"派生，不写死 28**：
-      //   · `needsDataRootOps` 就是 ① 循环自己遍历的那个数组（清单是分母，不是第二份字面量）；
+      // 🔴 ④ 的**期望调用数**（floor：2026-11-07 MF-3 起判，MF-4 这一轮把分母钉到**冻结表**）——
+      //   分母**不许和循环变量同源**（评审 r4 §四.1）：① 循环遍历的 `needsDataRootOps` 来自
+      //   `lib/cli-inventory.mjs`；把它的过滤改成 `.filter(() => false)` ⇒ 循环跑 0 条、期望数也
+      //   跟着变 5（1 + 4 作业）⇒ ① 真空绿、窗口格照旧绿。期望与循环同源 = 两边一起缩。
+      //   · `FROZEN_COMMANDS.filter(c => c.needsDataRoot)` = **第二个分母**（`DR-01` 已用它逐条对账）；
+      //     清单缩水时它不缩 ⇒ 刀在这一格红；
       //   · `+ 1` = ② 那条正向 `init` 的**一个**调用点；
       //   · `FROZEN.jobs` 就是 ③ 循环自己遍历的那个数组（`bg-notify` 不在 staging 时那 4 个调用点跑不到）。
       // 将来谁把某个子调用移出 `witnessWindow`（直接 `runCli`），窗口数就比这个数少 ⇒
-      // `DR02-BRAIN-WINDOWS-UNGUARDED` 红。清单里多一个 needsDataRoot 命令、少一个作业，这个数自己跟着变。
+      // `DR02-BRAIN-WINDOWS-UNGUARDED` 红。
       const needsDataRootOps = (commands ?? []).filter((c) => c.needsDataRoot === true)
+      const frozenDataRootOps = FROZEN_COMMANDS.filter((c) => c.needsDataRoot === true)
       const jobsWired = stagingExists(path.join('bin', 'bg-notify.mjs'))
-      const expectedCliCalls = needsDataRootOps.length + 1 + (jobsWired ? FROZEN.jobs.length : 0)
+      const expectedCliCalls = frozenDataRootOps.length + 1 + (jobsWired ? FROZEN.jobs.length : 0)
 
       // ① 每个 needsDataRoot 的命令在合法测试根上跑一遍，产物必须全在测试根里
       const runResults = {}
@@ -1387,7 +1393,8 @@ describe('integration · data-root (DR)', () => {
         label: '④ 的输入形状：before.brain / 每个窗口的 before+after 都是 `treePaths` 形状（`Array.isArray(paths)`、`count === paths.length`、真根存在 ⇒ paths 非空）',
         ok: baselineShape === null && badShapeWindows.length === 0,
         // 🔴 下面两个是**计数**（2026-11-07 MF-3）：`ok` 是"没发现坏形状"，零窗口时它也真；
-        //    "形状真的被评估过"只能靠次数读（自守在 ④''，不在这里）。
+        //    "形状真的被评估过"只能靠次数读（自守在 ④''，不在这里）。④'' 另外还读这个 `ok`
+        //    （MF-4：判决要成立、或者必须已经报出去）—— 两处读的是同一条判决，不是两份判据。
         evaluated: shapeCellEvaluations,
         windows: windows.length,
         bad: badShapeWindows.length,
@@ -1439,14 +1446,16 @@ describe('integration · data-root (DR)', () => {
             + '这一段整段删掉时 problems 仍是 0，所以它必须留下读数、并由这里读一次')
         }
       }
-      // ── ④'' 两段见证的**自守**（2026-11-07 MF-3）────────────────────────────────────────
+      // ── ④'' 两段见证的**自守**（2026-11-07 MF-3；MF-4 起形状那一格也读**判决**）────────────
       // 这两格**不在**被它们守的那两段里（`F-142` 的边界）：形状格整段删掉、或 `witnessWindow`
-      // 被换成 `return fn()`，这两格照旧会跑。判的是"**真的跑了**"（计数），不是"它自报的那句话"。
-      //   · 窗口：期望数从**发调用的那三处**派生（① 的清单 + ② 的一条 + ③ 的作业表），不写死 28；
+      // 被换成 `return fn()`，这两格照旧会跑。判两件事：**真的跑了**（计数）+ **判决真的出去了**。
+      //   · 窗口：期望数从**发调用的那三处**派生（① 的冻结分母 + ② 的一条 + ③ 的作业表），不写死 28；
       //     计数器 `cliCalls` 在 `bracketedCli` 里、窗口数组在 `witnessWindow` 里 —— 两处分开记，
       //     `witnessWindow` 坏掉时 28 ≠ 0。
-      //   · 形状格：读的是 `evaluated` 次数（baseline 1 + 每窗口 2），不是 `ok` —— 零窗口时 `ok:true`
-      //     是真的，但那句话在**空样本**上没有意义（评审 §三.3）。
+      //   · 形状格：**两个条件都读** —— ① `evaluated` 次数（baseline 1 + 每窗口 2；零窗口时 `ok:true`
+      //     在空样本上没有意义）；② **判决**（`brain_shape.ok` 为真，或那个码已经进了 `problems`）。
+      //     只数次数挡不住"删掉报告那一行"（MF-4：坏 baseline ⇒ `judged:false` ⇒
+      //     `brainWitnessViolation` 走不到它自己的形状分支，报告那一行一删就 0 红）。
       {
         const rs = rec.readings.real_roots
         const winList = Array.isArray(rs?.windows) ? rs.windows : null
@@ -1464,10 +1473,23 @@ describe('integration · data-root (DR)', () => {
         const shapeIsObject = shapeReading !== null && typeof shapeReading === 'object'
         const shapeEvaluated = shapeIsObject && Number.isInteger(shapeReading.evaluated) ? shapeReading.evaluated : null
         const shapeExpected = 1 + 2 * Math.max(windows.length, 0)
-        const shapeGuardOk = shapeIsObject && shapeEvaluated === shapeExpected && windows.length > 0
+        // 🔴 **判决**自守（2026-11-07 MF-4）：上面数的都是"评估过几次"，不是"判出了什么"。
+        //    输入形状坏时只有形状格自己那一行 `push('DR02-BRAIN-WITNESS-SHAPE')` 会说话；删掉那一行
+        //    ⇒ 0 红（坏 baseline ⇒ `judged:false` ⇒ `brainWitnessViolation` 走不到它自己的形状分支，
+        //    本段只数次数 ⇒ 照旧绿）。⇒ 这里直接读**判决**，并要求它**真的报了**：
+        //    `ok === true`，或者 `ok === false` 但那个码已经进了 `problems`；两条都不成立 ⇒ 红。
+        const shapeVerdictOk = shapeIsObject && shapeReading.ok === true
+        const shapeVerdictReported = problems.some((p) => p.code === 'DR02-BRAIN-WITNESS-SHAPE')
+        const verdictGuardOk = shapeVerdictOk || shapeVerdictReported
+        const shapeGuardOk = shapeIsObject && shapeEvaluated === shapeExpected && windows.length > 0 && verdictGuardOk
         rec.readings.dr02_witness_guards = {
           expected_cli_calls: expectedCliCalls,
-          cli_calls_from: { needs_data_root_ops: needsDataRootOps.length, positive_init: 1, jobs: jobsWired ? FROZEN.jobs.length : 0 },
+          cli_calls_from: {
+            frozen_commands: frozenDataRootOps.length,
+            live_inventory: needsDataRootOps.length,
+            positive_init: 1,
+            jobs: jobsWired ? FROZEN.jobs.length : 0,
+          },
           cli_calls: cliCalls,
           windows: windows.length,
           windows_reading: winList === null ? null : winList.length,
@@ -1475,15 +1497,24 @@ describe('integration · data-root (DR)', () => {
           shape_reading_present: shapeIsObject,
           shape_evaluations: shapeEvaluated,
           shape_evaluations_expected: shapeExpected,
+          shape_verdict: shapeIsObject ? shapeReading.ok : null,
+          shape_verdict_reported: shapeVerdictReported,
           cells: [
             { id: 'DR02-BRAIN-WINDOWS-UNGUARDED', ok: countOk && judgedOk, count_ok: countOk, judged_ok: judgedOk },
-            { id: 'DR02-BRAIN-WITNESS-SHAPE-UNGUARDED', ok: shapeGuardOk, evaluated: shapeEvaluated, expected: shapeExpected },
+            {
+              id: 'DR02-BRAIN-WITNESS-SHAPE-UNGUARDED',
+              ok: shapeGuardOk,
+              evaluated: shapeEvaluated,
+              expected: shapeExpected,
+              verdict: shapeIsObject ? shapeReading.ok : null,
+              verdict_reported: shapeVerdictReported,
+            },
           ],
         }
         if (!countOk || !judgedOk) {
           push('DR02-BRAIN-WINDOWS-UNGUARDED',
-            `④ 的窗口没跑全：期望 ${expectedCliCalls} 个（needsDataRoot 命令 ${needsDataRootOps.length} + 正向 init 1 + 作业 ${jobsWired ? FROZEN.jobs.length : 0} —— 从发调用的那三处派生，不写死）`
-            + ` · 子调用计数器 cliCalls=${cliCalls} · 窗口 ${windows.length} 个`
+            `④ 的窗口没跑全：期望 ${expectedCliCalls} 个（冻结表 needsDataRoot 命令 ${frozenDataRootOps.length} + 正向 init 1 + 作业 ${jobsWired ? FROZEN.jobs.length : 0} —— 分母钉在冻结表，不跟 ① 的循环变量一起缩）`
+            + ` · 子调用计数器 cliCalls=${cliCalls} · 窗口 ${windows.length} 个（① 实际遍历 ${needsDataRootOps.length} 个 needsDataRoot 命令）`
             + ` · 读数里 ${winList === null ? '(没有 windows 读数)' : `${winList.length} 个`}`
             + ` · baseline 形状 ${baselineShape ?? 'ok'} 下未判的窗口 ${unjudgedWhenUsable.length} 个`
             + `${unjudgedWhenUsable.length > 0 ? `（例：${unjudgedWhenUsable[0].label}）` : ''}`
@@ -1491,12 +1522,17 @@ describe('integration · data-root (DR)', () => {
         }
         if (!shapeGuardOk) {
           push('DR02-BRAIN-WITNESS-SHAPE-UNGUARDED',
-            shapeIsObject
-              ? `形状格没有真的评估过窗口：evaluated=${shapeEvaluated ?? '(不是整数)'} · 应=${shapeExpected}（baseline 1 + 窗口 ${windows.length} × 2）`
-                + (windows.length === 0 ? ' · 窗口 0 个 —— 空样本上的 `ok:true` 不是证据' : '')
-                + ' —— 形状格只自报 `ok`，自守读的是次数'
-              : `没有 brain_shape 读数（rec.readings.real_roots.brain_shape = ${shapeReading === undefined ? 'undefined（键不在）' : String(shapeReading)}）`
-                + ' —— 形状格整段删掉时 problems 仍是 0，所以它必须留下读数、并由这一段读一次（本段不在形状格里）')
+            !shapeIsObject
+              ? `没有 brain_shape 读数（rec.readings.real_roots.brain_shape = ${shapeReading === undefined ? 'undefined（键不在）' : String(shapeReading)}）`
+                + ' —— 形状格整段删掉时 problems 仍是 0，所以它必须留下读数、并由这一段读一次（本段不在形状格里）'
+              : !verdictGuardOk
+                ? `形状格**判了红却没人报**：brain_shape.ok=${String(shapeReading.ok)} · 窗口 ${windows.length} 个 · `
+                  + '`problems` 里没有 `DR02-BRAIN-WITNESS-SHAPE` —— '
+                  + '输入形状坏时每个窗口 `judged:false`，`brainWitnessViolation` 走不到它自己的形状分支；'
+                  + '报告那一行被摘掉时，这里是唯一还读判决的地方'
+                : `形状格没有真的评估过窗口：evaluated=${shapeEvaluated ?? '(不是整数)'} · 应=${shapeExpected}（baseline 1 + 窗口 ${windows.length} × 2）`
+                  + (windows.length === 0 ? ' · 窗口 0 个 —— 空样本上的 `ok:true` 不是证据' : '')
+                  + ' —— 这一格判两件事：评估次数（本次这一条）与判决；次数不对时判决也不必再看')
         }
       }
       // ── ④c `brain` 见证的两把刀（**副本**脑根；真根一个字节都不许碰）──────────────────
@@ -1599,6 +1635,51 @@ describe('integration · data-root (DR)', () => {
         if (!bw?.skipped && (!Array.isArray(bw?.cells) || bw.cells.length !== 3)) {
           push('DR02-BRAIN-WITNESS-UNGUARDED', `brain 见证那一段（④c）没跑：读数格数 ${Array.isArray(bw?.cells) ? bw.cells.length : '(无读数)'}（应为 3）—— `
             + '这一段整段删掉时 problems 仍是 0，所以它必须留下读数、并由这里读一次')
+        }
+      }
+      // ── ④ 见证的**段外兜底**（2026-11-07 MF-5）──────────────────────────────────────────────
+      // 🔴 为什么住在这里 —— 这一段在 §④ 那个**连续区域的外面**（`// ── ④ 真实根的见证` →
+      //    ④c 自守结束）。那一段整段连续删掉时，`problems` 仍是 0：两格自守也跟着走，因为它们
+      //    原来就长在那一段里（`F-142` 只推到"格"这一层，没推到"段"）。
+      //    这里量的是**读数有没有真的写下来**（"DR-02 的见证跑过"在盘上的唯一载体）：
+      //      · `rec.readings.real_roots`：`baseline` / `brain_shape` / `windows` / `unbracketed` / `content_uncovered`；
+      //      · `rec.readings.dr02_witness_guards`：两格自守的判决 + 两个分母。
+      //    没有它们，这一跑剩下的只有"这一格没报错"—— 而"没报错"和"没跑"在这里长得一模一样。
+      //    ⚠️ **判决也要有出口**：`dr02_witness_guards.cells` 里某一格 `ok:false`，那个码必须已经进了
+      //    `problems`；否则摘掉 ④'' 里那一条 `push` 就静默（形状格那一刀在 MF-4 里是同一个病）。
+      //    ⚠️ 边界：这一段自己也能被删掉（老边界）—— 但它**不在** §④ 的连续区域里，
+      //    所以"整段删 §④"这一刀必须红在它身上，而不是红在已经被一起删掉的两格上。
+      {
+        const rs = rec.readings.real_roots
+        const gd = rec.readings.dr02_witness_guards
+        const rsOk = rs !== null && typeof rs === 'object'
+          && rs.brain_shape !== null && typeof rs.brain_shape === 'object'
+          && Array.isArray(rs.windows)
+          && Array.isArray(rs.unbracketed) && rs.unbracketed.length > 0
+          && rs.content_uncovered !== null && typeof rs.content_uncovered === 'object'
+          && typeof rs.baseline?.brain?.count === 'number'
+        const GUARD_CELL_IDS = ['DR02-BRAIN-WINDOWS-UNGUARDED', 'DR02-BRAIN-WITNESS-SHAPE-UNGUARDED']
+        const gdCells = Array.isArray(gd?.cells) ? gd.cells : null
+        const gdCore = gdCells === null ? [] : gdCells.filter((c) => GUARD_CELL_IDS.includes(c?.id))
+        const gdOk = gdCells !== null
+          // 按 **id 成员**判，不按条数：`cells.length === 2` 会被"把同一格写两遍"混过去（少一格却仍是 2 条）。
+          && GUARD_CELL_IDS.every((id) => gdCore.some((c) => c?.id === id))
+          && Number.isInteger(gd?.expected_cli_calls) && gd.expected_cli_calls > 0
+          && gdCore.every((c) => c?.ok === true || problems.some((p) => p.code === c.id))
+        rec.readings.dr02_witness_outside = {
+          real_roots_present: rsOk,
+          guards_present: gdOk,
+          real_roots_keys: rs !== null && typeof rs === 'object' ? Object.keys(rs) : null,
+          guard_cells: gdCells === null ? null : gdCells.map((c) => ({ id: c?.id ?? null, ok: c?.ok ?? null })),
+        }
+        if (!rsOk || !gdOk) {
+          push('DR02-WITNESS-READINGS-UNGUARDED',
+            `DR-02 的见证读数没写全（段外兜底）：\`real_roots\` ${rsOk ? '在' : '缺/形状不对'}`
+            + ` · \`dr02_witness_guards\` ${gdOk ? '在' : '缺/形状不对/判决没出口'}`
+            + ` · real_roots 的键=${rs !== null && typeof rs === 'object' ? JSON.stringify(Object.keys(rs)) : String(rs)}`
+            + ` · 自守格=${gdCells === null ? '(没有 cells)' : JSON.stringify(gdCells.map((c) => ({ id: c?.id ?? null, ok: c?.ok ?? null })))}`
+            + ' —— §④ 那一段（含两格自守）整段删掉时 problems 仍是 0；这一格住在它外面，'
+            + '所以那一段不在、或者写了判决却没报，都必须在这里红。')
         }
       }
       rec.readings.controlled_env = {
