@@ -3,8 +3,10 @@
  *
  * 契约：`.team/test/2026-11-07/CONTRACT-batch14.md`（§一 接口 / §二 用例与刀 / §三 夹具拓扑 / §四 边界）。
  * 定形：`.team/leader/2026-11-07/定形-ticket-20261102-02.md`（§二 是组长拍的，不在这里重新讨论）。
- * 被测：staged `inject.js` 的 `officeBoundVerdict`（`landsInOffice` **没有导出** —— 见契约 §〇.1；
- *      `office_root` / `OFFICE_TREE_DIFFERS` 走它的**可选第 6 个参数** `readings`）。
+ * 被测：staged `inject.js` 的 `officeBoundVerdict` 与 `narrowVerdict`。
+ *      ⚠️ 2026-11-07 `9e744ec` 起产物里**没有 `landsInOffice`**（连同旧 docstring 一起删了；它原先也没导出）——
+ *      落点规则只有一份：`officeLandingVerdict(target, agent, strict)`；`office_root` / `OFFICE_TREE_DIFFERS`
+ *      走 `officeBoundVerdict` 的**可选第 6 个参数** `readings`（见契约 §一、§六、§七）。
  *
  * ## 每一格判什么（判词，不是计数）
  *   `OFB-01` ① 同树：相对 `.team/review/note.md` 与绝对 `<A>/.team/review/note.md` **都放行**；

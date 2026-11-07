@@ -277,8 +277,11 @@ export function decisionBody(opts = {}) {
 }
 
 /**
- * 对照模块的源码：`officeLandingVerdict`（契约 §1.2）+ `landsInOffice`（委托）+ `officeBoundVerdict`
- * （冻结前缀 / 两个码 / `readings` 六字段 / 拒绝报文两个路径）。**最小实现**：没有 shell 之外的任何东西。
+ * 对照模块的源码：`officeLandingVerdict`（契约 §1.2）+ `officeBoundVerdict`（冻结前缀 / 两个码 /
+ * `readings` 六字段 / 拒绝报文两个路径）+ `narrowVerdict`（窄写范围走 `strict === true`）。
+ * 它自带一个 `landsInOffice`（一行委托）只为"最小实现自足" —— **产物里没有这个函数**（2026-11-07
+ * `9e744ec` 连同旧 docstring 一起删了），所以这里**不是**在描述产品接线，只是对照自己的零件。
+ * **最小实现**：没有 shell 之外的任何东西。
  */
 export const CONTROL_SOURCE = [
   "/** OFB 阳性对照：照 `.team/test/2026-11-07/CONTRACT-batch14.md` §一 写的最小实现。不是生产代码。 */",

@@ -754,14 +754,14 @@ export const BATCH_AE = ['CARD-07', 'CARD-08']
 export const BATCH_AF = ['DASH-17', 'MKP-01']
 
 /**
- * 批次 AG 的 7 条 —— **`ticket-20261102-02` / 11-02 技术评审 `F3`**（2026-11-07 · batch 14）。
+ * 批次 AG 的 8 条 —— **`ticket-20261102-02` / 11-02 技术评审 `F3`**（2026-11-07 · batch 14）。
  *
  * 一句话：**office 不是"我这棵树的 `.team`"，而是"落点自己所在那棵树的 `.team`"**
  * （定形 `.team/leader/2026-11-07/定形-ticket-20261102-02.md` §二；契约
  * `.team/test/2026-11-07/CONTRACT-batch14.md`）。两半是同一个动作的两种写法：
  *   · **绝对路径**写进另一棵树的 `.team/` ⇒ 原来被拒（具名岗位写不了自己的交付件）；
  *   · **相对路径**按会话头 cwd 解析 ⇒ 落进原树的 `.team/` ⇒ 原来被放行（写错了树）。
- * 七格各判一面（同文件 `unit/ofb01-office-tree.test.mjs`，判据口径逐条写在文件头）：
+ * 八格各判一面（同文件 `unit/ofb01-office-tree.test.mjs`，判据口径逐条写在文件头）：
  *   `OFB-01` ① 同树相对/绝对都放行 + `office_root` 独立复算相同 ·
  *   `OFB-02` ② 异树放行 + `OFFICE_TREE_DIFFERS`（两个 office 路径）·
  *   `OFB-03` ③ 异树非 `.team` 处拒绝 + 报文含落点与期望的 office ·
@@ -779,7 +779,7 @@ export const BATCH_AF = ['DASH-17', 'MKP-01']
  * ⚠️ 一条**夹具连带**（契约 §三）：`REV-02` 的工作区基数换成 `.team`-free 的临时树 ——
  *    运行根按守卫只能在 `<repo>/.team/test/<日期>/_runs/<ID>`，它本身就在 `<repo>/.team` 里面，
  *    不换的话新口径会把 `项目根 / 穿越` 那几格放行（假红）。
- * ⚠️ 这七条**不进** `FROZEN_IDS`（同一批政策：后加批次各自以显式清单存在）。
+ * ⚠️ 这八条**不进** `FROZEN_IDS`（同一批政策：后加批次各自以显式清单存在）。
  */
 export const BATCH_AG = ['OFB-01', 'OFB-02', 'OFB-03', 'OFB-04', 'OFB-05', 'OFB-06', 'OFB-07', 'OFB-08']
 
@@ -1000,7 +1000,7 @@ const F = {
    *  （对真组合跑生成器，数两份预设体里的客户端 UI 行）。 */
   dash07: 'integration/dash07-read-window.test.mjs',
   mkp01: 'integration/mkp01-partition-control.test.mjs',
-  /** 批次 AG · `ticket-20261102-02`（F3）—— **一格一个 test、七格同住一个文件**：
+  /** 批次 AG · `ticket-20261102-02`（F3）—— **一格一个 test、八格同住一个文件**：
    *  五格是定形 §四 的五条口径（① 同树 / ② 异树 / ③ 越界 / ④ 三条老口径 / ⑤ 老越界样例），
    *  一格是**刀架**（阳性对照 + 六把刀），一格是**门禁层必须出声**（真 `apply()` 的日志）。
    *  同住一个文件：翻面读数（刀 → 哪几格红）要在一处读得出来。 */
@@ -1270,7 +1270,7 @@ const ROWS = [
   ['OFB-05', 'office-tree', F.ofb, '⑤ **老越界样例不许被放宽**（定形 §四⑤）：`.team/review/../../x.txt` 仍**拒绝** + 同一个码 + 前缀 + 报文点名**落点**（`<A>/../x.txt`，定形 §二.4 的两个路径那一半）；样本自证：raw target 里**有** `.team/`（串匹配会放过它）、而落点链上**没有** `.team`（按落点判才拒得住）', '批次 AG'],
   ['OFB-06', 'office-tree', F.ofb, '**刀架**（定形 §五.1 + 本批纪律）：① **阳性对照** —— 照契约写的最小实现五格必须**全绿**（不可满足的判据先修尺子：`OFFB-CONTROL-NOT-GREEN` / `OFFB-CONTROL-UNAVAILABLE`）；② **六把刀**（`K1` 退化回"只跟会话头 cwd 的 `.team` 比" ⇒ ②③ 必翻 · `K2` raw target 含 `.team` 就算的串匹配 ⇒ ⑤ · `K3` 去掉 C 盘闸 ⇒ ④-C · `K4` 相对目标按 `process.cwd()` 解析 ⇒ ①⑤ · `K5` `expected_office` 恒 null ⇒ ③ · `K6` 去掉空目标/cwd 闸 ⇒ ④-空/④-cwd），每把**只许翻它那几面**（多翻 = 刀切宽了，少翻 = 那一面没人守；`OFFB-KNIFE-VECTOR`）；③ 刀锚在 `officeLandingVerdict` 的函数体上 —— 实现前真源码没有它 ⇒ `OFFB-KNIFE-ANCHOR` **红**（预期的首跑红）；实现后同一段自动改跑真 staged 源码；切过的副本 import 不了 ⇒ `OFFB-KNIFE-IMPORT`（不是"咬到了"）', '批次 AG'],
   ['OFB-07', 'office-tree', F.ofb, '**门禁层必须出声**（定形 §二.6 的"必须 speak"）：真跑 `inject.js` 的 `apply()`（假 ctx + 合成内容根，载具 `support/injector-harness.mjs`），`tools.guard` 对"cwd=A、落点 B 树 `.team`"的 `write` 必须**放行**，且 `console.error` 里有一行同时含 `OFFICE_TREE_DIFFERS` 与**两个 office 路径**（`B/.team` 与 `A/.team`）。只有读数没有日志 ⇒ `OFFB-SILENT`；门禁没挂上 ⇒ `OFFB-GATE-NOT-MOUNTED`（分开报）', '批次 AG'],
-  ['OFB-08', 'office-tree', F.ofb, '**窄会话的写边界仍是最严的那道**（契约 §六；gate-4 返修 MF-2）：`narrowVerdict` 写**另一棵树**的 `.team/` ⇒ **拒**（`E_GUARD_NARROW_WRITE`，`OFFB-NARROW-CROSS-TREE`）；写**自己树**的 `.team/` ⇒ 放行；写两棵树的项目处 ⇒ 拒；**同一笔**跨树写从非窄的 `review` 走 ⇒ 放行 + `OFFICE_TREE_DIFFERS`（`OFFB-NARROW-CONTRAST`）—— 证明"门变窄"只在窄会话那一侧。刀 `K7`：`if (strict === true)` → `if (false)`（strict 当 falsy）⇒ **只**翻跨树那一腿（`OFFB-NARROW-KNIFE-VECTOR`）；只在基线成立时才有可比对象。另带 **N1** 的 oracle 两向校准（目标就是 `.team` / 树根 ⇒ `expected_office:null`；`B/src/x.js` ⇒ `B/.team`；`OFFB-OFFICE-ORACLE`）。⚠️ 2026-11-07 现状：`narrowVerdict` 仍走 `landsInOffice`（无 strict）⇒ 这一格**红**（`46d3259` 把 strict 接在了 `tools/result` 账本那一处，不是写门禁）', '批次 AG'],
+  ['OFB-08', 'office-tree', F.ofb, '**窄会话的写边界仍是最严的那道**（契约 §六；gate-4 返修 MF-2）：`narrowVerdict` 写**另一棵树**的 `.team/` ⇒ **拒**（`E_GUARD_NARROW_WRITE`，`OFFB-NARROW-CROSS-TREE`）；写**自己树**的 `.team/` ⇒ 放行；写两棵树的项目处 ⇒ 拒；**同一笔**跨树写从非窄的 `review` 走 ⇒ 放行 + `OFFICE_TREE_DIFFERS`（`OFFB-NARROW-CONTRAST`）—— 证明"门变窄"只在窄会话那一侧。刀 `K7`：`if (strict === true)` → `if (false)`（strict 当 falsy）⇒ **只**翻跨树那一腿（`OFFB-NARROW-KNIFE-VECTOR`）；只在基线成立时才有可比对象。另带 **N1** 的 oracle 两向校准（目标就是 `.team` / 树根 ⇒ `expected_office:null`；`B/src/x.js` ⇒ `B/.team`；`OFFB-OFFICE-ORACLE`）。现状（`06cb606` 起）：窄门禁走 `officeLandingVerdict(target, agent, true)` ⇒ 四条窄腿全绿，这一格**绿**；刀 K7 在真源码上跑，**只**翻跨树那一腿', '批次 AG'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
