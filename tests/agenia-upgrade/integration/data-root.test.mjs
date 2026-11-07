@@ -1062,7 +1062,15 @@ describe('integration · data-root (DR)', () => {
       // ④ 的**基线采样**：只用来钉副本份数（`before.brain.count`）与输入形状 —— **不是**见证窗口。
       // 见证 = 下面每个真正碰 CLI 的子调用各自那一对快照（MF-2 / 决定 §五.2：窗口从 15.9 s 压到子调用）。
       const before = realRootsSnapshot()
-      const baselineShape = pathSetShapeProblem(before.brain)
+      // 🔴 **形状评估计数器**（2026-11-07 MF-3）：形状格的每一次输入检查都从这里过。
+      // 形状格自守读的是**评估次数**，不是它自报的 `ok` —— 零窗口时 `ok:true` 是真的（没有坏窗口），
+      // 但"空样本上没发现坏形状"不是证据（评审 §三.3 / §六）。
+      let shapeCellEvaluations = 0
+      const evalShape = (snap) => {
+        shapeCellEvaluations += 1
+        return pathSetShapeProblem(snap)
+      }
+      const baselineShape = evalShape(before.brain)
       const witnessUsable = baselineShape === null
       const windows = []
       const round3 = (v) => Math.round(v * 1000) / 1000
@@ -1083,8 +1091,8 @@ describe('integration · data-root (DR)', () => {
           const t2 = process.hrtime.bigint()
           const a = realRootsSnapshot()
           const t3 = process.hrtime.bigint()
-          const shapeBefore = pathSetShapeProblem(b.brain)
-          const shapeAfter = pathSetShapeProblem(a.brain)
+          const shapeBefore = evalShape(b.brain)
+          const shapeAfter = evalShape(a.brain)
           const w = {
             label,
             call_ms: round3(Number(t2 - t1) / 1e6),
@@ -1123,6 +1131,16 @@ describe('integration · data-root (DR)', () => {
         return value
       }
 
+      // 🔴 **子调用计数器**（2026-11-07 MF-3）：**每一个真正发出去的 CLI 子调用**都从
+      // `bracketedCli` 过，与 `witnessWindow` 分开记。
+      // 为什么分开：`witnessWindow` 自己坏掉（例如函数体换成 `return fn()`）时，窗口数组是 0，
+      // 而这个数照样是 28 —— 两者不等 ⇒ 收口那一格必须红（评审 §三.3 的那个洞）。
+      let cliCalls = 0
+      const bracketedCli = (label, fn) => {
+        cliCalls += 1
+        return witnessWindow(label, fn)
+      }
+
       // ── 副本脑根：**基线之后立刻拷贝**（真根只读；写面只落运行根）──────────────────────────
       // 为什么这么早：`DR02-BRAIN-KNIFE-NOT-A-COPY` 的份数锚是 `before.brain.count`——
       // 锚与副本之间只许隔一次拷贝；隔上十几个子调用，"别人在这十几秒里正常新增一个文件"
@@ -1142,14 +1160,23 @@ describe('integration · data-root (DR)', () => {
       if (commands === null) {
         push('SUT-SURFACE-MISSING', 'staged/lib/cli-inventory.mjs（或它的 COMMANDS）不在 ⇒ DR-02 的清单分母拿不到（预期的首跑红）')
       }
+      // 🔴 ④ 的**期望窗口数**（2026-11-07 MF-3 的 floor）—— **从"真正发调用的那几处"派生，不写死 28**：
+      //   · `needsDataRootOps` 就是 ① 循环自己遍历的那个数组（清单是分母，不是第二份字面量）；
+      //   · `+ 1` = ② 那条正向 `init` 的**一个**调用点；
+      //   · `FROZEN.jobs` 就是 ③ 循环自己遍历的那个数组（`bg-notify` 不在 staging 时那 4 个调用点跑不到）。
+      // 将来谁把某个子调用移出 `witnessWindow`（直接 `runCli`），窗口数就比这个数少 ⇒
+      // `DR02-BRAIN-WINDOWS-UNGUARDED` 红。清单里多一个 needsDataRoot 命令、少一个作业，这个数自己跟着变。
+      const needsDataRootOps = (commands ?? []).filter((c) => c.needsDataRoot === true)
+      const jobsWired = stagingExists(path.join('bin', 'bg-notify.mjs'))
+      const expectedCliCalls = needsDataRootOps.length + 1 + (jobsWired ? FROZEN.jobs.length : 0)
 
       // ① 每个 needsDataRoot 的命令在合法测试根上跑一遍，产物必须全在测试根里
       const runResults = {}
-      for (const cmd of (commands ?? []).filter((c) => c.needsDataRoot === true)) {
+      for (const cmd of needsDataRootOps) {
         const payloadFile = writeFixture('DR-02', cmd.op.slice(0, 40), {})
         let res = null
         try {
-          res = witnessWindow(`cli:${cmd.cli}#${cmd.op}`, () => runCli(cmd.cli, { op: cmd.op, dataRoot: bp.root, inFile: payloadFile, testMode: true }, { env: process.env }))
+          res = bracketedCli(`cli:${cmd.cli}#${cmd.op}`, () => runCli(cmd.cli, { op: cmd.op, dataRoot: bp.root, inFile: payloadFile, testMode: true }, { env: process.env }))
         } catch (err) {
           runResults[cmd.op] = { threw: String(err.message).slice(0, 120) }
           continue
@@ -1163,7 +1190,7 @@ describe('integration · data-root (DR)', () => {
       // 🔴 不要求"每个写命令都成功"：同一个根上按任意顺序连跑，状态次序本身就会让一部分失败
       //    （`E_DATA_EXISTS`/`E_DATA_MISSING`）—— 那是假红（交付前自查抓到的一条）。
       const freshRoot = scenarioWorkspace('DR-02', 'all-commands')
-      const initRes = witnessWindow('cli:agenia-brain.mjs#init（合法空根正向）', () => runCli('agenia-brain.mjs', { op: 'init', dataRoot: freshRoot, inFile: writeFixture('DR-02', 'init-legal', {}), testMode: true }, { env: process.env }))
+      const initRes = bracketedCli('cli:agenia-brain.mjs#init（合法空根正向）', () => runCli('agenia-brain.mjs', { op: 'init', dataRoot: freshRoot, inFile: writeFixture('DR-02', 'init-legal', {}), testMode: true }, { env: process.env }))
       rec.readings.positive_init = { exit_code: initRes.exit_code, code: initRes.json?.error?.code ?? null }
       if (initRes.exit_code !== 0) {
         push('DR-POSITIVE', `干净合法根上的 init 必须成功（正向对照），实得 exit=${initRes.exit_code} / ${initRes.json?.error?.code ?? '(无码)'}：${initRes.stdout.trim().slice(0, 200)}`)
@@ -1183,15 +1210,14 @@ describe('integration · data-root (DR)', () => {
       if (leftovers.length > 0) push('TEMP-LEFTOVER', `发现临时件残渣（原子写的临时文件必须同目录 rename 掉）：${leftovers.slice(0, 5).join(', ')}`)
 
       // ③ 四个作业以测试根输入：投递必须只改测试根
-      const notifyOk = stagingExists(path.join('bin', 'bg-notify.mjs'))
-      if (!notifyOk) {
+      if (!jobsWired) {
         push('SUT-SURFACE-MISSING', 'staged/bin/bg-notify.mjs 不在 ⇒ 四作业以测试根输入的接缝拿不到（预期的首跑红）')
       } else {
         const ws = scenarioWorkspace('DR-02', 'jobs')
         const jobResults = {}
         for (const job of FROZEN.jobs) {
           const resultFile = writeFixture('DR-02', `${job.role}-result`.slice(0, 40), { ok: true, role: job.role })
-          const res = witnessWindow(`job:${job.role}`, () => runCli('bg-notify.mjs', {
+          const res = bracketedCli(`job:${job.role}`, () => runCli('bg-notify.mjs', {
             op: 'deliver', dataRoot: bp.root,
             extra: ['--status-root', path.join(ws, '.team'), '--job', job.role, '--job-id', `job-${job.role}-1`, '--state', 'done', '--result-file', resultFile],
           }, { env: process.env }))
@@ -1360,8 +1386,14 @@ describe('integration · data-root (DR)', () => {
       const shapeCell = {
         label: '④ 的输入形状：before.brain / 每个窗口的 before+after 都是 `treePaths` 形状（`Array.isArray(paths)`、`count === paths.length`、真根存在 ⇒ paths 非空）',
         ok: baselineShape === null && badShapeWindows.length === 0,
+        // 🔴 下面两个是**计数**（2026-11-07 MF-3）：`ok` 是"没发现坏形状"，零窗口时它也真；
+        //    "形状真的被评估过"只能靠次数读（自守在 ④''，不在这里）。
+        evaluated: shapeCellEvaluations,
+        windows: windows.length,
+        bad: badShapeWindows.length,
         detail: `before.brain：paths=${Array.isArray(before.brain.paths) ? `array(${before.brain.paths.length})` : String(before.brain.paths)} · count=${before.brain.count}`
           + ` · 形状=${baselineShape ?? 'ok'} · 窗口 ${windows.length} 个，其中形状坏 ${badShapeWindows.length} 个`
+          + ` · 形状评估 ${shapeCellEvaluations} 次（应为 1 + 窗口 × 2）`
           + `${badShapeWindows.length > 0 ? `（例：${badShapeWindows[0].label}）` : ''}`
           + ' —— 形状不对时"路径集合没变"算不出来（treeHash 的 `files` 会被读成两个空集 ⇒ 永远绿）',
       }
@@ -1390,7 +1422,7 @@ describe('integration · data-root (DR)', () => {
         unbracketed: [
           '① 之后：两棵测试根的全树走读（treeHash(bp.root) / treeHash(freshRoot)）—— 无 CLI',
           '② 临时件落点扫描（读 .team/test/2026-10-14/_runs 与活体预设两棵树）—— 无 CLI',
-          '③c 活体预设副本刀（拷贝 + 若干次写 + 3 次快照）—— 无 CLI；写只落运行根',
+          '③c 活体预设副本刀（拷贝 + 6 次写 + 6 次快照：k0/k1/k2/k3/seg_in/seg_out）—— 无 CLI；写只落运行根',
           '基线之后立刻：脑根副本拷贝（整棵真根，只读源树）—— 无 CLI',
           '④c 脑根副本刀（2 次写 + 3 次快照）—— 无 CLI；写只落运行根，对真根只读',
           '用例体之外：preflight / settle / run-all 的 real-roots 两相位（整跑约 5 分钟）—— 那是结算的契约口径（§2.4 第 5 条），不是 DR-02 的见证',
@@ -1405,6 +1437,66 @@ describe('integration · data-root (DR)', () => {
         if (!Array.isArray(cells) || cells.length !== 9) {
           push('DR02-RULER-UNGUARDED', `活体预设那一段（③c）没跑：读数格数 ${Array.isArray(cells) ? cells.length : '(无读数)'}（应为 9）—— `
             + '这一段整段删掉时 problems 仍是 0，所以它必须留下读数、并由这里读一次')
+        }
+      }
+      // ── ④'' 两段见证的**自守**（2026-11-07 MF-3）────────────────────────────────────────
+      // 这两格**不在**被它们守的那两段里（`F-142` 的边界）：形状格整段删掉、或 `witnessWindow`
+      // 被换成 `return fn()`，这两格照旧会跑。判的是"**真的跑了**"（计数），不是"它自报的那句话"。
+      //   · 窗口：期望数从**发调用的那三处**派生（① 的清单 + ② 的一条 + ③ 的作业表），不写死 28；
+      //     计数器 `cliCalls` 在 `bracketedCli` 里、窗口数组在 `witnessWindow` 里 —— 两处分开记，
+      //     `witnessWindow` 坏掉时 28 ≠ 0。
+      //   · 形状格：读的是 `evaluated` 次数（baseline 1 + 每窗口 2），不是 `ok` —— 零窗口时 `ok:true`
+      //     是真的，但那句话在**空样本**上没有意义（评审 §三.3）。
+      {
+        const rs = rec.readings.real_roots
+        const winList = Array.isArray(rs?.windows) ? rs.windows : null
+        // 评审 §六 原文："任何窗口 `judged:false` **且不是形状原因** ⇒ 红" —— 窗口自己的形状坏由形状格
+        // （`DR02-BRAIN-WITNESS-SHAPE`）点名，这里不重复报同一句话。
+        const unjudgedWhenUsable = baselineShape === null
+          ? windows.filter((w) => !w.judged && w.shape.before === null && w.shape.after === null)
+          : []
+        const countOk = winList !== null
+          && windows.length >= expectedCliCalls
+          && cliCalls === windows.length
+          && winList.length === windows.length
+        const judgedOk = unjudgedWhenUsable.length === 0
+        const shapeReading = rs?.brain_shape
+        const shapeIsObject = shapeReading !== null && typeof shapeReading === 'object'
+        const shapeEvaluated = shapeIsObject && Number.isInteger(shapeReading.evaluated) ? shapeReading.evaluated : null
+        const shapeExpected = 1 + 2 * Math.max(windows.length, 0)
+        const shapeGuardOk = shapeIsObject && shapeEvaluated === shapeExpected && windows.length > 0
+        rec.readings.dr02_witness_guards = {
+          expected_cli_calls: expectedCliCalls,
+          cli_calls_from: { needs_data_root_ops: needsDataRootOps.length, positive_init: 1, jobs: jobsWired ? FROZEN.jobs.length : 0 },
+          cli_calls: cliCalls,
+          windows: windows.length,
+          windows_reading: winList === null ? null : winList.length,
+          unjudged_when_baseline_usable: unjudgedWhenUsable.map((w) => w.label),
+          shape_reading_present: shapeIsObject,
+          shape_evaluations: shapeEvaluated,
+          shape_evaluations_expected: shapeExpected,
+          cells: [
+            { id: 'DR02-BRAIN-WINDOWS-UNGUARDED', ok: countOk && judgedOk, count_ok: countOk, judged_ok: judgedOk },
+            { id: 'DR02-BRAIN-WITNESS-SHAPE-UNGUARDED', ok: shapeGuardOk, evaluated: shapeEvaluated, expected: shapeExpected },
+          ],
+        }
+        if (!countOk || !judgedOk) {
+          push('DR02-BRAIN-WINDOWS-UNGUARDED',
+            `④ 的窗口没跑全：期望 ${expectedCliCalls} 个（needsDataRoot 命令 ${needsDataRootOps.length} + 正向 init 1 + 作业 ${jobsWired ? FROZEN.jobs.length : 0} —— 从发调用的那三处派生，不写死）`
+            + ` · 子调用计数器 cliCalls=${cliCalls} · 窗口 ${windows.length} 个`
+            + ` · 读数里 ${winList === null ? '(没有 windows 读数)' : `${winList.length} 个`}`
+            + ` · baseline 形状 ${baselineShape ?? 'ok'} 下未判的窗口 ${unjudgedWhenUsable.length} 个`
+            + `${unjudgedWhenUsable.length > 0 ? `（例：${unjudgedWhenUsable[0].label}）` : ''}`
+            + ' —— 空样本（0 个窗口）不是"全都没变"，是"没看"：少一个窗口 = 有一个子调用没被夹住')
+        }
+        if (!shapeGuardOk) {
+          push('DR02-BRAIN-WITNESS-SHAPE-UNGUARDED',
+            shapeIsObject
+              ? `形状格没有真的评估过窗口：evaluated=${shapeEvaluated ?? '(不是整数)'} · 应=${shapeExpected}（baseline 1 + 窗口 ${windows.length} × 2）`
+                + (windows.length === 0 ? ' · 窗口 0 个 —— 空样本上的 `ok:true` 不是证据' : '')
+                + ' —— 形状格只自报 `ok`，自守读的是次数'
+              : `没有 brain_shape 读数（rec.readings.real_roots.brain_shape = ${shapeReading === undefined ? 'undefined（键不在）' : String(shapeReading)}）`
+                + ' —— 形状格整段删掉时 problems 仍是 0，所以它必须留下读数、并由这一段读一次（本段不在形状格里）')
         }
       }
       // ── ④c `brain` 见证的两把刀（**副本**脑根；真根一个字节都不许碰）──────────────────
