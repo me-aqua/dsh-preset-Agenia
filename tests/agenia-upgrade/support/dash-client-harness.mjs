@@ -305,15 +305,22 @@ export function createDashboardHarness(source) {
    * 一个现场：装一次插件（`apply(ctx)`）→ 点一次按钮 → 让读盘落定 → 再画一次。
    *
    * @param {{remote:unknown, sessionId?:string, position?:object|null, ticks?:number,
-   *   t?:Function|null, resolveLocale?:boolean}} args
+   *   t?:Function|null, resolveLocale?:boolean, openCount?:number, skipDirectProbe?:boolean}} args
    *   `t`：覆盖 `t(key)`（缺省 = 恒等，**保持既有各格读数不变**）；
    *   `resolveLocale`：从插件**自己注册的字典**（`ctx.locale.register(NS, {zh, en})`）里解 `t(key)`
    *   —— 浏览器就是这么做的。🔴 缺了它，`t('truncatedPrefix')` 会被画成**键名本身**
    *   （2026-11-07 实测：产品那句「看板快照超过200 行 —— 这次读不全…」被画成
    *   `truncatedPrefix200truncatedSuffix …` ⇒ 判据读不到中文，红的原因其实是**载具**）。
    *   拿不到字典 / 键不在这份字典里 ⇒ 退回键名（判据因此会红，不假绿）。
+   *   🔴 **`resolveLocale` 的一个代价（写给下一个读的人）**：本文件那份合成最小实现（对照）
+   *   **不走 `t()`**，所以"载具又把 `t(key)` 画成键名"这类回归，形状会是
+   *   **对照绿、产品腿红** —— 与"产品坏了"同形。分辨的办法：每条腿的 `reading.locale`
+   *   （`{ns, languages}`）会记下来；但**没有一格因为它红**。改这一格的人先看那条读数再下结论。
+   *   `openCount`：点几次"开"（>1 时中间先点一次关掉 —— 同一个 mount，状态留着）；
+   *   `skipDirectProbe`：不先探一次 `readSnapshot`（那一探会多消耗一次 `read`；
+   *   要按次序喂多页的现场必须跳过它）。
    */
-  async function scene({ remote, sessionId = 'session-under-test', position = null, ticks = 3, t: tGiven = null, resolveLocale = false } = {}) {
+  async function scene({ remote, sessionId = 'session-under-test', position = null, ticks = 3, t: tGiven = null, resolveLocale = false, openCount = 1, skipDirectProbe = false } = {}) {
     const registered = { value: null }
     const dictionaries = { ns: null, dicts: null }
     const ctx = {
@@ -377,7 +384,9 @@ export function createDashboardHarness(source) {
     }
 
     // ① 直接问一次那条读盘路径：**返回的是不是 promise / 抛不抛 / 结果或原因**。
-    reading.direct = await probeCall(() => actions.readSnapshot(sessionId))
+    //    ⚠️ 这一探会**多消耗一次 `read`** ⇒ 要按次序喂多页的现场用 `skipDirectProbe` 跳过它。
+    reading.direct = skipDirectProbe ? null : await probeCall(() => actions.readSnapshot(sessionId))
+    reading.direct_probed = skipDirectProbe !== true
 
     const { renderer, log } = createRenderer(reactor)
     reactor.active = renderer
@@ -404,28 +413,67 @@ export function createDashboardHarness(source) {
     // ② 点之前（open=false：面板不画，读盘 effect 也不跑）
     const before = renderer.render(Component, props)
     renderer.flush()
-    const trigger = findTrigger(before.tree)
+    let trigger = findTrigger(before.tree)
     if (trigger === null || typeof trigger.props.onClick !== 'function') {
       reading.click = { ok: false, why: '触发器（`aria-haspopup="dialog"`）不在，或者没有 `onClick` —— 点不了' }
       reading.hook_args = reactor.lastHookArgs
       reading.throws = log.threw
       return reading
     }
-    // ③ 点一下：真调那个 `onClick`（`setOpen(!open)`）
-    trigger.props.onClick()
-    const opened = renderer.render(Component, props)
-    const flushOpen = renderer.flush()
-    reading.click = { ok: true, render_threw: opened.threw === null ? null : messageOf(opened.threw), effect_threw: flushOpen.threw === null ? null : messageOf(flushOpen.threw) }
+    /**
+     * 一轮"开 → 落定 → 读一棵树"。`cycle > 0` 时先点一次把它**关掉**再开 —— 同一个 mount、
+     * 同一批 hook 槽位（`view` / `truncated` / … 都还在），所以"关掉再开"这件事是真的。
+     * 为什么要它：2026-11-07 第 4 关评审 M2（`view` 打开时没清 ⇒ 上一次的看板与"读不全"同屏）
+     * 就藏在"只开一次"里 —— 载具不点第二次，那一格就永远看不见。
+     */
+    const phases = []
+    let tree = before.tree
+    for (let cycle = 0; cycle < openCount; cycle += 1) {
+      if (cycle > 0) {
+        trigger = findTrigger(tree)
+        if (trigger === null || typeof trigger.props.onClick !== 'function') {
+          phases.push({ cycle, phase: 'close', error: '触发器不在，关不掉' })
+          break
+        }
+        trigger.props.onClick()
+        const closed = renderer.render(Component, props)
+        renderer.flush()
+        tree = closed.threw === null ? closed.tree : tree
+        phases.push({ cycle, phase: 'close', render_threw: closed.threw === null ? null : messageOf(closed.threw) })
+        trigger = findTrigger(tree)
+        if (trigger === null || typeof trigger.props.onClick !== 'function') {
+          phases.push({ cycle, phase: 'open', error: '关掉之后触发器不在了，开不回来' })
+          break
+        }
+      }
+      trigger.props.onClick()
+      const opened = renderer.render(Component, props)
+      const flushOpen = renderer.flush()
+      reading.click = { ok: true, render_threw: opened.threw === null ? null : messageOf(opened.threw), effect_threw: flushOpen.threw === null ? null : messageOf(flushOpen.threw) }
+      // 让读盘那条 promise 落定（微任务 + 一个宏任务各给几拍）
+      for (let i = 0; i < ticks; i += 1) await new Promise((resolve) => setImmediate(resolve))
+      const settled = renderer.render(Component, props)
+      renderer.flush()
+      // ⚠️ 落定那一次**渲染抛了**才退回点开那一棵树；"组件自己返回 null"（槽位真的没了）
+      //    不许被 `??` 吃掉 —— 那一条正是 `DASH11-CLIENT-BUTTON-GONE` 要读的事实。
+      tree = settled.threw === null ? settled.tree : opened.tree
+      reading.settled = { render_threw: settled.threw === null ? null : messageOf(settled.threw) }
+      const phaseAlert = findAlert(tree)
+      phases.push({
+        cycle,
+        phase: 'open',
+        render_threw: settled.threw === null ? null : messageOf(settled.threw),
+        alert_text: phaseAlert === null ? null : textsOf(phaseAlert).join('').trim(),
+        texts: textsOf(tree),
+        status_texts: findStatusNodes(tree).map((node) => textsOf(node).join('').trim()),
+        trigger_present: findTrigger(tree) !== null,
+        root_present: findRoot(tree) !== null,
+      })
+      if (settled.threw !== null) break
+    }
+    reading.phases = phases
+    reading.open_count = phases.filter((phase) => phase.phase === 'open').length
 
-    // ④ 让读盘那条 promise 落定（微任务 + 一个宏任务各给几拍）
-    for (let i = 0; i < ticks; i += 1) await new Promise((resolve) => setImmediate(resolve))
-    const settled = renderer.render(Component, props)
-    renderer.flush()
-
-    // ⚠️ 落定那一次**渲染抛了**才退回点开那一棵树；"组件自己返回 null"（槽位真的没了）
-    //    不许被 `??` 吃掉 —— 那一条正是 `DASH11-CLIENT-BUTTON-GONE` 要读的事实。
-    const tree = settled.threw === null ? settled.tree : opened.tree
-    reading.settled = { render_threw: settled.threw === null ? null : messageOf(settled.threw) }
     reading.throws = log.threw.map((item) => `${item.where}: ${item.message}`)
     reading.trigger_present = findTrigger(tree) !== null
     reading.root_present = findRoot(tree) !== null

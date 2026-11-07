@@ -721,14 +721,24 @@ export const BATCH_AE = ['CARD-07', 'CARD-08']
  *     阳性对照（照契约写的**合成最小实现**必须全绿）+ 两把刀（`limit` 改回字面数字 ⇒ 只翻静态那一面；
  *     把源码里 `eof` 这个名字整体改掉 ⇒ 行为那几条一起翻）。
  *   · `MKP-01` **生成器的安全联锁**（定形 §一②）：判的是**控制流**不是"词的位置" —— 对**真组合的逐字节副本**
- *     跑**生成器的逐字节副本**（都住运行根；产品零字节），读它吐出来的那份补丁，用本文件自己的解析器
- *     分开"顶层 `- insert:` 的直接成员"与"两份预设体的行"，再按**包事实**（`name` → 最近的 `package.json`
- *     → `dsh.client.platform === 'web'`）数一遍 ⇒ **两份预设体里客户端 UI 行 = 0**，且期望的宿主级行
- *     **恰好一次**住在 insert 里。样本下限（组合里必须真有客户端 UI 行、两份预设体必须非空）；
- *     尺子自证（把同一行塞进一份预设体，解析器必须数得出来）；三把刀：K1 关掉宿主级过滤分支 ⇒
- *     生成器当场拒（`E_BUNDLE_CLIENT_UI_IN_PRESET`）· K2 **词的位置全对、行为不对**（撤标记 +
- *     `disabled: true` + 点名表清空 ⇒ 白名单接管，生成器**不报错**，两份预设体各多一条）·
- *     K3 把那一行整块删掉（预设体里**确实** 0 条 ⇒ 靠缺席让上一条变绿 ⇒ 被"insert 里没有它"抓住）。
+ *     跑**生成器的逐字节副本**（都住运行根；产品零字节），读它吐出来的那份补丁。
+ *     🔴 **判读半段不另造尺子**（第 4 关评审 M1）：层归属只有一个码族 —— `support/client-ui-placement.mjs` 的
+ *     `describePlacement()` / `scanBundleMount()` / `scanClientUiPlacement()` / `withHostRowInPresetBodies()`，
+ *     包事实走它的 `manifestIndexOf()` / `resolveRowPackage()`。本格自己的码只回答"这次观察成不成立"
+ *     （`MKP-GEN-REJECTED` / `MKP-EMPTY-SAMPLE` / `MKP-EMPTY-BODY` / `MKP-PARSER-CONTROL` /
+ *     `MKP-SOURCE-NOT-REAL` / `MKP-FIXTURE-BROKEN` / `MKP-LIVE-PATCH-TOUCHED` / `MKP-KNIFE-*` / `MKP-LEGS-INCOMPLETE`），
+ *     **一个"层归属"码都不产**：那份判决由尺子的 `DASH-CLIENT-IN-PRESET`（预设体里有客户端 UI 行）与
+ *     `DASH-NOT-HOST-LEVEL` / `DASH-ROW-ABSENT`（期望的宿主级行不在 insert / 整个不在）说。
+ *     ⚠️ 本格**不**报 `DASH-HOST-ROW-COUNT` / `DASH-TOP-INSERT-SHAPE`（那是 DASH-15/16 的腿；刀 K2/K3 会同时触发它们，
+ *     读数里照实记 `ruler_codes`）。样本下限（组合里必须真有客户端 UI 行、产品补丁里必须有期望的宿主级行、
+ *     两份预设体必须非空）；尺子自证（拿真补丁把那一行搬进两份预设体，尺子必须数出 ≥2 条且 insert 里剩 0 条）。
+ *     三把刀：K1 关掉宿主级过滤分支 ⇒ 生成器当场拒（`E_BUNDLE_CLIENT_UI_*` ⇒ `MKP-GEN-REJECTED`）·
+ *     K2 **词的位置全对、行为不对**（撤标记 + `disabled: true` + 点名表清空 ⇒ 白名单接管，生成器**不报错**、
+ *     补丁照写，两份预设体各多一条）· K3 把那一行整块删掉（预设体里**确实** 0 条 ⇒ 靠缺席让上一条变绿）。
+ *     🔴 **这一格补的是"可观察性"，不是"覆盖"**（第 4 关评审 M3）：本票之前**没有一格观察生成器的控制流**，
+ *     `DASH-15`/`DASH-16` 读的是**产物**；产物级的红要等**生成器重跑之后**才出现（重跑 DASH-16 红、
+ *     不重跑则 DASH-15 的派生物那一腿红）。K2 不是"没有格子会红的世界"，它是**本格的刀**：
+ *     它造出的正是"重跑之后才会响"的那一步，本格把它提到同一跑里。
  *     ⚠️ 真组合今天**就是对的** ⇒ `MKP-01` 今天 **RED 0**，它是**回归锁**；红的合法性来自三把刀。
  *
  * ⚠️ 分母 **152 → 154**（两格各一条 `test()`；两处不同的红因：一处渲染层的读盘出口 / 一处生成期的层归属）
@@ -1205,7 +1215,7 @@ const ROWS = [
   // 两格两处不同的红因：一格在**渲染层的读盘出口**（半份 JSON 被伪装成"快照坏了"），
   // 一格在**生成期**（`partitionHostLevel()` 之后两份预设体里一个宿主级行都不许剩）。
   ['DASH-17', 'client-dashboard', F.dash07, '**读盘窗口：两个数要有名字 + `eof === false` 必须有出口**（定形 §一①；`client.js:440` 的 `{offset:1,limit:200}`）：`A` **静态** —— 读盘调用第三个实参里的 `offset` / `limit` 必须是**本文件里的 `const <名> = <整数>`**（判据**从源码的常量里读**上限值，不钉 `200`）：字面数字 ⇒ `RDW-WINDOW-MAGIC-NUMBER`、名字读不出值 ⇒ `RDW-CONST-UNRESOLVED`、取值不成立 ⇒ `RDW-WINDOW-SHAPE`、找不到那条调用 ⇒ `RDW-WINDOW-CALL-MISSING`；`B` **行为**（真装 `client.js`、真点一次、真让读盘落定；夹具按宿主 `WorkspaceFileText` 的真形状 `stat + {offset,text,lines,eof}` 给）：`eof === false`（`limit+1` 行快照的前 `limit` 行 = **半份 JSON**）⇒ 面板必须说「快照超过 **N** 行，读不全（**路径**）」（N = 实现自己那个上限、路径 = `SNAPSHOT_PATH`）⇒ 否则 `RDW-TRUNCATED-UNANNOUNCED`；半份 JSON **被喂给解析器**（画了 `快照不是合法 JSON` / `JSON.parse` / `Unexpected end of JSON`）⇒ `RDW-TRUNCATED-PARSER-BLAMED`（这就是"红线指向快照坏了"那个病）；槽位被带走 ⇒ `RDW-TRUNCATED-PANEL-GONE`；`C` **两条对照输入** —— `eof === false` 但正文**能解析**（`limit` 行完整 JSON）⇒ 仍然必须说"读不全"（`RDW-EOF-FLAG-IGNORED`：信号是 `eof`，不是"解析失败才报"）；上限以内（`limit-1` 行 / 恰好 `limit` 行，`eof === true`）⇒ 行为不变（`RDW-FULL-PAGE-BROKEN`）；`D` **尺子自证 + 样本下限** —— 五棵合成树把"说了 / 被解析器背锅 / 面板在"三面单独造出来（含"两句同时在"与"数字不对 / 路径不对"两棵）⇒ `RDW-FACES-RULER-BROKEN`；截断页必须真的 `limit` 行且 `JSON.parse` 会抛、完整页必须真的合法（0 行 / 空串 / 恰好完整都不算样本）⇒ `RDW-SAMPLE-NOT-TRUNCATED` / `RDW-SAMPLE-NOT-A-SNAPSHOT`；`E` **阳性对照 + 两把刀**（产品零字节）—— 照契约写的**合成最小实现**必须全绿（`RDW-CONTROL-NOT-GREEN` / `RDW-CONTROL-UNAVAILABLE`），刀 K1（`limit` 改回字面数字）只翻静态那一面、刀 K2（源码里 `eof` 这个名字整体改掉 = 客户端看不见 `eof`）翻行为那三条（码集合逐把钉死：`RDW-KNIFE-VECTOR` / `RDW-KNIFE-NOT-BITING`）；`F` **自守在块外**：`rec.readings.legs` 按 id 成员覆盖 `LEG_IDS`（`RDW-LEGS-INCOMPLETE`）。不判上限该是几、不判像素', '批次 AF'],
-  ['MKP-01', 'bundle-patch', F.mkp01, '**生成器的安全联锁：判控制流，不判"词的位置"**（定形 §一②；`make-bundle-patch.mjs` 的 `partitionHostLevel()` / `classifyPresetRow()`）：对**真组合的逐字节副本**跑**生成器的逐字节副本**（都住运行根，产品零字节；`source_is_real` 自证 sha256 = 产品那份），读它吐出来的那份补丁 —— 用本文件自己的解析器分开"顶层 `- insert:` 的直接成员"与"两份预设体的行"，再按**包事实**（`name` → 最近的 `package.json` → `dsh.client.platform === "web"`）数一遍：① **两份预设体里客户端 UI 行 = 0**（`MKP-HOST-ROW-IN-PRESET`，报文点名"哪份预设 / 哪一行 / 哪个包"）；② 期望的宿主级行**恰好一次**住在 insert 的直接成员里（`MKP-HOST-ROW-NOT-IN-INSERT` —— 0 次 = 靠删掉它让 ① 变绿，多次 = 两个 Node 写者）；③ **样本下限**（组合里必须真有客户端 UI 行、两份预设体必须非空 ⇒ `MKP-EMPTY-SAMPLE` / `MKP-EMPTY-BODY`：0 行上的"0 条"不算通过）；④ 补丁结构读不懂 ⇒ `MKP-PARSER-BROKEN`；⑤ **尺子自证**（把同一行塞进一份预设体 ⇒ 解析器必须数出 1 条 ⇒ `MKP-PARSER-CONTROL`）；⑥ **三把刀**（副本，产品零字节；每把的码集合逐把钉死）：K1 关掉宿主级过滤分支 ⇒ 生成器当场拒（`E_BUNDLE_CLIENT_UI_IN_PRESET` ⇒ `MKP-GEN-REJECTED`）· K2 **词的位置全对、行为不对**（撤 `# @host-level` + 补 `disabled: true` + `HOST_LEVEL_IDS` 清空 ⇒ 白名单三格全中、生成器**不报错**，两份预设体各多一条）· K3 把那一行整块删掉（预设体里**确实** 0 条 ⇒ 只有 insert 那一条抓住它）；刀没咬住 ⇒ `MKP-KNIFE-NOT-BITING`，翻错面 ⇒ `MKP-KNIFE-VECTOR`；⑦ **自守在块外**（`SCENARIO_IDS` 按 id 成员，`MKP-LEGS-INCOMPLETE`）+ 产品三份文件跑前跑后 sha256 相同（`MKP-LIVE-PATCH-TOUCHED`）。⚠️ 真组合今天**就是对的** ⇒ 本格今天 **RED 0**，是**回归锁**；红的合法性来自三把刀', '批次 AF'],
+  ['MKP-01', 'bundle-patch', F.mkp01, '**生成器的安全联锁：判控制流，不判"词的位置"**（定形 §一②；`make-bundle-patch.mjs` 的 `partitionHostLevel()` / `classifyPresetRow()`）：对**真组合的逐字节副本**跑**生成器的逐字节副本**（都住运行根，产品零字节；`source_is_real` 自证 sha256 = 产品那份），读它吐出来的那份补丁。🔴 **判读半段不另造尺子**（第 4 关评审 M1）：层归属的判决只有一个码族 —— `support/client-ui-placement.mjs` 的 `describePlacement()` / `scanBundleMount()` / `scanClientUiPlacement()` / `withHostRowInPresetBodies()`（包事实走它的 `manifestIndexOf()` / `resolveRowPackage()`）；本格自己的码只回答"这次观察成不成立"（`MKP-GEN-REJECTED` / `MKP-EMPTY-SAMPLE` / `MKP-EMPTY-BODY` / `MKP-PARSER-CONTROL` / `MKP-SOURCE-NOT-REAL` / `MKP-FIXTURE-BROKEN` / `MKP-LIVE-PATCH-TOUCHED` / `MKP-KNIFE-*` / `MKP-LEGS-INCOMPLETE`）。① **两份预设体里客户端 UI 行 = 0** ⇒ `DASH-CLIENT-IN-PRESET`（尺子的码；报文点名"哪份预设 / 哪一行 / 哪个包"）；② 期望的宿主级行必须是 insert 的直接成员 ⇒ `DASH-NOT-HOST-LEVEL`（在、但在别处）/ `DASH-ROW-ABSENT`（整个不在 —— 0 次 = 靠删掉它让 ① 变绿）；③ **样本下限**（产品组合里必须真有客户端 UI 行、产品补丁里必须有期望的宿主级行、两份预设体必须非空 ⇒ `MKP-EMPTY-SAMPLE` / `MKP-EMPTY-BODY`）；④ **尺子自证**（拿真补丁 + `withHostRowInPresetBodies()` 把那一行搬进两份预设体 ⇒ 尺子必须数出 ≥2 条客户端 UI 行、insert 里剩 0 条 ⇒ `MKP-PARSER-CONTROL`）；⑤ **三把刀**（副本，产品零字节；每把的码集合逐把钉死）：K1 关掉宿主级过滤分支 ⇒ 生成器当场拒（`E_BUNDLE_CLIENT_UI_*` ⇒ `MKP-GEN-REJECTED`）· K2 **词的位置全对、行为不对**（撤 `# @host-level` + 补 `disabled: true` + `HOST_LEVEL_IDS` 清空 ⇒ 白名单三格全中、生成器**不报错**、补丁照写 ⇒ `DASH-CLIENT-IN-PRESET` + `DASH-NOT-HOST-LEVEL`）· K3 把那一行整块删掉（预设体里**确实** 0 条 ⇒ 只有 `DASH-ROW-ABSENT` 抓住它）；刀没咬住 ⇒ `MKP-KNIFE-NOT-BITING`，翻错面 ⇒ `MKP-KNIFE-VECTOR`；⑥ **自守在块外**（`SCENARIO_IDS` 按 id 成员，`MKP-LEGS-INCOMPLETE`）+ 产品三份文件跑前跑后**字节相同**（`MKP-LIVE-PATCH-TOUCHED`）。🔴 本格补的是**可观察性不是覆盖**（评审 M3）：本票之前没有一格观察生成器的控制流，`DASH-15`/`DASH-16` 读的是产物，产物级的红要等**生成器重跑之后**才出现（重跑 DASH-16 红、不重跑则 DASH-15 的派生物那一腿红）—— K2 不是"没有格子会红的世界"，它是本格的刀，造出的正是"重跑之后才会响"的那一步。⚠️ 真组合今天**就是对的** ⇒ 本格今天 **RED 0**，是**回归锁**；红的合法性来自三把刀', '批次 AF'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */

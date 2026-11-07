@@ -173,6 +173,9 @@ window.__ModuleLoader__.load({
 				setFailure(null);
 				setAbsent(null);
 				setTruncated(null);
+				// 🔴 旧的视图也要清：不然「上一次读到的看板」会和这一次的提示叠在一起
+				//    （实测形状：先 199 行画出看板、再来一次 201 行截断 ⇒ 旧看板 + 「这次读不全」同时出现）。
+				setView(null);
 				readSnapshot(sessionId).then((result) => {
 					if (result && typeof result.absent === "string") {
 						setAbsent(result.absent);
