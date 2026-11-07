@@ -91,6 +91,23 @@ function isEnvClass(name) {
  * `rel` 是**相对给定 root** 的路径（`/` 分隔、无前导 `./`）—— 排除表按同一个基准比（③b）。
  * 前缀比的是**段**：`.runtime/` 只吃顶层的 `.runtime/…`，不吃 `lib/.runtime/…`。
  */
+/**
+ * Non-writing query: would this absolute path count as CODE under `root`?
+ *
+ * Kept here on purpose: the exclusion table has exactly ONE home. Anyone who needs to ask
+ * "will my output land inside the audited CODE set?" (before writing anything) must come
+ * through this function instead of copying the table.
+ */
+export function isCodePath(root, abs) {
+  const rel = path.relative(root, abs).replace(/\\/g, '/')
+  if (rel === '') return { rel, code: false, why: 'landing is the audited root itself - not a file, not CODE' }
+  if (rel === '..' || rel.startsWith('../') || path.isAbsolute(rel)) {
+    return { rel, code: false, why: 'landing is outside the audited root - not CODE (and the recommended place)' }
+  }
+  if (excluded(rel)) return { rel, code: false, why: 'inside the exclusion table (prefix/segment/basename/suffix) - not CODE' }
+  return { rel, code: true, why: 'not excluded => it WOULD be counted into the CODE set' }
+}
+
 function excluded(rel) {
   const lower = rel.toLowerCase()
   for (const p of EXCLUDE_PREFIXES) if (lower.startsWith(p.toLowerCase())) return true
@@ -193,7 +210,7 @@ function fingerprint(root, includeEnv) {
 }
 
 function parseArgs(argv) {
-  const out = { root: REPO_DEFAULT, set: 'both', json: false, save: null, compare: null }
+  const out = { root: REPO_DEFAULT, set: 'both', json: false, save: null, compare: null, isCode: null }
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]
     if (a === '--json') out.json = true
@@ -201,6 +218,7 @@ function parseArgs(argv) {
     else if (a === '--set') out.set = argv[++i]
     else if (a === '--save') out.save = argv[++i]
     else if (a === '--compare') out.compare = argv[++i]
+    else if (a === '--is-code') out.isCode = argv[++i]
     else if (a === '--help' || a === '-h') out.help = true
     else return { error: `未知参数：${a}` }
   }
@@ -217,6 +235,7 @@ const USAGE = [
   '  --json              一行 JSON 输出（可机读）',
   '  --save <file>       把这次读数写进文件（当基线）',
   '  --compare <file>    与基线比一次：equal / changed[]（不等 ⇒ 退出码 1）',
+  '  --is-code <path>    只回答「这个绝对路径算不算 CODE」（不写盘、不量树）',
 ].join('\n')
 
 function main(argv) {
@@ -227,6 +246,18 @@ function main(argv) {
   }
   if (args.help) {
     process.stdout.write(`${USAGE}\n`)
+    return 0
+  }
+  // 不写盘的查询：这个绝对路径算不算 CODE（F-166 用它「写之前先问一句」）。
+  if (args.isCode !== null) {
+    if (typeof args.isCode !== 'string' || args.isCode.trim() === '') {
+      process.stderr.write('fingerprint.mjs: --is-code needs an absolute path\n')
+      return 2
+    }
+    const qRoot = path.resolve(args.root)
+    const qAbs = path.resolve(process.cwd(), args.isCode)
+    const verdict = isCodePath(qRoot, qAbs)
+    process.stdout.write(`${JSON.stringify({ ok: true, root: qRoot, abs: qAbs, ...verdict })}\n`)
     return 0
   }
   const root = path.resolve(args.root)

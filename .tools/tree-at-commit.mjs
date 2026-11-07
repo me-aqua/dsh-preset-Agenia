@@ -469,6 +469,31 @@ function codeListOf(root) {
  * ⚠️ 只有落点**确实在被测根里**才多走这一次；常见落点 `.team/<角色>/<day>/live-before.json` 不触发。
  * 量不动（`fingerprint.mjs` 非 0）⇒ `E_LIVE_BASELINE` 那一支，不许把"判不了"写成"没变"。
  */
+/**
+ * 问一次尺子：`abs` 这个落点在 `root` 里算不算 CODE？（`F-166`）
+ *
+ * 为什么要走子进程而不是自己比：排除表只有 `fingerprint.mjs` 那一份。
+ * 量不出来（工具不在 / 退出码非 0 / 输出不是 JSON）⇒ 返回 `null` —— **判不了**，
+ * 调用方不许把它当成"算 CODE"去拒，也不许当成"不算"去放行：这一句要出声。
+ */
+function askIsCode(root, abs) {
+  const r = spawnSync(process.execPath, [FINGERPRINT_TOOL, '--is-code', abs, '--root', root, '--json'], {
+    cwd: HERE, encoding: 'utf8', timeout: 60000,
+  })
+  if (r.status !== 0) {
+    process.stderr.write(`[tree-at-commit] 判不了「--out 算不算 CODE」（fingerprint.mjs --is-code 退出码 ${r.status}）`
+      + ' —— 这一条不拒，但你要知道自己没被核过。\n')
+    return null
+  }
+  try {
+    const parsed = JSON.parse(String(r.stdout).trim().split('\n')[0])
+    return parsed?.ok === true ? parsed : null
+  } catch (err) {
+    process.stderr.write(`[tree-at-commit] 判不了「--out 算不算 CODE」（读不出 JSON）—— 这一条不拒。\n`)
+    return null
+  }
+}
+
 function saveLiveBaseline(liveRoot, file) {
   mkdirSync(path.dirname(file), { recursive: true })
   const r = runFingerprint(['--root', liveRoot, '--set', 'code', '--save', file, '--json'])
@@ -592,6 +617,19 @@ function doExport(args) {
   const outLower = out.toLowerCase()
   if (outLower === path.join(repoAbs, '.git').toLowerCase() || outLower.startsWith(`${path.join(repoAbs, '.git').toLowerCase()}${path.sep}`)) {
     return fail('REFUSE-OVERWRITE', `--out 落在 ${repoAbs}\\.git 里面：${out} —— 副本必须是纯树，不许写进版本库`)
+  }
+  // 🔴 `--out` 落在**被测的 CODE 名单**里 ⇒ 拒在**任何写之前**（`ticket-20261106-01` 的姐妹项 `F-166`，与 `--live-baseline` 对称）。
+  //    怎么判"算不算 CODE"由尺子自己回答（`fingerprint.mjs --is-code`）——**表只有一份**，这里不复制。
+  //    为什么必须拒：副本要是落在被测树里，导出自己写下的每一份文件都会被下一次 `--verify` 算成"动了"，
+  //    而那份"动了"会挂在别人头上（一条假红，而且查不出是谁的）。
+  if (outLower.startsWith(`${repoAbs.toLowerCase()}${path.sep}`) || outLower === repoAbs.toLowerCase()) {
+    const asked = askIsCode(repoAbs, out)
+    if (asked !== null && asked.code === true) {
+      return fail('E_OUT_INSIDE_AUDITED',
+        `--out 落在被测树 ${repoAbs} 的 CODE 名单里：${asked.rel}（${asked.why}）。`
+        + '副本必须写在被测树之外，或者写进 `.team/` 这种被排除表挡住的前缀；'
+        + '否则导出自己写下的文件会被下一次 `--verify` 算成"动了"，那一条红会挂在别人头上。')
+    }
   }
   // 🔴 拒在写之前：**先看目录**，随后才创建 / 写第一份文件。
   if (existsSync(out)) {
