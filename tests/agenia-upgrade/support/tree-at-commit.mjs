@@ -784,6 +784,74 @@ export function missingFields(obj, fields) {
   return fields.filter((f) => !(f in obj) || obj[f] === undefined)
 }
 
+/**
+ * `equal` **只覆盖什么**（`F-170` / `bug-20261107-03`）—— 这句话必须跟读数住在同一个对象里。
+ *
+ * 为什么把它做成一个常量而不是散在注释里：读数旁边那句"equal 覆盖 CODE 集"是**可被人读错**的
+ * 唯一防线 —— 放注释里，读 `result.json` 的人看不到；放别处，读的人要回推。
+ *
+ * 🔴 **不扩**到全树 / 路径集合（定形 §一 #4 / 组长决定）：扩了会把"派生文件"全算进去，
+ *    等于把 `bug-20261107-03`（`equal` 对多出来的文件瞎）换成另一种假绿。
+ *    多出来的文件由 `copyIntegrityVerdict()` 单独判（`E_COPY_HAS_EXTRA`），**不改** `equal` 的口径。
+ */
+export const EQUAL_SCOPE = Object.freeze({
+  covers: 'CODE 集（按 .tools/fingerprint.mjs 的排除表：不含 .team/ · .runtime/ · __pycache__/ · *.pyc · *.log 等）',
+  does_not_cover: [
+    '副本里**多出来的文件**（例如 __pycache__/*.pyc、*.log、node_modules/…）—— 抓它的是 `is_that_commit` / `E_COPY_HAS_EXTRA`',
+    '文件权限 / 符号链接 / 目录结构',
+    '路径集合的变化（由 `is_that_commit` 那一格判）',
+  ],
+  note: '这句 `equal` **只覆盖 CODE 集**：它不覆盖副本里多出来的文件 —— `equal:true` 不等于"副本一个字节/一份文件都没多"',
+})
+
+/**
+ * 副本完整性判定（测试侧，`bug-20261107-03` 的刀口）—— **不改** `equal` 的口径，单独出一条读数。
+ *
+ * 与 `verifyCopyIsCommit()` 的分工：那个函数已经逐份列出 `missing / extra / mismatched`；
+ * 这里只负责把**多出来的文件**折成一个**有码的判决**，好让"`equal:true` 但那格红"这件事在读数里
+ * 一眼可见。`checkExtra:false` 是**退化刀**：把这条腿关掉 ⇒ 同一个输入必须变绿（证明翻面来自它）。
+ *
+ * @returns {{ok:boolean, code:string|null, extra:string[], missing:string[], mismatched:string[], problems:string[], checked:boolean, note:string}}
+ */
+export function copyIntegrityVerdict({ repo, commit, copyRoot, declared = [], checkExtra = true, checkMissing = true, checkMismatch = true } = {}) {
+  const v = verifyCopyIsCommit({ repo, commit, copyRoot, declared })
+  const extra = checkExtra ? [...(v.undeclared_extra ?? v.extra ?? [])] : []
+  const missing = checkMissing ? [...(v.missing ?? [])] : []
+  const mismatched = checkMismatch ? (v.mismatched ?? []).map((m) => m.rel) : []
+  const problems = []
+  let code = null
+  if (extra.length > 0) {
+    code = 'E_COPY_HAS_EXTRA'
+    problems.push(`副本里有 ${extra.length} 份**提交里没有、声明的追加里也没有**的文件：${extra.join(' · ')} —— \`equal\` 只覆盖 CODE 集，看不见它们（见 EQUAL_SCOPE.does_not_cover）`)
+  } else if (missing.length > 0) {
+    code = 'E_COPY_MISSING'
+    problems.push(`副本少 ${missing.length} 份：${missing.join(' · ')}`)
+  } else if (mismatched.length > 0) {
+    code = 'E_COPY_MISMATCH'
+    problems.push(`副本这几份的字节不是该提交里的：${mismatched.join(' · ')}`)
+  }
+  return {
+    ok: problems.length === 0,
+    code,
+    extra,
+    missing,
+    mismatched,
+    problems,
+    checked: { extra: checkExtra, missing: checkMissing, mismatch: checkMismatch },
+    note: '`equal` **只覆盖 CODE 集**；这一格单独判"副本里多/少/换了文件"（E_COPY_HAS_EXTRA / _MISSING / _MISMATCH）',
+  }
+}
+
+/** 读数里 `equal` 旁边那一格（`F-170`）：把 `EQUAL_SCOPE` 摊进读数，人不必去翻注释。 */
+export function equalScopeReading(extra = {}) {
+  return {
+    covers: EQUAL_SCOPE.covers,
+    does_not_cover: [...EQUAL_SCOPE.does_not_cover],
+    note: EQUAL_SCOPE.note,
+    ...extra,
+  }
+}
+
 // ── 文档面的针（派工卡怎么教、作业书怎么讲、契约那一句）──────────────────────────
 const readTextIfExists = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null)
 
@@ -808,19 +876,50 @@ const hasAny = (text, needles) => needles.some((n) => (n instanceof RegExp ? n.t
  * 红因码：`BRIEF-CODE-ROOT-STILL-LIVE-PATH` · `BRIEF-COPY-ANCHOR-MISSING` ·
  * `BRIEF-LIVE-SCOPE-MISSING` · `BRIEF-REPORT-N-MISSING` · `CARD-COMMIT-ANCHOR-MISSING` ·
  * `CARD-COPY-ANCHOR-MISSING` · `CARD-BEFORE-ANCHOR-MISSING` · `CONTRACT-F160-SENTENCE-MISSING`
+ *
+ * 🔴 **`repo` 必须显式给，而且必须是"评审对象那份副本"**（`F-168`）：
+ *    从前默认值是 `PATHS.repo`（活树）—— 唯一的调用方也就从不要求它读副本，
+ *    于是拿副本跑套件时这一格判的是**另一棵树**（技术评审 2026-10-30 `F4`）。
+ *    这里不再提供默认值：**没有"不指就指活树"这条捷径**；读数里的 `root` / `is_copy` 把
+ *    "这一次读的是哪棵树"写在同一份读数里（读的人不必回推调用方）。
  */
-export function dispatchShapes({ repo = PATHS.repo } = {}) {
+export function dispatchShapes({ repo } = {}) {
+  if (typeof repo !== 'string' || repo.trim() === '') {
+    throw new Error('dispatchShapes 必须显式给 repo（评审对象那份副本的根）—— 没有默认值：默认成活树就是 F-168 那个洞')
+  }
+  const root = path.resolve(repo)
   const problems = []
-  const readings = { files: {}, missing: [] }
-  const briefFile = path.join(repo, 'presets', 'agenia', 'job-briefs', 'technical-review.md')
-  const leaderFile = path.join(repo, 'presets', 'agenia', 'leader.md')
-  const contractFile = path.join(repo, 'CONTRACT.md')
+  const readings = {
+    /** 这一次读的是哪棵树（`F-168` 的落点；不是"某一棵树"）。 */
+    root,
+    /** 没有 `.git` ⇒ 这是提交导出的纯树（副本）；有 ⇒ 它是活树 / 检出。 */
+    is_copy: !existsSync(path.join(root, '.git')),
+    files: {},
+    missing: [],
+  }
+  const briefFile = path.join(root, 'presets', 'agenia', 'job-briefs', 'technical-review.md')
+  const leaderFile = path.join(root, 'presets', 'agenia', 'leader.md')
+  const contractFile = path.join(root, 'CONTRACT.md')
   const brief = readTextIfExists(briefFile)
   const leader = readTextIfExists(leaderFile)
   const contract = readTextIfExists(contractFile)
   for (const [key, file, text] of [['brief', briefFile, brief], ['leader', leaderFile, leader], ['contract', contractFile, contract]]) {
-    readings.files[key] = { file, exists: text !== null, bytes: text === null ? 0 : Buffer.byteLength(text, 'utf8') }
+    readings.files[key] = {
+      file,
+      exists: text !== null,
+      bytes: text === null ? 0 : Buffer.byteLength(text, 'utf8'),
+      /** 这一份读的是不是 `repo` 那棵树里的（**结构上**钉住"针读副本"，不靠调用方自觉）。 */
+      under_root: (() => {
+        const rel = path.relative(path.resolve(root), path.resolve(file))
+        return rel !== '' && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)
+      })(),
+    }
     if (text === null) readings.missing.push(file)
+  }
+  // 结构格：三份载体都在 `repo` 里（不在 ⇒ 这一跑不是关于这棵树的）
+  const outside = Object.entries(readings.files).filter(([, f]) => f.under_root !== true).map(([k]) => k)
+  if (outside.length > 0) {
+    problems.push({ code: 'NEEDLE-ROOT-ESCAPED', message: `这三份载体里有 ${outside.length} 份不在 repo 里（${outside.join(' / ')}）—— 读数没有落在被点名的那棵树上（repo=${root}）` })
   }
 
   // ① 作业书「必读输入清单」里 `代码根` 那一行 —— 点的必须是副本，不再是活树的绝对路径。

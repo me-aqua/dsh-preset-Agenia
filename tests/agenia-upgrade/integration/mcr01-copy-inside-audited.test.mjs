@@ -1,0 +1,226 @@
+/**
+ * `MCR-01` · **`F-166`** —— `tree-at-commit --out` 落在**被测 CODE 名单**里时，必须在**任何写之前**拒。
+ *
+ * 病根（技术评审 2026-10-30 `F2`；仲裁在 `.team/leader/2026-11-07/定形-batch8.md` §一 #1）：
+ * 副本要是落在被测树里，导出自己写下的每一份文件都会被下一次 `--verify` 算成"动了"，
+ * 而那条"动了"会挂在别人头上 —— 一条查不出是谁的假红。老工具只在 `--verify` 里报形状，
+ * **导出这一侧一个字节都不拦**；`--live-baseline` 早就有对称的拒（`E_BASELINE_IN_CODE`）。
+ *
+ * 判据（四格，一格一条，各自能单独翻面）：
+ *   ① **拒**：`--out` 指向被测 CODE 集里的**新路径** ⇒ 非零退出 + 码 **`E_OUT_INSIDE_AUDITED`**
+ *      （不是 `REFUSE-OVERWRITE` —— 那一族是"目录已有东西"，与"落点在 CODE 集里"是两件事）；
+ *      报文必须点名**落点**与**被测根**。
+ *   ② **拒在任何写之前**：被测根跑前 / 跑后**逐字节**同哈希（`treeHash`）+ **路径集合**同（`treePaths`）
+ *      + 那个 `--out` 目录**没有被创建**。⚠️ 这一格是"拒在写之前"的**唯一**证据：只判退出码的话，
+ *      "先写一半再拒"照样绿。
+ *   ③ **负对照（两条都成功）**：`--out` 指到被测根**之外** ⇒ 写出、`code.sha256` = 从 git 对象独立算的
+ *      CODE 指纹；`--out` 指进被测根的 **`.team/`**（被排除表挡住 ⇒ 不在 CODE 集）⇒ 同样成功。
+ *      ⚠️ 这两条是"拒的是**CODE 集**、不是'路径里有 repo 这两个字'"的阳性对照。
+ *   ④ **判定归尺子**：`.tools/fingerprint.mjs --is-code <abs> --root <root> --json` 是不写盘的一次查询；
+ *      三个落点各问一次（CODE 内 = true · `.team/` 内 = false · 根外 = false）。这一格证明
+ *      "算不算 CODE"只有**一份排除表**（工具那一份），工具里不复制第二张。
+ *
+ * 刀（退化刀，同格）：把导出器拷进运行根、只把 `if (asked !== null && asked.code === true) {`
+ *   改成 `if (false) {` ⇒ **同一个输入**必须 `exit 0` 并把副本写进被测树（= ① 会红）。
+ *   锚点找不到 / 命中不是 1 处 ⇒ `KNIFE-ANCHOR`（判据自己的刀钝了，不许静默绿）。
+ *
+ * 🔴 覆盖边界（这一格**不判**什么）：
+ *   · 不判"`--is-code` 自己判断得对不对"（那是 `fingerprint.mjs` 的排除表；这里只判三个已知落点）；
+ *   · 不判 `--out` 指进 `.git`（老 `REFUSE-OVERWRITE` 那一支，早就有人守）；
+ *   · 不判"拒的报文措辞好不好读"（只点名"落点 + 被测根"两样在不在）。
+ */
+import { before, describe, test } from 'node:test'
+import { spawnSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import { PATHS } from '../support/env.mjs'
+import { caseFail, preflight, problem, runCase, runRoot, treeHash, treePaths } from '../support/evidence.mjs'
+import {
+  buildFixtureRepo, codeDigestOfCommit, exporterPath, runExport, verifyCopyIsCommit,
+} from '../support/tree-at-commit.mjs'
+
+before(() => {
+  preflight()
+})
+
+/** 一次 `fingerprint.mjs --is-code`（不写盘的查询）。失败 ⇒ `{ok:false, problems}`，调用方点名红。 */
+function isCodeProbe(tool, abs, root) {
+  const r = spawnSync(process.execPath, [tool, '--is-code', abs, '--root', root, '--json'], {
+    encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024,
+  })
+  const line = String(r.stdout ?? '').trim().split('\n').filter((l) => l.trim() !== '').pop() ?? ''
+  let json = null
+  try { json = JSON.parse(line) } catch { json = null }
+  return { exit: r.status, json, stdout: String(r.stdout ?? '').slice(-400), stderr: String(r.stderr ?? '').slice(-400) }
+}
+
+describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 CODE 集里', () => {
+  test('MCR-01 --out 落在被测 CODE 名单里 ⇒ 写之前拒；指到根外 / .team/ ⇒ 成功（两把刀都在）', async () => {
+    await runCase('MCR-01', async (rec) => {
+      const problems = []
+      const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
+      const root = runRoot()
+
+      const ex = exporterPath()
+      rec.readings.exporter = { file: ex.file, exists: ex.exists, source: ex.source }
+      if (!ex.exists) {
+        push('EXPORTER-MISSING', `导出器不在：${ex.file}（来源 ${ex.source}）—— 这一格判不了"拒在写之前"（没有可拒的那条路）`)
+        caseFail(problems)
+        return
+      }
+
+      // ── 夹具：一个真的有 `.git` 的仓库（`--out` 的判定要看仓库根，不能拿纯树冒充）──
+      const fx = buildFixtureRepo(root, 'mcr01')
+      rec.readings.fixture = { repo: fx.repo, commit: fx.commitA, files_A: fx.filesA }
+      const audited = fx.repo
+      const beforeTree = treeHash(audited)
+      const beforePaths = treePaths(audited)
+      rec.readings.audited_tree = {
+        before: { sha256: beforeTree.sha256, count: beforeTree.count },
+        paths_before: beforePaths.count,
+      }
+
+      // ── ① 拒：`--out` 落在被测 CODE 集里的**新路径** ─────────────────────────
+      const outInside = path.join(audited, 'presets', 'agenia', '_probe_copy_mcr01')
+      const refused = runExport({ exporter: ex.file, repo: audited, commit: fx.commitA, out: outInside })
+      const errCode = refused.json?.error?.code ?? null
+      const errMsg = String(refused.json?.error?.message ?? '')
+      rec.readings.out_inside_audited = {
+        out: outInside, exit: refused.exit, code: errCode, message: errMsg.slice(0, 600),
+        stderr: String(refused.stderr ?? '').slice(-600),
+      }
+      if (refused.exit === 0) {
+        push('REFUSE-NOT-REFUSED', `\`--out\` 落在被测 CODE 集里（${outInside}）竟然 exit 0 —— 副本会写进被测树，下一次 --verify 会把导出自己写下的文件算成"动了"`)
+      } else if (errCode !== 'E_OUT_INSIDE_AUDITED') {
+        push('REFUSE-WRONG-CODE', `\`--out\` 落在被测 CODE 集里，应报 \`E_OUT_INSIDE_AUDITED\`，实得 ${JSON.stringify(errCode)}（stderr：${String(refused.stderr ?? '').trim().slice(0, 240)}）`)
+      }
+      if (errCode === 'REFUSE-OVERWRITE') {
+        push('REFUSE-FOLDED-INTO-OVERWRITE', '这条拒被折进了 `REFUSE-OVERWRITE`（"目录已有东西"）—— 两件事必须两个码：一个是"落点已有内容"，一个是"落点本身在被测 CODE 名单里"')
+      }
+      if (refused.exit !== 0 && errMsg !== '') {
+        if (!errMsg.includes('_probe_copy_mcr01') && !errMsg.includes('presets/agenia/_probe_copy_mcr01') && !errMsg.includes('presets\\agenia\\_probe_copy_mcr01')) {
+          push('REFUSE-MESSAGE-NO-LANDING', `拒的报文没有点名落点（\`_probe_copy_mcr01\`）：${errMsg.slice(0, 300)}`)
+        }
+        if (!errMsg.includes(audited)) push('REFUSE-MESSAGE-NO-ROOT', `拒的报文没有点名被测根（${audited}）：${errMsg.slice(0, 300)}`)
+      }
+
+      // ── ② 拒在**任何写之前**：逐字节 + 路径集合 + 目录没被创建 ────────────────
+      const afterTree = treeHash(audited)
+      const afterPaths = treePaths(audited)
+      const outCreated = existsSync(outInside)
+      const pathsEqual = afterPaths.count === beforePaths.count
+        && afterPaths.paths.every((p, i) => p === beforePaths.paths[i])
+      rec.readings.audited_tree.after = { sha256: afterTree.sha256, count: afterTree.count }
+      rec.readings.audited_tree.paths_after = afterPaths.count
+      rec.readings.audited_tree.equal = afterTree.sha256 === beforeTree.sha256
+      rec.readings.audited_tree.paths_equal = pathsEqual
+      rec.readings.audited_tree.out_created = outCreated
+      if (!rec.readings.audited_tree.equal) {
+        push('REFUSE-WROTE-BEFORE', `被拒之后被测根**变了**（${beforeTree.count} 份/${String(beforeTree.sha256).slice(0, 16)}… → ${afterTree.count} 份/${String(afterTree.sha256).slice(0, 16)}…）—— "拒在任何写之前"不成立：先写了再拒也是拒`)
+      }
+      if (!pathsEqual) {
+        push('REFUSE-WROTE-PATHS', `被拒之后被测根的**路径集合**变了（${beforePaths.count} → ${afterPaths.count} 条）—— 有东西被创建/删除了`)
+      }
+      if (outCreated) {
+        push('REFUSE-CREATED-OUT', `被拒了，但 \`--out\` 那个目录已经被创建：${outInside} —— 拒必须发生在**第一个字节**之前`)
+      }
+
+      // ── ③ 负对照：根外 ⇒ 成功；被测根的 `.team/`（排除表挡住）⇒ 也成功 ──────────
+      const commitDigest = codeDigestOfCommit(fx.repo, fx.commitA)
+      rec.readings.commit_code = { ok: commitDigest.ok, sha256: commitDigest.sha256, files: commitDigest.files }
+      const outOutside = path.join(root, 'fixtures', 'mcr01-outside', 'tree-at-a')
+      const expOutside = runExport({ exporter: ex.file, repo: fx.repo, commit: fx.commitA, out: outOutside })
+      const outsideIdentity = expOutside.exit === 0 && existsSync(outOutside)
+        ? verifyCopyIsCommit({ repo: fx.repo, commit: fx.commitA, copyRoot: outOutside })
+        : null
+      rec.readings.positives = {
+        outside: {
+          out: outOutside, exit: expOutside.exit, ok: expOutside.json?.ok ?? null,
+          code: expOutside.json?.code ?? null, stderr: String(expOutside.stderr ?? '').slice(-300),
+          identity: outsideIdentity === null ? null : { ok: outsideIdentity.ok, files: outsideIdentity.actual.length, problems: outsideIdentity.problems.slice(0, 4) },
+        },
+      }
+      if (expOutside.exit !== 0 || expOutside.json === null) {
+        push('POSITIVE-OUTSIDE-FAILED', `\`--out\` 指到被测根之外（${outOutside}）应当成功，却 exit=${expOutside.exit}：${String(expOutside.stderr ?? '').trim().slice(0, 240)}`)
+      } else {
+        if (expOutside.json.ok !== true) push('POSITIVE-OUTSIDE-FAILED', `根外导出的读数 \`ok\` 不是 true：${JSON.stringify(expOutside.json.ok)}`)
+        if (!commitDigest.ok || String(expOutside.json.code?.sha256 ?? '').toLowerCase() !== commitDigest.sha256) {
+          push('POSITIVE-OUTSIDE-CODE', `根外导出的 \`code.sha256\` ${String(expOutside.json.code?.sha256 ?? '').slice(0, 12)}… ≠ 从 git 对象独立算的 ${String(commitDigest.sha256).slice(0, 12)}…（"成功写出"必须是一份**对**的副本）`)
+        }
+        if (outsideIdentity !== null && !outsideIdentity.ok) {
+          push('POSITIVE-OUTSIDE-IDENTITY', `根外副本不是提交 ${fx.commitA.slice(0, 12)}…：${outsideIdentity.problems.slice(0, 4).join('；')}`)
+        }
+      }
+
+      const outInTeam = path.join(audited, '.team', 'probe_copy_mcr01')
+      const expTeam = runExport({ exporter: ex.file, repo: fx.repo, commit: fx.commitA, out: outInTeam })
+      rec.readings.positives.inside_team = {
+        out: outInTeam, exit: expTeam.exit, ok: expTeam.json?.ok ?? null,
+        error: expTeam.json?.error?.code ?? null, stderr: String(expTeam.stderr ?? '').slice(-300),
+      }
+      if (expTeam.exit !== 0 || expTeam.json === null || expTeam.json.ok !== true) {
+        push('POSITIVE-INSIDE-TEAM-FAILED', `\`--out\` 指进被测根的 \`.team/\`（排除表挡着 ⇒ 不在 CODE 集）应当成功，却 exit=${expTeam.exit} / ${expTeam.json?.error?.code ?? '(无码)'} —— 这条拒的应当是"CODE 集"，不是"路径里有没有 repo"`)
+      }
+
+      // ── ④ 判定归尺子：一次不写盘的查询，三个落点 ───────────────────────────────
+      const tool = path.join(PATHS.repo, '.tools', 'fingerprint.mjs')
+      const probes = {
+        inside_code: isCodeProbe(tool, path.join(audited, 'presets', 'agenia', '_probe_copy_mcr01'), audited),
+        inside_team: isCodeProbe(tool, path.join(audited, '.team', 'probe_copy_mcr01'), audited),
+        outside: isCodeProbe(tool, path.join(root, 'fixtures', 'mcr01-outside', 'x'), audited),
+      }
+      rec.readings.is_code_probe = Object.fromEntries(Object.entries(probes).map(([k, v]) => [k, {
+        exit: v.exit, ok: v.json?.ok ?? null, code: v.json?.code ?? null, why: v.json?.why ?? null,
+        abs: v.json?.abs ?? null, raw: v.json === null ? v.stdout : undefined,
+      }]))
+      const want = { inside_code: true, inside_team: false, outside: false }
+      for (const [key, w] of Object.entries(want)) {
+        const got = probes[key]
+        if (got.exit !== 0 || got.json === null) {
+          push('PRE-CHECK-DEVICE', `\`fingerprint.mjs --is-code\` 问不出来（${key}）：exit=${got.exit} · ${String(got.stderr || got.stdout).slice(0, 200)}`)
+          continue
+        }
+        if (got.json.code !== w) push('PRE-CHECK-DEVICE', `\`--is-code\` 对 ${key} 的回答应是 ${w}，实得 ${JSON.stringify(got.json.code)}（why：${String(got.json.why ?? '').slice(0, 160)}）—— 排除表分叉了，上面那条拒的落点也就不可信`)
+        if (typeof got.json.why !== 'string' || got.json.why.trim() === '') push('PRE-CHECK-DEVICE', `\`--is-code\` 对 ${key} 没给理由（\`why\` 空）—— 读的人不知道它凭哪一条判的`)
+      }
+
+      // ── 刀：把"拒"那一条关掉 ⇒ 同一个输入必须写进被测树（= ① 会红）───────────
+      const knifeDir = path.join(root, 'fixtures', 'mcr01-knife')
+      mkdirSync(knifeDir, { recursive: true })
+      const knifeTool = path.join(knifeDir, 'tree-at-commit.mjs')
+      const knifeFingerprint = path.join(knifeDir, 'fingerprint.mjs')
+      copyFileSync(ex.file, knifeTool)
+      copyFileSync(path.join(path.dirname(ex.file), 'fingerprint.mjs'), knifeFingerprint)
+      const src = readFileSync(knifeTool, 'utf8')
+      const anchor = 'if (asked !== null && asked.code === true) {'
+      const hits = src.split(anchor).length - 1
+      const patched = src.split(anchor).join('if (false) {')
+      writeFileSync(knifeTool, patched, 'utf8')
+      let knifeReading = { file: knifeTool, anchor, anchor_hits: hits, exit: null, copy_created: null, code: null }
+      if (hits !== 1) {
+        push('KNIFE-ANCHOR', `退化刀的锚点 "${anchor}" 在导出器里命中 ${hits} 处（应恰好 1 处）—— 刀钝了：这一格现在是"改回去也不会红"的绿`)
+      } else {
+        const outKnife = path.join(audited, 'presets', 'agenia', '_probe_copy_mcr01_knife')
+        const knifed = spawnSync(process.execPath, [knifeTool, '--repo', audited, '--commit', fx.commitA, '--out', outKnife, '--json'], {
+          encoding: 'utf8', timeout: 180000, maxBuffer: 128 * 1024 * 1024,
+          env: { ...process.env },
+        })
+        knifeReading = {
+          file: knifeTool, anchor, anchor_hits: hits, exit: knifed.status,
+          copy_created: existsSync(outKnife), code: (() => {
+            try { return JSON.parse(String(knifed.stdout).trim().split('\n').pop())?.error?.code ?? null } catch { return null }
+          })(),
+          stderr: String(knifed.stderr ?? '').slice(-300),
+        }
+        if (knifed.status === 0 && !knifeReading.copy_created) {
+          push('KNIFE-NO-BITE', `把"拒"那一条关掉之后，同一个输入 exit 0 却没写出副本（${outKnife}）—— 这一刀没咬到"写进被测树"这件事，① 的翻面证据不成立`)
+        } else if (knifed.status !== 0) {
+          push('KNIFE-NO-BITE', `把"拒"那一条关掉之后，同一个输入仍然被拒（exit=${knifed.status} / ${knifeReading.code ?? '(无码)'}）—— 说明拦住它的**不是**这一条（① 的绿不是这一条给的）`)
+        }
+      }
+      rec.readings.knife = knifeReading
+
+      caseFail(problems)
+    })
+  })
+})

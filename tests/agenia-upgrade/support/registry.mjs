@@ -784,6 +784,24 @@ export const BATCH_AF = ['DASH-17', 'MKP-01']
 export const BATCH_AG = ['OFB-01', 'OFB-02', 'OFB-03', 'OFB-04', 'OFB-05', 'OFB-06', 'OFB-07', 'OFB-08']
 
 /**
+ * 批次 AH 的 6 条 —— **量具 / 副本一族**（`ticket-20261106-01` 的姐妹项 + 技术评审 2026-10-30/11-06 的老账；
+ * 定形 `.team/leader/2026-11-07/定形-batch8.md`；契约 `.team/test/2026-11-07/CONTRACT-batch8.md`）。
+ *
+ * 一句话：**"副本还是不是派工那一刻那份"这句话，量在哪棵树、覆盖到哪一层、读不到一块时怎么说。**
+ *   · `MCR-01`（`F-166`）`--out` 落在被测 CODE 名单里 ⇒ **写第一个字节之前**拒；
+ *   · `MCR-02`（`F-168`）`REV-04/E` 的针**读副本**（twin 动它不动）；
+ *   · `MCR-03`（`F-169`）套件入口 / 尺子 / 体检脚本都指副本（两把把根钉回活树的刀）；
+ *   · `MCR-04`（`F-170`）`equal` 只覆盖 CODE 集：**边界句住在读数旁边** + 完整性那一条腿；
+ *   · `MCR-05`（`bug-20261107-02`）两个树读者对"读不到"说同一句话（`missing_*` / `read_ok`）；
+ *   · `MCR-06`（`bug-20261107-03`）副本里多一个文件 ⇒ `--verify` 必须红（刀：关掉那一条 ⇒ exit 0）。
+ *
+ * ⚠️ 第六件事 `bug-20261106-20`（`DR-01` 的 brain 见证改路径集合）**不新开 ID**：它是既有格 `DR-01`
+ *    的判据改动（两把刀 + 残余风险读数），而"同一个不变量两个 ID"会让人以为是两件事。
+ * ⚠️ 这六条**不进** `FROZEN_IDS`（同一批政策：后加批次各自以显式清单存在）。
+ */
+export const BATCH_AH = ['MCR-01', 'MCR-02', 'MCR-03', 'MCR-04', 'MCR-05', 'MCR-06']
+
+/**
  * 已落笔的二十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -807,7 +825,7 @@ export const BATCH_AG = ['OFB-01', 'OFB-02', 'OFB-03', 'OFB-04', 'OFB-05', 'OFB-
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -841,6 +859,7 @@ const BATCH_OF = (id) =>
                                                             : BATCH_AE.includes(id) ? 'AE'
                                                               : BATCH_AF.includes(id) ? 'AF'
                                                                 : BATCH_AG.includes(id) ? 'AG'
+                                                                  : BATCH_AH.includes(id) ? 'AH'
                                                                   : null
 
 const F = {
@@ -925,6 +944,18 @@ const F = {
    *  不在就用 `AGENIA_TREE_AT_COMMIT` 指过来 —— 它今天**还不存在**，所以这两格今天是红的）。 */
   rev04: 'integration/rev04-review-copy-valid.test.mjs',
   rev05: 'integration/rev05-copy-touched-void.test.mjs',
+  /** 批次 AH · 量具 / 副本一族（2026-11-07）—— **按判据面分文件**，不按"六件事"分：
+   *   `mcr01` 导出器的落点闸（`F-166`）· `mcr02` 针/入口/尺子读副本（`F-168`/`F-169`）·
+   *   `mcr04` `equal` 的覆盖边界与"多一个文件"（`F-170`/`bug-20261107-03`）·
+   *   `mcr05` 两个树读者（`bug-20261107-02`）。同一份夹具（导出副本 / 两棵树）在同一个文件里复用；
+   *   跨文件复用会让"这一格靠的是谁的夹具"说不清。 */
+  mcr01: 'integration/mcr01-copy-inside-audited.test.mjs',
+  mcr02: 'integration/mcr02-copy-needles.test.mjs',
+  mcr04: 'integration/mcr04-equal-scope.test.mjs',
+  /** `MCR-06` 与 `MCR-04` 同住一个文件：两者判的是同一个"多出来的文件"现场的**两个面**
+   *  （边界句 / 产品那条路必须红），拆开会让同一份夹具各建一次、读数互相找不到。 */
+  mcr06: 'integration/mcr04-equal-scope.test.mjs',
+  mcr05: 'integration/mcr05-tree-readers.test.mjs',
   /** 任务 B · bug 系统（批次 V）—— **一格一个文件**：四格的红因互不重叠（登记簿 / 分流 / 任务与准入 /
    *  严重线），合在一个文件里会让"哪一条坏了"只能靠码名去认。 */
   bug01: 'integration/bug01-bug-entry.test.mjs',
@@ -1271,6 +1302,19 @@ const ROWS = [
   ['OFB-06', 'office-tree', F.ofb, '**刀架**（定形 §五.1 + 本批纪律）：① **阳性对照** —— 照契约写的最小实现五格必须**全绿**（不可满足的判据先修尺子：`OFFB-CONTROL-NOT-GREEN` / `OFFB-CONTROL-UNAVAILABLE`）；② **六把刀**（`K1` 退化回"只跟会话头 cwd 的 `.team` 比" ⇒ ②③ 必翻 · `K2` raw target 含 `.team` 就算的串匹配 ⇒ ⑤ · `K3` 去掉 C 盘闸 ⇒ ④-C · `K4` 相对目标按 `process.cwd()` 解析 ⇒ ①⑤ · `K5` `expected_office` 恒 null ⇒ ③ · `K6` 去掉空目标/cwd 闸 ⇒ ④-空/④-cwd），每把**只许翻它那几面**（多翻 = 刀切宽了，少翻 = 那一面没人守；`OFFB-KNIFE-VECTOR`）；③ 刀锚在 `officeLandingVerdict` 的函数体上 —— 实现前真源码没有它 ⇒ `OFFB-KNIFE-ANCHOR` **红**（预期的首跑红）；实现后同一段自动改跑真 staged 源码；切过的副本 import 不了 ⇒ `OFFB-KNIFE-IMPORT`（不是"咬到了"）', '批次 AG'],
   ['OFB-07', 'office-tree', F.ofb, '**门禁层必须出声**（定形 §二.6 的"必须 speak"）：真跑 `inject.js` 的 `apply()`（假 ctx + 合成内容根，载具 `support/injector-harness.mjs`），`tools.guard` 对"cwd=A、落点 B 树 `.team`"的 `write` 必须**放行**，且 `console.error` 里有一行同时含 `OFFICE_TREE_DIFFERS` 与**两个 office 路径**（`B/.team` 与 `A/.team`）。只有读数没有日志 ⇒ `OFFB-SILENT`；门禁没挂上 ⇒ `OFFB-GATE-NOT-MOUNTED`（分开报）', '批次 AG'],
   ['OFB-08', 'office-tree', F.ofb, '**窄会话的写边界仍是最严的那道**（契约 §六；gate-4 返修 MF-2）：`narrowVerdict` 写**另一棵树**的 `.team/` ⇒ **拒**（`E_GUARD_NARROW_WRITE`，`OFFB-NARROW-CROSS-TREE`）；写**自己树**的 `.team/` ⇒ 放行；写两棵树的项目处 ⇒ 拒；**同一笔**跨树写从非窄的 `review` 走 ⇒ 放行 + `OFFICE_TREE_DIFFERS`（`OFFB-NARROW-CONTRAST`）—— 证明"门变窄"只在窄会话那一侧。刀 `K7`：`if (strict === true)` → `if (false)`（strict 当 falsy）⇒ **只**翻跨树那一腿（`OFFB-NARROW-KNIFE-VECTOR`）；只在基线成立时才有可比对象。另带 **N1** 的 oracle 两向校准（目标就是 `.team` / 树根 ⇒ `expected_office:null`；`B/src/x.js` ⇒ `B/.team`；`OFFB-OFFICE-ORACLE`）。现状（`06cb606` 起）：窄门禁走 `officeLandingVerdict(target, agent, true)` ⇒ 四条窄腿全绿，这一格**绿**；刀 K7 在真源码上跑，**只**翻跨树那一腿', '批次 AG'],
+
+  // ── 批次 AH · 量具 / 副本一族（定形 `.team/leader/2026-11-07/定形-batch8.md`）──────────────────
+  // 六格：`F-166` 副本不许落进被测 CODE 集 · `F-168` 针读副本 · `F-169` 入口/尺子/体检指副本 ·
+  // `F-170` equal 的覆盖边界 · `bug-20261107-02` 两个树读者对失败说同一句话 ·
+  // `bug-20261107-03` 多出来的文件必须红。判据口径逐条写在四份用例文件头。
+  // ⚠️ `bug-20261106-20`（`DR-01` 的 brain 见证改路径集合）**不在这里**：它是既有格 `DR-01` 的判据改动，
+  //    留在 `data-root.test.mjs`（组 `data-root`），不新开 ID —— 同一个不变量两个 ID 会让人以为是两件事。
+  ['MCR-01', 'measuring-copy', F.mcr01, '`F-166` **`--out` 落在被测 CODE 名单里 ⇒ 在写第一个字节之前拒**（与 `--live-baseline` 的 `E_BASELINE_IN_CODE` 对称；技术评审 2026-10-30 `F2`）：夹具仓库上 `--out <repo>/presets/agenia/_probe_copy`（**新路径**）⇒ 非零退出 + 码 **`E_OUT_INSIDE_AUDITED`**（**不是** `REFUSE-OVERWRITE`：一个说"落点已有内容"，一个说"落点本身在被测 CODE 名单里"），报文点名**落点**与**被测根**；**拒在任何写之前** = 被测根前后 `treeHash` 逐字节相同 **且** `treePaths` 路径集合相同 **且** 那个 `--out` 目录没被创建（只判退出码的话"先写一半再拒"照样绿）；负对照两条：`--out` 指到被测根**之外** ⇒ 成功且 `code.sha256` = 从 git 对象独立算的 CODE 指纹、指进被测根的 **`.team/`**（排除表挡着）⇒ 也成功；判定归尺子：`fingerprint.mjs --is-code <abs> --root <root> --json` 三个落点各问一次（CODE 内 true · `.team/` false · 根外 false，`why` 非空）⇒ 排除表只有工具那一份。刀：拷导出器，只把 `if (asked !== null && asked.code === true) {` 改成 `if (false) {`（锚点须恰好 1 处）⇒ **同一输入** `exit 0` 并把副本写进被测树（`KNIFE-ANCHOR` / `KNIFE-NO-BITE` 各报各的）', '批次 AH'],
+  ['MCR-02', 'measuring-copy', F.mcr02, '`F-168` **`REV-04/E` 的针读副本，活树怎么动都不进这一格**（技术评审 2026-10-30 `F4`）：① **静态**：`rev04-review-copy-valid.test.mjs` 里 `dispatchShapes({...})` 恰好 1 个调用点，且参数**不是** `PATHS.repo`（搜串 `repo:\\s*PATHS\\.repo` 命中 0 处 —— 从前那一行读的是"执行这一跑的那棵树"）；② **行为**：`dispatchShapes({repo: 副本})` 的三份载体（作业书 `technical-review.md` / `leader.md` / `CONTRACT.md`）`under_root:true`、`readings.root` = 副本根、`is_copy:true`；③ **活树不动读数**：把与副本逐字节相同的 **twin**（活树替身）里 `leader.md` 第三步标题与 `CONTRACT.md` 的 `F-160` 那几句弄坏 ⇒ 副本那一次的读数**一字不变**（`LIVE-MOVED-THE-READING`），而 twin 自己的读数**必须红** `CARD-STEP-MISSING` + `CONTRACT-F160-SENTENCE-MISSING`（`TWIN-NOT-RED`：针指到坏树不红 = "副本不动"是空话）。副本 = 这一跑在副本里跑就取它自己（没有 `.git`）/ 在活树里跑就把 HEAD 导成纯树；造不出副本 ⇒ **HOLD**（不拿活树顶替）', '批次 AH'],
+  ['MCR-03', 'measuring-copy', F.mcr02, '`F-169` **套件入口 / 尺子 / 体检脚本都指副本**（技术评审 2026-10-30 `F5`）：在一个导出副本里判三处 —— ① **尺子/体检**：从副本 `import tests/agenia-upgrade/support/env.mjs` 读 `PATHS.{repo,testRoot,checkNotes}` + `ROOT_SOURCE`，三处都必须在副本里、`checkNotes` 文件在；活树模式下还不许落在活树里（`RULER-NOT-COPY` / `RULER-READ-LIVE`）；② **入口**：真跑副本的 `run-all.mjs`（`--glob` 打一个不存在的文件、运行根建在副本 `.team/` 下）⇒ `judgement.txt` 的 `[尺子] 覆盖：` 与 `[尺子·入口]` 两行都点名副本的 `tests/agenia-upgrade`（`ENTRY-RULER-NOT-COPY` / `ENTRY-IDENTITY-NOT-COPY`）；③ **体检脚本真的在副本根上看的**：副本根放一个哨兵 `mcr03-root-sentinel.txt` ⇒ `check-notes.mjs` 的"仓库根只许白名单"那一行必须点名它（`HEALTH-NOT-ON-COPY`）。两把刀：把副本 `root-guard.mjs` 的派生根钉回活树 ⇒ `PATHS.testRoot` 必须回到活树（`KNIFE-NO-BITE`）；把副本 `check-notes.mjs` 的 `REPO` 钉回活树 ⇒ 它必须**看不见**那个哨兵。⚠️ 不判 `run-all` 的判词/退出码（`--glob` 故意打空），也不判体检脚本的结论', '批次 AH'],
+  ['MCR-04', 'measuring-copy', F.mcr04, '`F-170` **`equal` 只覆盖 CODE 集：这句边界住在读数旁边**（技术评审 2026-10-30 `F7`；定形 §一 #4 **不扩**到全树）：夹具副本里放一个 `__pycache__/probe.pyc`（在排除表里）—— ① **前提**：`--verify` 的 `equal` **仍然是 true**（有人把它扩到全树 ⇒ `EQUAL-PREMISE-CHANGED`：那是与组长决定相反的方向，要重新定形，不许静默改）；② **边界句**：`rec.readings.verify` 这**同一个对象**里的 `equal_scope` 必须 `covers` 点 CODE、`note` 说"不覆盖多出来的文件"、`does_not_cover` 点名"多出来的文件"（**不放在注释里、不放另一份文档**）；③ **同格另一条腿**：`copyIntegrityVerdict()` ⇒ `ok:false` + `E_COPY_HAS_EXTRA` + 点名那份 `.pyc`；抽掉"多出来的文件"这条腿（`checkExtra:false`）⇒ 同一份副本必须变绿（退化刀 `KNIFE-NO-BITE`）；④ **不是空样本**：删掉 `.pyc` ⇒ `equal:true` + 完整性 `ok:true`', '批次 AH'],
+  ['MCR-05', 'measuring-copy', F.mcr05, '`bug-20261107-02` **两个树读者对"读不到"说同一句话**（技术评审 2026-11-06 `F4`）：`support/target.mjs::walkTree` 从前 `catch { return } / catch { continue }` **静默丢**、`support/evidence.mjs::stagedVsLiveDrift` 从前**直接抛** —— 同一条深度规则、对失败两种形态 ⇒ `missing_*` 报不出枚举阶段已经丢掉的东西。判据（真现场 = 一个**悬空 junction**：`stat` ⇒ ENOENT）：① 两个读者都不许抛，且都点名 `a/ghost`（同一个 `rel`、同一个 `code` —— 两边从 `support/tree-read.mjs` 取同一个形状）；② 判决真的出去：`targetVerdict` 红因有 `TARGET-READ-FAILED` 且报文点名那条路径、`F57-TARGET` 那一行说"读不到"；`stagedVsLiveDrift.same` 必为 `false`；③ **"读不到" ≠ "那里没有"**：真少一份的树进 `only_staged` 且 `read_ok:true`，悬空链接进 `read_failures` 且**不许**冒充 `only_staged`；④ 干净一对树 ⇒ 两边 `read_ok:true` / `same:true` / `targetVerdict.ok:true`（不是空样本）。两把退化刀 = 两个旧形态：`onReadError:\'drop\'` ⇒ 静默、`onReadError:\'throw\'` ⇒ 抛 ENOENT（各不咬 ⇒ `KNIFE-NO-BITE`）', '批次 AH'],
+  ['MCR-06', 'measuring-copy', F.mcr06, '`bug-20261107-03` **副本里多一个文件 ⇒ 必须红**（技术评审 2026-11-06 `F5`；定形 §一 #7）：往导出副本里放 `__pycache__/probe.pyc` —— ① **产品那条路**：`--verify` 非零 + `ok:false` + `is_that_commit.ok:false` + `problems` 点名 `__pycache__/probe.pyc`（`VERIFY-EXTRA-ACCEPTED` / `VERIFY-EXTRA-IGNORED` / `VERIFY-EXTRA-UNNAMED` 分开报）；② **阳性对照**：删掉 `.pyc` ⇒ `exit 0` / `equal:true` / `is_that_commit.ok:true`（`VERIFY-RESTORE`：不是"永远红"）；③ **刀**：拷导出器、只把 `problems.push(`副本多一份（副本里有、提交里没有）：${rel}`)` 那一行关掉（锚点须恰好 1 处）⇒ **同一输入**必须 `exit 0` + `ok:true`（= ① 会红）。⚠️ 与 `MCR-04` 分工：`equal` 自己**不扩**（那一格写边界），多出来的文件由这一格的 `is_that_commit` / `E_COPY_HAS_EXTRA` 判 —— `equal:true` 与"副本多一份"**可以同时成立**，两句话各说各的', '批次 AH'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1404,6 +1448,12 @@ export const GROUP_COUNTS = {
    *  与**窄会话的写范围**（`narrowVerdict` 的 `write_scope` 那一格）；`guard` 那一族判的是门禁的装配与次序；
    *  红的时候一眼看得出是"判定算错了"还是"门禁没挂上"。 */
   'office-tree': 8,
+  /** 批次 AH · **量具 / 副本一族**（`MCR-01`…`MCR-06`，`F-166`/`F-168`/`F-169`/`F-170` +
+   *  `bug-20261107-02`/`-03`）。单开一组而不是并进 `review` / `verify-recompute`：
+   *  它判的是**量具自己读哪棵树、覆盖到哪一层、读不到时怎么说**（副本落点 / 针的根 / 入口与尺子 /
+   *  `equal` 的边界 / 两个树读者 / 多出来的文件），不是评审对象的效力。
+   *  红的时候一眼看得出是"量具指错树"还是"被测对象没实现"。 */
+  'measuring-copy': 6,
 }
 
 /**
@@ -1423,9 +1473,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1452,6 +1502,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }

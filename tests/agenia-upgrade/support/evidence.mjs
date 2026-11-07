@@ -16,6 +16,7 @@ import { ENV, FROZEN, PATHS, optionalEnv } from './env.mjs'
 import { calibrate } from './composition.mjs'
 import { CASES_BY_ID, TOTAL, countByStatus, REGISTRY, registryProblems, DISCOVERY } from './registry.mjs'
 import { platformReading, platformLine } from './platform.mjs'
+import { describeReadFailures, foldReadFailures, readFailureOf } from './tree-read.mjs'
 
 /**
  * 证据根的白名单父目录（`….team\test`）—— 跟着 `PATHS.repo` 派生（2026-11-02 起）。
@@ -249,9 +250,14 @@ export function realRootsSnapshot({ brainRoot = PATHS.realBrainRoot, livePresetR
 /**
  * 真实库的**内容级**读数 —— 只读，一个字节都不写。
  *
+ * ⚠️ **它已经不是任何一条安全见证的判据了**（2026-11-07 batch 8）：`DR-01` 与 `DR-02` 的 `brain`
+ * 见证都换成了**路径集合**（`treePaths` / `realRootsSnapshot().brain`）。这一份留着只当**读数**：
+ * 想回答"这一刻库里有几条审计 / v0 的哈希是多少"时用它，**不许**拿它当"这一跑写了没有"的证据
+ * （内容有多个**合法**来源：别的 workspace、`bg-notify`、日常作业 —— 见 `treePaths` 的覆盖边界）。
+ *
  * 为什么树哈希之外还要拆这三样：真实库**已经开出来了**（2026-10-15，`--op init-real` 亲手跑过，exit 0）。
- * 从那一刻起，「真实根不存在」不再是可用判据；还能护着它的判据只剩「**内容没变**」。
- * 而"内容没变"要让人一眼看出**变的是哪一样**，所以点名三样：
+ * 从那一刻起，「真实根不存在」不再是可用判据；还能护着它的判据只剩「**路径集合没变**」。
+ * 而"内容"这一层要让人一眼看出**变的是哪一样**，所以点名三样：
  *   ① `audit.jsonl` 的**行数** —— 任何一次 audit 写入都会让它 +1（哪怕只落一条审计）；
  *   ② `v0.json` 的**哈希** —— 开库产物，任何重开 / 重建 / 误初始化都会让它变；
  *   ③ **整棵树**的哈希（兜底：其它任何文件被写 / 被删 / 被加）。
@@ -514,37 +520,67 @@ export async function runCase(id, fn) {
  *            only_staged:string[], only_live:string[], different:string[], same:boolean,
  *            skip:string[], floor:{min_files:number,staged_ok:boolean,live_ok:boolean}|null, note:string}}
  */
-export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPreset, minFiles = null } = {}) {
+export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPreset, minFiles = null, onReadError = 'record' } = {}) {
   const dataSegments = FROZEN.targetLag.dataSegments
   const SKIP = new Set(dataSegments)
   const live = canonical(liveRoot)
   const stagedRaw = optionalEnv(ENV.STAGING_PRESET, env)
   const staged = stagedRaw ? canonical(stagedRaw) : null
+  /**
+   * 枚举一棵树（`bug-20261107-02`）：读不动的一块**记下来**，不再抛、也不再静默变短。
+   * `onReadError` 的三个值见 `support/tree-read.mjs` 的模块头：`record`（默认）/ `drop` / `throw`。
+   * 后两个只给刀用（它们各自是旧的两个形态：一个静默丢掉、一个抛出去）。
+   */
   const walkOf = (root) => {
     const out = new Map()
-    if (root === null || !existsSync(root)) return out
+    const failures = []
+    const fail = (rel, err, kind) => {
+      if (onReadError === 'throw') throw err
+      if (onReadError === 'drop') return
+      failures.push(readFailureOf(rel, err, kind))
+    }
+    if (root === null || !existsSync(root)) return { files: out, failures }
     const go = (dir, depth) => {
-      for (const name of readdirSync(dir).sort()) {
+      let names = []
+      try {
+        names = readdirSync(dir).sort()
+      } catch (err) {
+        // 目录列不出来 ⇒ 这一整棵子树没看见（不是"里面没有文件"）
+        fail(path.relative(root, dir).replace(/\\/g, '/') || '.', err, 'dir')
+        return
+      }
+      for (const name of names) {
         if (depth === 0 && SKIP.has(name)) continue
         const full = path.join(dir, name)
-        const st = statSync(full)
+        const rel = path.relative(root, full).replace(/\\/g, '/')
+        let st = null
+        try {
+          st = statSync(full)
+        } catch (err) {
+          fail(rel, err, 'stat')
+          continue
+        }
         if (st.isDirectory()) go(full, depth + 1)
         else if (st.isFile()) {
-          out.set(path.relative(root, full).replace(/\\/g, '/'), {
-            bytes: st.size,
-            sha256: createHash('sha256').update(readFileSync(full)).digest('hex'),
-          })
+          let buf = null
+          try {
+            buf = readFileSync(full)
+          } catch (err) {
+            fail(rel, err, 'file')
+            continue
+          }
+          out.set(rel, { bytes: buf.length, sha256: createHash('sha256').update(buf).digest('hex') })
         }
       }
     }
     go(root, 0)
-    return out
+    return { files: out, failures }
   }
   const a = walkOf(staged)
   const b = walkOf(live)
-  const onlyStaged = [...a.keys()].filter((k) => !b.has(k)).sort()
-  const onlyLive = [...b.keys()].filter((k) => !a.has(k)).sort()
-  const different = [...a.keys()].filter((k) => b.has(k) && (a.get(k).sha256 !== b.get(k).sha256 || a.get(k).bytes !== b.get(k).bytes)).sort()
+  const onlyStaged = [...a.files.keys()].filter((k) => !b.files.has(k)).sort()
+  const onlyLive = [...b.files.keys()].filter((k) => !a.files.has(k)).sort()
+  const different = [...a.files.keys()].filter((k) => b.files.has(k) && (a.files.get(k).sha256 !== b.files.get(k).sha256 || a.files.get(k).bytes !== b.files.get(k).bytes)).sort()
   /**
    * 🔴 `same` 必须**先有样本**再谈"相同"（`F-141`）：三张差集为空只说明"没发现差异"，
    * 不说明"比过东西" —— 两棵树都读得到、各 0 份文件时差集全空，只看差集就会判"相同"
@@ -552,7 +588,7 @@ export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPre
    * 所以：任一侧 0 份 ⇒ `same: false`；两侧都非空且差集全空 ⇒ `same: true`；
    * `staged === null`（`AGENIA_STAGING_PRESET` 没设）也是 false —— 判不了不是相同。
    */
-  const haveSamples = a.size > 0 && b.size > 0
+  const haveSamples = a.files.size > 0 && b.files.size > 0
   /**
    * 🔴 `F-140`：`haveSamples` 只挡住"0 份"，挡不住"一起变短" —— 48 份缩成 3 份、内容还对得上时，
    * 三张差集同样全空 ⇒ 只看差集/样本就会判 `same: true`，等于替一棵**缩水过的树**背书。
@@ -560,24 +596,39 @@ export function stagedVsLiveDrift(env = process.env, { liveRoot = PATHS.finalPre
    * 读数里明写 `floor: null`（"没判"不许长得像"判过"）。
    */
   const floor = Number.isFinite(minFiles)
-    ? { min_files: minFiles, staged_ok: a.size >= minFiles, live_ok: b.size >= minFiles }
+    ? { min_files: minFiles, staged_ok: a.files.size >= minFiles, live_ok: b.files.size >= minFiles }
     : null
   const floorOk = floor === null || (floor.staged_ok && floor.live_ok)
+  /**
+   * 🔴 **读不到的一块**（`bug-20261107-02`）：两侧各自折成 `tree-read.mjs` 那一个形状；
+   * `same` 必须在 `read_ok` 之后才算成立 —— "有一块我没看见"不是"没发现差异"。
+   * 读数里同时留 `missing_dirs` / `missing_files` / `missing_paths`（**点名**到路径与错误码）。
+   */
+  const readFailures = { staged: foldReadFailures(a.failures), live: foldReadFailures(b.failures) }
+  const readOk = readFailures.staged.read_ok && readFailures.live.read_ok
   return {
     staged,
     live,
-    staged_files: a.size,
-    live_files: b.size,
+    staged_files: a.files.size,
+    live_files: b.files.size,
     only_staged: onlyStaged,
     only_live: onlyLive,
     different,
-    same: staged !== null && haveSamples && floorOk && onlyStaged.length === 0 && onlyLive.length === 0 && different.length === 0,
+    same: staged !== null && readOk && haveSamples && floorOk && onlyStaged.length === 0 && onlyLive.length === 0 && different.length === 0,
+    /** 读不到的路径（两侧各一份，形状与 `measureTarget().read_failures` **同一份**）。 */
+    read_failures: readFailures,
+    read_ok: readOk,
+    missing_dirs: [...readFailures.staged.missing_dirs, ...readFailures.live.missing_dirs],
+    missing_files: [...readFailures.staged.missing_files, ...readFailures.live.missing_files],
+    missing_paths: [...readFailures.staged.missing_paths, ...readFailures.live.missing_paths],
+    read_failures_line: `靶子：${describeReadFailures(readFailures.staged.list)} · 现役：${describeReadFailures(readFailures.live.list)}`,
     /** 排除集 —— `FROZEN.targetLag.dataSegments`（**读数**：这一跑用的是哪一份；`STAT-01` 判的是**行为**，不是这个字段）。 */
     skip: dataSegments,
     floor,
     note: '比的是**两棵树**（跳过**顶层** `.runtime/` = 数据，不是代码；`lib/.runtime/…` 照样比）；差一个字节就算漂移；'
       + '**两侧都得有样本**（任一侧 0 份文件 ⇒ `same: false` —— 零样本不是"相同"）；'
-      + '**给了份数下限时两侧都得够**（`F-140`：一起缩水不是"相同"；`floor: null` = 这一关没判）',
+      + '**给了份数下限时两侧都得够**（`F-140`：一起缩水不是"相同"；`floor: null` = 这一关没判）；'
+      + '**读不到的路径**记进 `read_failures`（`same` 必为 false）—— 读不到 ≠ 没有',
   }
 }
 
@@ -624,7 +675,19 @@ export function preflight({ calibrateLive = false } = {}) {
   // 记在这儿的好处：每一跑（含定向跑）的 `_preflight` 里都留下"那一刻两棵树是什么"，可复现。
   out.staged_vs_live = (() => {
     const d = stagedVsLiveDrift()
-    return { same: d.same, staged_files: d.staged_files, live_files: d.live_files, only_staged: d.only_staged, only_live: d.only_live, different: d.different }
+    return {
+      same: d.same,
+      staged_files: d.staged_files,
+      live_files: d.live_files,
+      only_staged: d.only_staged,
+      only_live: d.only_live,
+      different: d.different,
+      /** `bug-20261107-02`：预检这一份也不许把"读不到"藏掉（`read_ok:false` 时 `same` 必为 false）。 */
+      read_ok: d.read_ok,
+      missing_dirs: d.missing_dirs.map((f) => f.rel),
+      missing_files: d.missing_files.map((f) => f.rel),
+      missing_paths: d.missing_paths.map((f) => f.rel),
+    }
   })()
   out.oracle_sha256 = oracleReadings().actual_sha256
   if (registry.length > 0) {

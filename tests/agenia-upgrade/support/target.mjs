@@ -30,6 +30,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FROZEN, PATHS } from './env.mjs'
+import { describeReadFailures, foldReadFailures, readFailureOf } from './tree-read.mjs'
 
 /**
  * 判据自己的问题码（每个码一句话，测试与入口共用同一份）。
@@ -41,6 +42,11 @@ import { FROZEN, PATHS } from './env.mjs'
 export const TARGET_CODES = [
   'TARGET-ZERO-SAMPLE',
   'TARGET-COUNT-FLOOR',
+  /**
+   * `bug-20261107-02`：枚举阶段**读不动**一块（目录 / 条目 / 文件）⇒ 这一跑不许当绿。
+   * 它与 `TARGET-ZERO-SAMPLE` 是两件事：零样本是"两棵树都枚举不出文件"，它是"有一块我没看见"。
+   */
+  'TARGET-READ-FAILED',
   'TARGET-SURFACE-MISSING',
   'TARGET-LAG-UNDECLARED',
   'TARGET-LAG-STALE-DECLARATION',
@@ -116,12 +122,19 @@ export const DECLARATION_TEXT_FIELDS = ['reason', 'approved_by', 'approved_on', 
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
 
-/** 量一份文件（存在性 / 字节数 / sha256 / 正文）。 */
+/** 量一份文件（存在性 / 字节数 / sha256 / 正文）。读不动 ⇒ `read_error`（**不是** `exists:false`）。 */
 export function measureOne(root, file) {
   const abs = path.join(root, file)
-  if (!existsSync(abs)) return { file, abs, exists: false, bytes: null, sha256: null, text: '' }
-  const buf = readFileSync(abs)
-  return { file, abs, exists: true, bytes: buf.length, sha256: sha256(buf), text: buf.toString('utf8') }
+  if (!existsSync(abs)) return { file, abs, exists: false, bytes: null, sha256: null, text: '', read_error: null }
+  let buf = null
+  try {
+    buf = readFileSync(abs)
+  } catch (err) {
+    // "在盘上"但读不出来：与"不在盘上"是两件事（`bug-20261107-02` 的同一句）
+    const f = readFailureOf(file, err, 'file')
+    return { file, abs, exists: true, bytes: null, sha256: null, text: '', read_error: { code: f.code, message: f.message } }
+  }
+  return { file, abs, exists: true, bytes: buf.length, sha256: sha256(buf), text: buf.toString('utf8'), read_error: null }
 }
 
 /**
@@ -147,9 +160,19 @@ export function measureTarget({
   stagedRoot = PATHS.stagedPreset,
   baselineRoot = PATHS.finalPreset,
   dataSegments = FROZEN.targetLag.dataSegments,
+  /**
+   * 读不动一块时怎么办（`bug-20261107-02` 的刀口）：
+   *   · `record`（默认）⇒ 记进 `read_failures`，由 `targetVerdict` 报 `TARGET-READ-FAILED`；
+   *   · `drop`   ⇒ **旧的静默形态**（样本变短、读数照绿）—— 只给刀用；
+   *   · `throw`  ⇒ 另一个读者的旧形态（`stagedVsLiveDrift` 从前就是抛）—— 只给刀用。
+   * 后两种**不是**可以带到生产里去的选项：它们是"回退会是什么样"的对照。
+   */
+  onReadError = 'record',
 } = {}) {
-  const stagedMap = walkTree(stagedRoot, dataSegments)
-  const baselineMap = walkTree(baselineRoot, dataSegments)
+  const staged = walkTree(stagedRoot, dataSegments, { onReadError })
+  const baseline = walkTree(baselineRoot, dataSegments, { onReadError })
+  const stagedMap = staged.files
+  const baselineMap = baseline.files
   const rels = [...new Set([...stagedMap.keys(), ...baselineMap.keys()])]
     .sort((a, b) => Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8')))
   return {
@@ -159,38 +182,58 @@ export function measureTarget({
     staged_files: stagedMap.size,
     baseline_files: baselineMap.size,
     files: rels.map((file) => ({ file, staged: measureOne(stagedRoot, file), baseline: measureOne(baselineRoot, file) })),
+    /**
+     * **读不到的路径**（`bug-20261107-02`）—— 两棵树各一份，形状与 `stagedVsLiveDrift` 同一份
+     * （都从 `tree-read.mjs` 折出来）⇒ 同一个输入在两个读者嘴里是同一个路径、同一个码。
+     */
+    read_failures: { staged: foldReadFailures(staged.failures), baseline: foldReadFailures(baseline.failures) },
+    read_ok: staged.failures.length === 0 && baseline.failures.length === 0,
   }
 }
 
 /**
  * 枚举一棵树的普通文件（相对路径 `/` 分隔 ⇒ 绝对路径），**只在顶层**跳过数据目录。
- * 只读；读不动 / 不存在的根 ⇒ 空表（"量不到"由 `actuals` 的 `missing_*` 说出来）。
+ * 只读；读不动的一块**记下来**（`failures`），不再静默变短 —— 见 `tree-read.mjs` 的覆盖边界。
+ *
+ * @returns {{files: Map<string,string>, failures: Array<{rel:string,kind:string,code:string,message:string}>}}
  */
-function walkTree(root, dataSegments) {
+function walkTree(root, dataSegments, { onReadError = 'record' } = {}) {
   const out = new Map()
-  if (root === undefined || root === null || !existsSync(root)) return out
+  const failures = []
+  const fail = (rel, err, kind) => {
+    if (onReadError === 'throw') throw err
+    if (onReadError === 'drop') return
+    failures.push(readFailureOf(rel, err, kind))
+  }
+  if (root === undefined || root === null || !existsSync(root)) return { files: out, failures }
   const go = (dir, depth) => {
     let names = []
     try {
       names = readdirSync(dir).sort()
-    } catch {
+    } catch (err) {
+      // 目录列不出来 ⇒ 这一整棵子树没看见（不是"里面没有文件"）
+      fail(path.relative(root, dir).replace(/\\/g, '/') || '.', err, 'dir')
       return
     }
     for (const name of names) {
       if (depth === 0 && dataSegments.includes(name)) continue
       const full = path.join(dir, name)
+      /** 这一条相对于**树根**的路径（`tree-read.mjs` 的键口径：两棵树比的也是它）。 */
+      const rel = path.relative(root, full).replace(/\\/g, '/')
       let st = null
       try {
         st = statSync(full)
-      } catch {
+      } catch (err) {
+        // 条目 stat 不了（悬空链接 / 权限 / 路径过长……）⇒ 它"在不在"都判不了
+        fail(rel, err, 'stat')
         continue
       }
       if (st.isDirectory()) go(full, depth + 1)
-      else if (st.isFile()) out.set(path.relative(root, full).replace(/\\/g, '/'), full)
+      else if (st.isFile()) out.set(rel, full)
     }
   }
   go(root, 0)
-  return out
+  return { files: out, failures }
 }
 
 /** 读声明；缺文件 / 坏 JSON 都如实回报，不抛。 */
@@ -228,6 +271,9 @@ export function actualOf(entry, markers = FROZEN.targetLag.markers) {
     staged: staged.exists ? { bytes: staged.bytes, sha256: staged.sha256 } : null,
     baseline: baseline.exists ? { bytes: baseline.bytes, sha256: baseline.sha256 } : null,
     missing_markers: missing,
+    /** 读不动的那一侧（`file` 读错误）—— 与"不在盘上"分开记，红报文照实点名。 */
+    read_error: staged.read_error ? { side: 'staged', ...staged.read_error }
+      : baseline.read_error ? { side: 'baseline', ...baseline.read_error } : null,
   }
   if (!staged.exists || !baseline.exists) {
     return {
@@ -235,6 +281,10 @@ export function actualOf(entry, markers = FROZEN.targetLag.markers) {
       state: staged.exists ? 'missing_in_baseline' : 'missing_in_target',
       lag_bytes: null,
     }
+  }
+  if (staged.read_error || baseline.read_error) {
+    // "在盘上、读不出来" ⇒ 不许进 `equal`（两边都无法比字节）；由 targetVerdict 报读失败
+    return { ...head, state: 'unreadable', lag_bytes: null }
   }
   if (staged.sha256 === baseline.sha256) return { ...head, state: 'equal', lag_bytes: 0 }
   const lag = baseline.bytes - staged.bytes
@@ -245,6 +295,7 @@ export function actualOf(entry, markers = FROZEN.targetLag.markers) {
 export function describeActual(a) {
   if (a.state === 'missing_in_target') return `${a.file} 靶子里没有这份文件（现役 ${fmt(a.baseline?.bytes)} B）`
   if (a.state === 'missing_in_baseline') return `${a.file} 现役里没有这份文件（靶子 ${fmt(a.staged?.bytes)} B）`
+  if (a.state === 'unreadable') return `${a.file} 在盘上但读不出来（${a.read_error?.side ?? '?'} 那一侧 · ${a.read_error?.code ?? 'E_READ'}）`
   if (a.state === 'equal') return `${a.file} 逐字节相同（${fmt(a.staged.bytes)} B · sha256 ${a.staged.sha256.slice(0, 12)}…）`
   const tail = a.missing_markers.length === 0
     ? '功能名目录里没缺任何一样'
@@ -340,7 +391,25 @@ export function targetVerdict({
     }
   }
 
-  // ── ③ 零样本：一份普通文件都没枚举到 ⇒ 判据自己没成立，先红 ──────────────
+  // ── ③ 读不到的一块：**先报出来**（`bug-20261107-02`）──────────────────────
+  // 枚举阶段读不动的路径（目录 / 条目 / 文件）在 `measured.read_failures` 里；旧读者把它们
+  // 静默丢掉 ⇒ 样本变短、差集照样全空 ⇒ "读不到"和"那里没有"同形。这一格必须在**对账之前**落红因：
+  // 对账只能说"哪一份差多少"，它说不出"有一块我没看见"。
+  const stagedFailures = measured?.read_failures?.staged
+  const baselineFailures = measured?.read_failures?.baseline
+  if (stagedFailures !== undefined || baselineFailures !== undefined) {
+    const all = [
+      ...(stagedFailures?.list ?? []).map((f) => ({ ...f, side: 'staged' })),
+      ...(baselineFailures?.list ?? []).map((f) => ({ ...f, side: 'baseline' })),
+    ]
+    if (all.length > 0) {
+      const where = (side) => describeReadFailures(all.filter((f) => f.side === side).map((f) => ({ rel: f.rel, kind: f.kind, code: f.code })))
+      push('TARGET-READ-FAILED', `有两棵树的枚举里读不动的路径（${all.length} 条）：靶子 ${where('staged')} · 现役 ${where('baseline')}`
+        + ' —— 读不到的那一块没进样本，所以"逐字节相同"这句话**不覆盖它**（读不到 ≠ 没有；也不是零样本）')
+    }
+  }
+
+  // ── ③′ 零样本：一份普通文件都没枚举到 ⇒ 判据自己没成立，先红 ──────────────
   // 下面 ④ 那个 `for` 一圈不跑的结果是 `problems` 空 ⇒ `ok=true` / `state='equal'`：
   // "没东西可判"与"都判过了"于是长得一模一样（`F-128`）。这一格必须在**对账之前**落一条红因 ——
   // 对账能说的只有"哪一份文件差多少"，它说不出"我一份都没看见"。
@@ -368,6 +437,10 @@ export function targetVerdict({
     const e = byFile.get(a.file)
     if (a.state === 'missing_in_target' || a.state === 'missing_in_baseline') {
       push('TARGET-SURFACE-MISSING', `量不到 ${a.file}：${describeActual(a)} —— 判据没法判，先把它放回盘上`)
+      continue
+    }
+    if (a.state === 'unreadable') {
+      push('TARGET-READ-FAILED', `读不出 ${a.file}：${describeActual(a)} —— 在盘上但字节读不出来，这一份不许进"逐字节相同"`)
       continue
     }
     if (a.state === 'equal') {
@@ -432,6 +505,14 @@ function describeLine(state, actuals, dpath, measured = null, problems = [], ext
   const drift = problems.find((p) => p.code === 'TARGET-CODE-TABLE-DRIFT') ?? null
   if (drift !== null) {
     return `F57-TARGET 🔴 名字表没对上账（TARGET-CODE-TABLE-DRIFT）：${drift.message}`
+  }
+  /**
+   * 🔴 **读不到**（`bug-20261107-02`）：枚举阶段有一块没看见 ⇒ 这一行**不许**说"逐字节相同"。
+   * 与"零样本"分开说：零样本是"一份都枚举不出来"，这里可能枚举了 100 份但**漏了一块**。
+   */
+  const readFailed = problems.find((p) => p.code === 'TARGET-READ-FAILED') ?? null
+  if (readFailed !== null) {
+    return `F57-TARGET 🔴 读不到一块（TARGET-READ-FAILED）：${readFailed.message}`
   }
   if (actuals.length === 0) {
     const staged = measured?.stagedRoot ?? '<未给>'

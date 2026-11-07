@@ -21,6 +21,8 @@
  *               另记一条读数：活树 vs 提交的**分歧**（今天 192 vs 135）—— 它**不等于**"活树动了"，谁按分歧报就是读数撒谎
  *   `E SHAPES`  三份载体上的针：作业书「必读输入清单」代码根那一行 + 「地基」一节 +
  *               `leader.md` 第三步（`rev-parse` / 副本 / `before_sha256`）+ `CONTRACT.md` 的 `F-160` 那一句
+ *               —— 🔴 **读的是副本**（`F-168`）：这一跑在副本里跑就是这一棵；在活树里跑就把 HEAD 导成纯树再读。
+ *               从前写的是 `PATHS.repo`（执行这一跑的那棵树）⇒ 拿副本跑套件时这一格判的是另一棵树。
  *
  * ⚠️ 这一格今天 **RED** 的只有两类：`C` 那一段（机制还没有：导出器不存在）与 `E` 那一段（三份载体还没改口径）。
  *    `A` / `B` / `D` 的读数今天是**绿的** —— 那正是"现场是真的、旧口径确实会作废好评审"的证据。
@@ -33,7 +35,7 @@ import { caseFail, caseHold, commitCopyReading, preflight, problem, runCase, run
 import {
   EXPORT_FIELDS, VERIFY_FIELDS, buildFixtureRepo, codeDigestOfCommit, codeDigestOfDir, codeListDiff,
   dispatchShapes, excludedFromCode, exportCommitReference, exporterPath, fingerprintCompare, fingerprintTool,
-  lsTreeBlobs, missingFields, runExport, runVerify, saveCodeBaseline, verifyCopyIsCommit,
+  git, lsTreeBlobs, missingFields, runExport, runVerify, saveCodeBaseline, verifyCopyIsCommit,
 } from '../support/tree-at-commit.mjs'
 
 before(() => {
@@ -339,9 +341,40 @@ describe('integration · review (REV) · F-160 评审对象是提交', () => {
       }
 
       // ══ E SHAPES：三处载体（每针各报各的）════════════════════════════════════
-      const shapes = dispatchShapes({ repo: PATHS.repo })
-      rec.readings.dispatch_shapes = shapes.readings
-      for (const p of shapes.problems) problems.push(p)
+      /**
+       * 🔴 **`F-168`：针读的是副本，不是活树**（技术评审 2026-10-30 `F4`）。
+       *
+       * 从前这里写的是 `dispatchShapes({ repo: PATHS.repo })` —— 而 `PATHS.repo` 是**执行这一跑的那棵树**
+       * （2026-11-02 之前还是硬编码的活树）。拿副本跑套件时，"作业书/派工卡/契约有没有改口径"这一格
+       * 判的是**另一棵树**：副本里那三份载体哪怕一个字没改，读数也可能绿（反过来也是）。
+       * ⇒ 这里显式导出一份**评审对象那份副本**：
+       *   · 这一跑本身就在副本里跑（没有 `.git`）⇒ 它就是副本，直接用；
+       *   · 在活树里跑 ⇒ 把 **HEAD**（派工/交付那一刻的提交）导成纯树，再从它读。
+       * 读数里带 `root` / `is_copy` / 每份文件的 `under_root` ⇒ "读的是哪棵树"写在读数里。
+       */
+      const shapesCopy = (() => {
+        if (!existsSync(path.join(PATHS.repo, '.git'))) {
+          return { root: PATHS.repo, source: 'suite-tree-is-a-copy (no .git)', problems: [] }
+        }
+        if (!ex.exists) return { root: null, source: 'exporter-missing', problems: [`导出器不在（${ex.file}）—— 造不出"派工那一刻那份副本"`] }
+        const head = git(['rev-parse', 'HEAD'], { cwd: PATHS.repo })
+        if (head.status !== 0) return { root: null, source: 'head-unresolved', problems: [`git rev-parse HEAD 失败：${String(head.stderr).trim().slice(0, 200)}`] }
+        const sha = String(head.stdout).trim()
+        const out = path.join(root, 'fixtures', 'f168-dispatch-copy')
+        const exp = runExport({ exporter: ex.file, repo: PATHS.repo, commit: sha, out })
+        if (exp.exit !== 0 || exp.json === null) {
+          return { root: null, source: `export-failed (exit=${exp.exit})`, problems: [`导出副本失败：${String(exp.stderr).trim().slice(0, 200)}`] }
+        }
+        return { root: out, source: `export HEAD ${sha.slice(0, 12)}…`, commit: sha, problems: [] }
+      })()
+      rec.readings.dispatch_copy = shapesCopy
+      if (shapesCopy.root === null) {
+        caseHold(rec, 'F168-NO-COPY', `造不出"评审对象那份副本"（${shapesCopy.source}）：${shapesCopy.problems.join('；')} —— 这一格判不了（不拿活树顶替）`)
+      } else {
+        const shapes = dispatchShapes({ repo: shapesCopy.root })
+        rec.readings.dispatch_shapes = shapes.readings
+        for (const p of shapes.problems) problems.push(p)
+      }
 
       caseFail(problems)
     })

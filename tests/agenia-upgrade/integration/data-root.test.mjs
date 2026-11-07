@@ -11,11 +11,15 @@
  *   · **正例必须存在**：只有"合法测试根写成功"这一侧过了，"拒绝"才不是"命令坏掉蒙对"（§9.5 第 1 条）。
  *   · 真实库前后**内容**随每个会碰它的子用例量（§2.4 第 5 条）：树哈希 + `audit.jsonl` 行数
  *     + `v0.json` 哈希；任何变化 = **安全违规**，不是普通红。
- *     ⚠️ **例外：`DR-02` 的 `brain` 判据是路径集合，不是内容**（2026-11-07 MF-1）。真实脑根
+ *     ⚠️ **`DR-02` 的 `brain` 判据是路径集合，不是内容**（2026-11-07 MF-1）。真实脑根
  *     = `presets/agenia/.runtime`，它有多个**合法**的写入来源（别的 workspace 在同一个预设级共享
  *     数据根上干活 · `bg-notify` · 日常作业）⇒ 内容哈希会把别人的正常干活算到这一跑头上。
- *     覆盖边界（就地覆盖不判）写在 `DR-02` 的 `rec.readings.real_roots.content_uncovered` 里；
- *     `DR-01` 这一侧的内容级读数**没有改**。
+ *     覆盖边界（就地覆盖不判）写在 `DR-02` 的 `rec.readings.real_roots.content_uncovered` 里。
+ *     🔴 **`DR-01` 在 2026-11-07（batch 8）**也换成了路径集合（`bug-20261106-20`）：内容哈希
+ *     对 `.runtime` 是同一个病（合法 churn ⇒ 归因错）。它的两把刀（新建 ⇒ 红 / 只改内容 ⇒ 不红）
+ *     在 ④c 那一段，残余风险写进 `rec.readings.real_brain.content_uncovered`。
+ *     ⚠️ 两格的**窗口不同**：`DR-02` 每个 CLI 子调用一个窗口，`DR-01` 是整段用例一个窗口
+ *     （读数里明写，别把两者的误报面读成一样）。
  *     ⚠️ `DR-02` 的见证**按 CLI 子调用开窗**（2026-11-07 MF-2）：不再拿一对快照夹整段用例（旧版 15.9 s），
  *     只夹真正碰 CLI 的子调用；输入形状另有一格钉住（`DR02-BRAIN-WITNESS-SHAPE`：`paths` 是数组、
  *     `count === paths.length`）—— `treeHash` 形状会让 `paths ?? []` 读成两个空集、④ 永远绿。
@@ -69,10 +73,9 @@ import {
   pathSetSummary,
   preflight,
   problem,
-  realRootContent,
-  realRootContentDiff,
   realRootsSnapshot,
   runCase,
+  runRoot,
   sha256File,
   stagingReadings,
   treeHash,
@@ -182,11 +185,11 @@ function badRootPostures(realRoot) {
  * 这一层必须报**它自己的码**（`DR02-BRAIN-WITNESS-SHAPE`），不许落进"路径集合没变"。
  * 光靠差集返回 `null` 不够 —— 那会被读成"缺一相位"，仍然不是"产品被改回 `treeHash`"这句话。
  */
-function brainWitnessViolation(before, after, label = 'DR-02 期间') {
+function brainWitnessViolation(before, after, label = 'DR-02 期间', { shapeCode = 'DR02-BRAIN-WITNESS-SHAPE' } = {}) {
   const shapeBefore = pathSetShapeProblem(before?.brain)
   const shapeAfter = pathSetShapeProblem(after?.brain)
   if (shapeBefore !== null || shapeAfter !== null) {
-    return problem('DR02-BRAIN-WITNESS-SHAPE', `真实脑根见证的**输入形状**不对（${label}）：before=${shapeBefore ?? 'ok'} · after=${shapeAfter ?? 'ok'}`
+    return problem(shapeCode, `真实脑根见证的**输入形状**不对（${label}）：before=${shapeBefore ?? 'ok'} · after=${shapeAfter ?? 'ok'}`
       + ' —— 形状不对时"路径集合没变"根本算不出来（`paths ?? []` 会把 treeHash 两侧读成两个空集，④ 就永远绿）')
   }
   const diff = pathSetDiff(before?.brain, after?.brain)
@@ -278,7 +281,8 @@ describe('integration · data-root (DR)', () => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
       rec.readings.staging = stagingReadings()
-      // 真实库的**内容级**读数（树哈希 + audit 行数 + v0 哈希）—— 只读，见 support/evidence.mjs。
+      // 真实库的**写保护见证**（2026-11-07 起是**路径集合**，不是内容哈希；见下面 `brainPathsOf`）——
+      // 只读，见 support/evidence.mjs。
       // 🔴 **这一个根是"写保护见证"，不是"靶子"**（2026-10-16 分清，技术评审 F2 / 票 `T-TEST-02`）：
       //    · **见证**：它是**活体**那个真库（`E:\Harness\presets\agenia\.runtime`），跑前跑后逐字比
       //      ⇒ 判"有没有人把它写坏"。它**永远**是活体那个，不跟着被测树走。
@@ -288,7 +292,28 @@ describe('integration · data-root (DR)', () => {
       //      等于**把答案告诉被测者**；那样就算绿了，也证明不了"它在自己的位置上算得对"。
       //    ⇒ 两者**不是同一个对象**，别再合并成一个常量。
       const realRoot = PATHS.realBrainRoot
-      const realBefore = realRootContent(realRoot)
+      /**
+       * 🔴 **`DR-01` 的见证也是路径集合，不是内容哈希**（`bug-20261106-20`；与 `DR-02` 同一个病）。
+       *
+       * 2026-11-07 之前这里读的是 `realRootContent()`（整树哈希 + audit 行数 + v0 哈希）——
+       * 而 `.runtime` 的内容**会合法地变**（本会话的作业/状态/报告 · 别的 workspace 在同一个
+       * 预设级共享数据根上干活 · `bg-notify` 投递）⇒「内容变了」不等于「这次测试写了」，
+       * 归因是错的。见证换成 **路径集合**（新增 / 删除）；就地覆盖不判，残余风险写在读数里
+       * （`rec.readings.real_brain.content_uncovered`）。
+       *
+       * 快照**走产品那条路**（`realRootsSnapshot({ brainRoot })`）—— 刀与真跑的构造是同一份代码，
+       * 自己 `treePaths()` 另造一份正是"产品改回 `treeHash` 整套仍绿"的藏身处（batch 7 `MF-2`）。
+       */
+      const brainPathsOf = (brainRoot = realRoot) => realRootsSnapshot({ brainRoot }).brain
+      const brainDiff = (before, after, label) => brainWitnessViolation({ brain: before }, { brain: after }, label, { shapeCode: 'DR01-BRAIN-WITNESS-SHAPE' })
+      const summarizeBrain = (b) => ({
+        path: b.path,
+        exists: b.exists,
+        count: typeof b.count === 'number' ? b.count : null,
+        /** 形状不对（例如有人把 `brain` 改回 `treeHash`）时这里是 `null`，**不许**在这里抛（那是脚手架红）。 */
+        sample: Array.isArray(b.paths) ? b.paths.slice(0, 5) : null,
+      })
+      const realBefore = brainPathsOf()
 
       // ── ① 清单本身（分母）：必须存在、必须与冻结 op 表一致 ──────────────
       const inv = await loadStagedModule('lib/cli-inventory.mjs', [])
@@ -736,7 +761,7 @@ describe('integration · data-root (DR)', () => {
       //     E_DATA_EXISTS（真库已在盘上）⇒ ① 当场红；真让它写进去 ⇒ ③ 红（而且那是**安全违规**级别的红）。
       //   · 把"逐字相等"放宽成"落在里面就算" ⇒ 「运行根之外」那一格的 E_ROOT_OUTSIDE 会变 ok ⇒ 红。
       //   · 把 `init-real` 从清单里删掉 ⇒ 分母空了 ⇒ 上面的 `CLI-INVENTORY` 红（不许空着一路绿）。
-      const initRealBefore = realRootContent(realRoot)
+      const initRealBefore = brainPathsOf()
       // 缺面时别在这里刷一串"跑不起来"：`③` 开头那条 `SUT-SURFACE-MISSING` 已经把缺面报红了，
       // 这里再报 7 条只会把"被测对象没实现"读成一堆噪声。
       const brainCliOk = stagingExists(path.join('bin', 'agenia-brain.mjs'))
@@ -794,14 +819,16 @@ describe('integration · data-root (DR)', () => {
           push('INIT-REAL-EXIT', `init-real 用「${c.label}」的 ${c.want} 应配退出码 ${wantExit}，实得 ${res.exit_code}`)
         }
       }
-      const initRealAfter = realRootContent(realRoot)
-      const initRealDiff = realRootContentDiff(initRealBefore, initRealAfter)
-      rec.readings.init_real = { before: initRealBefore, after: initRealAfter, diff: initRealDiff, cases: initRealResults }
-      if (initRealDiff.length > 0) {
-        push('SECURITY-VIOLATION', `真实库在 init-real 那一组里被改动了（${initRealDiff.join('；')}）—— 立即停测并报事故，不许自行清理现场`)
+      const initRealAfter = brainPathsOf()
+      const initRealViolation = brainDiff(initRealBefore, initRealAfter, 'init-real 那一组期间')
+      rec.readings.init_real = {
+        before: summarizeBrain(initRealBefore),
+        after: summarizeBrain(initRealAfter),
+        diff: initRealViolation === null ? [] : [{ code: initRealViolation.code, message: initRealViolation.message }],
+        cases: initRealResults,
       }
-      if (!initRealAfter.exists && initRealBefore.exists) {
-        push('SECURITY-VIOLATION', `真实库在 init-real 之后不见了（${initRealAfter.root}）—— 它在盘上是既定事实，测试不许把它拿走`)
+      if (initRealViolation !== null) {
+        push(initRealViolation.code, `真实库在 init-real 那一组里被改动了：${initRealViolation.message} —— 立即停测并报事故，不许自行清理现场`)
       }
       if (!initRealBefore.exists) {
         // 空对空永远"前后同值" ⇒ 这一组此刻**判不了**。挂起（HOLD）而不是绿，也不是红：
@@ -814,7 +841,7 @@ describe('integration · data-root (DR)', () => {
       // 🔴 死命令（文件头）：这几格里**任何一格**都不许让 `--real-mode` + 真实根 + 写 op 真跑起来。
       //    ⇒ 真实根那一侧**只用只读 op**（`entry-count`）；互斥闸是 **op 无关**的（跑在 op 分派之前），
       //      所以用只读 op 钉到的正是同一件事，却不用把真库押在"闸不会坏"上。
-      const realModeBefore = realRootContent(realRoot)
+      const realModeBefore = brainPathsOf()
       const realModeResults = {}
       const runRealMode = (label, opts, strip) => {
         if (!brainCliOk) return null // 缺面已由 ③ 那条 SUT-SURFACE-MISSING 报过（同上）
@@ -1032,23 +1059,134 @@ describe('integration · data-root (DR)', () => {
           }
         }
       }
-      const realModeAfter = realRootContent(realRoot)
-      const realModeDiff = realRootContentDiff(realModeBefore, realModeAfter)
-      rec.readings.real_mode = { before: realModeBefore, after: realModeAfter, diff: realModeDiff, cases: realModeResults }
-      if (realModeDiff.length > 0) {
-        push('SECURITY-VIOLATION', `真实库在 --real-mode 那一组里被改动了（${realModeDiff.join('；')}）—— 立即停测并报事故`)
+      const realModeAfter = brainPathsOf()
+      const realModeViolation = brainDiff(realModeBefore, realModeAfter, '--real-mode 那一组期间')
+      rec.readings.real_mode = {
+        before: summarizeBrain(realModeBefore),
+        after: summarizeBrain(realModeAfter),
+        diff: realModeViolation === null ? [] : [{ code: realModeViolation.code, message: realModeViolation.message }],
+        cases: realModeResults,
+      }
+      if (realModeViolation !== null) {
+        push(realModeViolation.code, `真实库在 --real-mode 那一组里被改动了：${realModeViolation.message} —— 立即停测并报事故`)
       }
 
-      // ── ④ 零写入 / 真实库内容不变 ──────────────────────────────────────
+      // ── ④ 零写入 / 真实脑根**路径集合**不变（`bug-20261106-20`）────────────────────
       // 🔴 判据是「**前后同值**」，**不是**"它必须不存在"。
       //    旧断言 `existsSync(REAL_BRAIN_ROOT) ⇒ SECURITY-VIOLATION` 的前提（"本轮真实根必须不存在"）
       //    2026-10-15 已作废：真实库那天起就是**真数据**（`--op init-real` 亲手开过，exit 0）。
       //    留着它 = 每天都红、而红的原因跟"有没有人写它"无关 —— 假红比不红更坏（AGENTS.md §6）。
-      const realAfter = realRootContent(realRoot)
-      const realDiff = realRootContentDiff(realBefore, realAfter)
-      rec.readings.real_brain = { before: realBefore, after: realAfter, diff: realDiff, exists: realBefore.exists }
-      if (realDiff.length > 0) {
-        push('SECURITY-VIOLATION', `真实库在 DR-01 期间被改动（${realDiff.join('；')}）—— 立即停测并报事故，不许自行清理现场`)
+      // 🔴 量的东西也换了：**路径集合**（不是内容哈希）—— 内容有多个合法来源，见 `brainPathsOf` 上面那段。
+      const realAfter = brainPathsOf()
+      const realViolation = brainDiff(realBefore, realAfter, 'DR-01 期间')
+      rec.readings.real_brain = {
+        before: summarizeBrain(realBefore),
+        after: summarizeBrain(realAfter),
+        diff: realViolation === null ? [] : [{ code: realViolation.code, message: realViolation.message }],
+        exists: realBefore.exists,
+        witness: 'treePaths（路径集合）· 内容不判',
+        /**
+         * 🔴 残余风险 —— 读的人不必去翻决定书（`决定-DR02的brain见证.md` §二/§三）：
+         * "就地覆盖"不在这一格的覆盖范围；兜它的是 `--real-mode` 的 `E_ROOT_REAL_BRAIN`。
+         * 另一方向是**残余误报**：别的会话在窗口里新增 / 删除一个路径，同样会红（假红，不是假绿）。
+         */
+        content_uncovered: {
+          root: 'brain',
+          what: '已存在文件被就地覆盖（内容改、路径不变）',
+          note: '`brain` 的见证是**路径集合**（新增 / 删除）；已存在文件被就地覆盖（内容改、路径不变）不在这条判据的覆盖范围。',
+          covered_by: ['DR-01 --real-mode ⇒ E_ROOT_REAL_BRAIN'],
+          cli_inventory: 'lib/cli-inventory.mjs 只是枚举命令，不判它会写哪儿 —— 不是闸',
+          residual_false_positive: '别的会话在窗口内新增 / 删除路径会被判成 SECURITY-VIOLATION（假红，不是假绿）',
+          window: 'DR-01 整段用例（不是每个 CLI 子调用一个窗口 —— 那是 DR-02 的口径；这一段比 DR-02 的窗口长）',
+        },
+      }
+      if (realViolation !== null) {
+        push(realViolation.code, `真实库在 DR-01 期间被改动：${realViolation.message} —— 立即停测并报事故，不许自行清理现场`)
+      }
+
+      // ── ④c `DR-01` 的路径集合见证：两把刀（**副本**脑根；真根一个字节都不许碰）──────────
+      // 与 `DR-02` 的 ④c 同形：刀走产品那条路（`realRootsSnapshot({ brainRoot })`），
+      // 读**同一个** `brainWitnessViolation()` ⇒ 刀响 = ④ 响。
+      //   · A（正向）：副本里**新建**一个文件 ⇒ 必须 `SECURITY-VIOLATION` 并点名那个路径；
+      //   · B（反向）：副本里既有文件**只改内容**、路径不变 ⇒ **必须不报**
+      //     （这一格是"内容不再是 `brain` 的判据"的证明；没有它，把内容哈希偷偷加回来照样全绿）。
+      const brainKnifeRoot = path.join(runRoot(), 'fixtures', 'dr01-brain-knife')
+      const brainCopied = copyRealBrainForKnife(brainKnifeRoot)
+      const knifeIsCopy = canonical(brainKnifeRoot) !== canonical(PATHS.realBrainRoot)
+      const b0 = knifeIsCopy ? brainPathsOf(brainKnifeRoot) : null
+      const knifeShape = b0 === null ? '副本没造出来' : pathSetShapeProblem(b0)
+      const knifeJudged = knifeIsCopy && knifeShape === null && b0.exists === true && b0.count > 0
+      const brainCells = []
+      const bcell = (label, ok, code, detail) => {
+        brainCells.push({ label, ok, detail })
+        if (!ok) problems.push(problem(code, detail))
+      }
+      if (!knifeIsCopy) {
+        push('DR01-BRAIN-KNIFE-NOT-A-COPY', `硬闸：目标 ${brainKnifeRoot} 就是真实脑根 —— 不拷、不写、刀不跑`)
+      }
+      if (knifeJudged) {
+        const STRAY_REL = 'dr01-stray-write.txt'
+        writeFileSync(path.join(brainKnifeRoot, STRAY_REL), 'stray\n', 'utf8')
+        const b1 = brainPathsOf(brainKnifeRoot)
+        const vAdd = brainDiff(b0, b1, '副本里新建一个文件之后（DR-01 的刀）')
+        bcell(
+          '副本里新建一个文件 ⇒ `SECURITY-VIOLATION` 必须响，且报文点名那个路径',
+          existsSync(path.join(brainKnifeRoot, STRAY_REL)) && vAdd?.code === 'SECURITY-VIOLATION' && String(vAdd.message).includes(STRAY_REL),
+          'DR01-BRAIN-KNIFE-ADD-NOFLIP',
+          `b0 ${b0.count} 份 → b1 ${b1.count} 份；判定=${vAdd?.code ?? '(没响)'}`
+            + ` · 报文点名 \`${STRAY_REL}\`=${String(vAdd?.message ?? '').includes(STRAY_REL)}`
+            + ' —— 不响说明"多一个文件"这条判据早就死了，绿是假的',
+        )
+        const victim = b0.paths[0] ?? null
+        let shaBefore = null
+        let shaAfter = null
+        let vContent = null
+        let b2 = null
+        if (victim !== null) {
+          const victimFile = path.join(brainKnifeRoot, victim)
+          shaBefore = sha256File(victimFile)
+          writeFileSync(victimFile, `${readFileSync(victimFile, 'utf8')}\n// dr01-knife\n`, 'utf8')
+          shaAfter = sha256File(victimFile)
+          b2 = brainPathsOf(brainKnifeRoot)
+          vContent = brainDiff(b1, b2, '副本里只改一个既有文件的内容之后（DR-01 的刀）')
+        }
+        bcell(
+          victim === null
+            ? '副本里**没有既有文件** ⇒ 反向刀打不出去（"只改内容不许报"这一格量不到）'
+            : `副本 \`${victim}\` 只改内容（sha 变了）、路径不变 ⇒ **不许报**违规`,
+          victim !== null && shaBefore !== shaAfter && vContent === null,
+          'DR01-BRAIN-KNIFE-CONTENT-FLIPS',
+          victim === null
+            ? `副本 ${brainKnifeRoot} 里 0 份文件（拷贝器自报 ${brainCopied.files} 份）—— 反向刀打不出去`
+            : `\`${victim}\` sha ${String(shaBefore).slice(0, 12)} → ${String(shaAfter).slice(0, 12)}`
+              + ` · 路径份数 ${b1.count} → ${b2?.count} · 判定=${vContent?.code ?? '(没响 = 对)'}`
+              + ' —— 响了就是把"别人的正常干活"算到这一跑头上（内容不许再当 `brain` 的判据）',
+        )
+        bcell(
+          '副本份数与**真根基线**路径份数相同（锚在 before.count，不是副本自报）',
+          b0.count === realBefore.count && realBefore.count > 0,
+          'DR01-BRAIN-KNIFE-NOT-A-COPY',
+          `副本 ${brainKnifeRoot} · 快照量的路径=${b0.path} · 副本份数=${b0.count} · 真根基线份数=${realBefore.count}`
+            + ` · 拷贝器自报=${brainCopied.files}（**只当读数，不当锚**）—— 半份副本会让两把刀失去意义`,
+        )
+      }
+      if (knifeJudged && brainCells.length !== 3) {
+        push('DR01-BRAIN-WITNESS-UNGUARDED', `DR-01 路径集合见证的刀架没跑全：${brainCells.length} 格（应为 3）`)
+      }
+      rec.readings.brain_witness = {
+        real_root: PATHS.realBrainRoot,
+        copy: brainKnifeRoot,
+        snapshot_via: 'realRootsSnapshot({ brainRoot })',
+        copy_files_reported: brainCopied.files,
+        real_baseline_count: realBefore.count,
+        copy_is_not_real_root: knifeIsCopy,
+        knife_shape: knifeShape,
+        knife_judged: knifeJudged,
+        cells: brainCells,
+      }
+      // 段外兜底（同 `DR-02` 的 ④ 段外兜底）：整段删掉时 problems 仍是 0 ⇒ 这一段必须自己读一次读数。
+      if (!rec.readings.real_brain?.content_uncovered || !Array.isArray(rec.readings.brain_witness?.cells)) {
+        push('DR01-BRAIN-WITNESS-UNGUARDED', 'DR-01 的路径集合见证读数没写全（`real_brain.content_uncovered` / `brain_witness.cells`）—— 整段删掉时 problems 仍是 0，所以它必须留下读数、并由这里读一次')
       }
 
       caseFail(problems)
