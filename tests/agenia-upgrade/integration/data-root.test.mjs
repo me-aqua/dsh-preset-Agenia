@@ -1138,6 +1138,25 @@ describe('integration · data-root (DR)', () => {
          */
         basis: witness.source.startsWith('env:') ? 'explicit-witness-root' : 'live-tree (derived)',
         note: '份数是**活树**的读数：真脑根住在活体预设里；副本 / worktree 里它不在盘上 ⇒ 这一格记 HOLD（`DR01-BRAIN-WITNESS-ABSENT`），不是绿',
+        /**
+         * 🔴 **`M1` 的 HOLD 语义**（第 1 轮评审要求"写在读数里，不只写在契约里"）：
+         *   · HOLD 是第三态：`runCase` 的 `rec.result` · 结算的 `hold_cases` 逐条列 · 入口 `exit 2` ·
+         *     以及 `HOLD > 0` 时 `F57-OK` **一个都不出**（`verdict.mjs` / `run-all.mjs`）；
+         *   · **红压过 HOLD**（`evidence.mjs:479` 的 `runCase`）：有红就是 RED，HOLD 洗不白一条红；
+         *   · ⇒ **#5 的证据必须是"活树那一跑"**：副本里这个根不在盘上 ⇒ HOLD；要在一份只读副本里判它，
+         *     必须显式给 `AGENIA_LIVE_BRAIN_ROOT=<活体预设>/.runtime`（那一跑同样算证据，但**默认**证据是活树）。
+         */
+        hold_semantics: {
+          third_state: 'HOLD',
+          read_at: [
+            'rec.result 的第三态（runCase：RED 压过一切；没有红但有 HOLD ⇒ HOLD）',
+            'settlement.settled.hold_cases（逐条列出 code / why）',
+            '入口 verdict 的 exit 2（F57-FAIL 有 HOLD 那一条）',
+            'HOLD > 0 时 F57-OK 一个都不出（verdict.mjs / run-all.mjs）',
+          ],
+          red_beats_hold: 'evidence.mjs:479（runCase）：rec.result = RED 优先；HOLD 洗不白一条红',
+          evidence_must_be: '这一格的证据必须是**活树**那一跑；副本 / worktree 里没有 presets/agenia/.runtime ⇒ HOLD。要在副本里判，显式给 AGENIA_LIVE_BRAIN_ROOT=<活体预设>/.runtime',
+        },
         witness: 'treePaths（路径集合）· 内容不判',
         /**
          * 🔴 残余风险 —— 读的人不必去翻决定书（`决定-DR02的brain见证.md` §二/§三）：
@@ -1245,6 +1264,14 @@ describe('integration · data-root (DR)', () => {
         knife_shape: knifeShape,
         knife_judged: knifeJudged,
         judged: witnessJudged,
+        /**
+         * 🔴 这一份的**证据口径**（`M1` / 第 1 轮评审）：`171 = 171` 是**活树**的读数 ——
+         * 真脑根住在活体预设里（`presets/agenia/.runtime`），只读副本 / worktree 里**没有它**。
+         * ⇒ 这一段（两把刀 + 逐份对账）的证据只可能来自**活树那一跑**；副本里要判，显式给
+         * `AGENIA_LIVE_BRAIN_ROOT`。不给就记 HOLD（`DR01-BRAIN-KNIFE-UNJUDGED`），不是绿。
+         */
+        evidence_basis: witness.source.startsWith('env:') ? 'explicit-witness-root (copy run allowed)' : 'live-tree run (this is the default evidence)',
+        note: '171 = 171 是**活树**的读数：真脑根住在活体预设里；副本 / worktree 里它不在盘上 ⇒ 这一段记 HOLD，不是绿',
         cells: brainCells,
       }
       /**

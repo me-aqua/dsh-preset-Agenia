@@ -10,8 +10,11 @@
  *   ① **拒**：`--out` 指向被测 CODE 集里的落点 ⇒ 非零退出 + 码 **`E_OUT_INSIDE_AUDITED`**
  *      （不是 `REFUSE-OVERWRITE` —— 那一族是"目录已有东西"，与"落点在 CODE 集里"是两件事）；
  *      报文必须点名**落点**、**它下面的探针**（`__agenia_probe__`）与**被测根**。
- *      **四个落点**（2026-11-07 评审 `M2` 之后）：新目录 · **名字以 `.pyc` 结尾的落点**（它自己被后缀
- *      规则排除、里面的文件不排除）· **junction 别名**（前缀看着在根外、`realpath` 之后在根内）· 同一落点再来一次。
+ *      **四个落点**（2026-11-07 评审 `M2` + 第 2 轮 `M-2a` 之后）：
+ *      **新目录** · **名字以 `.pyc` 结尾的落点**（它自己被后缀规则排除、里面的文件不排除）·
+ *      **落点的 junction 别名**（前缀看着在根外、`realpath` 之后在根内）·
+ *      **`--repo` 与 `--out` 都走同一个 junction 别名**（两侧只有词法形态时前缀判据根本不成立 ⇒
+ *      连尺子都不问；报文要同时点名**两个规范形态**）。
  *   ② **拒在任何写之前**：被测根跑前 / 跑后**逐字节**同哈希（`treeHash`）+ **路径集合**同（`treePaths`）
  *      + 那个 `--out` **没有被创建**（**每一个**被拒的落点都判一次）。⚠️ 这一格是"拒在写之前"的
  *      **唯一**证据：只判退出码的话，"先写一半再拒"照样绿。
@@ -85,13 +88,17 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
 
       // ── ① 拒：`--out` 落在被测 CODE 集里 —— 四个落点，**每个都要"写之前拒"** ────────────
       /**
-       * 🔴 四个落点各自堵一条"看起来不算 CODE"的写法（2026-11-07 评审 `M2`）：
-       *   1. 新目录 `<repo>/presets/agenia/_probe_copy_mcr01` —— 最朴素的那种；
+       * 🔴 四个落点各自堵一条"看起来不算 CODE / 看起来在根外"的写法（2026-11-07 评审 `M2` / 第 2 轮 `M-2a`）：
+       *   1. **新目录** `<repo>/presets/agenia/_probe_copy_mcr01` —— 最朴素的那种；
        *   2. **名字以 `.pyc` 结尾的落点** `<repo>/presets/agenia/_probe.pyc` —— 它**自己被排除表挡住**
        *      （`*.pyc` 那条后缀），可它**里面**的文件不排除 ⇒ 出口必须问"它下面的文件算不算"；
-       *   3. **junction 别名**：`E:\…\fixtures\mcr01-alias` → `<repo>/presets`，`--out <别名>/agenia/_probe_copy_alias`
-       *      —— 路径前缀看着在根外，`realpath` 之后在根内 ⇒ 出口必须先规范化再问；
-       *   4. 同一个朴素落点再导一次（第二次仍然要拒，且**不是** `REFUSE-OVERWRITE`：这个路径一次都没被创建过）。
+       *   3. **落点的 junction 别名**：`<runRoot>/fixtures/mcr01-alias` → `<repo>/presets`，
+       *      `--out <别名>/agenia/_probe_copy_alias` —— 路径前缀看着在根外，`realpath` 之后在根内
+       *      ⇒ 落点这一侧必须先规范化再问；
+       *   4. **`--repo` 与 `--out` 都走同一个 junction 别名**（`M-2a` 的那一对）：
+       *      `--repo <别名→repo>` + `--out <别名>\presets\agenia\_probe_copy3`
+       *      —— 两侧只有词法形态时前缀判据**根本不成立**（连尺子都不问），副本就写进被测树了
+       *      ⇒ 两侧必须在**同一个坐标系**里比（`repoCanon` / `outCanon`），报文要同时点名**两个规范形态**。
        */
       const junctionRoot = path.join(root, 'fixtures', 'mcr01-alias')
       let aliasReady = null
@@ -102,29 +109,61 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
         aliasReady = { link: junctionRoot, target: path.join(audited, 'presets'), ok: false, error: `${err.code ?? ''} ${String(err.message).slice(0, 160)}` }
       }
       rec.readings.junction_alias = aliasReady
+      const repoAlias = path.join(root, 'fixtures', 'mcr01-repo-alias')
+      let repoAliasReady = null
+      try {
+        symlinkSync(audited, repoAlias, 'junction')
+        repoAliasReady = { link: repoAlias, target: audited, ok: true }
+      } catch (err) {
+        repoAliasReady = { link: repoAlias, target: audited, ok: false, error: `${err.code ?? ''} ${String(err.message).slice(0, 160)}` }
+      }
+      rec.readings.repo_junction_alias = repoAliasReady
       const refusedCases = [
-        { id: 'fresh-dir', out: path.join(audited, 'presets', 'agenia', '_probe_copy_mcr01'), mustName: ['_probe_copy_mcr01', '__agenia_probe__'] },
-        { id: 'pyc-named-landing', out: path.join(audited, 'presets', 'agenia', '_probe.pyc'), mustName: ['_probe.pyc', '__agenia_probe__'] },
+        {
+          id: 'fresh-dir', repo: audited,
+          out: path.join(audited, 'presets', 'agenia', '_probe_copy_mcr01'),
+          canonicalOut: path.join(audited, 'presets', 'agenia', '_probe_copy_mcr01'),
+          mustName: ['_probe_copy_mcr01', '__agenia_probe__'], mustRoots: [audited],
+        },
+        {
+          id: 'pyc-named-landing', repo: audited,
+          out: path.join(audited, 'presets', 'agenia', '_probe.pyc'),
+          canonicalOut: path.join(audited, 'presets', 'agenia', '_probe.pyc'),
+          mustName: ['_probe.pyc', '__agenia_probe__'], mustRoots: [audited],
+        },
         ...(aliasReady.ok
-          ? [{ id: 'junction-alias', out: path.join(junctionRoot, 'agenia', '_probe_copy_alias'), mustName: ['_probe_copy_alias', '__agenia_probe__'] }]
+          ? [{
+              id: 'out-junction-alias', repo: audited,
+              out: path.join(junctionRoot, 'agenia', '_probe_copy_alias'),
+              canonicalOut: path.join(audited, 'presets', 'agenia', '_probe_copy_alias'),
+              mustName: ['_probe_copy_alias', '__agenia_probe__'], mustRoots: [audited],
+            }]
+          : []),
+        ...(repoAliasReady.ok
+          ? [{
+              id: 'repo-and-out-junction (M-2a)', repo: repoAlias,
+              out: path.join(repoAlias, 'presets', 'agenia', '_probe_copy3'),
+              canonicalOut: path.join(audited, 'presets', 'agenia', '_probe_copy3'),
+              mustName: ['_probe_copy3', '__agenia_probe__'], mustRoots: [audited, repoAlias],
+            }]
           : []),
       ]
       const refusedReadings = []
       for (const c of refusedCases) {
-        const r = runExport({ exporter: ex.file, repo: audited, commit: fx.commitA, out: c.out })
+        const r = runExport({ exporter: ex.file, repo: c.repo, commit: fx.commitA, out: c.out })
         const code = r.json?.error?.code ?? null
         const msg = String(r.json?.error?.message ?? '')
         const afterTree = treeHash(audited)
         const afterPaths = treePaths(audited)
         const pathsEqual = afterPaths.count === beforePaths.count && afterPaths.paths.every((p, i) => p === beforePaths.paths[i])
         const reading = {
-          id: c.id, out: c.out, exit: r.exit, code, message: msg.slice(0, 700),
+          id: c.id, repo: c.repo, out: c.out, canonical_out: c.canonicalOut, exit: r.exit, code, message: msg.slice(0, 800),
           stderr: String(r.stderr ?? '').slice(-400),
           audited_equal: afterTree.sha256 === beforeTree.sha256,
           audited_paths_equal: pathsEqual,
-          out_created: existsSync(c.out),
+          out_created: existsSync(c.out) || existsSync(c.canonicalOut),
           names_landing: c.mustName.every((n) => msg.includes(n)),
-          names_root: msg.includes(audited),
+          names_roots: c.mustRoots.map((root) => ({ root, named: msg.includes(root) })),
           folded_into_overwrite: code === 'REFUSE-OVERWRITE',
         }
         refusedReadings.push(reading)
@@ -139,8 +178,8 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
         if (r.exit !== 0 && msg !== '' && !reading.names_landing) {
           push('REFUSE-MESSAGE-NO-LANDING', `[${c.id}] 拒的报文没有把落点和"它下面的探针"都点名（要 ${JSON.stringify(c.mustName)}）：${msg.slice(0, 300)}`)
         }
-        if (r.exit !== 0 && msg !== '' && !reading.names_root) {
-          push('REFUSE-MESSAGE-NO-ROOT', `[${c.id}] 拒的报文没有点名被测根（${audited}）：${msg.slice(0, 300)}`)
+        if (r.exit !== 0 && msg !== '' && reading.names_roots.some((x) => !x.named)) {
+          push('REFUSE-MESSAGE-NO-ROOT', `[${c.id}] 拒的报文没有点名这些根：${JSON.stringify(reading.names_roots.filter((x) => !x.named).map((x) => x.root))}（全文：${msg.slice(0, 300)}）`)
         }
         if (!reading.audited_equal) {
           push('REFUSE-WROTE-BEFORE', `[${c.id}] 被拒之后被测根**变了**（${beforeTree.count} 份/${String(beforeTree.sha256).slice(0, 16)}… → ${afterTree.count} 份/${String(afterTree.sha256).slice(0, 16)}…）—— "拒在任何写之前"不成立：先写了再拒也是拒`)
@@ -149,7 +188,7 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
           push('REFUSE-WROTE-PATHS', `[${c.id}] 被拒之后被测根的**路径集合**变了（${beforePaths.count} → ${afterPaths.count} 条）—— 有东西被创建/删除了`)
         }
         if (reading.out_created) {
-          push('REFUSE-CREATED-OUT', `[${c.id}] 被拒了，但 \`--out\` 那个路径已经被创建：${c.out} —— 拒必须发生在**第一个字节**之前`)
+          push('REFUSE-CREATED-OUT', `[${c.id}] 被拒了，但落点（或它的规范形态）已经被创建：${c.out} / ${c.canonicalOut} —— 拒必须发生在**第一个字节**之前`)
         }
       }
       const afterTree = treeHash(audited)
