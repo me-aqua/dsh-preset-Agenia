@@ -49,8 +49,8 @@
  *
  * `BRG-07` 的翻面读数（都是 `run-all --glob=integration/brg01-toolname-bridge.test.mjs` 跑的；
  * 字节数与 sha256 量的是**提交里那个 blob**（`HEAD:presets/agenia/inject.js`），不是工作树）：
- *   · 现役 `inject.js`（提交 `06cb606` · 230124 B · sha256 `310a3a60…`）⇒ **RED 0 / GREEN 7**
- *     （run `brg-flip-06cb606` · `--glob=tests/agenia-upgrade/integration/brg01-toolname-bridge.test.mjs`
+ *   · 现役 `inject.js`（提交 `9e744ec` · 229951 B · sha256 `faa15933…`）⇒ **RED 0 / GREEN 7**
+ *     （run `brg-flip-9e744ec` · `--glob=tests/agenia-upgrade/integration/brg01-toolname-bridge.test.mjs`
  *     · 范围 7/162：`readings.preset.injector` 与 `production_injector` 是同一个数
  *     ⇒ 量的就是这一段点名的那一份）；
  *     三个数（提交号 / 字节数 / sha256）由 `FLIP-01` 逐项对上，**任一变化它当场红**。
