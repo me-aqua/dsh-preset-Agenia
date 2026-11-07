@@ -638,7 +638,8 @@ export const NARROW_CODES = Object.freeze({
  * 三格逐条对 `NARROW_PERMISSION`（**一个字符都不在这里重复**）：
  *   ① `proposal` = deny ⇒ `proposal_file` 调用被拒（先判：报文要说清是"窄"不是"你不该提"）；
  *   ② `tools` 白名单 ⇒ 不在名单里的**一律拒**（含 shell / 委派 / 记忆库工具）；
- *   ③ `write_scope` = team ⇒ `write` / `edit` 的**落点**必须在 `resolve(cwd,'.team')` 之下。
+ *   ③ `write_scope` = team ⇒ `write` / `edit` 的**落点**必须在**会话头那棵树的 `.team/`** 之下。
+ *      比别的岗位更严：别的岗位认"任何树的 `.team/`"，窄会话只认**自己那棵**（`officeLandingVerdict` 的 `strict`）。
  *
  * 口径边界（别把它读成"全机沙箱"）：它管的是**模型能调的这些工具**；真正写到别处
  * 还有框架自己的 fs 沙箱那一道。这里拒的是"这个会话没有这个工具"。
@@ -671,8 +672,8 @@ export function narrowVerdict(toolName, args, agent) {
     if (!officeLandingVerdict(target, agent, true).allow) {
       return {
         code: NARROW_CODES.write,
-        message: `${why}：只能写项目里 .team/ 下面的东西。`
-          + `你这次要写的是「${String(target)}」，按落点算在队伍目录外面。`,
+        message: `${why}：这个会话是窄权限，只能写**自己这棵树**的 .team/。`
+          + `你这次要写的是「${String(target)}」—— 它就算落在别的树的 .team/ 里，也不是你的那一棵。`,
       }
     }
   }
@@ -1653,16 +1654,22 @@ function driveOfPath(p) {
 }
 
 /**
- * 这个路径落在团队的办公桌上吗？
+ * 这个路径落在团队的办公桌上吗？（**规则正文只此一份**）
  *
- * 三条口径（追加裁定 v1.7 · B4）：
+ * 三条口径：
  *   · **先算落点再比** —— 先 `resolve`（吃掉 `..` 与 `.`），盘上存在再 `realpath`；
  *     只匹配字符串的话，`.team/review/../../x.txt` 里含有 `.team/` 却落在项目根；
- *   · **工位随落点走** —— 从落点向上找最近的、名字恰好是 `.team` 的祖先（`officeLandingVerdict`）；
- *     窄会话（`strict === true`）例外：它仍只认会话头那棵树的 `.team`（最硬的那道门，不放宽）；
+ *   · **工位随落点走** —— 从落点向上找最近的、名字恰好是 `.team` 的祖先，找到就放行并报出是哪棵树；
+ *     窄会话（`strict === true`）例外：它只认**会话头那棵树**的 office（最硬的那道门，不放宽）；
  *   · **空目标 · 解析不出 cwd · 落点在 C 盘** ⇒ 一律算"不在组内"（C 盘是本机硬禁区）。
  *
- * ⚠️ 它与活体那版（段匹配）**语义不同**，是有意的收紧，安装后由 R1 验。
+ * **不判什么**（读的人不用再猜）：
+ *   · **不判活体 cwd** —— 相对路径仍按**会话头** cwd 解析；所以"相对路径写进了会话头那棵树"这种情形，
+ *     它与会话头那棵是同一棵 ⇒ 不报 `OFFICE_TREE_DIFFERS`，**这一半不在本函数的能力里**
+ *     （要判它得给写操作落一条账，见 `bug-20261107-10`）；
+ *   · 不判 symlink/junction 攻击、不判 `.team` 目录的权限、不判落点是否真的被写成功。
+ *
+ * `expected_office` 只在**拒绝**时有意义：落点往上、**最近的且自己有 `.team` 子目录**的那个目录 + `/.team`。
  */
 function officeLandingVerdict(target, agent, strict) {
   const norm = (p) => { let s = String(p ?? '').replace(/\\/g, '/'); while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1); return s.toLowerCase() }
@@ -1696,19 +1703,6 @@ function officeLandingVerdict(target, agent, strict) {
   const expected = office === null ? expectedOf(landing) : null
   return { allow, landing, office_root: office, header_office: header, expected_office: expected, differs, warning: differs ? 'OFFICE_TREE_DIFFERS' : null }
 }
-
-/**
- * 这个路径落在团队的办公桌上吗？
- *
- * 🔴 2026-11-07 改（`ticket-20261102-02` / F3）：office 不再是"会话头 cwd 那棵树的 `.team`"，
- * 而是**落点自己所在那棵树的 `.team`** —— 从落点**向上**找最近的、名字恰好是 `.team` 的祖先。
- * 理由：会话头 cwd 是**出生时定死**的，而本机有 `working_directory`、也有 worktree 这种活法 ⇒
- * 拿它当 office 基准会同时错两次：绝对路径写进另一棵树的 `.team/` 被拒（写不了自己的交付件），
- * 相对路径落进原树的 `.team/` 被放行（写错树）。
- * 三条老口径**一条没放宽**：空目标 / 解析不出 cwd / 落点在 C 盘 ⇒ 一律"不在组内"。
- * ⚠️ `officeLandingVerdict` 这个名字与函数体形状是**冻的**：刀按花括号整段替换切它。
- */
-function landsInOffice(target, agent) { return officeLandingVerdict(target, agent).allow }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 委派门禁（**纯函数**）：名单从组合 config 读，代码里不硬编码。
