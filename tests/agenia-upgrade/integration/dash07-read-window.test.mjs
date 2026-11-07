@@ -38,7 +38,13 @@
  *      "上一次"的值），关掉再开、第二次读到**截断页** ⇒ 必须只说"读不全"，**上一次那棵看板的痕迹
  *      一个都不许还在**（旧 headline / 旧数字）。不清 `view` 就会两屏同显 —— 这正是 M2 的形状，
  *      而它藏了整整一票是因为**之前每一格都只开一次**；
- *    · `RDW-REOPEN-SAMPLE` —— 这一腿的样本自证：真的开了两次、真的读了两次（载具开不回来 ⇒ 不许当绿）；
+ *    · `RDW-REOPEN-FIRST-READ-UNCAUGHT` —— **第一拍必须真的画过**上一次那棵看板（旧 headline + 旧数字
+ *      都在）；否则"先旧后新"这个序列是**没人核过**的一句话。有了它，`phases` 才是断言，不只是读数；
+ *    · `RDW-REOPEN-SAMPLE` —— 只兜"**开/读次数不对**"（少于两次）。⚠️ 它**不是** fail-closed 那道闸：
+ *      一个每次打开都重新挂载的载具照样是"开两次、读两次" ⇒ 这一格照样绿。**那种回归由刀 K3 的
+ *      `RDW-KNIFE-VECTOR` 抓**（`setView(null)` 在重挂载的世界里没有可清的旧状态 ⇒ K3 的向量对不上）。
+ *      —— 这条边界 2026-11-07 复审第二轮点名过：本腿依赖"同一个 mount 里再开"；
+ *      将来的重构若改成每次重挂载，这一腿**已经是另一个测试**了，别指望样本格替你报信；
  *    · `RDW-VINTAGE-BYTES-UNAVAILABLE` —— 拿不到 `f558f63` 那一版真字节时记 HOLD（不当绿）。
  *  `D` **尺子自证**（读判决，不读计数）：
  *    · `RDW-FACES-RULER-BROKEN` —— 三棵合成树把"说了 / 被解析器背锅 / 面板在"三面单独造出来，
@@ -46,7 +52,7 @@
  *    · `RDW-SAMPLE-NOT-TRUNCATED` / `RDW-SAMPLE-NOT-A-SNAPSHOT` —— **样本下限**：
  *      截断页必须真的是 `limit` 行且 `JSON.parse` 会抛，完整页必须真的是合法快照 ——
  *      否则"0 行 / 空串"也会让上面那几条静默成立（0 行快照 ≠ 通过）。
- *  `E` **阳性对照 + 三把刀**（判据自己会不会翻面；**产品零字节**，全在运行根里）：
+ *  `E` **阳性对照 + 四把刀**（判据自己会不会翻面；**产品零字节**，全在运行根里）：
  *    · `RDW-CONTROL-NOT-GREEN` —— 照上面这份契约写的**最小实现**（合成模块，住本文件）必须**全绿**；
  *      否则这一格的红是尺子坏了，不是产品缺功能；
  *    · `RDW-CONTROL-UNAVAILABLE` —— 合成实现的锚点没对上（夹具造不出来，判不了）；
@@ -54,7 +60,9 @@
  *    · 刀 `K2`（把那份源码里 `eof` 这个名字整体改掉 —— "客户端看不见 eof 了"）⇒ 行为那几条一起翻红
  *      （`RDW-TRUNCATED-UNANNOUNCED` + `RDW-TRUNCATED-PARSER-BLAMED` + `RDW-EOF-FLAG-IGNORED`）；
  *    · 刀 `K3`（把对照里**打开时那一行 `setView(null)`** 抽掉）⇒ **只有** `RDW-STALE-VIEW-ON-REOPEN` 翻红，
- *      单次打开的那几条腿一条都不许动；
+ *      单次打开的那几条腿一条都不许动；**它同时是"载具改成每次重挂载"那道回归的闸**（见 `C2` 那条边界）；
+ *    · 刀 `K4`（对照里把 `view !== null && h3` 改成 `false && h3` —— 第一拍不画视图）⇒ **只有**
+ *      `RDW-REOPEN-FIRST-READ-UNCAUGHT` 翻红；
  *      刀翻错面 ⇒ `RDW-KNIFE-VECTOR`，刀没咬住（输入没变）⇒ `RDW-KNIFE-NOT-BITING`。
  *    · **真字节阳性对照**：`f558f63`（评审看到的那一版，`setView(null)` 还没加）装进同一具载具 ⇒
  *      必须恰好 `RDW-STALE-VIEW-ON-REOPEN`（证明这一格抓得住那次真故障，不只是合成变异体）。
@@ -112,6 +120,7 @@ const CODE = {
   fullBroken: 'RDW-FULL-PAGE-BROKEN',
   staleView: 'RDW-STALE-VIEW-ON-REOPEN',
   reopenSample: 'RDW-REOPEN-SAMPLE',
+  firstReadUncaught: 'RDW-REOPEN-FIRST-READ-UNCAUGHT',
   vintageUnavailable: 'RDW-VINTAGE-BYTES-UNAVAILABLE',
   facesRuler: 'RDW-FACES-RULER-BROKEN',
   controlUnavailable: 'RDW-CONTROL-UNAVAILABLE',
@@ -126,7 +135,7 @@ const CODE = {
  * 这一跑量了哪几格 —— **显式清单**（自守读它，不读条数：删一格与加一格都要分别报）。
  * ⚠️ 加一条腿 = 同时改这里（自守会当场报"少一格 / 多一格"）。
  */
-const LEG_IDS = ['static', 'sample', 'truncated', 'eof-flag', 'full', 'reopen', 'reopen-vintage', 'faces', 'control', 'knife-magic', 'knife-eof', 'knife-stale-view']
+const LEG_IDS = ['static', 'sample', 'truncated', 'eof-flag', 'full', 'reopen', 'reopen-vintage', 'faces', 'control', 'knife-magic', 'knife-eof', 'knife-stale-view', 'knife-first-read']
 
 // ── 源码读取：那条读盘调用 + 它的两个值 ──────────────────────────────────────
 /** 括号 / 引号都认的最小扫描器：返回 `open` 位置对应的闭括号下标（找不到 ⇒ -1）。 */
@@ -489,6 +498,15 @@ async function runLeg({ source, page = null, pages = null, expect, label, openCo
     if (opens !== openCount || calls.length !== openCount) {
       codes.push(CODE.reopenSample)
     }
+    /**
+     * 第一拍必须**真的画出过**上一次那棵看板 —— 否则"旧看板被替换掉了"是**没人核过**的一句话。
+     * ⚠️ 这条只判"第一拍画过旧的"，不判"第二拍干净"（那是 `RDW-STALE-VIEW-ON-REOPEN`）；
+     *    两条一起才等于"先旧后新"这个序列真的发生过。
+     */
+    const firstOpen = (scene.phases ?? []).find((phase) => phase.phase === 'open' && phase.cycle === 0)
+    const firstTexts = firstOpen?.texts ?? []
+    const firstCarried = staleMarks.length > 0 && staleMarks.every((mark) => firstTexts.some((text) => String(text).includes(mark)))
+    if (!firstCarried) codes.push(CODE.firstReadUncaught)
     if (!faces.announced) codes.push(CODE.unannounced)
     if (faces.blamed) codes.push(CODE.blamed)
     if (!faces.panel || faces.crash) codes.push(CODE.panelGone)
@@ -510,6 +528,8 @@ async function runLeg({ source, page = null, pages = null, expect, label, openCo
     pages: Array.isArray(pages) ? pages.map((item, index) => ({ index: index + 1, eof: item.eof, lines: item.lines })) : null,
     read_calls: calls.map((args) => ({ session: args[0], path: args[1], range: args[2] ?? null })),
     open_count: scene.open_count ?? null,
+    first_read_carried_old: (scene.phases ?? []).filter((phase) => phase.phase === 'open' && phase.cycle === 0)
+      .map((phase) => staleMarks.every((mark) => (phase.texts ?? []).some((text) => String(text).includes(mark)))),
     phases: (scene.phases ?? []).map((phase) => ({
       cycle: phase.cycle,
       phase: phase.phase,
@@ -587,7 +607,10 @@ window.__ModuleLoader__.load({
           open && react_dom.createPortal(jsxr.jsxs('div', { role: 'dialog', 'data-dashboard-panel': true, children: [
             note !== null && jsxr.jsx('div', { role: 'status', 'data-dashboard-truncated': true, children: '快照超过 ' + note.limit + ' 行，读不全（' + note.path + '）' }),
             failure !== null && jsxr.jsx('div', { role: 'alert', children: failure }),
-            view !== null && jsxr.jsx('h3', { children: view.header.text })
+            view !== null && jsxr.jsxs('div', { 'data-fixture-view': true, children: [
+              jsxr.jsx('h3', { children: view.header.text }),
+              (view.debts || []).map((debt) => jsxr.jsx('span', { children: debt.text }, debt.key))
+            ] })
           ] }), { tagName: 'BODY' })
         ] });
       };
@@ -981,6 +1004,43 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
         changed: knifeStaleSource !== controlSource,
         measured: true,
         codes: [...new Set(k3Problems.map((p) => p.code))],
+      }
+
+      // 刀 K4：让对照**画出视图那一行**不成立（`view !== null && …` ⇒ `false && …`）
+      // ⇒ 第一拍根本没画过上一次那棵看板 ⇒ `reopen` 那条腿必须报 `RDW-REOPEN-FIRST-READ-UNCAUGHT`。
+      // 这一刀防的是"第一拍画过旧的"永远没人核：没有它，`phases` 只是读数，不是断言。
+      const firstFrom = 'view !== null && jsxr.jsxs'
+      const firstTo = 'false && jsxr.jsxs'
+      const knifeFirstSource = controlSource.replace(firstFrom, firstTo)
+      const k4Hits = controlSource.split(firstFrom).length - 1
+      const k4Reopen = await runLeg({
+        source: knifeFirstSource,
+        pages: [reopenPageA, reopenPageB],
+        expect: 'reopen',
+        label: '刀 K4 · 第一拍不画视图',
+        openCount: 2,
+        staleMarks: [OLD_HEADLINE, OLD_DEBT],
+      })
+      const k4Codes = [...new Set(k4Reopen.codes)]
+      const k4Problems = []
+      if (knifeFirstSource === controlSource || k4Hits !== 1) {
+        k4Problems.push(problem(CODE.knifeNotBiting,
+          `刀 K4 没有咬住：锚点 ${JSON.stringify(firstFrom)} 命中 ${k4Hits} 次（要求恰好 1）—— 改这把刀的人要同批改这里`))
+      }
+      if (JSON.stringify([...k4Codes].sort()) !== JSON.stringify([CODE.firstReadUncaught])) {
+        k4Problems.push(problem(CODE.knifeVector,
+          `刀 K4（第一拍不画视图）翻出来的是 ${JSON.stringify([...k4Codes].sort())}，应当恰好 ${JSON.stringify([CODE.firstReadUncaught])}`))
+      }
+      for (const p of k4Problems) problems.push(p)
+      legs['knife-first-read'] = {
+        input: '对照里把 `view !== null && h3` 改成 `false && h3`（第一拍不画视图）',
+        expected_codes: [CODE.firstReadUncaught],
+        actual_codes: [...k4Codes].sort(),
+        anchor_hits: k4Hits,
+        first_read_carried_old: k4Reopen.first_read_carried_old,
+        changed: knifeFirstSource !== controlSource,
+        measured: true,
+        codes: [...new Set(k4Problems.map((p) => p.code))],
       }
     }
 
