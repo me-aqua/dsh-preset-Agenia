@@ -96,7 +96,7 @@
  */
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -476,6 +476,28 @@ function codeListOf(root) {
  * 量不出来（工具不在 / 退出码非 0 / 输出不是 JSON）⇒ 返回 `null` —— **判不了**，
  * 调用方不许把它当成"算 CODE"去拒，也不许当成"不算"去放行：这一句要出声。
  */
+/**
+ * 落点的**规范形态**：存在的走 `realpathSync`（吃掉 junction / 短名），
+ * 不存在的取**最近存在祖先**的 realpath + 余下那段（`M2`：junction 别名必须被解开，
+ * 否则"根外路径其实指到根内"这种写法会让前缀闸根本不去问尺子）。
+ */
+function canonicalOut(abs) {
+  const tail = []
+  let cur = abs
+  for (let i = 0; i < 64; i += 1) {
+    if (existsSync(cur)) {
+      let real = cur
+      try { real = realpathSync.native(cur) } catch (err) { real = cur }
+      return tail.length === 0 ? real : path.join(real, ...tail.reverse())
+    }
+    const parent = path.dirname(cur)
+    if (parent === cur) return abs
+    tail.push(path.basename(cur))
+    cur = parent
+  }
+  return abs
+}
+
 function askIsCode(root, abs) {
   const r = spawnSync(process.execPath, [FINGERPRINT_TOOL, '--is-code', abs, '--root', root, '--json'], {
     cwd: HERE, encoding: 'utf8', timeout: 60000,
@@ -622,11 +644,16 @@ function doExport(args) {
   //    怎么判"算不算 CODE"由尺子自己回答（`fingerprint.mjs --is-code`）——**表只有一份**，这里不复制。
   //    为什么必须拒：副本要是落在被测树里，导出自己写下的每一份文件都会被下一次 `--verify` 算成"动了"，
   //    而那份"动了"会挂在别人头上（一条假红，而且查不出是谁的）。
-  if (outLower.startsWith(`${repoAbs.toLowerCase()}${path.sep}`) || outLower === repoAbs.toLowerCase()) {
-    const asked = askIsCode(repoAbs, out)
+  const outCanon = canonicalOut(out)
+  const outCanonLower = outCanon.toLowerCase()
+  if (outCanonLower.startsWith(`${repoAbs.toLowerCase()}${path.sep}`) || outCanonLower === repoAbs.toLowerCase()) {
+    // 🔴 问的**不是落点自己**，而是"它下面的文件算不算" —— 落点可能恰好叫 `x.pyc`，
+    //    它自己被后缀规则排除，可它**里面**的文件不排除（M2 的 (A)）。
+    const probeChild = path.join(outCanon, '__agenia_probe__')
+    const asked = askIsCode(repoAbs, probeChild)
     if (asked !== null && asked.code === true) {
       return fail('E_OUT_INSIDE_AUDITED',
-        `--out 落在被测树 ${repoAbs} 的 CODE 名单里：${asked.rel}（${asked.why}）。`
+        `--out 落在被测树 ${repoAbs} 的 CODE 名单里：${asked.rel}（${asked.why}；落点规范形态 ${outCanon}）。`
         + '副本必须写在被测树之外，或者写进 `.team/` 这种被排除表挡住的前缀；'
         + '否则导出自己写下的文件会被下一次 `--verify` 算成"动了"，那一条红会挂在别人头上。')
     }
@@ -914,6 +941,15 @@ function doVerify(args) {
     commit: resolved.sha,
     copy: { root: copy, code_sha256: code.ok ? code.sha256 : null, files: code.files, bytes: code.bytes, problems: code.problems },
     equal,
+    // 🔴 `equal` 只覆盖 **CODE 集里**的字节。它**不覆盖**：副本里多出来的、被排除表挡掉的文件（交给 `is_that_commit`），
+    //    以及 CODE 集之外的任何路径。读 `equal:true` 的人必须同时看 `is_that_commit` —— 两个都 ok 才叫"副本还是那一份"。
+    equal_scope: {
+      covers: 'CODE set only (exclusion table applied)',
+      does_not_cover: [
+        'extra files inside the copy that the exclusion table drops (e.g. __pycache__/*.pyc)',
+        'any path outside the CODE set',
+      ],
+    },
     is_that_commit: isThatCommit,
     live: { baseline: baselineFile, moved: live.moved, places: live.places, detail: live.detail },
     ...(args.withStaging ? { staging: isThatStaging } : {}),
