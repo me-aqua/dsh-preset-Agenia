@@ -1077,13 +1077,12 @@ const WRITE_TARGET = { write: 'file_path', edit: 'file_path' }
 const SHELL = ['bash', 'pwsh']
 
 /**
- * 团队的办公桌：**`resolve(cwd, '.team')` 这一棵子树**（含它自己）。受限岗位只能写这里。
+ * 团队的办公桌：**落点自己所在那棵树的 `.team/`**（`officeLandingVerdict` 判）。
  *
- * 🔴 判据是 **containment**（追加裁定 v1.7 · B4），不是"解析后的路径里含 `.team` 段"：
- *    段匹配在"cwd 自己就在某个 `.team` 之下"时会把外面误判成里面
- *    （实测：夹具 `AGENIA_TEST_WORKSPACE` = `E:\Harness\.team\test\…` ⇒ `ws\x.md` 被放行）。
- *    语义与 `lib/paths.mjs` 的 `resolveWithin` 一致：先 `resolve` 吃掉 `..`，
- *    盘上存在再 `realpath` 吃掉 junction/symlink（AGENTS.md 3e：路径判断必须算落点）。
+ * 判定：先 `resolve` 吃掉 `..`，盘上存在再 `realpath` 吃掉 junction/symlink（路径判断必须算落点），
+ * 然后从落点向上找最近的、名字恰好是 `.team` 的**祖先目录** —— 找到就放行，并报出是哪棵树。
+ * 受限岗位只能写这种地方；**窄会话更严**：只认会话头那棵树的 `.team/`。
+ * 不是字符串匹配（`.team/review/../../x.txt` 里含 `.team/`，却落在项目根）。
  */
 const OFFICE_DIR = '.team'
 
@@ -1658,12 +1657,13 @@ function driveOfPath(p) {
  * 三条口径（追加裁定 v1.7 · B4）：
  *   · **先算落点再比** —— 先 `resolve`（吃掉 `..` 与 `.`），盘上存在再 `realpath`；
  *     只匹配字符串的话，`.team/review/../../x.txt` 里含有 `.team/` 却落在项目根；
- *   · **containment** —— 落点要在 `resolve(cwd, '.team')` 之下（含相等与子目录）才算组内；
+ *   · **工位随落点走** —— 从落点向上找最近的、名字恰好是 `.team` 的祖先（`officeLandingVerdict`）；
+ *     窄会话（`strict === true`）例外：它仍只认会话头那棵树的 `.team`（最硬的那道门，不放宽）；
  *   · **空目标 · 解析不出 cwd · 落点在 C 盘** ⇒ 一律算"不在组内"（C 盘是本机硬禁区）。
  *
  * ⚠️ 它与活体那版（段匹配）**语义不同**，是有意的收紧，安装后由 R1 验。
  */
-function officeLandingVerdict(target, agent) {
+function officeLandingVerdict(target, agent, strict) {
   const norm = (p) => { let s = String(p ?? '').replace(/\\/g, '/'); while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1); return s.toLowerCase() }
   const canon = (p) => { const r = resolve(p); try { return realpathSync.native(r) } catch (err) { return r } }
   const driveOf = (p) => { const m = /^([A-Za-z]):/.exec(String(p ?? '')); return m === null ? null : m[1].toUpperCase() + ':' }
@@ -1682,6 +1682,13 @@ function officeLandingVerdict(target, agent) {
   const base = cwd
   const landing = canon(resolve(base, targetText))
   if (driveOf(landing) === 'C:') return refuse(landing, header)
+  // 🔴 窄会话（`narrowVerdict`）传 `strict === true` ⇒ 退回**最严**的老口径：只认会话头那棵树的 `.team`。
+  //    原因：它是队伍里最硬的一道门（窄权限行 5/6/7），这一票放宽的是"工位随落点走"，不该顺带把它也放宽。
+  if (strict === true) {
+    const inside = (child, parent) => { const c = norm(child); const p = norm(parent); return c === p || c.startsWith(p + '/') }
+    const allowStrict = inside(landing, header)
+    return { allow: allowStrict, landing, office_root: header, header_office: header, expected_office: header, differs: false, warning: null }
+  }
   const office = officeOf(landing)
   const allow = office !== null
   const differs = office !== null && norm(office) !== norm(header)
@@ -1844,8 +1851,8 @@ export function subagentBackgroundVerdict(toolName, args, policy) {
  * 三条语义（改之前先想清楚）：
  *   · 角色认不出 / 不在名单里 ⇒ 放行 —— 这道边界是挡几个岗位的，**绝不能反过来挡组长**；
  *   · `bash` / `pwsh` 一律拒（一条通用命令行就是一条通用写入通道，留着它边界就是纸的）；
- *   · `write` / `edit` 按**落点**判：落点要在 `resolve(cwd, '.team')` 之下才放行
- *     （containment，追加裁定 v1.7 · B4 —— `landsInOffice` 那一节写着三条口径）。
+ *   · `write` / `edit` 按**落点**判：落点必须在**某棵树的 `.team/`** 里才放行
+ *     （工位随落点走 —— `officeLandingVerdict` 那一节写着完整口径，含"哪棵树的办公室"与"读数是哪六个字段"）。
  *
  * 🔴 2026-11-01 第 4 关返修：**"`review` 没有命令行"这条规则的运行时作者是角色表**
  *    （`ROLE_TABLE[review].tools = NO_SHELL_TOOLS`）—— 装配时裁目录（`toolCatalogFor`）、
@@ -2620,7 +2627,7 @@ export async function apply(ctx, config = {}) {
       ? undefined
       : call.arguments[where]
     // 落在 .team/ 里的写入是队里的本子，不是项目文件动了。
-    if (landsInOffice(target, call.agent)) return
+    if (officeLandingVerdict(target, call.agent, true).allow) return
     ledger.afterTest += 1
     ledger.afterReview += 1
   })
