@@ -61,7 +61,7 @@
  *      （`RDW-TRUNCATED-UNANNOUNCED` + `RDW-TRUNCATED-PARSER-BLAMED` + `RDW-EOF-FLAG-IGNORED`）；
  *    · 刀 `K3`（把对照里**打开时那一行 `setView(null)`** 抽掉）⇒ **只有** `RDW-STALE-VIEW-ON-REOPEN` 翻红，
  *      单次打开的那几条腿一条都不许动；**它同时是"载具改成每次重挂载"那道回归的闸**（见 `C2` 那条边界）；
- *    · 刀 `K4`（对照里把 `view !== null && h3` 改成 `false && h3` —— 第一拍不画视图）⇒ **只有**
+ *    · 刀 `K4`（对照里把 `view !== null && jsxr.jsxs` 改成 `false && jsxr.jsxs` —— 第一拍不画视图）⇒ **只有**
  *      `RDW-REOPEN-FIRST-READ-UNCAUGHT` 翻红；
  *      刀翻错面 ⇒ `RDW-KNIFE-VECTOR`，刀没咬住（输入没变）⇒ `RDW-KNIFE-NOT-BITING`。
  *    · **真字节阳性对照**：`f558f63`（评审看到的那一版，`setView(null)` 还没加）装进同一具载具 ⇒
@@ -79,9 +79,11 @@
  */
 import { before, test } from 'node:test'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, sha256Text } from '../support/evidence.mjs'
+import { emissionCatalogue } from '../support/emission-catalog.mjs'
 import {
   clientSourceAtCommit,
   createDashboardHarness,
@@ -123,8 +125,11 @@ const CODE = {
   firstReadUncaught: 'RDW-REOPEN-FIRST-READ-UNCAUGHT',
   vintageUnavailable: 'RDW-VINTAGE-BYTES-UNAVAILABLE',
   facesRuler: 'RDW-FACES-RULER-BROKEN',
+  harnessUnavailable: 'RDW-HARNESS-UNAVAILABLE',
   controlUnavailable: 'RDW-CONTROL-UNAVAILABLE',
   controlNotGreen: 'RDW-CONTROL-NOT-GREEN',
+  catalogueUnreachable: 'RDW-CATALOGUE-UNREACHABLE',
+  catalogueRowStale: 'RDW-CATALOGUE-ROW-STALE',
   knifeVector: 'RDW-KNIFE-VECTOR',
   knifeNotBiting: 'RDW-KNIFE-NOT-BITING',
   legsIncomplete: 'RDW-LEGS-INCOMPLETE',
@@ -135,7 +140,7 @@ const CODE = {
  * 这一跑量了哪几格 —— **显式清单**（自守读它，不读条数：删一格与加一格都要分别报）。
  * ⚠️ 加一条腿 = 同时改这里（自守会当场报"少一格 / 多一格"）。
  */
-const LEG_IDS = ['static', 'sample', 'truncated', 'eof-flag', 'full', 'reopen', 'reopen-vintage', 'faces', 'control', 'knife-magic', 'knife-eof', 'knife-stale-view', 'knife-first-read']
+const LEG_IDS = ['static', 'sample', 'truncated', 'eof-flag', 'full', 'reopen', 'reopen-vintage', 'faces', 'control', 'catalogue', 'knife-magic', 'knife-eof', 'knife-stale-view', 'knife-first-read']
 
 // ── 源码读取：那条读盘调用 + 它的两个值 ──────────────────────────────────────
 /** 括号 / 引号都认的最小扫描器：返回 `open` 位置对应的闭括号下标（找不到 ⇒ -1）。 */
@@ -458,9 +463,11 @@ async function runLeg({ source, page = null, pages = null, expect, label, openCo
   const snapshotPath = readSnapshotPath(source)
   const harness = createDashboardHarness(source)
   if (!harness.ok) {
+    const codes = []
+    codes.push(CODE.harnessUnavailable)
     return {
       expect, page: label, eof: page === null ? null : page.eof, lines: page === null ? null : page.lines,
-      faces: null, codes: ['RDW-HARNESS-UNAVAILABLE'], reading: null, error: harness.reason,
+      faces: null, codes, reading: null, error: harness.reason,
     }
   }
   const calls = []
@@ -561,7 +568,7 @@ async function runLeg({ source, page = null, pages = null, expect, label, openCo
  * 一个最小的渲染层模块（`window.__ModuleLoader__.load({id, factory})` 的形状与产品同一份）：
  *   · 两个数是有名字的常量；`svc.read(sessionId, SNAPSHOT_PATH, { offset: READ_FROM_LINE, limit: READ_MAX_LINES })`；
  *   · `page.eof === false` ⇒ 画一句「快照超过 N 行，读不全（路径）」，**不解析**；
- *   · `eof === true` ⇒ `JSON.parse` 出视图并画 headline（行为不变）。
+ *   · `eof === true` ⇒ `JSON.parse` 出视图，画 headline **和** `debts[].text`（= 面板上那一屏；行为不变）。
  *
  * 🔴 它的用处只有一个：**证明这套判据会翻绿**（不是永远红）。所以它必须是"照契约写的最小实现"，
  *    而不是产品那份代码的影子 —— 它跟产品的实现细节没有任何耦合。
@@ -877,7 +884,7 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
       for (const p of facesProblems) problems.push(p)
       legs.faces = { control: facesControl.map((c) => c.name), measured: true, codes: [...new Set(facesProblems.map((p) => p.code))] }
 
-      // ── E 阳性对照 + 两把刀 ────────────────────────────────────────────────
+      // ── E 阳性对照 + 四把刀（K1 magic / K2 eof / K3 stale-view / K4 first-read）──────────
       // 🔴 对照**永远是**本文件那份合成最小实现 —— 它不能随着产品一起变：
       //    2026-11-07 实栽一次：`conforms()` 让对照在产品"看起来合规"时切成产品源码，
       //    于是"对照红了"读起来像"产品坏了"，而真相是**载具把 t() 画成了键名**。
@@ -897,22 +904,51 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
         truncated: await runLeg({ source: controlSource, page: truncatedPage, expect: 'truncated', label: '对照 · 截断页' }),
         'eof-flag': await runLeg({ source: controlSource, page: eofFlagPage, expect: 'eof-flag', label: '对照 · eof=false 但可解析' }),
         full: await runLeg({ source: controlSource, page: fullPages[1].page, expect: 'full', label: '对照 · 恰好一页' }),
+        // 🔴 **未经变异的对照也要走 `reopen`**：K3/K4 那两把刀要有一个"绿的底"才有意义。
+        //    （复审第三轮点名：原来对照只跑三条腿，K4 的底座根本没量过。）
+        reopen: await runLeg({
+          source: controlSource,
+          pages: [reopenPageA, reopenPageB],
+          expect: 'reopen',
+          label: '对照 · 关掉再开',
+          openCount: 2,
+          staleMarks: [OLD_HEADLINE, OLD_DEBT],
+        }),
       }
       const controlCodes = [...new Set(Object.values(controlRuns).flatMap((r) => r.codes))]
       const anchorsOk = rec.readings.control.anchors.window === true
         && rec.readings.control.anchors.gate === true
         && rec.readings.control.anchors.reset_view === true
-      await leg('control', async () => ({
+      /**
+       * 对照那一格把两件事**分开**报（复审第三轮：`RDW-CONTROL-NOT-GREEN` 原来只写在目录里、
+       * 没有任何一条路径能吐出来 —— 现在它是真的发射点）：
+       *   · 锚点对不上 ⇒ `RDW-CONTROL-UNAVAILABLE`（**尺子坏了**，判不了）；
+       *   · 对照本身不绿 ⇒ `RDW-CONTROL-NOT-GREEN`（下面点名是哪几条腿、吐了哪些码）。
+       */
+      const controlProblems = []
+      if (!anchorsOk) {
+        controlProblems.push(problem(CODE.controlUnavailable,
+          `合成最小实现的锚点没对上（window=${String(rec.readings.control.anchors.window)} · gate=${String(rec.readings.control.anchors.gate)} · reset_view=${String(rec.readings.control.anchors.reset_view)}）`
+          + ' —— 对照造不出来，这一跑判不了"判据会不会翻绿"'))
+      } else if (controlCodes.length > 0) {
+        controlProblems.push(problem(CODE.controlNotGreen,
+          `照契约写的**合成最小实现**自己红了：${JSON.stringify(controlCodes)}`
+          + `（${Object.entries(controlRuns).filter(([, v]) => v.codes.length > 0).map(([k, v]) => `${k}=${JSON.stringify(v.codes)}`).join(' · ')}）`
+          + ' —— 这一格的红是**尺子坏了**，不是产品缺功能'))
+      }
+      for (const p of controlProblems) problems.push(p)
+      legs.control = {
         expect: 'all-green',
         page: '合成最小实现（CONFORMING_CLIENT）',
         eof: null,
         lines: null,
         faces: Object.fromEntries(Object.entries(controlRuns).map(([k, v]) => [k, v.faces === null ? null : { announced: v.faces.announced, blamed: v.faces.blamed, panel: v.faces.panel }])),
-        codes: anchorsOk ? controlCodes : [...new Set([CODE.controlUnavailable, ...controlCodes])],
-        details: controlCodes.map((c) => `${c}: ${Object.entries(controlRuns).filter(([, v]) => v.codes.includes(c)).map(([k]) => k).join(',')}`),
+        codes: [...new Set(controlProblems.map((p) => p.code))],
+        underlying_codes: controlCodes,
         locale_languages: controlRuns.truncated.reading === null ? null : controlRuns.truncated.reading.locale?.languages ?? null,
-        error: null,
-      }))
+        leg_codes: Object.fromEntries(Object.entries(controlRuns).map(([k, v]) => [k, v.codes])),
+        measured: true,
+      }
 
       // 刀 K1：把 `limit: <常量>` 改回字面数字 ⇒ 只有静态那一格翻面
       const knifeMagic = controlSource.replace(/limit:\s*[A-Za-z_$][\w$]*/, `limit: ${LIMIT}`)
@@ -1033,7 +1069,7 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
       }
       for (const p of k4Problems) problems.push(p)
       legs['knife-first-read'] = {
-        input: '对照里把 `view !== null && h3` 改成 `false && h3`（第一拍不画视图）',
+        input: '对照里把 `view !== null && jsxr.jsxs` 改成 `false && jsxr.jsxs`（第一拍不画视图）',
         expected_codes: [CODE.firstReadUncaught],
         actual_codes: [...k4Codes].sort(),
         anchor_hits: k4Hits,
@@ -1045,6 +1081,90 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
     }
 
     // ── F 自守（**在每条腿外面**）：这一跑真的量了哪几格 ────────────────────
+    /**
+     * **码的目录两端**（复审第三轮）：`declared`（`CODE` 表里写着的）必须 ⊆ `reachable`
+     * （有一条 `problem(` / `caseHold(` / `codes.push(` 的**发射点**）—— 只写在文件头 / `expected_codes:`
+     * 里的名字不算。这把尺子在 `support/emission-catalog.mjs`，读的是本文件自己的源码。
+     * 同一格顺带核题面：`registry.mjs` 的 `DASH-17` 那一行必须点名每一个声明过的码。
+     */
+    {
+      const catalogueProblems = []
+      const ownSource = readFileSync(fileURLToPath(import.meta.url), 'utf8')
+      const registryPath = path.join(PATHS.testRoot, 'support', 'registry.mjs')
+      let registrySource = null
+      try {
+        registrySource = readFileSync(registryPath, 'utf8')
+      } catch {
+        registrySource = null
+      }
+      const catalogue = emissionCatalogue({
+        source: ownSource,
+        registrySource,
+        registryRowPrefix: "  ['DASH-17', 'client-dashboard', F.dash07,",
+      })
+      /**
+       * **尺子自证**（这把尺子自己也得能翻面）：一段合成源码 —— 一个码有 `problem()` 发射点、
+       * 一个码只在**注释**里、一个码只在 `expected_codes:` 里 ⇒ `no_emission` 必须恰好是后两个。
+       * 只数"名字出现过几次"的旧核对会把三…… 会把**只写期望**的那个也放过去，这一格就是拦它的。
+       */
+      const SYNTHETIC_CATALOGUE = [
+        'const CODE = {',
+        "  emitted: 'RDW-SYNTH-EMITTED',",
+        "  declaredOnly: 'RDW-SYNTH-DECLARED-ONLY',",
+        "  expectationOnly: 'RDW-SYNTH-EXPECTATION',",
+        '}',
+        '// 这一行提到 RDW-SYNTH-DECLARED-ONLY，但注释不是发射点',
+        'const problems = []',
+        "problems.push(problem(CODE.emitted, 'ok'))",
+        'const leg = { expected_codes: [CODE.expectationOnly], codes: [] }',
+      ].join('\n')
+      const checkerControl = emissionCatalogue({ source: SYNTHETIC_CATALOGUE })
+      const checkerOk = JSON.stringify(checkerControl.no_emission.slice().sort())
+        === JSON.stringify(['RDW-SYNTH-DECLARED-ONLY', 'RDW-SYNTH-EXPECTATION'])
+      if (!checkerOk) {
+        catalogueProblems.push(problem(CODE.catalogueUnreachable,
+          `**尺子自己坏了**：合成样本里"只有注释 / 只有 expected_codes"的两个码应当判成不可吐，实得 `
+          + `${JSON.stringify(checkerControl.no_emission)}（declared=${checkerControl.declared.length} · reachable=${checkerControl.reachable.length}）`
+          + ' —— 这把尺子现在分不出"写着"与"吐得出来"'))
+      }
+      if (catalogue.no_emission.length > 0) {
+        catalogueProblems.push(problem(CODE.catalogueUnreachable,
+          `这些码只是**写着**，没有任何一条路径吐得出来：${JSON.stringify(catalogue.no_emission)}`
+          + `（declared=${catalogue.declared.length} · reachable=${catalogue.reachable.length} · 发射点 ${catalogue.sites} 处）`
+          + ' —— 题面承诺一个用例说不出来的码，比缺一个码更坏'))
+      }
+      if (registrySource === null) {
+        catalogueProblems.push(problem(CODE.catalogueRowStale,
+          `读不到 \`${path.relative(PATHS.repo, registryPath).replace(/\\/g, '/')}\` ⇒ 题面那一端判不了（这一格不许记绿）`))
+      } else if (catalogue.row_present !== true) {
+        catalogueProblems.push(problem(CODE.catalogueRowStale, '`registry.mjs` 里找不到 `DASH-17` 那一行 —— 题面与用例分家了'))
+      } else if (catalogue.not_in_row.length > 0) {
+        catalogueProblems.push(problem(CODE.catalogueRowStale,
+          `题面那一行没点名这些码：${JSON.stringify(catalogue.not_in_row)} —— 表与实际矛盾，读的人会以为它们不存在`))
+      }
+      for (const p of catalogueProblems) problems.push(p)
+      legs.catalogue = {
+        expect: 'declared ⊆ reachable ⊆ row',
+        page: 'support/emission-catalog.mjs',
+        eof: null,
+        lines: null,
+        faces: null,
+        declared: catalogue.declared.length,
+        reachable: catalogue.reachable.length,
+        no_emission: catalogue.no_emission,
+        not_in_row: catalogue.not_in_row,
+        emission_sites: catalogue.sites,
+        row_present: catalogue.row_present,
+        ruler_control: {
+          synthetic_no_emission: checkerControl.no_emission,
+          ok: checkerOk,
+        },
+        codes: [...new Set(catalogueProblems.map((p) => p.code))],
+        measured: true,
+      }
+    }
+
+    // ── G 自守（**在每条腿外面**）：这一跑真的量了哪几格 ────────────────────
     const seen = Object.keys(legs)
     const missing = LEG_IDS.filter((id) => !seen.includes(id))
     const extra = seen.filter((id) => !LEG_IDS.includes(id))
