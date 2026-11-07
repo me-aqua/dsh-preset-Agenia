@@ -155,6 +155,8 @@ window.__ModuleLoader__.load({
 			const [failure, setFailure] = (0, react.useState)(null);
 			/** 这个工作区还没有快照（`workspace-file/not-found`）—— 一条状态，不是故障；值是它找的那个路径。 */
 			const [absent, setAbsent] = (0, react.useState)(null);
+			/** 读不全（`eof === false`）—— 也是一条状态，不是故障；值是 {maxLines, path, lines}。 */
+			const [truncated, setTruncated] = (0, react.useState)(null);
 			const rootRef = (0, react.useRef)(null);
 			const triggerRef = (0, react.useRef)(null);
 			const panelRef = (0, react.useRef)(null);
@@ -170,9 +172,14 @@ window.__ModuleLoader__.load({
 				if (!open) return;
 				setFailure(null);
 				setAbsent(null);
+				setTruncated(null);
 				readSnapshot(sessionId).then((result) => {
 					if (result && typeof result.absent === "string") {
 						setAbsent(result.absent);
+						return;
+					}
+					if (result && result.truncated && typeof result.truncated.path === "string") {
+						setTruncated(result.truncated);
 						return;
 					}
 					let parsed;
@@ -236,12 +243,23 @@ window.__ModuleLoader__.load({
 					"data-dashboard-panel": true,
 					children: [(0, react_jsx_runtime.jsxs)("div", {
 						className: Dashboard_module_css_default.body,
-						children: [view === null && failure === null && absent === null && (0, react_jsx_runtime.jsxs)("div", {
+						children: [view === null && failure === null && absent === null && truncated === null && (0, react_jsx_runtime.jsxs)("div", {
 							// 官方 E06 那一格（`div.notice[role=status]`）只装**读盘状态**：只有"读的中途"这一行；
 							// 读完了（成功或失败）它就什么也不画 —— 空分支 = 没有提示。日期不在这一格。
 							className: Dashboard_module_css_default.notice,
 							role: "status",
 							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }), t("loading")]
+						}), truncated !== null && (0, react_jsx_runtime.jsxs)("div", {
+							// 「这次没读全」= 一条状态：灰点 + 一句人话 + 上限与路径。
+							// 它不是故障（文件可能是完好的），不许用 `role=alert`。
+							className: Dashboard_module_css_default.notice,
+							role: "status",
+							"data-dashboard-truncated": true,
+							// 一句话说全：上限值 + 「读不全」 + 找的是哪个路径。
+							// （拼成一个字符串子节点：读者要从**同一段文字**里读到这三样，别拆碎。）
+							children: (0, react_jsx_runtime.jsx)("span", {
+								children: t("truncatedPrefix") + String(truncated.maxLines) + t("truncatedSuffix") + " " + truncated.path
+							})
 						}), absent !== null && (0, react_jsx_runtime.jsxs)("div", {
 							// 「这个工作区还没有快照」= 一条状态：灰点 + 一句人话 + 找的是哪个路径。
 							// 它不是故障，不许用 `role=alert`，也不许把远端错误对象整段倒出来。
@@ -303,6 +321,8 @@ window.__ModuleLoader__.load({
 			loading: "正在读账本…",
 			unavailable: "账本暂不可用",
 			absent: "这个工作区还没有看板快照（账本还没在这儿跑过），找的是",
+			truncatedPrefix: "看板快照超过",
+			truncatedSuffix: " 行 —— 这次读不全（文件本身没坏）；找的是",
 			debts: "欠着的东西",
 			expand: "展开",
 			collapse: "收起"
@@ -312,6 +332,8 @@ window.__ModuleLoader__.load({
 			loading: "Reading the ledger…",
 			unavailable: "Ledger unavailable",
 			absent: "This workspace has no dashboard snapshot yet (the ledger has never run here); looked for",
+			truncatedPrefix: "The dashboard snapshot is longer than the read window:",
+			truncatedSuffix: " lines — this read was incomplete (the file itself is fine); looked for",
 			debts: "Outstanding",
 			expand: "Show more",
 			collapse: "Show less"
@@ -320,6 +342,10 @@ window.__ModuleLoader__.load({
 		//#region lib/types/client/mount.js
 		/** 视图快照在工作区里的相对路径（Node 侧写它；本插件只读它）。 */
 		const SNAPSHOT_PATH = ".tools/_scratch/dashboard/view.json";
+	/** 读快照时从第几行开始（1 起）。 */
+	const READ_FROM_LINE = 1;
+	/** 一次最多读多少行。超过这个数就是「读不全」—— 必须说出来，不许静默截断。 */
+	const READ_MAX_LINES = 200;
 		/** 本插件用到的浏览器服务：槽位 + 词典 + 会话 + 读文件的那条 Remote。 */
 		const inject = [
 			"sessions",
@@ -437,9 +463,24 @@ window.__ModuleLoader__.load({
 					if (!svc || typeof svc.read !== "function") {
 						return Promise.reject(new Error("remote.workspaceFiles 不可用（浏览器侧没有这个服务）"));
 					}
-					return Promise.resolve(svc.read(sessionId, SNAPSHOT_PATH, { offset: 1, limit: 200 })).then(pickPageText).then((text) => {
+					// 窗口写在调用点上、值是命名常量：两个数有名字，判据也能直接读到它。
+					return Promise.resolve(svc.read(sessionId, SNAPSHOT_PATH, {
+						offset: READ_FROM_LINE,
+						limit: READ_MAX_LINES
+					})).then((page) => {
+						// 🔴 `eof === false` ⇒ 这次没读全。**不许**把半份 JSON 交给解析器：
+						//    那会把「只读了前 N 行」说成「快照不是合法 JSON」，红线指向一个没坏的文件。
+						if (page && page.eof === false) {
+							return {
+								truncated: {
+									maxLines: READ_MAX_LINES,
+									path: SNAPSHOT_PATH,
+									lines: typeof page.lines === "number" ? page.lines : null
+								}
+							};
+						}
 						return {
-							text
+							text: pickPageText(page)
 						};
 					}).catch((reason) => {
 						// 🔴 2026-11-06：「这个工作区还没有快照」**不是故障**，是一条状态。

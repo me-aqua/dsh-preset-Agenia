@@ -304,19 +304,34 @@ export function createDashboardHarness(source) {
   /**
    * 一个现场：装一次插件（`apply(ctx)`）→ 点一次按钮 → 让读盘落定 → 再画一次。
    *
-   * @param {{remote:unknown, sessionId?:string, position?:object|null, ticks?:number}} args
+   * @param {{remote:unknown, sessionId?:string, position?:object|null, ticks?:number,
+   *   t?:Function|null, resolveLocale?:boolean}} args
+   *   `t`：覆盖 `t(key)`（缺省 = 恒等，**保持既有各格读数不变**）；
+   *   `resolveLocale`：从插件**自己注册的字典**（`ctx.locale.register(NS, {zh, en})`）里解 `t(key)`
+   *   —— 浏览器就是这么做的。🔴 缺了它，`t('truncatedPrefix')` 会被画成**键名本身**
+   *   （2026-11-07 实测：产品那句「看板快照超过200 行 —— 这次读不全…」被画成
+   *   `truncatedPrefix200truncatedSuffix …` ⇒ 判据读不到中文，红的原因其实是**载具**）。
+   *   拿不到字典 / 键不在这份字典里 ⇒ 退回键名（判据因此会红，不假绿）。
    */
-  async function scene({ remote, sessionId = 'session-under-test', position = null, ticks = 3 } = {}) {
+  async function scene({ remote, sessionId = 'session-under-test', position = null, ticks = 3, t: tGiven = null, resolveLocale = false } = {}) {
     const registered = { value: null }
+    const dictionaries = { ns: null, dicts: null }
     const ctx = {
       remote,
       logger: { warn() {}, info() {}, debug() {} },
-      // 插件第一句是 `ctx.effect(() => ctx.locale.register(...), "…")`；字典不是这一格的判据。
+      // 插件第一句是 `ctx.effect(() => ctx.locale.register(...), "…")`；字典不是这一格的判据，
+      // 但 `t()` 的**解**要靠它（`resolveLocale`）—— 只记键与语言，不把整份字典塞进读数。
       effect(fn) {
         const cleanup = fn()
         return cleanup
       },
-      locale: { register: () => () => {} },
+      locale: {
+        register(ns, dicts) {
+          dictionaries.ns = ns ?? null
+          dictionaries.dicts = dicts ?? null
+          return () => {}
+        },
+      },
       slots: {
         inject(_name, factory) {
           registered.value = factory()
@@ -353,6 +368,8 @@ export function createDashboardHarness(source) {
       status_texts: [],
       panel_style: null,
       hook_args: null,
+      /** 插件注册的词典是哪一份（只记语言，不抄正文）：`resolveLocale` 有没有东西可解，看它。 */
+      locale: { ns: null, languages: [] },
       texts: [],
     }
     if (typeof Component !== 'function' || typeof actions?.readSnapshot !== 'function') {
@@ -367,7 +384,22 @@ export function createDashboardHarness(source) {
     reactor.position = position
     reactor.lastHookArgs = null
     reactor.hookCalls = 0
-    const props = { sessionId, t: (key) => key, readSnapshot: actions.readSnapshot }
+    /**
+     * `t(key)` 的三个来源（优先级从高到低）：调用方给的 `t` · 插件自己注册的 `zh` 字典 · 恒等。
+     * 字典在 `apply(ctx)` 那一刻才注册，所以这里读的是**闭包里的引用**（渲染时已经填好了）。
+     */
+    const dicts = dictionaries.dicts
+    const languages = dicts !== null && typeof dicts === 'object' ? Object.keys(dicts) : []
+    reading.locale = { ns: dictionaries.ns, languages }
+    const t = typeof tGiven === 'function'
+      ? tGiven
+      : resolveLocale
+        ? (key) => {
+            const zh = dicts !== null && typeof dicts === 'object' ? dicts.zh : null
+            return zh !== null && typeof zh === 'object' && typeof zh[key] === 'string' ? zh[key] : key
+          }
+        : (key) => key
+    const props = { sessionId, t, readSnapshot: actions.readSnapshot }
 
     // ② 点之前（open=false：面板不画，读盘 effect 也不跑）
     const before = renderer.render(Component, props)

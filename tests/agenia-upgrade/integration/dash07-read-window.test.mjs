@@ -351,7 +351,33 @@ const PARSER_BLAME = [
 ]
 
 /**
+ * 树里每个节点的**子树文字**（叶子节点本身 + 这一棵拼起来的那一段）。
+ * 一句话被拆成兄弟节点时，拼起来的那一段才等于读的人看到的那一行。
+ */
+function subtreeTextsOf(node, out = []) {
+  if (node === null || node === undefined || node === true || node === false) return out
+  if (Array.isArray(node)) {
+    for (const child of node) subtreeTextsOf(child, out)
+    return out
+  }
+  if (typeof node === 'string' || typeof node === 'number') {
+    const text = String(node).trim()
+    if (text !== '') out.push(text)
+    return out
+  }
+  if (typeof node !== 'object') return out
+  const joined = textsOf(node).map((value) => String(value)).join('').trim()
+  if (joined !== '') out.push(joined)
+  subtreeTextsOf(node.props?.children, out)
+  return out
+}
+
+/**
  * 一棵树 → 三面（纯函数；合成树与真树走**同一份**判读）。
+ *
+ * 🔴 文字取的是**每个节点的子树拼接**（叶子 + 拼起来的那一段），不是逐叶子节点：
+ *    浏览器的 `t()` 会把一句话拼出来（产品那句 = `t('truncatedPrefix') + N + t('truncatedSuffix') + ' ' + path`），
+ *    读的人看到的是一行字 —— 判据必须按"一行字"读，否则"把句子拆成兄弟节点"就成了假红。
  *
  * @param {unknown} tree
  * @param {{limit:number|null, snapshotPath:string|null, reading:object}} input
@@ -359,7 +385,7 @@ const PARSER_BLAME = [
  *   truncation_texts:string[], blame_texts:string[], texts:string[]}}
  */
 function facesOf(tree, { limit, snapshotPath, reading }) {
-  const texts = tree === null || tree === undefined ? [] : textsOf(tree).map((t) => String(t).trim()).filter((t) => t !== '')
+  const texts = tree === null || tree === undefined ? [] : [...new Set(subtreeTextsOf(tree))]
   const numeric = limit === null ? null : String(limit)
   /** "读不全"那一句：必须有「快照超过 N 行」+「读不全」+ 快照路径 —— 三样都得在**同一段文字**里。 */
   const truncation = texts.filter((t) => /快照超过/.test(t) && /读不全/.test(t)
@@ -402,7 +428,9 @@ async function runLeg({ source, page, expect, label }) {
     }
   }
   const calls = []
-  const scene = await harness.scene({ remote: pageRemote(page, calls), ticks: 3 })
+  // 🔴 `resolveLocale: true` —— 浏览器用插件**自己注册的字典**解 `t(key)`；载具不这么做，
+  //    `t('truncatedPrefix')` 就会被画成键名本身，判据读到的是 `truncatedPrefix200…`（2026-11-07 实栽）。
+  const scene = await harness.scene({ remote: pageRemote(page, calls), ticks: 3, resolveLocale: true })
   const faces = facesOf(scene.tree ?? null, { limit, snapshotPath, reading: scene })
   const codes = []
   if (expect === 'full') {
@@ -429,6 +457,7 @@ async function runLeg({ source, page, expect, label }) {
       root_present: scene.root_present,
       panel_present: findPanel(scene.tree ?? null) !== null,
       status_texts: scene.status_texts,
+      locale: scene.locale ?? null,
       throws: scene.throws,
     },
     error: null,
@@ -682,15 +711,20 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
       for (const p of facesProblems) problems.push(p)
       legs.faces = { control: facesControl.map((c) => c.name), measured: true, codes: [...new Set(facesProblems.map((p) => p.code))] }
 
-      // ── E 阳性对照 + 两把刀（对照 = 合规的源码：产品已合规就用产品，否则用合成实现）──
-      const productConforms = conforms(source)
-      const controlSource = productConforms ? source : CONFORMING_CLIENT
+      // ── E 阳性对照 + 两把刀 ────────────────────────────────────────────────
+      // 🔴 对照**永远是**本文件那份合成最小实现 —— 它不能随着产品一起变：
+      //    2026-11-07 实栽一次：`conforms()` 让对照在产品"看起来合规"时切成产品源码，
+      //    于是"对照红了"读起来像"产品坏了"，而真相是**载具把 t() 画成了键名**。
+      //    产品自己那几格由 `truncated` / `eof-flag` / `full` 三条腿判；对照只回答"这套判据会翻绿"。
+      const controlSource = CONFORMING_CLIENT
       rec.readings.control = {
-        source: productConforms ? 'product' : 'synthetic',
-        anchors: productConforms ? null : {
+        source: 'synthetic-minimal-implementation',
+        note: '照 CONTRACT-batch12 §二 写的最小实现；与产品实现细节零耦合（产品合规与否不影响它）',
+        anchors: {
           window: controlSource.includes(CONTROL_ANCHORS.window),
           gate: controlSource.includes(CONTROL_ANCHORS.gate),
         },
+        product_conforms_reading_only: conforms(source),
       }
       const controlRuns = {
         truncated: await runLeg({ source: controlSource, page: truncatedPage, expect: 'truncated', label: '对照 · 截断页' }),
@@ -698,14 +732,16 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
         full: await runLeg({ source: controlSource, page: fullPages[1].page, expect: 'full', label: '对照 · 恰好一页' }),
       }
       const controlCodes = [...new Set(Object.values(controlRuns).flatMap((r) => r.codes))]
+      const anchorsOk = rec.readings.control.anchors.window === true && rec.readings.control.anchors.gate === true
       await leg('control', async () => ({
         expect: 'all-green',
-        page: productConforms ? '产品源码（已合规）' : '合成最小实现',
+        page: '合成最小实现（CONFORMING_CLIENT）',
         eof: null,
         lines: null,
         faces: Object.fromEntries(Object.entries(controlRuns).map(([k, v]) => [k, v.faces === null ? null : { announced: v.faces.announced, blamed: v.faces.blamed, panel: v.faces.panel }])),
-        codes: controlCodes.length === 0 ? [] : productConforms ? controlCodes : [...new Set([CODE.controlUnavailable, ...controlCodes])],
+        codes: anchorsOk ? controlCodes : [...new Set([CODE.controlUnavailable, ...controlCodes])],
         details: controlCodes.map((c) => `${c}: ${Object.entries(controlRuns).filter(([, v]) => v.codes.includes(c)).map(([k]) => k).join(',')}`),
+        locale_languages: controlRuns.truncated.reading === null ? null : controlRuns.truncated.reading.locale?.languages ?? null,
         error: null,
       }))
 
