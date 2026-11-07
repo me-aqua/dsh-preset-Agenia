@@ -130,6 +130,7 @@ const CODE = {
   controlNotGreen: 'RDW-CONTROL-NOT-GREEN',
   catalogueUnreachable: 'RDW-CATALOGUE-UNREACHABLE',
   catalogueRowStale: 'RDW-CATALOGUE-ROW-STALE',
+  catalogueSourceUnparsed: 'RDW-CATALOGUE-SOURCE-UNPARSED',
   knifeVector: 'RDW-KNIFE-VECTOR',
   knifeNotBiting: 'RDW-KNIFE-NOT-BITING',
   legsIncomplete: 'RDW-LEGS-INCOMPLETE',
@@ -1082,9 +1083,11 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
 
     // ── F 自守（**在每条腿外面**）：这一跑真的量了哪几格 ────────────────────
     /**
-     * **码的目录两端**（复审第三轮）：`declared`（`CODE` 表里写着的）必须 ⊆ `reachable`
-     * （有一条 `problem(` / `caseHold(` / `codes.push(` 的**发射点**）—— 只写在文件头 / `expected_codes:`
-     * 里的名字不算。这把尺子在 `support/emission-catalog.mjs`，读的是本文件自己的源码。
+     * **码的目录两端**（复审第三/四轮）：`declared`（`CODE` 表里写着的）必须 ⊆ `reachable`
+     * —— 判"可吐"只认**码位**那一个实参（`problem(…)` 第 1 个 / `caseHold(…)` 第 2 个 /
+     * `codes.push(…)` 第 1 个），**提示文本里提到不算**、文件头 / `expected_codes:` / leg 的 `codes:` 都不算。
+     * 声明表读不出来时必须出声（`RDW-CATALOGUE-SOURCE-UNPARSED`），不许静默变绿。
+     * 这把尺子在 `support/emission-catalog.mjs`，读的是本文件自己的源码；
      * 同一格顺带核题面：`registry.mjs` 的 `DASH-17` 那一行必须点名每一个声明过的码。
      */
     {
@@ -1103,34 +1106,56 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
         registryRowPrefix: "  ['DASH-17', 'client-dashboard', F.dash07,",
       })
       /**
-       * **尺子自证**（这把尺子自己也得能翻面）：一段合成源码 —— 一个码有 `problem()` 发射点、
-       * 一个码只在**注释**里、一个码只在 `expected_codes:` 里 ⇒ `no_emission` 必须恰好是后两个。
-       * 只数"名字出现过几次"的旧核对会把三…… 会把**只写期望**的那个也放过去，这一格就是拦它的。
+       * **尺子自证**（复审第四轮换了形状，MF-2）：合成源码的声明表用 **`Object.freeze({ "…": "RDW-…" })`
+       * + 双引号**（与真实文件那种 `const CODE = { '…': 'RDW-…' }` 不同形状）—— 只认一种写法的解析器
+       * 在这里会 `table_ok:false` ⇒ `declared:0` ⇒ 下面这份期望对不上 ⇒ 当场红，藏不住。
+       *
+       * 五个码各一格，只有三个真能吐：
+       *   · `emittedProblem` / `emittedCaseHold` / `emittedPush` —— 三种码位各一个发射点 ⇒ **可吐**；
+       *   · `mentionedOnly` —— **只在提示文本里出现**（`problem(…, '… CODE.mentionedOnly …')`）⇒ **不可吐**；
+       *   · `declaredOnly` —— 只在声明表 + 注释里 ⇒ 不可吐；
+       *   · `expectationOnly` —— 只在 `expected_codes:` 里 ⇒ 不可吐。
        */
       const SYNTHETIC_CATALOGUE = [
-        'const CODE = {',
-        "  emitted: 'RDW-SYNTH-EMITTED',",
-        "  declaredOnly: 'RDW-SYNTH-DECLARED-ONLY',",
-        "  expectationOnly: 'RDW-SYNTH-EXPECTATION',",
-        '}',
-        '// 这一行提到 RDW-SYNTH-DECLARED-ONLY，但注释不是发射点',
+        'const CODE = Object.freeze({',
+        '  "emittedProblem": "RDW-SYNTH-PROBLEM",',
+        '  "emittedCaseHold": "RDW-SYNTH-HOLD",',
+        '  "emittedPush": "RDW-SYNTH-PUSH",',
+        '  "mentionedOnly": "RDW-SYNTH-MENTIONED-ONLY",',
+        '  "declaredOnly": "RDW-SYNTH-DECLARED-ONLY",',
+        '  "expectationOnly": "RDW-SYNTH-EXPECTATION-ONLY",',
+        '})',
+        '// 注释里提到 RDW-SYNTH-DECLARED-ONLY 也不算发射',
         'const problems = []',
-        "problems.push(problem(CODE.emitted, 'ok'))",
+        "problems.push(problem(CODE.emittedProblem, '提示里提到 CODE.mentionedOnly 与 RDW-SYNTH-MENTIONED-ONLY，但这不是码位'))",
+        "caseHold(rec, CODE.emittedCaseHold, 'why')",
+        'codes.push(CODE.emittedPush)',
         'const leg = { expected_codes: [CODE.expectationOnly], codes: [] }',
       ].join('\n')
       const checkerControl = emissionCatalogue({ source: SYNTHETIC_CATALOGUE })
-      const checkerOk = JSON.stringify(checkerControl.no_emission.slice().sort())
-        === JSON.stringify(['RDW-SYNTH-DECLARED-ONLY', 'RDW-SYNTH-EXPECTATION'])
+      const wantNoEmission = ['RDW-SYNTH-DECLARED-ONLY', 'RDW-SYNTH-EXPECTATION-ONLY', 'RDW-SYNTH-MENTIONED-ONLY']
+      const checkerOk = checkerControl.table_ok === true
+        && JSON.stringify(checkerControl.no_emission.slice().sort()) === JSON.stringify(wantNoEmission)
+        && checkerControl.declared.length === 6
       if (!checkerOk) {
         catalogueProblems.push(problem(CODE.catalogueUnreachable,
-          `**尺子自己坏了**：合成样本里"只有注释 / 只有 expected_codes"的两个码应当判成不可吐，实得 `
-          + `${JSON.stringify(checkerControl.no_emission)}（declared=${checkerControl.declared.length} · reachable=${checkerControl.reachable.length}）`
-          + ' —— 这把尺子现在分不出"写着"与"吐得出来"'))
+          '**尺子自己坏了**：合成样本（`Object.freeze` + 双引号那种声明形状）应当解析出 6 个码、'
+          + `且"只在提示文本 / 只在声明+注释 / 只在 expected_codes"的三个判成不可吐；实得 `
+          + `table_ok=${String(checkerControl.table_ok)}${checkerControl.table_why === null ? '' : `（${checkerControl.table_why}）`}`
+          + ` · declared=${checkerControl.declared.length} · reachable=${checkerControl.reachable.length}`
+          + ` · no_emission=${JSON.stringify(checkerControl.no_emission)}`
+          + ' —— 这把尺子分不出"发射"与"提到"（或者换一种声明形状就看不见了）'))
+      }
+      if (catalogue.table_ok !== true) {
+        catalogueProblems.push(problem(CODE.catalogueSourceUnparsed,
+          `用例自己的 \`CODE\` 声明表读不出来：${catalogue.table_why ?? '（没有原因）'}`
+          + ' —— 读成空表就会得到 `declared=0 · no_emission=[]` 的**假绿**，所以这一格必须出声'))
       }
       if (catalogue.no_emission.length > 0) {
         catalogueProblems.push(problem(CODE.catalogueUnreachable,
           `这些码只是**写着**，没有任何一条路径吐得出来：${JSON.stringify(catalogue.no_emission)}`
-          + `（declared=${catalogue.declared.length} · reachable=${catalogue.reachable.length} · 发射点 ${catalogue.sites} 处）`
+          + `（declared=${catalogue.declared.length} · reachable=${catalogue.reachable.length} · 码位发射点 ${catalogue.sites} 处`
+          + `${catalogue.skipped.length === 0 ? '' : ` · 缺码位实参 ${catalogue.skipped.length} 处`}）`
           + ' —— 题面承诺一个用例说不出来的码，比缺一个码更坏'))
       }
       if (registrySource === null) {
@@ -1149,13 +1174,21 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
         eof: null,
         lines: null,
         faces: null,
+        table_ok: catalogue.table_ok,
+        table_shape: catalogue.table_shape,
+        table_why: catalogue.table_why,
         declared: catalogue.declared.length,
         reachable: catalogue.reachable.length,
         no_emission: catalogue.no_emission,
         not_in_row: catalogue.not_in_row,
         emission_sites: catalogue.sites,
+        skipped_code_positions: catalogue.skipped,
         row_present: catalogue.row_present,
+        /** 🔴 读 `no_emission: []` 之前先读这一句（复审第四轮要求它进读数）。 */
+        scope_note: catalogue.scope_note,
         ruler_control: {
+          table_shape: checkerControl.table_shape,
+          declared: checkerControl.declared,
           synthetic_no_emission: checkerControl.no_emission,
           ok: checkerOk,
         },
