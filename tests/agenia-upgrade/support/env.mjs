@@ -75,6 +75,19 @@ export const ENV = {
    * 不给 ⇒ 读数里记 `pinned: null`（"这一格没配"是读数，不是绿灯）。
    */
   STAGING_MANIFEST: 'AGENIA_STAGING_MANIFEST',
+  /**
+   * 🔴 **真脑根（写保护见证）在哪** —— 显式给，不从 `REPO_ROOT` 推（batch 8 评审 `M1`）。
+   *
+   * 为什么：`DR-01` 的见证根原来是 `REPO_ROOT/presets/agenia/.runtime`。在**只读副本**（评审对象）
+   * 或 worktree 里，那个目录**不存在** ⇒ 前后两个快照都是 `exists:false` ⇒ 路径集合"没变" ⇒ 这一格
+   * **绿**（空对空的绿），而两把刀也只剩一个空目录（`brainCells:[]`）。那是"没量到"被写成了"没变"。
+   * ⇒ 这个根现在**必须显式给**：`AGENIA_LIVE_BRAIN_ROOT=<活体预设>/.runtime`。
+   *    不给时仍回落到派生值（活树里逐字符相同、行为一字不改），但**根不在盘上 ⇒ 这一格记 HOLD**
+   *    （`DR01-BRAIN-WITNESS-ABSENT`），不是绿。
+   * ⚠️ **不许**用 `AGENIA_REPO_ROOT` 把整棵树的根钉回活树来"修"这一格：那会让 `MCR-03`（入口/尺子/
+   *    体检脚本指副本）翻红 —— 那一格要的正是"根从这一跑自己推"。
+   */
+  LIVE_BRAIN_ROOT: 'AGENIA_LIVE_BRAIN_ROOT',
 }
 
 export class EnvMissingError extends Error {

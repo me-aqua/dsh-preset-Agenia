@@ -13,11 +13,13 @@
  * `MCR-04` 判四格：
  *   ① **前提**：副本里有一个 `__pycache__/*.pyc` 时，`--verify` 的 `equal` **仍然是 true**
  *      （如果它变成 false，说明有人扩了 `equal` 的口径 —— 与组长的决定相反，这一格要重新定形，不许静默改）；
- *   ② **边界句**：读数里 `equal` **同一个对象**里有 `equal_scope`：`covers` 点 CODE、`note` 说"不覆盖多出来的文件"、
- *      `does_not_cover` 里点名"多出来的文件"；
+ *   ② **边界句是产品自己说的**（2026-11-07 评审 `M3`）：`--verify` 的 JSON 里、与 `equal` **同一份**，
+ *      必须有 `equal_scope`：`covers` 点 CODE、`does_not_cover` 至少有一条点名"多出来的文件"、
+ *      至少有一条说清"被排除表挡掉 / CODE 集之外"。测试侧**不再另写一份**（`equalScopeReading()` 已删）；
+ *      刀打在**产品的 emit** 上（拷导出器、把 `equal_scope` 键改名）⇒ 同一个 `--verify` 没有这一格 ⇒ ② 红。
  *   ③ **同格另一条腿**：`copyIntegrityVerdict()` 必须 `ok:false` + `E_COPY_HAS_EXTRA` 并点名那份 `.pyc`；
  *      抽掉"多出来的文件"这一条腿（`checkExtra:false`）⇒ 同一份副本必须变绿（退化刀）；
- *   ④ **不是空样本**：把 `.pyc` 删掉 ⇒ `equal:true` + 完整性 `ok:true`（这一格两边都翻得动）。
+ *   ④ **不是空样本**：把 `.pyc` 搬走 ⇒ `equal:true` + 完整性 `ok:true`（这一格两边都翻得动）。
  *
  * `MCR-06` 判三格（**产品那条路**）：
  *   ① 有 `.pyc` ⇒ `--verify` 非零、`ok:false`、`is_that_commit.ok:false`、`problems` 点名 `__pycache__/probe.pyc`；
@@ -36,7 +38,7 @@ import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import {
-  buildFixtureRepo, codeDigestOfCommit, copyIntegrityVerdict, equalScopeReading, exporterPath,
+  buildFixtureRepo, codeDigestOfCommit, copyIntegrityVerdict, exporterPath,
   runExport, runVerify,
 } from '../support/tree-at-commit.mjs'
 
@@ -92,27 +94,27 @@ describe('integration · measuring/copy (MCR) · F-170 equal 的覆盖边界', (
       const withoutExtra = copyIntegrityVerdict({ repo: fx.repo, commit: fx.commitA, copyRoot: out, checkExtra: false })
 
       /**
-       * 🔴 **边界句住在 `equal` 旁边**（`F-170` 的判据本体）：不是注释、不是另一份文档，
-       * 而是 `rec.readings.verify` 这**同一个对象**里的 `equal_scope`。
+       * 🔴 **边界句住在 `equal` 旁边，而且它是产品自己说的**（`F-170`；2026-11-07 评审 `M3`）：
+       * `--verify` 的 JSON 现在自己 emit `equal_scope`（`{covers, does_not_cover}`）。
+       * ⇒ 这一格**只断言产品那一格**（`v.equal_scope`），测试侧不再另写一份（`equalScopeReading()` 已删）：
+       *   一份事实两个载体，改一处就是没改（`cand-20261104-0020`）。
        */
+      const scope = v.equal_scope ?? null
       rec.readings.verify = {
         copy: out,
         expect,
         equal_clean: verifyClean.json?.equal ?? null,
         /** 同一个对象里的 `equal`：这一格量的是"有 .pyc 时它还是不是 true"。 */
         equal: v.equal ?? null,
-        equal_scope: equalScopeReading({
-          equal: v.equal ?? null,
-          extra_file_present: true,
-          extra_files: [pycRel],
-          /** 产品那一侧也把"多一份"说出来了（`is_that_commit` 那条腿）——但 `equal` 自己没变。 */
-          product_says_extra: (v.is_that_commit?.problems ?? []).some((p) => String(p).includes(pycRel)),
-        }),
+        /** 产品 emit 的那一句，原样抄进来（**不在测试侧重写**）—— 读 `result.json` 的人在这里看到它。 */
+        equal_scope: scope,
         product: {
           exit: verifyExtra.exit,
           ok: v.ok ?? null,
           is_that_commit_ok: v.is_that_commit?.ok ?? null,
           problems: (v.is_that_commit?.problems ?? []).slice(0, 5),
+          equal_scope_present: 'equal_scope' in v,
+          equal_present: 'equal' in v,
         },
         copy_integrity: extraIntegrity,
         copy_integrity_without_extra_leg: withoutExtra,
@@ -124,16 +126,23 @@ describe('integration · measuring/copy (MCR) · F-170 equal 的覆盖边界', (
       }
       if (verifyClean.json?.equal !== true) push('EQUAL-PREMISE-CHANGED', `干净副本的 \`equal\` 就不是 true（${JSON.stringify(verifyClean.json?.equal ?? null)}）—— 后面的"有 .pyc 时仍 true"没有对照`)
 
-      // ② 边界句：三样都要在（cover 点 CODE / note 说"不覆盖" / does_not_cover 点名多出来的文件）
-      const scope = rec.readings.verify.equal_scope
-      if (typeof scope.covers !== 'string' || !scope.covers.includes('CODE')) {
-        push('EQUAL-SCOPE-MISSING', `读数里 \`equal_scope.covers\` 没有点名 CODE 集：${JSON.stringify(scope.covers)}`)
-      }
-      if (typeof scope.note !== 'string' || !scope.note.includes('不覆盖') || !scope.note.includes('多出来')) {
-        push('EQUAL-SCOPE-MISSING', `读数里 \`equal_scope.note\` 没有写"不覆盖多出来的文件"：${JSON.stringify(scope.note)} —— 读 \`equal:true\` 的人会以为副本一个文件都没多`)
-      }
-      if (!Array.isArray(scope.does_not_cover) || scope.does_not_cover.length === 0 || !scope.does_not_cover.some((s) => String(s).includes('多出来'))) {
-        push('EQUAL-SCOPE-MISSING', `读数里 \`equal_scope.does_not_cover\` 没有点名"多出来的文件"：${JSON.stringify(scope.does_not_cover)}`)
+      // ② 边界句：**产品的** `equal_scope` 必须与 `equal` 同住一份 JSON，且三样都在
+      //    （covers 点 CODE / does_not_cover 点名多出来的文件 / 它讲清了"CODE 集之外"）
+      if (!('equal_scope' in v)) {
+        push('EQUAL-SCOPE-MISSING', `\`--verify\` 的 JSON 里没有 \`equal_scope\`（有 \`equal\`=${JSON.stringify(v.equal ?? null)}）—— 读 \`equal:true\` 的人没有任何一句告诉他这数只覆盖 CODE 集`)
+      } else if (scope === null || typeof scope !== 'object' || Array.isArray(scope)) {
+        push('EQUAL-SCOPE-MISSING', `\`equal_scope\` 不是对象：${JSON.stringify(scope)?.slice(0, 200)}`)
+      } else {
+        if (typeof scope.covers !== 'string' || !/code/i.test(scope.covers)) {
+          push('EQUAL-SCOPE-MISSING', `\`equal_scope.covers\` 没有点名 CODE 集：${JSON.stringify(scope.covers)}`)
+        }
+        const dnc = Array.isArray(scope.does_not_cover) ? scope.does_not_cover.map(String) : []
+        if (dnc.length === 0) {
+          push('EQUAL-SCOPE-MISSING', `\`equal_scope.does_not_cover\` 不是非空数组：${JSON.stringify(scope.does_not_cover)} —— "只覆盖 CODE 集"必须同句说清**不覆盖**什么`)
+        } else {
+          if (!dnc.some((s) => /extra/i.test(s))) push('EQUAL-SCOPE-MISSING', `\`equal_scope.does_not_cover\` 没有一条点名"多出来的文件"：${JSON.stringify(dnc)}`)
+          if (!dnc.some((s) => /__pycache__|exclusion/i.test(s))) push('EQUAL-SCOPE-MISSING', `\`equal_scope.does_not_cover\` 没有一条说清"被排除表挡掉的文件"：${JSON.stringify(dnc)}`)
+        }
       }
 
       // ③ 同格另一条腿：完整性判定必须红 + 有码；抽掉那一条腿 ⇒ 同一输入必须绿
@@ -141,6 +150,40 @@ describe('integration · measuring/copy (MCR) · F-170 equal 的覆盖边界', (
       if (extraIntegrity.code !== 'E_COPY_HAS_EXTRA') push('COPY-INTEGRITY-CODE', `多出来文件的红因码应是 \`E_COPY_HAS_EXTRA\`，实得 ${JSON.stringify(extraIntegrity.code)}`)
       if (!(extraIntegrity.extra ?? []).includes(pycRel)) push('COPY-INTEGRITY-NAME', `完整性判定没有点名 \`${pycRel}\`：${JSON.stringify(extraIntegrity.extra)}`)
       if (withoutExtra.ok !== true) push('KNIFE-NO-BITE', '把"多出来的文件"这一条腿抽掉（`checkExtra:false`）之后，同一份副本仍然 ok=false —— 这一刀没咬到那一条腿（①③ 的翻面证据不成立）')
+
+      // ③b **刀打在产品的 emit 上**（评审 `M3`）：拷一份导出器，只把 `equal_scope` 那个键改名 ⇒
+      //     同一个 `--verify` 的 JSON 里就**没有** `equal_scope` ⇒ ② 必须红（而 `equal` 仍是 true，
+      //     证明这一刀只动了"边界句"那一格，没有把整个读数弄坏）。
+      {
+        const knifeDir = path.join(root, 'fixtures', 'mcr04-knife')
+        mkdirSync(knifeDir, { recursive: true })
+        const knifeTool = path.join(knifeDir, 'tree-at-commit.mjs')
+        copyFileSync(ex.file, knifeTool)
+        copyFileSync(path.join(path.dirname(ex.file), 'fingerprint.mjs'), path.join(knifeDir, 'fingerprint.mjs'))
+        const src = readFileSync(knifeTool, 'utf8')
+        const anchor = '    equal_scope: {'
+        const hits = src.split(anchor).length - 1
+        if (hits !== 1) {
+          push('KNIFE-ANCHOR', `退化刀的锚点 "${anchor}" 在导出器里命中 ${hits} 处（应恰好 1 处）—— 刀钝了：把边界句从 emit 里摘掉也不会红`)
+          rec.readings.equal_scope_knife = { anchor, anchor_hits: hits }
+        } else {
+          writeFileSync(knifeTool, src.split(anchor).join('    equal_scope_disabled: {'), 'utf8')
+          const knifed = runVerify({ exporter: knifeTool, copy: out, repo: fx.repo, commit: fx.commitA, expect })
+          const kj = knifed.json ?? {}
+          rec.readings.equal_scope_knife = {
+            anchor, anchor_hits: hits, exit: knifed.exit,
+            equal: kj.equal ?? null,
+            equal_scope_present: 'equal_scope' in kj,
+            equal_scope_disabled_present: 'equal_scope_disabled' in kj,
+          }
+          if ('equal_scope' in kj) {
+            push('KNIFE-NO-BITE', `把 emit 里 \`equal_scope\` 那个键改名之后，\`--verify\` 的 JSON 里**仍然有** \`equal_scope\` ⇒ 这一刀没咬到边界句（② 的翻面证据不成立）`)
+          }
+          if (kj.equal !== true) {
+            push('KNIFE-NO-BITE', `边界句那把刀把 \`equal\` 也弄坏了（${JSON.stringify(kj.equal ?? null)}）—— 刀砍宽了：它应当只动 \`equal_scope\` 那一格`)
+          }
+        }
+      }
 
       // ④ 删掉 .pyc ⇒ 两边都绿（这一格不是空样本）
       // ⚠️ **用改名搬走、不用 `rmSync`**：`ENV-02` 的 `DELETE-NO-MARKER` 明令测试里不许裸删
@@ -159,12 +202,13 @@ describe('integration · measuring/copy (MCR) · F-170 equal 的覆盖边界', (
 
       // 读数旁的那句话再核一次：**同一份 result.json 里**能读到的搜串（"说某句话在"也要贴搜串）
       rec.readings.equal_boundary_search = {
-        file_note: 'result.json → readings.verify.equal_scope',
-        searched: ['不覆盖', '多出来', 'CODE'],
+        file_note: 'result.json → readings.verify.equal_scope（**产品的**字段，原样抄）',
+        searched: ['equal_scope', 'CODE', 'extra', '__pycache__|exclusion'],
         hits: {
-          note_has_bukey: typeof scope.note === 'string' && scope.note.includes('不覆盖'),
-          note_has_duochulai: typeof scope.note === 'string' && scope.note.includes('多出来'),
-          covers_has_code: typeof scope.covers === 'string' && scope.covers.includes('CODE'),
+          product_equal_scope: 'equal_scope' in v,
+          covers_has_code: typeof scope?.covers === 'string' && /code/i.test(scope.covers),
+          dnc_has_extra: Array.isArray(scope?.does_not_cover) && scope.does_not_cover.map(String).some((s) => /extra/i.test(s)),
+          dnc_has_exclusion: Array.isArray(scope?.does_not_cover) && scope.does_not_cover.map(String).some((s) => /__pycache__|exclusion/i.test(s)),
         },
       }
 

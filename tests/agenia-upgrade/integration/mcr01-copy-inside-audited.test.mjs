@@ -7,18 +7,21 @@
  * **导出这一侧一个字节都不拦**；`--live-baseline` 早就有对称的拒（`E_BASELINE_IN_CODE`）。
  *
  * 判据（四格，一格一条，各自能单独翻面）：
- *   ① **拒**：`--out` 指向被测 CODE 集里的**新路径** ⇒ 非零退出 + 码 **`E_OUT_INSIDE_AUDITED`**
+ *   ① **拒**：`--out` 指向被测 CODE 集里的落点 ⇒ 非零退出 + 码 **`E_OUT_INSIDE_AUDITED`**
  *      （不是 `REFUSE-OVERWRITE` —— 那一族是"目录已有东西"，与"落点在 CODE 集里"是两件事）；
- *      报文必须点名**落点**与**被测根**。
+ *      报文必须点名**落点**、**它下面的探针**（`__agenia_probe__`）与**被测根**。
+ *      **四个落点**（2026-11-07 评审 `M2` 之后）：新目录 · **名字以 `.pyc` 结尾的落点**（它自己被后缀
+ *      规则排除、里面的文件不排除）· **junction 别名**（前缀看着在根外、`realpath` 之后在根内）· 同一落点再来一次。
  *   ② **拒在任何写之前**：被测根跑前 / 跑后**逐字节**同哈希（`treeHash`）+ **路径集合**同（`treePaths`）
- *      + 那个 `--out` 目录**没有被创建**。⚠️ 这一格是"拒在写之前"的**唯一**证据：只判退出码的话，
- *      "先写一半再拒"照样绿。
- *   ③ **负对照（两条都成功）**：`--out` 指到被测根**之外** ⇒ 写出、`code.sha256` = 从 git 对象独立算的
- *      CODE 指纹；`--out` 指进被测根的 **`.team/`**（被排除表挡住 ⇒ 不在 CODE 集）⇒ 同样成功。
- *      ⚠️ 这两条是"拒的是**CODE 集**、不是'路径里有 repo 这两个字'"的阳性对照。
+ *      + 那个 `--out` **没有被创建**（**每一个**被拒的落点都判一次）。⚠️ 这一格是"拒在写之前"的
+ *      **唯一**证据：只判退出码的话，"先写一半再拒"照样绿。
+ *   ③ **负对照（四条都成功）**：`--out` 指到被测根**之外**（目录 / `.pyc` 两种）⇒ 写出、`code.sha256`
+ *      = 从 git 对象独立算的 CODE 指纹；`--out` 指进被测根的 **`.team/`**（目录 / `.pyc` 两种，
+ *      排除表挡住 ⇒ 不在 CODE 集）⇒ 同样成功。这四条是"拒的是 **CODE 集**、不是'名字以 .pyc 结尾'"的阳性对照。
  *   ④ **判定归尺子**：`.tools/fingerprint.mjs --is-code <abs> --root <root> --json` 是不写盘的一次查询；
- *      三个落点各问一次（CODE 内 = true · `.team/` 内 = false · 根外 = false）。这一格证明
- *      "算不算 CODE"只有**一份排除表**（工具那一份），工具里不复制第二张。
+ *      **八个落点**各问一次：CODE 内（落点 / 子路径）· `.team/` 内（落点 / 子路径）· 根外（落点 / 子路径）·
+ *      `.pyc` 落点**自己**（`false`）与**它的子路径**（`true` —— `M2` 的洞就在这里）。
+ *      这一格证明"算不算 CODE"只有**一份排除表**（工具那一份），工具里不复制第二张。
  *
  * 刀（退化刀，同格）：把导出器拷进运行根、只把 `if (asked !== null && asked.code === true) {`
  *   改成 `if (false) {` ⇒ **同一个输入**必须 `exit 0` 并把副本写进被测树（= ① 会红）。
@@ -31,7 +34,7 @@
  */
 import { before, describe, test } from 'node:test'
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, runRoot, treeHash, treePaths } from '../support/evidence.mjs'
@@ -80,50 +83,83 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
         paths_before: beforePaths.count,
       }
 
-      // ── ① 拒：`--out` 落在被测 CODE 集里的**新路径** ─────────────────────────
-      const outInside = path.join(audited, 'presets', 'agenia', '_probe_copy_mcr01')
-      const refused = runExport({ exporter: ex.file, repo: audited, commit: fx.commitA, out: outInside })
-      const errCode = refused.json?.error?.code ?? null
-      const errMsg = String(refused.json?.error?.message ?? '')
-      rec.readings.out_inside_audited = {
-        out: outInside, exit: refused.exit, code: errCode, message: errMsg.slice(0, 600),
-        stderr: String(refused.stderr ?? '').slice(-600),
+      // ── ① 拒：`--out` 落在被测 CODE 集里 —— 四个落点，**每个都要"写之前拒"** ────────────
+      /**
+       * 🔴 四个落点各自堵一条"看起来不算 CODE"的写法（2026-11-07 评审 `M2`）：
+       *   1. 新目录 `<repo>/presets/agenia/_probe_copy_mcr01` —— 最朴素的那种；
+       *   2. **名字以 `.pyc` 结尾的落点** `<repo>/presets/agenia/_probe.pyc` —— 它**自己被排除表挡住**
+       *      （`*.pyc` 那条后缀），可它**里面**的文件不排除 ⇒ 出口必须问"它下面的文件算不算"；
+       *   3. **junction 别名**：`E:\…\fixtures\mcr01-alias` → `<repo>/presets`，`--out <别名>/agenia/_probe_copy_alias`
+       *      —— 路径前缀看着在根外，`realpath` 之后在根内 ⇒ 出口必须先规范化再问；
+       *   4. 同一个朴素落点再导一次（第二次仍然要拒，且**不是** `REFUSE-OVERWRITE`：这个路径一次都没被创建过）。
+       */
+      const junctionRoot = path.join(root, 'fixtures', 'mcr01-alias')
+      let aliasReady = null
+      try {
+        symlinkSync(path.join(audited, 'presets'), junctionRoot, 'junction')
+        aliasReady = { link: junctionRoot, target: path.join(audited, 'presets'), ok: true }
+      } catch (err) {
+        aliasReady = { link: junctionRoot, target: path.join(audited, 'presets'), ok: false, error: `${err.code ?? ''} ${String(err.message).slice(0, 160)}` }
       }
-      if (refused.exit === 0) {
-        push('REFUSE-NOT-REFUSED', `\`--out\` 落在被测 CODE 集里（${outInside}）竟然 exit 0 —— 副本会写进被测树，下一次 --verify 会把导出自己写下的文件算成"动了"`)
-      } else if (errCode !== 'E_OUT_INSIDE_AUDITED') {
-        push('REFUSE-WRONG-CODE', `\`--out\` 落在被测 CODE 集里，应报 \`E_OUT_INSIDE_AUDITED\`，实得 ${JSON.stringify(errCode)}（stderr：${String(refused.stderr ?? '').trim().slice(0, 240)}）`)
-      }
-      if (errCode === 'REFUSE-OVERWRITE') {
-        push('REFUSE-FOLDED-INTO-OVERWRITE', '这条拒被折进了 `REFUSE-OVERWRITE`（"目录已有东西"）—— 两件事必须两个码：一个是"落点已有内容"，一个是"落点本身在被测 CODE 名单里"')
-      }
-      if (refused.exit !== 0 && errMsg !== '') {
-        if (!errMsg.includes('_probe_copy_mcr01') && !errMsg.includes('presets/agenia/_probe_copy_mcr01') && !errMsg.includes('presets\\agenia\\_probe_copy_mcr01')) {
-          push('REFUSE-MESSAGE-NO-LANDING', `拒的报文没有点名落点（\`_probe_copy_mcr01\`）：${errMsg.slice(0, 300)}`)
+      rec.readings.junction_alias = aliasReady
+      const refusedCases = [
+        { id: 'fresh-dir', out: path.join(audited, 'presets', 'agenia', '_probe_copy_mcr01'), mustName: ['_probe_copy_mcr01', '__agenia_probe__'] },
+        { id: 'pyc-named-landing', out: path.join(audited, 'presets', 'agenia', '_probe.pyc'), mustName: ['_probe.pyc', '__agenia_probe__'] },
+        ...(aliasReady.ok
+          ? [{ id: 'junction-alias', out: path.join(junctionRoot, 'agenia', '_probe_copy_alias'), mustName: ['_probe_copy_alias', '__agenia_probe__'] }]
+          : []),
+      ]
+      const refusedReadings = []
+      for (const c of refusedCases) {
+        const r = runExport({ exporter: ex.file, repo: audited, commit: fx.commitA, out: c.out })
+        const code = r.json?.error?.code ?? null
+        const msg = String(r.json?.error?.message ?? '')
+        const afterTree = treeHash(audited)
+        const afterPaths = treePaths(audited)
+        const pathsEqual = afterPaths.count === beforePaths.count && afterPaths.paths.every((p, i) => p === beforePaths.paths[i])
+        const reading = {
+          id: c.id, out: c.out, exit: r.exit, code, message: msg.slice(0, 700),
+          stderr: String(r.stderr ?? '').slice(-400),
+          audited_equal: afterTree.sha256 === beforeTree.sha256,
+          audited_paths_equal: pathsEqual,
+          out_created: existsSync(c.out),
+          names_landing: c.mustName.every((n) => msg.includes(n)),
+          names_root: msg.includes(audited),
+          folded_into_overwrite: code === 'REFUSE-OVERWRITE',
         }
-        if (!errMsg.includes(audited)) push('REFUSE-MESSAGE-NO-ROOT', `拒的报文没有点名被测根（${audited}）：${errMsg.slice(0, 300)}`)
+        refusedReadings.push(reading)
+        if (r.exit === 0) {
+          push('REFUSE-NOT-REFUSED', `[${c.id}] \`--out\` 落在被测 CODE 集里（${c.out}）竟然 exit 0 —— 副本会写进被测树，下一次 --verify 会把导出自己写下的文件算成"动了"`)
+        } else if (code !== 'E_OUT_INSIDE_AUDITED') {
+          push('REFUSE-WRONG-CODE', `[${c.id}] 应报 \`E_OUT_INSIDE_AUDITED\`，实得 ${JSON.stringify(code)}（stderr：${String(r.stderr ?? '').trim().slice(0, 240)}）`)
+        }
+        if (reading.folded_into_overwrite) {
+          push('REFUSE-FOLDED-INTO-OVERWRITE', `[${c.id}] 这条拒被折进了 \`REFUSE-OVERWRITE\`（"目录已有东西"）—— 两件事必须两个码：一个是"落点已有内容"，一个是"落点本身在被测 CODE 名单里"`)
+        }
+        if (r.exit !== 0 && msg !== '' && !reading.names_landing) {
+          push('REFUSE-MESSAGE-NO-LANDING', `[${c.id}] 拒的报文没有把落点和"它下面的探针"都点名（要 ${JSON.stringify(c.mustName)}）：${msg.slice(0, 300)}`)
+        }
+        if (r.exit !== 0 && msg !== '' && !reading.names_root) {
+          push('REFUSE-MESSAGE-NO-ROOT', `[${c.id}] 拒的报文没有点名被测根（${audited}）：${msg.slice(0, 300)}`)
+        }
+        if (!reading.audited_equal) {
+          push('REFUSE-WROTE-BEFORE', `[${c.id}] 被拒之后被测根**变了**（${beforeTree.count} 份/${String(beforeTree.sha256).slice(0, 16)}… → ${afterTree.count} 份/${String(afterTree.sha256).slice(0, 16)}…）—— "拒在任何写之前"不成立：先写了再拒也是拒`)
+        }
+        if (!reading.audited_paths_equal) {
+          push('REFUSE-WROTE-PATHS', `[${c.id}] 被拒之后被测根的**路径集合**变了（${beforePaths.count} → ${afterPaths.count} 条）—— 有东西被创建/删除了`)
+        }
+        if (reading.out_created) {
+          push('REFUSE-CREATED-OUT', `[${c.id}] 被拒了，但 \`--out\` 那个路径已经被创建：${c.out} —— 拒必须发生在**第一个字节**之前`)
+        }
       }
-
-      // ── ② 拒在**任何写之前**：逐字节 + 路径集合 + 目录没被创建 ────────────────
       const afterTree = treeHash(audited)
       const afterPaths = treePaths(audited)
-      const outCreated = existsSync(outInside)
-      const pathsEqual = afterPaths.count === beforePaths.count
-        && afterPaths.paths.every((p, i) => p === beforePaths.paths[i])
+      rec.readings.out_inside_audited = refusedReadings
       rec.readings.audited_tree.after = { sha256: afterTree.sha256, count: afterTree.count }
       rec.readings.audited_tree.paths_after = afterPaths.count
       rec.readings.audited_tree.equal = afterTree.sha256 === beforeTree.sha256
-      rec.readings.audited_tree.paths_equal = pathsEqual
-      rec.readings.audited_tree.out_created = outCreated
-      if (!rec.readings.audited_tree.equal) {
-        push('REFUSE-WROTE-BEFORE', `被拒之后被测根**变了**（${beforeTree.count} 份/${String(beforeTree.sha256).slice(0, 16)}… → ${afterTree.count} 份/${String(afterTree.sha256).slice(0, 16)}…）—— "拒在任何写之前"不成立：先写了再拒也是拒`)
-      }
-      if (!pathsEqual) {
-        push('REFUSE-WROTE-PATHS', `被拒之后被测根的**路径集合**变了（${beforePaths.count} → ${afterPaths.count} 条）—— 有东西被创建/删除了`)
-      }
-      if (outCreated) {
-        push('REFUSE-CREATED-OUT', `被拒了，但 \`--out\` 那个目录已经被创建：${outInside} —— 拒必须发生在**第一个字节**之前`)
-      }
+      rec.readings.audited_tree.paths_equal = afterPaths.count === beforePaths.count && afterPaths.paths.every((p, i) => p === beforePaths.paths[i])
+      rec.readings.audited_tree.outs_created = refusedReadings.filter((r) => r.out_created).map((r) => r.out)
 
       // ── ③ 负对照：根外 ⇒ 成功；被测根的 `.team/`（排除表挡住）⇒ 也成功 ──────────
       const commitDigest = codeDigestOfCommit(fx.repo, fx.commitA)
@@ -161,19 +197,60 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
       if (expTeam.exit !== 0 || expTeam.json === null || expTeam.json.ok !== true) {
         push('POSITIVE-INSIDE-TEAM-FAILED', `\`--out\` 指进被测根的 \`.team/\`（排除表挡着 ⇒ 不在 CODE 集）应当成功，却 exit=${expTeam.exit} / ${expTeam.json?.error?.code ?? '(无码)'} —— 这条拒的应当是"CODE 集"，不是"路径里有没有 repo"`)
       }
+      /**
+       * 🔴 **评审 `M2` 的两个正对照**（被测者自己给的读数，原样再跑一遍）：
+       *   · 落点叫 `_p.pyc`、但在 `.team/` 下 ⇒ 排除表挡着 ⇒ 成功；
+       *   · 落点叫 `x.pyc`、但在被测根之外 ⇒ 成功。
+       * 这两条与"`.pyc` 落在 CODE 集里必须拒"是**同一把尺子的两个方向** —— 只判前者的实现
+       * 会把所有 `.pyc` 落点都拒掉（过度拒绝），只判后者的实现会把这一格放过去。
+       */
+      const outTeamPyc = path.join(audited, '.team', 'leader', '_p.pyc')
+      const expTeamPyc = runExport({ exporter: ex.file, repo: fx.repo, commit: fx.commitA, out: outTeamPyc })
+      rec.readings.positives.pyc_under_team = {
+        out: outTeamPyc, exit: expTeamPyc.exit, ok: expTeamPyc.json?.ok ?? null,
+        error: expTeamPyc.json?.error?.code ?? null, stderr: String(expTeamPyc.stderr ?? '').slice(-300),
+      }
+      if (expTeamPyc.exit !== 0 || expTeamPyc.json?.ok !== true) {
+        push('POSITIVE-INSIDE-TEAM-FAILED', `\`--out <repo>/.team/leader/_p.pyc\` 应当成功（`.team/` 在排除表里），却 exit=${expTeamPyc.exit} / ${expTeamPyc.json?.error?.code ?? '(无码)'} —— 拒的应当是"CODE 集里的文件"，不是"名字以 .pyc 结尾"`)
+      }
+      const outOutsidePyc = path.join(root, 'fixtures', 'mcr01-outside2', 'x.pyc')
+      const expOutsidePyc = runExport({ exporter: ex.file, repo: fx.repo, commit: fx.commitA, out: outOutsidePyc })
+      rec.readings.positives.pyc_outside = {
+        out: outOutsidePyc, exit: expOutsidePyc.exit, ok: expOutsidePyc.json?.ok ?? null,
+        error: expOutsidePyc.json?.error?.code ?? null, stderr: String(expOutsidePyc.stderr ?? '').slice(-300),
+      }
+      if (expOutsidePyc.exit !== 0 || expOutsidePyc.json?.ok !== true) {
+        push('POSITIVE-OUTSIDE-FAILED', `\`--out <根外>/x.pyc\` 应当成功，却 exit=${expOutsidePyc.exit} / ${expOutsidePyc.json?.error?.code ?? '(无码)'} —— 根外落点一个都不该被这条闸拦`)
+      }
 
-      // ── ④ 判定归尺子：一次不写盘的查询，三个落点 ───────────────────────────────
+      // ── ④ 判定归尺子：一次不写盘的查询，**落点与"它下面的探针"都问**（`M2`）──────────────
       const tool = path.join(PATHS.repo, '.tools', 'fingerprint.mjs')
       const probes = {
         inside_code: isCodeProbe(tool, path.join(audited, 'presets', 'agenia', '_probe_copy_mcr01'), audited),
+        inside_code_child: isCodeProbe(tool, path.join(audited, 'presets', 'agenia', '_probe_copy_mcr01', '__agenia_probe__'), audited),
         inside_team: isCodeProbe(tool, path.join(audited, '.team', 'probe_copy_mcr01'), audited),
+        inside_team_child: isCodeProbe(tool, path.join(audited, '.team', 'leader', '_p.pyc', '__agenia_probe__'), audited),
+        pyc_landing: isCodeProbe(tool, path.join(audited, 'presets', 'agenia', '_probe.pyc'), audited),
+        pyc_landing_child: isCodeProbe(tool, path.join(audited, 'presets', 'agenia', '_probe.pyc', '__agenia_probe__'), audited),
         outside: isCodeProbe(tool, path.join(root, 'fixtures', 'mcr01-outside', 'x'), audited),
+        outside_child: isCodeProbe(tool, path.join(root, 'fixtures', 'mcr01-outside2', 'x.pyc', '__agenia_probe__'), audited),
       }
       rec.readings.is_code_probe = Object.fromEntries(Object.entries(probes).map(([k, v]) => [k, {
         exit: v.exit, ok: v.json?.ok ?? null, code: v.json?.code ?? null, why: v.json?.why ?? null,
         abs: v.json?.abs ?? null, raw: v.json === null ? v.stdout : undefined,
       }]))
-      const want = { inside_code: true, inside_team: false, outside: false }
+      const want = {
+        inside_code: true,
+        inside_code_child: true,
+        inside_team: false,
+        inside_team_child: false,
+        /** 落点**自己**是 `.pyc` ⇒ 被后缀规则排除（`false`）—— 这正是 `M2` 的洞：只看这一格会放行。 */
+        pyc_landing: false,
+        /** 但**它下面的文件**不排除 ⇒ `true` —— 出口问的必须是这一格。 */
+        pyc_landing_child: true,
+        outside: false,
+        outside_child: false,
+      }
       for (const [key, w] of Object.entries(want)) {
         const got = probes[key]
         if (got.exit !== 0 || got.json === null) {

@@ -785,31 +785,15 @@ export function missingFields(obj, fields) {
 }
 
 /**
- * `equal` **只覆盖什么**（`F-170` / `bug-20261107-03`）—— 这句话必须跟读数住在同一个对象里。
- *
- * 为什么把它做成一个常量而不是散在注释里：读数旁边那句"equal 覆盖 CODE 集"是**可被人读错**的
- * 唯一防线 —— 放注释里，读 `result.json` 的人看不到；放别处，读的人要回推。
- *
- * 🔴 **不扩**到全树 / 路径集合（定形 §一 #4 / 组长决定）：扩了会把"派生文件"全算进去，
- *    等于把 `bug-20261107-03`（`equal` 对多出来的文件瞎）换成另一种假绿。
- *    多出来的文件由 `copyIntegrityVerdict()` 单独判（`E_COPY_HAS_EXTRA`），**不改** `equal` 的口径。
- */
-export const EQUAL_SCOPE = Object.freeze({
-  covers: 'CODE 集（按 .tools/fingerprint.mjs 的排除表：不含 .team/ · .runtime/ · __pycache__/ · *.pyc · *.log 等）',
-  does_not_cover: [
-    '副本里**多出来的文件**（例如 __pycache__/*.pyc、*.log、node_modules/…）—— 抓它的是 `is_that_commit` / `E_COPY_HAS_EXTRA`',
-    '文件权限 / 符号链接 / 目录结构',
-    '路径集合的变化（由 `is_that_commit` 那一格判）',
-  ],
-  note: '这句 `equal` **只覆盖 CODE 集**：它不覆盖副本里多出来的文件 —— `equal:true` 不等于"副本一个字节/一份文件都没多"',
-})
-
-/**
  * 副本完整性判定（测试侧，`bug-20261107-03` 的刀口）—— **不改** `equal` 的口径，单独出一条读数。
  *
  * 与 `verifyCopyIsCommit()` 的分工：那个函数已经逐份列出 `missing / extra / mismatched`；
  * 这里只负责把**多出来的文件**折成一个**有码的判决**，好让"`equal:true` 但那格红"这件事在读数里
  * 一眼可见。`checkExtra:false` 是**退化刀**：把这条腿关掉 ⇒ 同一个输入必须变绿（证明翻面来自它）。
+ *
+ * ⚠️ **"`equal` 只覆盖 CODE 集"这句话的唯一出处是产品**（`--verify` 的 `equal_scope`，
+ *    2026-11-07 评审 `M3` 起由 `tree-at-commit.mjs` 自己 emit）。测试侧**不再**另写一份
+ *    （`EQUAL_SCOPE` / `equalScopeReading()` 已删）—— 一份事实两个载体，改一处就是没改。
  *
  * @returns {{ok:boolean, code:string|null, extra:string[], missing:string[], mismatched:string[], problems:string[], checked:boolean, note:string}}
  */
@@ -822,7 +806,7 @@ export function copyIntegrityVerdict({ repo, commit, copyRoot, declared = [], ch
   let code = null
   if (extra.length > 0) {
     code = 'E_COPY_HAS_EXTRA'
-    problems.push(`副本里有 ${extra.length} 份**提交里没有、声明的追加里也没有**的文件：${extra.join(' · ')} —— \`equal\` 只覆盖 CODE 集，看不见它们（见 EQUAL_SCOPE.does_not_cover）`)
+    problems.push(`副本里有 ${extra.length} 份**提交里没有、声明的追加里也没有**的文件：${extra.join(' · ')} —— 它们不在 CODE 集里（产品的 \`equal_scope.does_not_cover\` 写明了这一条），所以 \`equal\` 看不见它们，由这一格单独判`)
   } else if (missing.length > 0) {
     code = 'E_COPY_MISSING'
     problems.push(`副本少 ${missing.length} 份：${missing.join(' · ')}`)
@@ -838,17 +822,7 @@ export function copyIntegrityVerdict({ repo, commit, copyRoot, declared = [], ch
     mismatched,
     problems,
     checked: { extra: checkExtra, missing: checkMissing, mismatch: checkMismatch },
-    note: '`equal` **只覆盖 CODE 集**；这一格单独判"副本里多/少/换了文件"（E_COPY_HAS_EXTRA / _MISSING / _MISMATCH）',
-  }
-}
-
-/** 读数里 `equal` 旁边那一格（`F-170`）：把 `EQUAL_SCOPE` 摊进读数，人不必去翻注释。 */
-export function equalScopeReading(extra = {}) {
-  return {
-    covers: EQUAL_SCOPE.covers,
-    does_not_cover: [...EQUAL_SCOPE.does_not_cover],
-    note: EQUAL_SCOPE.note,
-    ...extra,
+    note: '这一格只判"副本里多 / 少 / 换了文件"（E_COPY_HAS_EXTRA / _MISSING / _MISMATCH）；`equal` 的覆盖边界由产品的 `equal_scope` 那一格说',
   }
 }
 
