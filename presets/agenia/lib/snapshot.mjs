@@ -27,7 +27,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { readJsonFile, writeFileAtomic, writeJsonAtomic } from './atomic.mjs'
-import { capacityVerdict, charCountOf, distributionOf, sharesOf, TYPE_IDS, controlCharVerdict } from './memory.mjs'
+import { capacityVerdict, charCountOf, distributionOf, sharesOf, TYPE_IDS } from './memory.mjs'
 import {
   archiveDir,
   brainError,

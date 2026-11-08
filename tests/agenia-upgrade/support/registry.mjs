@@ -815,8 +815,9 @@ export const BATCH_AH = ['MCR-01', 'MCR-02', 'MCR-03', 'MCR-04', 'MCR-05', 'MCR-
  *   · `F-165` **四条入库路径的控制字符闸**（`CTL-01`…`CTL-04` 一格一条路径；`CTL-05` = 刀架）。
  *     四条路径 = `proposal_file` / `--op proposal-import` / `--op maintenance-import` / `--op judge-commit`
  *     （枚举方法与源码锚点见 `.team/test/2026-11-08/CONTRACT-batch9.md` §1.0/§1.1）。
- *     🔴 **首跑预期红**：产品四条路今天一个控制字符检查都没有（契约 §1.5 有原样搜索串与命中数）；
- *     `CTL-05` 用运行根里的合成最小实现 + 四把刀证明"该绿时绿"（同 `OFB-06` 的口径）。
+ *     🔴 **装闸后全绿**（`b9-full-08`；`32c504e` 装闸 / `6488a0c` 码点下标 / `fd740de` 判据入树）——
+ *     **首跑红**是装闸前的读数（契约 §1.5 有原样搜索串与命中数）。
+ *     `CTL-05` 用**测试替身**（`fixtures/ctl-sut/`，不是产品副本）+ **六把刀**（四把切替身 · 两把切**真源码**）证明"该绿时绿、该红时红"（同 `OFB-06` 的口径）。
  *   · `F-167` **作业书/说明书的「地基」段要被判据咬住**（`TRB-01` 作业书 7 条 clause；
  *     `TRB-02` 说明书 4 条 clause；两边都咬的理由见契约 §2.1）。
  * `control-chars` 与 `foundation-brief` 各开一组：红的时候一眼看得出是"入库路径没闸"还是"那一段被改写"。
@@ -1345,11 +1346,11 @@ const ROWS = [
 
   // ── 批次 AI（2026-11-08 · batch 9）：`F-165` 四条入库路径的控制字符闸 + `F-167` 两份「地基」段 ──
   // 契约 `.team/test/2026-11-08/CONTRACT-batch9.md`（§一 四条路径先点名；§二 两份文档逐句钉）。
-  ['CTL-01', 'control-chars', F.ctl01, '`F-165` **路径 P1 `proposal_file`**：`entry.text` 里 `code<32` 且 ≠LF 必须为 0（LF 唯一允许、CR 也禁）。喂四份只差一个码点的正文（clean / LF / U+0001@第4位 / CR@第4位）+ 主路 `proposalFileRun`：干净/LF 必须收（池子恰好 1 行、正文逐字）；脏字符必须拒（0 行）+ 码已登记 + 报文点名 `proposal_file`/`第 4 个字符`/`U+0001`（CR 格 `U+000D`）。**首跑预期红**（产品今天这条路上没有闸 —— 契约 §1.5 有原样搜索串与命中数；探针实测它收下 `甲乙丙\\u0001丁`）', '批次 AI'],
-  ['CTL-02', 'control-chars', F.ctl01, '`F-165` **路径 P2 `--op proposal-import`**：`payload.entry.text` 同一把尺子（四份正文各导一次；拒 ⇒ exit≠0 + 池子 0 行；收 ⇒ exit 0 + 池子 1 行且正文逐字）。报文同样要点名 `payload.entry.text` / 第 4 个字符 / 码点。**首跑预期红**（同一处缺闸）', '批次 AI'],
-  ['CTL-03', 'control-chars', F.ctl01, '`F-165` **路径 P3 `--op maintenance-import`**：**两处都查** —— `payload.entry.text` 与 `payload.engine_ops[1].entry.text`（脏字符放在第二位，防"只看第一条"）各拒一次；clean/LF 收且同一行里两处正文都逐字。**首跑预期红**', '批次 AI'],
-  ['CTL-04', 'control-chars', F.ctl01, '`F-165` **路径 P4 `--op judge-commit`**（真正写进快照的那一下）：`entries_patch[0].entry.text` 有控制字符 ⇒ 拒 + **零写入**（版本集合仍 `[\'v0\']`、`current` 不动、`phase` 仍 `judging`）；clean/LF ⇒ 快照 v1 里逐字相同。**首跑预期红**', '批次 AI'],
-  ['CTL-05', 'control-chars', F.ctl01, '`F-165` **刀架**（判据自己的可满足性 + 四把刀；产品零字节）：在运行根里造 `presets/agenia` 的逐字节副本（不含 `.runtime`），照契约装最小闸 ⇒ 四条路**全绿**（`CTL-CONTROL-NOT-GREEN` = 判据不可满足）；四把刀各只翻自己那一面 —— `only_tool`（只 P1 有闸 ⇒ P2/P3/P4 红）· `ban_lf`（忘 LF 例外 ⇒ 四条路 LF 腿红）· `allow_cr`（CR 先归一 ⇒ 四条路 CR 腿红）· `first_only`（`engine_ops` 只看第 0 条 ⇒ 只 P3 的"第二位"腿红）；开跑/收口各量一次产品六份源码 sha256（`CTL-LIVE-TOUCHED`）。另把真产品"四条路今天都收"记成读数', '批次 AI'],
+  ['CTL-01', 'control-chars', F.ctl01, '`F-165` **路径 P1 `proposal_file`**：`entry.text` 里 `code<32` 且 ≠LF 必须为 0（LF 唯一允许、CR 也禁）。喂六份正文（clean / LF / U+0001@第4位 / CR@第4位 / `astral`=😀+U+0001@**第2个码点** / **v15 真受损正文**）+ 主路 `proposalFileRun`：干净/LF 必须收（池子恰好 1 行、正文逐字）；脏字符必须拒（0 行）+ 码已登记 + 报文点名位置/第 N 个字符/`U+XXXX`（CR 格 `U+000D`）。**现绿**（装闸前首跑红；`b9-full-08` 起绿）', '批次 AI'],
+  ['CTL-02', 'control-chars', F.ctl01, '`F-165` **路径 P2 `--op proposal-import`**：`payload.entry.text` 同一把尺子（六份正文各导一次；拒 ⇒ exit≠0 + 池子 0 行；收 ⇒ exit 0 + 池子 1 行且正文逐字）。报文同样要点名 `payload.entry.text` / 第 N 个字符 / 码点。**现绿**（同一处闸）', '批次 AI'],
+  ['CTL-03', 'control-chars', F.ctl01, '`F-165` **路径 P3 `--op maintenance-import`**：**两处都查** —— `payload.entry.text` 与 `payload.engine_ops[1].entry.text`（脏字符放在第二位，防"只看第一条"）各拒一次；clean/LF 收且同一行里两处正文都逐字。**现绿**', '批次 AI'],
+  ['CTL-04', 'control-chars', F.ctl01, '`F-165` **路径 P4 `--op judge-commit`**：闸在 **`opJudgeCommit` 的 `entries_patch` 循环**（payload 下标，排在 `capacityVerdict`/`applyEntriesPatch`/`publishUpdate` 之前）—— `entries_patch[0].entry.text` 有控制字符 ⇒ 拒 + **零写入**（版本集合/`current`/`phase` 不动）；clean/LF ⇒ 新快照里逐字相同；另有 **`stock37` 非空存量腿**（底 = 37 条 + payload 只带 **1** 个 op）⇒ 报文必须说 `entries_patch[0].entry.text`（**不是 `entries[37]`**）。**现绿**', '批次 AI'],
+  ['CTL-05', 'control-chars', F.ctl01, '`F-165` **刀架**（判据自己的可满足性 + **六把刀**；产品零字节）：**测试替身** `fixtures/ctl-sut/`（最小 brain CLI + 最小 `proposal_file` + 一条码的 `CODES`；**不是产品副本**）⇒ 四条路**全绿**（`CTL-CONTROL-NOT-GREEN` / `CTL-CONTROL-UNAVAILABLE` = 判据不可满足/替身坏了）；四把切替身的刀各只翻自己那一面 —— `only_tool`（只 P1 有闸 ⇒ P2/P3/P4 红）· `ban_lf`（忘 LF 例外 ⇒ 四条路 LF 腿红）· `allow_cr`（CR 先归一 ⇒ 四条路 CR 腿红）· `first_only`（`engine_ops` 只看第 0 条 ⇒ 只 P3 的"第二位"腿红）；**两把切真源码**：① **关掉控制字符闸**——拷一份已提交产品、把 `lib/memory.mjs::controlCharVerdict` 的 `if (cp < 32) {` 改成 `if (false) {`（锚点恰好 1 处）⇒ 四条路各翻 `DAMAGED`/`CR`/`ASTRAL`/`REAL-DAMAGED`（对照副本全绿 ⇒ `CTL-REAL-KNIFE-CONTROL`；锚点不在 ⇒ `CTL-REAL-KNIFE-ANCHOR`；翻错面 ⇒ `CTL-REAL-KNIFE-NOT-BITING`/`-VECTOR`；跑不动 ⇒ `CTL-REAL-KNIFE-UNAVAILABLE`）；② **把闸移回 `buildSnapshot`**——关掉 `opJudgeCommit` 的闸（`if (!v.ok) throw …` → `if (false) throw …`）+ 在 `buildSnapshot` 的 `entries.map` 前装一个看存活集的闸（`entries[${i}].text`）⇒ `CTL-04` 的 **`stock37-damaged`** 腿红在 `CTL-P4-STOCK37-READING`（报文会说 `entries[37].text`，而 payload 里只有 1 个 op）；对照副本绿灯（`CTL-REAL-KNIFE-MOVE-*`）；开跑/收口各量一次产品六份源码 sha256（`CTL-LIVE-TOUCHED`）', '批次 AI'],
   ['TRB-01', 'foundation-brief', F.trb01, '`F-167` **作业书** `job-briefs/technical-review.md` §三「地基」：七条 clause 逐句咬住 —— `B1` 代码根 + `<commit>` + 只读副本**同一行三样都要**（F6：防"任一命中就绿"）· `B2` `before_sha256`/`after_sha256` 同一行都量在副本上 · `B3` 活树动 ⇒ 不在本轮效力范围（不算作废/不是你的事）· `B4` 必须报"活树动了 N 处"（N 由基线比出来）· `B5` 没有基线 ⇒ 写"判不了"、不许写 0、校验器是 `live.moved: null` · `B6` N ≠ 副本与活树的分歧 · `B7` 改副本 ⇒ 作废 + 交活前在副本上算 `after_sha256`；**整段换成反面话（复用同样关键词）⇒ 七条逐条红；还原 ⇒ 绿；三处合法改写仍绿；七把单句刀各只翻一条**（副本里做，产品零字节）', '批次 AI'],
   ['TRB-02', 'foundation-brief', F.trb01, '`F-167` **说明书** `team/technical-review.md` §一「地基」：四条 clause 逐句咬住 —— `C1` 生产代码与 `tests/**` 不许改 · `C2` 副本前后 CODE 指纹必须相同 + 两个哈希都在同一份副本上 · `C3` 活树动**不算作废**、不在本轮效力范围 · `C4` 必须报"活树动了 N 处"；整段反面话 ⇒ 四条逐条红、还原 ⇒ 绿、三处合法改写仍绿、四把单句刀各只翻一条。**两边都咬的理由**写在用例文件头（说明书是注入的、作业书是派工时读的）', '批次 AI'],
 ]

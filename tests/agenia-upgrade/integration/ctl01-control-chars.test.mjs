@@ -8,8 +8,11 @@
  *   `P2` `--op proposal-import`（`bin/agenia-brain.mjs::importOp` → `lib/proposals.mjs::bodyCapVerdict` → 候选池）；
  *   `P3` `--op maintenance-import`（同一条 `bodyCapVerdict`；正文住 `payload.entry.text`
  *        **和** `payload.engine_ops[i].entry.text`）；
- *   `P4` `--op judge-commit`（`lib/snapshot.mjs::buildSnapshot` → 快照 = 真正进库的那一下）。
- * 第五条 `buildSnapshot` 调用者是 `opInit`，它传 `entries: []` ⇒ 不带一个字符，不算路径。
+ *   `P4` `--op judge-commit`（`bin/agenia-brain.mjs::opJudgeCommit` 的 **`entries_patch` 循环** ——
+ *        payload 下标 `entries_patch[i]`，排在 `capacityVerdict` / `applyEntriesPatch` / `publishUpdate` **之前**）。
+ *        🔴 `lib/snapshot.mjs::buildSnapshot` **不再**装这道闸：它看的是"存活集"（存量 + 本次 patch），
+ *        在那一层拦会把**存量下标**当 op 下标（改第 37 条时报 `entries[37]`，而 payload 里只有 1 个 op），
+ *        也违反 F-72（**入口只卡新导入、不扫存量**）。`buildSnapshot` 的另一个调用者 `opInit` 传 `entries: []`。
  *
  * ── 每一格怎么判（四格同一把尺子，只有 `where` 不同）────────────────────────
  *   喂五份**只差一个码点**的正文：`clean`（无控制字符）· `lf`（U+000A，**唯一**允许）·
@@ -22,13 +25,14 @@
  *   · **红不是邻居红的**：clean/lf 与 damaged/cr 走**同一份信封、同一组参数**，只差一个码点；
  *     clean/lf 收 ⇒ damaged 的拒只能来自那个码点。两边读数都落进 `readings`。
  *
- * ── 🔴 本格的现状（2026-11-08 15:0x 现读）────────────────────────────────────
+ * ── 🔴 本格的现状（2026-11-08 15:3x 现读）────────────────────────────────────
  * 产品四个锚点已装（`controlCharVerdict` 在 `lib/memory.mjs`；P1 `proposalFileVerdict` / P2+P3 `bodyCapVerdict` /
- * P4 `buildSnapshot`），`E_PROPOSAL_CONTROL_CHAR` 已登记。**行为层已成立**：四条路对 damaged / CR / v15 真受损正文
- * 全部拒，`write_audit` 在每个拒的腿上 `clean:true`（没有"先写后拒"），CR 报 `U+000D`。
- * **唯一遗留红**：`第 <N> 个字符` 的单位 —— 现实现数 **UTF-16 码元**，`astral` 腿（`'😀\u0001'`）报"第 3 个"，
- * 按本项目冻结的字符单位（`char_metric.unit = unicode-code-point`）应是"第 2 个"。按码点迭代即修（契约 §1.7）。
- * 修完 `CTL-01…04` 必须 **GREEN**；`CTL-05`（替身）已经是绿 —— 它证明同一份判据在契约形状下可满足。
+ * P4 **`opJudgeCommit` 的 `entries_patch` 循环**；`buildSnapshot` **不**装闸），`E_PROPOSAL_CONTROL_CHAR` 已登记。
+ * **行为层已成立**：四条路对 damaged / CR / v15 真受损正文全部拒，`write_audit` 在每个拒的腿上 `clean:true`
+ * （没有"先写后拒"），CR 报 `U+000D`；`第 <N> 个字符` 已按**码点**数（`6488a0c`，`astral` 腿转绿）。
+ * ⇒ `CTL-01…04` **全绿**；`CTL-05`（替身 + **六把刀**：四把切替身、两把切真源码）也是绿。
+ * `CTL-04` 另有 **`stock37` 非空存量腿**：底 = 37 条 + payload 只带 **1** 个 op ⇒ 报文必须说 `entries_patch[0]`
+ * （一个装在 `buildSnapshot` 里的闸会说 `entries[37]`；那一版由 `CTL-05` 的"移回去"刀复现 ⇒ 该腿必红）。
  *
  * ── 刀架（`CTL-05`）──────────────────────────────────────────────────────────
  * 用一份**测试替身**（`tests/agenia-upgrade/fixtures/ctl-sut/`：最小 brain CLI + 最小 `proposal_file` +
@@ -43,6 +47,9 @@
  * `lib/memory.mjs::controlCharVerdict` 的 `if (cp < 32) {` 改成 `if (false) {`（锚点恰好 1 处）⇒
  * 四条路各翻四码（`DAMAGED` / `CR` / `ASTRAL` / `REAL-DAMAGED`）；**未切的同一份副本**先跑一遍必须全绿（对照）。
  * 锚点不在 ⇒ `CTL-REAL-KNIFE-ANCHOR`；切了跑不动 ⇒ `CTL-REAL-KNIFE-UNAVAILABLE`；翻错面 ⇒ `CTL-REAL-KNIFE-*`。
+ * 另有**第六把**（gate-4 复审 M1 的补丁）：把 `opJudgeCommit` 的闸关掉、在 `buildSnapshot` 装一个"看存活集"的闸
+ * （正是被修掉的那一版）⇒ `CTL-04` 的 **`stock37-damaged`** 腿必须红在 `CTL-P4-STOCK37-READING`
+ * （报文会说 `entries[37].text`，而 payload 里只有 1 个 op）；未切的对照必须绿（`CTL-REAL-KNIFE-MOVE-*`）。
  *
  * ── 判什么 / 不判什么（scope note）────────────────────────────────────────────
  * **判**：四条路对"正文里有 `code<32` 且 ≠LF 的字符"的反应（收/拒 + 零写入 + 报文三样）。
@@ -135,7 +142,7 @@ const PLACE = Object.freeze({
   P2: ['payload.entry.text'],
   P3a: ['payload.entry.text'],
   P3b: ['payload.engine_ops[1].entry.text'],
-  P4: ['entries_patch[0].entry.text', 'entries[0].text'],
+  P4: ['entries_patch[0].entry.text'],
 })
 const ACCEPT_LEGS = Object.freeze(['clean', 'lf'])
 
@@ -547,6 +554,112 @@ async function measureP3(ctx) {
   }
 }
 
+/**
+ * **非空存量腿**（gate-4 复审 M1 的补丁）：底 = **37 条**存量 + `judge-commit` 的 payload 里**只带 1 个 op**。
+ * 闸在 `opJudgeCommit` 的 `entries_patch` 循环 ⇒ 报文说 `entries_patch[0].entry.text`；
+ * 若把闸移回 `buildSnapshot`（看的是存活集）⇒ 那个 op 会落在 `entries[37]`。
+ * `stock37-clean` 是对照（同一套 37 条底，干净 op 必须提交成功、新快照 38 条）；
+ * `stock37-damaged` 是承重腿（拒 + 零写入 + 报文说 `entries_patch[0]`）。
+ */
+async function measureP4Stock(ctx, leg) {
+  const { sut, tag, push, readings } = ctx
+  const damaged = leg === 'stock37-damaged'
+  const body = damaged ? BODIES.damaged : '存量之后新增的一条干净正文'
+  const root = freshDir(tag, `p4-${leg}`)
+  const init = runCli('agenia-brain.mjs', { op: 'init', dataRoot: root, testMode: true }, { env: process.env, cliPath: sut.brain })
+  if (init.exit_code !== 0) { push('CTL-P4-SETUP', `[P4/${leg}] init 必须先成功，实得 exit=${init.exit_code} / ${init.json?.error?.code ?? '(无码)'}`); return }
+  // 种 37 条存量：用**产品自己的** `buildSnapshot` 造 v1（不手搓快照形状）。
+  let snapMod = null
+  try { snapMod = await importFresh(sut.snapshot) } catch (error) {
+    push('CTL-P4-SETUP', `[P4/${leg}] 载入 ${sut.snapshot} 失败：${String(error?.message ?? error)}`); return
+  }
+  const stock = Array.from({ length: 37 }, (_, i) => ({ id: `stock-${String(i).padStart(2, '0')}`, type: 'general', text: `存量第 ${i} 条`, last_evidence_review: DAY }))
+  let seeded = null
+  try {
+    seeded = snapMod.buildSnapshot({
+      version: 'v1', parentVersion: 'v0', entries: stock,
+      commonSenseSha256: init.json?.common_sense_sha256 ?? 'a'.repeat(64),
+      generatedAt: `${DAY}T02:00:00+08:00`,
+    })
+  } catch (error) {
+    push('CTL-P4-SETUP', `[P4/${leg}] 37 条存量的 v1 造不出来：${String(error?.message ?? error)}`); return
+  }
+  writeFileSync(path.join(root, 'memory', 'snapshots', 'v1.json'), `${JSON.stringify(seeded)}\n`, 'utf8')
+  writeFileSync(path.join(root, 'memory', 'snapshots', 'current'), 'v1\n', 'utf8')
+  const claimFile = writeFixture(`ctl-${tag}-p4`, `${leg}-claim`, { day: DAY, owner_project: 'ctl', owner_session: `ctl-${tag}-${leg}` })
+  const claim = runCli('agenia-brain.mjs', { op: 'claim-update', dataRoot: root, inFile: claimFile, testMode: true }, { env: process.env, cliPath: sut.brain })
+  if (claim.exit_code !== 0) { push('CTL-P4-SETUP', `[P4/${leg}] claim-update 必须先成功，实得 exit=${claim.exit_code} / ${claim.json?.error?.code ?? '(无码)'}`); return }
+  const generation = claim.json?.generation ?? null
+  const attempt = claim.json?.attempt ?? null
+  const token = claim.json?.token ?? null
+  const freezeFile = writeFixture(`ctl-${tag}-p4`, `${leg}-freeze`, { generation, candidate_ids: ['cand-ctl-p4'] })
+  const freeze = runCli('agenia-brain.mjs', { op: 'candidates-freeze', dataRoot: root, inFile: freezeFile, testMode: true }, { env: process.env, cliPath: sut.brain })
+  const startFile = writeFixture(`ctl-${tag}-p4`, `${leg}-start`, { generation, attempt, token, job_id: `job-ctl-${tag}-${leg}` })
+  const start = runCli('agenia-brain.mjs', { op: 'judge-start', dataRoot: root, inFile: startFile, testMode: true }, { env: process.env, cliPath: sut.brain })
+  if (freeze.exit_code !== 0 || start.exit_code !== 0) {
+    push('CTL-P4-SETUP', `[P4/${leg}] 判决前置必须成功：freeze exit=${freeze.exit_code} / start exit=${start.exit_code}（${freeze.json?.error?.code ?? '-'} / ${start.json?.error?.code ?? '-'}）`); return
+  }
+  const before = snapshotState(root)
+  readings.stock_seed = { leg, version: 'v1', entries: seeded?.entries?.length ?? null, current: before.current }
+  const commitFile = writeFixture(`ctl-${tag}-p4`, `${leg}-commit`, {
+    generation, attempt, token,
+    base_snapshot: 'v1',
+    entries_patch: [{ kind: 'add', entry: { id: 'cand-ctl-stock37-new', type: 'general', text: body, last_evidence_review: DAY } }],
+    accepted: ['cand-ctl-p4'],
+    maintenance_decisions: [],
+    common_sense_sha256: init.json?.common_sense_sha256 ?? 'a'.repeat(64),
+    report: { memory_update: `reports/memory-update/${DAY}.json` },
+  })
+  const auditBefore = rootFacts(root)
+  const commit = runCli('agenia-brain.mjs', { op: 'judge-commit', dataRoot: root, inFile: commitFile, testMode: true }, { env: process.env, cliPath: sut.brain })
+  const after = snapshotState(root)
+  const audit = writeAudit(auditBefore, rootFacts(root))
+  const message = String(commit.json?.error?.message ?? commit.stderr ?? '')
+  readings.roots[`p4-${leg}`] = root
+  readings.write_audit = readings.write_audit ?? {}
+  readings.write_audit[`p4-${leg}`] = audit
+  readings.snapshots[`p4-${leg}`] = { before, after }
+  readings.cli[`p4-${leg}`] = { commit_exit: commit.exit_code, code: commit.json?.error?.code ?? null, message: message.slice(0, 600) }
+  const accepted = commit.exit_code === 0
+  const parsed = parseReading(message, PLACE.P4)
+  readings.legs[leg] = {
+    leg, expect: damaged ? 'damaged' : 'clean', where: PLACE.P4, body: JSON.stringify(body),
+    stock_entries: before.versions.includes('v1') ? 37 : null,
+    payload_ops: 1, accepted, code: commit.json?.error?.code ?? null,
+    message: message.slice(0, 600), reading: parsed,
+    before_versions: before.versions, after_versions: after.versions, after_current: after.current, after_phase: after.phase,
+  }
+  if (damaged) {
+    if (accepted) {
+      push('CTL-P4-STOCK37-ACCEPTED', `[P4/${leg}] 37 条存量 + 1 个脏 op 竟然**收下**了（commit exit 0）—— 存量没让这条闸失效，它根本没收`)
+      return
+    }
+    if (!codeRegistered(ctx.codes, commit.json?.error?.code)) {
+      push('CTL-P4-CODE-UNREGISTERED', `[P4/${leg}] 拒了，但码 ${JSON.stringify(commit.json?.error?.code ?? null)} 不在 CODES 里`)
+    }
+    const okIndex = parsed.where_hit && parsed.index === CHARACTER_INDEX.damaged && parsed.code_point === CODE_POINT.damaged
+    if (!okIndex) {
+      push('CTL-P4-STOCK37-READING', `[P4/${leg}] 存量 37 条时报文必须说 \`entries_patch[0].entry.text\` + 第 4 个字符 + U+0001（payload 下标，不是 entries[37]）；实得 where=${JSON.stringify(parsed.where_label)} / index=${JSON.stringify(parsed.index)} / cp=${JSON.stringify(parsed.code_point)}；报文：${message.slice(0, 400)}`)
+    }
+    if (JSON.stringify(after.versions) !== JSON.stringify(before.versions)) {
+      push('CTL-P4-ZERO-WRITE-VIOLATED', `[P4/${leg}] 拒了却动了快照版本：${JSON.stringify(before.versions)} → ${JSON.stringify(after.versions)}`)
+    }
+    if (after.current !== before.current) push('CTL-P4-ZERO-WRITE-VIOLATED', `[P4/${leg}] 拒了却动了 current：${JSON.stringify(before.current)} → ${JSON.stringify(after.current)}`)
+    if (after.phase !== 'judging') push('CTL-P4-ZERO-WRITE-VIOLATED', `[P4/${leg}] 拒了却动了 phase：${JSON.stringify(after.phase)}`)
+    if (!audit.clean) push('CTL-P4-WROTE-BEFORE-REFUSAL', `[P4/${leg}] 拒了，但拒之前已经写过：${JSON.stringify(audit)}`)
+  } else {
+    if (!accepted) {
+      push('CTL-P4-STOCK37-CLEAN-REJECTED', `[P4/${leg}] 37 条存量 + 1 个干净 op 必须提交成功，实得 exit=${commit.exit_code} / ${JSON.stringify(commit.json?.error?.code ?? null)}`)
+      return
+    }
+    const v2 = after.texts[after.current] ?? []
+    if (after.current !== 'v2' || v2.length !== 38) {
+      push('CTL-P4-STOCK37-SHAPE', `[P4/${leg}] 干净那一条必须把快照推到 v2 且 38 条（37 存量 + 1 新增），实得 current=${JSON.stringify(after.current)} 条数=${v2.length}`)
+    }
+    if (!v2.includes(body)) push('CTL-P4-STOCK37-TEXT', `[P4/${leg}] v2 里必须有新增那条正文（逐字），实得 ${JSON.stringify(v2.slice(-2))}`)
+  }
+}
+
 async function measureP4(ctx) {
   const { sut, tag, legs, push, readings } = ctx
   const entryOf = (text) => ({
@@ -555,6 +668,7 @@ async function measureP4(ctx) {
     known_from: 'ctl-fixture', created_at: '2026-11-08T00:00:00+08:00', type_changed_at: null,
   })
   for (const leg of legs) {
+    if (leg === 'stock37-clean' || leg === 'stock37-damaged') { await measureP4Stock(ctx, leg); continue }
     const body = BODIES[leg]
     const root = freshDir(tag, `p4-${leg}`)
     const init = runCli('agenia-brain.mjs', { op: 'init', dataRoot: root, testMode: true }, { env: process.env, cliPath: sut.brain })
@@ -688,9 +802,9 @@ function pathCase(caseId, pathId, legs) {
 test('CTL-01 `proposal_file` 工具：控制字符必拒 · 干净/LF 必收（池子恰好一行、正文逐字）', pathCase('CTL-01', 'P1', ['clean', 'lf', 'damaged', 'cr', 'astral', ...(REAL_DAMAGE.ok ? ['real'] : [])]))
 test('CTL-02 `--op proposal-import`：`payload.entry.text` 有控制字符必拒（exit≠0 + 零写入）· 干净/LF 必收', pathCase('CTL-02', 'P2', ['clean', 'lf', 'damaged', 'cr', 'astral', ...(REAL_DAMAGE.ok ? ['real'] : [])]))
 test('CTL-03 `--op maintenance-import`：`payload.entry.text` **与** `engine_ops[1].entry.text` 两处各拒一次 · 干净/LF 必收', pathCase('CTL-03', 'P3', ['clean', 'lf', 'damaged-entry', 'damaged-ops1', 'cr', 'astral', ...(REAL_DAMAGE.ok ? ['real'] : [])]))
-test('CTL-04 `--op judge-commit`：`entries_patch[0].entry.text` 有控制字符必拒（版本集合/current/phase 不动）· 干净/LF 必进快照', pathCase('CTL-04', 'P4', ['clean', 'lf', 'damaged', 'cr', 'astral', ...(REAL_DAMAGE.ok ? ['real'] : [])]))
+test('CTL-04 `--op judge-commit`：`entries_patch[0].entry.text` 有控制字符必拒（版本集合/current/phase 不动）· 干净/LF 必进快照 · **stock37 非空存量**报文必须说 `entries_patch[0]`', pathCase('CTL-04', 'P4', ['clean', 'lf', 'damaged', 'cr', 'astral', 'stock37-clean', 'stock37-damaged', ...(REAL_DAMAGE.ok ? ['real'] : [])]))
 
-// ── 刀架：CTL-05（合成最小实现 + 四把刀；产品零字节）────────────────────────────
+// ── 刀架：CTL-05（合成最小实现 + 六把刀：四把切替身、两把切真源码；产品零字节）──────────────────
 /**
  * 合成最小实现 = **测试替身**（`tests/agenia-upgrade/fixtures/ctl-sut/`：一个最小 brain CLI +
  * 一个最小 `proposal_file` + 一张只有一条码的 `CODES`）。**不是产品副本、不是产品代码。**
@@ -769,6 +883,57 @@ function buildRealKnife(tag) {
   return { ok: true, sut: sutFiles(destMutant), controlSut: sutFiles(destControl), file, anchor_count: count, code: null, message: '' }
 }
 
+/**
+ * **"把闸移回去"刀**（gate-4 复审 M1 的补丁）：把已提交产品的 `opJudgeCommit` 那道闸关掉，
+ * 再在 `buildSnapshot` 里装一个"看存活集"的闸（位置串 `entries[${i}].text`）—— 正是组长修掉的那一版。
+ * 期望：`CTL-04` 的 **`stock37-damaged`** 腿红在 `CTL-P4-STOCK37-READING`（报文会说 `entries[37].text`，
+ * 而 payload 里只有 1 个 op）；未切的对照副本那条腿必须绿。锚点各须恰好 1 处。
+ */
+function buildRealKnifeMove(tag) {
+  const base = path.join(runRoot(), 'ctl-real-knife', `${tag}-${process.pid}-${Date.now().toString(36)}`)
+  const destControl = path.join(base, 'control')
+  const destMutant = path.join(base, 'mutant')
+  const copy = (dest) => {
+    if (existsSync(dest)) throw new Error(`落点已存在（拒绝覆盖）：${dest}`)
+    cpSync(LIVE_PRESET, dest, {
+      recursive: true,
+      filter: (src) => {
+        const rel = path.relative(LIVE_PRESET, src)
+        if (rel === '') return true
+        const parts = rel.split(path.sep)
+        return !parts.includes('.runtime') && !parts.includes('client-ui-dashboard')
+      },
+    })
+  }
+  try {
+    copy(destControl)
+    copy(destMutant)
+  } catch (error) {
+    return { ok: false, code: 'CTL-REAL-KNIFE-MOVE-UNAVAILABLE', message: `副本建不起来（${LIVE_PRESET} → ${base}）：${String(error?.message ?? error)}` }
+  }
+  const patch = (rel, anchor, replacement) => {
+    const file = path.join(destMutant, rel)
+    const text = readText(file)
+    if (text === null) return { ok: false, message: `副本里缺 ${rel}` }
+    const count = text.split(anchor).length - 1
+    if (count !== 1) return { ok: false, message: `锚点 ${JSON.stringify(anchor)} 在 ${rel} 里出现 ${count} 次（必须恰好 1 次）` }
+    writeFileSync(file, text.replace(anchor, replacement), 'utf8')
+    return { ok: true, count }
+  }
+  const off = patch('bin/agenia-brain.mjs', 'if (!v.ok) throw cliError(v.code, v.message)', 'if (false) throw cliError(v.code, v.message)')
+  if (!off.ok) return { ok: false, code: 'CTL-REAL-KNIFE-MOVE-ANCHOR', message: `关闸失败：${off.message}` }
+  const on = patch('lib/snapshot.mjs', '  const normalized = entries.map((e) => normalizeEntry(e, generatedAt))',
+    '  {\n'
+    + '    for (let i = 0; i < entries.length; i += 1) {\n'
+    + '      const v = controlCharVerdict(entries[i]?.text, `entries[${i}].text`)\n'
+    + '      if (!v.ok) throw brainError(v.code, v.message)\n'
+    + '    }\n'
+    + '  }\n'
+    + '  const normalized = entries.map((e) => normalizeEntry(e, generatedAt))')
+  if (!on.ok) return { ok: false, code: 'CTL-REAL-KNIFE-MOVE-ANCHOR', message: `装回 buildSnapshot 失败：${on.message}` }
+  return { ok: true, sut: sutFiles(destMutant), controlSut: sutFiles(destControl), anchors: { brain: off.count, snapshot: on.count }, code: null, message: '' }
+}
+
 /** 刀架期望的翻面集（case 内 problem code 的**精确**集合；多一个少一个都算刀切错了）。 */
 const KNIFE_VECTORS = [
   { mode: 'only_tool', p3Legs: ['damaged-entry', 'damaged-ops1'], legs: ['damaged'], expect: { P2: ['CTL-P2-DAMAGED-ACCEPTED'], P3: ['CTL-P3-DAMAGED-ACCEPTED'], P4: ['CTL-P4-DAMAGED-ACCEPTED'] } },
@@ -777,7 +942,7 @@ const KNIFE_VECTORS = [
   { mode: 'first_only', legs: ['damaged-ops1'], expect: { P3: ['CTL-P3-DAMAGED-ACCEPTED'] } },
 ]
 
-test('CTL-05 刀架：合成最小实现四条路全绿 + 四把刀各只翻自己那一面 + 一把切真源码（副本里跑，产品零字节）', async () => {
+test('CTL-05 刀架：合成最小实现四条路全绿 + 四把刀各只翻自己那一面 + 两把切真源码（副本里跑，产品零字节）', async () => {
   await runCase('CTL-05', async (rec) => {
     const problems = []
     const push = (code, message, detail) => problems.push(problem(code, message, detail))
@@ -882,6 +1047,29 @@ test('CTL-05 刀架：合成最小实现四条路全绿 + 四把刀各只翻自�
         if (extra.length > 0) push('CTL-REAL-KNIFE-VECTOR', `[真源码刀/${pathId}] 翻了不该翻的：多 ${JSON.stringify(extra)}（期望 ${JSON.stringify(want)}）`)
       }
       rec.readings.real_knife_mutant = mutant
+    }
+
+    // ③c **"把闸移回 buildSnapshot"刀**（gate-4 复审 M1）：同一把 `stock37-damaged` 腿 ——
+    //     对照（未切）必须绿；切过（opJudgeCommit 的闸关掉 + buildSnapshot 装一个看存活集的闸）
+    //     必须红在 `CTL-P4-STOCK37-READING`（报文会说 `entries[37].text`）。
+    const moveKnife = buildRealKnifeMove('move')
+    rec.readings.real_knife_move = { ok: moveKnife.ok, code: moveKnife.code ?? null, sut: moveKnife.sut?.preset ?? null, control_sut: moveKnife.controlSut?.preset ?? null, anchors: moveKnife.anchors ?? null }
+    if (!moveKnife.ok) {
+      push(moveKnife.code, `[移回刀] ${moveKnife.message}`)
+    } else {
+      const controlMove = await measure('P4', { sut: moveKnife.controlSut, tag: 'CTL-05-move-control', legs: ['stock37-damaged'] })
+      rec.readings.real_knife_move_control = { codes: controlMove.problems.map((p) => p.code) }
+      if (controlMove.problems.length > 0) {
+        push('CTL-REAL-KNIFE-MOVE-CONTROL', `[移回刀/对照] 未切的副本跑 stock37-damaged 必须绿，实得 ${JSON.stringify(rec.readings.real_knife_move_control.codes)}`)
+      }
+      const mutantMove = await measure('P4', { sut: moveKnife.sut, tag: 'CTL-05-move-mutant', legs: ['stock37-damaged'] })
+      const got = [...new Set(mutantMove.problems.map((p) => p.code))].sort()
+      rec.readings.real_knife_move_mutant = { codes: got, messages: mutantMove.problems.map((p) => p.message.slice(0, 400)) }
+      const want = ['CTL-P4-STOCK37-READING']
+      const missing = want.filter((c) => !got.includes(c))
+      const extra = got.filter((c) => !want.includes(c))
+      if (missing.length > 0) push('CTL-REAL-KNIFE-MOVE-NOT-BITING', `[移回刀/mutant] 该翻的没翻：缺 ${JSON.stringify(missing)}（实得 ${JSON.stringify(got)}）—— 报文：${JSON.stringify(mutantMove.problems.map((p) => p.message.slice(0, 300)))}`)
+      if (extra.length > 0) push('CTL-REAL-KNIFE-MOVE-VECTOR', `[移回刀/mutant] 翻了不该翻的：多 ${JSON.stringify(extra)}（实得 ${JSON.stringify(got)}，期望 ${JSON.stringify(want)}）`)
     }
 
     // ④ 产品零字节：六份源码跑前跑后逐字节相同。
