@@ -399,7 +399,16 @@ function opLocalReceiptSet(ctx) {
   const result = L.localTransaction(teamDir, { day, field: null, at, sessionId: ctx.sessionId, forceRecover: ctx.args.forceRecover, waitMs: ctx.waitMs }, (current) => {
     const snapshot = typeof payload.snapshot === 'string' && payload.snapshot.trim() !== '' ? payload.snapshot.trim() : (current?.snapshot ?? 'v0')
     const state = current ?? L.emptyLocalState({ project, day, snapshot, at })
-    const node = state.technical
+    // 🔴 `bug-20261108-13`：节点按入参分派，**不许写死 technical**（写死会把会话回执静默写进技术那一段，
+  //    还占掉它的版本号）。认不出的名字 ⇒ 点名报错，不猜。
+  const fieldName = String(payload?.field ?? payload?.node ?? 'technical').trim()
+  const NODE_FIELDS = ['technical', 'conversation', 'memory_review']
+  if (!NODE_FIELDS.includes(fieldName)) {
+    throw cliError('E_ARG_SCHEMA',
+      `local-receipt-set 的节点只认 ${NODE_FIELDS.join(' / ')}，实得 ${JSON.stringify(payload?.field ?? payload?.node)}`
+      + ' —— 不传就是 technical；传了认不出的名字这里**不猜**（写死节点会把回执记到别人那段、还占掉它的版本号）。')
+  }
+  const node = state[fieldName]
     // 已存在的版本 = 台账（登记过的） ∪ 盘上真有的那几份 —— C-6 明写"目标版本文件已存在"也算。
     const existing = [...new Set([...L.receiptVersionsOf(node), ...L.receiptVersionsOnDisk(teamDir, day)])].sort((a, b) => a - b)
     const verdict = R.receiptWriteVerdict({
@@ -410,7 +419,7 @@ function opLocalReceiptSet(ctx) {
     })
     if (!verdict.ok) return { ok: false, code: verdict.code, message: verdict.message }
     const next = { ...state, updated_at: at }
-    next.technical = L.applyReceiptRegistration(node, { ...payload, receipt_path: payload.receipt_path.trim() }, at)
+    next[fieldName] = L.applyReceiptRegistration(node, { ...payload, receipt_path: payload.receipt_path.trim() }, at)
     return { ok: true, state: next }
   })
   if (!result.ok) throw cliError(result.code, result.message, { path: result.path })
