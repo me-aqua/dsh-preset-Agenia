@@ -46,6 +46,8 @@
  *   · 不判"`--is-code` 自己判断得对不对"（那是 `fingerprint.mjs` 的排除表；这里只判三个已知落点）；
  *   · 不判 `--out` 指进 `.git`（老 `REFUSE-OVERWRITE` 那一支，早就有人守）；
  *   · 不判"拒的报文措辞好不好读"（只点名"落点 + 被测根"两样在不在）。
+ *   · **两条同族残余也不判**（junction 落点建不出来时没有 HOLD · `.git` 守卫仍是词法比较 +
+ *     `canonicalOut` 静默退回词法）：全文只写在一处 —— `registry.mjs` 的 `MCR-01` 行末（batch 13 记）。
  */
 import { before, describe, test } from 'node:test'
 import { spawnSync } from 'node:child_process'

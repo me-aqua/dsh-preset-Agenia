@@ -2565,7 +2565,13 @@ test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的�
         const dir = path.join(base, 'knife')
         mkdirSync(dir, { recursive: true })
         const mutFile = path.join(dir, `coverage-line.handwritten.${process.pid}.mjs`)
-        const handwritten = "  - 🔴 覆盖边界（DR-02 的读数）：【已存在文件被就地覆盖（内容改、路径不变）】…（手写的一份，看起来是健康的）"
+        /**
+         * 🔴 这一行是**占位**（`bug-20261108-17`）：它的用处只有两个 —— ① 形状像**健康行**
+         * （带健康标签、不带 `COVERAGE_MISSING_TOKEN`）；② 是**手写的**、不是从读数拼出来的。
+         * 它不许逐字抄任何人话：那五句覆盖边界的唯一手写载体是
+         * `support/evidence.mjs::REAL_ROOTS_CONTENT_UNCOVERED`（`MF-1`）。
+         */
+        const handwritten = '  - 🔴 覆盖边界（DR-02 的读数）：【占位：这一行是刀手写的，不是读数】…（看起来是健康的）'
         writeFileSync(mutFile, covText.replace(HAND, `if (u === null || typeof u !== 'object') return ${JSON.stringify(handwritten)}`), 'utf8')
         const mutMod = await import(pathToFileURL(mutFile).href)
         const missingInput = { content_uncovered: null, content_uncovered_source: null }

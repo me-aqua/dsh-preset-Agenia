@@ -26,9 +26,62 @@
  *
  *   · 另一头也是真的：**声明表读不出来**时必须出声（`table_ok: false`），否则
  *     `declared: 0 · no_emission: []` 会让整格静默变绿（复审第四轮 MF-2）。
+ *     同理，**读出来一部分**也必须出声：解析条数 ≠ 表块里 `RDW-` 字面量条数 ⇒ `table_ok: false`
+ *     （batch 12 r5 非阻塞第 2 条 —— 少算一条以前是静默的）。
  */
 
-/** 把注释从源码里剥掉（引号里的 `//` 不动）；字符串保留 —— 字面量码名本身就是发射点。 */
+/** `out` 里最后一个**非空白**字符（注释被替换成空格，`out` 尾部可能全是空格）。 */
+function lastSignificant(out) {
+  let i = out.length - 1
+  while (i >= 0 && /\s/.test(out[i])) i -= 1
+  return i < 0 ? null : { ch: out[i], prev: i > 0 ? out[i - 1] : null }
+}
+
+/**
+ * `out` 这一格里的 `/` 是不是**正则字面量**的开头。
+ * 判据只有一条：左边最近一个**记号**（跳过空白）决定它 —— 行首与
+ * ``( , = : [ ! & | ? { } ; + - * % ~ ^ < >`` 之后是正则，别处是除法。
+ * `i++ / 2` / `i-- / 2` 那种除外（前一个记号是 `++` / `--`）⇒ 除法。
+ * 这是**语法近似**，不是解析器：它只负责"别把正则里的引号当成字符串开头"。
+ */
+function regexCanStart(out) {
+  const sig = lastSignificant(out)
+  if (sig === null) return true
+  if (!'(,=:[!&|?{};+-*%~^<>'.includes(sig.ch)) return false
+  if ((sig.ch === '+' || sig.ch === '-') && sig.prev === sig.ch) return false
+  return true
+}
+
+/** `text[start]` 是 `/`：正则字面量的收尾下标（`[...]` 字符类里的 `/` 不算收尾，`\` 转义跳过）；不是正则 ⇒ `-1`。 */
+function regexEnd(text, start) {
+  let inClass = false
+  for (let i = start + 1; i < text.length; i += 1) {
+    const c = text[i]
+    if (c === '\\') { i += 1; continue }
+    if (c === '\n') return -1
+    if (inClass) {
+      if (c === ']') inClass = false
+      continue
+    }
+    if (c === '[') { inClass = true; continue }
+    if (c === '/') return i
+  }
+  return -1
+}
+
+/**
+ * 把注释从源码里剥掉（引号里的 `//` 不动、**正则字面量里的引号也不动**）；字符串保留 ——
+ * 字面量码名本身就是发射点。
+ *
+ * 🔴 **正则字面量必须认**（`bug-20261107-09` ③）：本文件自己扫的源码里有 `/…["'`]…/` 这种字面量
+ * （`dash07:310`），不认它就会从那个 `"` 起把"引号态"打开、再也关不上 ⇒ 它**后面**的整行注释
+ * 被当成代码。读数（batch 13 现量，量法 = 逐行看"原文件里整行注释的行是否在 `stripped` 里被抹成空白"：
+ * 改前 `dash07` 有 **16** 处、改后 **0** 处，脚本 `.team/test/2026-11-08/_probe/b13-regex-literal.mjs`）。
+ * 今天注释里没有带真别名的码位（0 处）⇒ 它不制造假绿，但"注释里的假发射点"
+ * 这条通道是**开着**的（`DASH-17` 的 `catalogue` 格有一条刀，样本 `SYNTHETIC_REGEX`）。
+ * ⚠️ 另两把扫描器（`closingIndexOf` / `splitArguments`）仍不认正则字面量：它们解析的是
+ * 码位**实参**的括号与逗号，今天没有任何一处码位实参里含正则字面量（实测 0 处）；改它们要另配刀。
+ */
 export function stripComments(source) {
   const text = String(source)
   let out = ''
@@ -57,6 +110,10 @@ export function stripComments(source) {
       out += text.slice(i, end + 2).replace(/[^\n]/g, ' ')
       i = end + 1
       continue
+    }
+    if (c === '/' && regexCanStart(out)) {
+      const end = regexEnd(text, i)
+      if (end > i) { out += text.slice(i, end + 1); i = end; continue }
     }
     out += c
   }
@@ -107,6 +164,39 @@ function splitArguments(text) {
 }
 
 /**
+ * 声明表**表块**（`{…}` 里面那一段）的顶层键 —— 引号 / `()` / `[]` / `{}` 里的冒号不算。
+ * 用来对账"表里有几条、解析出几条"：只看 `RDW-` 字面量条数是不够的（值换成变量/常量引用时，
+ * 那个字面量**也从表块里消失** ⇒ 两边一起少，判据不翻面）。
+ */
+function topLevelKeys(block) {
+  const keys = []
+  let depth = 0
+  let quote = null
+  let read = ''
+  for (let i = 0; i < block.length; i += 1) {
+    const c = block[i]
+    if (quote !== null) {
+      if (c === '\\') i += 1
+      else if (c === quote) quote = null
+      continue
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; continue }
+    if (c === '(' || c === '[' || c === '{') { depth += 1; continue }
+    if (c === ')' || c === ']' || c === '}') { depth -= 1; continue }
+    if (depth !== 0) continue
+    if (c === ',') { read = ''; continue }
+    if (c === ':') {
+      const hit = /['"]?([A-Za-z_$][\w$]*)['"]?\s*$/.exec(read)
+      if (hit !== null) keys.push(hit[1])
+      read = ''
+      continue
+    }
+    read += c
+  }
+  return keys
+}
+
+/**
  * 声明表：`const CODE = {…}` / `const CODE = Object.freeze({…})`，单双引号都认。
  * 🔴 **读不出来必须出声**（`ok: false` + `why`）—— 返回空表会让调用方静默变绿。
  *
@@ -130,6 +220,30 @@ export function codeTable(source) {
   while ((m = re.exec(block)) !== null) aliases.set(m[1], m[3])
   if (aliases.size === 0) {
     return { ok: false, why: '`CODE` 对象里一个 `别名: \'RDW-…\'` 都没解析出来 —— 形状变了？', shape: head[1] === undefined ? 'literal' : 'Object.freeze', aliases }
+  }
+  /**
+   * 🔴 **少算一条**也是假的（`bug-20261107-09` ②；batch 12 r5 非阻塞第 2 条）：
+   * 上面那只正则只认 `别名: 'RDW-…'` 这种**字面量**值。值要是模板串 / 拼接 / 变量 / 常量引用，
+   * 那一条就从 `aliases` 里**消失**，而 `table_ok` 仍是 true ⇒ `declared` 少一条、`no_emission`
+   * 也少一条 ⇒ 这一格静默变绿（"分母少了一个"比"多一个"更难发现）。
+   * ⇒ 两个对数，各挡一种形状：
+   *   · `parsed == 表块里的顶层键数` —— 值不是字面量时**键还在、别名没了**（这一条能翻面）；
+   *   · `parsed == 表块里的 \`RDW-\` 字面量条数` —— 值里**有**码名却没被解析（拼接 / 函数调用那种）。
+   * 表块是 `stripComments` 之后的正文 ⇒ 注释里的 `RDW-` 不参与计数。
+   */
+  const keys = topLevelKeys(block)
+  const literalCount = (block.match(/RDW-[A-Z0-9-]+/g) ?? []).length
+  const unparsedKeys = keys.filter((key) => !aliases.has(key))
+  if (unparsedKeys.length > 0 || aliases.size !== literalCount) {
+    return {
+      ok: false,
+      why: `\`CODE\` 表块里 ${keys.length} 条属性、${literalCount} 处 \`RDW-\` 字面量，只解析出 ${aliases.size} 条 —— `
+        + (unparsedKeys.length > 0 ? `这些键没有解析出码名：${unparsedKeys.join(' / ')}；` : '')
+        + '别名值不是 `别名: \'RDW-…\'` 这种字面量时，这条路会**静默少算**'
+        + '（少算的那条既不在 declared、也不在 no_emission）',
+      shape: head[1] === undefined ? 'literal' : 'Object.freeze',
+      aliases,
+    }
   }
   return { ok: true, why: null, shape: head[1] === undefined ? 'literal' : 'Object.freeze', aliases }
 }

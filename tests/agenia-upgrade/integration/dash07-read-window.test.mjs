@@ -1137,6 +1137,31 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
       const checkerOk = checkerControl.table_ok === true
         && JSON.stringify(checkerControl.no_emission.slice().sort()) === JSON.stringify(wantNoEmission)
         && checkerControl.declared.length === 6
+      /**
+       * **刀（batch 13 · `bug-20261107-09` ③）**：`stripComments` 不认**正则字面量**时，引号态会从
+       * `/…["'`]…/` 那种字面量起失步 ⇒ 它**后面**的整行注释被当成代码（读数与量法在
+       * `support/emission-catalog.mjs::stripComments` 的文件头）。
+       *
+       * 这一份样本里那个别名**只活在注释里**，两个方向各说一件事：
+       *   · 认正则（现在）⇒ 注释被剥掉 ⇒ 别名**没有**发射点 ⇒ 进 `no_emission`（正确）；
+       *   · 不认（改回去）⇒ 注释里那行 `problem(CODE.…)` 被算成发射点 ⇒ `no_emission` 空 ⇒ 这一格红。
+       * 它证的是"注释里的假发射点"这条通道；不依赖真实文件里今天有没有被注释掉的码位（今天 0 处）。
+       */
+      const SYNTHETIC_REGEX = [
+        "const CODE = { 'regexGuard': 'RDW-SYNTH-REGEX-LITERAL' }",
+        'const quoted = /["\'`]/g',
+        '// problem(CODE.regexGuard) —— 只在注释里提到，不是发射点',
+      ].join('\n')
+      const regexControl = emissionCatalogue({ source: SYNTHETIC_REGEX })
+      const regexOk = regexControl.table_ok === true
+        && JSON.stringify(regexControl.no_emission) === JSON.stringify(['RDW-SYNTH-REGEX-LITERAL'])
+      if (!regexOk) {
+        catalogueProblems.push(problem(CODE.catalogueUnreachable,
+          '**尺子自己坏了（正则字面量）**：一行整行注释里的 `problem(CODE.…)` 被当成了发射点 —— '
+          + '`stripComments` 不认 `/["\'`]/` 这种字面量，引号态从那里起失步，后面整行注释都被当成代码。'
+          + `实得 table_ok=${String(regexControl.table_ok)}${regexControl.table_why === null ? '' : `（${regexControl.table_why}）`}`
+          + ` · declared=${JSON.stringify(regexControl.declared)} · no_emission=${JSON.stringify(regexControl.no_emission)}`))
+      }
       if (!checkerOk) {
         catalogueProblems.push(problem(CODE.catalogueUnreachable,
           '**尺子自己坏了**：合成样本（`Object.freeze` + 双引号那种声明形状）应当解析出 6 个码、'
@@ -1153,7 +1178,7 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
       }
       if (catalogue.no_emission.length > 0) {
         catalogueProblems.push(problem(CODE.catalogueUnreachable,
-          `这些码只是**写着**，没有任何一条路径吐得出来：${JSON.stringify(catalogue.no_emission)}`
+          `这些码只是**写着**，没有一处**码位**写着它：${JSON.stringify(catalogue.no_emission)}`
           + `（declared=${catalogue.declared.length} · reachable=${catalogue.reachable.length} · 码位发射点 ${catalogue.sites} 处`
           + `${catalogue.skipped.length === 0 ? '' : ` · 缺码位实参 ${catalogue.skipped.length} 处`}）`
           + ' —— 题面承诺一个用例说不出来的码，比缺一个码更坏'))
@@ -1191,6 +1216,12 @@ test('DASH-17 读盘窗口：两个数要有名字 + eof===false 必须说「快
           declared: checkerControl.declared,
           synthetic_no_emission: checkerControl.no_emission,
           ok: checkerOk,
+          /** 🔴 正则字面量那条通道的刀（`bug-20261107-09` ③）：认了正则 ⇒ 注释里的码位不算发射点。 */
+          regex_literal: {
+            ok: regexOk,
+            declared: regexControl.declared,
+            no_emission: regexControl.no_emission,
+          },
         },
         codes: [...new Set(catalogueProblems.map((p) => p.code))],
         measured: true,

@@ -50,6 +50,9 @@
  * 另有**第六把**（gate-4 复审 M1 的补丁）：把 `opJudgeCommit` 的闸关掉、在 `buildSnapshot` 装一个"看存活集"的闸
  * （正是被修掉的那一版）⇒ `CTL-04` 的 **`stock37-damaged`** 腿必须红在 `CTL-P4-STOCK37-READING`
  * （报文会说 `entries[37].text`，而 payload 里只有 1 个 op）；未切的对照必须绿（`CTL-REAL-KNIFE-MOVE-*`）。
+ * 🔴 这一腿的**位置**要钉死：报文必须**逐字**点名 `entries[37].text`（batch 9 r3 `N1`）。
+ * 只断言"不是 `entries_patch[0]`"会被任何别的拒绝满足 ⇒ 那不是"钉住位置"，只是"没看见 payload 下标"
+ * （`CTL-REAL-KNIFE-MOVE-WHERE`）。
  * 🔴 这一把**自带尺子**：注入的是**内联**码点扫描 + 自己的 `Error.code`，**不借产品的 import / 符号** ——
  * 产品删掉 `snapshot.mjs` 里那个无调用者的 import 之后，借符号的刀会当场变钝（`controlCharVerdict is not defined`）。
  * 它证的是**闸的位置**（payload 下标 vs 存活集下标），被测的那一行仍是产品的 `buildSnapshot`。
@@ -59,7 +62,12 @@
  * **不判**：① `code >= 32`（含 DEL 127）与 Unicode 其它类别 —— 口径只到 `code < 32`；
  *   ② 正文超 400 字（`MTC-01…03` 那一族）、BOM / CRLF 的字数口径（`charCountOf` 那一族）；
  *   ③ 存量（库里已有的脏条目）—— 只卡入口（`F-72`）；
- *   ④ 池子行/快照的其它字段（那是 `store` / `proposal-file` 两族的格）。
+ *   ④ 池子行/快照的其它字段（那是 `store` / `proposal-file` 两族的格）；
+ *   ⑤ **拒绝的次序**（先撞哪一道闸）—— 两处产品实现**不同序**：P1
+ *      （`tools/proposal-file.mjs::proposalFileVerdict`）**长度先于控制字符**，P2/P3
+ *      （`lib/proposals.mjs::bodyCapVerdict`）**控制字符先于长度**。判词不受影响：四条路都拒、
+ *      都不写；四格只判"拒 + 零写入 + 报文三样"，不判先撞哪一道。要统一次序得改产品
+ *      （`presets/**` 不在测试岗写区）—— 所以这里把差**说清**，不拿它当判据（batch 9 r3 `N3`）。
  * **绿的边界**："绿 = 这四条路都会拒收并点名"；不是"库里的存量干净"。
  * **读哪棵树**：现役 `presets/agenia`（`AGENIA_CTL_SUT_PRESET` 只给反向量测用：合法值 = 现役或运行根下的副本，
  * 别处一律 `CTL-SUT-ILLEGAL`）。staged 与现役的差由入口的 `F57-TARGET` 单独管，这里不混。
@@ -847,12 +855,12 @@ function buildSynthetic(tag) {
 }
 
 /**
- * **真源码刀**（组长 2026-11-08 点名）：把**已提交的产品**拷到运行根，再把
- * `lib/memory.mjs::controlCharVerdict` 的 `if (cp < 32) {` 改成 `if (false) {`。
- * 锚点须**恰好 1 处**（不是 ⇒ `CTL-REAL-KNIFE-ANCHOR`，附计数）；副本建不起来 ⇒ `CTL-REAL-KNIFE-UNAVAILABLE`。
- * 返回 `{ok, sut, file, anchor_count, code, message}`；**只写运行根**。
+ * 两把**切真源码**的刀共用的一份夹具：把**已提交的产品**拷进运行根（`control` + `mutant` 两份），
+ * 过滤规则一处（不含 `.runtime` / `client-ui-dashboard`）。**只写运行根**。
+ * 两把刀各留自己的错误码（`CTL-REAL-KNIFE-UNAVAILABLE` / `CTL-REAL-KNIFE-MOVE-UNAVAILABLE`），
+ * 所以 `copy` 在这里**只抛**，由调用方翻译成自己的码。
  */
-function buildRealKnife(tag) {
+function copyPresetPair(tag) {
   const base = path.join(runRoot(), 'ctl-real-knife', `${tag}-${process.pid}-${Date.now().toString(36)}`)
   const destControl = path.join(base, 'control')
   const destMutant = path.join(base, 'mutant')
@@ -868,6 +876,17 @@ function buildRealKnife(tag) {
       },
     })
   }
+  return { base, destControl, destMutant, copy }
+}
+
+/**
+ * **真源码刀**（组长 2026-11-08 点名）：把**已提交的产品**拷到运行根，再把
+ * `lib/memory.mjs::controlCharVerdict` 的 `if (cp < 32) {` 改成 `if (false) {`。
+ * 锚点须**恰好 1 处**（不是 ⇒ `CTL-REAL-KNIFE-ANCHOR`，附计数）；副本建不起来 ⇒ `CTL-REAL-KNIFE-UNAVAILABLE`。
+ * 返回 `{ok, sut, file, anchor_count, code, message}`；**只写运行根**。
+ */
+function buildRealKnife(tag) {
+  const { base, destControl, destMutant, copy } = copyPresetPair(tag)
   try {
     copy(destControl)
     copy(destMutant)
@@ -899,21 +918,7 @@ function buildRealKnife(tag) {
  * 所以尺子由刀自己带；被测的那一行仍是产品的 `buildSnapshot`（`entries.map` 之前）。
  */
 function buildRealKnifeMove(tag) {
-  const base = path.join(runRoot(), 'ctl-real-knife', `${tag}-${process.pid}-${Date.now().toString(36)}`)
-  const destControl = path.join(base, 'control')
-  const destMutant = path.join(base, 'mutant')
-  const copy = (dest) => {
-    if (existsSync(dest)) throw new Error(`落点已存在（拒绝覆盖）：${dest}`)
-    cpSync(LIVE_PRESET, dest, {
-      recursive: true,
-      filter: (src) => {
-        const rel = path.relative(LIVE_PRESET, src)
-        if (rel === '') return true
-        const parts = rel.split(path.sep)
-        return !parts.includes('.runtime') && !parts.includes('client-ui-dashboard')
-      },
-    })
-  }
+  const { base, destControl, destMutant, copy } = copyPresetPair(tag)
   try {
     copy(destControl)
     copy(destMutant)
@@ -1088,12 +1093,23 @@ test('CTL-05 刀架：合成最小实现四条路全绿 + 四把刀各只翻自�
       }
       const mutantMove = await measure('P4', { sut: moveKnife.sut, tag: 'CTL-05-move-mutant', legs: ['stock37-damaged'] })
       const got = [...new Set(mutantMove.problems.map((p) => p.code))].sort()
-      rec.readings.real_knife_move_mutant = { codes: got, messages: mutantMove.problems.map((p) => p.message.slice(0, 400)) }
+      const mutantMessage = String(mutantMove.readings.legs['stock37-damaged']?.message ?? '')
+      /**
+       * 🔴 **报文必须逐字点名 `entries[37].text`**（batch 9 第 3 轮复审 `N1` · `bug-20261108-16` ①）：
+       * 这一腿要证的是**闸的位置** —— 存活集下标（37）≠ payload 下标（0）。
+       * 只断言"不是 `entries_patch[0]`"会被**任何别的拒绝**满足（例如别的闸先拦下、或报文根本读不出位置），
+       * ⇒ 位置那一格没被钉住。所以：翻了面之后，报文的位置标签必须**恰好**是 `entries[37].text`。
+       */
+      const moveWhere = parseReading(mutantMessage, ['entries[37].text'])
+      rec.readings.real_knife_move_mutant = { codes: got, where_label: moveWhere.where_label, messages: mutantMove.problems.map((p) => p.message.slice(0, 400)) }
       const want = ['CTL-P4-STOCK37-READING']
       const missing = want.filter((c) => !got.includes(c))
       const extra = got.filter((c) => !want.includes(c))
       if (missing.length > 0) push('CTL-REAL-KNIFE-MOVE-NOT-BITING', `[移回刀/mutant] 该翻的没翻：缺 ${JSON.stringify(missing)}（实得 ${JSON.stringify(got)}）—— 报文：${JSON.stringify(mutantMove.problems.map((p) => p.message.slice(0, 300)))}`)
       if (extra.length > 0) push('CTL-REAL-KNIFE-MOVE-VECTOR', `[移回刀/mutant] 翻了不该翻的：多 ${JSON.stringify(extra)}（实得 ${JSON.stringify(got)}，期望 ${JSON.stringify(want)}）`)
+      if (missing.length === 0 && moveWhere.where_label !== 'entries[37].text') {
+        push('CTL-REAL-KNIFE-MOVE-WHERE', `[移回刀/mutant] 翻对了面，但报文没有逐字点名 \`entries[37].text\`（这一腿要证的就是**位置**：存活集下标 37、不是 payload 下标 0）—— 实得 where=${JSON.stringify(moveWhere.where_label)}；报文：${mutantMessage.slice(0, 300)}`)
+      }
     }
 
     // ④ 产品零字节：六份源码跑前跑后逐字节相同。
