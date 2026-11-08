@@ -22,6 +22,10 @@
  *   · 用 `lib/memory.mjs::charCountOf` **同一把尺子**（去开头 BOM → `\r\n`/`\r` 归一 → 数 code point）；
  *   · **400 = 可以，401 = 不行**；
  *   · 检查对象是**所有会进库的正文**：`payload.entry.text` **以及** `payload.engine_ops[].entry.text`。
+ *   · 🔴 `F-165`（2026-11-08）起 **CR 禁**（`entry.text` 里 `code<32` 且 ≠LF 必须为 0，`CTL-01…04` 量它）：
+ *     **含 CRLF 的正文按新规矩本身就是受损正文**，不是"合法正文"；它该被控制字符闸拒，不该被 400 字帽收。
+ *     `charCountOf` 的 `\r\n`→`\n` 归一口径不变（它是**计数**口径，仍由 `ruler.chars.crlf400` 与
+ *     存量 / 报告那一侧量）；F-125 的意图（"400 字按字符数算，不按 `.length`"）由 **BOM 那一格**承重。
  *
  * 每条用例都量**两个面**（两处要能互相顶住）：
  *   ① **纯函数** `importVerdict({payload, state, poolEntries, existingVersions, kind})` —— 闸本体；
@@ -80,7 +84,8 @@ const readText = (p) => {
  * 交给人读的一段正文：`charCountOf` 恰好 n 个字。
  * 用全角汉字（1 字 = 1 code point = 1 个 `String.length`），"字数"与"码点数"在它上面重合 ——
  * 这样 401 / 400 这两个数**不是**靠 `.length` 与 `charCountOf` 的差凑出来的
- * （那种差另有两格专判：BOM 那一格与 CRLF 那一格）。
+ * （那种差由 **BOM 那一格**专判；CRLF 只留在 `ruler.chars.crlf400` 这条**计数读数**里 ——
+ *   `F-165` 起 CR 禁，含 CRLF 的正文不再是"合法导入正文"，见下面 MTC-01/03 的注释）。
  */
 const cjk = (n) => '字'.repeat(n)
 
@@ -333,11 +338,17 @@ test('MTC-01 payload.entry.text：401 字必拒 · 400 字必过（两条导入 
     // ── 1. 字数两头（承重）────────────────────────────────────────────────────
     cell('entry_401', T401, 'reject')
     cell('entry_400', T400, 'accept')
-    // ── 2. 同一把尺子（两格）──────────────────────────────────────────────────
-    //    BOM400 / CRLF400 的 `String.length` 分别是 401 / 500 —— 一个按 `.length` 判的实现会把它们
-    //    判成"超了"，而 `charCountOf` 说 400 ⇒ 必须收。这两格是"同一把尺子"的**唯一**证据。
+    // ── 2. 同一把尺子（BOM 归一那一格）────────────────────────────────────────
+    //    BOM400 的 `String.length` 是 401、`charCountOf` 是 400 —— 一个按 `.length` 判的实现会把它
+    //    判成"超了"，而 `charCountOf` 说 400 ⇒ 必须收。这一格是"同一把尺子"的**导入面**证据。
+    //
+    // 🔴 `F-165`（2026-11-08）起 **CR 禁**：`entry.text` 里 `code<32` 且 ≠LF 的字符必须为 0
+    //    （`CTL-01…04` 量它）。所以"`cjk(300)+'\r\n'×100` 归一后 400 ⇒ 必须收"这条腿**已作废** ——
+    //    含 CRLF 的正文按新规矩**本身就是受损正文**，它该被控制字符闸拒，不该被 400 字帽收。
+    //    `charCountOf` 的 `\r\n`→`\n` 归一口径**没有变**：它仍由上面 `ruler.chars.crlf400` 这条**计数读数**
+    //    证明，并继续由"存量 / 报告"那一侧（`unit/memory.test.mjs` / `memory-report.test.mjs`）量 ——
+    //    F-125 的意图（"400 字按字符数算，不按 `.length`"）由 **BOM 那一格**承重。
     cell('entry_bom400', BOM400, 'accept')
-    cell('entry_crlf400', CRLF400, 'accept')
 
     // ── 3. 普通提案（`kind: 'proposal'`）：闸**同一条**，不是另一条 ────────────────
     //    两条导入 CLI 都走 `importVerdict`；`kind` 只决定报文怎么称呼这份案（"普通提案" / "维护案"），
@@ -652,9 +663,12 @@ test('MTC-03 阳性对照：普通候选 401 字仍被 proposal_file 拒（400 �
     // ── 1. 旧闸的两头仍在（承重）────────────────────────────────────────────
     verify('cand_401', T401, 'reject')
     verify('cand_400', T400, 'accept')
-    // ── 2. 同一把尺子：BOM / CRLF 归一后都是 400 ⇒ 也必须收（与 MTC-01 同口径）────
+    // ── 2. 同一把尺子：BOM 归一后是 400 ⇒ 必须收（与 MTC-01 同口径）──────────────
+    //    🔴 `F-165` 起 **CR 禁**：`cjk(300)+'\r\n'×100` 这条"CRLF 归一后 400 必须收"的腿**已作废** ——
+    //    含 CRLF 的正文按新规矩本身就是受损正文（该被控制字符闸拒，见 `CTL-01…04`），不是"合法正文"。
+    //    `charCountOf` 的归一仍由上面 `ruler.chars.crlf400` 这条**计数读数**与"存量 / 报告"那一侧量；
+    //    F-125 的意图由 **BOM 那一格**承重。
     verify('cand_bom400', BOM400, 'accept')
-    verify('cand_crlf400', CRLF400, 'accept')
 
     // ── 2b. 🔴 `F-134`：**两个入口对同一段（两个开头 BOM）必须报同一个字数** ─────────────
     // 病（`82c23ad` 之前）：`tools/proposal-file.mjs::charCountOfText` 只剥**一个**开头 BOM，

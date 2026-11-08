@@ -810,6 +810,20 @@ export const BATCH_AG = ['OFB-01', 'OFB-02', 'OFB-03', 'OFB-04', 'OFB-05', 'OFB-
 export const BATCH_AH = ['MCR-01', 'MCR-02', 'MCR-03', 'MCR-04', 'MCR-05', 'MCR-06']
 
 /**
+ * 批次 AI（2026-11-08 · batch 9 · 定形 `.team/leader/2026-11-08/定形-batch9.md`）——
+ * 两件事、七格：
+ *   · `F-165` **四条入库路径的控制字符闸**（`CTL-01`…`CTL-04` 一格一条路径；`CTL-05` = 刀架）。
+ *     四条路径 = `proposal_file` / `--op proposal-import` / `--op maintenance-import` / `--op judge-commit`
+ *     （枚举方法与源码锚点见 `.team/test/2026-11-08/CONTRACT-batch9.md` §1.0/§1.1）。
+ *     🔴 **首跑预期红**：产品四条路今天一个控制字符检查都没有（契约 §1.5 有原样搜索串与命中数）；
+ *     `CTL-05` 用运行根里的合成最小实现 + 四把刀证明"该绿时绿"（同 `OFB-06` 的口径）。
+ *   · `F-167` **作业书/说明书的「地基」段要被判据咬住**（`TRB-01` 作业书 7 条 clause；
+ *     `TRB-02` 说明书 4 条 clause；两边都咬的理由见契约 §2.1）。
+ * `control-chars` 与 `foundation-brief` 各开一组：红的时候一眼看得出是"入库路径没闸"还是"那一段被改写"。
+ */
+export const BATCH_AI = ['CTL-01', 'CTL-02', 'CTL-03', 'CTL-04', 'CTL-05', 'TRB-01', 'TRB-02']
+
+/**
  * 已落笔的二十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -833,7 +847,7 @@ export const BATCH_AH = ['MCR-01', 'MCR-02', 'MCR-03', 'MCR-04', 'MCR-05', 'MCR-
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -868,6 +882,7 @@ const BATCH_OF = (id) =>
                                                               : BATCH_AF.includes(id) ? 'AF'
                                                                 : BATCH_AG.includes(id) ? 'AG'
                                                                   : BATCH_AH.includes(id) ? 'AH'
+                                                                    : BATCH_AI.includes(id) ? 'AI'
                                                                   : null
 
 const F = {
@@ -1044,6 +1059,9 @@ const F = {
    *  一格是**刀架**（阳性对照 + 六把刀），一格是**门禁层必须出声**（真 `apply()` 的日志）。
    *  同住一个文件：翻面读数（刀 → 哪几格红）要在一处读得出来。 */
   ofb: 'unit/ofb01-office-tree.test.mjs',
+  /** 批次 AI · batch 9：`F-165` 四条入库路径（一格一条）+ 刀架；`F-167` 两份「地基」段（各一格）。 */
+  ctl01: 'integration/ctl01-control-chars.test.mjs',
+  trb01: 'static/trb01-geolocation-brief.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1161,9 +1179,9 @@ const ROWS = [
   ['SURF-03', 'surface-declared', F.surf03, 'F-112① 补格：注入面声明的每一份 .md 不许是空壳（去掉空白后必须非空：1 字节 / 只剩空白 / 只有 BOM ⇒ 红并点名；读不出正文也点名；缺一份不归这一格）+ 九组控制面（含 CRLF 2 字节那一格）· `F-135` 再加一格：**真那份 `presets/agenia/.runtime/common-sense.md`（常识）在不在 / 空不空**（不在 / 空壳 / 读不出 ⇒ 三个码各说各的）+ 五组合成事实 + **抽走对照**（运行根里放一份活体正文的逐字节副本，改名搬开 ⇒ `SURF-COMMON-SENSE-MISSING` 点名那个路径，搬回 ⇒ 重新绿且逐字节相同）+ 注入器那一侧**得出声**（读不到 / 空文件两条分支都被注释掉 ⇒ `SURF-COMMON-SENSE-SILENT`；文本针先剥注释，注释掉的警告不算出声）', '批次 I'],
 
   // ── 门 1 · `F-125` 正文 400 字帽（3）：同一个上限只挂在一条入口上就等于没有（2026-10-22）──────
-  ['MTC-01', 'maintenance-cap', F.mtc, 'F-125 `payload.entry.text`：401 字必拒（码带 TOO_LONG 且已登记；报文给 401/400/位置）/ 400 字必过 · BOM 与 CRLF 归一后 400 也算过（同一把 `charCountOf`）· **两条导入 CLI 同两格**：`--op maintenance-import` 与 `--op proposal-import` 各导一次，401 ⇒ exit 2 且池子零写入、400 ⇒ exit 0 且恰好追加一行（正文仍是 400 字）', '批次 J'],
+  ['MTC-01', 'maintenance-cap', F.mtc, 'F-125 `payload.entry.text`：401 字必拒（码带 TOO_LONG 且已登记；报文给 401/400/位置）/ 400 字必过 · BOM 归一后 400 也算过（同一把 `charCountOf`）· **CRLF 不再作为导入样本**（`F-165` 起 CR 禁：含 CRLF 的正文按新规矩**本身就是受损正文**，由 `CTL-01…04` 拒，不由 400 字帽收；`charCountOf` 的归一口径仍由计数读数 / 存量报告那一侧量）· **两条导入 CLI 同两格**：`--op maintenance-import` 与 `--op proposal-import` 各导一次，401 ⇒ exit 2 且池子零写入、400 ⇒ exit 0 且恰好追加一行（正文仍是 400 字）', '批次 J'],
   ['MTC-02', 'maintenance-cap', F.mtc, 'F-125 `payload.engine_ops[].entry.text`：401 必拒 / 400 必过 · 超长那条在第二位也要被抓（不许只看第一条）· 纯 retire 案（无正文）不许被误伤 · 两处都超也拒 · 真 CLI 同两格外加零写入', '批次 J'],
-  ['MTC-03', 'maintenance-cap', F.mtc, 'F-125 阳性对照（旧**工具**面，不是导入面）：普通候选 401 字**仍然**被 `proposal_file` 拒（码 = `E_PROPOSAL_TOO_LONG` 且已登记；报文给 401/400）· 400 过 · BOM/CRLF 归一后 400 也过 · 主路拒时零写入、400 时追加一行 —— 两把闸不互相顶掉 · `F-134` 再加一格：**两个入口对同一段（两个开头 BOM）必须报同一个字数**（`lib/memory.mjs::charCountOf` 剥全部 BOM vs `tools/proposal-file.mjs::charCountOfText`）：两个 BOM + 400 字 ⇒ 工具必须收（只剥一个会算成 401 ⇒ 拒）；两个 BOM + 401 字 ⇒ 必须拒且报文里那个字数 = 401（不是 402）。刀靠 `AGENIA_F125_SUT_TOOL` 指到运行根里的副本（生产代码不动）', '批次 J'],
+  ['MTC-03', 'maintenance-cap', F.mtc, 'F-125 阳性对照（旧**工具**面，不是导入面）：普通候选 401 字**仍然**被 `proposal_file` 拒（码 = `E_PROPOSAL_TOO_LONG` 且已登记；报文给 401/400）· 400 过 · BOM 归一后 400 也过（**CRLF 不再作为导入样本**：`F-165` 起 CR 禁，含 CRLF 的正文由 `CTL-01…04` 拒）· 主路拒时零写入、400 时追加一行 —— 两把闸不互相顶掉 · `F-134` 再加一格：**两个入口对同一段（两个开头 BOM）必须报同一个字数**（`lib/memory.mjs::charCountOf` 剥全部 BOM vs `tools/proposal-file.mjs::charCountOfText`）：两个 BOM + 400 字 ⇒ 工具必须收（只剥一个会算成 401 ⇒ 拒）；两个 BOM + 401 字 ⇒ 必须拒且报文里那个字数 = 401（不是 402）。刀靠 `AGENIA_F125_SUT_TOOL` 指到运行根里的副本（生产代码不动）', '批次 J'],
 
   // ── 门 2 · `F-129` anchors 形状（1）：没给与给错了必须分开（2026-10-23）─────────────────
   ['ANC-01', 'anchors-shape', F.anc01, 'F-129 `codeFingerprintVerdict` 的 anchors 八格：非对象（64 hex 字符串 / 数组 / 数字 / 布尔）· 短哈希 · 一半坏（**第二项**是 `xyz` / `null` / 空串 —— `null` 是"给了但形状不对"，`undefined` 才是"没给"）· 坏值（`42` / `false`，另有 `{SHA_A, false}` 让第二项真被读到）⇒ 拒 `E_ARG_SCHEMA`；`null` / 省略 / **对象在但一项都没给**（`{}` · 两项都 `undefined`，第三态与 `null` 同形：同一段结论含「判不了」、前缀各自不同）⇒ `ok:true` **且 `detail` 非空、写明"判不了"**（契约 §6.3 ⑧；这一支单独一个红因 `ANCHORS-NULL-DETAIL-SILENT`）；全对 · 只给一项（`{before_sha256: SHA_A}`）⇒ `ok:true` 且 **`detail` 必须是空串**（判过了却写"判不了" ⇒ `ANCHORS-GOOD-DETAIL-CAVEATED`）；真对不上 ⇒ 仍 `E_CODE_FINGERPRINT_MOVED`；**次序**（坏 `fp` + 非对象 `anchors` ⇒ 必须报 `fp` 那条，红因 `ANCHORS-ORDER-SWAPPED`）—— 外加阳性对照（照契约写的最小实现八格全成立）与三把反向刀（删掉「非对象就报错」那一行 ⇒ 只有 S0 翻面；挖空 REF 里三态共用的「判不了」⇒ G1 四形一起翻红；给"判过"那一侧加 caveat ⇒ G2 两形一起翻红；后两把另有 `KNIFE2-PARTIAL` / `KNIFE3-PARTIAL` 抓"只翻一部分"）', '批次 K'],
@@ -1324,6 +1342,16 @@ const ROWS = [
   ['MCR-04', 'measuring-copy', F.mcr04, '`F-170` **`equal` 只覆盖 CODE 集：这句边界由产品说、住在 `equal` 旁边**（技术评审 2026-10-30 `F7`；定形 §一 #4 **不扩**到全树；第 1 轮评审 `M3` 之后改成断**产品那一格**）：夹具副本里放一个 `__pycache__/probe.pyc`（在排除表里）—— ① **前提**：`--verify` 的 `equal` **仍然是 true**（有人把它扩到全树 ⇒ `EQUAL-PREMISE-CHANGED`：与组长决定相反，要重新定形，不许静默改）；② **边界句**：`--verify` 的 JSON 里、与 `equal` **同一份**，必须有产品自己 emit 的 `equal_scope`：`covers` 点 CODE · `does_not_cover` 至少一条点名"多出来的文件"、至少一条说清"被排除表挡掉 / CODE 集之外"；测试侧**不另写一份**（`EQUAL_SCOPE` / `equalScopeReading()` 已删），读数原样抄 `verify.equal_scope`；③ **刀打在产品的 emit 上**：拷导出器、`    equal_scope: {` → `    equal_scope_disabled: {` ⇒ 同一个 `--verify` 里 `equal:true` 仍在、`equal_scope` 不见 ⇒ ② 红（断言按语义写，不钉产品措辞）；④ **同格另一条腿**：`copyIntegrityVerdict()` ⇒ `ok:false` + `E_COPY_HAS_EXTRA` + 点名那份 `.pyc`；抽掉这条腿（`checkExtra:false`）⇒ 同一份副本变绿（退化刀）；⑤ **不是空样本**：搬走 `.pyc` ⇒ `equal:true` + 完整性 `ok:true`', '批次 AH'],
   ['MCR-05', 'measuring-copy', F.mcr05, '`bug-20261107-02` **两个树读者对"读不到"说同一句话**（技术评审 2026-11-06 `F4`）：`support/target.mjs::walkTree` 从前 `catch { return } / catch { continue }` **静默丢**、`support/evidence.mjs::stagedVsLiveDrift` 从前**直接抛** —— 同一条深度规则、对失败两种形态 ⇒ `missing_*` 报不出枚举阶段已经丢掉的东西。判据（真现场 = 一个**悬空 junction**：`stat` ⇒ ENOENT）：① 两个读者都不许抛，且都点名 `a/ghost`（同一个 `rel`、同一个 `code` —— 两边从 `support/tree-read.mjs` 取同一个形状）；② 判决真的出去：`targetVerdict` 红因有 `TARGET-READ-FAILED` 且报文点名那条路径、`F57-TARGET` 那一行说"读不到"；`stagedVsLiveDrift.same` 必为 `false`；③ **"读不到" ≠ "那里没有"**：真少一份的树进 `only_staged` 且 `read_ok:true`，悬空链接进 `read_failures` 且**不许**冒充 `only_staged`；④ 干净一对树 ⇒ 两边 `read_ok:true` / `same:true` / `targetVerdict.ok:true`（不是空样本）。两把退化刀 = 两个旧形态：`onReadError:\'drop\'` ⇒ 静默、`onReadError:\'throw\'` ⇒ 抛 ENOENT（各不咬 ⇒ `KNIFE-NO-BITE`）', '批次 AH'],
   ['MCR-06', 'measuring-copy', F.mcr06, '`bug-20261107-03` **副本里多一个文件 ⇒ 必须红**（技术评审 2026-11-06 `F5`；定形 §一 #7）：往导出副本里放 `__pycache__/probe.pyc` —— ① **产品那条路**：`--verify` 非零 + `ok:false` + `is_that_commit.ok:false` + `problems` 点名 `__pycache__/probe.pyc`（`VERIFY-EXTRA-ACCEPTED` / `VERIFY-EXTRA-IGNORED` / `VERIFY-EXTRA-UNNAMED` 分开报）；② **阳性对照**：删掉 `.pyc` ⇒ `exit 0` / `equal:true` / `is_that_commit.ok:true`（`VERIFY-RESTORE`：不是"永远红"）；③ **刀**：拷导出器、只把 `problems.push(`副本多一份（副本里有、提交里没有）：${rel}`)` 那一行关掉（锚点须恰好 1 处）⇒ **同一输入**必须 `exit 0` + `ok:true`（= ① 会红）。⚠️ 与 `MCR-04` 分工：`equal` 自己**不扩**（那一格写边界），多出来的文件由这一格的 `is_that_commit` / `E_COPY_HAS_EXTRA` 判 —— `equal:true` 与"副本多一份"**可以同时成立**，两句话各说各的', '批次 AH'],
+
+  // ── 批次 AI（2026-11-08 · batch 9）：`F-165` 四条入库路径的控制字符闸 + `F-167` 两份「地基」段 ──
+  // 契约 `.team/test/2026-11-08/CONTRACT-batch9.md`（§一 四条路径先点名；§二 两份文档逐句钉）。
+  ['CTL-01', 'control-chars', F.ctl01, '`F-165` **路径 P1 `proposal_file`**：`entry.text` 里 `code<32` 且 ≠LF 必须为 0（LF 唯一允许、CR 也禁）。喂四份只差一个码点的正文（clean / LF / U+0001@第4位 / CR@第4位）+ 主路 `proposalFileRun`：干净/LF 必须收（池子恰好 1 行、正文逐字）；脏字符必须拒（0 行）+ 码已登记 + 报文点名 `proposal_file`/`第 4 个字符`/`U+0001`（CR 格 `U+000D`）。**首跑预期红**（产品今天这条路上没有闸 —— 契约 §1.5 有原样搜索串与命中数；探针实测它收下 `甲乙丙\\u0001丁`）', '批次 AI'],
+  ['CTL-02', 'control-chars', F.ctl01, '`F-165` **路径 P2 `--op proposal-import`**：`payload.entry.text` 同一把尺子（四份正文各导一次；拒 ⇒ exit≠0 + 池子 0 行；收 ⇒ exit 0 + 池子 1 行且正文逐字）。报文同样要点名 `payload.entry.text` / 第 4 个字符 / 码点。**首跑预期红**（同一处缺闸）', '批次 AI'],
+  ['CTL-03', 'control-chars', F.ctl01, '`F-165` **路径 P3 `--op maintenance-import`**：**两处都查** —— `payload.entry.text` 与 `payload.engine_ops[1].entry.text`（脏字符放在第二位，防"只看第一条"）各拒一次；clean/LF 收且同一行里两处正文都逐字。**首跑预期红**', '批次 AI'],
+  ['CTL-04', 'control-chars', F.ctl01, '`F-165` **路径 P4 `--op judge-commit`**（真正写进快照的那一下）：`entries_patch[0].entry.text` 有控制字符 ⇒ 拒 + **零写入**（版本集合仍 `[\'v0\']`、`current` 不动、`phase` 仍 `judging`）；clean/LF ⇒ 快照 v1 里逐字相同。**首跑预期红**', '批次 AI'],
+  ['CTL-05', 'control-chars', F.ctl01, '`F-165` **刀架**（判据自己的可满足性 + 四把刀；产品零字节）：在运行根里造 `presets/agenia` 的逐字节副本（不含 `.runtime`），照契约装最小闸 ⇒ 四条路**全绿**（`CTL-CONTROL-NOT-GREEN` = 判据不可满足）；四把刀各只翻自己那一面 —— `only_tool`（只 P1 有闸 ⇒ P2/P3/P4 红）· `ban_lf`（忘 LF 例外 ⇒ 四条路 LF 腿红）· `allow_cr`（CR 先归一 ⇒ 四条路 CR 腿红）· `first_only`（`engine_ops` 只看第 0 条 ⇒ 只 P3 的"第二位"腿红）；开跑/收口各量一次产品六份源码 sha256（`CTL-LIVE-TOUCHED`）。另把真产品"四条路今天都收"记成读数', '批次 AI'],
+  ['TRB-01', 'foundation-brief', F.trb01, '`F-167` **作业书** `job-briefs/technical-review.md` §三「地基」：七条 clause 逐句咬住 —— `B1` 代码根 + `<commit>` + 只读副本**同一行三样都要**（F6：防"任一命中就绿"）· `B2` `before_sha256`/`after_sha256` 同一行都量在副本上 · `B3` 活树动 ⇒ 不在本轮效力范围（不算作废/不是你的事）· `B4` 必须报"活树动了 N 处"（N 由基线比出来）· `B5` 没有基线 ⇒ 写"判不了"、不许写 0、校验器是 `live.moved: null` · `B6` N ≠ 副本与活树的分歧 · `B7` 改副本 ⇒ 作废 + 交活前在副本上算 `after_sha256`；**整段换成反面话（复用同样关键词）⇒ 七条逐条红；还原 ⇒ 绿；三处合法改写仍绿；七把单句刀各只翻一条**（副本里做，产品零字节）', '批次 AI'],
+  ['TRB-02', 'foundation-brief', F.trb01, '`F-167` **说明书** `team/technical-review.md` §一「地基」：四条 clause 逐句咬住 —— `C1` 生产代码与 `tests/**` 不许改 · `C2` 副本前后 CODE 指纹必须相同 + 两个哈希都在同一份副本上 · `C3` 活树动**不算作废**、不在本轮效力范围 · `C4` 必须报"活树动了 N 处"；整段反面话 ⇒ 四条逐条红、还原 ⇒ 绿、三处合法改写仍绿、四把单句刀各只翻一条。**两边都咬的理由**写在用例文件头（说明书是注入的、作业书是派工时读的）', '批次 AI'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1463,6 +1491,15 @@ export const GROUP_COUNTS = {
    *  `equal` 的边界 / 两个树读者 / 多出来的文件），不是评审对象的效力。
    *  红的时候一眼看得出是"量具指错树"还是"被测对象没实现"。 */
   'measuring-copy': 6,
+  /** 批次 AI · batch 9（2026-11-08）—— `F-165` **四条入库路径的控制字符闸**：一格一条路径
+   *  （`proposal_file` / `proposal-import` / `maintenance-import` / `judge-commit`）+ 一格刀架。
+   *  单开一组而不是并进 `maintenance-cap` / `proposal-file`：它判的是"正文里**有没有控制字符**"
+   *  （`code<32` 且 ≠LF），红的时候一眼看得出是"哪条入库路没闸"。 */
+  'control-chars': 5,
+  /** 批次 AI · batch 9 —— `F-167` **「地基」段**（作业书 §三 7 条 clause / 说明书 §一 4 条 clause）。
+   *  单开一组：它判的是**两份静态文档那一段的文字方向**（含整段反面话的翻面证明），
+   *  与 `static-doc` 那族"整份文档里必须出现/必须消失的字面量"不同 —— 这里判的是"义务还在不在、有没有被写成反面"。 */
+  'foundation-brief': 2,
 }
 
 /**
@@ -1482,9 +1519,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1511,6 +1548,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
