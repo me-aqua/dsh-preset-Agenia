@@ -365,20 +365,28 @@ export const BATCH_T = ['REV-04', 'REV-05']
 /**
  * 批次 U —— **任务 A**（拆账·并员·通电 的第一个任务，2026-11-01 第 2 关）。
  *
- * 四格各自一条红因，能拆开读：
+ * 五格各自一条红因，能拆开读：
  *   · `PRS-01` 页面两条 / 一份通用组员预设 / 九行工具不变 / 旧九份删除（+ 升级前基线逐字留存）；
  *   · `PRS-02` 身份判定表九行（toolName 定角色 · `defaultRole` 只报警 · 内部 worker / legacy 不窄 · 窄恰三条来源）；
  *   · `PRS-03` 判决岗提案「工具在列表里、调用被拒」；
- *   · `PRS-04` 角色表是 persona / charter / model / tools 的唯一作者（逐字 no-regression · 不串味）。
+ *   · `PRS-04` 角色表是 persona / charter / model / tools 的唯一作者（逐字 no-regression · 不串味）；
+ *   · `PRS-05`（2026-11-08 加）九条委派行写死的 `agentOptions` **真的落到子会话**（真插件算出的
+ *     `request.agentOptions` = `deepseek-official` / `deepseek-flash`；去掉一行就回落父路由）。
  *
  * ⚠️ 这四格**打现役** `presets/agenia`（其余用例打 staged 靶子）—— 理由写在
  * `static/presets-two.test.mjs` 文件头：A 的交付物就是页面上的那两条，打 staging 会让
  * "staging 改了、现役没改"变绿。两棵树是否同步仍由 `STAT-01` 与入口的 `F57-TARGET` 各管一次。
  *
+ * 🔴 **2026-11-08 加第 5 格 `PRS-05`**（老板改模型）：原定形 §6.1「非身份设置 no-regression」那一行
+ * （「改一个 model，会话真用它」）在 `CONTRACT-A` §12.4 被判"本版不具备"——因为 `ROLE_TABLE.model`
+ * 没有读者。老板 2026-11-08 把落法改到**九条委派行的 `agentOptions`**（`provider: deepseek-official`
+ * + `model: deepseek-flash`；`DeepSeek-V41-Flash` 只是显示名）⇒ 这一格有落点了，同批补上。
+ * 打现役的理由与上面四格相同（配置就住在现役那份 yml 里）。
+ *
  * 契约：`.team/test/CONTRACT-A.md`；定形：`.team/leader/2026-10-30/定形-拆账·并员·通电.md`（02:14 版）。
  * ⚠️ 它们**不进** `FROZEN_IDS`（历史冻结的 A–F 55 条）。
  */
-export const BATCH_U = ['PRS-01', 'PRS-02', 'PRS-03', 'PRS-04']
+export const BATCH_U = ['PRS-01', 'PRS-02', 'PRS-03', 'PRS-04', 'PRS-05']
 
 /**
  * 批次 V —— **任务 B**（bug 系统 = 登记簿 + bug 任务 + 严重三线，2026-11-01 第 2 关）。
@@ -1196,6 +1204,7 @@ const ROWS = [
   ['PRS-02', 'preset-identity', F.presetsTwo, '任务 A 身份判定表（定形 §2.2 九行按行序判；纯函数 `identityVerdict`）：① 角色表 9 对 `toolName↔role↔read/write` 逐条对（正向）+ 不许第十个（反向）；② 九行各喂一次：`row0` 内部 worker（workflow / ralph）⇒ 无角色 + 不窄 + **未受管**；`row0.5` legacy ⇒ 不窄 + 未受管；`row1` 组长+工具名 ⇒ 拒；`row2` 未知工具名（`team_retro` / `proposal_file`）⇒ 拒；`row3` 组长+无工具 ⇒ leader；`row4` 组员+工具 ⇒ 该角色；`row5` 组员+无工具 ⇒ 窄；`row6` 未知预设+有效工具 ⇒ **角色保留 + 窄**；`row7` 未知+无工具 ⇒ 窄；③ `defaultRole` **只报警**：缺 / 合法 / 与预设不符 / 非法串 四种输入下 `row`·`role`·`narrow` **一格不许动**，只有 `warnings` 变（合法的 0 条、其余 ≥1 且点名 `defaultRole`）；④ 窄权限**恰好** row 5/6/7（row 0/0.5 显式例外）+ 闭三元组 `NARROW_PERMISSION` 逐格对；⑤ `isLegacySession` 谓词：快照里 ⇒ true、之后同形 ⇒ false、**快照坏了 ⇒ false**（走向窄 = 安全方向）；⑥ **运行时执行者**（第 4 关第三轮 N-5）：`narrowVerdict` 读的就是 `NARROW_PERMISSION` —— 三个码各一格（`E_GUARD_NARROW_TOOL` / `_WRITE` / `_PROPOSAL`）+ 三个"该放行"的格子（拦过头也是错）+ 门禁五条判定的**次序**（文件序代理）+ 文字刀自证次序提取器会翻面 + 表值刀（白名单里加 `pwsh`，**证据根里的副本**）⇒ 同一个 `narrowVerdict("pwsh")` 从拒变成放行；⑦ **注入哪一侧**（第三轮 N-3）：**只有 row 3 是组长侧** —— row 0（内部 worker）/ 0.5（旧会话）/ 5（手动组员）/ 7（未知预设）都走组员侧（没有 `leader`/`persona`/`style`、没有开工四步、记忆 = 索引 + 常识、**没有** `boss`/`machine`/`project` 全条），工具侧**不跟着动**（0 / 0.5 仍不窄、5 / 7 窄）+ 刀（`isMemberSide = row >= 4` ⇒ row 0 / 0.5 变回组长侧，row 5 是"刀没切宽"的证人）', '批次 U'],
   ['PRS-03', 'preset-identity', F.presetsTwo, '任务 A 判决岗：提案工具**在列表里、调用被拒**（不是"工具集里没有"）：① `ROLE_TABLE` 的 `deny` **只**挂在判决岗那一条、值含 `proposal`（注册与拒同源）；② `proposalVerdict(\u0027memory-judge\u0027,\u0027proposal_file\u0027)` 必须拒（码 `E_GUARD_JUDGE_PROPOSAL` + 非空报文）；③ 反向：其余八个角色调同一个工具**一个都不许被挡**，判决岗调 `read` 也不许被挡（拒的只是提案，不是这个人）；④ 注册面：判决行上方 `# @member-deny proposal_file` 与补丁里任何 `proposalFile: false` 都必须消失（那是"根本不注册"的旧口径）；⑤ `team/memory-judge.md` 要点出提案工具并写着「调用被拒 / 调用会被拒 / 调用时被拒」，且**不许**再写"没有这个工具"这一类', '批次 U'],
   ['PRS-04', 'preset-identity', F.presetsTwo, '任务 A 角色表是 persona / charter / model / tools 的**唯一作者**（定形 §3.3 + §6.1 的 no-regression）：九份升级前人格**逐字**在角色表里（缺一句 ⇒ `PERSONA-MISSING` / `PERSONA-DRIFT`）、**不串味**（别人的那句出现在这个角色身上 ⇒ `PERSONA-CROSSTALK`，逐字比基线）；`charter` 是 team/ 下**自己那一份**真文件；`model` / `tools` 两个键都在（`model` 可为 null = 引擎默认）、`tools` 非空且**不含任何委派工具**（组员结构上不能再招人）；角色表恰 9 条；⑤ **工具的运行时执行者**（第 4 关第三轮 N-5）：`toolCatalogFor`（装配时裁目录）+ `roleToolVerdict`（调用时拒）都从 `ROLE_TABLE[role].tools` 读 —— review 的目录里**没有** `bash`/`pwsh`、dev 有；窄赢过角色目录（`toolCatalogFor("review", true, …)` = 闭三元组）；框架工具（`run_code` / 不认识的）**不误伤**；刀（把 review 那一格换成 base 全套，**证据根里的副本**）⇒ 目录里冒出 `bash`/`pwsh` **且** `roleToolVerdict("review","pwsh")` 变成放行；⑥ **人格真的被注入**：`agenia:role-persona` 紧挨 `agenia:charter:<role>` 之前、正文**逐字**是角色表那一格、全上下文里**只出现一次**；没有角色的会话两条都不吐；刀（换掉表里 `dev` 那一句）⇒ 注入的正文跟着换。`model` 这一版是**纯声明**（没有读者，见 `CONTRACT-A` §12.4）—— 本格不测"改 model 会话真用它"', '批次 U'],
+   ['PRS-05', 'preset-identity', F.presetsTwo, '**「改一个 model，会话真用它」**（老板 2026-11-08：「派 subagent 组员的时候一律显式调用 DeepSeek-V41-Flash（写死）」；`CONTRACT-A` §12.4 原判"本版不具备"的那一格，同批补上）：把 `presets/agenia/agent.cordis.yml` 里**九条委派行**的 `config`（含 `agentOptions: {provider: deepseek-official, model: deepseek-flash}`）喂给**装好的真插件** `resources/app.asar!dsh-tool-subagent/lib/index.js`（逐字节读出，sha256/版本进读数），跑真 provider（`dsh-subagent-spawn-in-process`）的 `apply` + 真插件 `apply`/`execute`，**逐行**读三处：① `ctx.subagents.startActivation` 收到的 `request.agentOptions` 必须是那一对；② 送去 `llm.resolveCallConfig` 预检的路由必须是那一对；③ 真运行时 `dsh-subagent.resolveChildAgentOptions` 算出的子 Agent options 必须仍是那一对（`subagentDepth:1` 照常），**不是**子会话记录（那要一次真 LLM 往返；读数 `child_session_record:false` 写明）。假父会话路由故意是 `deepseek-chat` ⇒ **刀**：去掉一行 `agentOptions` ⇒ 子会话回落到父路由（`CHILD-MODEL-KNIFE-NO-BITE` 挡"配置无关也绿"）。另：补丁（派生物）里同一行必须也是那一对；这台机器 desktop profile 里必须有 `deepseek-flash` 这个 id（`DeepSeek-V41-Flash` 只是显示名）。读不到插件 ⇒ HOLD（`CHILD-MODEL-PLUGIN-ABSENT`）', '批次 U'],
 
   // ── 任务 B · bug 系统（2026-11-01 第 2 关）：登记簿 / 五分支分流 / bug 任务与准入 / 严重三线 ──────
   ['BUG-01', 'bug-system', F.bug01, '任务 B1 **登记簿**（契约 `.team/test/CONTRACT-B.md`）：`A` 九个 bug op 在 `--op help` 里（缺面 ⇒ `BUG-OPS-MISSING`，这是"功能没做"不是"输入被拒"）+ `lib/bug-ledger.mjs` 导出 `entryVerdict`/`openCounts`/`capVerdict`；`B` **登记不建路线**（裸工作区上 `bug-register` 成、`.team/route/` 不许被建出来）+ `bug-read` 没有台账 ⇒ `E_DATA_MISSING`/exit 7 且零写入（缺 ≠ 空）；`C` 条目准入 = 现象 + 证据（≥1 条）是硬门、`kind` 只认 `bug`/`observation`、**老板报的 bug 不要求配方**（recipe=null 必须收）、被拒的记录零写入（比台账 SHA256）；`D` **两个词不混**：assessment 四值闭集 · `bug_open` 数的是"无 disposition"（评估为 duplicate/true 都不算处置）· `observation_open` 单独一格；`E` **50/30**：49/50 与 30/31 四条边界各一格（`cap.threshold=50` · `cap.days=30` · `oldest_age_days` 按注入时钟算）· 49 条 @31 天必须因**年龄**翻红（单调性：条数多不许吞掉年龄预警）· 50 条 open observation 不许红 · 60 条已归档不许红 · **封顶红不动手**（不自动改任何 disposition）；`F` **两本账不互串**：路线票段里 7 张 open 票不许进 `bug_open`，且 `bug-read` 前后 `current.json` SHA256 相同（`counts` 恰四格，不许有 ticket 那一格）', '批次 V'],
@@ -1408,8 +1417,8 @@ export const GROUP_COUNTS = {
   /** 门 2 · `F-163` 平台版本读数的自证（`PLT-01`：短 2 B / BOM / 截断 / 纯函数 / 真实 asar 读数）。 */
   'platform-reading': 1,
   /** 任务 A · 九份组员并成一份（`PRS-01` 页面两条 / `PRS-02` 身份判定表 / `PRS-03` 判决岗调用被拒 /
-   *  `PRS-04` 角色表唯一作者）—— 契约见 `.team/test/CONTRACT-A.md`。 */
-  'preset-identity': 4,
+   *  `PRS-04` 角色表唯一作者 / `PRS-05` 写死的模型真落到子会话（2026-11-08 加））—— 契约见 `.team/test/CONTRACT-A.md`。 */
+  'preset-identity': 5,
   /** 任务 B · bug 系统（`BUG-01` 登记簿与封顶 / `BUG-02` 五分支分流 / `BUG-03` bug 任务与准入 /
    *  `BUG-04` 严重三线）—— 契约见 `.team/test/CONTRACT-B.md`。 */
   'bug-system': 4,

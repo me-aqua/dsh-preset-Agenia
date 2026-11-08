@@ -503,15 +503,17 @@ function askIsCode(root, abs) {
     cwd: HERE, encoding: 'utf8', timeout: 60000,
   })
   if (r.status !== 0) {
-    process.stderr.write(`[tree-at-commit] 判不了「--out 算不算 CODE」（fingerprint.mjs --is-code 退出码 ${r.status}）`
-      + ' —— 这一条不拒，但你要知道自己没被核过。\n')
+    // 🔴 F5（技术评审 11-07）：这里以前只印一句话然后 `return null`，调用方又不拒 ⇒ **fail-open**：
+    //    尺子跑不动时副本照样写进被测树。判不了**不等于**可以放行 —— 这一路必须让调用方拒。
+    process.stderr.write(`[tree-at-commit] 判不了「--out 算不算 CODE」：fingerprint.mjs --is-code 退出码 ${r.status}`
+      + `（${String(r.stderr ?? '').trim().slice(0, 200)}）\n`)
     return null
   }
   try {
     const parsed = JSON.parse(String(r.stdout).trim().split('\n')[0])
     return parsed?.ok === true ? parsed : null
   } catch (err) {
-    process.stderr.write(`[tree-at-commit] 判不了「--out 算不算 CODE」（读不出 JSON）—— 这一条不拒。\n`)
+    process.stderr.write('[tree-at-commit] 判不了「--out 算不算 CODE」：--is-code 的输出读不出 JSON\n')
     return null
   }
 }
@@ -655,7 +657,13 @@ function doExport(args) {
     //    它自己被后缀规则排除，可它**里面**的文件不排除（M2 的 (A)）。
     const probeChild = path.join(outCanon, '__agenia_probe__')
     const asked = askIsCode(repoCanon, probeChild)
-    if (asked !== null && asked.code === true) {
+    if (asked === null) {
+      // 🔴 fail-closed（F5）：判不了不许放行。真因在上面的 stderr 里（尺子跑不动 / 输出读不出）。
+      return fail('E_OUT_NOT_MEASURABLE',
+        `判不了「--out 会不会落进被测树 ${repoCanon} 的 CODE 名单」—— 尺子（fingerprint.mjs --is-code）跑不动。`
+        + '这一路**不猜**：判不了就拒。先把尺子修好（它自己会印真因），或者把 `--out` 写到被测树之外。')
+    }
+    if (asked.code === true) {
       return fail('E_OUT_INSIDE_AUDITED',
         `--out 落在被测树 ${repoAbs} 的 CODE 名单里：${asked.rel}（${asked.why}；落点规范形态 ${outCanon}；被测根规范形态 ${repoCanon}）。`
         + '副本必须写在被测树之外，或者写进 `.team/` 这种被排除表挡住的前缀；'

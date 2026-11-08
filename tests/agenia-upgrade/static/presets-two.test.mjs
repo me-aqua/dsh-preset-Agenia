@@ -1,5 +1,5 @@
 /**
- * PRS-01..04 —— **任务 A**（拆账·并员·通电 的第一个任务）的自动判据。
+ * PRS-01..05 —— **任务 A**（拆账·并员·通电 的第一个任务）的自动判据。
  *
  * 冻结依据：定形 `2026-10-30/定形-拆账·并员·通电.md`（02:14 版）§2.2 身份表 / §3.3 通用组员 /
  * §5 迁移算术 / §6.1 任务 A 那张验收表 / §7 任务 A 行；接缝口径见 `.team/test/CONTRACT-A.md`。
@@ -48,6 +48,18 @@
  *   · `PRS-04` ⑥ 角色人格**真的被注入**（`agenia:role-persona` 紧挨 charter、正文逐字是表里那一句、
  *     全上下文里**只出现一次**）+ 刀（换掉表里那句 ⇒ 注入的正文跟着换）。
  * 每一刀都打在**证据根里的副本**上（`presets/**` 一个字节不动），刀没咬到时另有一个码（`…-NOT-FLIPPED`）。
+ *
+ * ── 2026-11-08 补的 `PRS-05`（老板改模型 · 旧契约判为"不具备"的那一格）──────────────────────
+ * 老板原话：「派 subagent 组员的时候一律显式调用 DeepSeek-V41-Flash（写死）」。落法**不在**角色表
+ * （`ROLE_TABLE.model` 是纯声明、没有读者 —— `CONTRACT-A` §12.4），而在**九条委派行**的 `agentOptions`
+ * （`dsh-tool-subagent` 的配置键；`provider: deepseek-official` + `model: deepseek-flash`，
+ * 后者是**模型 id**，`DeepSeek-V41-Flash` 只是显示名）。
+ * ⇒ 旧契约 §12.4 说"第 5 关没有'改一个 model，会话真用它'这一格"，现在这一格**有了**：
+ *   量具 = **装好的真插件**（`resources/app.asar` 里的 `dsh-tool-subagent/lib/index.js`）拿到那一行配置后
+ *   交给 `startActivation` 的 `request.agentOptions`，再用真运行时的 `resolveChildAgentOptions` 算成
+ *   子 Agent 的 options；**不是**子会话记录（那要一次真 LLM 往返），读数里 `child_session_record:false` 写明。
+ *   假父会话的路由故意不是 `deepseek-flash` ⇒ 刀（去掉一行 `agentOptions`）必须让子会话回落到父路由：
+ *   两臂都量，"配置生效"才与"继承父会话"分得开。
  */
 import { before, describe, test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -56,6 +68,8 @@ import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
 import { caseDir, caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import { cfg, delegationToolNames, enabledDelegations, hostLevelPairingProblems, leaderBlockProblems, listMd, memberAnnotations, parseComposition, plain, presetEntries, readPresetBaseline } from '../support/composition.mjs'
+// 2026-11-08：`PRS-05` 的运行时量具（真插件 + 真 provider + 切出来的真运行时函数；口径写在文件头）。
+import { CHILD_MODEL_DISPLAY_NAME, CHILD_MODEL_PIN, childModelReadings } from '../support/subagent-options.mjs'
 import {
   buildCatalog, buildContentRoot, configFromComposition, guardOrderOf, importSourceCopy,
   injectedNames, injectedText, knifeReplace, loadInjector as loadInjectorFile, namesOfCatalog,
@@ -337,6 +351,12 @@ describe('static · presets-two (任务 A)', () => {
         //   `- insert:`，两份预设体里都没有它 ⇒ 组长块里**不该**出现它。
         //   标记本身现在是**要求**（不是违规）：判法翻成"标记 ↔ 补丁里的宿主行成对"，见下面对
         //   `hostLevelPairingProblems()` 的调用（旧方向 `hostLevelMarkProblems()` 已退休，恒红）。
+        // 🔴 **2026-11-08 重定基线（老板改模型）**：老板原话「派 subagent 组员的时候一律显式调用
+        //   DeepSeek-V41-Flash（写死）」⇒ 九条委派行各加 `agentOptions: {provider: deepseek-official,
+        //   model: deepseek-flash}`（`model` 是**模型 id**，`DeepSeek-V41-Flash` 只是显示名；读的人别把
+        //   显示名当成 id 写进 yml）。基线因此同批加了**恰好**那九块三行值行（`baseRest` 227 → 254），
+        //   别的值行一个字节没动；**严格度不变** —— 别处差一个字符照样 `LEADER-CLOBBERED`，
+        //   也没有"跳过这几行"的放行（本文件没有这类开关）。
         const leaderBase = (base.value.preset_blocks ?? []).find((b) => b.preset_id === LEADER_PRESET_ID)
         const leaderNow = blocks.find((b) => b.preset_id === LEADER_PRESET_ID)
         if (leaderBase !== undefined) {
@@ -1106,6 +1126,65 @@ describe('static · presets-two (任务 A)', () => {
             }
           }
         }
+      }
+      caseFail(problems)
+    })
+  })
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PRS-05 · 九条委派行写死的模型**真的落到子会话**（2026-11-08 · 老板改模型）
+  // ═══════════════════════════════════════════════════════════════════════════
+  test('PRS-05 九条委派行写死的模型落到子会话：真插件算出的 agentOptions = deepseek-flash（不是读 yml）', async () => {
+    await runCase('PRS-05', async (rec) => {
+      const problems = []
+      const push = (code, msg) => problems.push(problem(code, msg))
+
+      const ymlText = readRel('agent.cordis.yml')
+      const patchText = readRel('cordis.patch.yml')
+      if (ymlText === null) push('SUT-SURFACE-MISSING', `读不到 ${path.join(PRESET, 'agent.cordis.yml')}`)
+      if (patchText === null) push('SUT-SURFACE-MISSING', `读不到 ${path.join(PRESET, 'cordis.patch.yml')}`)
+      if (ymlText === null || patchText === null) return caseFail(problems)
+
+      // 🔴 量的是**装好的真插件**（`resources/app.asar`），不是这份 yml；口径见 support/subagent-options.mjs 文件头。
+      //    读数是它交给 `startActivation` 的 `request.agentOptions` + 真运行时算出的子 Agent options。
+      const out = await childModelReadings({
+        compositionText: ymlText,
+        patchText,
+        toolNames: TOOL_NAMES,
+        workspace: caseDir('PRS-05'),
+      })
+      rec.readings.model_pin = {
+        ...CHILD_MODEL_PIN,
+        display_name: CHILD_MODEL_DISPLAY_NAME,
+        display_name_note: '`DeepSeek-V41-Flash` 只是显示名；yml 里必须写模型 id `deepseek-flash`',
+      }
+      rec.readings.measured_layer = out.readings.measured_layer
+      rec.readings.child_session_record = out.readings.child_session_record
+      rec.readings.plugin = out.readings.plugin
+      rec.readings.profile = out.readings.profile
+      rec.readings.parent_route = out.readings.parent_route
+      rec.readings.rows = out.readings.rows
+      rec.readings.knife = out.readings.knife ?? null
+      rec.readings.patch_rows = out.readings.patch_rows ?? null
+
+      if (out.hold !== undefined && out.hold !== null) caseHold(rec, out.hold.code, out.hold.why)
+      for (const p of out.problems) push(p.code, p.message)
+
+      // 插件读不到（HOLD）时下面这几条**一条都不跑** —— 否则"判不了"会被二次判成红（那是假红，不是读数）。
+      if (out.hold === undefined || out.hold === null) {
+        // 另一方向（**必须真的驱动过一个 `team_*` 工具**）：九行里至少一条 `team_*` 拿到了写死的那一对。
+        const teamDriven = out.readings.rows.filter((r) => typeof r.toolName === 'string' && r.toolName.startsWith('team_'))
+          .filter((r) => r.requested?.provider === CHILD_MODEL_PIN.provider && r.requested?.model === CHILD_MODEL_PIN.model)
+        rec.readings.team_rows_driven = teamDriven.map((r) => r.toolName)
+        if (teamDriven.length === 0) {
+          push('CHILD-MODEL-TEAM-ROW-NOT-DRIVEN', '九条委派行里没有一条 `team_*` 真的被驱动出写死的那一对 —— 这一格要的是"派一个组员"那条路（不是只读配置）')
+        }
+        // 九行一条不多一条不少（量具自己也要对账：少一行 = 那一行没人量）。
+        if (out.readings.rows.length !== TOOL_NAMES.length) {
+          push('CHILD-MODEL-ROW-COUNT', `量到的委派行 ${out.readings.rows.length} 条，角色表闭表是 ${TOOL_NAMES.length} 条`)
+        }
+        const undriven = out.readings.rows.filter((r) => r.error !== null && r.error !== undefined).map((r) => r.toolName)
+        if (undriven.length > 0) push('CHILD-MODEL-ROW-UNDRIVEN', `这些行没被真插件驱动出来：${JSON.stringify(undriven)}`)
       }
       caseFail(problems)
     })
