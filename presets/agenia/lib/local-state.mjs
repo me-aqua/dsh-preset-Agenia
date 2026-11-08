@@ -43,6 +43,19 @@ export const FIELD_ALIASES = Object.freeze({
 /** 节点的状态枚举（B3.6）。 */
 export const NODE_STATES = Object.freeze(['unclaimed', 'running', 'done', 'failed', 'stale'])
 
+/**
+ * 🔴 **回执锚点的形状**（`bug-20261108-14`：这里以前没写清，组长为它猜了六次）：
+ *
+ * · `receipt_path` 指向的是**回执 JSON**（`.team` 相对，例 `leader/<day>/技术复盘回执.json`），
+ *   它必须**带一个整数 `version`** —— `local-mark` 会拿它和 `receipt_version` 对账（读不出整数 ⇒ `E_DATA_CORRUPT`）。
+ * · `receipt_sha256` 必须等于**盘上那一份的字节**（`E_ARG_HASH`：自报的摘要不算锚）。
+ * · ⚠️ **不许拿 xlsx 卡片当锚点**（`记忆更新报告-*.xlsx` / `技术评审回执-*.xlsx`）：`daily-cards.py`
+ *   **每跑一次都会重写**同名文件 ⇒ 任何绑在它字节上的登记都会在下一次出卡时"过期"。
+ *   卡片是**给人看的报告**，不是锚。
+ *
+ * ⇒ 想要"这一场交活了"的可核证据，就把**回执 JSON** 当锚（它是稳定件，版本号由人加一）。
+ */
+
 /** 状态文件里那三个节点的必填键（B3.6 逐字）；加性键（`receipt_versions` / `failure_history`）不算。 */
 const NODE_REQUIRED = Object.freeze([
   'claim', 'state', 'job_id', 'liveness_at', 'failure_reason',
