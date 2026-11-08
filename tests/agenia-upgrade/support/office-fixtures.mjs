@@ -398,8 +398,9 @@ export function decisionBody(opts = {}) {
   lines.push(
     '  if (strict === true) {',
     "    const insideStrict = (child, parent) => { const c = norm(child); const p = norm(parent); return c === p || c.startsWith(p + '/') }",
-    '    const allowStrict = insideStrict(landing, header)',
-    '    return { allow: allowStrict, landing, office_root: header, header_office: header, expected_office: header, differs: false, warning: null }',
+    "    const strictBase = resolve(cwd, '.team')",
+    '    const allowStrict = insideStrict(landing, strictBase)',
+    '    return { allow: allowStrict, landing, office_root: strictBase, header_office: header, expected_office: strictBase, differs: false, warning: null }',
     '  }',
   )
   if (rule === 'header') {
@@ -534,15 +535,50 @@ export const KNIVES = [
 ]
 
 /**
- * **窄会话那一格的刀**（契约 §六）：把 `strict` 当 falsy ——
- * `if (strict === true) {` → `if (false) {`（只改这一处；strict 那一支还在，只是永远走不到）。
+ * **窄会话那两格的刀**（契约 §六）。
+ *   · `K7`：把 `strict` 当 falsy —— `if (strict === true) {` → `if (false) {`（只改这一处；
+ *     strict 那一支还在，只是永远走不到）⇒ **两条**窄腿一起翻（跨树写 / `header.cwd` 在 `.team` 里的
+ *     兄弟抽屉写）—— 这两条都是"这道门只认自己那棵树"的两个面。
+ *     ⚠️ 2026-11-08：`want` 从一条变两条，因为 `narrowRow()` 补了 `header.cwd` 在 `.team` 里那一格
+ *     （组长点名要的形状；`F6`）。
+ *   · `K8`：把 strict 的**基**换回"会话头 cwd 的最近 `.team` 祖先"（`strictBase = header`）⇒
+ *     **只**翻 `header.cwd` 在 `.team` 里那一格（跨树那一格照样拒：两棵树的 header 都是自己那棵）。
+ *     ⇒ 两把刀的分工：`K7` 证明"这道门本身"在咬着，`K8` 证明"基是 cwd 下面那棵"在咬着。
  * 只在**基线成立**（窄会话的跨树写确实被拒）时才有可比对象；基线不成立时调用方记 skip（读数，不加红因）。
  */
 export const NARROW_KNIFE = {
   id: 'K7',
   label: '把 strict 当 falsy（`if (strict === true)` → `if (false)`）',
-  want: ['OFFB-NARROW-CROSS-TREE'],
+  want: ['OFFB-NARROW-CROSS-TREE', 'OFFB-NARROW-HEADER-INSIDE-TEAM'],
 }
+
+/** 窄会话那一格的**第二把**刀（`F6`）：`strictBase = resolve(cwd, '.team')` → `strictBase = header`。 */
+export const NARROW_BASE_KNIFE = {
+  id: 'K8',
+  label: 'strict 的基换回 header（`const strictBase = resolve(cwd, …)` → `const strictBase = header`）',
+  want: ['OFFB-NARROW-HEADER-INSIDE-TEAM'],
+}
+
+/**
+ * 把 strict 分支的**基**换回"会话头 cwd 的最近 `.team` 祖先"（`K8`）。
+ * 两种源码各自的那一行（阳性对照 `resolve(cwd, '.team')` · 真源码 `resolve(cwd, OFFICE_DIR)`）都认；
+ * 命中 **0** 处 / **> 1** 处 ⇒ `ok:false`（尺子红，不许当成"刀咬了"）。
+ */
+export function strictBaseOff(source) {
+  const text = String(source)
+  const re = /const strictBase = resolve\(cwd, (?:'\.team'|OFFICE_DIR)\)/g
+  const hits = text.match(re) ?? []
+  if (hits.length === 0) {
+    return { ok: false, code: 'KNIFE-ANCHOR-MISSING', why: `找不到 \`const strictBase = resolve(cwd, '.team' | OFFICE_DIR)\`（strict 分支的基）`, source: null }
+  }
+  if (hits.length > 1) {
+    return { ok: false, code: 'KNIFE-ANCHOR-AMBIGUOUS', why: `strict 基那一行出现 ${hits.length} 次（必须恰好 1 次）`, source: null }
+  }
+  const out = text.replace(re, 'const strictBase = header')
+  if (out === text) return { ok: false, code: 'KNIFE-NO-CUT', why: '替换没改动一个字节', source: null }
+  return { ok: true, code: null, why: null, source: out }
+}
+
 
 /**
  * @param {string} source 真源码或阳性对照

@@ -278,21 +278,27 @@ describe('integration · measuring/copy (MCR) · F-169 入口/尺子/体检指�
        *    绝不动"评审对象那份副本"：评审期间那份副本必须**逐字不变**（否则这次评审作废）。
        *    活树模式：`resolveReviewedCopy` 已经导出了一份（它是副本）；
        *    副本模式：那一份**就是评审对象** ⇒ 再拷一份（跳过 `.team`，否则运行根会被自己递归拷进去）。
+       *
+       * 🔴 `F1`：工作副本的落点**必须在被测副本之外** —— 拷进自己的子目录 = `ERR_FS_CP_EINVAL`，
+       *    而"套件自己就是副本"正是评审模式的唯一形态。落点规则与 `MCR-02` 的参照树同一条
+       *    （`referenceTreeBase()`：`<副本的父目录>/.agenia-test-twins/<RUN_ID>/…`）。
        */
       const suiteTree = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
       let copyRoot = path.resolve(copy.root)
+      const workingBase = referenceTreeBase({ copyRoot })
+      rec.readings.working_base = workingBase
+      if (workingBase.under_copy) {
+        push('WORKING-BASE-INSIDE-COPY', `工作副本的落点会落在被测副本里面：${workingBase.base} ⊂ ${canonical(copyRoot)}（来源 ${workingBase.source}）`
+          + ' —— 拷进自己的子目录必然 ERR_FS_CP_EINVAL（F1 的原样）；工作副本只许落在副本之外')
+        caseFail(problems)
+        return
+      }
       if (copyRoot === suiteTree) {
-        const working = path.join(root, 'fixtures', 'mcr03-working-copy')
-        cpSync(copyRoot, working, {
-          recursive: true,
-          force: true,
-          filter: (src) => {
-            const rel = path.relative(copyRoot, src).replace(/\\/g, '/')
-            return rel !== '.team' && !rel.startsWith('.team/')
-          },
-        })
+        mkdirSync(workingBase.base, { recursive: true })
+        const working = path.join(workingBase.base, 'mcr03-working-copy')
+        copyTree(copyRoot, working)
         copyRoot = working
-        rec.readings.working_copy = { root: working, source: 'copy-of-the-suite-tree (excluding .team/)' }
+        rec.readings.working_copy = { root: working, source: 'copy-of-the-suite-tree (excluding .team/) · outside the reviewed copy' }
       }
       const under = (p) => {
         const rel = path.relative(copyRoot, path.resolve(p))

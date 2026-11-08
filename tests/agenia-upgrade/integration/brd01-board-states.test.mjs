@@ -69,6 +69,16 @@
  *      那时该把针改成"断言作废的句式"，**不是删针**；
  *   6. D 格判不了"活树在评审窗口里动过"这件事：板子数的是**最后一次 `team_review` 之后**的写入，
  *      它既不知道评审读的是哪个提交，也不该知道（那是 `REV-04`/`REV-05` 判的）。
+ *
+ * ## 夹具位置（**2026-11-08 batch 16 · `bug-20261108-12`** · 与技术评审 `F7` 同一个形状）
+ * 会话头 cwd = **`.team`-free 的夹具树**（`support/office-fixtures.mjs` 的 `B` 树，与 `REV-02` / `PRS-02` 共用一个夹具根），
+ * 写文件那一步用**相对 cwd** 的 `src/_brd01-fixture-never-written.mjs`。
+ * 为什么（**这一条只改"哪棵树"，期望值一条没改**）：产品的 `tools/result` 监听器把"落在 `.team/` 里的写"当队里的本子、
+ * 不计"项目文件动过"（`inject.js` 那段 `officeLandingVerdict(...).allow ⇒ return`）。从前的底座是 `PATHS.repo` ——
+ * **评审副本住在 `.team/…` 下面**，于是那几笔写全落进**外层那棵 `.team`** ⇒ 账本永不计数 ⇒ B/C/D 五条腿读到空告警、
+ * 整条红（活树里绿）。判据本身是对的，红因是**夹具位置**。
+ * 刀：`AGENIA_BRD01_BASE=<副本根>` 把底座放回旧的那一个 ⇒ 这一格**红在夹具上**（`BRD01-FIXTURE-UNDER-TEAM`），
+ * 不是一个看起来像"板子坏了"的 `BRD-NEVER-TESTED-FILES-MOVED`。
  */
 import { before, describe, test } from 'node:test'
 import { createHash } from 'node:crypto'
@@ -76,7 +86,8 @@ import { mkdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { caseFail, preflight, problem, runCase, sha256File } from '../support/evidence.mjs'
-import { PATHS } from '../support/env.mjs'
+import { PATHS, optionalEnv } from '../support/env.mjs'
+import { ensureOfficeFixtures, normKey, officeOfPath } from '../support/office-fixtures.mjs'
 import { stagingPath } from '../support/sut.mjs'
 import { boardPartOf, openBoardSession, warningLinesOf } from '../support/board-surface.mjs'
 import { fixtureDir } from '../support/verify-recompute.mjs'
@@ -118,8 +129,20 @@ const MENTIONS_UNREVIEWED = ['还没被评审过', '还没评审过', '没被评
  */
 const REVIEW_VOIDED_PHRASES = ['评审作废', '要重审']
 
-/** 写文件那一步用的目标路径：**只进事件参数，不落盘**（这个文件从不被创建）。 */
-const WRITE_TARGET_PATH = path.join(PATHS.repo, 'tests', 'agenia-upgrade', '_brd01-fixture-never-written.mjs')
+/**
+ * 写文件那一步用的目标（**只进事件参数，不落盘**；这个文件从不被创建）。
+ *
+ * 🔴 **2026-11-08（batch 16 · 技术评审 11-07 的 F7 形状）· 为什么要**相对**写法**：
+ *    从前这里是 `path.join(PATHS.repo, 'tests', …, '_brd01-fixture-never-written.mjs')`，会话头 cwd 也是
+ *    `PATHS.repo`。而**评审副本住在 `.team/…` 下面** —— 于是 `<副本>/tests/…` 落在**外层那棵 `.team`** 里，
+ *    产品按自己的规则把它判成"队里的本子"（`inject.js` 的 `tools/result` 监听器：`officeLandingVerdict(...).allow ⇒ return`）
+ *    ⇒ 账本从不记"项目文件动过" ⇒ B/C/D 五条腿读到空告警、整条红（活树里绿）。
+ *    ⇒ 目标改成**相对会话头 cwd**的写法（生产里的写就是这样），cwd 换成**`.team`-free 的夹具树**
+ *      （`support/office-fixtures.mjs` 的 `B` 树：它自己那棵 `.team` 在它里面，而不是它在一个 `.team` 里面）。
+ *    **期望值一条没改**（A/C 逐字、B/D 按语义/短语）—— 只把"哪棵树"换成生产形状。
+ *    刀：`AGENIA_BRD01_BASE=<副本根>` 把底座放回旧的那一个 ⇒ `BRD01-FIXTURE-UNDER-TEAM`（红在夹具上，不是产品）。
+ */
+const WRITE_TARGET_REL = 'src/_brd01-fixture-never-written.mjs'
 
 /**
  * 每格 `inputs` 是一组**同义现场**（同一句判据、不同账本形状）——
@@ -154,7 +177,7 @@ const CELLS = [
     inputs: [
       {
         label: 'B1 外聘叫过 + 文件动过一次（板子才在）',
-        drive: [['subagent', {}], ['write', { file_path: WRITE_TARGET_PATH }]],
+        drive: [['subagent', {}], ['write', { file_path: WRITE_TARGET_REL }]],
         ledger: { counts: { hire: 1 }, afterTest: 1 },
         progress: ['测试 0', '外聘 1'],
       },
@@ -163,7 +186,7 @@ const CELLS = [
         // 测试计数是 0 ⇒ 不管叫没叫过开发，都不许说「最后一次测试之后」/「那次测试作废」；
         // 必须说"文件动过 + 一次测试都没叫过"。这一条输入就是那一条裁决的判据。
         label: 'B2 开发叫过 + 文件动过一次（混合现场：从没叫过测试优先）',
-        drive: [['team_dev', {}], ['write', { file_path: WRITE_TARGET_PATH }]],
+        drive: [['team_dev', {}], ['write', { file_path: WRITE_TARGET_REL }]],
         ledger: { counts: { dev: 1 }, afterTest: 1 },
         progress: ['开发 1', '测试 0'],
       },
@@ -181,7 +204,7 @@ const CELLS = [
     inputs: [
       {
         label: '叫过测试，之后又写了一次文件',
-        drive: [['team_test', {}], ['write', { file_path: WRITE_TARGET_PATH }]],
+        drive: [['team_test', {}], ['write', { file_path: WRITE_TARGET_REL }]],
         ledger: { counts: { test: 1 }, afterTest: 1 },
         progress: ['测试 1'],
       },
@@ -199,7 +222,7 @@ const CELLS = [
         // 现场（`F-160` `P16`）：评审刚交活，活树里别的岗位又落了一份文件。板子只该说
         // "有新改动、还没被评审过"；说"那次评审作废"是把活树变动错算成副本变动（§14.0 表第 2/3 行）。
         label: 'D1 叫过评审 + 之后又写了一次项目文件',
-        drive: [['team_review', {}], ['write', { file_path: WRITE_TARGET_PATH }]],
+        drive: [['team_review', {}], ['write', { file_path: WRITE_TARGET_REL }]],
         ledger: { counts: { review: 1 }, afterTest: 1, afterReview: 1 },
         progress: ['评审 1'],
         holds: [
@@ -283,8 +306,8 @@ function judgeText(rules, text) {
  * @param {object} input  那一条输入（读 `label` / `drive`）
  * @param {number} index  同一格内第几条输入（会话 id 靠它分开 ⇒ 账本不串）
  */
-async function runCell(cell, input, index) {
-  const session = await openBoardSession({ id: `brd01-${cell.key}-${index + 1}`, cwd: PATHS.repo })
+async function runCell(cell, input, index, cwd) {
+  const session = await openBoardSession({ id: `brd01-${cell.key}-${index + 1}`, cwd })
   if (session.surfaceMissing || session.applyError.length > 0 || !session.events.includes('agent/pre-step')) {
     return { session, board: undefined, warnings: '', stepped: null, problems: session.applyError }
   }
@@ -311,6 +334,45 @@ describe('integration · board states (BRD) · F-152 板子把两种"没验过"�
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
 
+      // ── ⓪ 底座：**.team-free 的工作区**（与 `REV-02` / `PRS-02` 同一个夹具根；`F7` 的形状）────────
+      //    `openBoardSession({cwd})` 与那几笔"动过的项目文件"都相对它解析 ⇒ 落点**不在任何 `.team` 里**
+      //    ⇒ 产品的 `tools/result` 监听器才会计"项目文件动过"。用 `PATHS.repo` 的旧底座在副本里必然红
+      //    （副本住在 `.team/…` 下），见 `WRITE_TARGET_REL` 上面那段说明。
+      const boardFixture = ensureOfficeFixtures()
+      const pinnedBase = optionalEnv('AGENIA_BRD01_BASE')
+      const boardBase = pinnedBase === null
+        ? (boardFixture.ok ? boardFixture.b : null)
+        : path.resolve(String(pinnedBase))
+      const baseFacts = (base) => {
+        if (base === null) return null
+        const abs = path.resolve(base)
+        const hit = officeOfPath(abs)
+        const own = path.join(abs, '.team')
+        return { base: abs, ancestor_office: hit, own_office: own, foreign: hit !== null && normKey(hit) !== normKey(own) }
+      }
+      const boardBaseFacts = baseFacts(boardBase)
+      rec.readings.board_base = {
+        source: pinnedBase === null ? 'ensureOfficeFixtures().b（与 REV-02 / PRS-02 同一个夹具根）' : 'env:AGENIA_BRD01_BASE（刀）',
+        chosen: boardBaseFacts,
+        fixture: { ok: boardFixture.ok, root: boardFixture.root, problems: boardFixture.problems },
+        write_target_rel: WRITE_TARGET_REL,
+        resolved_write_target: boardBase === null ? null : path.resolve(boardBase, WRITE_TARGET_REL),
+        /** 刀那一侧的读数：旧底座（`PATHS.repo`）在这棵树里会认哪一棵 `.team` 当 office。 */
+        old_base: baseFacts(PATHS.repo),
+        knife_env: 'AGENIA_BRD01_BASE',
+      }
+      if (boardBase === null) {
+        caseHold(rec, 'BRD01-FIXTURE', `板子那几格要一个 \`.team\`-free 的工作区，而这棵树里那个夹具搭不起来：${(boardFixture.problems ?? []).map((p) => `${p.code}: ${p.message}`).join('；')} —— 这五条腿判不了（不拿 \`PATHS.repo\` 顶替：评审副本里它就在一个 \`.team\` 里面，那正是 F7 那个洞）。**不是绿。**`)
+        caseFail(problems)
+        return
+      }
+      const cwd = boardBaseFacts.base
+      if (boardBaseFacts.foreign === true) {
+        push('BRD01-FIXTURE-UNDER-TEAM', `板子那几格的 cwd 底座住在**外层**某个 .team 里：底座 ${boardBaseFacts.base} · 最近的 .team 祖先是 ${boardBaseFacts.ancestor_office} · 它自己那棵树本该是 ${boardBaseFacts.own_office}`
+          + ' —— 于是"项目文件动过"那几笔写会被产品判成"组内本子"（`officeLandingVerdict(...).allow`）⇒ 账本不计 ⇒ 五条腿读到空告警，而红因看起来像产品坏了。'
+          + '换一个 `.team`-free 底座（与 REV-02 / PRS-02 同款），别改产品')
+      }
+
       // ── ⓪ 被测面的读数（缺面 = 预期红）────────────────────────────────────
       let sutFile = null
       try {
@@ -331,7 +393,7 @@ describe('integration · board states (BRD) · F-152 板子把两种"没验过"�
       const sutRows = []
       for (const cell of CELLS) {
         for (const [index, input] of cell.inputs.entries()) {
-          const row = await runCell(cell, input, index)
+          const row = await runCell(cell, input, index, cwd)
           const text = row.warnings
           const rules = rulesOf(cell, input)
           const verdict = judgeText(rules, text)

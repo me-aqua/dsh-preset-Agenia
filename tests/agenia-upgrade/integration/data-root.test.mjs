@@ -295,6 +295,55 @@ function copyLivePresetForKnife(to) {
   return { files, skipped }
 }
 
+/**
+ * **「排除真的生效了」的判据本体（纯函数）** —— `F4`（技术评审 2026-11-07）。
+ *
+ * 三态，因为 `count = 0` 有两种成因：
+ *   · 命中 **> 0**            ⇒ **红**（`DR02-EXCLUSION-NOT-APPLIED`）：数据的的确确进了安全哈希；
+ *   · 命中 **= 0** 且**盘上有数据根** ⇒ **绿**：有东西可排，也排掉了（这一格才有资格叫"生效"）；
+ *   · 命中 **= 0** 且**盘上没有数据根** ⇒ **HOLD**（`DR02-EXCLUSION-NO-DATA-ROOT`）：
+ *     "没东西可排"与"排掉了"在这一格里长得一模一样 ⇒ **判不了**，既不绿也不红。
+ *
+ * 为什么必须是纯函数：刀要喂**同一个**函数两种输入（副本上有 `.runtime` + 排除生效 / 同一份副本
+ * 去掉排除）——"没样本就挂起"与"样本在就必须咬住"两向都量得到，HOLD 才不是一个藏身处。
+ * 来历：旧判据把它压成一个布尔，数据根缺席时写"排除没生效"并记红，而同一个条件在
+ * `DR-01` / `VRF-01` / `DOC-01` / `SURF-03` / `DBY-05` 上是 HOLD（同一件事两种判词）；
+ * 评审副本里 `.runtime` 是数据段、永远不在提交里 ⇒ 任何评审副本都会这样红。
+ *
+ * @param {{files:Array<{rel:string}>, pinned:string[], dataRootOnDisk:boolean, dataRoot?:string}} input
+ * @returns {{label:string, ok:boolean|null, hold:null|{code:string, why:string}, code:string|null, detail:string, hits:string[]}}
+ */
+export function dataSegmentExclusionVerdict({ files, pinned, dataRootOnDisk, dataRoot = null } = {}) {
+  const hits = (Array.isArray(files) ? files : [])
+    .filter((f) => Array.isArray(pinned) && pinned.includes(String(f?.rel).split('/')[0]))
+    .map((f) => String(f.rel))
+  const label = '顶层数据段的文件不在哈希里（排除真的生效了）'
+  const rootText = dataRoot === null ? '（现役预设）/.runtime' : dataRoot
+  if (hits.length > 0) {
+    return {
+      label, ok: false, hold: null, code: 'DR02-EXCLUSION-NOT-APPLIED', hits,
+      detail: `哈希里还有 ${hits.length} 份顶层数据段文件（例：${hits.slice(0, 3).join(', ')}）`
+        + `；盘上 \`${rootText}\` 存在 = ${dataRootOnDisk === true}`
+        + ' —— 数据段进了安全哈希 ⇒ 只要有人正常干活这条安全判据就必红（先例 `cand-20261019-0042`）',
+    }
+  }
+  if (dataRootOnDisk !== true) {
+    return {
+      label, ok: null, hold: {
+        code: 'DR02-EXCLUSION-NO-DATA-ROOT',
+        why: `这棵树里**没有顶层数据段**（盘上 \`${rootText}\` 不存在）⇒ 命中数 0 分不清「排除生效了」与「没有东西可排」，`
+          + '这一格判不了。**不是绿**，也不是红。（评审副本里 `.runtime` 是数据段、永远不在提交里 ⇒ 这是常态；'
+          + `要给样本就在活树上跑，或把 ${ENV.LIVE_BRAIN_ROOT} 指向 <活体预设>/.runtime 那些命令的根）`,
+      },
+      code: null, hits, detail: `命中 0 份，但盘上没有数据根 ⇒ HOLD（同一条件在 DR-01 / VRF-01 / DOC-01 / SURF-03 / DBY-05 上也是 HOLD）`,
+    }
+  }
+  return {
+    label, ok: true, hold: null, code: null, hits,
+    detail: `哈希里 0 份顶层数据段文件，而盘上 \`${rootText}\` **存在** ⇒ 有东西可排、也排掉了（排除真的生效）`,
+  }
+}
+
 describe('integration · data-root (DR)', () => {
   test('DR-01 命令清单 × 五种姿势：非法一律非零退出零写入（合法根必须写成功）', async () => {
     await runCase('DR-01', async (rec) => {
@@ -1505,8 +1554,14 @@ describe('integration · data-root (DR)', () => {
       //   （`livePresetViolation`）必须报 `SECURITY-VIOLATION`。没有这把刀，这条判据可能因为
       //   "量的是同一个东西"而永远绿。副本在运行根里，`presets/agenia` 一个字节都不碰。
       const rulerCells = []
+      /**
+       * 这一段的**判决**（`F4` 之后有三态）：绿 / 红 / **挂起**各算**一次判决**。
+       * 自守（④'）数的是它，不是"绿格数"—— 数据根缺席时那一格合法地挂起，数绿格会把它读成"这一段没跑"。
+       */
+      const rulerVerdicts = []
       const cell = (label, ok, code, detail) => {
         rulerCells.push({ label, ok, detail })
+        rulerVerdicts.push({ label, kind: ok ? 'pass' : 'red' })
         if (!ok) problems.push(problem(code, detail))
       }
       const exclusions = before.livePreset.excluded ?? null
@@ -1524,15 +1579,34 @@ describe('integration · data-root (DR)', () => {
         'DR02-EXCLUSION-CONTENT',
         `实得 ${JSON.stringify(exclusions)}，应为 ${JSON.stringify(PINNED_DATA_SEGMENTS)} —— 把产品文件塞进排除表来躲开这条安全判据，会在这里红`,
       )
-      const topLevelDataHits = (before.livePreset.files ?? []).filter((f) => PINNED_DATA_SEGMENTS.includes(String(f.rel).split('/')[0]))
-      cell(
-        '顶层数据段的文件不在哈希里（排除真的生效了）',
-        topLevelDataHits.length === 0 && existsSync(path.join(PATHS.finalPreset, '.runtime')),
-        'DR02-EXCLUSION-NOT-APPLIED',
-        `哈希里还有 ${topLevelDataHits.length} 份顶层数据段文件（例：${topLevelDataHits.slice(0, 3).map((f) => f.rel).join(', ')}）`
-        + `；盘上 \`presets/agenia/.runtime\` 存在 = ${existsSync(path.join(PATHS.finalPreset, '.runtime'))}`
-        + ' —— 数据段没被排除 ⇒ 只要有人正常干活这条安全判据就必红（先例 `cand-20261019-0042`）',
-      )
+      /**
+       * 🔴 **F4（技术评审 2026-11-07 `F4`）· `count = 0` 分不清「排除了」与「没东西可排」**
+       *
+       * 旧判据是 `topLevelDataHits.length === 0 && existsSync(<现役预设>/.runtime)` 一个布尔：
+       * 数据根**缺席**时它写"数据段没被排除"并**记红** —— 而归因是错的（没有东西可排，不是排除没生效），
+       * 而且同一个条件在 `DR-01` / `VRF-01` / `DOC-01` / `SURF-03` / `DBY-05` 五条兄弟判据上都是 **HOLD**
+       * （"副本里没有数据段，空对空，判不了"）。同一件事两种判词。
+       * 评审副本里 `.runtime` 是数据段、**永远不在提交里** ⇒ 任何评审副本都会这样红，而它正是票 (a)
+       * 见证结果的那道门，一红就把那一段读数一起吞掉。
+       *
+       * 现在三态分开（判据本体是纯函数 `dataSegmentExclusionVerdict()`，刀也喂同一个函数）：
+       *   · 命中 > 0 ⇒ **红**（`DR02-EXCLUSION-NOT-APPLIED`，证据是那几份路径）；
+       *   · 命中 = 0 且盘上**有**数据根 ⇒ **绿**（有东西可排，也排掉了）；
+       *   · 命中 = 0 且盘上**没有**数据根 ⇒ **HOLD**（`DR02-EXCLUSION-NO-DATA-ROOT`，点名原因）——
+       *     **不是绿**、也不是红。
+       */
+      const dataRootOnDisk = existsSync(path.join(PATHS.finalPreset, '.runtime'))
+      const exclusionVerdict = dataSegmentExclusionVerdict({
+        files: before.livePreset.files ?? [],
+        pinned: PINNED_DATA_SEGMENTS,
+        dataRootOnDisk,
+        dataRoot: path.join(PATHS.finalPreset, '.runtime'),
+      })
+      rec.readings.exclusion_verdict = exclusionVerdict
+      if (exclusionVerdict.hold !== null) {
+        rulerVerdicts.push({ label: exclusionVerdict.label, kind: 'hold', code: exclusionVerdict.hold.code })
+        caseHold(rec, exclusionVerdict.hold.code, exclusionVerdict.hold.why)
+      } else cell(exclusionVerdict.label, exclusionVerdict.ok === true, exclusionVerdict.code, exclusionVerdict.detail)
       const presentRels = new Set((before.livePreset.files ?? []).map((f) => f.rel))
       cell(
         '哈希不是空样本：既有文件，又有产品文件 `inject.js`',
@@ -1634,7 +1708,41 @@ describe('integration · data-root (DR)', () => {
         + ` · sha ${String(kSegIn.livePreset.sha256).slice(0, 12)} → ${String(kSegOut.livePreset.sha256).slice(0, 12)}`
         + ` · 排除集已还原=${segRestored} —— 写死一份清单的实现在这里不会跟着变`,
       )
-      rec.readings.live_preset_ruler = { exclusions: exclusions ?? null, pinned: PINNED_DATA_SEGMENTS, cells: rulerCells }
+      /**
+       * ── `F4` 的刀（两向，**同一份真字节**）──────────────────────────────────────────
+       * 为什么要两向：这一格新加的 HOLD 很容易变成藏身处 —— "数据根不在 ⇒ 挂起"可以掩盖
+       * "排除根本没生效"。所以拿**同一棵副本**（`knifeRoot`，里面真摆着顶层 `.runtime/probe.txt`）量两次：
+       *   · 正向：产品那条路（`realRootsSnapshot` 带 `FROZEN` 的排除集）⇒ 命中 0 + 盘上有数据根 ⇒ **必须绿**；
+       *   · 刀向：**同一份字节**去掉排除（`treeHash()` 不排除）⇒ 命中 ≥ 1 ⇒ **必须红**（`DR02-EXCLUSION-NOT-APPLIED`）。
+       * 两向都过，"排除生效"与"没有东西可排"才真的分得开；只跑一边的话，谓词写成恒 HOLD 或恒绿都看不出来。
+       * 判据本体是同一个纯函数 `dataSegmentExclusionVerdict()` —— 刀与真跑**同一份代码**。
+       */
+      const f4Excluded = (snapAt('f4_excluded').livePreset.files ?? [])
+      const f4Unexcluded = treeHash(knifeRoot).files ?? []
+      const f4DataRoot = path.join(knifeRoot, '.runtime')
+      const f4OnDisk = existsSync(f4DataRoot)
+      const f4Green = dataSegmentExclusionVerdict({ files: f4Excluded, pinned: PINNED_DATA_SEGMENTS, dataRootOnDisk: f4OnDisk, dataRoot: f4DataRoot })
+      const f4Red = dataSegmentExclusionVerdict({ files: f4Unexcluded, pinned: PINNED_DATA_SEGMENTS, dataRootOnDisk: f4OnDisk, dataRoot: f4DataRoot })
+      rec.readings.exclusion_knife = {
+        data_root_on_disk: f4OnDisk,
+        excluded: { hits: f4Green.hits, ok: f4Green.ok, code: f4Green.code, hold: f4Green.hold?.code ?? null },
+        unexcluded: { hits: f4Red.hits, ok: f4Red.ok, code: f4Red.code },
+      }
+      cell(
+        '`F4` 的刀①：副本里**有**顶层数据段、排除照常 ⇒ 这一格必须**绿**（不是"没东西可排"）',
+        f4OnDisk === true && f4Green.ok === true && f4Green.hits.length === 0,
+        'DR02-EXCLUSION-KNIFE',
+        `副本 ${knifeRoot} · 盘上 .runtime 存在=${f4OnDisk} · 排除后命中 ${f4Green.hits.length} 份 · 判词 ok=${String(f4Green.ok)}`
+        + ` ${f4Green.hold === null ? '' : `（挂起码 ${f4Green.hold.code}）`} —— 有样本时挂起/红都说明这一格没在判"排除生效"`,
+      )
+      cell(
+        '`F4` 的刀②：**同一份字节**去掉排除 ⇒ 命中 ≥ 1 ⇒ 必须**红**（HOLD 不许当藏身处）',
+        f4Red.ok === false && f4Red.code === 'DR02-EXCLUSION-NOT-APPLIED' && f4Red.hits.length >= 1,
+        'DR02-EXCLUSION-KNIFE',
+        `不经排除的同一棵副本命中 ${f4Red.hits.length} 份（例：${f4Red.hits.slice(0, 3).join(', ')}）· 判词 ok=${String(f4Red.ok)} / code=${String(f4Red.code)}`
+        + ' —— 这一向不红，说明"排除没生效"在这一格里永远抓不到',
+      )
+      rec.readings.live_preset_ruler = { exclusions: exclusions ?? null, pinned: PINNED_DATA_SEGMENTS, cells: rulerCells, verdicts: rulerVerdicts }
 
       // ── ④ 真实根的见证：**每个 CLI 子调用一个窗口**（MF-2 / 决定 §五.2）──────────────────
       // 【窗口】`DR-02` 不再拿一对快照夹住整段用例（旧版夹 15.9 s ⇒ 别人在这段里正常干活也会被
@@ -1696,10 +1804,15 @@ describe('integration · data-root (DR)', () => {
       // ④' 这一段的自守（`F-142` 的形状，边界也一样）：**整段删掉**时 `problems` 仍是 0 ⇒ 全绿。
       // 只判"这一段跑过没有"（格数）；某一条 `push` 被单独抽掉不归它管（那一层要源码对账，
       // 会退化成"改一句实现就红"的变更探测器）。
+      // ⚠️ 2026-11-08（batch 16 · `F4`）：**9 → 11** —— ③c 里加了两格刀（`F4` 的两向：同一份副本
+      //    「排除照常 ⇒ 必须绿」/「去掉排除 ⇒ 必须红」）。它们必须在这个自守之内：否则把这两格删掉
+      //    仍然全绿，而"排除没生效"就再也没人咬了。
+      // 🔴 数的口径 = **判决数**（绿 / 红 / 挂起各算一次），不是"绿格数"：`F4` 让"排除生效"那一格在
+      //    数据根缺席时合法地 **HOLD**（它不再是 `cell()` 的一次绿），数绿格会把那次挂起读成"这一段没跑"。
       {
-        const cells = rec.readings.live_preset_ruler?.cells
-        if (!Array.isArray(cells) || cells.length !== 9) {
-          push('DR02-RULER-UNGUARDED', `活体预设那一段（③c）没跑：读数格数 ${Array.isArray(cells) ? cells.length : '(无读数)'}（应为 9）—— `
+        const verdicts = rec.readings.live_preset_ruler?.verdicts
+        if (!Array.isArray(verdicts) || verdicts.length !== 11) {
+          push('DR02-RULER-UNGUARDED', `活体预设那一段（③c）没跑：判决数 ${Array.isArray(verdicts) ? verdicts.length : '(无读数)'}（应为 11 = 原 9 格 + F4 的两向刀；绿/红/挂起各算一次）—— `
             + '这一段整段删掉时 problems 仍是 0，所以它必须留下读数、并由这里读一次')
         }
       }

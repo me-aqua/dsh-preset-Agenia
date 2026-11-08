@@ -66,8 +66,8 @@ import { FROZEN, PATHS } from '../support/env.mjs'
 import { importStaged, readStagedText } from '../support/sut.mjs'
 import { buildCatalog, buildContentRoot, configFromComposition, importSourceCopy, withHarness } from '../support/injector-harness.mjs'
 import {
-  CONTROL_SOURCE, KNIVES, NARROW_KNIFE, canonicalOf, decisionBody, digestOf, ensureOfficeFixtures, expectedOfficeOf,
-  headerOfficeOf, normKey, officeOfPath, officeRunId, oracleProblems, sampleProblems, strictOff, swapDecisionBody,
+  CONTROL_SOURCE, KNIVES, NARROW_BASE_KNIFE, NARROW_KNIFE, canonicalOf, decisionBody, digestOf, ensureOfficeFixtures, expectedOfficeOf,
+  headerOfficeOf, normKey, officeOfPath, officeRunId, oracleProblems, sampleProblems, strictBaseOff, strictOff, swapDecisionBody,
 } from '../support/office-fixtures.mjs'
 
 const BOUND = new Set(FROZEN.staged.officeBoundRoles)
@@ -313,12 +313,16 @@ const ROWS = { '①': row1, '②': row2, '③': row3, '④': row4, '⑤': row5 }
 /**
  * ⑧ **窄会话的写边界仍是最严的那道**（契约 §六；gate-4 返修 MF-2）。
  *
- * 判四件事 + 一个对照：
+ * 判五件事 + 一个对照：
  *   · 窄会话写**另一棵树**的 `.team/` ⇒ **拒**（`OFFB-NARROW-CROSS-TREE`）—— 这条是本格的主判词；
  *   · 窄会话写**自己那棵树**的 `.team/` ⇒ 放行（`OFFB-NARROW-OWN-TREE`）；
  *   · 窄会话写自己树 / 另一棵树的项目处 ⇒ 拒（`OFFB-NARROW-OUTSIDE`）；
+ *   · **`header.cwd` 自己就落在某个 `.team` 里**时（`F6`，组长 2026-11-08 点名的形状）：
+ *     写**同层别的岗位抽屉** ⇒ **拒**（`OFFB-NARROW-HEADER-INSIDE-TEAM`）；**同一笔写**、cwd 在 `.team`
+ *     之外（自己那棵树）⇒ **放行**（`OFFB-NARROW-OWN-TREE`）—— 拒的是"跨抽屉"，不是"一律关死"；
  *   · **同一笔**跨树写从非窄的受限岗位（`review`）走 ⇒ **放行 + `OFFICE_TREE_DIFFERS`**（`OFFB-NARROW-CONTRAST`）——
  *     证明"门变窄"只发生在窄会话那一侧，不是把所有人都关在外面。
+ *   两把刀：`K7`（strict 当 falsy）⇒ 两条窄腿一起翻；`K8`（strict 的基换回 `header`）⇒ 只翻"cwd 在 `.team` 里"那一腿。
  *
  * 口径边界：这里判的是**执行者**（`narrowVerdict`，导出纯函数）；"门禁真的会调它"那一层由
  * `PRS-02` 的 row 5 工具拒覆盖（同一条 `narrowVerdict`，只是另一条腿）。strict 的读数**不在契约里**
@@ -334,10 +338,11 @@ function narrowRow(mod) {
   const agent = agentAt(FX.a)
   const cross = path.join(FX.b, '.team', 'bug', 'ledger.json')
   const own = path.join(FX.a, '.team', 'bug', 'ledger.json')
-  const leg = (label, target, want, code) => {
+  const leg = (label, target, want, code) => legAt(label, agent, target, want, code)
+  const legAt = (label, agentOf, target, want, code) => {
     let verdict
     try {
-      verdict = mod.narrowVerdict('write', { file_path: target }, agent)
+      verdict = mod.narrowVerdict('write', { file_path: target }, agentOf)
     } catch (err) {
       push('OFFB-NARROW-THREW', `${label}：调用抛了（${String(err?.message ?? err)}）—— 拒绝必须是判词，不是异常`)
       return
@@ -355,6 +360,27 @@ function narrowRow(mod) {
   leg('窄会话写自己树的 .team', own, 'allow', 'OFFB-NARROW-OWN-TREE')
   leg('窄会话写自己树的项目根', path.join(FX.a, 'x.md'), 'reject', 'OFFB-NARROW-OUTSIDE')
   leg('窄会话写另一棵树的项目处', path.join(FX.b, 'src', 'x.js'), 'reject', 'OFFB-NARROW-OUTSIDE')
+  /**
+   * 🔴 **`F6` 的形状（组长 2026-11-08 点名要的那一格）· `header.cwd` 自己就落在某个 `.team` 里**。
+   *
+   * 现场：会话头 cwd = `<某树>/.team/<岗位>/<日期>`（生产里到处都是；套件的夹具工作区也是这个形状）。
+   * 老口径（strict 的基 = "cwd 的最近 `.team` 祖先"）在这个形状上认的是**外层那棵** ⇒ 窄会话能写
+   * **同层别的岗位抽屉**（`.team/test/…`、`.team/leader/…`）—— 而注释与报文都写着"只认自己那棵树"。
+   * 这两格把两个方向都钉住：
+   *   · cwd 在 `.team` 里 ⇒ 写同层兄弟抽屉 **必须拒**；
+   *   · **同一笔写**、cwd 在 `.team` 之外（自己那棵树）⇒ **必须放行**（证明拒的是"跨抽屉"，不是"一律关死"）。
+   * 刀：`K8`（`strictBase = header`）⇒ 只翻前一条；`K7`（strict 当 falsy）⇒ 两条窄腿一起翻。
+   */
+  const cwdInsideOffice = path.join(FX.a, '.team', 'review')
+  const siblingDrawer = path.join(FX.a, '.team', 'test', 'from-inside.md')
+  if (officeOfPath(path.resolve(cwdInsideOffice)) === null) {
+    push('OFFB-NARROW-SAMPLE', `"cwd 在 .team 里"那一格的 cwd 其实不在任何 .team 里（${cwdInsideOffice}）—— 样本错了`)
+  }
+  if (officeOfPath(path.resolve(siblingDrawer)) === null) {
+    push('OFFB-NARROW-SAMPLE', `兄弟抽屉那一格的落点不在任何 .team 里（${siblingDrawer}）—— 样本错了`)
+  }
+  legAt('cwd 在 .team 里 ⇒ 写同层别的岗位抽屉', agentAt(cwdInsideOffice), siblingDrawer, 'reject', 'OFFB-NARROW-HEADER-INSIDE-TEAM')
+  legAt('同一笔写、cwd 在 .team 之外（自己那棵树）', agentAt(FX.a), siblingDrawer, 'allow', 'OFFB-NARROW-OWN-TREE')
   const contrast = callOffice(mod, { target: cross, agent })
   if (kindOf(contrast.out) !== 'allow' || contrast.readings.warning !== 'OFFICE_TREE_DIFFERS') {
     push('OFFB-NARROW-CONTRAST', `同一笔跨树写从非窄的 review 会话走：必须放行且记 OFFICE_TREE_DIFFERS，`
@@ -369,6 +395,28 @@ function judgeAll(mod) {
   const rows = {}
   for (const id of ROW_IDS) rows[id] = ROWS[id](mod)
   return rows
+}
+
+/**
+ * 同上，但把**进程 cwd** 钉在夹具根上（`.team`-free）再判 —— 刀架的输入要确定。
+ *
+ * 🔴 为什么非钉不可（2026-11-08 · 在副本里跑出来的）：`K4`（`relativeBase: 'process'`）模拟的是
+ *    "相对目标按 **工作目录** 解析，不是会话头 cwd"。它喂的那一格是 ⑤ 的 `.team/review/../../x.txt`：
+ *    · 活树里进程 cwd = `<repo>`（`.team`-free）⇒ 落点 `<repo>/x.txt` 不在任何 `.team` 里 ⇒ 拒 ⇒ 翻 `ROW5-LANDING`；
+ *    · **副本住在 `.team/...` 底下**时进程 cwd = 副本根 ⇒ 同一个落点算出来**在外层那棵 `.team` 里** ⇒ 放行
+ *      ⇒ 翻的是 `ROW5-ALLOWED`。同一把刀、同一个断言，翻面集却随"这棵树住哪"变 —— 那是**环境**差异，
+ *      不是刀切宽了。
+ *    ⇒ 判刀时把进程 cwd 钉在 `<夹具根>`（同盘、仓库之外、祖先链上没有 `.team`，活树/副本两种模式都成立），
+ *      翻面集就只由刀决定。**不是**放宽：期望集一个字没改，改的是"量的时候环境长什么样"。
+ */
+function judgeAllAt(mod) {
+  const prev = process.cwd()
+  try {
+    process.chdir(FX.root)
+    return judgeAll(mod)
+  } finally {
+    process.chdir(prev)
+  }
 }
 
 const codesOf = (rows) => [...new Set(ROW_IDS.flatMap((id) => rows[id].map((p) => p.code)))].sort()
@@ -463,7 +511,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
       if (!control.ok) {
         push('OFFB-CONTROL-UNAVAILABLE', `阳性对照 import 不了：${control.code} ${control.why}`)
       } else {
-        const rows = judgeAll(control.mod)
+        const rows = judgeAllAt(control.mod)
         rec.readings.control = { codes: codesOf(rows), rows: Object.fromEntries(ROW_IDS.map((id) => [id, rows[id].map((p) => p.code)])) }
         if (codesOf(rows).length > 0) push('OFFB-CONTROL-NOT-GREEN', `阳性对照自己没有全绿（${JSON.stringify(codesOf(rows))}）—— 判据不可满足，先修尺子`)
       }
@@ -490,7 +538,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
             push('OFFB-KNIFE-IMPORT', `${knife.id}@${subject}：切过的副本 import 不了（那不是"咬到了"，是换个崩法）：${cut.why}`)
             continue
           }
-          const rows = judgeAll(cut.mod)
+          const rows = judgeAllAt(cut.mod)
           const codes = codesOf(rows)
           row[subject] = { ok: true, codes, rows: Object.fromEntries(ROW_IDS.map((id) => [id, rows[id].map((p) => p.code)])) }
           if (JSON.stringify(codes) !== JSON.stringify(row.want)) {
@@ -577,7 +625,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
     })
   })
 
-  test('OFB-08 窄会话的 .team 写边界仍是最严的那道：另一棵树的 .team 必须拒，同一笔写从 review 走放行+warning', async () => {
+  test('OFB-08 窄会话的 .team 写边界仍是最严的那道：另一棵树的 .team 必须拒、cwd 在 .team 里写兄弟抽屉必须拒，同一笔写从 review 走放行+warning', async () => {
     await runCase('OFB-08', async (rec) => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
@@ -597,7 +645,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
         if (controlProblems.length > 0) {
           push('OFFB-NARROW-CONTROL-NOT-GREEN', `阳性对照自己没有全绿（${JSON.stringify(controlProblems.map((p) => p.code))}）—— 判据不可满足，先修尺子`)
         }
-        // ── ② 刀 K7（对照上）：strict 当 falsy ⇒ 只翻"跨树写"那一腿 ──
+        // ── ② 刀 K7（对照上）：strict 当 falsy ⇒ 翻"跨树写"与"cwd 在 .team 里"两条窄腿 ──
         const cut = strictOff(CONTROL_SOURCE)
         if (!cut.ok) {
           push('OFFB-NARROW-KNIFE-ANCHOR', `${NARROW_KNIFE.id} 在阳性对照上没有落点：${cut.code} ${cut.why}`)
@@ -613,6 +661,29 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
               const onlyWant = NARROW_KNIFE.want.filter((c) => !codes.includes(c))
               push('OFFB-NARROW-KNIFE-VECTOR', `${NARROW_KNIFE.id}@control：多翻 ${JSON.stringify(onlyActual)} · 少翻 ${JSON.stringify(onlyWant)}（实测 ${JSON.stringify(codes)}）`
                 + ' —— 多翻 = 刀切宽了，少翻 = 窄的那一面没人守')
+            }
+          }
+        }
+        /**
+         * ── ②' 刀 `K8`（对照上 · `F6`）：strict 的**基**换回 `header` ⇒ **只**翻"cwd 在 `.team` 里"那一腿 ──
+         * 这把刀是组长 2026-11-08 点名要的那一格的反面：基线成立（兄弟抽屉被拒）而这一刀翻不出来，
+         * 说明"基是 cwd 下面那棵"这句话没有判据在守。
+         */
+        const baseCut = strictBaseOff(CONTROL_SOURCE)
+        if (!baseCut.ok) {
+          push('OFFB-NARROW-KNIFE-ANCHOR', `${NARROW_BASE_KNIFE.id} 在阳性对照上没有落点：${baseCut.code} ${baseCut.why}`)
+        } else {
+          const mutant = await importSourceCopy({ dir: path.join(base, `knife-${NARROW_BASE_KNIFE.id}-control`), source: baseCut.source })
+          if (!mutant.ok) {
+            push('OFFB-NARROW-KNIFE-IMPORT', `${NARROW_BASE_KNIFE.id}@control：切过的副本 import 不了：${mutant.why}`)
+          } else {
+            const codes = narrowRow(mutant.mod).map((p) => p.code)
+            rec.readings.knife_base_control = { want: NARROW_BASE_KNIFE.want, codes }
+            if (JSON.stringify(codes) !== JSON.stringify(NARROW_BASE_KNIFE.want)) {
+              const onlyActual = codes.filter((c) => !NARROW_BASE_KNIFE.want.includes(c))
+              const onlyWant = NARROW_BASE_KNIFE.want.filter((c) => !codes.includes(c))
+              push('OFFB-NARROW-KNIFE-VECTOR', `${NARROW_BASE_KNIFE.id}@control：多翻 ${JSON.stringify(onlyActual)} · 少翻 ${JSON.stringify(onlyWant)}（实测 ${JSON.stringify(codes)}）`
+                + ' —— 只该翻"cwd 在 .team 里写兄弟抽屉"那一格')
             }
           }
         }
@@ -645,6 +716,24 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
                   const onlyActual = codes.filter((c) => !NARROW_KNIFE.want.includes(c))
                   const onlyWant = NARROW_KNIFE.want.filter((c) => !codes.includes(c))
                   push('OFFB-NARROW-KNIFE-VECTOR', `${NARROW_KNIFE.id}@real：多翻 ${JSON.stringify(onlyActual)} · 少翻 ${JSON.stringify(onlyWant)}（实测 ${JSON.stringify(codes)}）`)
+                }
+              }
+            }
+            // ── ④' 刀 K8（真源码）：strict 的基换回 `header` ⇒ 只翻"cwd 在 .team 里"那一腿 ──
+            const baseCutReal = strictBaseOff(source)
+            if (!baseCutReal.ok) {
+              push('OFFB-NARROW-KNIFE-ANCHOR', `${NARROW_BASE_KNIFE.id} 在真 staged 源码上没有落点：${baseCutReal.code} ${baseCutReal.why}`)
+            } else {
+              const baseMutant = await importSourceCopy({ dir: path.join(base, `knife-${NARROW_BASE_KNIFE.id}-real`), source: baseCutReal.source })
+              if (!baseMutant.ok) {
+                push('OFFB-NARROW-KNIFE-IMPORT', `${NARROW_BASE_KNIFE.id}@real：切过的副本 import 不了：${baseMutant.why}`)
+              } else {
+                const codes = narrowRow(baseMutant.mod).map((p) => p.code)
+                rec.readings.knife_base_real = { want: NARROW_BASE_KNIFE.want, codes }
+                if (JSON.stringify(codes) !== JSON.stringify(NARROW_BASE_KNIFE.want)) {
+                  const onlyActual = codes.filter((c) => !NARROW_BASE_KNIFE.want.includes(c))
+                  const onlyWant = NARROW_BASE_KNIFE.want.filter((c) => !codes.includes(c))
+                  push('OFFB-NARROW-KNIFE-VECTOR', `${NARROW_BASE_KNIFE.id}@real：多翻 ${JSON.stringify(onlyActual)} · 少翻 ${JSON.stringify(onlyWant)}（实测 ${JSON.stringify(codes)}）`)
                 }
               }
             }
