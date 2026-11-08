@@ -30,7 +30,7 @@
  *   长度上限 / 四类的配额 / 复核与次日判决 —— 那三样归判决那一侧，工具顺手加一条就是第二条判据。
  */
 import { appendProposalDeduped, duplicateProposalOf } from '../lib/proposals.mjs'
-import { TYPE_IDS } from '../lib/memory.mjs'
+import { TYPE_IDS, controlCharVerdict } from '../lib/memory.mjs'
 import { dayOf, nowIso, sha256Hex } from '../lib/state.mjs'
 
 /** 注册给模型的名字（下划线 —— 与 `team_test` / `subagent_fork` 同一套；契约 §1.1）。 */
@@ -129,6 +129,12 @@ export function proposalFileVerdict({ args, poolEntries } = {}) {
         + `请把「事实 + 判据」留下，把来历 / 推导 / 现场读数挪进当天的 log.md（F-72）`,
     }
   }
+  // 🔴 F-165：正文里的控制字符**先于**出处检查（出处错还能改，坏字节进了池子就得洗池）。
+  {
+    const v = controlCharVerdict(a.text, 'proposal_file')
+    if (!v.ok) return { ok: false, code: v.code, message: v.message }
+  }
+
   // ② source：必填、非空。**不许静默补空**（不补 "(unknown)"、不拿正文顶上）：出处是这条候选的凭据。
   if (typeof a.source !== 'string' || a.source.trim() === '') {
     return {

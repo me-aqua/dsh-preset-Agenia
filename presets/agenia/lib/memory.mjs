@@ -78,6 +78,37 @@ function schemaError(message) {
  * 不 trim（前后空格算数）、不做 NFC/NFD（`e` + 组合音标是 2 个字）。
  * 非字符串按 0 计（缺正文的条目不该让整份报告炸掉；坏数据的检测在快照读取那一层）。
  */
+/**
+ * **正文里控制字符必须为 0**（`F-165`）：只放行 `LF(10)`；`CR(13)` 与其他 `code < 32` 一律拒。
+ *
+ * 为什么禁 CR：正文是"一句话加判据"，CR 只会是传输/拼接留下的脏东西；放行它，同一段话在不同读者眼里
+ * 会变成不同的字节（`\r\n` 与 `\n` 谁说了算，永远吵不完）。**归一化不是入口该干的事，拒之门外才是。**
+ *
+ * @param {unknown} text 待检正文
+ * @param {string} where 位置标签（`payload.entry.text` / `payload.engine_ops[1].entry.text` …）
+ * @returns {{ok:true, code:null, message:string}
+ *          |{ok:false, code:'E_PROPOSAL_CONTROL_CHAR', message:string}}
+ */
+export function controlCharVerdict(text, where) {
+  const label = typeof where === 'string' && where.trim() !== '' ? where : '（未点名位置）'
+  if (typeof text !== 'string') return { ok: true, code: null, message: '' }
+  for (let i = 0; i < text.length; i += 1) {
+    const cp = text.codePointAt(i)
+    if (cp === 10) continue // LF 是唯一的例外
+    if (cp < 32) {
+      const hex = cp.toString(16).toUpperCase().padStart(4, '0')
+      return {
+        ok: false,
+        code: 'E_PROPOSAL_CONTROL_CHAR',
+        message: `${label} 的正文里有控制字符：第 ${i + 1} 个字符是 U+${hex}（只放行 LF）。`
+          + '正文被弄坏过几次（反斜杠 + f/r 混进来那一类），所以入口对控制字符**一律拒**、不替谁洗：'
+          + '把那一处换成普通空格或换行，再重新导。',
+      }
+    }
+  }
+  return { ok: true, code: null, message: '' }
+}
+
 export function charCountOf(text) {
   if (typeof text !== 'string' || text.length === 0) return 0
   const normalized = text.replace(/^\uFEFF+/, '').replace(/\r\n?/g, '\n')

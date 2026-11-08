@@ -39,6 +39,7 @@ import { PACKET_CODES } from './packet.mjs'
  * 🔴 `E_PACKET_TOO_LARGE`（F-144，2026-10-23）必须在本表里：没登记的码会被 CLI 的 catch
  *    折成 `E_INTERNAL` ⇒ "包太大"与"程序有 bug"在报文里长得一模一样。
  */
+const E_PROPOSAL_CONTROL_CHAR_CODE = 'E_PROPOSAL_CONTROL_CHAR'
 const PACKET_EXIT = Object.freeze({
   [PACKET_CODES.MANIFEST]: { exit: 5, zh: '会话包的 manifest 不合（v1.5 的字段表：缺字段 / 形状错 / schema 不是 agenia.session-packet/1）' },
   [PACKET_CODES.FRAMES]: { exit: 5, zh: '会话包的帧读数不合（坏帧 / 截断 / 逐帧实解字节与落盘文本对不上 / 字符数对不上）' },
@@ -50,6 +51,8 @@ const PACKET_EXIT = Object.freeze({
 
 /** 退出码族（只作可读常量；表里每个码自带数字）。 */
 export const CODES = Object.freeze({
+  // F-165：正文里出现控制字符（只放行 LF）。入口一律拒，不替谁洗。
+  [E_PROPOSAL_CONTROL_CHAR_CODE]: { exit: 2, zh: '正文里有控制字符（只放行 LF）——入口不收' },
   // ── 2 用法 / 参数 ─────────────────────────────────────────────────────────
   E_USAGE: { exit: 2, zh: '用法错误：参数形状、未知 op、缺少必填项' },
   // v1.10 ② 补冻：入参不成形状（必填缺失 / 类型不对 / 枚举越界）也归这一族。

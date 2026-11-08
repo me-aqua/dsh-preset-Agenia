@@ -37,7 +37,7 @@ import { sha256Hex, stableStringify, brainError, judgedLockPath, judgedPath, poo
 import { listVersions } from './snapshot.mjs'
 // 尺子只有一把：`charCountOf`（去开头 BOM → `\r\n` 归成 `\n` → 数 code point）住在 `lib/memory.mjs`。
 // 正文上限那一关（`bodyCapVerdict`）量字数时只许用它 —— 另写一份 `.length` 判据就是"同一个 400 长出第二个数"。
-import { charCountOf } from './memory.mjs'
+import { charCountOf, controlCharVerdict } from './memory.mjs'
 
 /** 池子行的 schema。 */
 export const POOL_SCHEMA = 1
@@ -276,6 +276,18 @@ function bodyCapVerdict(payload, kind) {
   if (typeof entryText === 'string') {
     const n = charCountOf(entryText)
     if (n > BODY_MAX_CHARS) overlong.push({ at: 'payload.entry', chars: n })
+  }
+  // 🔴 F-165：**控制字符先于长度**（同"形状先于长度"的道理）—— 带 U+0001 / CR 的正文根本不该被收，
+  //    先拒它，别先去数它几个字。P3 要逐条 `engine_ops[i]` 查，索引进报文。
+  {
+    const bad = []
+    const entryVerdict = controlCharVerdict(inner?.entry?.text, 'payload.entry.text')
+    if (!entryVerdict.ok) bad.push(entryVerdict.message)
+    for (let i = 0; i < ops.length; i += 1) {
+      const v = controlCharVerdict(ops[i]?.entry?.text, `payload.engine_ops[${i}].entry.text`)
+      if (!v.ok) bad.push(v.message)
+    }
+    if (bad.length > 0) return { ok: false, code: 'E_PROPOSAL_CONTROL_CHAR', message: bad.join(' / ') }
   }
   // 形状先于长度：数不了的东西不参与"超没超"的排序，先按入参 schema 拒。
   if (notText.length > 0) {

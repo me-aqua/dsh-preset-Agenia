@@ -27,7 +27,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { readJsonFile, writeFileAtomic, writeJsonAtomic } from './atomic.mjs'
-import { capacityVerdict, charCountOf, distributionOf, sharesOf, TYPE_IDS } from './memory.mjs'
+import { capacityVerdict, charCountOf, distributionOf, sharesOf, TYPE_IDS, controlCharVerdict } from './memory.mjs'
 import {
   archiveDir,
   brainError,
@@ -280,6 +280,16 @@ export function buildSnapshot(spec = {}) {
     shares = null,
   } = spec
   if (!isSnapshotVersion(version)) throw brainError('E_ARG_SCHEMA', `buildSnapshot：version 必须是 v<n>，实得 ${JSON.stringify(version)}`)
+  // 🔴 F-165（P4）：快照这条入库路也要拦控制字符，而且**拦在任何发布之前**
+  //    ——这里拒了，versions / current / phase 一个字节都不会动。
+  {
+    const bad = []
+    for (let i = 0; i < entries.length; i += 1) {
+      const v = controlCharVerdict(entries[i]?.text, `entries_patch[${i}].entry.text`)
+      if (!v.ok) bad.push(v.message)
+    }
+    if (bad.length > 0) throw brainError('E_PROPOSAL_CONTROL_CHAR', bad.join(' / '))
+  }
   const normalized = entries.map((e) => normalizeEntry(e, generatedAt))
   const shareTable = shares ?? sharesOf(normalized)
   const published = normalized.map((e) => ({
