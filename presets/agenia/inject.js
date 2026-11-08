@@ -1740,13 +1740,6 @@ const OFFICE_LEDGER_UNWRITABLE = 'E_OFFICE_LEDGER_UNWRITABLE'
 /** 账本读不动 / 有坏行时的码（`officeLandingLedger` 的 `reason` 前缀）。 */
 const OFFICE_LEDGER_UNREADABLE = 'E_OFFICE_LEDGER_UNREADABLE'
 
-/** 两棵树是不是同一棵：小写 + 正斜杠 + 去尾斜杠（**不碰盘**，契约里那个 `normKey`）。 */
-function officeTreeKey(p) {
-  let s = String(p ?? '').replace(/\\/g, '/')
-  while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1)
-  return s.toLowerCase()
-}
-
 /**
  * 账本的绝对路径：`<officeRoot>/state/office-landings.jsonl`（`officeRoot` 就是 `.team` 那一级）。
  *
@@ -2822,7 +2815,8 @@ export async function apply(ctx, config = {}) {
               landing: String(officeReadings.landing),
               office_root: officeReadings.office_root,
               header_office: String(officeReadings.header_office),
-              tree_differs: officeTreeKey(officeReadings.office_root) !== officeTreeKey(officeReadings.header_office),
+              // 一条规则一个实现：`officeLandingVerdict` 已经算过同一件事（`OFB-0x` 钉的就是那个字段）。
+              tree_differs: officeReadings.differs === true,
             }
             const written = recordOfficeLanding(officeReadings.header_office, landing)
             if (written.ok !== true) {
