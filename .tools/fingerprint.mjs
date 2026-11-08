@@ -64,23 +64,30 @@ import { fileURLToPath } from 'node:url'
 
 const REPO_DEFAULT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-/** 排除表（③）—— 三条形状分开写，读的人一眼能核对配方。 */
+/**
+ * 排除表（③）—— **这一块就是表，一行一个条目**；来由写在下面那段「为什么」里，不要混进来。
+ *
+ * 三条形状分开：前缀（按 root 相对的段比）/ 段名（路径里任何一段叫这个就排）/ 文件名与后缀。
+ */
 const EXCLUDE_PREFIXES = [
   '.git/', '.workbuddy/', 'CLI/', '.team/',
   '.tools/_staging/', '.tools/_scratch/', '.tools/_backup/',
-  // 数据目录的**根相对**写法（③b）：`--root <预设根>` 时收录的相对路径就是 `.runtime/…`。
-  // 只认**顶层**那一段：`lib/.runtime/manifest.json` 这种仍然是代码（"任何一段叫 .runtime 就排"
-  // 会把真代码一起藏起来 —— 少算不是安全）。
-  '.runtime/',
-  // 共享记忆库的**数据目录**（写法与 `.gitignore:53` 逐字一致）。
-  // 库一开就每轮都在写：一次审计追加、一次常识确认都会让它变。
-  // 2026-10-16 加 —— 来历见上面 ③ 那一行（10-15 技术评审 F5）。
-  // 它是"仓库根相对"的形状 ⇒ 只有 `--root` = 仓库根时才命中；预设根那一路由上面那条 `.runtime/` 管。
-  'presets/agenia/.runtime/',
+  '.runtime/',              // 只在**顶层**命中：`lib/.runtime/…` 仍是代码
+  'presets/agenia/.runtime/', // 共享记忆库的数据目录（与 `.gitignore` 同一写法）
 ]
 const EXCLUDE_SEGMENTS = ['node_modules', '__pycache__']
 const EXCLUDE_BASENAMES = ['api.txt', '.credentials.yaml', '.credentials.yml']
 const EXCLUDE_SUFFIXES = ['.log', '.pyc']
+
+/**
+ * 为什么是这几条（**理由不是表** —— 改表时只动上面那份，理由只是给人看的）：
+ *   · `.team/`、`.tools/_staging|_scratch|_backup/`：队伍自己的本子与脚手，不是产品
+ *   · `.runtime/` 与 `presets/agenia/.runtime/`：共享记忆库的数据目录，**每轮都在写** ——
+ *     一次审计追加、一次常识确认都会让它变；两处写法分别对应"根 = 仓库"与"根 = 预设"两种用法
+ *     （`--root` 换了，相对路径的形状也跟着换，所以两条都要有）
+ *   · `node_modules` / `__pycache__` / `*.pyc` / `*.log` / `api.txt` / `.credentials*`：依赖与产物、凭据
+ * ⚠️ 判据：**少算不是安全** —— 宁可多算一份文件（那样才看得见它变），也不许把真代码藏起来。
+ */
 
 /** env 类（④）—— 两套的**唯一**差异。 */
 function isEnvClass(name) {

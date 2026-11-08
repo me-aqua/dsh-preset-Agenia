@@ -1694,8 +1694,13 @@ function officeLandingVerdict(target, agent, strict) {
   //    原因：它是队伍里最硬的一道门（窄权限行 5/6/7），这一票放宽的是"工位随落点走"，不该顺带把它也放宽。
   if (strict === true) {
     const inside = (child, parent) => { const c = norm(child); const p = norm(parent); return c === p || c.startsWith(p + '/') }
-    const allowStrict = inside(landing, header)
-    return { allow: allowStrict, landing, office_root: header, header_office: header, expected_office: header, differs: false, warning: null }
+    // 🔴 F6（技术评审 11-08 的 P2）：基必须是 **cwd 下面**那个 `.team`（= 旧 containment），
+    //    不能是"cwd 的最近 `.team` 祖先" —— 后者在 `cwd` 自己就落在某个 `.team` 里时，
+    //    会把**外层那棵**当成你的 office，于是窄会话能写同层别的岗位抽屉（`.team/leader/…`），
+    //    而注释与报文都写着"只认自己那棵树"。
+    const strictBase = resolve(cwd, OFFICE_DIR)
+    const allowStrict = inside(landing, strictBase)
+    return { allow: allowStrict, landing, office_root: strictBase, header_office: header, expected_office: strictBase, differs: false, warning: null }
   }
   const office = officeOf(landing)
   const allow = office !== null
