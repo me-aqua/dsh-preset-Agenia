@@ -682,6 +682,41 @@ function doExport(args) {
   }
 
   const resolved = resolveCommit(repo, String(args.commit))
+  // 🔴 F3（技术评审 11-07 · P2）：`--with-staging` 会让副本带着**两个时间点**
+  //    （presets 取自提交、staging 取自导出时刻）⇒ 副本里 `STAT-01`（staged vs live）永远红，
+  //    而那条差是导出器造的。⇒ **一个副本只能是一个时间点**；不一致就拒，而且**拒在任何写之前**
+  //    （F-166 的同一条纪律：我第一版把这段放在写完之后，负对照里 206 份已经落盘了）。
+  if (args.withStaging) {
+    const tree = git(['ls-tree', '-r', '--name-only', resolved.sha, '--', 'presets/agenia'], { cwd: repo })
+    if (tree.status !== 0) return fail('E_COMMIT_UNRESOLVED', `读不出 ${resolved.sha} 的 presets/agenia 清单`, { commit: resolved.sha })
+    const commitPreset = new Map()
+    for (const rel of String(tree.stdout).split('\n').map((x) => x.trim()).filter((x) => x !== '')) {
+      const blob = git(['cat-file', 'blob', `${resolved.sha}:${rel}`], { cwd: repo, encoding: 'buffer' })
+      if (blob.status === 0) commitPreset.set(rel.slice('presets/agenia/'.length), blob.stdout)
+    }
+    const liveNow = stagingFilesOf(repo)
+    const stagingPreset = new Map(liveNow.files.filter((f) => f.rel.startsWith('preset/')).map((f) => [f.rel.slice('preset/'.length), null]))
+    const onlyCommit = [...commitPreset.keys()].filter((rel) => !stagingPreset.has(rel)).sort()
+    const onlyStaging = [...stagingPreset.keys()].filter((rel) => !commitPreset.has(rel)).sort()
+    const diff = []
+    for (const [rel, buf] of commitPreset) {
+      if (!stagingPreset.has(rel)) continue
+      let other = null
+      try { other = readFileSync(path.join(liveNow.root, 'preset', ...rel.split('/'))) } catch { other = null }
+      if (other === null || !other.equals(Buffer.from(buf))) diff.push(rel)
+    }
+    if (onlyCommit.length > 0 || onlyStaging.length > 0 || diff.length > 0) {
+      return fail('E_STAGING_TIME_MISMATCH',
+        '`--with-staging` 会让副本带着**两个时间点**：提交里的 presets/agenia 与导出时刻的 staging/preset 不一致'
+        + `（只在提交里 ${onlyCommit.length} 份 · 只在 staging 里 ${onlyStaging.length} 份 · 内容不同 ${diff.length} 份`
+        + `${diff.length > 0 ? '：' + diff.slice(0, 3).join(' · ') : ''}）。`
+        + '副本必须是**一个**时间点，否则副本里 `STAT-01`（staged vs live）永远红，而那条差是导出器造的。'
+        + '两条出路：**先把 presets 提交**再导出；或者这次**不要** `--with-staging`。'
+        + '（这一拒发生在写第一个字节之前 —— 盘上什么都没多。）',
+        { commit: resolved.sha, tree_root: null })
+    }
+  }
+
   if (!resolved.ok) return fail('E_COMMIT_UNRESOLVED', resolved.problems[0], { commit: null })
 
   // 派工那一刻的活树基线（一旦给了就**在写副本之前**量：那一刻的活树是派工时的活树）。
