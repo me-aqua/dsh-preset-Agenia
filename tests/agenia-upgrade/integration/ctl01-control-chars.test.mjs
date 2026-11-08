@@ -50,6 +50,9 @@
  * 另有**第六把**（gate-4 复审 M1 的补丁）：把 `opJudgeCommit` 的闸关掉、在 `buildSnapshot` 装一个"看存活集"的闸
  * （正是被修掉的那一版）⇒ `CTL-04` 的 **`stock37-damaged`** 腿必须红在 `CTL-P4-STOCK37-READING`
  * （报文会说 `entries[37].text`，而 payload 里只有 1 个 op）；未切的对照必须绿（`CTL-REAL-KNIFE-MOVE-*`）。
+ * 🔴 这一把**自带尺子**：注入的是**内联**码点扫描 + 自己的 `Error.code`，**不借产品的 import / 符号** ——
+ * 产品删掉 `snapshot.mjs` 里那个无调用者的 import 之后，借符号的刀会当场变钝（`controlCharVerdict is not defined`）。
+ * 它证的是**闸的位置**（payload 下标 vs 存活集下标），被测的那一行仍是产品的 `buildSnapshot`。
  *
  * ── 判什么 / 不判什么（scope note）────────────────────────────────────────────
  * **判**：四条路对"正文里有 `code<32` 且 ≠LF 的字符"的反应（收/拒 + 零写入 + 报文三样）。
@@ -888,6 +891,12 @@ function buildRealKnife(tag) {
  * 再在 `buildSnapshot` 里装一个"看存活集"的闸（位置串 `entries[${i}].text`）—— 正是组长修掉的那一版。
  * 期望：`CTL-04` 的 **`stock37-damaged`** 腿红在 `CTL-P4-STOCK37-READING`（报文会说 `entries[37].text`，
  * 而 payload 里只有 1 个 op）；未切的对照副本那条腿必须绿。锚点各须恰好 1 处。
+ *
+ * 🔴 **这把刀自带尺子**：注入的是**内联**的码点扫描 + 自己的 `Error.code`，**不 import / 不调用产品的
+ * `controlCharVerdict`**。理由（2026-11-08 组长实测）：产品把 `snapshot.mjs` 里那个已无调用者的 import 删掉之后，
+ * 借产品符号的刀当场变钝（`controlCharVerdict is not defined` ⇒ `CTL-P4-SETUP`）—— 而"产品变干净"是明确目标
+ * （代码美学进评审门）。这把刀要证的是**闸的位置**（payload 下标 vs 存活集下标），不是"产品里还有没有那个符号"，
+ * 所以尺子由刀自己带；被测的那一行仍是产品的 `buildSnapshot`（`entries.map` 之前）。
  */
 function buildRealKnifeMove(tag) {
   const base = path.join(runRoot(), 'ctl-real-knife', `${tag}-${process.pid}-${Date.now().toString(36)}`)
@@ -924,10 +933,25 @@ function buildRealKnifeMove(tag) {
   if (!off.ok) return { ok: false, code: 'CTL-REAL-KNIFE-MOVE-ANCHOR', message: `关闸失败：${off.message}` }
   const on = patch('lib/snapshot.mjs', '  const normalized = entries.map((e) => normalizeEntry(e, generatedAt))',
     '  {\n'
-    + '    for (let i = 0; i < entries.length; i += 1) {\n'
-    + '      const v = controlCharVerdict(entries[i]?.text, `entries[${i}].text`)\n'
-    + '      if (!v.ok) throw brainError(v.code, v.message)\n'
+    + '    // 【刀自带尺子】不借产品的 import / 符号：内联码点扫描 + 自己的 code。\n'
+    + '    const moveBackGate = (list) => {\n'
+    + '      for (let i = 0; i < list.length; i += 1) {\n'
+    + '        const t = list[i]?.text\n'
+    + '        if (typeof t !== \'string\') continue\n'
+    + '        let at = 0\n'
+    + '        for (const ch of t) {\n'
+    + '          at += 1\n'
+    + '          const cp = ch.codePointAt(0)\n'
+    + '          if (cp !== 10 && cp < 32) {\n'
+    + '            const hex = cp.toString(16).toUpperCase().padStart(4, \'0\')\n'
+    + '            const err = new Error(`entries[${i}].text 正文里有控制字符：第 ${at} 个字符（U+${hex}）`)\n'
+    + '            err.code = \'E_PROPOSAL_CONTROL_CHAR\'\n'
+    + '            throw err\n'
+    + '          }\n'
+    + '        }\n'
+    + '      }\n'
     + '    }\n'
+    + '    moveBackGate(entries)\n'
     + '  }\n'
     + '  const normalized = entries.map((e) => normalizeEntry(e, generatedAt))')
   if (!on.ok) return { ok: false, code: 'CTL-REAL-KNIFE-MOVE-ANCHOR', message: `装回 buildSnapshot 失败：${on.message}` }
