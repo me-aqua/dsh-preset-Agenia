@@ -25,19 +25,65 @@
  *   · 不判体检脚本的**结论**（它的红绿取决于机器现状；这里只判"它在哪棵树上看的"）。
  *   · 副本模式下 `PATHS.repo` **就是**副本 ⇒ "调用方退回 `PATHS.repo`"这件事**只有静态那一格抓得到**；
  *     活树模式下 `reading.root ≠ PATHS.repo` 也能抓。两种模式的抓法写在读数里。
+ *
+ * ## 参照树落在哪（**F1** · 技术评审 2026-11-07 `F1`；这条写在这里因为它是夹具的头号前提）
+ * `MCR-02` ③ 需要"**另一棵树**"（与副本逐字节相同、被弄坏之后副本那一格不许动），`MCR-03` 需要一份
+ * 可以随便写的工作副本；两者都是 `cpSync(副本, 落点)`。落点从前取 `<运行根>/fixtures/…`，而
+ * **运行根必在 `<repo>/.team/` 下** —— 套件自己就是副本时（评审模式的唯一形态），源 = 整棵副本、
+ * 落点 = 它自己的子目录 ⇒ `ERR_FS_CP_EINVAL`（"Cannot copy … to a subdirectory of self"）当场抛，
+ * 于是票 (d)「针 / 入口 / 尺子都指副本」在**任何评审副本里都拿不到证据**。
+ *
+ * ⇒ 规则：**参照树只许落在被测副本之外**。落点 = `<副本的父目录>/.agenia-test-twins/<RUN_ID>/<label>`
+ *   （活树模式：`<运行根>/fixtures/.agenia-test-twins/<RUN_ID>/…`；两种模式下它都在副本之外、同一块盘）；
+ *   拷的时候**跳过 `.team/`** —— 那是这一跑的运行根与证据，拷进去只会把正在写的树复制一遍。
+ *   ⚠️ 判断"在不在副本里"用 `canonical` + 路径分量（`isUnder`），不用字符串前缀；判到在副本里就
+ *   **点名红**（`TWIN-BASE-INSIDE-COPY`），**不**去 cpSync 撞 EINVAL —— 崩溃不是判据。
+ *   刀：`AGENIA_TEST_TWIN_BASE=<副本里面的某个目录>` ⇒ 那一格必须红且红在夹具上（见 log 的刀跑）。
  */
 import { before, describe, test } from 'node:test'
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
-import { PATHS } from '../support/env.mjs'
+import { PATHS, optionalEnv } from '../support/env.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
+import { canonical, isUnder } from '../support/root-guard.mjs'
 import { dispatchShapes, exporterPath, git, runExport } from '../support/tree-at-commit.mjs'
 
 before(() => {
   preflight()
 })
+
+/**
+ * **参照树的底座**（`F1`）：只在被测副本**之外**。
+ *   · 缺省 = `<副本的父目录>/.agenia-test-twins/<RUN_ID>`（父目录按定义不在副本里；同盘）；
+ *   · `AGENIA_TEST_TWIN_BASE` 可以钉死它 —— **只给刀用**（钉在副本里面 ⇒ 这一格红在夹具上）。
+ * @returns {{base:string, under_copy:boolean, pinned:boolean, source:string}}
+ */
+function referenceTreeBase({ copyRoot }) {
+  const pinned = optionalEnv('AGENIA_TEST_TWIN_BASE')
+  const copy = canonical(copyRoot)
+  const base = pinned === null
+    ? path.join(path.dirname(copy), '.agenia-test-twins', path.basename(runRoot()))
+    : canonical(String(pinned))
+  return { base, under_copy: isUnder(base, copy), pinned: pinned !== null, source: pinned === null ? 'sibling-of-the-reviewed-copy' : 'env:AGENIA_TEST_TWIN_BASE（刀）' }
+}
+
+/**
+ * 拷一份树作参照 —— **跳过 `.team/`**（运行根 / 证据根都在那里，拷进去等于把正在写的树复制一遍）。
+ * `to` 必须已经在副本之外（`referenceTreeBase()` 保证；调用方另外判一次）。
+ */
+function copyTree(source, to) {
+  cpSync(source, to, {
+    recursive: true,
+    force: true,
+    filter: (src) => {
+      const rel = path.relative(source, src).replace(/\\/g, '/')
+      return rel !== '.team' && !rel.startsWith('.team/')
+    },
+  })
+  return to
+}
 
 /** 子进程环境：去掉 `AGENIA_REPO_ROOT`（否则"派生"与"显式指定"分不清），临时件落运行根。 */
 function cleanEnv(extra = {}) {
@@ -166,32 +212,46 @@ describe('integration · measuring/copy (MCR) · F-168 针读副本', () => {
       }
 
       // ── ③ 活树 twin：另一棵树被弄坏，副本这一格**不动**；twin 自己必须红 ─────────
-      const twin = path.join(root, 'fixtures', 'mcr02-live-twin')
-      cpSync(copy.root, twin, { recursive: true })
-      const leaderFile = path.join(twin, 'presets', 'agenia', 'leader.md')
-      const contractFile = path.join(twin, 'CONTRACT.md')
-      const leaderSrc = readFileSync(leaderFile, 'utf8')
-      const stepAnchor = '**三、'
-      const stepHits = leaderSrc.split(stepAnchor).length - 1
-      writeFileSync(leaderFile, leaderSrc.split(stepAnchor).join('**第三、'), 'utf8')
-      const contractSrc = readFileSync(contractFile, 'utf8')
-      const dropped = contractSrc.split(/\r?\n/).filter((l) => !l.includes('F-160'))
-      writeFileSync(contractFile, dropped.join('\n'), 'utf8')
-      const second = shapeRootReading(dispatchShapes({ repo: copy.root }))
-      const twinReading = shapeRootReading(dispatchShapes({ repo: twin }))
-      const stable = JSON.stringify({ ...first, root: '<same>' }) === JSON.stringify({ ...second, root: '<same>' })
-      rec.readings.live_movement = {
-        twin,
-        twin_mutations: { leader_step_heading_hits: stepHits, contract_f160_lines_dropped: contractSrc.split(/\r?\n/).length - dropped.length },
-        reading_stable: stable,
-        copy_before: first,
-        copy_after: second,
-        twin_reading: twinReading,
+      // 🔴 `F1`：twin 的落点**必须在副本之外**（拷进自己的子目录 = `ERR_FS_CP_EINVAL`；
+      //    而套件自己就是副本时，运行根必在它里面 —— 那正是评审模式的唯一形态）。
+      const twinBase = referenceTreeBase({ copyRoot: copy.root })
+      rec.readings.twin_base = twinBase
+      if (twinBase.under_copy) {
+        push('TWIN-BASE-INSIDE-COPY', `参照树（twin）的落点会落在被测副本里面：${twinBase.base} ⊂ ${canonical(copy.root)}（来源 ${twinBase.source}）`
+          + ' —— 拷进自己的子目录必然 ERR_FS_CP_EINVAL，这一格就不再有样本（F1 的原样）。参照树只许落在副本之外')
       }
-      if (!stable) push('LIVE-MOVED-THE-READING', '把**另一棵树**（twin）里的载体弄坏之后，副本那一次的读数变了 —— 这一格读的不是副本，是"别的什么树"（活树一动手它就翻）')
-      if (stepHits !== 1) push('TWIN-FIXTURE', `twin 的 fixtures：\`${stepAnchor}\` 在 leader.md 里命中 ${stepHits} 处（应恰好 1 处）—— twin 造坏了，"twin 必须红"那一格就没样本`)
-      for (const code of ['CARD-STEP-MISSING', 'CONTRACT-F160-SENTENCE-MISSING']) {
-        if (!twinReading.problems.includes(code)) push('TWIN-NOT-RED', `twin（三道针被弄坏的那棵树）应当红 \`${code}\`，实得 ${JSON.stringify(twinReading.problems)} —— 针在"指到坏树"时不红，那"副本不动"也就是一句空话`)
+      const twin = path.join(twinBase.base, 'mcr02-live-twin')
+      let stable = false
+      let stepHits = -1
+      let twinReading = null
+      if (!twinBase.under_copy) {
+        mkdirSync(twinBase.base, { recursive: true })
+        copyTree(copy.root, twin)
+        const leaderFile = path.join(twin, 'presets', 'agenia', 'leader.md')
+        const contractFile = path.join(twin, 'CONTRACT.md')
+        const leaderSrc = readFileSync(leaderFile, 'utf8')
+        const stepAnchor = '**三、'
+        stepHits = leaderSrc.split(stepAnchor).length - 1
+        writeFileSync(leaderFile, leaderSrc.split(stepAnchor).join('**第三、'), 'utf8')
+        const contractSrc = readFileSync(contractFile, 'utf8')
+        const dropped = contractSrc.split(/\r?\n/).filter((l) => !l.includes('F-160'))
+        writeFileSync(contractFile, dropped.join('\n'), 'utf8')
+        const second = shapeRootReading(dispatchShapes({ repo: copy.root }))
+        twinReading = shapeRootReading(dispatchShapes({ repo: twin }))
+        stable = JSON.stringify({ ...first, root: '<same>' }) === JSON.stringify({ ...second, root: '<same>' })
+        rec.readings.live_movement = {
+          twin,
+          twin_mutations: { leader_step_heading_hits: stepHits, contract_f160_lines_dropped: contractSrc.split(/\r?\n/).length - dropped.length },
+          reading_stable: stable,
+          copy_before: first,
+          copy_after: second,
+          twin_reading: twinReading,
+        }
+        if (!stable) push('LIVE-MOVED-THE-READING', '把**另一棵树**（twin）里的载体弄坏之后，副本那一次的读数变了 —— 这一格读的不是副本，是"别的什么树"（活树一动手它就翻）')
+        if (stepHits !== 1) push('TWIN-FIXTURE', `twin 的 fixtures：\`${stepAnchor}\` 在 leader.md 里命中 ${stepHits} 处（应恰好 1 处）—— twin 造坏了，"twin 必须红"那一格就没样本`)
+        for (const code of ['CARD-STEP-MISSING', 'CONTRACT-F160-SENTENCE-MISSING']) {
+          if (!twinReading.problems.includes(code)) push('TWIN-NOT-RED', `twin（三道针被弄坏的那棵树）应当红 \`${code}\`，实得 ${JSON.stringify(twinReading.problems)} —— 针在"指到坏树"时不红，那"副本不动"也就是一句空话`)
+        }
       }
 
       caseFail(problems)

@@ -48,12 +48,20 @@
  * ## 夹具（为什么不在运行根里）
  *   运行根按守卫只能落在 `<repo>/.team/test/<日期>/_runs/<RUN_ID>` ⇒ "向上找最近的 `.team`"会先撞上
  *   **真实的 `<repo>/.team`** ⇒ ③⑤ 的拒绝在运行根里造不出来。⇒ 两棵临时树放在
- *   `<repo 的父目录>/.agenia-office-fixtures/<RUN_ID>/A|B`（同盘、仓库之外、祖先链上没有 `.team`）。
+ *   `<底座>/.agenia-office-fixtures/<RUN_ID>/A|B`（同盘、仓库之外、祖先链上没有 `.team`）。
  *   拓扑本身是判据：每格先过 `sampleProblems()`（`support/office-fixtures.mjs`）。**不删**任何东西。
+ *
+ *   🔴 **F2（技术评审 2026-11-07）· 底座是"逐级向上找"的，不是"父目录"**：
+ *     评审副本住在 `.team/review/<日期>/` 下面 ⇒ `<repo 的父目录>` 自己就在一个 `.team` 里。旧版在这里
+ *     `throw` ⇒ 本文件在 `before()` 里当场死 ⇒ `OFB-01…08` **一条都没跑**（结算写成"本批未写"），
+ *     而 `REV-02` 拿同一个夹具 ⇒ 替它红。"夹具搭不起来"被读成了"产品坏了"。
+ *     现在：底座从 `<repo 的父目录>` 起**逐级向上**取第一个"同盘 + 不在工作区里 + 祖先链上没有 `.team`"的
+ *     （活树里选中的仍是 `E:\`，落点与从前逐字符相同）；一个都挑不出来 / 建不动 ⇒ **HOLD 并点名**
+ *     （`sampleGate()`），不抛、不红、不静默跳过。刀：`AGENIA_OFFICE_FIXTURE_BASE=<.team 底下>`。
  */
 import { before, describe, test } from 'node:test'
 import path from 'node:path'
-import { caseDir, caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
+import { caseDir, caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import { FROZEN, PATHS } from '../support/env.mjs'
 import { importStaged, readStagedText } from '../support/sut.mjs'
 import { buildCatalog, buildContentRoot, configFromComposition, importSourceCopy, withHarness } from '../support/injector-harness.mjs'
@@ -67,7 +75,7 @@ const WRITE_CODE = FROZEN.officeBoundCodes.write
 const PREFIX = FROZEN.officeBoundMessagePrefix
 const ROW_IDS = ['①', '②', '③', '④', '⑤']
 
-/** 夹具（`before()` 里建；建不出来 = 整份文件红，不许静默跳过）。 */
+/** 夹具（`before()` 里建；**建不出来不抛** —— 那一档由 `sampleGate()` 记 HOLD 并点名，`F2`）。 */
 let FX = null
 before(() => {
   preflight()
@@ -94,18 +102,44 @@ function sample(push) {
   for (const [code, message] of sampleProblems(FX)) push(code, message)
 }
 
+/**
+ * **夹具闸**（`F2`，技术审查 2026-11-07）：夹具**搭不起来** ⇒ 这一格 `HOLD` + 点名，返回 `false`；
+ * 搭起来了 ⇒ 走 `sampleProblems()`（拓扑被挪走 / 空样本照旧**红**）并返回 `true`。
+ *
+ * 分工的口径（"夹具坏了" vs "产品坏了"）：
+ *   · `ok:false`（底座选不出来 / 建不动）⇒ **这一档不适用** ⇒ HOLD（`caseHold`），**不是红**；
+ *   · `ok:true` 但根被挪进一个 `.team` / 种子没了 ⇒ **判据的样本坏了** ⇒ 红（`OFFB-SAMPLE-*`）。
+ * 从前这两种都是"整份文件在 `before()` 里死掉"：8 条一条都没跑、`REV-02` 替它红。
+ * ⚠️ 这不是放宽：HOLD 在结算里单独一栏、逐条写原因，**绝不计绿**。
+ */
+function sampleGate(rec, push) {
+  if (FX !== null && FX.ok === true) {
+    sample(push)
+    return true
+  }
+  const reasons = (FX?.problems ?? []).length > 0
+    ? FX.problems
+    : [{ code: 'OFFB-SAMPLE-MISSING', message: '夹具对象没建出来（before() 挂了？）' }]
+  for (const p of reasons) caseHold(rec, p.code, p.message)
+  return false
+}
+
 /** 读上面那几样（读数里要有"这一跑量的是哪棵树"，不然读的人没法回推）。 */
 function fixtureReadings() {
   return {
+    ok: FX === null ? null : FX.ok,
     root: FX === null ? null : FX.root,
     a: FX === null ? null : FX.a,
     b: FX === null ? null : FX.b,
-    tree_hashes: FX === null ? null : { a: digestOf(FX.a), b: digestOf(FX.b) },
+    /** 底座是怎么选出来的（`F2`）：逐级的理由 + 最终用的是哪一级。 */
+    base_choice: FX === null ? null : FX.choice,
+    problems: FX === null ? null : FX.problems,
+    tree_hashes: FX === null || FX.ok !== true ? null : { a: digestOf(FX.a), b: digestOf(FX.b) },
     topology: {
-      fixture_root_ancestor_office: FX === null ? null : officeOfPath(FX.root),
+      fixture_root_ancestor_office: FX === null || FX.root === null ? null : officeOfPath(FX.root),
       run_root: runRoot(),
       run_root_ancestor_office: officeOfPath(runRoot()),
-      note: '运行根在 <repo>/.team 里面 ⇒ ③⑤ 的拒绝只能在仓库之外的两棵临时树上量（契约 §三）。',
+      note: '运行根在 <repo>/.team 里面 ⇒ ③⑤ 的拒绝只能在仓库之外的两棵临时树上量（契约 §三）；底座逐级向上找 `.team`-free 的那一级（F2）。',
     },
     scope_note: '不判窄会话的另外两格（白名单 / 提案拒）与门禁路由 / 真挂载 / officeBound 名单一致 / 活体 cwd（working_directory）/ symlink 攻击；只判契约 §一、§六 的落点、读数与窄会话写范围。',
   }
@@ -346,7 +380,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
       rec.readings.fixtures = fixtureReadings()
-      sample(push)
+      if (!sampleGate(rec, push)) { caseFail(out); return }
       const mod = await loadSubject(push)
       if (mod !== null) {
         out.push(...row1(mod))
@@ -361,7 +395,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
       rec.readings.fixtures = fixtureReadings()
-      sample(push)
+      if (!sampleGate(rec, push)) { caseFail(out); return }
       const mod = await loadSubject(push)
       if (mod !== null) {
         out.push(...row2(mod))
@@ -376,7 +410,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
       rec.readings.fixtures = fixtureReadings()
-      sample(push)
+      if (!sampleGate(rec, push)) { caseFail(out); return }
       const mod = await loadSubject(push)
       if (mod !== null) {
         out.push(...row3(mod))
@@ -391,7 +425,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
       rec.readings.fixtures = fixtureReadings()
-      sample(push)
+      if (!sampleGate(rec, push)) { caseFail(out); return }
       const mod = await loadSubject(push)
       if (mod !== null) {
         out.push(...row4(mod))
@@ -406,7 +440,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
       rec.readings.fixtures = fixtureReadings()
-      sample(push)
+      if (!sampleGate(rec, push)) { caseFail(out); return }
       const mod = await loadSubject(push)
       if (mod !== null) {
         out.push(...row5(mod))
@@ -421,7 +455,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
       rec.readings.fixtures = fixtureReadings()
-      sample(push)
+      if (!sampleGate(rec, push)) { caseFail(out); return }
       const base = path.join(caseDir('OFB-06'), 'ofb06')
 
       // ── 阳性对照：照契约写的最小实现必须五格全绿（否则是这套判据不可满足，不是产品的问题）──
@@ -478,7 +512,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
       rec.readings.fixtures = fixtureReadings()
-      sample(push)
+      if (!sampleGate(rec, push)) { caseFail(out); return }
       const mod = await loadSubject(push)
       if (mod === null) caseFail(out)
       const contentRoot = path.join(runRoot(), 'tmp', 'ofb-harness', officeRunId())
@@ -548,7 +582,7 @@ describe('unit · office tree (OFB) · ticket-20261102-02', () => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
       rec.readings.fixtures = fixtureReadings()
-      sample(push)
+      if (!sampleGate(rec, push)) { caseFail(out); return }
       // N1 的落点：oracle 自己的两向校准（目标就是 .team / 树根 ⇒ null；B/src/x.js ⇒ B/.team）
       for (const [code, message] of oracleProblems(FX)) push(code, message)
       const base = path.join(caseDir('OFB-08'), 'ofb08')

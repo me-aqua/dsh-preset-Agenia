@@ -19,7 +19,7 @@ import { before, describe, test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { FROZEN, PATHS } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase, stagingReadings } from '../support/evidence.mjs'
+import { caseFail, caseHold, preflight, problem, runCase, stagingReadings } from '../support/evidence.mjs'
 import { importStaged, readStagedText, stagingExists, stagingPath } from '../support/sut.mjs'
 import { annotationLeaks, cfg, identityLanding, listMd, memberAnnotations, memberPresetShared, parseComposition, readPresetBaseline } from '../support/composition.mjs'
 import { ensureOfficeFixtures } from '../support/office-fixtures.mjs'
@@ -297,8 +297,23 @@ describe('static · roles (REV-02)', () => {
        * ⇒ 旧夹具基数（`AGENIA_TEST_WORKSPACE`，= 运行根里的 workspace）会让 `项目根 / 穿越` 那几格
        * 被真实的 `<repo>/.team` 放行 ⇒ 这三格变成**假红**。断言的期望值一条没改（仍在 `.team/` 里放行、
        * 出了 `.team` 拒绝），只把"哪棵树"换成生产形状：一个工作区，`.team` 在它里面，而不是它在一个 `.team` 里面。
+       *
+       * 🔴 **技术评审 2026-11-07 `F2`**：夹具**搭不起来**（底座里挑不出一个 `.team`-free 的 / 建不动）时，
+       * 这一格从此记 **HOLD 并点名** —— 从前 `ensureOfficeFixtures()` 会 `throw`，于是 `REV-02` 替
+       * `OFB-01…08` 红，"夹具搭不起来"被读成了"产品坏了"。
+       * ⚠️ 没放宽：HOLD 在结算里单列、逐条写原因，**绝不计绿**（这条用例前面那些格子的红照旧是红）；
+       * 夹具建出来但拓扑不对仍然由各格自己的断言去红。
        */
-      const ws = ensureOfficeFixtures().root
+      const fx = ensureOfficeFixtures()
+      rec.readings.office_fixtures = { ok: fx.ok, root: fx.root, base_choice: fx.choice, problems: fx.problems }
+      if (!fx.ok) {
+        for (const p of (fx.problems ?? [{ code: 'REV02-OFFICE-FIXTURE', message: 'office 夹具没建出来（原因没记）' }])) {
+          caseHold(rec, p.code, `office 夹具搭不起来 ⇒ 写边界那几格判不了（不是产品越权）：${p.message}`)
+        }
+        caseFail(problems)
+        return
+      }
+      const ws = fx.root
       const agentAt = (cwd) => ({ id: 'agent-1', session: { header: { cwd } } })
       const at = agentAt(ws)
       const v = (role, toolName, args, agent = at) => {

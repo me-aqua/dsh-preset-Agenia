@@ -65,8 +65,10 @@ import { before, describe, test } from 'node:test'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { PATHS } from '../support/env.mjs'
+import { PATHS, optionalEnv } from '../support/env.mjs'
 import { caseDir, caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
+// F7（技术评审 2026-11-07）：窄权限那几格的 cwd 底座与 `REV-02` **同款** —— `.team`-free 的 office 夹具树。
+import { ensureOfficeFixtures, normKey as officeKey, officeOfPath } from '../support/office-fixtures.mjs'
 import { cfg, delegationToolNames, enabledDelegations, hostLevelPairingProblems, leaderBlockProblems, listMd, memberAnnotations, parseComposition, plain, presetEntries, readPresetBaseline } from '../support/composition.mjs'
 // 2026-11-08：`PRS-05` 的运行时量具（真插件 + 真 provider + 切出来的真运行时函数；口径写在文件头）。
 import { CHILD_MODEL_DISPLAY_NAME, CHILD_MODEL_PIN, childModelReadings } from '../support/subagent-options.mjs'
@@ -573,23 +575,58 @@ describe('static · presets-two (任务 A)', () => {
       //    门禁里那次 `narrowVerdict`。补这一腿之前，"删掉 `narrowSessions.add(…)`"、"把白名单换成
       //    别处的一份字面量"、"把窄挪到角色工具集后面"这三种改法，102 条一条都不会红。
       //    三格各一个码 + 三个"该放行"的格子（只拦不算数，拦过头也是错）。
+      //
+      // 🔴 **F7（技术评审 2026-11-07 `F7`）· 这几格的 cwd 底座 = `.team`-free 的 office 夹具树**：
+      //    从前这里拿 `PATHS.repo` 当 cwd。评审副本住在 `.team/review/<日期>/tree-at-…` 下 ⇒
+      //    一条会话的 office 是"最近的 `.team` 祖先"= **外层**那棵 ⇒ 落点 `<副本>/presets/agenia/inject.js`
+      //    在它里面 ⇒ 那两条「必须拒」翻成**放行**，红因看起来像产品越权，其实是**夹具位置**。
+      //    同一天里 `REV-02` 已经换到 `.team`-free 的临时树（`static/roles.test.mjs`），这里跟上，
+      //    而且**用同一个底座**（`ensureOfficeFixtures().root`）—— 两个文件同一份夹具口径。
+      //    刀：`AGENIA_PRS02_NARROW_BASE=<副本根>` 把旧底座原样放回来 ⇒ 这一格必须红，**红在夹具上**
+      //    （`PRS02-FIXTURE-UNDER-TEAM`），不是一个看起来像产品越权的 `NARROW-CODE`。
       const narrowVerdictFn = mod.narrowVerdict
-      const repoRoot = PATHS.repo
       const agentAt = (cwd) => ({ id: 'prs-narrow', session: { id: 'prs-narrow', header: { cwd } } })
+      const narrowFixture = ensureOfficeFixtures()
+      const pinnedNarrowBase = optionalEnv('AGENIA_PRS02_NARROW_BASE')
+      const narrowBase = pinnedNarrowBase === null ? (narrowFixture.ok ? narrowFixture.root : null) : path.resolve(String(pinnedNarrowBase))
+      /** 这个底座是不是住在**外层**某个 `.team` 里（是 ⇒ 那两条「必须拒」不是这条规则的样本）。 */
+      const baseOfficeFacts = (base) => {
+        if (base === null) return null
+        const abs = path.resolve(base)
+        const hit = officeOfPath(abs)
+        const own = path.join(abs, '.team')
+        return { base: abs, ancestor_office: hit, own_office: own, foreign: hit !== null && officeKey(hit) !== officeKey(own) }
+      }
+      const narrowBaseFacts = baseOfficeFacts(narrowBase)
+      rec.readings.narrow_base = {
+        source: pinnedNarrowBase === null ? 'ensureOfficeFixtures().root（与 REV-02 同一个底座）' : 'env:AGENIA_PRS02_NARROW_BASE（刀）',
+        chosen: narrowBaseFacts,
+        fixture: { ok: narrowFixture.ok, root: narrowFixture.root, problems: narrowFixture.problems },
+        /** 刀那一侧的读数：旧底座（`PATHS.repo`）在这棵树里会认哪一棵 `.team` 当 office。 */
+        old_base: baseOfficeFacts(PATHS.repo),
+        knife_env: 'AGENIA_PRS02_NARROW_BASE',
+      }
       if (typeof narrowVerdictFn !== 'function') {
         push('NARROW-EXECUTOR-MISSING', '现役 inject.js 没有导出 `narrowVerdict` —— 窄权限只剩标签、没有执行者（`NARROW_PERMISSION` 就没有读者）')
+      } else if (narrowBase === null) {
+        caseHold(rec, 'PRS02-NARROW-FIXTURE', `窄权限那几格要一个 \`.team\`-free 的 cwd 底座，而这棵树里那个夹具搭不起来：${(narrowFixture.problems ?? []).map((p) => `${p.code}: ${p.message}`).join('；')} —— 这六格判不了（不拿 \`PATHS.repo\` 顶替：评审副本里它就在一个 \`.team\` 里面，那正是 F7 那个洞）。**不是绿。**`)
+      } else if (narrowBaseFacts.foreign === true) {
+        push('PRS02-FIXTURE-UNDER-TEAM', `窄权限那几格的 cwd 底座住在**外层**某个 .team 里：底座 ${narrowBaseFacts.base} · 最近的 .team 祖先是 ${narrowBaseFacts.ancestor_office} · 它自己那棵树本该是 ${narrowBaseFacts.own_office}`
+          + ' —— 于是"会话的 office"认的是外层那棵，那两条「必须拒」写的是**另一条规则**（F7：评审副本里它们会翻成放行，而红因看起来像产品越权）。'
+          + '换一个 `.team`-free 底座（与 REV-02 同款），别改产品')
       } else {
+        const narrowRoot = narrowBaseFacts.base
         const narrowCells = [
-          ['工具不在白名单（pwsh）', ['pwsh', {}, agentAt(repoRoot)], NARROW_DENY_CODES.tool],
-          ['工具不在白名单（bash，第二把）', ['bash', {}, agentAt(repoRoot)], NARROW_DENY_CODES.tool],
-          ['工具名是空串', ['', {}, agentAt(repoRoot)], NARROW_DENY_CODES.tool],
-          ['提案（proposal_file）', ['proposal_file', {}, agentAt(repoRoot)], NARROW_DENY_CODES.proposal],
-          ['写项目文件（.team 之外）', ['write', { file_path: path.join(repoRoot, 'presets', 'agenia', 'inject.js') }, agentAt(repoRoot)], NARROW_DENY_CODES.write],
-          ['写 .team 但用 .. 穿出去', ['edit', { file_path: path.join(repoRoot, '.team', '..', 'README.md') }, agentAt(repoRoot)], NARROW_DENY_CODES.write],
-          ['写但没给落点', ['write', {}, agentAt(repoRoot)], NARROW_DENY_CODES.write],
-          ['读（白名单内）', ['read', { file_path: path.join(repoRoot, 'presets', 'agenia', 'inject.js') }, agentAt(repoRoot)], null],
-          ['写 .team 里的东西', ['write', { file_path: path.join(repoRoot, '.team', 'test', 'prs-narrow.md') }, agentAt(repoRoot)], null],
-          ['写 .team 里带 .. 但没穿出去', ['edit', { file_path: path.join(repoRoot, '.team', 'a', '..', 'b.md') }, agentAt(repoRoot)], null],
+          ['工具不在白名单（pwsh）', ['pwsh', {}, agentAt(narrowRoot)], NARROW_DENY_CODES.tool],
+          ['工具不在白名单（bash，第二把）', ['bash', {}, agentAt(narrowRoot)], NARROW_DENY_CODES.tool],
+          ['工具名是空串', ['', {}, agentAt(narrowRoot)], NARROW_DENY_CODES.tool],
+          ['提案（proposal_file）', ['proposal_file', {}, agentAt(narrowRoot)], NARROW_DENY_CODES.proposal],
+          ['写项目文件（.team 之外）', ['write', { file_path: path.join(narrowRoot, 'presets', 'agenia', 'inject.js') }, agentAt(narrowRoot)], NARROW_DENY_CODES.write],
+          ['写 .team 但用 .. 穿出去', ['edit', { file_path: path.join(narrowRoot, '.team', '..', 'README.md') }, agentAt(narrowRoot)], NARROW_DENY_CODES.write],
+          ['写但没给落点', ['write', {}, agentAt(narrowRoot)], NARROW_DENY_CODES.write],
+          ['读（白名单内）', ['read', { file_path: path.join(narrowRoot, 'presets', 'agenia', 'inject.js') }, agentAt(narrowRoot)], null],
+          ['写 .team 里的东西', ['write', { file_path: path.join(narrowRoot, '.team', 'test', 'prs-narrow.md') }, agentAt(narrowRoot)], null],
+          ['写 .team 里带 .. 但没穿出去', ['edit', { file_path: path.join(narrowRoot, '.team', 'a', '..', 'b.md') }, agentAt(narrowRoot)], null],
         ]
         const narrowReadings = {}
         for (const [label, args, wantCode] of narrowCells) {
@@ -643,8 +680,8 @@ describe('static · presets-two (任务 A)', () => {
             const cut = await importSourceCopy({ dir: path.join(caseDir('PRS-02'), 'knife-narrow'), source: knife.source })
             if (!cut.ok) push(cut.code, `窄权限那把刀 import 不了（那不是"变绿"，是换个崩法）：${cut.why}`)
             else {
-              const baseline = callPure(narrowVerdictFn, 'pwsh', {}, agentAt(repoRoot))
-              const mutant = callPure(cut.mod.narrowVerdict, 'pwsh', {}, agentAt(repoRoot))
+              const baseline = callPure(narrowVerdictFn, 'pwsh', {}, agentAt(narrowRoot))
+              const mutant = callPure(cut.mod.narrowVerdict, 'pwsh', {}, agentAt(narrowRoot))
               rec.readings.narrow_knife = {
                 baseline: baseline.err === null ? baseline.out : { err: baseline.err },
                 mutant: mutant.err === null ? mutant.out : { err: mutant.err },

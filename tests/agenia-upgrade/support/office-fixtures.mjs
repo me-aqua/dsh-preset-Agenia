@@ -8,8 +8,20 @@
  *    而新规则「从落点向上找最近的 `.team` 祖先」会先撞上**真实的 `<repo>/.team`** ⇒ 运行根里的每个落点都
  *    "在组内"，定形 ③（拒绝）与 ⑤（老越界样例仍拒绝）**造不出来**。
  *    ⇒ 两棵临时树放**同一块盘、仓库之外、祖先链上没有 `.team`** 的地方：
- *       `<盘符>\.agenia-office-fixtures\<RUN_ID>\A|B`
+ *       `<底座>\.agenia-office-fixtures\<RUN_ID>\A|B`（底座由 `chooseOfficeFixtureBase()` **逐级向上**选）。
  *    拓扑本身是判据（`sampleProblems()` 在每一格里先跑）：根被挪进一个 `.team` 底下 ⇒ 红，不静默放过。
+ *
+ * 🔴 **F2（技术评审 2026-11-07）· 底座要逐级向上找，搭不起来记 HOLD**：
+ *    评审副本住在 `.team/review/<日期>/` 下面 ⇒ `<repo 的父目录>` **自己就在一个 `.team` 里**。
+ *    旧版只看这一级、撞上 `.team` 就 `throw` ⇒ `before()` 当场死 ⇒ `OFB-01…08` 一条都没跑
+ *    （结算里写成"本批未写 / pending-write"），`REV-02` 拿同一个夹具 ⇒ 替它红 ——
+ *    "夹具搭不起来"被读成了"产品坏了"。现在：
+ *      · 底座**从 `<repo 的父目录>` 起逐级向上**找第一个"同盘 + 不在工作区里 + 祖先链上没有 `.team`"的
+ *        （在活树里选中的仍是 `E:\`，与从前**逐字符同一个落点**）；
+ *      · 一个都找不到 / 建不动 ⇒ `ok:false` + 点名的 `problems[]` ⇒ 调用方记 **HOLD**（不是红、不是缺跑）；
+ *      · 拓扑仍然是判据：建出来了但根在 `.team` 底下 ⇒ `OFFB-SAMPLE-TOPOLOGY` **红**。
+ *    刀：`AGENIA_OFFICE_FIXTURE_BASE=<某个 .team 底下>` ⇒ 上面第 2 条（HOLD 并点名），见
+ *    `.team/test/2026-11-08/log.md`。
  *
  * 🔴 删除纪律：这里**不删**任何东西（删除只允许在运行根里，见 `root-guard.mjs::assertDeletable`）。
  *    同一个 `RUN_ID` 重复跑只覆盖种子文件；不同 `RUN_ID` 各留一棵小树（与 `_runs` 同一种账）。
@@ -150,52 +162,183 @@ export function officeRunId() {
 }
 
 /**
- * 夹具根：**仓库之外**（`<repo 的父目录>/.agenia-office-fixtures/<RUN_ID>`），同一个盘符。
- * 形状的来历见文件头（运行根在 `.team` 里面 ⇒ 拒绝那两格造不出来）。
+ * **把夹具底座钉死**（只给刀 / 复现用；正常情况下**不许设**）。
+ * 名字与语义见 `chooseOfficeFixtureBase()`：一旦钉了就**不走**"逐级向上找 `.team`-free 底座"那条路，
+ * 于是"钉在一个 `.team` 底下"就能把 F2 描述的旧形状原样造出来（那一跑必须 HOLD 并点名，不是红、不是缺跑）。
  */
-export function officeFixtureRoot() {
-  return path.join(path.dirname(PATHS.repo), '.agenia-office-fixtures', officeRunId())
+export const OFFICE_FIXTURE_BASE_ENV = 'AGENIA_OFFICE_FIXTURE_BASE'
+
+/**
+ * 一个目录能不能当**夹具底座** —— 四个条件，缺一条返回人话（`null` = 可以）。
+ * 这四条就是"这两棵临时树代表生产"的前提（同 `sampleProblems()` 那一组，但这里判的是**底座**）。
+ *
+ * 🔴 第三条是 F2 的病根：底座自己或它的祖先链上出现 `.team` ⇒ `A`/`B` 里那些 `.team` 就不再是
+ *    "最近的那一个" ⇒ ③⑤ 的拒绝会静默变放行。评审副本正住在 `.team/review/<日期>/` 下，
+ *    所以**底座要逐级向上找**，不能只看 `<repo 的父目录>`。
+ */
+export function officeFixtureBaseProblem(base, { repo = PATHS.repo } = {}) {
+  if (typeof base !== 'string' || base.trim() === '') return '底座是空路径'
+  const abs = path.resolve(base)
+  if (driveOf(abs) === null) return `底座不是一个带盘符的绝对路径：${abs}`
+  if (driveOf(abs) !== driveOf(repo)) return `底座与工作区不同盘（${driveOf(abs)} ≠ ${driveOf(repo)}；C 盘是硬红线）：${abs}`
+  if (isUnderPath(abs, repo)) return `底座落在工作区里（${abs} ⊂ ${repo}）`
+  const office = officeOfPath(abs)
+  if (office !== null) return `底座的祖先链上已经有 .team（${office}）—— 拒绝那两格会静默变放行`
+  return null
+}
+
+/** 候选底座：从 `from` 起**逐级向上**（`from` 自己算第一个，最后一个是盘根）。 */
+export function officeFixtureBaseCandidates(from = path.dirname(PATHS.repo)) {
+  const out = []
+  let dir = path.resolve(from)
+  for (let i = 0; i < 64; i += 1) {
+    out.push(dir)
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return out
+}
+
+/** 这个目录**在一个 git 工作树里**吗（它自己或任一祖先有 `.git`）。**只用于选优**，不是判据。 */
+export function insideGitWorkTree(dir) {
+  let cur = path.resolve(dir)
+  for (let i = 0; i < 64; i += 1) {
+    if (existsSync(path.join(cur, '.git'))) return true
+    const parent = path.dirname(cur)
+    if (parent === cur) return false
+    cur = parent
+  }
+  return false
+}
+
+/**
+ * **选夹具底座**（`F2`）：第一个「可用 且 不在任何 git 工作树里」的候选；没有就退到第一个可用的；
+ * 一个可用的都没有 ⇒ `ok:false` + **点名的原因**（调用方记 HOLD，不许抛、不许让兄弟判据替它红）。
+ *
+ * 为什么优先"不在 git 工作树里"：底座在一个仓库根上时，`<底座>/.agenia-office-fixtures/…` 会落进
+ * **那个仓库的工作树**（评审副本住在 `.team/review/…` 时，逐级向上第一站就是活树 `E:\Harness`）——
+ * 夹具会往活树里扔一份没人认领的目录。这条**只影响选优**：两个候选都可用时优先不脏工作树的那个。
+ *
+ * 读数：`tried[]` 逐条记「哪一级、为什么不用 / 用了」，报里能回推"为什么是这个底座"。
+ *
+ * @param {{from?:string, repo?:string, pinned?:string|null}} [options]
+ * @returns {{ok:boolean, base:string|null, root:string|null, source:string, tried:Array<object>,
+ *            code:string|null, message:string|null}}
+ */
+export function chooseOfficeFixtureBase({ from = path.dirname(PATHS.repo), repo = PATHS.repo, pinned = optionalEnv(OFFICE_FIXTURE_BASE_ENV) } = {}) {
+  const tried = []
+  if (pinned !== null && String(pinned).trim() !== '') {
+    const abs = path.resolve(String(pinned))
+    const problem = officeFixtureBaseProblem(abs, { repo })
+    tried.push({ base: abs, pinned: true, problem, inside_git_work_tree: insideGitWorkTree(abs) })
+    if (problem !== null) {
+      return {
+        ok: false, base: null, root: null, source: `env:${OFFICE_FIXTURE_BASE_ENV}`, tried,
+        code: 'OFFB-FIXTURE-BASE-PINNED-UNUSABLE',
+        message: `夹具底座被 ${OFFICE_FIXTURE_BASE_ENV} 钉在 ${abs}，而它不能用：${problem} —— 这一档的夹具搭不起来（HOLD，不是产品坏了）`,
+      }
+    }
+    return { ok: true, base: abs, root: path.join(abs, '.agenia-office-fixtures', officeRunId()), source: `env:${OFFICE_FIXTURE_BASE_ENV}`, tried, code: null, message: null }
+  }
+  let firstUsable = null
+  for (const dir of officeFixtureBaseCandidates(from)) {
+    const problem = officeFixtureBaseProblem(dir, { repo })
+    const git = insideGitWorkTree(dir)
+    tried.push({ base: dir, pinned: false, problem, inside_git_work_tree: git })
+    if (problem !== null) continue
+    if (firstUsable === null) firstUsable = dir
+    if (!git) return { ok: true, base: dir, root: path.join(dir, '.agenia-office-fixtures', officeRunId()), source: 'nearest-.team-free-outside-git', tried, code: null, message: null }
+  }
+  if (firstUsable !== null) return { ok: true, base: firstUsable, root: path.join(firstUsable, '.agenia-office-fixtures', officeRunId()), source: 'nearest-.team-free', tried, code: null, message: null }
+  return {
+    ok: false, base: null, root: null, source: 'no-.team-free-base', tried,
+    code: 'OFFB-FIXTURE-NO-UNIT-FREE-BASE',
+    message: `从 ${from} 逐级向上找不到一个能当夹具底座的目录（要求：同盘、不在工作区里、祖先链上没有 .team）—— 这一档的夹具搭不起来（HOLD，不是产品坏了）`,
+  }
+}
+
+/**
+ * 夹具根 —— 底座的派生（`<底座>/.agenia-office-fixtures/<RUN_ID>`）。
+ * ⚠️ 可能为 `null`（底座选不出来时）—— **调用方不许把 null 当路径用**（F2：那是 HOLD，不是红）。
+ */
+export function officeFixtureRoot({ from = path.dirname(PATHS.repo), repo = PATHS.repo } = {}) {
+  const choice = chooseOfficeFixtureBase({ from, repo })
+  return choice.root
 }
 
 /**
  * 建（幂等）两棵临时树：
  *   `<root>/A/.team/review/{seed.md}`   ← 假会话的 `header.cwd` 指向 A
  *   `<root>/B/.team/review/{seed.md}` · `<root>/B/src/keep.js`
- * @returns {{root:string, a:string, b:string, aOffice:string, bOffice:string, seeds:string[]}}
+ *
+ * 🔴 **不抛**（`F2`，技术评审 2026-11-07 `F2`）：底座选不出来 / 建不动 ⇒ `ok:false` + `problems[]`，
+ *    调用方把它记成 **HOLD 并点名**。从前这里在"祖先链上有 `.team`"时直接 `throw`，而那正是
+ *    **评审副本的住处** ⇒ 整个文件在 `before()` 里就死了：`OFB-01…08` 一条都没跑（结算里写成
+ *    "本批未写"），`REV-02` 拿同一个夹具 ⇒ 替它红。"夹具搭不起来"被读成了"产品坏了"。
+ *    ⚠️ **没有放宽判据**：拓扑仍然是判据（`sampleProblems()` 照旧判，建出来但底座不对 ⇒ **红**）；
+ *    这里只把"建不出来"与"建出来但不对"分开 —— 前者 HOLD，后者红。
+ *
+ * @param {{pinned?:string|null, from?:string, repo?:string}} [options]
+ * @returns {{ok:boolean, root:string|null, a:string|null, b:string|null, aOffice:string|null,
+ *            bOffice:string|null, seeds:string[], choice:object, problems:Array<{code:string,message:string}>}}
  */
-export function ensureOfficeFixtures() {
-  const root = officeFixtureRoot()
-  // 落点自检：必须在仓库之外、同盘、祖先链上没有 `.team` —— 这几条是"这棵树代表生产"的前提。
-  if (isUnderPath(root, PATHS.repo)) throw new Error(`OFB 夹具根不许落在工作区里：${root} ⊂ ${PATHS.repo}`)
-  if (driveOf(root) !== driveOf(PATHS.repo)) throw new Error(`OFB 夹具根必须与工作区同盘（C 盘红线）：${root}`)
-  if (officeOfPath(root) !== null) throw new Error(`OFB 夹具根的祖先里已经有 .team（拒绝那两格会变放行）：${officeOfPath(root)}`)
+export function ensureOfficeFixtures({ pinned, from, repo } = {}) {
+  const options = {}
+  if (pinned !== undefined) options.pinned = pinned
+  if (from !== undefined) options.from = from
+  if (repo !== undefined) options.repo = repo
+  const choice = chooseOfficeFixtureBase(options)
+  const problems = []
+  const empty = { ok: false, root: null, a: null, b: null, aOffice: null, bOffice: null, seeds: [], choice, problems }
+  if (!choice.ok) {
+    problems.push({ code: choice.code ?? 'OFFB-FIXTURE-BASE', message: choice.message ?? '夹具底座选不出来' })
+    return empty
+  }
+  const root = choice.root
+  // 落点自检：底座过了，**派生出来的根**再判一次（同一条规则，不是第二份口径）。
+  const rootProblem = officeFixtureBaseProblem(root, { repo: options.repo ?? PATHS.repo })
+  if (rootProblem !== null) {
+    problems.push({ code: 'OFFB-FIXTURE-BASE-UNUSABLE', message: `OFB 夹具根不能用：${root} —— ${rootProblem}` })
+    return { ...empty, root, problems }
+  }
   const a = path.join(root, 'A')
   const b = path.join(root, 'B')
   const aOffice = path.join(a, '.team')
   const bOffice = path.join(b, '.team')
-  for (const dir of [path.join(aOffice, 'review'), path.join(bOffice, 'review'), path.join(b, 'src')]) {
-    mkdirSync(dir, { recursive: true })
-  }
   const seeds = [
     path.join(aOffice, 'review', 'seed.md'),
     path.join(bOffice, 'review', 'seed.md'),
     path.join(b, 'src', 'keep.js'),
   ]
-  for (const file of seeds) {
-    if (!existsSync(file)) writeFileSync(file, `OFB 夹具种子（${path.basename(file)}）—— 只用来证明这棵树不是空壳。\n`, 'utf8')
+  try {
+    for (const dir of [path.join(aOffice, 'review'), path.join(bOffice, 'review'), path.join(b, 'src')]) {
+      mkdirSync(dir, { recursive: true })
+    }
+    for (const file of seeds) {
+      if (!existsSync(file)) writeFileSync(file, `OFB 夹具种子（${path.basename(file)}）—— 只用来证明这棵树不是空壳。\n`, 'utf8')
+    }
+  } catch (err) {
+    problems.push({ code: 'OFFB-FIXTURE-MKDIR', message: `OFB 夹具建不出来（${root}）：${String(err?.message ?? err).slice(0, 240)}` })
+    return { ok: false, root, a, b, aOffice, bOffice, seeds, choice, problems }
   }
-  return { root, a, b, aOffice, bOffice, seeds }
+  return { ok: true, root, a, b, aOffice, bOffice, seeds, choice, problems }
 }
 
 /**
  * **样本下限 / 拓扑自检**（每一格都先跑）：空样本必须红，拓扑被挪走也必须红。
  * 返回 `[code, message]` 清单 —— 调用方把它们推进 `problems`。
+ *
+ * ⚠️ 它判的是**建出来的**夹具（`fx.ok === true`）。`ok === false`（底座选不出来 / 建不动）**不是**这一条：
+ *    那是"这一档不适用" ⇒ 调用方记 **HOLD**（见各用例的 `sampleGate`）。这条分工是 F2 的全部要点 ——
+ *    "搭不起来"不许走红，否则兄弟判据会替它背红。
  */
 export function sampleProblems(fx) {
   const out = []
   const need = (ok, code, message) => { if (!ok) out.push([code, message]) }
-  need(fx !== null && typeof fx === 'object', 'OFFB-SAMPLE-MISSING', '夹具对象没建出来（before() 挂了？）')
-  if (fx === null || typeof fx !== 'object') return out
+  if (fx === null || typeof fx !== 'object' || fx.ok !== true) {
+    return [['OFFB-SAMPLE-MISSING', `夹具没建出来（ok=${String(fx === null ? 'null' : fx?.ok)}）—— 这一格没有样本；底座的原因见 ensureOfficeFixtures() 的 problems（那一档记 HOLD，不该走到这里）`]]
+  }
   need(existsSync(fx.root), 'OFFB-SAMPLE-ROOT', `夹具根不在：${fx.root}`)
   need(existsSync(fx.a) && existsSync(fx.b), 'OFFB-SAMPLE-TREES', `两棵临时树不在：${fx.a} / ${fx.b}`)
   for (const office of [fx.aOffice, fx.bOffice]) {
