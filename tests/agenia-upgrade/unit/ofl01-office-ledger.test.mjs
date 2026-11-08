@@ -688,7 +688,10 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
         rec.readings.real_knife = { knife: 'K1', anchor: cut.ok ? 'found' : cut.code, why: cut.why }
         if (!cut.ok) {
           push('OFL-KNIFE-ANCHOR', `真 staged 源码里找不到这一刀的锚（本批还没实现 ⇒ 预期红）：${cut.code} ${cut.why} —— `
-            + '实现落地后这一条必须消失：`recordOfficeLanding` 的函数体被换掉之后，只有 row1/row2/row5 该红（`OFL-LEDGER-ABSENT` / `OFL-ONE-LINE` / `OFL-CROSS-TREE` / `OFL-EXACTLY-TWO`）')
+            + '实现落地后这一条必须消失；落地后这一刀该翻的是一组**六**码：`OFL-CROSS-TREE` · `OFL-EXACTLY-TWO` · '
+            + '`OFL-FAIL-CLOSED-ALLOWED` · `OFL-LEDGER-ABSENT` · `OFL-LINE-VALUES` · `OFL-ONE-LINE`'
+            + ' —— `OFL-ONE-LINE`（行数 ≠ 2）与 `OFL-LINE-VALUES`（最后一行逐字等于种子行）是**同一条事实的两句话**：'
+            + '没有追加行时最后一行就是种子行 ⇒ 「有 `ONE-LINE` 而没有 `LINE-VALUES`」这种形状不存在')
         } else {
           const mod = await loadSubject(push)
           const baseline = mod === null ? null : await judgeRows({ mod, makeSubject: (fx) => productSubject(mod, fx, built.root) }, { tag: 'realbase' })
@@ -704,7 +707,20 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
             } else {
               const rows = await judgeRows({ mod: mutant.mod, makeSubject: (fx) => productSubject(mutant.mod, fx, built.root) }, { tag: 'realk1' })
               const codes = codesOf(rows)
-              const want = ['OFL-LEDGER-ABSENT', 'OFL-ONE-LINE', 'OFL-CROSS-TREE', 'OFL-EXACTLY-TWO']
+              /**
+               * 🔴 **为什么恰好是这六个**（gate-2 重开时逐条查过的；写在这里，下一个读它的人不必再推一遍）：
+               * 这一刀把 `recordOfficeLanding` 的函数体换成"什么都不写" ⇒ 四格产生码，按格拆开正好六个**不同**的：
+               *   · row1（同树放行）：`OFL-ONE-LINE`（行数 ≠ 2）**与** `OFL-LINE-VALUES`（最后一行逐字等于种子行）——
+               *     这两个是**同一条事实的两句话**：没有追加行 ⇒ 最后一行**就是**种子行 ⇒
+               *     「有 `ONE-LINE` 而没有 `LINE-VALUES`」这种形状**不存在**（这也是为什么 `want` 不能只写四条）。
+               *   · row2（异树放行）：`OFL-LEDGER-ABSENT`（会话头那本账里没有这一行）+ `OFL-CROSS-TREE`（带两个 office 的那行没了）；
+               *   · row4（账写不进去）：`OFL-FAIL-CLOSED-ALLOWED`（追加这一步都不存在了，失败分支当然也不存在）；
+               *   · row5（三次探测）：`OFL-EXACTLY-TWO`（凑不出"恰好两行"）；row3（读者）无码。
+               * ⇒ 2 + 2 + 1 + 1 = **六**，与对照侧 `KNIVES[K1].want` 逐字相同（那边 `match=true`，`readings.knives.K1`）。
+               * 判据是**精确集合相等**（`JSON.stringify(codes) !== JSON.stringify(want)`）⇒ 把这两条加进来只会**更严**
+               * （漏翻 ⇒ 红），不会让任何一个该红的变异体变绿。
+               */
+              const want = ['OFL-CROSS-TREE', 'OFL-EXACTLY-TWO', 'OFL-FAIL-CLOSED-ALLOWED', 'OFL-LEDGER-ABSENT', 'OFL-LINE-VALUES', 'OFL-ONE-LINE']
               rec.readings.real_knife.codes = codes
               rec.readings.real_knife.want = want
               if (JSON.stringify(codes) !== JSON.stringify(want)) {

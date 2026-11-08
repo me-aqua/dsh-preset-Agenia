@@ -471,6 +471,11 @@ export function applyKnife(source, knife) {
  * 为什么用函数体而不是文本锚：实现怎么写那一行还没定，钉文本形状会变成"实现必须长得跟我猜的一样"
  * （那种刀会在换版之后静默不咬）。钉的是**契约里冻结的名字**（§2.1），改实现不改名字 ⇒ 刀照样咬。
  *
+ * 🔴 **这一刀该翻的是一组六码**：`OFL-CROSS-TREE` · `OFL-EXACTLY-TWO` · `OFL-FAIL-CLOSED-ALLOWED` ·
+ * `OFL-LEDGER-ABSENT` · `OFL-LINE-VALUES` · `OFL-ONE-LINE` —— `OFL-ONE-LINE`（行数 ≠ 2）与
+ * `OFL-LINE-VALUES`（最后一行逐字等于种子行）是**同一条事实的两句话**：没有追加行时最后一行就是种子行
+ * ⇒ 「有 `ONE-LINE` 而没有 `LINE-VALUES`」这种形状不存在。与对照侧 `KNIVES[K1].want` 逐字相同。
+ *
  * @param {string} source 真 `inject.js` 全文
  * @returns {{ok:boolean, code:string|null, why:string|null, source:string|null}}
  */

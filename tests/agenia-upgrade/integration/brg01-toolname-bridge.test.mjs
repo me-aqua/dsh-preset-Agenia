@@ -49,16 +49,18 @@
  *
  * `BRG-07` 的翻面读数（都是 `run-all --glob=integration/brg01-toolname-bridge.test.mjs` 跑的；
  * 字节数与 sha256 量的是**提交里那个 blob**（`HEAD:presets/agenia/inject.js`），不是工作树）：
- *   · 现役 `inject.js`（提交 `6d00d87` · 234710 B · sha256 `a647b427…`）⇒ **RED 0 / GREEN 7**
- *     （run `b13-brg-live` · `--glob=tests/agenia-upgrade/integration/brg01-toolname-bridge.test.mjs`
- *     · 范围 7/179：`readings.preset.injector` 与 `production_injector` 是同一个数
+ *   · 现役 `inject.js`（提交 `8c7cdce` · 243313 B · sha256 `c373dff5…`）⇒ **RED 0 / GREEN 7**
+ *     （run `b15-brg-live` · `--glob=tests/agenia-upgrade/integration/brg01-toolname-bridge.test.mjs`
+ *     · 范围 7/185：`readings.preset.injector` 与 `production_injector` 是同一个数
  *     ⇒ 量的就是这一段点名的那一份；`sut_overridden:false` / `acceptance_eligible:true`）。
  *     三个数（提交号 / 字节数 / sha256）由 `FLIP-01` 逐项对上，**任一变化它当场红**。
  *   · 刀 = **本提交**那份 `inject.js` 的副本，只把"按子会话第一条用户消息对号（完整相等）"整条
  *     换成"按队列顺序取队首"（`presets/**` 零字节）：
- *     `.team/test/2026-11-08/_probe/_run/b13-knife-brg07/inject.js` · 234384 B · sha256 `dbf96c55…`
- *     （造法与自证：`_probe/b13-brg07-knife.mjs`，printout 在 `_probe/_out/b13-brg07-knife.stdout.txt`；
- *     `roundtrip_equals_live:true` ⇒ 与现役只差那一刀）⇒ **RED 1 / GREEN 6**（run `b13-brg-knife-02`）：
+ *     `.team/test/2026-11-08/_probe/_run/brg07-knife-8c7cdce/inject.js` · 242987 B · sha256 `16eba5f5…`
+ *     （造法与自证：`_probe/b13-brg07-knife.mjs 8c7cdce`，printout 在 `_probe/_out/b13-brg07-knife-8c7cdce.stdout.txt`；
+ *     `roundtrip_equals_live:true` ⇒ 与现役只差那一刀；⚠️ 目录名用**提交短哈希**、不用现役 sha 前缀 ——
+ *     带 sha 前缀会让这一行"看着 sha 对、字节不对"，`FLIP-01` 的判据 ③ 当场红）⇒
+ *     **RED 1 / GREEN 6**（run `b15-brg-knife-02`）：
  *     红的只有 `BRG-07`（`BRG-PARALLEL-SWAP-TEST` ×3 + `BRG-PARALLEL-SWAP-REVIEW` ×3 +
  *     `BRG-PARALLEL-PERSONA` ×6 = 12 条），`sut_overridden:true` / `acceptance_eligible:false`。
  *     ⚠️ 这份副本**要自带 `lib/` 与 `tools/`**：`inject.js` 有三处 `import(new URL('./lib/…'))`
