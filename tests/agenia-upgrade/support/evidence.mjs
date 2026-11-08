@@ -17,6 +17,15 @@ import { calibrate } from './composition.mjs'
 import { CASES_BY_ID, TOTAL, countByStatus, REGISTRY, registryProblems, DISCOVERY } from './registry.mjs'
 import { platformReading, platformLine } from './platform.mjs'
 import { describeReadFailures, foldReadFailures, readFailureOf } from './tree-read.mjs'
+import { coverageSettlementLine } from './coverage-line.mjs'
+
+export { coverageSettlementLine } from './coverage-line.mjs'
+
+/**
+ * 本文件在仓库里的相对路径（**量出来的**，不是手打）：结算行末尾点名"唯一定义"时用它。
+ * 形式与 `sourceInventory()` 的 `rel` 同形（posix 分隔符）。
+ */
+const SELF_REL = path.relative(PATHS.repo, fileURLToPath(import.meta.url)).replace(/\\/g, '/')
 
 /**
  * 证据根的白名单父目录（`….team\test`）—— 跟着 `PATHS.repo` 派生（2026-11-02 起）。
@@ -891,6 +900,8 @@ export function settlementRealRoots({ before, after, dr02 }) {
     witness_ok: witness.present !== true || witnessState === 'hold' ? null : problems.length === 0,
     problems,
     content_uncovered: witness.real_roots?.content_uncovered ?? null,
+    /** 这一行的来源读数（`definition` = 唯一的人写载体；`printed_from` = 本跑的 DR-02 读数路径）。 */
+    content_uncovered_source: contentUncoveredSource(witness),
   }
 }
 
@@ -911,13 +922,18 @@ export function realRootsSettlementLine(rr) {
   return `- ${head}：DR-02 见证 **${w.real_roots.windows_judged}/${w.real_roots.windows_total} 窗口已判** · brain 基线 **${w.real_roots.baseline_brain_count}** 路径 · ${twoPhase}`
 }
 
-/** `settlement.md` 的「覆盖边界」那一行（**同一份读数**：`DR-02` 写下的 `content_uncovered`）。 */
-export function coverageSettlementLine(rr) {
-  const u = rr.content_uncovered
-  if (u === null || typeof u !== 'object') {
-    return '  - 🔴 覆盖边界：DR-02 的读数里没有 `content_uncovered` —— 这一行判不了（它不是一份可以另写的字面量：判据与结算读同一份）'
+/**
+ * 结算的 `real_roots.content_uncovered_source`：**这一行是从哪儿读回来的**（读数，不是断言）。
+ *   · `definition` = 那份唯一的**人写**载体（本文件里的常量；`SELF_REL` 由 `import.meta.url` 量出来）；
+ *   · `printed_from` = 这一跑的 `DR-02/result.json`（绝对路径，来自读数本身）。
+ * ② 与 ③ 不再各自维护一份人话：`DR-01` / `DR-02` 都**展开**那个常量，本行按字段原样打印（`coverage-line.mjs`）。
+ */
+function contentUncoveredSource(witness) {
+  if (!witness?.real_roots?.has_content_uncovered) return null
+  return {
+    definition: `${SELF_REL}#REAL_ROOTS_CONTENT_UNCOVERED`,
+    printed_from: witness.file ?? null,
   }
-  return `  - 🔴 覆盖边界（DR-02 的读数）：【${u.what ?? '（未给）'}】不会被 \`brain\` 的路径集合判据抓到 —— 兜它的是 ${(u.covered_by ?? ['（未声明）']).join(' + ')}；\`cli-inventory\` 只是枚举、不是闸。另一方向：别的会话在窗口内新增 / 删除路径仍会红（残余误报，窗口 = 每个 CLI 子调用）。`
 }
 
 // ── 结算（注册数 vs 结算数）────────────────────────────────────────────────

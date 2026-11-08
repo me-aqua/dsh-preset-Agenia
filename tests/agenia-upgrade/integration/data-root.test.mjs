@@ -85,6 +85,7 @@ import {
   treeHash,
 } from '../support/evidence.mjs'
 import { TEMP_SCAN_CODES, tempScanTargets, tempScanVerdict } from '../support/temp-scan.mjs'
+import { COVERAGE_MISSING_TOKEN, coverageSettlementLine } from '../support/coverage-line.mjs'
 import { buildSettlementProbe, coverageLineOf, realRootsLineOf, runSettleCLI } from '../support/settlement-probe.mjs'
 import { canonical, driveOf, ensureMarkedDir, isUnc, REAL_BRAIN_ROOT, REAL_ROUTE_ROOT } from '../support/root-guard.mjs'
 import { brainPaths, loadStagedModule, routePaths, runBrain, runCli, runRoute, stagingExists, writeFixture } from '../support/sut.mjs'
@@ -1217,14 +1218,12 @@ describe('integration · data-root (DR)', () => {
          * 🔴 残余风险 —— 读的人不必去翻决定书（`决定-DR02的brain见证.md` §二/§三）：
          * "就地覆盖"不在这一格的覆盖范围；兜它的是 `--real-mode` 的 `E_ROOT_REAL_BRAIN`。
          * 另一方向是**残余误报**：别的会话在窗口里新增 / 删除一个路径，同样会红（假红，不是假绿）。
+         * 🔴 **展开它，不许重抄**（gate-4 `MF-1`）：这里曾经逐字重抄了那五句 ⇒ 与 `DR-02` / 结算行
+         *    各成一份手维护副本。现在只有 `window` 是 DR-01 自己的（它的窗口 = 整段用例），其余全来自
+         *    `evidence.mjs::REAL_ROOTS_CONTENT_UNCOVERED` 那**一个**常量。
          */
         content_uncovered: {
-          root: 'brain',
-          what: '已存在文件被就地覆盖（内容改、路径不变）',
-          note: '`brain` 的见证是**路径集合**（新增 / 删除）；已存在文件被就地覆盖（内容改、路径不变）不在这条判据的覆盖范围。',
-          covered_by: ['DR-01 --real-mode ⇒ E_ROOT_REAL_BRAIN'],
-          cli_inventory: 'lib/cli-inventory.mjs 只是枚举命令，不判它会写哪儿 —— 不是闸',
-          residual_false_positive: '别的会话在窗口内新增 / 删除路径会被判成 SECURITY-VIOLATION（假红，不是假绿）',
+          ...REAL_ROOTS_CONTENT_UNCOVERED,
           window: 'DR-01 整段用例（不是每个 CLI 子调用一个窗口 —— 那是 DR-02 的口径；这一段比 DR-02 的窗口长）',
         },
       }
@@ -2384,9 +2383,15 @@ test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的�
     const probe = (name, corrupt) => {
       const copy = JSON.parse(JSON.stringify(realDr02))
       corrupt?.(copy)
-      const { runRoot: probeRoot } = buildSettlementProbe({ baseDir: base, name, snapshot, records: { 'DR-02': copy } })
+      const { runRoot: probeRoot, evidenceDir } = buildSettlementProbe({ baseDir: base, name, snapshot, records: { 'DR-02': copy } })
       const out = runSettleCLI({ runRoot: probeRoot })
-      return { out, line: realRootsLineOf(out.markdown), coverage: coverageLineOf(out.markdown) }
+      return {
+        out,
+        line: realRootsLineOf(out.markdown),
+        coverage: coverageLineOf(out.markdown),
+        /** 这份合成证据根里 DR-02 的记录（结算行应当说"本行从**这一份**读回"）。 */
+        dr02RecordFile: path.join(evidenceDir, 'DR-02', 'result.json'),
+      }
     }
     const summary = (p) => ({
       present: p.out.present,
@@ -2394,6 +2399,8 @@ test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的�
       problems: (p.out.settlement?.real_roots?.problems ?? []).map((x) => x.code),
       witness_ok: p.out.settlement?.real_roots?.witness_ok ?? null,
       settlement_ok: p.out.settlement?.settlement_ok ?? null,
+      content_uncovered: p.out.settlement?.real_roots?.content_uncovered === null ? null : (p.out.settlement?.real_roots?.content_uncovered ? 'object' : 'absent'),
+      content_source: p.out.settlement?.real_roots?.content_uncovered_source ?? null,
       line: p.line,
       coverage: p.coverage,
     })
@@ -2403,12 +2410,16 @@ test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的�
     const noUncovered = probe('no-uncovered', (r) => { delete r.readings.real_roots.content_uncovered })
     const noWindows = probe('no-windows', (r) => { r.readings.real_roots.windows = [] })
     const countChanged = probe('count-changed', (r) => { r.readings.real_roots.baseline.brain.count = 12345 })
+    const residualChanged = probe('residual-changed', (r) => {
+      r.readings.real_roots.content_uncovered.residual_false_positive = '（副本改写）残余误报那句话被换掉了'
+    })
     rec.readings.settlement_probes = {
       intact: summary(intact),
       no_readings: summary(noReadings),
       no_uncovered: summary(noUncovered),
       no_windows: summary(noWindows),
       count_changed: summary(countChanged),
+      residual_changed: summary(residualChanged),
     }
 
     // ── A 读数完好：结算行点名 DR-02，并写出它的读数 ─────────────────────────
@@ -2437,6 +2448,48 @@ test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的�
       if (intact.out.exit !== 0) {
         push('STM-SETTLE-EXIT', `读数完好（且同文件兄弟用例都齐）时结算必须 exit 0，实得 ${intact.out.exit} · stdout=${intact.out.stdout.slice(0, 300)}`)
       }
+      /**
+       * 🔴 **覆盖边界：那一行的每一个字都要能从读数里找回来**（gate-4 `MF-1`）。
+       * 期望值取自**这一跑 DR-02 的读数**（`u.*`），不是测试里另抄一份人话 ——
+       * 上一版结算行只读 `what`/`covered_by`、其余自己重打，`residual_false_positive` 里连
+       * `SECURITY-VIOLATION` 这个码名都丢了；这一格按字段逐条比，漂一个字就红。
+       */
+      const u = realDr02?.readings?.real_roots?.content_uncovered
+      if (intact.coverage === null) {
+        push('STM-COVERAGE-NOT-READING', '[A] 读数完好时"覆盖边界"那一行必须存在')
+      } else if (u !== null && typeof u === 'object') {
+        for (const key of ['what', 'note', 'cli_inventory', 'residual_false_positive']) {
+          if (typeof u[key] !== 'string' || u[key].trim() === '') {
+            push('STM-SETUP', `[A] DR-02 读数的 content_uncovered.${key} 不是非空字符串（${JSON.stringify(u[key])}）—— 这格判不了`)
+          } else if (!intact.coverage.includes(u[key])) {
+            push('STM-COVERAGE-NOT-READING', `[A] 覆盖边界那一行必须**逐字**包含读数里的 \`${key}\`：${JSON.stringify(u[key])}`
+              + `（实得 ${JSON.stringify(intact.coverage)}）—— 只读 what/covered_by、其余自己重打，就是第二份真相（MF-1）`)
+          }
+        }
+        for (const item of (u.covered_by ?? [])) {
+          if (!intact.coverage.includes(item)) {
+            push('STM-COVERAGE-NOT-READING', `[A] 覆盖边界那一行必须含 \`covered_by\` 的每一项（缺 ${JSON.stringify(item)}）`)
+          }
+        }
+        if (!intact.coverage.includes('SECURITY-VIOLATION')) {
+          push('STM-COVERAGE-NOT-READING', '[A] 覆盖边界那一行必须带码名 `SECURITY-VIOLATION`（读数里有；上一版重打时正是把这个码名丢了）')
+        }
+        if (intact.coverage.includes(COVERAGE_MISSING_TOKEN)) {
+          push('STM-COVERAGE-NOT-READING', `[A] 健康行里**不许**出现缺读数的 token ${COVERAGE_MISSING_TOKEN}（它是 C 格的判据，出现在这里 C 就永远翻不了面）`)
+        }
+        const src = intact.out.settlement?.real_roots?.content_uncovered_source
+        if (src === null || typeof src !== 'object' || !String(src.definition ?? '').endsWith('#REAL_ROOTS_CONTENT_UNCOVERED')) {
+          push('STM-COVERAGE-NOT-READING', `[A] 结算读数必须点名覆盖边界的**唯一定义**（content_uncovered_source.definition 以 #REAL_ROOTS_CONTENT_UNCOVERED 收尾），实得 ${JSON.stringify(src)}`)
+        }
+        if (src?.printed_from !== intact.dr02RecordFile) {
+          push('STM-COVERAGE-NOT-READING', `[A] 那一行必须说明它是从**这份证据根的 DR-02 记录**读回来的（printed_from=${JSON.stringify(src?.printed_from)} · 期望 ${JSON.stringify(intact.dr02RecordFile)}）`)
+        }
+        if (!intact.coverage.includes('唯一定义：')) {
+          push('STM-COVERAGE-NOT-READING', '[A] 覆盖边界那一行必须自己说清"唯一定义"是哪一个（源头在行文里，不靠读的人去猜）')
+        }
+      } else {
+        push('STM-SETUP', '[A] DR-02 的读数里没有 content_uncovered —— 这格判不了（先看 DR-02 自己）')
+      }
     }
 
     // ── B 删掉 DR-02 的 readings.real_roots ⇒ 行变红、点名、非零退出 ───────────
@@ -2457,7 +2510,7 @@ test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的�
       if (noReadings.line === intact.line) push('STM-LINE-NOT-READING', '[B] 改坏读数之后那一行一个字都没变 —— 它读的不是 DR-02')
     }
 
-    // ── C 删掉 content_uncovered ⇒ 覆盖边界那一行跟着红（单一来源）────────────
+    // ── C 删掉 content_uncovered ⇒ 覆盖边界那一行**换成缺读数的那一句**（判据是一个健康行里没有的 token）──
     if (!noUncovered.out.present) {
       push('STM-SETTLE-UNAVAILABLE', `[C] 结算没生成（exit=${noUncovered.out.exit}）`)
     } else {
@@ -2466,8 +2519,67 @@ test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的�
       if (!codes.includes('SETTLE-DR02-CONTENT-UNCOVERED-MISSING')) {
         push('STM-COVERAGE-NOT-READING', `[C] 删掉 DR-02 读数里的 content_uncovered 之后，结算必须点名 SETTLE-DR02-CONTENT-UNCOVERED-MISSING，实得 ${JSON.stringify(codes)}`)
       }
-      if (noUncovered.coverage === null || !noUncovered.coverage.includes('🔴')) {
-        push('STM-COVERAGE-NOT-READING', `[C] 覆盖边界那一行必须跟着红（实得 ${JSON.stringify(noUncovered.coverage)}）—— 它是 settle() 里另一份手写字面量的话就不会动`)
+      if (rr?.content_uncovered !== null) {
+        push('STM-COVERAGE-NOT-READING', `[C] 读数里没有 content_uncovered 时，结算的 \`real_roots.content_uncovered\` 必须是 **null**，实得 ${JSON.stringify(rr?.content_uncovered)}`)
+      }
+      if (rr?.content_uncovered_source !== null) {
+        push('STM-COVERAGE-NOT-READING', `[C] 读数里没有 content_uncovered 时不许报来源（实得 ${JSON.stringify(rr?.content_uncovered_source)}）`)
+      }
+      /**
+       * 🔴 **判据必须是健康行里没有的那个 token**（gate-4 `MF-2`）：`🔴` 是"已知覆盖边界"的常驻标记，
+       * 健康行也有 ⇒ 拿它当判据，把这一行改回手写字面量之后这一格**照样绿**。
+       */
+      if (noUncovered.coverage === null || !noUncovered.coverage.includes(COVERAGE_MISSING_TOKEN)) {
+        push('STM-COVERAGE-NOT-READING', `[C] 覆盖边界那一行必须带缺读数的 token ${COVERAGE_MISSING_TOKEN}（实得 ${JSON.stringify(noUncovered.coverage)}）`
+          + ' —— 🔴 是健康行也有的标记，不能当判据（MF-2）')
+      }
+      if (noUncovered.coverage !== null && noUncovered.coverage.includes('覆盖边界（DR-02 的读数）')) {
+        push('STM-COVERAGE-NOT-READING', `[C] 读数缺了，那一行却还印着健康行的那句标签（实得 ${JSON.stringify(noUncovered.coverage)}）`)
+      }
+    }
+
+    // ── F 改掉读数里的一句人话 ⇒ 覆盖边界那一行跟着改（印的是读数，不是常量/字面量）──────
+    if (residualChanged.out.present) {
+      const line = residualChanged.coverage
+      const original = realDr02?.readings?.real_roots?.content_uncovered?.residual_false_positive
+      if (line === null || !line.includes('（副本改写）残余误报那句话被换掉了')) {
+        push('STM-COVERAGE-NOT-READING', `[F] 把读数里的 residual_false_positive 换掉之后，覆盖边界那一行必须跟着换（实得 ${JSON.stringify(line)}）—— 不换就说明它印的是自己那一份字面量`)
+      }
+      if (typeof original === 'string' && line !== null && line.includes(original)) {
+        push('STM-COVERAGE-NOT-READING', '[F] 读数里的那一句已经被换掉，行里却还印着旧的那句 —— 这一行不是从读数来的')
+      }
+    } else {
+      push('STM-SETTLE-UNAVAILABLE', `[F] 结算没生成（exit=${residualChanged.out.exit}）`)
+    }
+
+    // ── G 刀：把"缺读数"那一支改回手写字面量（副本）⇒ 同一输入下 token 不在 ⇒ C 会红 ─────────
+    {
+      const covSrc = path.join(PATHS.testRoot, 'support', 'coverage-line.mjs')
+      const covText = readFileSync(covSrc, 'utf8')
+      const HAND = 'if (u === null || typeof u !== \'object\') return COVERAGE_MISSING_LINE'
+      const hits = covText.split(HAND).length - 1
+      rec.readings.coverage_knife = { anchor_hits: hits, source: covSrc }
+      if (hits !== 1) {
+        push('STM-KNIFE-ANCHOR', `[G] 锚点 ${JSON.stringify(HAND)} 在 support/coverage-line.mjs 里出现 ${hits} 次（须恰好 1 次）—— 实现换过写法，这把刀要同批更新`)
+      } else {
+        const dir = path.join(base, 'knife')
+        mkdirSync(dir, { recursive: true })
+        const mutFile = path.join(dir, `coverage-line.handwritten.${process.pid}.mjs`)
+        const handwritten = "  - 🔴 覆盖边界（DR-02 的读数）：【已存在文件被就地覆盖（内容改、路径不变）】…（手写的一份，看起来是健康的）"
+        writeFileSync(mutFile, covText.replace(HAND, `if (u === null || typeof u !== 'object') return ${JSON.stringify(handwritten)}`), 'utf8')
+        const mutMod = await import(pathToFileURL(mutFile).href)
+        const missingInput = { content_uncovered: null, content_uncovered_source: null }
+        const realLine = coverageSettlementLine(missingInput)
+        const mutLine = mutMod.coverageSettlementLine(missingInput)
+        rec.readings.coverage_knife.real_line = realLine
+        rec.readings.coverage_knife.mutant_line = mutLine
+        rec.readings.coverage_knife.bites = realLine.includes(COVERAGE_MISSING_TOKEN) && !mutLine.includes(COVERAGE_MISSING_TOKEN)
+        if (!realLine.includes(COVERAGE_MISSING_TOKEN)) {
+          push('STM-COVERAGE-NOT-READING', `[G/对照] 真模块在"读数缺 content_uncovered"上必须带 token（实得 ${JSON.stringify(realLine)}）`)
+        }
+        if (mutLine.includes(COVERAGE_MISSING_TOKEN)) {
+          push('STM-KNIFE-NOT-BITING', `[G] 把缺读数那一支改回手写字面量之后，同一输入仍带 token（实得 ${JSON.stringify(mutLine)}）—— 这一格量不到"改回手写字面量"那种回退`)
+        }
       }
     }
 
