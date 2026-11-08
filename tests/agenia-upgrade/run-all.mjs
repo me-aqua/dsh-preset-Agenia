@@ -44,7 +44,10 @@
  *     `support/self-check.mjs`）。"哪一份在跑"只有这一行说了算；入口不在 `[尺子]` 那棵树里时，
  *     紧跟一行 🔴 明写这一跑的 `[尺子]` 读数不是关于跑着的这份代码的。
  *
- * `judgement.txt` 里逐行是：`[平台]` → `F57-TARGET` → `[尺子] 覆盖` → `[尺子] 测试树 …`（同树判定，1–2 行）→ `[尺子·入口]` → `F57-SETTLE` → 判词 → `exit=`。
+ * `judgement.txt` 里逐行是：`[平台]` → `F57-TARGET` → `[尺子] 覆盖` → `[尺子·入口]` → `[尺子] 测试树 …`（同树判定，1–2 行）→ `F57-SETTLE` → 判词 → `exit=`。
+ * 🔴 **顺序不是随手排的**（gate-4 2026-11-08 `MF-2`）：`[尺子] 覆盖` 那一行自己写着「那一格由**下一行**
+ *   `[尺子·入口]` 回答」—— 同树判定必须插在 **`[尺子·入口]` 之后**，否则那一句在这个载体上就成了假话
+ *   （控制台上它仍是下一行 ⇒ 一句话两个载体、一个真一个假，正是这一批要修的病）。改顺序前先改那句话。
  * （同树判定的输入是**收口才有的** settlement ⇒ 它算得比其他几行晚，但**同一份文字**既进控制台也进这份文件 ——
  *   作废的那一跑必须在盘上看得出来。⚠️ 这一格**今天没有判据守着**：没有任何用例读 `[尺子] 测试树` 那一行，
  *   改坏它不会红。登记在 `bug-20261108-16` ② 的后续与 `now.md`；要守它就在 `MCR-03` 那两行断言旁边再加一条。）
@@ -353,7 +356,10 @@ console.log(line)
  */
 const judgement = judgementLines(verdict, { settled, denominator, scopeCases })
 for (const l of judgement) console.log(l)
-writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[PLATFORM_LINE, target.line, RULER_SCOPE_LINE, ...RULER_TREE_LINES, IDENTITY_LINE, line, ...judgement, `exit=${verdict.exitCode}`].join('\n')}\n`, 'utf8')
+// 🔴 落盘顺序：同树判定**紧跟 `[尺子·入口]`**（不是紧跟 `[尺子] 覆盖`）——
+//    `[尺子] 覆盖` 那一行自己写着"那一格由**下一行** `[尺子·入口]` 回答"，插在它后面会让那句话在文件里变成假话
+//    （gate-4 2026-11-08 `MF-2`；控制台顺序不变，因为控制台上它本来就印在 settle 之后）。
+writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[PLATFORM_LINE, target.line, RULER_SCOPE_LINE, IDENTITY_LINE, ...RULER_TREE_LINES, line, ...judgement, `exit=${verdict.exitCode}`].join('\n')}\n`, 'utf8')
 
 if (JSON_OUT !== null) {
   writeFileSync(path.resolve(JSON_OUT), `${JSON.stringify({

@@ -50,6 +50,14 @@
  *   "这一档不适用"，不是"前置本不该失败"。
  *   另：**落点数本身**也有判据（`LANDINGS-INCOMPLETE`）—— 无条件那两个按名单核对、总数按
  *   `2 + 两个 junction 是否建成` 复算 ⇒ 删掉一条落点不会静默通过。
+ *   🔴 **这一条挡得住什么、挡不住什么**（写在这里，别留给下一个人重新发现 · gate-4 2026-11-08）：
+ *     · **挡得住**：删掉落点**却没删名单** —— 名单是手维护的 `UNCONDITIONAL_LANDINGS`，
+ *       `ran ≠ expected` ⇒ 红（实测：临时删 `fresh-dir` ⇒ `RED 1`，恰好一条 `LANDINGS-INCOMPLETE`）。
+ *     · **挡不住**：把落点**连同名单那一行一起删**。总数里"两个 junction"那一半是从**同一对**
+ *       `aliasReady.ok` / `repoAliasReady.ok` 推出来的（跟入列用的是同一对 flag）⇒ 那一半是**同源计数**，
+ *       它只证明"列了几个就跑了几个"，证明不了"该有几个"。名单那一半是这条判据唯一的外部输入。
+ *     · ⇒ "四个落点"这个数**没有独立来源**，靠人手维护的名单守。要真钉死，得从盘外取第四个数
+ *       （产品报文里的落点清单 / 契约里的枚举），那是另一件事，不在本批。
  *
  * 🔴 覆盖边界（这一格**不判**什么）：
  *   · 不判"`--is-code` 自己判断得对不对"（那是 `fingerprint.mjs` 的排除表；这里只判三个已知落点）；
@@ -158,9 +166,16 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
           `建不出 junction 别名（${aliasReady.link} → ${aliasReady.target}：${aliasReady.error || '(无 stderr)'}）`
           + ' ⇒ `out-junction-alias` 那个落点**没有量**（被拒落点从 4 少一条）—— 这一档判不了，不是绿')
       }
+      /**
+       * ⚠️ 报文里要取**对象**上的 `link` / `target`（`repoAliasReady`），不许取 `repoAlias` 那个字符串：
+       * `repoAlias` 是 `path.join(…)` 的返回值，而 `String.prototype.link` 是个**函数** ——
+       * `${repoAlias.link}` 会印出 `function link() { [native code] }`、`.target` 印 `undefined`
+       * （gate-4 2026-11-08 `MF-1` 就是在 `_evidence/b13-probe-mcr01-hold` 的报文里抓到这一句的）。
+       * 报文是这一格的**验收面**（"点名别名 + 说清代价"），印错就等于没点。
+       */
       if (!repoAliasReady.ok) {
         caseHold(rec, 'REPO-JUNCTION-ALIAS-UNAVAILABLE',
-          `建不出 junction 别名（${repoAlias.link} → ${repoAlias.target}：${repoAliasReady.error || '(无 stderr)'}）`
+          `建不出 junction 别名（${repoAliasReady.link} → ${repoAliasReady.target}：${repoAliasReady.error || '(无 stderr)'}）`
           + ' ⇒ `repo-and-out-junction (M-2a)` 那个落点**没有量**（被拒落点从 4 少一条）—— 这一档判不了，不是绿')
       }
       const refusedCases = [
