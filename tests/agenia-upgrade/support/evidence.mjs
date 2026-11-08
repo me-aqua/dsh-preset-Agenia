@@ -735,6 +735,191 @@ export function realRootsDiff(before, after) {
   return diffs
 }
 
+/**
+ * 🔴 **覆盖边界只有一份**（`bug-20261107-06`）：这段话从前有两份手维护的副本
+ * （`DR-02` 的 `rec.readings.real_roots.content_uncovered` 与 `settle()` 里的一个字面量），
+ * 一处改、两处不一致不会有人知道。现在：
+ *   · `DR-02` 把**这一个对象**写进它的读数；
+ *   · 结算**从 `DR-02` 的 `result.json` 里读回来**（`dr02WitnessReading()`），不再自带字面量。
+ * ⇒ 删掉 `DR-02` 的读数这一节，覆盖边界那一行就跟着红（`SETTLE-DR02-CONTENT-UNCOVERED-MISSING`）。
+ */
+export const REAL_ROOTS_CONTENT_UNCOVERED = Object.freeze({
+  root: 'brain',
+  what: '已存在文件被就地覆盖（内容改、路径不变）',
+  note: '`brain` 的见证是**路径集合**（新增 / 删除）；已存在文件被就地覆盖（内容改、路径不变）不在这条判据的覆盖范围。',
+  covered_by: ['DR-01 --real-mode ⇒ E_ROOT_REAL_BRAIN'],
+  cli_inventory: 'lib/cli-inventory.mjs 只是枚举命令，不判它会写哪儿 —— 不是闸',
+  residual_false_positive: '别的会话在窗口内新增 / 删除路径会被判成 SECURITY-VIOLATION（假红，不是假绿）',
+})
+
+/** 见证记录的落点（`<证据根>/DR-02/result.json`）—— 结算侧读 DR-02 的唯一入口。 */
+export const DR02_WITNESS_ID = 'DR-02'
+
+/**
+ * **读 `DR-02` 的读数**（结算侧的文件外读者；`bug-20261107-06` / `-07`）。
+ *
+ * 为什么需要它：`DR-02` 的 `rec.readings.real_roots` 以前**文件外没有读者** ——
+ * 把 §④ 那一段（连同它的最后一道守卫）整段删掉，结算行照旧印「差异=无」。
+ * 现在结算这一侧读这份读数，缺了就说缺了。
+ *
+ * 三态分开（**不许混**）：
+ *   · `present:false` ⇒ **这一跑没跑到 DR-02**（分批跑的正常形态）—— 结算行写"判不了"，不罚退出码；
+ *   · `present:true` + 读数/守卫读数缺 ⇒ **红**（`SETTLE-DR02-*`）—— 有人删了见证或它的守卫；
+ *   · `present:true` + 读数齐 ⇒ 按 `GREEN` / `HOLD` / `RED` 各说各的话（HOLD 判不了、RED 不重复判）。
+ */
+export function dr02WitnessReading({ evidenceDir = evidenceRoot() } = {}) {
+  const file = path.join(evidenceDir, DR02_WITNESS_ID, 'result.json')
+  const empty = {
+    file,
+    present: false,
+    reason: 'case-not-run',
+    case_result: null,
+    problems: [],
+    holds: [],
+    real_roots: null,
+    guard: null,
+  }
+  if (!existsSync(file)) return empty
+  let rec = null
+  try {
+    rec = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (err) {
+    return { ...empty, present: true, reason: `读数读不出来（${String(err?.message ?? err).slice(0, 200)}）` }
+  }
+  const rs = rec?.readings?.real_roots
+  const rsObj = rs !== null && typeof rs === 'object' ? rs : null
+  const wins = Array.isArray(rsObj?.windows) ? rsObj.windows : null
+  const guard = rec?.readings?.dr02_witness_outside
+  const guardObj = guard !== null && typeof guard === 'object' ? guard : null
+  return {
+    file,
+    present: true,
+    reason: null,
+    case_result: rec?.result ?? null,
+    problems: (rec?.problems ?? []).map((p) => p?.code ?? null),
+    holds: (rec?.holds ?? []).map((h) => ({ code: h?.code ?? null, why: String(h?.why ?? '').slice(0, 400) })),
+    real_roots: rsObj === null ? null : {
+      keys: Object.keys(rsObj),
+      baseline_brain_count: typeof rsObj?.baseline?.brain?.count === 'number' ? rsObj.baseline.brain.count : null,
+      windows_total: wins === null ? null : wins.length,
+      windows_judged: wins === null ? null : wins.filter((w) => w?.judged === true).length,
+      has_content_uncovered: rsObj?.content_uncovered !== null && typeof rsObj?.content_uncovered === 'object',
+      content_uncovered: rsObj?.content_uncovered ?? null,
+    },
+    guard: guardObj === null ? null : {
+      real_roots_present: guardObj.real_roots_present === true,
+      guards_present: guardObj.guards_present === true,
+      keys: Object.keys(guardObj),
+    },
+  }
+}
+
+/**
+ * 结算的「真实根前后」那一节：**两相位差异 + DR-02 的见证读数**，**一个来源**。
+ *
+ * 两件事分开（别混着读）：
+ *   · `diff` = 整跑两相位（`_preflight/real-roots.{before,after}.json`）的差集；
+ *   · `dr02` = **跑中**每个 CLI 子调用窗口的见证（`DR-02` 的读数）。
+ * 结算行由这两个**一起**说，缺 DR-02 的读数时**整行判不了**（不是"差异无"）。
+ */
+export function settlementRealRoots({ before, after, dr02 }) {
+  const diff = before && after ? realRootsDiff(before, after) : null
+  const witness = dr02 ?? { present: false, reason: 'case-not-run', file: null, case_result: null, problems: [], holds: [], real_roots: null, guard: null }
+  const problems = []
+  let witnessState = 'not-run'
+  if (witness.present !== true) {
+    witnessState = 'not-run'
+  } else {
+    /**
+     * 🔴 **先查"读数在不在"（结构），再看病例的判词** —— 顺序是刻意的：
+     *    只按 `case_result === 'RED'` 分流，会把"见证被整段删掉"与"见证跑了但量出了红"混成一件事；
+     *    而"守卫被单独删掉"那种形态，病例自己甚至是 GREEN，只有结构检查抓得到。
+     */
+    if (witness.real_roots === null) {
+      problems.push(problem('SETTLE-DR02-WITNESS-READING-MISSING',
+        `DR-02 本跑的 result.json 里没有 \`readings.real_roots\`（${witness.file}${witness.reason ? ` · ${witness.reason}` : ''}）—— `
+        + '结算这一行必须读它；读数不在时**不许**再自己拼一份"差异=无"'))
+    }
+    if (witness.guard === null) {
+      problems.push(problem('SETTLE-DR02-GUARD-READING-MISSING',
+        `DR-02 的 result.json 里没有 \`readings.dr02_witness_outside\`（${witness.file}）—— 段外兜底那一格`
+        + '（`DR02-WITNESS-READINGS-UNGUARDED`）的读数不见了：守卫可能和被守的那一段一起被删了'))
+    } else if (!witness.guard.real_roots_present || !witness.guard.guards_present) {
+      problems.push(problem('SETTLE-DR02-GUARD-READING-MISSING',
+        `DR-02 的段外兜底读数说自己没写全（real_roots_present=${witness.guard.real_roots_present} · guards_present=${witness.guard.guards_present}）—— 守卫的判决没有出口`))
+    }
+    if (witness.real_roots !== null) {
+      if (!witness.real_roots.has_content_uncovered) {
+        problems.push(problem('SETTLE-DR02-CONTENT-UNCOVERED-MISSING',
+          `DR-02 的读数里没有 \`real_roots.content_uncovered\`（键=${JSON.stringify(witness.real_roots.keys)}）—— 覆盖边界只有一份，它必须由 DR-02 写下来、结算读回来`))
+      }
+      /**
+       * ⚠️ **HOLD 时窗口本来就没判**（见证根不在盘上的合法形态）⇒ 不许拿"没判全"再记一条红。
+       * HOLD 的语义是"这一档判不了"，已经在结算的 HOLD 栏里；这里只把它的读数要求留在上面两条。
+       */
+      if (witness.case_result !== 'HOLD') {
+        const total = witness.real_roots.windows_total
+        const judged = witness.real_roots.windows_judged
+        if (!(typeof total === 'number' && total > 0 && judged === total)) {
+          problems.push(problem('SETTLE-DR02-WINDOWS-UNJUDGED',
+            `DR-02 的见证窗口没判全：${judged === null ? '(没有 windows 读数)' : `${judged}/${total}`}（窗口 ${total === null ? '?' : total} 个）—— `
+            + '空窗口不是"都没变"，是"没看"'))
+        }
+      }
+    }
+    if (witness.case_result === 'RED') {
+      witnessState = 'case-red'
+      problems.push(problem('SETTLE-DR02-CASE-RED',
+        `DR-02 本跑自己 **RED**（${(witness.problems ?? []).join(' / ') || '(无码)'}）—— 见证的判决没通过，这一行不许读成"差异=无"`))
+    } else if (witness.case_result === 'HOLD' && problems.length === 0) {
+      witnessState = 'hold'
+    } else if (problems.length === 0) {
+      witnessState = 'green'
+    } else {
+      witnessState = witness.real_roots === null ? 'reading-missing' : witness.guard === null ? 'guard-reading-missing' : 'reading-incomplete'
+    }
+  }
+  return {
+    before: before ?? null,
+    after: after ?? null,
+    diff,
+    security_violation: diff === null ? null : diff.length > 0,
+    source: DR02_WITNESS_ID,
+    dr02: witness,
+    witness_state: witnessState,
+    /** `true` = 见证真的判过且没毛病；`false` = 判过但读数缺/病例红；`null` = 这一档本来就不适用（没跑到 / HOLD）。 */
+    witness_ok: witness.present !== true || witnessState === 'hold' ? null : problems.length === 0,
+    problems,
+    content_uncovered: witness.real_roots?.content_uncovered ?? null,
+  }
+}
+
+/** `settlement.md` 的「真实根前后」那一行（**读者 = DR-02**；红的时候整行 🔴）。 */
+export function realRootsSettlementLine(rr) {
+  const twoPhase = `两相位 before=${rr.before ? '有' : '缺'} · after=${rr.after ? '有' : '缺'} · 差异=${rr.diff === null ? '（判不了：缺一相位）' : rr.diff.length === 0 ? '**无**' : `**有**：${rr.diff.join('；')}`}`
+  const head = '真实根前后（读者 = DR-02 的读数）'
+  const w = rr.dr02 ?? {}
+  if (w.present !== true) return `- ${head}：**判不了** —— DR-02 本跑没跑到（\`${w.file ?? '(未给)'}\` 不在）· ${twoPhase}`
+  // 🔴 有红因就先说红因（覆盖"见证被删 / 守卫被删 / 窗口没判 / 病例自己红了"四种）
+  if (rr.problems.length > 0) {
+    return `- 🔴 ${head}：**判不了** —— ${rr.problems.map((p) => `[${p.code}] ${String(p.message).split('\n')[0]}`).join('；')} · ${twoPhase}`
+  }
+  if (w.case_result === 'HOLD') {
+    const why = (w.holds ?? []).map((h) => `${h.code}：${h.why}`).join('；') || '(未给理由)'
+    return `- ${head}：**判不了** —— DR-02 本跑 **HOLD**（${why}）· ${twoPhase}`
+  }
+  return `- ${head}：DR-02 见证 **${w.real_roots.windows_judged}/${w.real_roots.windows_total} 窗口已判** · brain 基线 **${w.real_roots.baseline_brain_count}** 路径 · ${twoPhase}`
+}
+
+/** `settlement.md` 的「覆盖边界」那一行（**同一份读数**：`DR-02` 写下的 `content_uncovered`）。 */
+export function coverageSettlementLine(rr) {
+  const u = rr.content_uncovered
+  if (u === null || typeof u !== 'object') {
+    return '  - 🔴 覆盖边界：DR-02 的读数里没有 `content_uncovered` —— 这一行判不了（它不是一份可以另写的字面量：判据与结算读同一份）'
+  }
+  return `  - 🔴 覆盖边界（DR-02 的读数）：【${u.what ?? '（未给）'}】不会被 \`brain\` 的路径集合判据抓到 —— 兜它的是 ${(u.covered_by ?? ['（未声明）']).join(' + ')}；\`cli-inventory\` 只是枚举、不是闸。另一方向：别的会话在窗口内新增 / 删除路径仍会红（残余误报，窗口 = 每个 CLI 子调用）。`
+}
+
 // ── 结算（注册数 vs 结算数）────────────────────────────────────────────────
 /** 交付面清单：`tests/agenia-upgrade/**` 逐文件 SHA —— 红基线要能冻住"测试是哪一版"。 */
 export function sourceInventory() {
@@ -905,7 +1090,24 @@ export function settle() {
   const scaffoldingErrors = cases
     .filter((c) => c.settled && c.problems.some((p) => scaffoldingCodes.includes(p.code)))
     .map((c) => ({ id: c.id, codes: [...new Set(c.problems.filter((p) => scaffoldingCodes.includes(p.code)).map((p) => p.code))] }))
-  const diff = before && after ? realRootsDiff(before, after) : null
+  /**
+   * 🔴 **`bug-20261107-06`**：结算的「真实根前后」不再自己拼 —— 它**读 `DR-02` 的读数**
+   * （两相位差异 + 跑中见证，一个来源）。读数缺了/守卫读数缺了 ⇒ `problems` 非空 ⇒ 这一行红、退出码非零。
+   * 以前 `DR-02` 的 `readings.real_roots` 文件外没有读者：把见证整段删掉，这一行照旧印「差异=无」。
+   */
+  const realRoots = settlementRealRoots({ before, after, dr02: dr02WitnessReading() })
+  /**
+   * 报告器核对（三条一起看）：
+   *   ① 跑到的文件里不许有已写用例偷偷没结算（`partialFiles` 必须为空）；
+   *   ② 不许有 pending-write 的用例跑出来（`unexpected` 必须为空）；
+   *   ③ 🔴 **`HOLD` 不许被当 pass**（v1.14）：所以它**不进** `green`、也不进 `red`，单独一栏；
+   *      这一条在这里只保证"三态互斥且计数守恒"（`red + green + holds === settled`），
+   *      谁要把 HOLD 读成"过了"，得先推翻这个守恒式。
+   *   ④ 🔴 **登记必须等于盘上**（F-57）：`discoveryProblems` 必须为空 ——
+   *      包括"没登记的用例跑了 / 登记的用例不见了 / 证据根里有孤儿目录"。
+   * `missing` 是"全部已写用例里这次没跑的"—— 分批跑时它非空是**正常的**，明写在 `not_run_cases` 里。
+   */
+  const reporterCheckOk = partialFiles.length === 0 && unexpected.length === 0 && red + green + holdCases.length === cases.filter((c) => c.settled).length && discoveryProblems.length === 0
   /**
    * 🔴 **`F-106`**：这一跑的平台版本 —— **读数**，不是判据（不进 `reporter_check_ok`、不改退出码）。
    * 它只回答"上面那些 `sources` / `test_tree` / `staged_tree_sha256` 是**对着哪一版平台**量的"。
@@ -935,42 +1137,20 @@ export function settle() {
     settled: { total: cases.filter((c) => c.settled).length, red, green, holds: holdCases.length, hold_cases: holds, missing, unexpected, partial_files: partialFiles },
     /** 语言级错误（红在脚手架 ⇒ 先查测试自己）：单独一栏，别和"被测对象的红"混着读。 */
     scaffolding_errors: scaffoldingErrors,
+    /** 报告器核对（三条一起看：文件内缺结算 / 跑到未写的 / HOLD 计数守恒 / 登记=盘上）。 */
+    reporter_check_ok: reporterCheckOk,
     /**
-     * 报告器核对（三条一起看）：
-     *   ① 跑到的文件里不许有已写用例偷偷没结算（`partialFiles` 必须为空）；
-     *   ② 不许有 pending-write 的用例跑出来（`unexpected` 必须为空）；
-     *   ③ 🔴 **`HOLD` 不许被当 pass**（v1.14）：所以它**不进** `green`、也不进 `red`，单独一栏；
-     *      这一条在这里只保证"三态互斥且计数守恒"（`red + green + holds === settled`），
-     *      谁要把 HOLD 读成"过了"，得先推翻这个守恒式。
-     *   ④ 🔴 **登记必须等于盘上**（F-57）：`discoveryProblems` 必须为空 ——
-     *      包括"没登记的用例跑了 / 登记的用例不见了 / 证据根里有孤儿目录"。
-     * `missing` 是"全部已写用例里这次没跑的"—— 分批跑时它非空是**正常的**，明写在 `not_run_cases` 里。
+     * 🔴 结算自己算不算数：报告器核对通过 **且** 「真实根前后」那一节没有红因。
+     * 退出码认这一个（`--settle` 那一段）—— 结算说"不通过"就必须非零（F-43 / F-57）。
      */
-    reporter_check_ok: partialFiles.length === 0 && unexpected.length === 0 && red + green + holdCases.length === cases.filter((c) => c.settled).length && discoveryProblems.length === 0,
+    settlement_ok: reporterCheckOk && realRoots.problems.length === 0,
     full_coverage: missing.length === 0,
     /**
      * 安全不变量：真实脑 / 真实路线前后必须同值（契约 §2.4 第 5 条）。
-     * 🔴 覆盖边界（2026-11-07 MF-1）：`brain` 判的是**路径集合**，内容不判 —— 见下面的 `content_uncovered`。
+     * 🔴 **同一来源**（`bug-20261107-06`）：`diff` 是两相位差集，`dr02` 是 `DR-02` 的读数；
+     * 覆盖边界 `content_uncovered` **从 `DR-02` 的读数里读回来**（不再有第二份手写字面量）。
      */
-    real_roots: {
-      before,
-      after,
-      diff,
-      security_violation: diff === null ? null : diff.length > 0,
-      /**
-       * 🔴 **这一格没盖住什么 / 会误伤什么**（2026-11-07 MF-2 更正；读的人不必去翻决定书）：
-       *   · 没盖住：已存在文件被**就地覆盖**（内容改、路径不变）—— 兜它的是 `--real-mode` 的
-       *     `E_ROOT_REAL_BRAIN`（`DR-01`）。`lib/cli-inventory.mjs` 只是枚举命令，**不是闸**。
-       *   · 会误伤：别的会话在这段**窗口**里新增 / 删除一个路径，同样红 —— 假红，不是假绿。
-       */
-      content_uncovered: {
-        root: 'brain',
-        what: '已存在文件被就地覆盖（内容改、路径不变）',
-        covered_by: ['DR-01 --real-mode ⇒ E_ROOT_REAL_BRAIN'],
-        cli_inventory: 'lib/cli-inventory.mjs 只是枚举命令，不判它会写哪儿 —— 不是闸',
-        residual_false_positive: '别的会话在窗口内新增 / 删除路径仍会被判成 SECURITY-VIOLATION（假红，不是假绿）',
-      },
-    },
+    real_roots: realRoots,
     oracle: oracleReadings(),
     staging: stagingReadings(),
     /**
@@ -1029,11 +1209,8 @@ export function settleMarkdown(s) {
   lines.push(`- 本次跑到的文件：${s.run_scope.files_in_run.join(' · ') || '（无）'}`)
   lines.push(`- 报告器核对（跑到的文件里不许缺结算 + 不许跑到未写的）：${s.reporter_check_ok ? '通过' : '**不通过**'}${s.settled.partial_files.length ? ` · 文件内缺结算：${s.settled.partial_files.map((p) => `${p.file}(${p.missing.join(',')})`).join('；')}` : ''}${s.settled.unexpected.length ? ` · 意外多出：${s.settled.unexpected.join(', ')}` : ''}`)
   lines.push(`- 未跑到的已写用例（分批跑时正常，明写在此）：${s.run_scope.not_run_cases.length === 0 ? '无（本次全覆盖）' : `${s.run_scope.not_run_cases.length} 条 —— ${s.run_scope.not_run_files.join(' · ')}`}`)
-  lines.push(`- 真实根前后：before=${s.real_roots.before ? '有' : '缺'} · after=${s.real_roots.after ? '有' : '缺'} · 差异=${s.real_roots.diff === null ? '（判不了：缺一相位）' : (s.real_roots.diff.length === 0 ? '**无**' : `**有**：${s.real_roots.diff.join('；')}`)}`)
-  {
-    const uncovered = s.real_roots.content_uncovered
-    lines.push(`  - 🔴 覆盖边界（2026-11-07 MF-2）：【${uncovered?.what ?? '（这一节不在：老 settlement）'}】不会被 \`brain\` 的路径集合判据抓到 —— 兜它的是 ${(uncovered?.covered_by ?? ['（未声明）']).join(' + ')}；\`cli-inventory\` 只是枚举、不是闸。另一方向：别的会话在窗口内新增 / 删除路径仍会红（残余误报，窗口 = 每个 CLI 子调用）。`)
-  }
+  lines.push(realRootsSettlementLine(s.real_roots))
+  lines.push(coverageSettlementLine(s.real_roots))
   lines.push(`- oracle：${s.oracle.exists ? `在盘（SHA ${s.oracle.actual_sha256}）` : '**不在盘**'} · 声明版本 ${s.oracle.declared_version ?? '(未给)'} · 路径 ${s.oracle.path ?? '(未给)'}`)
   lines.push(`- staging：${s.staging.exists ? '在盘' : '**不在盘**'}（${s.staging.path ?? '(未给)'}）`)
   lines.push(`- **被测 staging 树哈希（T-RUN-1）**：\`${s.staged_tree_sha256 ?? '(算不出)'}\` · ${s.staged_tree_files ?? 0} 个文件 —— 与上面那行 oracle SHA 并列，就是"这一轮被测的是哪一版"的锚`)
@@ -1071,8 +1248,9 @@ if (process.argv[1] && canonical(process.argv[1]) === canonical(fileURLToPath(im
     const s = settle()
     writeJson(path.join(evidenceRoot(), 'settlement.json'), s)
     writeText(path.join(evidenceRoot(), 'settlement.md'), settleMarkdown(s))
-    console.log(`settlement: ${s.settled.red} RED / ${s.settled.green} GREEN / 分母 ${s.registry.total} / reporter_check_ok=${s.reporter_check_ok} / real_roots_diff=${s.real_roots.diff === null ? 'n/a' : s.real_roots.diff.length}`)
+    console.log(`settlement: ${s.settled.red} RED / ${s.settled.green} GREEN / 分母 ${s.registry.total} / reporter_check_ok=${s.reporter_check_ok} / settlement_ok=${s.settlement_ok} / real_roots_diff=${s.real_roots.diff === null ? 'n/a' : s.real_roots.diff.length} / dr02_witness=${s.real_roots.witness_state} / real_roots_problems=${s.real_roots.problems.length}`)
     // 🔴 结算自己说"不通过" ⇒ 退出码必须非零（2）。恒 exit 0 会让"分母 + 全绿"那两句话谁都不负责（F-43 / F-57）。
-    process.exitCode = s.reporter_check_ok ? 0 : 2
+    //    `settlement_ok` = 报告器核对 **且** 「真实根前后」那一节没有红因（读 DR-02 的读数）。
+    process.exitCode = s.settlement_ok ? 0 : 2
   }
 }

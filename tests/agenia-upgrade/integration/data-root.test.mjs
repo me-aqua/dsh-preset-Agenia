@@ -62,24 +62,30 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════
  */
 import { before, describe, test } from 'node:test'
+import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { ENV, FROZEN, PATHS, optionalEnv, requireEnv } from '../support/env.mjs'
 import {
   caseFail,
   caseHold,
+  evidenceRoot,
   pathSetDiff,
   pathSetShapeProblem,
   pathSetSummary,
   preflight,
   problem,
   realRootsSnapshot,
+  REAL_ROOTS_CONTENT_UNCOVERED,
   runCase,
   runRoot,
   sha256File,
   stagingReadings,
   treeHash,
 } from '../support/evidence.mjs'
+import { TEMP_SCAN_CODES, tempScanTargets, tempScanVerdict } from '../support/temp-scan.mjs'
+import { buildSettlementProbe, coverageLineOf, realRootsLineOf, runSettleCLI } from '../support/settlement-probe.mjs'
 import { canonical, driveOf, ensureMarkedDir, isUnc, REAL_BRAIN_ROOT, REAL_ROUTE_ROOT } from '../support/root-guard.mjs'
 import { brainPaths, loadStagedModule, routePaths, runBrain, runCli, runRoute, stagingExists, writeFixture } from '../support/sut.mjs'
 // 端到端正例的两块料（来历见各自的文件头）：
@@ -1512,14 +1518,38 @@ describe('integration · data-root (DR)', () => {
       if (freshTree.count === 0) push('DR-POSITIVE', '合法测试根上跑完 init 之后一个产物都没有 —— 正例不成立（"没写出去"和"写对了地方"必须分得开）')
       if (bpAfter.count === 0) push('DR-POSITIVE', `共享测试根 ${bp.root} 上一个产物都没有 —— 清单里的命令没在测试根里落下东西`)
 
-      // ② 临时件落点：运行根 tmp 里不许留 .tmp-* 残渣；真实预设目录里也不许有
-      const leftovers = []
-      for (const dir of [path.join(PATHS.repo, '.team', 'test', '2026-10-14', '_runs'), PATHS.finalPreset]) {
-        const t = treeHash(dir)
-        for (const f of t.files ?? []) if (/\.tmp-|\.partial$/i.test(f.rel)) leftovers.push(`${dir}\\${f.rel}`)
+      // ② 临时件落点：**这一跑**的 temp 目录（`AGENIA_TEST_RUN_ROOT/tmp` —— 不是写死日期的旧运行根）+
+      //    活体预设。判词本体在 `support/temp-scan.mjs`（刀也喂同一个函数）：
+      //      · 扫到残渣 ⇒ 红 `TEMP-LEFTOVER`；
+      //      · 目录不存在 / 空 ⇒ **HOLD** `TEMP-SCAN-NO-SAMPLE`（"没扫到残渣" ≠ "什么都没看"）；
+      //      · 有样本且干净 ⇒ 绿，且读数里必须写出**扫了几份**。
+      const tempScan = tempScanVerdict({ targets: tempScanTargets() })
+      rec.readings.temp_scan = {
+        verdict: tempScan.verdict,
+        code: tempScan.code,
+        scanned: tempScan.scanned,
+        sample_targets: tempScan.targets.filter((t) => t.exists && t.files > 0).map((t) => t.label),
+        no_sample_targets: tempScan.targets.filter((t) => !t.exists || t.files === 0).map((t) => `${t.label}（${t.exists ? '空' : '不存在'}）`),
+        targets: tempScan.targets.map((t) => ({ label: t.label, dir: t.dir, exists: t.exists, files: t.files, leftovers: t.leftovers.length })),
+        leftovers: tempScan.leftovers,
       }
-      rec.readings.temp_leftovers = leftovers
-      if (leftovers.length > 0) push('TEMP-LEFTOVER', `发现临时件残渣（原子写的临时文件必须同目录 rename 掉）：${leftovers.slice(0, 5).join(', ')}`)
+      // 老读点（兼容）：同一份残渣清单 —— 不是第二份判据，只是同一个数换个键。
+      rec.readings.temp_leftovers = tempScan.leftovers
+      if (tempScan.verdict === 'HOLD') {
+        caseHold(rec, TEMP_SCAN_CODES.noSample,
+          `临时件扫描没有样本：${tempScan.why} —— 空 / 缺目录下的"没扫到残渣"不是"干净"，是"没看"`
+          + `（目标：${tempScan.targets.map((t) => `${t.label}=${t.exists ? `${t.files} 份` : '不存在'}`).join(' · ')}）`)
+      }
+      if (tempScan.verdict === 'RED') {
+        push(TEMP_SCAN_CODES.leftover,
+          `发现临时件残渣（原子写的临时文件必须同目录 rename 掉）：${tempScan.leftovers.slice(0, 5).join(', ')}`
+          + ` · 扫了 ${tempScan.scanned ?? '(未计数)'} 份`)
+      }
+      // 读数自守（`bug-20261107-05`）：有样本时必须数得出"扫了几份" —— 只报"干净"、不报份数，
+      // 空样本就会被读成绿（判据 `TMP-01` 的 C 格与刀各咬这一面）。
+      if (tempScan.verdict !== 'HOLD' && !(typeof tempScan.scanned === 'number' && tempScan.scanned > 0)) {
+        push('TEMP-SCAN-COUNT-MISSING', `临时件扫描的读数里没有"扫了几份"（scanned=${JSON.stringify(tempScan.scanned)}）—— 没数样本的"干净"不算读数`)
+      }
 
       // ③ 四个作业以测试根输入：投递必须只改测试根
       if (!jobsWired) {
@@ -1774,14 +1804,9 @@ describe('integration · data-root (DR)', () => {
       // ── ④b 残余风险的**登记**（决定 §三.3；2026-11-07 MF-2 更正措辞）────────────────────
       // 读的人不必去翻决定书：`brain` 这一格**没盖住**"就地覆盖"；兜它的**只有** `E_ROOT_REAL_BRAIN`
       // （`cli-inventory` 是枚举不是闸）；另一方向（别人新增 / 删除路径）是**残余误报**，不是"不会红"。
-      const contentUncovered = {
-        root: 'brain',
-        what: '已存在文件被就地覆盖（内容改、路径不变）',
-        note: '`brain` 的见证是**路径集合**（新增 / 删除）；已存在文件被就地覆盖（内容改、路径不变）不在这条判据的覆盖范围。',
-        covered_by: ['DR-01 --real-mode ⇒ E_ROOT_REAL_BRAIN'],
-        cli_inventory: 'lib/cli-inventory.mjs 只是枚举命令，不判它会写哪儿 —— 不是闸',
-        residual_false_positive: '别的会话在窗口内新增 / 删除路径会被判成 SECURITY-VIOLATION（假红，不是假绿）',
-      }
+      // 🔴 **只有一份**（`bug-20261107-06`）：这段话就是 `evidence.mjs::REAL_ROOTS_CONTENT_UNCOVERED`，
+      //    结算从**这份读数**里读回去 —— 这里再抄一份字面量就是"第二份真相"。
+      const contentUncovered = REAL_ROOTS_CONTENT_UNCOVERED
       rec.readings.real_roots = {
         baseline: {
           at: before.at,
@@ -1793,7 +1818,7 @@ describe('integration · data-root (DR)', () => {
         windows,
         unbracketed: [
           '① 之后：两棵测试根的全树走读（treeHash(bp.root) / treeHash(freshRoot)）—— 无 CLI',
-          '② 临时件落点扫描（读 .team/test/2026-10-14/_runs 与活体预设两棵树）—— 无 CLI',
+          '② 临时件落点扫描（读本次运行的 `AGENIA_TEST_RUN_ROOT/tmp` 与活体预设两棵树）—— 无 CLI',
           '③c 活体预设副本刀（拷贝 + 6 次写 + 6 次快照：k0/k1/k2/k3/seg_in/seg_out）—— 无 CLI；写只落运行根',
           '基线之后立刻：脑根副本拷贝（整棵真根，只读源树）—— 无 CLI',
           '④c 脑根副本刀（2 次写 + 3 次快照）—— 无 CLI；写只落运行根，对真根只读',
@@ -2165,5 +2190,310 @@ describe('integration · data-root (DR)', () => {
 
       caseFail(problems)
     })
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════════════════════════
+// batch 11 · 量具层的两条（`bug-20261107-05` / `bug-20261107-06`）—— 判据本体在 `support/`
+// ══════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * `TMP-01` —— **空样本不许报绿**（`bug-20261107-05`；与 `DR-01` 那条真空真同族）。
+ *
+ * 今天的样子（这一格写的时候）：`DR-02` 的临时件扫描把目录写死成 `.team/test/2026-10-14/_runs`，
+ * 扫不到残渣就是绿 —— 目录不存在 / 空的时候也是绿。"没扫到残渣"与"什么都没看"在读数上分不开。
+ *
+ * 这一格判四件事（行为，不判实现）：
+ *   A 空目录 ⇒ `HOLD` + 码 `TEMP-SCAN-NO-SAMPLE`（点名那个目标）；
+ *   B 目录不存在 ⇒ 同上；
+ *   C 有样本且干净 ⇒ `GREEN`，**`scanned` 必须恰好等于那份样本的份数**（"干净"要带份数）；
+ *   D 有样本且有残渣 ⇒ `RED` + 码 `TEMP-LEFTOVER`（残渣点名、份数照旧）；
+ *   E 目标**从环境算**：两个不同运行根必须给出两个不同的运行根目标（写死日期在这里红）。
+ * 两把刀（切 `support/temp-scan.mjs` 的**副本**，本文件跑动中一个字节不动）：
+ *   F 把"空 ⇒ HOLD"改成"空 ⇒ 绿" ⇒ 同一份空目录，真模块 HOLD、变体 GREEN（刀咬住了）；
+ *   G 把目标改回写死的 `2026-10-14` ⇒ 变体的目标里没有 `<env>/tmp`（刀咬住了）。
+ * 🔴 刀**自带尺子**：期望（HOLD/GREEN/份数/`<env>/tmp`）都写在判据里，不 import 被切的那份模块的任何符号；
+ *    切不动（锚点不在 / 不是恰好 1 处）⇒ `TMP-KNIFE-ANCHOR`，**不许**当成"刀过了"。
+ */
+test('TMP-01 临时件扫描必须有样本：空/缺目录 ⇒ HOLD 点名 TEMP-SCAN-NO-SAMPLE；有样本必须数出扫了几份（两把刀）', async () => {
+  await runCase('TMP-01', async (rec) => {
+    const problems = []
+    const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
+    const base = path.join(runRoot(), 'tmp01')
+    const put = (dir, name, body = 'x\n') => {
+      mkdirSync(path.dirname(path.join(dir, name)), { recursive: true })
+      writeFileSync(path.join(dir, name), body, 'utf8')
+    }
+    const emptyDir = path.join(base, 'empty')
+    const absentDir = path.join(base, 'absent')
+    const cleanDir = path.join(base, 'clean')
+    const dirtyDir = path.join(base, 'dirty')
+    mkdirSync(emptyDir, { recursive: true })
+    put(cleanDir, 'a.mjs')
+    put(cleanDir, 'b.json', '{}\n')
+    put(cleanDir, 'sub/c.txt')
+    put(dirtyDir, 'keep.txt')
+    put(dirtyDir, 'left.tmp-9f3a', 'half\n')
+    const scan = (targets) => tempScanVerdict({ targets: targets.map(([label, dir]) => ({ label, dir })) })
+
+    // ── A 空目录 ─────────────────────────────────────────────────────────────
+    const a = scan([['空目录', emptyDir]])
+    rec.readings.tmp01_empty = { verdict: a.verdict, code: a.code, scanned: a.scanned, why: a.why }
+    if (!(a.verdict === 'HOLD' && a.code === TEMP_SCAN_CODES.noSample)) {
+      push('TEMP-SCAN-NO-SAMPLE', `空目录必须 HOLD + code=${TEMP_SCAN_CODES.noSample}，实得 verdict=${JSON.stringify(a.verdict)} / code=${JSON.stringify(a.code)}`
+        + ' —— 空样本上的"没扫到残渣"不是"干净"（同 DR-01 那条真空真）')
+    }
+    if (!String(a.why ?? '').includes('空目录')) {
+      push('TEMP-SCAN-NO-SAMPLE', `HOLD 的说明必须点名**哪一个**目标没样本（why=${JSON.stringify(a.why)}）—— 只说"没样本"读的人不知道去哪儿看`)
+    }
+
+    // ── B 目录不存在 ─────────────────────────────────────────────────────────
+    const b = scan([['不存在的目录', absentDir]])
+    rec.readings.tmp01_absent = { verdict: b.verdict, code: b.code, scanned: b.scanned, exists: b.targets?.[0]?.exists ?? null }
+    if (!(b.verdict === 'HOLD' && b.code === TEMP_SCAN_CODES.noSample && b.targets?.[0]?.exists === false)) {
+      push('TEMP-SCAN-NO-SAMPLE', `缺目录必须 HOLD + code=${TEMP_SCAN_CODES.noSample} + exists:false，实得 verdict=${JSON.stringify(b.verdict)} / code=${JSON.stringify(b.code)} / exists=${JSON.stringify(b.targets?.[0]?.exists)}`)
+    }
+
+    // ── C 有样本且干净：份数必须是那个数 ─────────────────────────────────────
+    const c = scan([['干净目录', cleanDir]])
+    rec.readings.tmp01_clean = { verdict: c.verdict, code: c.code, scanned: c.scanned, files: c.targets?.[0]?.files ?? null }
+    if (!(c.verdict === 'GREEN' && c.code === null && c.scanned === 3 && c.targets?.[0]?.files === 3)) {
+      push('TEMP-SCAN-COUNT', `有样本且干净 ⇒ GREEN 且 scanned 必须写 3，实得 verdict=${JSON.stringify(c.verdict)} / scanned=${JSON.stringify(c.scanned)} / files=${JSON.stringify(c.targets?.[0]?.files)}`
+        + ' —— 只报"干净"、不报份数，空样本就被读成绿了')
+    }
+
+    // ── D 有样本且有残渣 ─────────────────────────────────────────────────────
+    const d = scan([['脏目录', dirtyDir]])
+    rec.readings.tmp01_dirty = { verdict: d.verdict, code: d.code, scanned: d.scanned, leftovers: d.leftovers }
+    if (!(d.verdict === 'RED' && d.code === TEMP_SCAN_CODES.leftover && d.scanned === 2
+      && Array.isArray(d.leftovers) && d.leftovers.length === 1 && /left\.tmp-9f3a$/.test(d.leftovers[0]))) {
+      push('TEMP-LEFTOVER', `残渣必须 RED + code=${TEMP_SCAN_CODES.leftover} + 点名那一份 + scanned=2，实得 verdict=${JSON.stringify(d.verdict)} / code=${JSON.stringify(d.code)} / scanned=${JSON.stringify(d.scanned)} / leftovers=${JSON.stringify(d.leftovers)}`)
+    }
+
+    // ── E 目标从**环境**算（两个不同运行根 ⇒ 两个不同目标）────────────────────
+    const envA = { ...process.env, [ENV.RUN_ROOT]: path.join(base, 'run-a') }
+    const envB = { ...process.env, [ENV.RUN_ROOT]: path.join(base, 'run-b') }
+    const ta = tempScanTargets({ env: envA })
+    const tb = tempScanTargets({ env: envB })
+    const expectA = canonical(path.join(base, 'run-a', 'tmp'))
+    const expectB = canonical(path.join(base, 'run-b', 'tmp'))
+    const hasA = ta.some((t) => canonical(t.dir) === expectA)
+    const hasB = tb.some((t) => canonical(t.dir) === expectB)
+    rec.readings.tmp01_targets = { a: ta.map((t) => t.dir), b: tb.map((t) => t.dir), expected_a: expectA, expected_b: expectB }
+    if (!hasA || !hasB) {
+      push('TEMP-SCAN-DIRS', `扫描目标必须从 AGENIA_TEST_RUN_ROOT 算（期望含 ${expectA} 与 ${expectB}），实得 A=${JSON.stringify(ta.map((t) => t.dir))} / B=${JSON.stringify(tb.map((t) => t.dir))}`
+        + ' —— 写死日期的目标会在这里红：拿旧跑的证据冒充今天的读数')
+    }
+
+    // ── 刀的架子：把真模块拷进运行根（相对 import 改成绝对 file:// —— 测试树零字节）──────
+    const srcFile = path.join(PATHS.testRoot, 'support', 'temp-scan.mjs')
+    const srcText = readFileSync(srcFile, 'utf8')
+    const rewritten = srcText.replace(/from\s+'(\.\/[^']+)'/g, (_m, rel) => `from '${pathToFileURL(path.join(path.dirname(srcFile), rel)).href}'`)
+    const leftoverRel = (rewritten.match(/from\s+'\.\//g) ?? []).length
+    const knifeOk = leftoverRel === 0 && /from\s+'file:/.test(rewritten)
+    const ANCHOR_EMPTY = 'if (noSample.length > 0) {'
+    const ANCHOR_DIR = "path.join(runRoot, 'tmp')"
+    const cut = async (tag, anchor, replacement) => {
+      const hits = rewritten.split(anchor).length - 1
+      if (hits !== 1) return { ok: false, code: 'TMP-KNIFE-ANCHOR', message: `锚点 ${JSON.stringify(anchor)} 在 support/temp-scan.mjs 里出现 ${hits} 次（须恰好 1 次）—— 实现换过写法，这把刀要同批更新` }
+      const dir = path.join(base, 'knife', tag)
+      mkdirSync(dir, { recursive: true })
+      const file = path.join(dir, `temp-scan.${tag}.${process.pid}.mjs`)
+      writeFileSync(file, rewritten.replace(anchor, replacement), 'utf8')
+      try {
+        const mod = await import(pathToFileURL(file).href)
+        return { ok: true, mod }
+      } catch (err) {
+        return { ok: false, code: 'TMP-KNIFE-UNAVAILABLE', message: `变体跑不起来：${String(err?.message ?? err).slice(0, 300)}` }
+      }
+    }
+    rec.readings.tmp01_knife_frame = { imports_rewritten: knifeOk, leftover_relative_imports: leftoverRel }
+
+    // ── F 刀①：空 ⇒ HOLD 改成 空 ⇒ 绿 ───────────────────────────────────────
+    const emptyGreen = await cut('empty-green', ANCHOR_EMPTY, 'if (false) {')
+    rec.readings.knife_empty_green = { ok: emptyGreen.ok, code: emptyGreen.code ?? null }
+    if (!emptyGreen.ok) {
+      push(emptyGreen.code, `[刀① 空⇒绿] ${emptyGreen.message}`)
+    } else {
+      const realEmpty = scan([['空目录', emptyDir]])
+      const mutEmpty = emptyGreen.mod.tempScanVerdict({ targets: [{ label: '空目录', dir: emptyDir }] })
+      rec.readings.knife_empty_green.reading = { real: realEmpty.verdict, mutant: mutEmpty.verdict }
+      if (realEmpty.verdict !== 'HOLD') push('TEMP-SCAN-NO-SAMPLE', `[刀① 对照] 真模块在空目录上必须 HOLD，实得 ${JSON.stringify(realEmpty.verdict)}`)
+      if (mutEmpty.verdict !== 'GREEN') {
+        push('TMP-KNIFE-NOT-BITING', `[刀①] 把"空 ⇒ HOLD"改成"空 ⇒ 绿"之后，变体在空目录上仍不是 GREEN（实得 ${JSON.stringify(mutEmpty.verdict)} / code=${JSON.stringify(mutEmpty.code)}）—— 这一格量不到那把回退`)
+      }
+    }
+
+    // ── G 刀②：目标改回写死日期 ─────────────────────────────────────────────
+    const hardcoded = await cut('hardcoded-dir', ANCHOR_DIR, "path.join(PATHS.repo, '.team', 'test', '2026-10-14', '_runs')")
+    rec.readings.knife_hardcoded_dir = { ok: hardcoded.ok, code: hardcoded.code ?? null }
+    if (!hardcoded.ok) {
+      push(hardcoded.code, `[刀② 写死日期] ${hardcoded.message}`)
+    } else {
+      const mutTargets = hardcoded.mod.tempScanTargets({ env: envA })
+      const mutHasEnv = mutTargets.some((t) => canonical(t.dir) === expectA)
+      rec.readings.knife_hardcoded_dir.reading = { mutant_targets: mutTargets.map((t) => t.dir), has_env_target: mutHasEnv }
+      if (mutHasEnv) {
+        push('TMP-KNIFE-NOT-BITING', `[刀②] 把目标改回写死的 2026-10-14 之后，变体仍含 <env>/tmp（${JSON.stringify(mutTargets.map((t) => t.dir))}）—— 这一格量不到"写死日期"那种回退`)
+      }
+      if (!hasA) push('TEMP-SCAN-DIRS', '[刀② 对照] 真模块必须含 <env>/tmp（这一条与 E 格同源：真模块不成立时刀没有意义）')
+    }
+
+    caseFail(problems)
+  })
+})
+
+/**
+ * `STM-01` —— **结算那一条「真实根前后」读的是 `DR-02` 的读数**（`bug-20261107-06`）。
+ *
+ * 今天的样子（这一格写的时候）：结算行从 `_preflight/real-roots.{before,after}.json` +
+ * `settle()` 里另一份手写 `content_uncovered` 拼出来，`DR-02` 的 `readings.real_roots`
+ * **文件外没有读者** ⇒ 把 `DR-02` 的见证整段删掉，结算行照旧印「差异=无」。
+ *
+ * 这一格用**真入口**（`node support/evidence.mjs --settle`，跑在一份合成证据根上）判五件事：
+ *   A 读数完好 ⇒ 结算行点名 **DR-02**、写出**它的**窗口数 / brain 基线；`real_roots.problems` 为空；
+ *   B 把 `readings.real_roots` 整段删掉（**副本**）⇒ 行变 🔴、点名缺的是 DR-02 的读数、退出码非零；
+ *   C 删掉 `readings.real_roots.content_uncovered` ⇒ 覆盖边界那一行跟着红（它不是 `evidence.mjs` 的字面量）；
+ *   D `windows` 清空 ⇒ 行变 🔴 且点名"没判过的窗口"；
+ *   E 改 `baseline.brain.count` ⇒ 行里那个数**跟着变**（同一来源，不是自己另算的）。
+ * 期望侧全部手写（不 import 结算的实现来反推）；证据根本身由 `support/settlement-probe.mjs` 复算并核对。
+ */
+test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的读数 ⇒ 行红/变字，绝不停在"差异=无"', async () => {
+  await runCase('STM-01', async (rec) => {
+    const problems = []
+    const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
+    const realEvidence = evidenceRoot()
+    const realDr02File = path.join(realEvidence, 'DR-02', 'result.json')
+    if (!existsSync(realDr02File)) {
+      push('STM-SETUP', `本跑的 DR-02 读数不在（${realDr02File}）—— 这格判不了（它是"结算读 DR-02"的前提）`)
+      caseFail(problems)
+      return
+    }
+    const realDr02 = JSON.parse(readFileSync(realDr02File, 'utf8'))
+    if (realDr02?.result !== 'GREEN') {
+      push('STM-SETUP', `本跑的 DR-02 不是 GREEN（实得 ${JSON.stringify(realDr02?.result)}）—— 下面那些"读数完好"的前提不成立，先看 DR-02 自己的红`)
+    }
+    rec.readings.dr02_source = {
+      file: realDr02File,
+      result: realDr02?.result ?? null,
+      has_real_roots: realDr02?.readings?.real_roots !== undefined,
+      has_guard_reading: realDr02?.readings?.dr02_witness_outside !== undefined,
+    }
+    const snapshot = realRootsSnapshot()
+    const base = path.join(runRoot(), 'stm01')
+    const probe = (name, corrupt) => {
+      const copy = JSON.parse(JSON.stringify(realDr02))
+      corrupt?.(copy)
+      const { runRoot: probeRoot } = buildSettlementProbe({ baseDir: base, name, snapshot, records: { 'DR-02': copy } })
+      const out = runSettleCLI({ runRoot: probeRoot })
+      return { out, line: realRootsLineOf(out.markdown), coverage: coverageLineOf(out.markdown) }
+    }
+    const summary = (p) => ({
+      present: p.out.present,
+      exit: p.out.exit,
+      problems: (p.out.settlement?.real_roots?.problems ?? []).map((x) => x.code),
+      witness_ok: p.out.settlement?.real_roots?.witness_ok ?? null,
+      settlement_ok: p.out.settlement?.settlement_ok ?? null,
+      line: p.line,
+      coverage: p.coverage,
+    })
+
+    const intact = probe('intact')
+    const noReadings = probe('no-readings', (r) => { delete r.readings.real_roots })
+    const noUncovered = probe('no-uncovered', (r) => { delete r.readings.real_roots.content_uncovered })
+    const noWindows = probe('no-windows', (r) => { r.readings.real_roots.windows = [] })
+    const countChanged = probe('count-changed', (r) => { r.readings.real_roots.baseline.brain.count = 12345 })
+    rec.readings.settlement_probes = {
+      intact: summary(intact),
+      no_readings: summary(noReadings),
+      no_uncovered: summary(noUncovered),
+      no_windows: summary(noWindows),
+      count_changed: summary(countChanged),
+    }
+
+    // ── A 读数完好：结算行点名 DR-02，并写出它的读数 ─────────────────────────
+    if (!intact.out.present) {
+      push('STM-SETTLE-UNAVAILABLE', `合成证据根上跑不出结算（exit=${intact.out.exit} · stderr=${intact.out.stderr.slice(0, 400)}）`)
+    } else {
+      const rr = intact.out.settlement.real_roots
+      if (rr?.dr02?.present !== true) {
+        push('STM-READING-NOT-WIRED', `读数完好时结算行必须认出 DR-02 的读数（settlement.real_roots.dr02.present=${JSON.stringify(rr?.dr02?.present)}）—— 结算行没有读者`)
+      }
+      if (rr?.witness_ok !== true || intact.out.settlement?.settlement_ok !== true) {
+        push('STM-READING-NOT-WIRED', `读数完好时 witness_ok/settlement_ok 必须为 true，实得 ${JSON.stringify(rr?.witness_ok)} / ${JSON.stringify(intact.out.settlement?.settlement_ok)}`)
+      }
+      if ((rr?.problems ?? []).length > 0) {
+        push('STM-READING-NOT-WIRED', `读数完好时不许有 real_roots 问题，实得 ${JSON.stringify((rr?.problems ?? []).map((x) => x.code))}`)
+      }
+      if (intact.line === null || !intact.line.includes('DR-02')) {
+        push('STM-LINE-NOT-READING', `结算那一行必须点名它的读者（DR-02），实得 ${JSON.stringify(intact.line)}`)
+      }
+      if (intact.line !== null && intact.line.includes('🔴')) {
+        push('STM-LINE-NOT-READING', `读数完好时那一行不许是 🔴：${JSON.stringify(intact.line)}`)
+      }
+      if (intact.line !== null && /差异=/.test(intact.line) === false) {
+        push('STM-LINE-NOT-READING', `那一行必须写出两相位差异（"差异="），实得 ${JSON.stringify(intact.line)}`)
+      }
+      if (intact.out.exit !== 0) {
+        push('STM-SETTLE-EXIT', `读数完好（且同文件兄弟用例都齐）时结算必须 exit 0，实得 ${intact.out.exit} · stdout=${intact.out.stdout.slice(0, 300)}`)
+      }
+    }
+
+    // ── B 删掉 DR-02 的 readings.real_roots ⇒ 行变红、点名、非零退出 ───────────
+    if (!noReadings.out.present) {
+      push('STM-SETTLE-UNAVAILABLE', `[B] 结算没生成（exit=${noReadings.out.exit}）`)
+    } else {
+      const rr = noReadings.out.settlement.real_roots
+      const codes = (rr?.problems ?? []).map((x) => x.code)
+      if (!codes.includes('SETTLE-DR02-WITNESS-READING-MISSING')) {
+        push('STM-READING-NOT-WIRED', `[B] 删掉 DR-02 的 readings.real_roots 之后，结算必须点名 SETTLE-DR02-WITNESS-READING-MISSING，实得 ${JSON.stringify(codes)}`)
+      }
+      if (rr?.settlement_ok !== undefined) push('STM-READING-NOT-WIRED', '[B] 读数没了，`real_roots` 里却还有 `settlement_ok` —— 这两格不许各写一份')
+      if (noReadings.out.settlement?.settlement_ok !== false) push('STM-READING-NOT-WIRED', `[B] 这一跑的 settlement_ok 必须是 false（实得 ${JSON.stringify(noReadings.out.settlement?.settlement_ok)}）`)
+      if (noReadings.line === null || !noReadings.line.includes('🔴')) {
+        push('STM-LINE-NOT-READING', `[B] 那一行必须变成 🔴（实得 ${JSON.stringify(noReadings.line)}）—— 读数没了还印"差异=无"就是假绿`)
+      }
+      if (noReadings.out.exit === 0) push('STM-SETTLE-EXIT', '[B] 结算读数没了，退出码却还是 0')
+      if (noReadings.line === intact.line) push('STM-LINE-NOT-READING', '[B] 改坏读数之后那一行一个字都没变 —— 它读的不是 DR-02')
+    }
+
+    // ── C 删掉 content_uncovered ⇒ 覆盖边界那一行跟着红（单一来源）────────────
+    if (!noUncovered.out.present) {
+      push('STM-SETTLE-UNAVAILABLE', `[C] 结算没生成（exit=${noUncovered.out.exit}）`)
+    } else {
+      const rr = noUncovered.out.settlement.real_roots
+      const codes = (rr?.problems ?? []).map((x) => x.code)
+      if (!codes.includes('SETTLE-DR02-CONTENT-UNCOVERED-MISSING')) {
+        push('STM-COVERAGE-NOT-READING', `[C] 删掉 DR-02 读数里的 content_uncovered 之后，结算必须点名 SETTLE-DR02-CONTENT-UNCOVERED-MISSING，实得 ${JSON.stringify(codes)}`)
+      }
+      if (noUncovered.coverage === null || !noUncovered.coverage.includes('🔴')) {
+        push('STM-COVERAGE-NOT-READING', `[C] 覆盖边界那一行必须跟着红（实得 ${JSON.stringify(noUncovered.coverage)}）—— 它是 settle() 里另一份手写字面量的话就不会动`)
+      }
+    }
+
+    // ── D windows 清空 ⇒ 行变红且点名"没判过的窗口" ───────────────────────────
+    if (!noWindows.out.present) {
+      push('STM-SETTLE-UNAVAILABLE', `[D] 结算没生成（exit=${noWindows.out.exit}）`)
+    } else {
+      const rr = noWindows.out.settlement.real_roots
+      const codes = (rr?.problems ?? []).map((x) => x.code)
+      if (!codes.includes('SETTLE-DR02-WINDOWS-UNJUDGED')) {
+        push('STM-WINDOWS-NOT-READING', `[D] windows 清空之后结算必须点名 SETTLE-DR02-WINDOWS-UNJUDGED，实得 ${JSON.stringify(codes)}`)
+      }
+      if (noWindows.line === null || !noWindows.line.includes('🔴')) {
+        push('STM-WINDOWS-NOT-READING', `[D] 那一行必须变红（实得 ${JSON.stringify(noWindows.line)}）`)
+      }
+    }
+
+    // ── E 改 baseline.brain.count ⇒ 行里那个数跟着变（同一来源）───────────────
+    if (countChanged.out.present) {
+      if (countChanged.line === null || !countChanged.line.includes('12345')) {
+        push('STM-COUNT-NOT-READING', `[E] 把 DR-02 读数里的 baseline.brain.count 改成 12345，结算行里就必须出现 12345（实得 ${JSON.stringify(countChanged.line)}）—— 行里的数不是从 DR-02 取的`)
+      }
+    } else {
+      push('STM-SETTLE-UNAVAILABLE', `[E] 结算没生成（exit=${countChanged.out.exit}）`)
+    }
+
+    caseFail(problems)
   })
 })
