@@ -92,15 +92,19 @@ function schemaError(message) {
 export function controlCharVerdict(text, where) {
   const label = typeof where === 'string' && where.trim() !== '' ? where : '（未点名位置）'
   if (typeof text !== 'string') return { ok: true, code: null, message: '' }
-  for (let i = 0; i < text.length; i += 1) {
-    const cp = text.codePointAt(i)
+  // ⚠️ 位置按**码点**数（1 基），不按 UTF-16 单元：星平面字符占两个单元，
+  //    按单元数会把"第 2 个字符"报成"第 3 个"（`CTL-01` 的 astral 腿抓到过）。
+  let at = 0
+  for (const ch of text) {
+    at += 1
+    const cp = ch.codePointAt(0)
     if (cp === 10) continue // LF 是唯一的例外
     if (cp < 32) {
       const hex = cp.toString(16).toUpperCase().padStart(4, '0')
       return {
         ok: false,
         code: 'E_PROPOSAL_CONTROL_CHAR',
-        message: `${label} 的正文里有控制字符：第 ${i + 1} 个字符是 U+${hex}（只放行 LF）。`
+        message: `${label} 的正文里有控制字符：第 ${at} 个字符是 U+${hex}（只放行 LF）。`
           + '正文被弄坏过几次（反斜杠 + f/r 混进来那一类），所以入口对控制字符**一律拒**、不替谁洗：'
           + '把那一处换成普通空格或换行，再重新导。',
       }
