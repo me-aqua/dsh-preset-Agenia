@@ -36,7 +36,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1666,8 +1666,9 @@ function driveOfPath(p) {
  *
  * **不判什么**（读的人不用再猜）：
  *   · **不判活体 cwd** —— 相对路径仍按**会话头** cwd 解析；所以"相对路径写进了会话头那棵树"这种情形，
- *     它与会话头那棵是同一棵 ⇒ 不报 `OFFICE_TREE_DIFFERS`，**这一半不在本函数的能力里**
- *     （要判它得给写操作落一条账，见 `bug-20261107-10`）；
+ *     它与会话头那棵是**同一棵** ⇒ `differs:false`。**这一格该是 false**（两棵树确实一样）；
+ *     "放过一次 office 写"这件事的落点**不在这里判**，它落在下面那本账上
+ *     （`state/office-landings.jsonl`，`bug-20261107-10` / batch 15）——同一棵也留一行；
  *   · 不判 symlink/junction 攻击、不判 `.team` 目录的权限、不判落点是否真的被写成功。
  *
  * `expected_office` 只在**拒绝**时有意义：落点往上、**最近的且自己有 `.team` 子目录**的那个目录 + `/.team`。
@@ -1708,6 +1709,120 @@ function officeLandingVerdict(target, agent, strict) {
   const differs = office !== null && norm(office) !== norm(header)
   const expected = office === null ? expectedOf(landing) : null
   return { allow, landing, office_root: office, header_office: header, expected_office: expected, differs, warning: differs ? 'OFFICE_TREE_DIFFERS' : null }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// office 落点账（`bug-20261107-10` · batch 15）
+//
+// 一次**放行**的 office 写 = 盘上一行。没有这本账时，"这一轮放行过哪些写、落在哪棵树"会话结束就查无此事：
+// `office_root` / `header_office` / `differs` 只作为 `officeBoundVerdict` 的 readings 活在内存里，
+// 而相对路径落进**会话头自己那棵树**时两棵树相等 ⇒ 盘上零痕迹。
+//
+// 三条口径（改之前先读一遍）：
+//   · **写方那棵树**：账落 `<header_office>/state/office-landings.jsonl`（会话头那棵树的 `.team`），
+//     **不是**落点那棵树 —— 一个工作区只有一本账，"三次放行 ⇒ 恰好两行"这句话才有意义；
+//   · **只追加**：`appendFileSync`，绝不重写整份文件（预置的行必须逐字节活着）；
+//   · **只记落点与两棵树**：一行恰好七个键（`at` / `role` / `tool` / `landing` / `office_root` /
+//     `header_office` / `tree_differs`），**没有地方放正文** —— 账本不是日志倾倒场。
+//
+// 谁写：`apply()` 的 `tools.guard`，在岗位写边界**放行**之后（被拒的写一行都不留：账记的是放行）。
+// 谁读：`officeLandingLedger`（`warning` 由账上的 `cross_tree` 数出来，不从内存 readings 猜）。
+// 写不进去 ⇒ **拒这次写**（`E_GUARD_OFFICE_LEDGER`，fail-closed）；纯读者那一侧报
+// `E_OFFICE_LEDGER_UNWRITABLE`。绝不"记不上还照放"。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 账本相对**某个 office**（`.team` 那一级）的路径 —— 冻结名字（判据与探针按它取）。 */
+export const OFFICE_LANDING_LEDGER_REL = 'state/office-landings.jsonl'
+
+/** `recordOfficeLanding` 失败时返回的码（纯函数层；门禁那一侧另有 `E_GUARD_OFFICE_LEDGER`）。 */
+const OFFICE_LEDGER_UNWRITABLE = 'E_OFFICE_LEDGER_UNWRITABLE'
+
+/** 账本读不动 / 有坏行时的码（`officeLandingLedger` 的 `reason` 前缀）。 */
+const OFFICE_LEDGER_UNREADABLE = 'E_OFFICE_LEDGER_UNREADABLE'
+
+/** 两棵树是不是同一棵：小写 + 正斜杠 + 去尾斜杠（**不碰盘**，契约里那个 `normKey`）。 */
+function officeTreeKey(p) {
+  let s = String(p ?? '').replace(/\\/g, '/')
+  while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1)
+  return s.toLowerCase()
+}
+
+/**
+ * 账本的绝对路径：`<officeRoot>/state/office-landings.jsonl`（`officeRoot` 就是 `.team` 那一级）。
+ *
+ * 相对路径那两段由 `OFFICE_LANDING_LEDGER_REL` 拆出来（唯一来源）；`officeRoot` 为空时
+ * 退回一个**拼不出来的路径**由调用方按"写不进去"处理 —— 不猜、不抛。
+ */
+export function officeLandingLedgerPath(officeRoot) {
+  return join(String(officeRoot ?? ''), ...OFFICE_LANDING_LEDGER_REL.split('/'))
+}
+
+/**
+ * 追加一行（**只追加，不重写**）。返回 `{ ok, code, path, reason }`，**不抛** ——
+ * 要判"写不进去"必须看 `ok`：`ok:false` 时 `reason` 非空（点名 errno 一族）。
+ *
+ * @param {string} officeRoot 写方那棵树（会话头那棵）的 `.team`
+ * @param {object} line 恰好七个键的账行（形状由调用方给；这里不补、不改）
+ */
+export function recordOfficeLanding(officeRoot, line) {
+  let path = null
+  try {
+    path = officeLandingLedgerPath(officeRoot)
+    mkdirSync(dirname(path), { recursive: true })
+    appendFileSync(path, `${JSON.stringify(line)}\n`, 'utf8')
+    return { ok: true, code: null, path, reason: null }
+  } catch (err) {
+    const detail = `${String(err?.code ?? 'UNKNOWN')}: ${String(err?.message ?? err)}`
+    return { ok: false, code: OFFICE_LEDGER_UNWRITABLE, path, reason: detail }
+  }
+}
+
+/**
+ * 从**盘上**读回这本账（不读任何内存里的 readings）。
+ *
+ * `ok:false` 只由"读不动"或"有坏行"引起；**`exists:false` 不是 `ok:false`**（新队还没有这本账是正常态），
+ * 但它也**不算证据**：任何一格都不许拿"没有账本"当"机制成立"。
+ * `unreadable > 0` ⇒ `ok:false`（半行绝不当成 0 行，否则"账坏了"与"账是空的"长得一模一样）。
+ *
+ * @param {string} officeRoot 账本在哪棵树的 `.team` 下
+ */
+export function officeLandingLedger(officeRoot) {
+  const path = officeLandingLedgerPath(officeRoot)
+  const out = {
+    ok: true, path, exists: false, entries: 0, same_tree: 0, cross_tree: 0, unreadable: 0, warning: null, reason: null, lines: [],
+  }
+  if (!existsSync(path)) return out
+  out.exists = true
+  let text = ''
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch (err) {
+    out.ok = false
+    out.reason = `${OFFICE_LEDGER_UNREADABLE}: 账本读不动（${String(err?.code ?? err)}）`
+    return out
+  }
+  const bad = []
+  for (const [index, raw] of String(text).split('\n').entries()) {
+    if (raw.trim() === '') continue
+    let row = null
+    try { row = JSON.parse(raw) } catch { row = null }
+    if (row === null || typeof row !== 'object' || Array.isArray(row) || typeof row.tree_differs !== 'boolean') {
+      out.unreadable += 1
+      bad.push(index + 1)
+      continue
+    }
+    out.entries += 1
+    if (row.tree_differs === true) out.cross_tree += 1
+    else out.same_tree += 1
+    out.lines.push(row)
+  }
+  // 这一行是"读数从账上来"的那一半：`warning` 只由盘上的行数出来，不从内存 readings 猜。
+  out.warning = out.cross_tree > 0 ? 'OFFICE_TREE_DIFFERS' : null
+  if (bad.length > 0) {
+    out.ok = false
+    out.reason = `${OFFICE_LEDGER_UNREADABLE}: ${bad.length} 行解析不了（第 ${bad.join('、')} 行）—— 不许当成 0 行`
+  }
+  return out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2688,16 +2803,45 @@ export async function apply(ctx, config = {}) {
           if (proposal !== null) return `${proposal.code}：${proposal.message}`
           const officeReadings = {}
           const office = officeBoundVerdict(role, toolName, args, who, officeBound, officeReadings)
-          // 🔴 2026-11-07（`ticket-20261102-02`）：**放行但写错了树** 必须出声。
-          //    典型形状：会话头 cwd 在 A 树、相对路径把交付件写进 A 树的 `.team/`，
-          //    而这一轮真正干活的是 B 树。判词是放行（它确实落在某个 `.team/` 里），
-          //    但这一行必须留下两个 office 路径 —— 不许悄悄发生。
-          if (office === null && officeReadings.warning === 'OFFICE_TREE_DIFFERS') {
-            console.error(`[agenia] OFFICE_TREE_DIFFERS：这次写的树与会话头不是同一棵`
-              + `（落点「${String(officeReadings.landing)}」· 那棵树的 office「${String(officeReadings.office_root)}」`
-              + `· 会话头那棵树的 office「${String(officeReadings.header_office)}」）—— 放行了，但你确认一下是不是想写这棵树。`)
-          }
+          // 被拒的写**不落账**：账记的是"这道门放行了"，拒的理由在下面那句报文里。
           if (office !== null) return office.message
+          // 🔴 放行之后必须**在盘上留一行**（`bug-20261107-10` · batch 15）：
+          //    每一次被放行的 `write` / `edit`，只要落点在某一棵树的 `.team/` 里（`office_root` 非 null），
+          //    就往**写方那棵树**（`header_office`）的账上追加一行 —— 同树也留（那一行是
+          //    `tree_differs:false`），异树更留（两个 office 都写着）。
+          //    次序是定的：① 追加 → ② 追加失败 ⇒ **拒这次写**（fail-closed）→ ③ 异树出声。
+          //    ⚠️ 这一行必须与刚追加的那一行**同源**：下面那句 `OFFICE_TREE_DIFFERS` 用的是同一个
+          //       `landing` 对象，不是另算一遍 readings。
+          //    ⚠️ `office_root` 只在**受限岗位**的 write/edit 上被填（名单外岗位在
+          //       `officeBoundVerdict` 第一行就早退了，那一半仍然不留痕 —— 见契约 §5.2）。
+          if (typeof officeReadings.office_root === 'string' && officeReadings.office_root !== '') {
+            const landing = {
+              at: new Date().toISOString(),
+              role: String(role),
+              tool: toolName,
+              landing: String(officeReadings.landing),
+              office_root: officeReadings.office_root,
+              header_office: String(officeReadings.header_office),
+              tree_differs: officeTreeKey(officeReadings.office_root) !== officeTreeKey(officeReadings.header_office),
+            }
+            const written = recordOfficeLanding(officeReadings.header_office, landing)
+            if (written.ok !== true) {
+              // 账写不进去 ⇒ **拒绝这次写**（盘满 / 权限 / 路径被占着）。静默放行会让"写错树"永远查不到。
+              console.error(`[agenia] E_GUARD_OFFICE_LEDGER：账写不进去，这次写被拒 —— `
+                + `账本「${String(written.path)}」原因：${String(written.reason)}`
+                + '（定形 batch 15 §二.4：账写不进去不许静默放行）。')
+              return `E_GUARD_OFFICE_LEDGER：账写不进去，这次写被拒。账本「${String(written.path)}」原因：${String(written.reason)}`
+            }
+            // 🔴 2026-11-07（`ticket-20261102-02`）：**放行但写错了树** 必须出声。
+            //    典型形状：会话头 cwd 在 A 树、落点却在 B 树的 `.team/` 里，而这一轮真正干活的是 A 树。
+            //    判词是放行（它确实落在某个 `.team/` 里），但这一行必须留下两个 office 路径 —— 不许悄悄发生。
+            //    本批起它由**账上刚追加的那一行**驱动（`landing.tree_differs`），不再从内存 readings 猜。
+            if (landing.tree_differs === true) {
+              console.error(`[agenia] OFFICE_TREE_DIFFERS：这次写的树与会话头不是同一棵`
+                + `（落点「${landing.landing}」· 那棵树的 office「${landing.office_root}」`
+                + `· 会话头那棵树的 office「${landing.header_office}」）—— 放行了，但你确认一下是不是想写这棵树。`)
+            }
+          }
           // 🔴 两份每日评审要等**今天的记忆判决**落盘（老板 2026-11-03 定的硬门）。
           const reviewGate = dailyReviewGateVerdict(toolName, contentDir)
           if (reviewGate !== null) return `${reviewGate.code}：${reviewGate.message}`
