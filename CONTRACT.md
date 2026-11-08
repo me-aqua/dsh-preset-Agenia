@@ -854,6 +854,9 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 2. **同一把尺子**（`MTC-01` 两格，`MTC-03` 两格）：两段正文的 `String.length` 分别是 **401** 与 **500**，
    而 `charCountOf` 都是 **400** ⇒ **必须收**。
    · 开头 BOM：`"\uFEFF" + 400 字` ⇒ `charCountOf` 400；
+· 🔴 **CRLF 不再是合法正文**（`F-165`，2026-11-08）：入口只放行 LF，`U+000D` 一律拒 `E_PROPOSAL_CONTROL_CHAR`。
+  所以「CRLF 归一到 LF 之后再数字数」这件事**只剩计数层还在做**（`charCountOf` / `ruler.chars.crlf400` 的读数），
+  闸口已经没有 CRLF 这种输入了 —— 别再把「CRLF 400 也过」当入口判据。
    · `\r\n`：`300 字 + "\r\n"×100` ⇒ 归一后 400。
    一个按 `.length` 判的实现会在这两格当场红 —— 这就是"同一把尺子"唯一的证据。
 3. **别只查一处**（`MTC-02` 三格）：
@@ -880,7 +883,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\<日期>\
 
 | 格 | 守的是 | 现在（2026-10-22 · 现役 `presets/agenia`） |
 | --- | --- | --- |
-| `MTC-01` | §8.1/§8.2 ①②⑤：`payload.entry.text` 401 拒 · 400 过 · BOM/CRLF 归一后 400 也过；**两条导入 CLI 同两格** —— `--op maintenance-import` 与 `--op proposal-import` 各导一次：401 ⇒ exit 2 且零写入、400 ⇒ exit 0 且追加一行 | 🟢 **绿**（4 次真 CLI：两次 401 都 `exit 2` / `E_PROPOSAL_TOO_LONG` / 池子 `pool_exists=false`，两次 400 都 `exit 0` 且各追加 1 行、正文 400 字） |
+| `MTC-01` | §8.1/§8.2 ①②⑤：`payload.entry.text` 401 拒 · **BOM 归一后 400 过**（CRLF 那条腿已于 2026-11-08 删掉：`F-165` 之后带 CR 的正文本身不合格）；**两条导入 CLI 同两格** —— `--op maintenance-import` 与 `--op proposal-import` 各导一次：401 ⇒ exit 2 且零写入、400 ⇒ exit 0 且追加一行 | 🟢 **绿**（4 次真 CLI：两次 401 都 `exit 2` / `E_PROPOSAL_TOO_LONG` / 池子 `pool_exists=false`，两次 400 都 `exit 0` 且各追加 1 行、正文 400 字） |
 | `MTC-02` | §8.2 ③：`engine_ops[].entry.text` 401 拒 · 400 过 · 超长在第二位也抓 · retire 案不误伤 · 两处都超也拒；真 CLI 同两格 | 🟢 **绿** |
 | `MTC-03` | §8.2 ④：阳性对照（旧**工具**面）—— 普通候选 401 仍被 `proposal_file` 拒、400 过、同一把尺子、拒=零写入 | 🟢 **绿**（旧闸在，行为没变） |
 | 反向 | 同一份用例跑**改动前**的 `importVerdict`（`git show HEAD:` 的副本，不回落项目文件） | 🔴 **用例这一层**：`RED 2 格 / GREEN 1 格`（3 条用例里 `MTC-01` / `MTC-02` 红、`MTC-03` 绿）· **问题码这一层**：红的那 1 格 `MTC-01` 里 **4 条**，其中 **2 条**是新断言（`MTC-PROP-401-ACCEPTED` + `MTC-CLI-PROP-401-EXIT`：401 被收下、exit 0）；`MTC-02` 另有 4 条（读数 `.team/test/2026-10-22/log.md` 第二十八节 §28.4 `R-1`） |

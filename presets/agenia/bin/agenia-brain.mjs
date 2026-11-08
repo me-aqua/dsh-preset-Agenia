@@ -64,7 +64,7 @@ import path from 'node:path'
 import { CODES } from '../lib/error-codes.mjs'
 import { dataRootVerdict, realInitVerdict, realModeVerdict, realRootsFor, TEST_ROOT_MARKER, testModeOf, workspaceWriteVerdict } from '../lib/paths.mjs'
 import { acquireLock, readJsonFile, releaseLock, writeJsonAtomic } from '../lib/atomic.mjs'
-import { capacityVerdict, isCullEligible } from '../lib/memory.mjs'
+import { capacityVerdict, isCullEligible, controlCharVerdict } from '../lib/memory.mjs'
 import { LEASES } from '../lib/liveness.mjs'
 import { validateRedoEvidence } from '../lib/evidence.mjs'
 import * as S from '../lib/state.mjs'
@@ -761,6 +761,14 @@ function opJudgeCommit({ root, payload }) {
   //    这条路径不再发出；映射表留着，op 形状被拒时仍是它自己那个码）。
   const ops = payload?.entries_patch === undefined || payload?.entries_patch === null ? [] : payload.entries_patch
   if (!Array.isArray(ops)) throw cliError('E_ARG_SCHEMA', 'entries_patch 必须是数组')
+  // 🔴 F-165（P4）：控制字符在**入口**拦，不在存量拦（F-72 的口径：入口只卡新导入、不扫存量）。
+  //    位置用**入参下标**（这里 `i` 就是 `entries_patch[i]` 的那个 i）—— 在 `buildSnapshot` 里拦会把
+  //    整份存活集的下标当成 op 下标（改到第 37 条时报 `entries_patch[37]`，而 payload 里只有 1 个 op）。
+  for (let i = 0; i < ops.length; i += 1) {
+    const text = ops[i]?.entry?.text
+    const v = controlCharVerdict(text, `entries_patch[${i}].entry.text`)
+    if (!v.ok) throw cliError(v.code, v.message)
+  }
   const verdict = capacityVerdict(base.snapshot.entries ?? [], ops)
   if (!verdict.ok) {
     const code = verdict.rejectCode === 'E_CAP_COUNT' || verdict.rejectCode === 'E_CAP_CHARS' || verdict.rejectCode === 'E_OP_INVALID'
