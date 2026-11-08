@@ -1727,8 +1727,9 @@ function officeLandingVerdict(target, agent, strict) {
 //
 // 谁写：`apply()` 的 `tools.guard`，在岗位写边界**放行**之后（被拒的写一行都不留：账记的是放行）。
 // 谁读：`officeLandingLedger`（`warning` 由账上的 `cross_tree` 数出来，不从内存 readings 猜）。
-// 写不进去 ⇒ **拒这次写**（`E_GUARD_OFFICE_LEDGER`，fail-closed）；纯读者那一侧报
-// `E_OFFICE_LEDGER_UNWRITABLE`。绝不"记不上还照放"。
+// 写不进去 ⇒ **拒这次写**（`E_GUARD_OFFICE_LEDGER`，fail-closed）。读的时候读不了（缺 / 坏行 / 没权限）
+// 另算一个面：`officeLandingLedger` 计入 `unreadable`，`reason` 是 `E_OFFICE_LEDGER_UNREADABLE`。
+// （`E_OFFICE_LEDGER_UNWRITABLE` 只出现在 `recordOfficeLanding` 的返回值上 —— 别把两个面写成一句话。）
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 账本相对**某个 office**（`.team` 那一级）的路径 —— 冻结名字（判据与探针按它取）。 */
