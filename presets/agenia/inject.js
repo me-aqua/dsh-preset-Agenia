@@ -38,7 +38,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
-import { isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** 插件名，只出现在排查信息里。 */
@@ -921,6 +921,7 @@ async function sharedDayKeyOfFn() {
     if (typeof module.dayKeyOf !== 'function') throw new Error('lib/route.mjs 没有导出 dayKeyOf')
     sharedDayKeyOf = module.dayKeyOf
   }
+
   return sharedDayKeyOf
 }
 
@@ -2984,6 +2985,25 @@ export async function apply(ctx, config = {}) {
    * 读不到 / 空的 ⇒ `undefined` 并出声 —— 这一刀只贴风格，不许静默变空。
    * ⚠️ 每次现读（存盘即生效），与 `styleOf` 同一个理由。
    */
+  /**
+   * 记忆轮转的**纯逻辑**（`lib/memory-rotation.mjs`）。
+   * 🔴 懒加载：这个文件一条顶层静态 import 脑库都没有 —— 库坏了会连人格注入一起死（0 字符）。
+   *    装不上 ⇒ 只这一节不贴，并出声一次。
+   */
+  let rotationModule
+  let rotationModuleFailed = false
+  async function loadRotationModule() {
+    if (rotationModule !== undefined || rotationModuleFailed) return rotationModule
+    try {
+      rotationModule = await import(new URL('./lib/memory-rotation.mjs', import.meta.url).href)
+    } catch (error) {
+      rotationModuleFailed = true
+      warnOnce('rotation-module', `[agenia] 记忆轮转的模块装不上（${String(error?.message ?? error)}）`
+        + ' —— 这一节不贴（风格与常识照旧）。')
+    }
+    return rotationModule
+  }
+
   function commonSenseOf() {
     let raw
     try {
@@ -3244,8 +3264,66 @@ export async function apply(ctx, config = {}) {
    * ⚠️ 时间行**无条件**拼；**常识段的条件是"那份文件读得到"**（`commonSenseOf()` 读不到/空 ⇒
    * 这一段不拼，出声一次）—— 契约写准在 `CONTRACT.md` §1.2 / §2.3 第 3 条（`F-145`）。
    */
+  /**
+   * 这一轮的**记忆轮转块**：通用 + 本项目的条目，一次 10 条，按游标轮转。
+   * 读快照走 `current` 指针（与长期记忆那一节同一把尺子）；游标存数据根下，**原子写**。
+   * 🔴 读不到 / 挑不到 / 游标坏 ⇒ 块里写明（模块给的兜底文本）并出声一次 —— 不许静默变空。
+   */
+  function memoryRotationOf() {
+    if (rotationModule === undefined) return undefined
+    const root = join(contentDir, RUNTIME_DIR)
+    let snapshot = null
+    try {
+      const dir = join(root, ...MEMORY_SNAPSHOTS_REL)
+      const version = readFileSync(join(dir, MEMORY_POINTER_FILE), 'utf8').trim()
+      if (MEMORY_VERSION_RE.test(version)) {
+        const parsed = JSON.parse(readFileSync(join(dir, `${version}.json`), 'utf8'))
+        if (Array.isArray(parsed?.entries)) snapshot = { version, entries: parsed.entries }
+      }
+    } catch (error) {
+      snapshot = null
+    }
+    const file = join(root, ...rotationModule.CURSOR_REL)
+    let cursorGeneral = 0
+    let cursorProject = 0
+    try {
+      const raw = JSON.parse(readFileSync(file, 'utf8'))
+      if (Number.isInteger(raw?.cursor_general) && raw.cursor_general >= 0) cursorGeneral = raw.cursor_general
+      else if (Number.isInteger(raw?.cursor) && raw.cursor >= 0) cursorGeneral = raw.cursor
+      if (Number.isInteger(raw?.cursor_project) && raw.cursor_project >= 0) cursorProject = raw.cursor_project
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        warnOnce('rotation-cursor', `[agenia] 记忆轮转的游标读不出来（${file}）—— 这一轮从 0 开始。`)
+      }
+    }
+    const project = (() => {
+      for (const state of moods.values()) {
+        if (typeof state?.cwd === 'string' && state.cwd.trim() !== '') return rotationModule.projectNameOf(state.cwd)
+      }
+      return rotationModule.projectNameOf(process.cwd())
+    })()
+    const block = rotationModule.rotationBlockOf({ snapshot, project, cursorGeneral, cursorProject })
+    if (block.nextCursorGeneral !== cursorGeneral || block.nextCursorProject !== cursorProject) {
+      try {
+        mkdirSync(dirname(file), { recursive: true })
+        const tmp = `${file}.tmp-${process.pid}`
+        writeFileSync(tmp, `${JSON.stringify({ cursor_general: block.nextCursorGeneral, cursor_project: block.nextCursorProject, snapshot: snapshot?.version ?? null, updated_at: new Date().toISOString() }, null, 1)}\n`, 'utf8')
+        renameSync(tmp, file)
+      } catch (error) {
+        warnOnce('rotation-cursor-write', `[agenia] 记忆轮转的游标写不回去（${String(error?.message ?? error)}）—— 下一轮可能重贴同一批。`)
+      }
+    }
+    if (block.note !== 'ok') {
+      warnOnce(`rotation-${block.note}`, `[agenia] 记忆轮转这一轮「${block.note}」—— 块里写明了，别读成"没有记忆"。`)
+    }
+    return block.text
+  }
+
   function tailBodyOf(id, { board } = {}) {
     const parts = [styleOf().text]
+    // 🔴 老板 2026-11-08：记忆轮转贴**常识那个位置**（常识块暂时还在 —— 它那 5 条还没判进库）。
+    const rotation = memoryRotationOf()
+    if (typeof rotation === 'string' && rotation.length > 0) parts.push(rotation)
     const sense = commonSenseOf()
     if (sense !== undefined) parts.push(sense)
     parts.push(timeLineOf(id, Date.now()))
@@ -3292,6 +3370,10 @@ export async function apply(ctx, config = {}) {
   // ⚠️ **同一批里 style 恒 ≤ 1 条**：② 赢下这一格就把 ① 的挂账清掉（"不叠"）。
   // 组员：整条丢（口径 16）—— 装配排在 pre-step 前面，那一刻角色已经登记好了。
   // ─────────────────────────────────────────────────────────────
+  // 记忆轮转的纯逻辑（与 route.mjs 同一个理由懒加载；装不上只这一节不贴，人格照旧）。
+  // ⚠️ 必须放在 `warnOnce` 定义之后：它是 `const warned = new Set()` + 函数，早调会撞 TDZ。
+  await loadRotationModule()
+
   ctx.on('agent/pre-step', async ({ agent }, next) => {
     const decision = await next()
     if (decision?.kind === 'reject') return decision
