@@ -47,20 +47,21 @@
  * 理由：并行派两发时子会话的启动先后与父会话的调用先后**无关**，只按队列取
  * 会把两个角色发给对方。`BRG-04` 量的是"退回队列"那一侧，`BRG-07` 量的是"按 prompt 对号（完整相等）"那一侧。
  *
- * `BRG-07` 的翻面读数（都是 `run-all --glob=integration/brg01-toolname-bridge.test.mjs` 跑的；
- * 字节数与 sha256 量的是**提交里那个 blob**（`HEAD:presets/agenia/inject.js`），不是工作树）：
- *   · 现役 `inject.js`（提交 `8c7cdce` · 243313 B · sha256 `c373dff5…`）⇒ **RED 0 / GREEN 7**
- *     （run `b15-brg-live` · `--glob=tests/agenia-upgrade/integration/brg01-toolname-bridge.test.mjs`
- *     · 范围 7/185：`readings.preset.injector` 与 `production_injector` 是同一个数
+ * `BRG-07` 的翻面读数（都是 `run-all --glob=integration/brg01-toolname-bridge.test.mjs` 跑的）。
+ * 🔴 **判据钉的是「BRG-07 面」的摘要，不是整份文件的字节数/sha256**（`FLIP-01`，2026-11-08 深夜改口径）：
+ *   面 = 这把刀**切到 / 读到**的那几段代码（`firstUserPromptOf` · `bridgeRecordClaim` · `bridgeTakeClaim` · 调用点接线）。
+ *   ⇒ 面**外**的注释/空白改动**不会**让这段读数作废；面**里**变一个字节 ⇒ 读数当场作废。
+ *   面的定义与"为什么不上自量"写在 `integration/flip01-bridge-reading.test.mjs` 的文件头。
+ *   · 现役 `inject.js`（提交 `4724312` · 面 `a7bc764044db78d5…` · 面占 4488 / 243105 字节）⇒ **RED 0 / GREEN 7**
+ *     （run `b15-brg-live-4724312` · `--glob=tests/agenia-upgrade/integration/brg01-toolname-bridge.test.mjs`
+ *     · 范围 7/185：`readings.preset.injector` 与 `production_injector` 是同一个 sha256
  *     ⇒ 量的就是这一段点名的那一份；`sut_overridden:false` / `acceptance_eligible:true`）。
- *     三个数（提交号 / 字节数 / sha256）由 `FLIP-01` 逐项对上，**任一变化它当场红**。
  *   · 刀 = **本提交**那份 `inject.js` 的副本，只把"按子会话第一条用户消息对号（完整相等）"整条
  *     换成"按队列顺序取队首"（`presets/**` 零字节）：
- *     `.team/test/2026-11-08/_probe/_run/brg07-knife-8c7cdce/inject.js` · 242987 B · sha256 `16eba5f5…`
- *     （造法与自证：`_probe/b13-brg07-knife.mjs 8c7cdce`，printout 在 `_probe/_out/b13-brg07-knife-8c7cdce.stdout.txt`；
+ *     `.team/test/2026-11-08/_probe/_run/brg07-knife-4724312/inject.js` · 242779 B · sha256 `53a3c99b…`
+ *     （造法与自证：`_probe/b13-brg07-knife.mjs 4724312`，printout 在 `_probe/_out/b13-brg07-knife-4724312.stdout.txt`；
  *     `roundtrip_equals_live:true` ⇒ 与现役只差那一刀；⚠️ 目录名用**提交短哈希**、不用现役 sha 前缀 ——
- *     带 sha 前缀会让这一行"看着 sha 对、字节不对"，`FLIP-01` 的判据 ③ 当场红）⇒
- *     **RED 1 / GREEN 6**（run `b15-brg-knife-02`）：
+ *     带前缀会让这一行"看着 sha 对、字节不对"）⇒ **RED 1 / GREEN 6**（run `b15-brg-knife-4724312`）：
  *     红的只有 `BRG-07`（`BRG-PARALLEL-SWAP-TEST` ×3 + `BRG-PARALLEL-SWAP-REVIEW` ×3 +
  *     `BRG-PARALLEL-PERSONA` ×6 = 12 条），`sut_overridden:true` / `acceptance_eligible:false`。
  *     ⚠️ 这份副本**要自带 `lib/` 与 `tools/`**：`inject.js` 有三处 `import(new URL('./lib/…'))`
@@ -68,8 +69,10 @@
  *     —— batch 13 实测：只抄 `memory-rotation.mjs` ⇒ `RED 4 / GREEN 3`，多红的 3 格是
  *     `BRG-01` / `BRG-03` / `BRG-04` 的 `E_REVIEW_DAY_UNKNOWN`，**不是**这一刀造成的。
  *   · 旧的 `.team/test/2026-11-02/_probe/_run/pre-fix-inject.mjs`（212390 B · 提交 `6c848dd`）
- *     **不再是这一格的刀**：它量的是另一份 `inject.js`（11-02 的代码），"绿的那一跑量的是哪一版"
- *     正是 `FLIP-01` 要拦的那件事。要重跑就按上面那条造法从**本提交**切一刀。
+ *     **不再是这一格的刀**：它量的是另一份代码（11-02 的），"绿的那一跑量的是哪一版"正是 `FLIP-01` 要拦的那件事。
+ *   · 来历（**不进判据**，会随面外改动漂）：整份文件在 `4724312` 上 243105 B · sha256 `2eef7ead…`；
+ *     那两个数（`RED 0 / GREEN 7` · `RED 1 / GREEN 6`）是从点名的那两跑**继承**来的 —— 这一格不重跑刀，
+ *     面外的改动可能让它们失效而不让这一格红（`FLIP-01` 文件头的「新失效模式」）。
  */
 import { before, describe, test } from 'node:test'
 import { createHash } from 'node:crypto'
