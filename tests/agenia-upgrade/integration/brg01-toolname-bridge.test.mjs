@@ -49,17 +49,25 @@
  *
  * `BRG-07` 的翻面读数（都是 `run-all --glob=integration/brg01-toolname-bridge.test.mjs` 跑的；
  * 字节数与 sha256 量的是**提交里那个 blob**（`HEAD:presets/agenia/inject.js`），不是工作树）：
- *   · 现役 `inject.js`（提交 `24d67e9` · 230431 B · sha256 `550086e6…`）⇒ **RED 0 / GREEN 7**
- *     （run `brg-24d67e9` · `--glob=tests/agenia-upgrade/integration/brg01-toolname-bridge.test.mjs`
- *     · 范围 7/169：`readings.preset.injector` 与 `production_injector` 是同一个数
- *     ⇒ 量的就是这一段点名的那一份）；
+ *   · 现役 `inject.js`（提交 `6d00d87` · 234710 B · sha256 `a647b427…`）⇒ **RED 0 / GREEN 7**
+ *     （run `b13-brg-live` · `--glob=tests/agenia-upgrade/integration/brg01-toolname-bridge.test.mjs`
+ *     · 范围 7/179：`readings.preset.injector` 与 `production_injector` 是同一个数
+ *     ⇒ 量的就是这一段点名的那一份；`sut_overridden:false` / `acceptance_eligible:true`）。
  *     三个数（提交号 / 字节数 / sha256）由 `FLIP-01` 逐项对上，**任一变化它当场红**。
- *   · 把 `BRG_SUT_INJECTOR` 指到修前那一份**副本**（`.team/test/2026-11-02/_probe/_run/pre-fix-inject.mjs`
- *     · 212390 B · sha256 `0314BD9B…`；它与提交 `6c848dd` 那份逐字节相同，`presets/**` 零字节；
- *     那一跑 `sut_overridden=true` / `acceptance_eligible=false`）
- *     ⇒ **RED 1 / GREEN 6**，红的就是 `BRG-07`：`BRG-PARALLEL-SWAP-TEST` ×3 + `BRG-PARALLEL-SWAP-REVIEW` ×3
- *     （三组里角色都换成了对方的）+ `BRG-PARALLEL-PERSONA` ×6（run `p02-brg-prefix`）
- *     —— 这一格只在"按 prompt 对号（完整相等）"那把修上翻面。
+ *   · 刀 = **本提交**那份 `inject.js` 的副本，只把"按子会话第一条用户消息对号（完整相等）"整条
+ *     换成"按队列顺序取队首"（`presets/**` 零字节）：
+ *     `.team/test/2026-11-08/_probe/_run/b13-knife-brg07/inject.js` · 234384 B · sha256 `dbf96c55…`
+ *     （造法与自证：`_probe/b13-brg07-knife.mjs`，printout 在 `_probe/_out/b13-brg07-knife.stdout.txt`；
+ *     `roundtrip_equals_live:true` ⇒ 与现役只差那一刀）⇒ **RED 1 / GREEN 6**（run `b13-brg-knife-02`）：
+ *     红的只有 `BRG-07`（`BRG-PARALLEL-SWAP-TEST` ×3 + `BRG-PARALLEL-SWAP-REVIEW` ×3 +
+ *     `BRG-PARALLEL-PERSONA` ×6 = 12 条），`sut_overridden:true` / `acceptance_eligible:false`。
+ *     ⚠️ 这份副本**要自带 `lib/` 与 `tools/`**：`inject.js` 有三处 `import(new URL('./lib/…'))`
+ *     （记忆轮转 / `route.mjs` 的 `dayKeyOf` / 提案工具）。少一份，评审那几格会以"找不到模块"的样子红
+ *     —— batch 13 实测：只抄 `memory-rotation.mjs` ⇒ `RED 4 / GREEN 3`，多红的 3 格是
+ *     `BRG-01` / `BRG-03` / `BRG-04` 的 `E_REVIEW_DAY_UNKNOWN`，**不是**这一刀造成的。
+ *   · 旧的 `.team/test/2026-11-02/_probe/_run/pre-fix-inject.mjs`（212390 B · 提交 `6c848dd`）
+ *     **不再是这一格的刀**：它量的是另一份 `inject.js`（11-02 的代码），"绿的那一跑量的是哪一版"
+ *     正是 `FLIP-01` 要拦的那件事。要重跑就按上面那条造法从**本提交**切一刀。
  */
 import { before, describe, test } from 'node:test'
 import { createHash } from 'node:crypto'
