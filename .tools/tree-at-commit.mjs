@@ -687,7 +687,9 @@ function doExport(args) {
   //    而那条差是导出器造的。⇒ **一个副本只能是一个时间点**；不一致就拒，而且**拒在任何写之前**
   //    （F-166 的同一条纪律：我第一版把这段放在写完之后，负对照里 206 份已经落盘了）。
   if (args.withStaging) {
-    const tree = git(['ls-tree', '-r', '--name-only', resolved.sha, '--', 'presets/agenia'], { cwd: repo })
+    // 🔴 `--full-tree` 必须给：不给时 `-- presets/agenia` 是**相对 cwd** 的 pathspec，
+    //    cwd 不是 git 顶层时它一份都读不出来（CPY-01 实测：副本里 0 行 / 加 `--full-tree` 55 行）。
+    const tree = git(['ls-tree', '-r', '--full-tree', '--name-only', resolved.sha, '--', 'presets/agenia'], { cwd: repo })
     if (tree.status !== 0) return fail('E_COMMIT_UNRESOLVED', `读不出 ${resolved.sha} 的 presets/agenia 清单`, { commit: resolved.sha })
     const commitPreset = new Map()
     for (const rel of String(tree.stdout).split('\n').map((x) => x.trim()).filter((x) => x !== '')) {
@@ -704,6 +706,14 @@ function doExport(args) {
       let other = null
       try { other = readFileSync(path.join(liveNow.root, 'preset', ...rel.split('/'))) } catch { other = null }
       if (other === null || !other.equals(Buffer.from(buf))) diff.push(rel)
+    }
+    // 读出 0 份 ⇒ **判不了**（不是「提交里没有 presets」）：路径解析走错时不许报成「不一致」。
+    if (commitPreset.size === 0 && stagingPreset.size > 0) {
+      return fail('E_STAGING_TIME_UNMEASURABLE',
+        `判不了「提交 ${resolved.sha} 的 presets/agenia 与活 staging 是不是同一个时间点」：从提交里读出 0 份 presets，`
+        + `而 staging 那边有 ${stagingPreset.size} 份。这一路**不猜** —— 读不出来不是「不一致」，也不是「一致」。`
+        + '先确认 `git ls-tree` 在这个 cwd 上能读到 presets（`--full-tree`），或者别用 `--with-staging`。',
+        { commit: resolved.sha, tree_root: null })
     }
     if (onlyCommit.length > 0 || onlyStaging.length > 0 || diff.length > 0) {
       return fail('E_STAGING_TIME_MISMATCH',
