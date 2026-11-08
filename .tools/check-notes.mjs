@@ -25,6 +25,29 @@ import { now as clockNow } from '../presets/agenia/lib/clock.mjs'
 import { dayKeyOf } from '../presets/agenia/lib/route.mjs'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+/**
+ * `--workspace <dir>`：**团队活动那一节**要量哪个工作区。
+ *
+ * 🔴 2026-11-08（老板点的，也是 `cand-20261028-0461` 记过的病）：根一度只有"脚本自己所在目录"，
+ * 拿去体检别的工作区时，`.team` 那一节判的是 **Harness 自己**的账 —— 调用方那件事根本没被量，
+ * 而红会挂在别人头上。默认值保持 `REPO`（本仓库自检不变），显式给了就量给的这一棵，
+ * 并且**输出开头永远写明量的是哪棵树**。
+ */
+const WS_ARG = (() => {
+  const i = process.argv.indexOf('--workspace')
+  if (i !== -1 && typeof process.argv[i + 1] === 'string' && process.argv[i + 1].trim() !== '') {
+    return resolve(process.argv[i + 1])
+  }
+  const eq = process.argv.find((a) => a.startsWith('--workspace='))
+  return eq === undefined ? null : resolve(eq.slice('--workspace='.length))
+})()
+const WORKSPACE = WS_ARG ?? REPO
+/** 团队账的落点（跟着 `--workspace` 走，不跟脚本跑 —— 这是这一节唯一的根）。 */
+const teamRoot = join(WORKSPACE, '.team')
+/** 那个工作区有没有 `.team/`：没有 ⇒ 团队活动那几格**判不了**，挂起并点名（不是绿、也不是误导人的红）。 */
+const TEAM_ROOT_EXISTS = existsSync(teamRoot)
+const teamBasisWhy = `判不了：${WORKSPACE} 没有 .team/（这一节量的是"这个工作区的团队账"，而它不在盘上）`
 const PRESET = join(REPO, 'presets', 'agenia')
 const HOME = process.env.USERPROFILE ?? process.env.HOME
 const PROFILES = join(HOME, '.dsh', 'profiles')
@@ -1411,7 +1434,7 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const gi = read(join(REPO, '.gitignore'))
   yes('office', '.gitignore 里挡住了 .team/', /^\.team\/$/m.test(gi))
 
-  const teamRoot = join(REPO, '.team')
+  
   const roleDirs = existsSync(teamRoot)
     ? readdirSync(teamRoot, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort()
     : []
@@ -1602,11 +1625,15 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const convFound = firstExisting('会话评审')
   const techOk = techFound !== null
   const convOk = convFound !== null
+  if (!TEAM_ROOT_EXISTS) {
+    pending('office', `**昨天（${yesterday}）的每日评审两份都在**`, teamBasisWhy)
+  } else {
   yes('office', `**昨天（${yesterday}）的每日评审两份都在** —— 开工第一步该派的正是它（四个抽屉任一个：retro / technical-review / conversation-review / memory-review）`,
     techOk && convOk,
     `技术评审 ${techOk ? '在 · ' + techFound : '**缺**'} · 会话评审 ${convOk ? '在 · ' + convFound : '**缺**'} —— `
     + '⚠️ 判的是**昨天**不是今天：今天的要到**明天早上**才验收（评审评的是昨天的工作，'
     + '今天派出去的那两份此刻还在写）；今天没派 ⇒ 明天这一格就红')
+  }
 
   // 旧锚点（前日复盘）：**已经退役**，在就判形状 —— **只报不红**（保留形状断言，不删）
   const review = join(teamRoot, 'retro', today, '前日复盘.md')
@@ -1959,6 +1986,12 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
 }
 
 // ── 输出 ───────────────────────────────────────────────────────────────────
+// 🔴 先写「量的是哪棵树」（老板 2026-11-08 点的）：根曾经只有脚本自己所在目录，
+//    拿去体检别的工作区时红会挂在别人头上。这一行让人一眼看出这一跑量的是谁。
+console.log(`[根] 团队账（.team/ 那一节）量的是 ${WORKSPACE}`
+  + (WS_ARG === null ? '（默认：脚本所在仓库；给了 --workspace 就量那个工作区）' : '（来自 --workspace）'))
+console.log(`[根] 结构与预设那几节量的是 ${REPO}`)
+if (!TEAM_ROOT_EXISTS) console.log(`[根] ⚠️ ${teamRoot} 不在 ⇒ 团队账那几节挂起（挂起 ≠ 通过）`)
 // 三个态：`ok: true` 绿 · `ok: false` 红 · `ok: null` **挂起**（判不了，留分母、明写）。
 const failed = rows.filter((r) => r.ok === false)
 const held = rows.filter((r) => r.ok === null)

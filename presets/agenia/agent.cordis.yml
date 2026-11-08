@@ -326,6 +326,12 @@
         modelSelectionSettings: true
         maxDepth: 1
         agentPreset: agenia-member
+        # 🔴 2026-11-08 老板定：**每条委派行都写死 `DeepSeek-V41-Flash`**（模型 id 是 `deepseek-flash`，
+        #    那个中文名只是显示名）。不写这一行 ⇒ 组员跟着组长走的默认模型。
+        #    换模型时改这几行（老板说改的时候再动），别在别处另立一份。
+        agentOptions:
+          provider: deepseek-official
+          model: deepseek-flash
 
     # ⚠️ 2026-09-22 老板拍板：**这一行关掉**（出厂 standard 里它是开的）。
     #
@@ -401,6 +407,12 @@
         toolName: team_design
         maxDepth: 1
         agentPreset: agenia-member
+        # 🔴 2026-11-08 老板定：**每条委派行都写死 `DeepSeek-V41-Flash`**（模型 id 是 `deepseek-flash`，
+        #    那个中文名只是显示名）。不写这一行 ⇒ 组员跟着组长走的默认模型。
+        #    换模型时改这几行（老板说改的时候再动），别在别处另立一份。
+        agentOptions:
+          provider: deepseek-official
+          model: deepseek-flash
 
     - id: team-dev
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -409,6 +421,12 @@
         toolName: team_dev
         maxDepth: 1
         agentPreset: agenia-member
+        # 🔴 2026-11-08 老板定：**每条委派行都写死 `DeepSeek-V41-Flash`**（模型 id 是 `deepseek-flash`，
+        #    那个中文名只是显示名）。不写这一行 ⇒ 组员跟着组长走的默认模型。
+        #    换模型时改这几行（老板说改的时候再动），别在别处另立一份。
+        agentOptions:
+          provider: deepseek-official
+          model: deepseek-flash
 
     - id: team-test
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -417,6 +435,12 @@
         toolName: team_test
         maxDepth: 1
         agentPreset: agenia-member
+        # 🔴 2026-11-08 老板定：**每条委派行都写死 `DeepSeek-V41-Flash`**（模型 id 是 `deepseek-flash`，
+        #    那个中文名只是显示名）。不写这一行 ⇒ 组员跟着组长走的默认模型。
+        #    换模型时改这几行（老板说改的时候再动），别在别处另立一份。
+        agentOptions:
+          provider: deepseek-official
+          model: deepseek-flash
 
     - id: team-review
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -425,6 +449,12 @@
         toolName: team_review
         maxDepth: 1
         agentPreset: agenia-member
+        # 🔴 2026-11-08 老板定：**每条委派行都写死 `DeepSeek-V41-Flash`**（模型 id 是 `deepseek-flash`，
+        #    那个中文名只是显示名）。不写这一行 ⇒ 组员跟着组长走的默认模型。
+        #    换模型时改这几行（老板说改的时候再动），别在别处另立一份。
+        agentOptions:
+          provider: deepseek-official
+          model: deepseek-flash
 
     # 🔴 2026-10-15（执行二 · 批次 I15）：**这一行关掉**（关掉不删，跟 tool-subagent-fork 同一个做法）。
     #
@@ -486,6 +516,12 @@
         toolName: job_memory_judge
         maxDepth: 1
         agentPreset: agenia-member
+        # 🔴 2026-11-08 老板定：**每条委派行都写死 `DeepSeek-V41-Flash`**（模型 id 是 `deepseek-flash`，
+        #    那个中文名只是显示名）。不写这一行 ⇒ 组员跟着组长走的默认模型。
+        #    换模型时改这几行（老板说改的时候再动），别在别处另立一份。
+        agentOptions:
+          provider: deepseek-official
+          model: deepseek-flash
 
     - id: tool-job-memory-review
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -494,6 +530,12 @@
         toolName: job_memory_review
         maxDepth: 1
         agentPreset: agenia-member
+        # 🔴 2026-11-08 老板定：**每条委派行都写死 `DeepSeek-V41-Flash`**（模型 id 是 `deepseek-flash`，
+        #    那个中文名只是显示名）。不写这一行 ⇒ 组员跟着组长走的默认模型。
+        #    换模型时改这几行（老板说改的时候再动），别在别处另立一份。
+        agentOptions:
+          provider: deepseek-official
+          model: deepseek-flash
 
     - id: tool-job-conversation-review
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -502,6 +544,12 @@
         toolName: job_conversation_review
         maxDepth: 1
         agentPreset: agenia-member
+        # 🔴 2026-11-08 老板定：**每条委派行都写死 `DeepSeek-V41-Flash`**（模型 id 是 `deepseek-flash`，
+        #    那个中文名只是显示名）。不写这一行 ⇒ 组员跟着组长走的默认模型。
+        #    换模型时改这几行（老板说改的时候再动），别在别处另立一份。
+        agentOptions:
+          provider: deepseek-official
+          model: deepseek-flash
 
     - id: tool-job-technical-review
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -510,6 +558,12 @@
         toolName: job_technical_review
         maxDepth: 1
         agentPreset: agenia-member
+        # 🔴 2026-11-08 老板定：**每条委派行都写死 `DeepSeek-V41-Flash`**（模型 id 是 `deepseek-flash`，
+        #    那个中文名只是显示名）。不写这一行 ⇒ 组员跟着组长走的默认模型。
+        #    换模型时改这几行（老板说改的时候再动），别在别处另立一份。
+        agentOptions:
+          provider: deepseek-official
+          model: deepseek-flash
 
     # ⚠️ 2026-09-28 换版（0.1.7）：这一格原来写着
     #      `- id: workflow-worker-thread / name: '@deepseek-ai/dsh-workflow-worker-thread'
