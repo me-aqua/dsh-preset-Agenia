@@ -736,9 +736,11 @@ function buildSynthetic(tag) {
  * 返回 `{ok, sut, file, anchor_count, code, message}`；**只写运行根**。
  */
 function buildRealKnife(tag) {
-  const dest = path.join(runRoot(), 'ctl-real-knife', `${tag}-${process.pid}-${Date.now().toString(36)}`)
-  try {
-    if (existsSync(dest)) return { ok: false, code: 'CTL-REAL-KNIFE-UNAVAILABLE', message: `落点已存在（拒绝覆盖）：${dest}` }
+  const base = path.join(runRoot(), 'ctl-real-knife', `${tag}-${process.pid}-${Date.now().toString(36)}`)
+  const destControl = path.join(base, 'control')
+  const destMutant = path.join(base, 'mutant')
+  const copy = (dest) => {
+    if (existsSync(dest)) throw new Error(`落点已存在（拒绝覆盖）：${dest}`)
     cpSync(LIVE_PRESET, dest, {
       recursive: true,
       filter: (src) => {
@@ -748,10 +750,14 @@ function buildRealKnife(tag) {
         return !parts.includes('.runtime') && !parts.includes('client-ui-dashboard')
       },
     })
-  } catch (error) {
-    return { ok: false, code: 'CTL-REAL-KNIFE-UNAVAILABLE', message: `副本建不起来（${LIVE_PRESET} → ${dest}）：${String(error?.message ?? error)}` }
   }
-  const file = path.join(dest, 'lib', 'memory.mjs')
+  try {
+    copy(destControl)
+    copy(destMutant)
+  } catch (error) {
+    return { ok: false, code: 'CTL-REAL-KNIFE-UNAVAILABLE', message: `副本建不起来（${LIVE_PRESET} → ${base}）：${String(error?.message ?? error)}` }
+  }
+  const file = path.join(destMutant, 'lib', 'memory.mjs')
   const text = readText(file)
   if (text === null) return { ok: false, code: 'CTL-REAL-KNIFE-UNAVAILABLE', message: `副本里缺 ${file}` }
   const anchor = 'if (cp < 32) {'
@@ -760,7 +766,7 @@ function buildRealKnife(tag) {
     return { ok: false, code: 'CTL-REAL-KNIFE-ANCHOR', anchor_count: count, file, message: `锚点 ${JSON.stringify(anchor)} 在 ${file} 里出现 ${count} 次（必须恰好 1 次）—— 产品换过写法，这把刀要同批更新（cand-20261106-0140）` }
   }
   writeFileSync(file, text.replace(anchor, 'if (false) {'), 'utf8')
-  return { ok: true, sut: sutFiles(dest), file, anchor_count: count, code: null, message: '' }
+  return { ok: true, sut: sutFiles(destMutant), controlSut: sutFiles(destControl), file, anchor_count: count, code: null, message: '' }
 }
 
 /** 刀架期望的翻面集（case 内 problem code 的**精确**集合；多一个少一个都算刀切错了）。 */
@@ -841,15 +847,15 @@ test('CTL-05 刀架：合成最小实现四条路全绿 + 四把刀各只翻自�
     //    `if (cp < 32) {` 改成 `if (false) {`（锚点须恰好 1 处）⇒ 四条路必须**各自**翻四码
     //    （damaged / CR / astral / v15 真受损）；未变的同一份副本先跑一遍必须全绿（对照：红是刀造出来的）。
     const realKnife = buildRealKnife('real')
-    rec.readings.real_knife = { ok: realKnife.ok, code: realKnife.code ?? null, sut: realKnife.sut?.preset ?? null, anchor_count: realKnife.anchor_count ?? null, file: realKnife.file ?? null }
+    rec.readings.real_knife = { ok: realKnife.ok, code: realKnife.code ?? null, sut: realKnife.sut?.preset ?? null, control_sut: realKnife.controlSut?.preset ?? null, anchor_count: realKnife.anchor_count ?? null, file: realKnife.file ?? null }
     if (!realKnife.ok) {
       push(realKnife.code, `[真源码刀] ${realKnife.message}`)
     } else {
-      // 对照：同一份副本、没切那一刀 ⇒ 四条路必须全绿（不然红因里混着"副本坏了"）。
+      // 对照：**另一份未切的**副本 ⇒ 四条路必须全绿（不然红因里混着"副本坏了"）。
       const control = {}
       for (const pathId of ['P1', 'P2', 'P3', 'P4']) {
         const legs = pathId === 'P3' ? ['clean', 'lf', 'damaged-entry', 'damaged-ops1', 'cr', 'astral'] : ['clean', 'lf', 'damaged', 'cr', 'astral']
-        const out = await measure(pathId, { sut: realKnife.sut, tag: 'CTL-05-real-knife-control', legs })
+        const out = await measure(pathId, { sut: realKnife.controlSut, tag: 'CTL-05-real-knife-control', legs })
         control[pathId] = out.problems.map((p) => p.code)
         if (out.problems.length > 0) {
           push('CTL-REAL-KNIFE-CONTROL', `[真源码刀/对照/${pathId}] 未切的同一份副本必须全绿，实得 ${JSON.stringify(control[pathId])}`)
