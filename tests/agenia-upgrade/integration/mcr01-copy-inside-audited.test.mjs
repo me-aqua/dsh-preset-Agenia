@@ -42,19 +42,28 @@
  *   ⚠️ 这一格与 ① 是**两侧**：① 是"尺子说在 CODE 集里 ⇒ 拒"，⑤ 是"尺子说不出话 ⇒ 也拒"。
  *   只判 ① 的实现正是这次 P1 的形状（`F-166` 名义上在、真故障时放行）。
  *
+ * ⑥ **判不了的两条 junction 腿 ⇒ `HOLD`**（`bug-20261107-11` ②；组长 2026-11-08 定：
+ *   "一条判不了任何东西的判据必须 HOLD，不许保持沉默"）：两个 junction 落点要 `symlinkSync(…,'junction')`
+ *   建得出别名才在列 —— 建不出时它们**从 4 条腿里静默消失**，而判词照样可以绿。
+ *   现在：建不出 ⇒ `HOLD JUNCTION-ALIAS-UNAVAILABLE` / `HOLD REPO-JUNCTION-ALIAS-UNAVAILABLE`
+ *   （`HOLD` 不计绿、也不算失败，结算里单独一栏，入口退出码 2）。**这不是红**：平台建不出别名是
+ *   "这一档不适用"，不是"前置本不该失败"。
+ *   另：**落点数本身**也有判据（`LANDINGS-INCOMPLETE`）—— 无条件那两个按名单核对、总数按
+ *   `2 + 两个 junction 是否建成` 复算 ⇒ 删掉一条落点不会静默通过。
+ *
  * 🔴 覆盖边界（这一格**不判**什么）：
  *   · 不判"`--is-code` 自己判断得对不对"（那是 `fingerprint.mjs` 的排除表；这里只判三个已知落点）；
  *   · 不判 `--out` 指进 `.git`（老 `REFUSE-OVERWRITE` 那一支，早就有人守）；
  *   · 不判"拒的报文措辞好不好读"（只点名"落点 + 被测根"两样在不在）。
- *   · **两条同族残余也不判**（junction 落点建不出来时没有 HOLD · `.git` 守卫仍是词法比较 +
- *     `canonicalOut` 静默退回词法）：全文只写在一处 —— `registry.mjs` 的 `MCR-01` 行末（batch 13 记）。
+ *   · **一条同族残余也不判**（`.git` 守卫仍是词法比较 + `canonicalOut` 静默退回词法）：
+ *     全文只写在一处 —— `registry.mjs` 的 `MCR-01` 行末（batch 13 记；组长认领，不归测试岗）。
  */
 import { before, describe, test } from 'node:test'
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase, runRoot, treeHash, treePaths } from '../support/evidence.mjs'
+import { caseFail, caseHold, preflight, problem, runCase, runRoot, treeHash, treePaths } from '../support/evidence.mjs'
 import {
   buildFixtureRepo, codeDigestOfCommit, exporterPath, runExport, verifyCopyIsCommit,
 } from '../support/tree-at-commit.mjs'
@@ -132,6 +141,28 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
         repoAliasReady = { link: repoAlias, target: audited, ok: false, error: `${err.code ?? ''} ${String(err.message).slice(0, 160)}` }
       }
       rec.readings.repo_junction_alias = repoAliasReady
+      /**
+       * 🔴 **判不了就 HOLD，不许静默少两条腿**（`bug-20261107-11` ②；组长 2026-11-08 定：
+       * "一条判不了任何东西的判据必须 HOLD，不许保持沉默"）。
+       *
+       * 建不出 junction ⇒ 下面那两个落点**根本进不了** `refusedCases` ⇒ 这一格从 4 条腿静默降到 2/3 条，
+       * 而判词照样可以绿。这两个 junction 落点正是最可能建不出来的那一对（`symlinkSync(..., 'junction')`
+       * 要平台支持：换一台机器 / 换一个盘就可能 `EPERM`）—— 所以它**必须说出来**。
+       *
+       * 为什么是 `HOLD` 而不是红：这是**这一档不适用**（平台建不出别名），不是"前置本不该失败"。
+       * `HOLD` 不计绿、也不算失败，它在结算里单独一栏（`settled.holds` / `hold_cases`），
+       * 入口的退出码会成为 2 —— 读的人一眼看得见"这一面没量"。
+       */
+      if (!aliasReady.ok) {
+        caseHold(rec, 'JUNCTION-ALIAS-UNAVAILABLE',
+          `建不出 junction 别名（${aliasReady.link} → ${aliasReady.target}：${aliasReady.error || '(无 stderr)'}）`
+          + ' ⇒ `out-junction-alias` 那个落点**没有量**（被拒落点从 4 少一条）—— 这一档判不了，不是绿')
+      }
+      if (!repoAliasReady.ok) {
+        caseHold(rec, 'REPO-JUNCTION-ALIAS-UNAVAILABLE',
+          `建不出 junction 别名（${repoAlias.link} → ${repoAlias.target}：${repoAliasReady.error || '(无 stderr)'}）`
+          + ' ⇒ `repo-and-out-junction (M-2a)` 那个落点**没有量**（被拒落点从 4 少一条）—— 这一档判不了，不是绿')
+      }
       const refusedCases = [
         {
           id: 'fresh-dir', repo: audited,
@@ -162,6 +193,27 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
             }]
           : []),
       ]
+      /**
+       * 🔴 **落点数也是个读数，不是注释**（`bug-20261107-11` ② 的同族）：删掉一条**无条件**的落点
+       * （例如 `fresh-dir`），今天不会有任何一格喊 —— 少一面判据，判词照样绿。
+       * ⇒ 无条件那两个按名单核对、总数按 `2 + 两个 junction 是否建成` 复算；对不上就红。
+       */
+      const UNCONDITIONAL_LANDINGS = ['fresh-dir', 'pyc-named-landing']
+      const landingIds = refusedCases.map((c) => c.id)
+      const missingUnconditional = UNCONDITIONAL_LANDINGS.filter((id) => !landingIds.includes(id))
+      const expectedLandings = UNCONDITIONAL_LANDINGS.length + (aliasReady.ok ? 1 : 0) + (repoAliasReady.ok ? 1 : 0)
+      rec.readings.landings = {
+        ran: landingIds,
+        expected: expectedLandings,
+        missing_unconditional: missingUnconditional,
+        conditional_present: { 'out-junction-alias': aliasReady.ok, 'repo-and-out-junction (M-2a)': repoAliasReady.ok },
+      }
+      if (missingUnconditional.length > 0 || refusedCases.length !== expectedLandings) {
+        push('LANDINGS-INCOMPLETE',
+          `这一格声明 ${expectedLandings} 个被拒落点，实得 ${refusedCases.length} 个（${landingIds.join(' / ')}）`
+          + `${missingUnconditional.length === 0 ? '' : `；无条件应有而这几个不在：${missingUnconditional.join(' / ')}`}`
+          + ' —— 少一个落点就是少一面判据，而判词照样绿')
+      }
       const refusedReadings = []
       for (const c of refusedCases) {
         const r = runExport({ exporter: ex.file, repo: c.repo, commit: fx.commitA, out: c.out })

@@ -31,6 +31,8 @@
  *   [尺子] 覆盖：E:\Harness\tests\agenia-upgrade 那棵树（开跑 / 收口各量一次它自己的指纹）—— **不覆盖**"执行的是哪一份入口"
  *   [尺子·入口] run-all.mjs <绝对路径> · <字节> B · sha256 <HEX> · self-check.mjs <绝对路径> · <字节> B · sha256 <HEX>
  *   F57-SETTLE 分母 66 · 盘上发现 66 · 跑到 20 文件/66 条 · RED 0 / GREEN 64 / HOLD 2 · 登记=盘上 ✓ · node --test exit 0（tests 66 · fail 0） · settle exit 0
+ *   [尺子] 测试树 <指纹> · <份数> 份 · 开跑 <时刻> 与收口一致 ⇒ 这一跑跑的**就是** `sources` 里那版
+ *     （判不了 / 变过时是另外两句；变过那一支是两行：判定 + `差异 …`）
  *
  * 🔴 这几行回答的是**四件不同的事**，别混着读：
  *   · `[平台]` = 这一跑跑在**哪个平台版本**上（`resources/app.asar` 里的版本号，`F-106`）——
@@ -42,8 +44,10 @@
  *     `support/self-check.mjs`）。"哪一份在跑"只有这一行说了算；入口不在 `[尺子]` 那棵树里时，
  *     紧跟一行 🔴 明写这一跑的 `[尺子]` 读数不是关于跑着的这份代码的。
  *
- * `judgement.txt` 里逐行是：`[平台]` → `F57-TARGET` → `[尺子] 覆盖` → `[尺子·入口]` → `F57-SETTLE` → 判词 → `exit=`。
- * （`[尺子]` 的**同树判定**那两句只进控制台 —— 它们的输入是收口才有的 settlement；覆盖范围与入口身份两行落盘。）
+ * `judgement.txt` 里逐行是：`[平台]` → `F57-TARGET` → `[尺子] 覆盖` → `[尺子] 测试树 …`（同树判定，1–2 行）→ `[尺子·入口]` → `F57-SETTLE` → 判词 → `exit=`。
+ * （同树判定的输入是**收口才有的** settlement ⇒ 它算得比其他几行晚，但**同一份文字**既进控制台也进这份文件 ——
+ *   作废的那一跑必须在盘上看得出来。⚠️ 这一格**今天没有判据守着**：没有任何用例读 `[尺子] 测试树` 那一行，
+ *   改坏它不会红。登记在 `bug-20261108-16` ② 的后续与 `now.md`；要守它就在 `MCR-03` 那两行断言旁边再加一条。）
  *
  * 🔴 **`F57-OK` 只在"分母 = 跑到 = 全绿 = 无 HOLD"时出现**。其余情况一个 OK 都不许有：
  *   · `HOLD > 0` ⇒ `exit 2`（判不了不是绿）
@@ -255,18 +259,29 @@ if (s === null) {
 
 // 🔴 **`R-5`**：这一跑**执行的是哪一版尺子**（测试树）—— 与"打的是哪棵树"（`target.line`）并列，
 //    都是"这一跑的结论该算在谁头上"的锚点。收口那份 `sources` 是跑完之后量的，冒充不了它。
+//    🔴 这一行**必须落盘**（batch 9 第 3 轮复审 `N2` · `bug-20261108-16` ②）：从前它只进控制台，
+//    作废的一跑在 `judgement.txt` 里与好的一跑**逐字相同** ⇒ 单看落盘文件分不出哪一跑被作废。
+//    ⚠️ 两条纪律（改这里必须守住）：① 控制台那几句的字**逐字不变**（格式是别人读惯的）；
+//    ② 控制台与 `judgement.txt` 用**同一份文字**（一个数组，两处消费），不许两边各写一句。
 const testTree = s.test_tree ?? null
-if (testTree === null) {
-  console.log('[尺子] 判不了：这份 settlement 没有 `test_tree`（老 run-root）⇒ "跑的是哪版测试代码"没有落点')
-} else if (testTree.same === true) {
-  const short = String(testTree.preflight_sha256).slice(0, 16)
-  console.log(`[尺子] 测试树 ${short} · ${testTree.settle_files} 份 · 开跑 ${testTree.preflight_at} 与收口一致 ⇒ 这一跑跑的**就是** \`sources\` 里那版`)
-} else if (testTree.same === false) {
-  console.log(`[尺子] 🔴 测试树在跑动中变过：开跑 ${String(testTree.preflight_sha256).slice(0, 16)} ≠ 收口 ${String(testTree.settle_sha256).slice(0, 16)}`)
-  console.log(`       差异 ${JSON.stringify(testTree.differ)} ⇒ 收口那份 \`sources\` 不能代表"跑的那版"；这一跑不能当基线的收口证据`)
-} else {
-  console.log('[尺子] 判不了：预检里没有测树指纹（`test_tree_sha256`）⇒ "跑的是哪版"没有落点')
-}
+/** 判读那一行（`same:false` 是两行：判定 + 差异）；控制台与 `judgement.txt` 用**同一份文字**。 */
+const RULER_TREE_LINES = (() => {
+  if (testTree === null) {
+    return ['[尺子] 判不了：这份 settlement 没有 `test_tree`（老 run-root）⇒ "跑的是哪版测试代码"没有落点']
+  }
+  if (testTree.same === true) {
+    const short = String(testTree.preflight_sha256).slice(0, 16)
+    return [`[尺子] 测试树 ${short} · ${testTree.settle_files} 份 · 开跑 ${testTree.preflight_at} 与收口一致 ⇒ 这一跑跑的**就是** \`sources\` 里那版`]
+  }
+  if (testTree.same === false) {
+    return [
+      `[尺子] 🔴 测试树在跑动中变过：开跑 ${String(testTree.preflight_sha256).slice(0, 16)} ≠ 收口 ${String(testTree.settle_sha256).slice(0, 16)}`,
+      `       差异 ${JSON.stringify(testTree.differ)} ⇒ 收口那份 \`sources\` 不能代表"跑的那版"；这一跑不能当基线的收口证据`,
+    ]
+  }
+  return ['[尺子] 判不了：预检里没有测树指纹（`test_tree_sha256`）⇒ "跑的是哪版"没有落点']
+})()
+for (const l of RULER_TREE_LINES) console.log(l)
 
 const denominator = s.registry.total
 const discovered = s.discovery?.cases ?? null
@@ -338,7 +353,7 @@ console.log(line)
  */
 const judgement = judgementLines(verdict, { settled, denominator, scopeCases })
 for (const l of judgement) console.log(l)
-writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[PLATFORM_LINE, target.line, RULER_SCOPE_LINE, IDENTITY_LINE, line, ...judgement, `exit=${verdict.exitCode}`].join('\n')}\n`, 'utf8')
+writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[PLATFORM_LINE, target.line, RULER_SCOPE_LINE, ...RULER_TREE_LINES, IDENTITY_LINE, line, ...judgement, `exit=${verdict.exitCode}`].join('\n')}\n`, 'utf8')
 
 if (JSON_OUT !== null) {
   writeFileSync(path.resolve(JSON_OUT), `${JSON.stringify({
