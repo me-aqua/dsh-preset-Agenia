@@ -59,6 +59,7 @@ const SOURCES = Object.freeze({
   subagent: { inner: `${ASAR_PREFIX}dsh-subagent/lib/index.js`, as: 'dsh-subagent-source.mjs' },
   llm: { inner: `${ASAR_PREFIX}dsh-llm/lib/index.js`, as: 'dsh-llm-source.mjs' },
   brand: { inner: `${ASAR_PREFIX}dsh-brand/lib/index.js`, as: 'dsh-brand-source.mjs' },
+  session: { inner: `${ASAR_PREFIX}dsh-session/lib/index.js`, as: 'dsh-session-source.mjs' },
   pkg: { inner: `${ASAR_PREFIX}dsh-tool-subagent/package.json`, as: 'plugin-package.json' },
 })
 
@@ -204,8 +205,32 @@ function makeParent(route) {
   }
 }
 
-/** 一台机器上 `deepseek-flash` 这个 **id** 是不是真存在（只是读数；文件不在就不判）。 */
-function profileModelReading() {
+/**
+ * **子会话的 `session.header` 里到底允不允许出现 provider/model** —— 从装好的 `dsh-session` 里量。
+ *
+ * 为什么要量这一下：老板要的是"从**子会话自己的记录**里读到 model"。这一版平台的
+ * `validateSessionHeader()` 是写进 header 的那张白名单；若里面没有 provider/model，那么
+ * **子会话头天生不带模型** —— 模型住在子 Agent 的 options（`ctx.agents.create()` 那一层），
+ * 也就是本格量的那一层。这是产品事实，不是本格的辩解；产品哪天把路由写进 header，这个读数会翻。
+ */
+function sessionHeaderReading(source) {
+  const text = String(source ?? '')
+  const a = text.indexOf('function validateSessionHeader(')
+  const b = a < 0 ? -1 : text.indexOf('function validateRestoredSessionHeader(', a)
+  if (a < 0 || b < 0) {
+    return { source: 'asar!dsh/node_modules/@deepseek-ai/dsh-session/lib/index.js', ok: false, fields: null, has_provider: null, has_model: null, why: '在 dsh-session 里切不出 `validateSessionHeader()`' }
+  }
+  const fields = [...new Set([...text.slice(a, b).matchAll(/record\.([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]))].sort()
+  return {
+    source: 'asar!dsh/node_modules/@deepseek-ai/dsh-session/lib/index.js',
+    ok: true, fields,
+    has_provider: fields.includes('provider'),
+    has_model: fields.includes('model'),
+    why: null,
+  }
+}
+
+/** 一台机器上 `deepseek-flash` 这个 **id** 是不是真存在（只是读数；文件不在就不判）。 */function profileModelReading() {
   const file = path.join(os.homedir(), '.dsh', 'profiles', 'desktop', 'cordis.patch.yml')
   const out = { file, present: false, model_id_present: null, display_name: null }
   let text
@@ -283,10 +308,10 @@ export async function childModelReadings({
       return { problems, readings, hold: { code: 'CHILD-MODEL-PLUGIN-ABSENT', why: `asar 里读不出 ${spec.inner}：${got.why}` } }
     }
     sourceTexts[key] = got.text
-    if (key === 'pkg') sourceTexts[key] = got.text
   }
   let pkg
-  try { pkg = JSON.parse(sourceTexts.pkg) } catch { pkg = null }  readings.plugin = {
+  try { pkg = JSON.parse(sourceTexts.pkg) } catch { pkg = null }
+  readings.plugin = {
     asar: platform.asar,
     inner: SOURCES.plugin.inner,
     bytes: Buffer.byteLength(sourceTexts.plugin, 'utf8'),
@@ -334,6 +359,11 @@ export async function childModelReadings({
   readings.profile = profileModelReading()
   if (readings.profile.present && readings.profile.model_id_present === false) {
     push('CHILD-MODEL-UNKNOWN-ID', `这台机器的 desktop profile（${readings.profile.file}）里没有模型 id \`${CHILD_MODEL_PIN.model}\` —— 写死的那个 id 在运行时不存在，子会话起不来`)
+  }
+  // ── "子会话头里带不带模型"：**量**一次（不是断言）────────────────────────────
+  readings.session_header = sessionHeaderReading(sourceTexts.session)
+  if (readings.session_header.ok && (readings.session_header.has_provider || readings.session_header.has_model)) {
+    push('CHILD-MODEL-HEADER-NOW-CARRIES-ROUTE', `这一版平台的 session header 白名单里出现了 provider/model（${JSON.stringify(readings.session_header.fields)}）—— "子会话头不携带路由、只能量子 Agent options"这个前提变了：请重新定这一格的量法`)
   }
 
   /** 起一台假宿主：真 provider 注册 + 一行配置 ⇒ 执行一次委派 ⇒ 记三处读数。 */

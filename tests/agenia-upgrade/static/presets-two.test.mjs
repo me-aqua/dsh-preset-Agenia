@@ -1162,6 +1162,9 @@ describe('static · presets-two (任务 A)', () => {
       rec.readings.child_session_record = out.readings.child_session_record
       rec.readings.plugin = out.readings.plugin
       rec.readings.profile = out.readings.profile
+      // 为什么量的是"子 Agent options"而不是"子会话记录"：子会话 header 的白名单里没有 provider/model
+      // （`dsh-session` 的 `validateSessionHeader()`，本跑现读）；路由住在 `ctx.agents.create()` 的 options 里。
+      rec.readings.session_header = out.readings.session_header
       rec.readings.parent_route = out.readings.parent_route
       rec.readings.rows = out.readings.rows
       rec.readings.knife = out.readings.knife ?? null

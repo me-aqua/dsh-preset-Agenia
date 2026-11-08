@@ -26,9 +26,21 @@
  *      `.pyc` 落点**自己**（`false`）与**它的子路径**（`true` —— `M2` 的洞就在这里）。
  *      这一格证明"算不算 CODE"只有**一份排除表**（工具那一份），工具里不复制第二张。
  *
- * 刀（退化刀，同格）：把导出器拷进运行根、只把 `if (asked !== null && asked.code === true) {`
+ * 刀（退化刀，同格）：把导出器拷进运行根、只把 `if (asked.code === true) {`
  *   改成 `if (false) {` ⇒ **同一个输入**必须 `exit 0` 并把副本写进被测树（= ① 会红）。
  *   锚点找不到 / 命中不是 1 处 ⇒ `KNIFE-ANCHOR`（判据自己的刀钝了，不许静默绿）。
+ *   ⚠️ 2026-11-08 换锚：生产侧加了 fail-closed 的 `if (asked === null) { return fail(…) }`（见 ⑤），
+ *   旧锚 `if (asked !== null && asked.code === true) {` 已经不存在。**锚必须落在 `asked.code === true` 那一行**：
+ *   刀喂的同一个输入里尺子是**好的**（`asked` 非空），`asked === null` 那一支根本不参与 ——
+ *   把锚落到它上面，这一刀就切不到"这次拒"了（会变成 `KNIFE-NO-BITE`，而不是"翻面"）。
+ *
+ * ⑤ **尺子跑不动 ⇒ 拒 + 零写入**（2026-11-08 补；技术评审 11-07 `F5` 的**那一侧**）：
+ *   `askIsCode` 以前在尺子失败时只印一句"这一条不拒"并 `return null`，调用方又不拒 ⇒ **fail-open**：
+ *   尺子跑不动时副本照样写进被测树。这一格喂**同一个"落在被测树里"的落点** + **一把坏尺子**
+ *   （导出器副本旁边的 `fingerprint.mjs` 恒 `exit 3`）⇒ 必须 `E_OUT_NOT_MEASURABLE` + 落点没创建 +
+ *   被测树逐字节/路径集合不变。阳性对照：坏尺子自己 `--is-code` 必须 `exit 3`（否则"拒"可能来自别处）。
+ *   ⚠️ 这一格与 ① 是**两侧**：① 是"尺子说在 CODE 集里 ⇒ 拒"，⑤ 是"尺子说不出话 ⇒ 也拒"。
+ *   只判 ① 的实现正是这次 P1 的形状（`F-166` 名义上在、真故障时放行）。
  *
  * 🔴 覆盖边界（这一格**不判**什么）：
  *   · 不判"`--is-code` 自己判断得对不对"（那是 `fingerprint.mjs` 的排除表；这里只判三个已知落点）；
@@ -61,7 +73,7 @@ function isCodeProbe(tool, abs, root) {
 }
 
 describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 CODE 集里', () => {
-  test('MCR-01 --out 落在被测 CODE 名单里 ⇒ 写之前拒；指到根外 / .team/ ⇒ 成功（两把刀都在）', async () => {
+  test('MCR-01 --out 落在被测 CODE 名单里 ⇒ 写之前拒；指到根外 / .team/ ⇒ 成功；尺子坏了也拒（刀 + 坏尺子两格）', async () => {
     await runCase('MCR-01', async (rec) => {
       const problems = []
       const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -300,6 +312,67 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
         if (typeof got.json.why !== 'string' || got.json.why.trim() === '') push('PRE-CHECK-DEVICE', `\`--is-code\` 对 ${key} 没给理由（\`why\` 空）—— 读的人不知道它凭哪一条判的`)
       }
 
+      // ── ⑤ 尺子跑不动 ⇒ **拒**（fail-closed）+ 零写入 ────────────────────────────────
+      //   病根（技术评审 2026-11-07 `F5`）：`askIsCode` 失败时只印一句"这一条不拒"就 `return null`，
+      //   调用方又不拒 ⇒ 尺子坏了副本照样写进被测树（实测 3 份落在 CODE 集里）。
+      //   这一格喂**同一个"落在被测树里"的落点** + 一把**坏尺子**（恒 exit 3）⇒ 必须拒、且一个字节都不写。
+      //   阳性对照：坏尺子自己 `--is-code` 必须 exit 3 —— 否则"拒"可能来自别处，因果就不成立。
+      const brokenDir = path.join(root, 'fixtures', 'mcr01-broken-ruler')
+      mkdirSync(brokenDir, { recursive: true })
+      const brokenTool = path.join(brokenDir, 'tree-at-commit.mjs')
+      const brokenFingerprint = path.join(brokenDir, 'fingerprint.mjs')
+      copyFileSync(ex.file, brokenTool)
+      writeFileSync(brokenFingerprint, [
+        '#!/usr/bin/env node',
+        '// 坏尺子（MCR-01 ⑤ 的夹具）：任何调用都 exit 3 —— 模拟"尺子跑不动"。',
+        "process.stderr.write('坏尺子（夹具）：exit 3\\n')",
+        'process.exit(3)',
+        '',
+      ].join('\n'), 'utf8')
+      const rulerProbe = spawnSync(process.execPath, [
+        brokenFingerprint, '--is-code', path.join(audited, 'presets', 'agenia', 'probe.txt'), '--root', audited, '--json',
+      ], { encoding: 'utf8', timeout: 60000, maxBuffer: 8 * 1024 * 1024 })
+      const brokenBefore = treeHash(audited)
+      const brokenBeforePaths = treePaths(audited)
+      const outBroken = path.join(audited, 'presets', 'agenia', '_probe_copy_mcr01_unmeasurable')
+      const broken = spawnSync(process.execPath, [brokenTool, '--repo', audited, '--commit', fx.commitA, '--out', outBroken, '--json'], {
+        encoding: 'utf8', timeout: 180000, maxBuffer: 128 * 1024 * 1024, env: { ...process.env },
+      })
+      const brokenAfter = treeHash(audited)
+      const brokenAfterPaths = treePaths(audited)
+      const brokenCode = (() => {
+        try { return JSON.parse(String(broken.stdout).trim().split('\n').pop())?.error?.code ?? null } catch { return null }
+      })()
+      rec.readings.broken_ruler = {
+        ruler_exit: rulerProbe.status,
+        ruler_stderr: String(rulerProbe.stderr ?? '').slice(-200),
+        exit: broken.status,
+        code: brokenCode,
+        out: outBroken,
+        out_created: existsSync(outBroken),
+        audited_equal: brokenAfter.sha256 === brokenBefore.sha256,
+        audited_paths_equal: brokenAfterPaths.count === brokenBeforePaths.count
+          && brokenAfterPaths.paths.every((p, i) => p === brokenBeforePaths.paths[i]),
+        stderr: String(broken.stderr ?? '').slice(-400),
+      }
+      if (rulerProbe.status !== 3) {
+        push('BROKEN-RULER-NOT-BROKEN', `坏尺子夹具自己应 \`exit 3\`，实得 ${rulerProbe.status}（stderr：${String(rulerProbe.stderr ?? '').trim().slice(0, 200)}）—— 这一格的"拒"就可能来自别处，因果不成立`)
+      }
+      if (broken.status === 0) {
+        push('FAIL-OPEN', `尺子跑不动（\`exit 3\`）时导出器仍然 \`exit 0\`（--out=${outBroken}）—— **判不了被当成放行**：副本会写进被测树（技术评审 11-07 \`F5\` 的形状）`)
+      } else if (brokenCode !== 'E_OUT_NOT_MEASURABLE') {
+        push('FAIL-OPEN-WRONG-CODE', `尺子跑不动时应报 \`E_OUT_NOT_MEASURABLE\`，实得 ${JSON.stringify(brokenCode)}（stderr：${String(broken.stderr ?? '').trim().slice(0, 240)}）`)
+      }
+      if (existsSync(outBroken)) {
+        push('FAIL-OPEN-WROTE', `尺子跑不动时落点已经被创建：${outBroken} —— fail-closed 要求第一个字节之前拒`)
+      }
+      if (brokenAfter.sha256 !== brokenBefore.sha256) {
+        push('FAIL-OPEN-WROTE-TREE', `尺子跑不动这一跑之后被测根**变了**（${String(brokenBefore.sha256).slice(0, 16)}… → ${String(brokenAfter.sha256).slice(0, 16)}…）—— "拒在任何写之前"在 fail-closed 这一支上不成立`)
+      }
+      if (!(brokenAfterPaths.count === brokenBeforePaths.count && brokenAfterPaths.paths.every((p, i) => p === brokenBeforePaths.paths[i]))) {
+        push('FAIL-OPEN-WROTE-PATHS', `尺子跑不动这一跑之后被测根的**路径集合**变了（${brokenBeforePaths.count} → ${brokenAfterPaths.count} 条）`)
+      }
+
       // ── 刀：把"拒"那一条关掉 ⇒ 同一个输入必须写进被测树（= ① 会红）───────────
       const knifeDir = path.join(root, 'fixtures', 'mcr01-knife')
       mkdirSync(knifeDir, { recursive: true })
@@ -308,7 +381,13 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
       copyFileSync(ex.file, knifeTool)
       copyFileSync(path.join(path.dirname(ex.file), 'fingerprint.mjs'), knifeFingerprint)
       const src = readFileSync(knifeTool, 'utf8')
-      const anchor = 'if (asked !== null && asked.code === true) {'
+      /**
+       * 锚点：`if (asked.code === true) {`（**不是** `if (asked === null) {`）。
+       * 2026-11-08 生产侧加了 fail-closed 分支后，旧锚 `if (asked !== null && asked.code === true) {` 消失。
+       * 选这一行的理由：刀喂的**同一个输入**里尺子是好的（`asked` 非空）⇒ 拦住它的就是这一行；
+       * 把 `asked === null` 那一支切成 `false` 只会让"判不了"的路更松，对这一刀要翻的那一格没有任何作用。
+       */
+      const anchor = 'if (asked.code === true) {'
       const hits = src.split(anchor).length - 1
       const patched = src.split(anchor).join('if (false) {')
       writeFileSync(knifeTool, patched, 'utf8')
