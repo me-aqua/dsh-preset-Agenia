@@ -95,6 +95,10 @@ const DEFAULT_MEMBER_ORDER = ['work-guidelines', 'memory', 'charter']
  *    ⚠️ 代价同上：两件保护都没了，只剩纪律。**名单现在是恰好 1 项**，与 yml 逐项一致。
  *    📌 **两次同一条**：这道门禁一次拿掉两样，而它们只需要"那一样"。
  *    下次再加"要算数"的受限岗位，先问"它要不要算"，别默认把两样一起给它铐上。
+ *
+ * ⚠️ 这份名单只管**谁能写**（`officeBoundVerdict` 的放行面）。它**不判账行合不合规**：
+ *    `OFFICE_LEDGER_ROW_VERDICT` 的 `V2` 判的是"这个岗位**在不在册**"（`ROLE_TABLE`），
+ *    不是"它今天在不在编" —— 配置放宽到某个在册角色时，账行不该因此被拒（见那一段注释）。
  */
 const DEFAULT_OFFICE_BOUND = ['review']
 
@@ -1633,36 +1637,22 @@ function unattributableSession(header, identity) {
 }
 
 /**
- * canonical：先 `resolve`（吃掉 `..` 与 `.`），盘上存在再 `realpath`（吃掉 junction/symlink）。
- * 盘上没有这个路径就退回 `resolve` —— 与 `lib/paths.mjs` 的 `canonicalPath` 同形。
+ * "两条路径是不是同一棵树"的**唯一**口径 —— **纯字符串**，不碰盘。
+ *
+ * 口径：正斜杠 + 去尾斜杠 + 小写（与契约 §1.2 的 `normKey` 逐字一致）。
+ * 三处共用这一份：写方算 `tree_differs`（下面 `officeLandingVerdict` 的 `differs`）、
+ * 账行判定 `V6`（`officeLedgerRowRule`）、判据侧比较（`tests/**` 取这个导出）。
+ *
+ * 🔴 为什么**不许**在这里 `realpath`：`V6` 判的是**账本里存着的那两个字符串**。账是只追加的流水，
+ *    它的可读性不许取决于"读的时候盘上长什么样" —— 同一份字节都不变的行，不能因为某个目录
+ *    从不存在的变成存在（或者变成了 junction）就换一个答案。落账时写进去的是
+ *    `officeLandingVerdict` 里 `canon(resolve(...))` 的结果，那是**写的那一刻**的盘；判这一行
+ *    合不合规只比字符串。
  */
-function canonicalPath(p) {
-  const resolved = resolve(p)
-  try {
-    return realpathSync.native(resolved)
-  } catch {
-    return resolved
-  }
-}
-
-/** 可比较形状：canonical + 正斜杠 + 去尾斜杠 + 小写。 */
-function pathKey(p) {
-  let s = canonicalPath(p).replace(/\\/g, '/')
+export function officeKey(p) {
+  let s = String(p ?? '').replace(/\\/g, '/')
   while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1)
   return s.toLowerCase()
-}
-
-/** `child` 是否落在 `parent` 之下（含相等）。 */
-function isUnder(child, parent) {
-  const c = pathKey(child)
-  const p = pathKey(parent)
-  return c === p || c.startsWith(`${p}/`)
-}
-
-/** 盘符（`C:` / `E:`…）；不认识（UNC、相对路径）⇒ null。 */
-function driveOfPath(p) {
-  const m = /^([A-Za-z]):/.exec(String(p ?? ''))
-  return m ? `${m[1].toUpperCase()}:` : null
 }
 
 /**
@@ -1685,7 +1675,6 @@ function driveOfPath(p) {
  * `expected_office` 只在**拒绝**时有意义：落点往上、**最近的且自己有 `.team` 子目录**的那个目录 + `/.team`。
  */
 function officeLandingVerdict(target, agent, strict) {
-  const norm = (p) => { let s = String(p ?? '').replace(/\\/g, '/'); while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1); return s.toLowerCase() }
   const canon = (p) => { const r = resolve(p); try { return realpathSync.native(r) } catch (err) { return r } }
   const driveOf = (p) => { const m = /^([A-Za-z]):/.exec(String(p ?? '')); return m === null ? null : m[1].toUpperCase() + ':' }
   const partsOf = (p) => String(p ?? '').replace(/\\/g, '/').split('/')
@@ -1706,7 +1695,7 @@ function officeLandingVerdict(target, agent, strict) {
   // 🔴 窄会话（`narrowVerdict`）传 `strict === true` ⇒ 退回**最严**的老口径：只认会话头那棵树的 `.team`。
   //    原因：它是队伍里最硬的一道门（窄权限行 5/6/7），这一票放宽的是"工位随落点走"，不该顺带把它也放宽。
   if (strict === true) {
-    const inside = (child, parent) => { const c = norm(child); const p = norm(parent); return c === p || c.startsWith(p + '/') }
+    const inside = (child, parent) => { const c = officeKey(child); const p = officeKey(parent); return c === p || c.startsWith(p + '/') }
     // 🔴 F6（技术评审 11-08 的 P2）：基必须是 **cwd 下面**那个 `.team`（= 旧 containment），
     //    不能是"cwd 的最近 `.team` 祖先" —— 后者在 `cwd` 自己就落在某个 `.team` 里时，
     //    会把**外层那棵**当成你的 office，于是窄会话能写同层别的岗位抽屉（`.team/leader/…`），
@@ -1717,7 +1706,7 @@ function officeLandingVerdict(target, agent, strict) {
   }
   const office = officeOf(landing)
   const allow = office !== null
-  const differs = office !== null && norm(office) !== norm(header)
+  const differs = office !== null && officeKey(office) !== officeKey(header)
   const expected = office === null ? expectedOf(landing) : null
   return { allow, landing, office_root: office, header_office: header, expected_office: expected, differs, warning: differs ? 'OFFICE_TREE_DIFFERS' : null }
 }
@@ -1759,7 +1748,7 @@ const OFFICE_LEDGER_UNWRITABLE = 'E_OFFICE_LEDGER_UNWRITABLE'
  *
  * 与 `E_OFFICE_LEDGER_UNWRITABLE` 分开的理由：两个面查的人不一样 —— "盘满了 / 没权限"要去弄盘，
  * "行不成形状"是实现自己拼错了这一行（盘可能一点事都没有）。合成一个码会把查的人支去错的方向。
- * 值的那几条（相对路径 / 空串 / 超长路径 / 名单外岗位 / `tree_differs` 不自洽）也归它：
+ * 值的那几条（相对路径 / 空串 / 超长路径 / 不在册的岗位 / `tree_differs` 不自洽）也归它：
  * 契约 §1.2.1 把"收 / 拒"钉在**值**上，拼错的值与拼错的形状是同一类事（查的人都是看写方那一行）。
  * 登记在 `lib/error-codes.mjs::CODES`（退出码 5 = 校验拒绝族；它不是 CLI 退出码）。
  */
@@ -1839,6 +1828,14 @@ export const OFFICE_LEDGER_BODY_KEYS = ['content', 'text', 'body', 'patch', 'old
 const OFFICE_LEDGER_PATH_KEYS = ['landing', 'office_root', 'header_office']
 /** 单条路径的字符上界（`V4`；三条路径**同一上限**，不是 Win32 的 32767 硬顶）。 */
 const OFFICE_LEDGER_PATH_MAX = 4096
+/**
+ * "根相对"的路径：**单个**分隔符开头（`\foo` / `/foo`）。
+ *
+ * 它不是绝对路径 —— Win32 的 `path.isAbsolute` 对它回 `true`，但它的含义取决于"验这一行时那个进程的
+ * 当前盘"（`\x` 落在哪个盘由那个进程决定）。正是 `V1` 要防的那一类"按环境解析 ⇒ 两个 office 相等
+ * ⇒ 异树判据静默失效"。UNC（`\\server\share`、`//server/share`）是两个分隔符，不受这一条影响。
+ */
+const OFFICE_LEDGER_ROOT_RELATIVE = /^[\\/](?![\\/])/
 
 /**
  * 一行账合不合规 —— 纯函数，写方与读方**共用**（一个口径一份实现）。
@@ -1848,82 +1845,117 @@ const OFFICE_LEDGER_PATH_MAX = 4096
  *   · **V1 绝对路径**：`landing` / `office_root` / `header_office` 三条路径都必须是绝对路径。
  *     相对路径按**会话头 cwd** 解析 ⇒ 落进会话头那棵树时两个 office 相等 ⇒ 异树判据静默失效
  *     （`bug-20261107-10` 的病根，反例 `landing: '.team/review/x.md'`）。
- *   · **V2 岗位**：`role` 必须在受限岗位名单里。名单的**唯一来源**是 `DEFAULT_OFFICE_BOUND`
- *     （它同时是配置缺失时的兜底；静态用例钉着它与 `agent.cordis.yml` 的 `officeBound` 逐项一致）
- *     —— 这里**不另抄一张表**。
+ *   · **V2 岗位**：`role` 必须是**在册岗位**（`ROLE_TABLE` 的九个角色；`ROLE_ENTRY_BY_ROLE` 是它的索引）。
+ *     判的是"这个面**存不存在**"，不是"它今天在**不在编**"：`officeBound` 是**配置**
+ *     （`config.officeBound`，缺失时才兜底 `DEFAULT_OFFICE_BOUND`），而账是**持久数据** ——
+ *     配置一改，昨天写下的行不该因此读不懂或被判坏。
+ *     ⇒ 两个集合不是一回事：**在册** = 九个角色；**在编（受限）** = 今天只有 `review`
+ *     （`DEFAULT_OFFICE_BOUND` 与 yml 那一行，静态用例钉着两者逐项一致）。拿在编名单判账行，
+ *     只会在配置放宽到某个在册角色（例如把 `dev` 加进 `officeBound`）时，把门禁**已经放行**的写
+ *     fail-closed 拒掉 —— 这条检查对账行**没有真阳性**：账行唯一的产生者是门禁，它已经按在编名单
+ *     过滤过，所以在这里再判一次只有"假拒"这一个效果面。
+ *     ⚠️ "在编 ⊆ 在册"是**配置**的约束，配置侧的自检（`apply()` 里 `officeBound` 那个循环）会报
+ *     "这个名字不是队伍里的岗位"；这里不重复判它。
  *   · **V3 空串**：`role` / `tool` / `landing` / `office_root` / `header_office` 五样都不许是空串
  *     （空串不是"没给"：它会让 `office_root === header_office` 成立，也让"点名"变成一句空话）。
  *   · **V4 长度**：三条路径每一条都 ≤ `OFFICE_LEDGER_PATH_MAX`（4096）字符 —— 单行账的机器读数，
  *     超长只可能是拼错 / 注入。
  *   · **V5 类型**：七样逐键 —— `at` 字符串且 `Date.parse` 得出来 · `role` / `tool` 字符串 ·
  *     `tool` ∈ `write`/`edit` · 三条路径字符串 · `tree_differs` 布尔。
- *   · **V6 跨字段**：`tree_differs === (normKey(office_root) !== normKey(header_office))`
- *     —— 写方算错时账本层要看得见（`normKey` 就是本文件那份 `pathKey`：正斜杠 + 去尾斜杠 + 小写，
- *     另外多吃一层 `realpath`，同一棵树的不同写法算同树）。
+ *   · **V6 跨字段**：`tree_differs === (officeKey(office_root) !== officeKey(header_office))`
+ *     —— 写方算错时账本层要看得见。`officeKey` 是**纯字符串**口径（正斜杠 + 去尾斜杠 + 小写，
+ *     不碰盘、不 `realpath`）：判的是账本里**存着的那两个串**，与"读的时候盘上长什么样"无关；
+ *     写方算 `tree_differs` 用的是同一个函数（一个谓词一份实现）。
  *
  * 判的**次序**：结构（键集 / 正文键 / 多键）→ V5 类型 → V3 空串 → V5 的 `at` / `tool` 值
  * → V1 绝对 → V4 长度 → V2 岗位 → V6 跨字段。
- * `role: ''` 因此得到"空串"而不是"不在名单里"：同一行两处都不对时，先报更具体的那一处。
+ * `role: ''` 因此得到"空串"而不是"不在册"：同一行两处都不对时，先报更具体的那一处。
  *
  * 判据侧 `tests/agenia-upgrade/support/office-ledger-fixtures.mjs::lineProblems` 对同一批样例逐条查
  * 同样这六样（它把路径 / 岗位与期望值比，这里没有"期望值"可给，只能判"这个值合不合法"）。
  *
  * **不判**：`at` 的钟准（只判可解析，契约 §5.4）· 并发多写者（§5.5）· 账本被人手改
- * （改一个 `tree_differs` 字段会被 V6 抓住；两个 office 连着一起改掉则仍然骗得过读者 —— §5.7）。
+ * （改一个 `tree_differs` 字段会被 V6 抓住；两个 office 连着一起改掉则仍然骗得过读者 —— §5.7）·
+ * **`landing` 与 `office_root` 的关系**：表里**没有**"`landing` 必须落在 `office_root` 之下"这条规则，
+ * 所以**单独把 `landing` 改成任何一个绝对路径，这六条全过、一行都抓不到**（要管它，得先在
+ * 契约 §1.2.1 里加 V7 —— 那是表的改动，不是这里的实现能替它做的）。
  *
- * @returns {string|null} `null` = 合规；否则是拒的理由（点名缺哪个 / 多哪个 / 哪个是正文键 / 哪个值不对）
+ * 判词**一份实现、两个面**：
+ *   · `officeLedgerRowRule(line)` —— 机器可读的判别子 `{ rule, reason }`；
+ *   · `OFFICE_LEDGER_ROW_VERDICT(line)` —— 它的字符串面（冻结的导出面，写方 / 读方都用它）。
+ *
+ * @returns {{rule: string|null, reason: string|null}}
  */
-export function OFFICE_LEDGER_ROW_VERDICT(line) {
-  if (line === null || typeof line !== 'object' || Array.isArray(line)) return '不是对象'
+export function officeLedgerRowRule(line) {
+  const fail = (rule, reason) => ({ rule, reason })
+  if (line === null || typeof line !== 'object' || Array.isArray(line)) return fail('SHAPE', '不是对象')
   const keys = Object.keys(line)
   // 缺键与多键用**同一个谓词**（自有可枚举键）：`in` 会认原型链，与 `Object.keys` 不是一把尺子。
   const missing = OFFICE_LEDGER_ROW_KEYS.filter((key) => !keys.includes(key))
-  if (missing.length > 0) return `缺键 ${missing.join('/')}`
+  if (missing.length > 0) return fail('SHAPE', `缺键 ${missing.join('/')}`)
   // 🔴 正文键**先于**"多键"判：正文键也不在那七个里，晚一步就只会得到"多键 content"，
   //    "正文进账了"这个语义就没人说得出来。
   const body = keys.filter((key) => OFFICE_LEDGER_BODY_KEYS.includes(key.toLowerCase()))
-  if (body.length > 0) return `有正文键 ${body.join('/')}（账本不记内容）`
+  if (body.length > 0) return fail('SHAPE', `有正文键 ${body.join('/')}（账本不记内容）`)
   const extra = keys.filter((key) => !OFFICE_LEDGER_ROW_KEYS.includes(key))
-  if (extra.length > 0) return `多键 ${extra.join('/')}（一行的键集必须恰好是那七个）`
+  if (extra.length > 0) return fail('SHAPE', `多键 ${extra.join('/')}（一行的键集必须恰好是那七个）`)
   // ── V5 类型（七样逐键；一格一个断言，别合成"某个键不对"）────────────────────
-  if (typeof line.at !== 'string') return `at 不是字符串（实得 ${JSON.stringify(line.at)}）`
-  if (typeof line.role !== 'string') return `role 不是字符串（实得 ${JSON.stringify(line.role)}）`
-  if (typeof line.tool !== 'string') return `tool 不是字符串（实得 ${JSON.stringify(line.tool)}）`
+  if (typeof line.at !== 'string') return fail('V5', `at 不是字符串（实得 ${JSON.stringify(line.at)}）`)
+  if (typeof line.role !== 'string') return fail('V5', `role 不是字符串（实得 ${JSON.stringify(line.role)}）`)
+  if (typeof line.tool !== 'string') return fail('V5', `tool 不是字符串（实得 ${JSON.stringify(line.tool)}）`)
   for (const key of OFFICE_LEDGER_PATH_KEYS) {
-    if (typeof line[key] !== 'string') return `${key} 不是字符串（实得 ${JSON.stringify(line[key])}）`
+    if (typeof line[key] !== 'string') return fail('V5', `${key} 不是字符串（实得 ${JSON.stringify(line[key])}）`)
   }
-  if (typeof line.tree_differs !== 'boolean') return `tree_differs 不是布尔（实得 ${JSON.stringify(line.tree_differs)}）`
+  if (typeof line.tree_differs !== 'boolean') return fail('V5', `tree_differs 不是布尔（实得 ${JSON.stringify(line.tree_differs)}）`)
   // ── V3 空串（五样；空串不是"没给"）─────────────────────────────────────────
   for (const key of ['role', 'tool', 'landing', 'office_root', 'header_office']) {
-    if (line[key].trim() === '') return `${key} 是空串（"没给"与"给空串"不是一回事）`
+    if (line[key].trim() === '') return fail('V3', `${key} 是空串（"没给"与"给空串"不是一回事）`)
   }
   // `at` 只判"能 Date.parse"（钟准是另一件事，契约 §5.4）。
-  if (Number.isNaN(Date.parse(line.at))) return `at 不是可解析的时刻字符串（实得 ${JSON.stringify(line.at)}）`
+  if (Number.isNaN(Date.parse(line.at))) return fail('V5', `at 不是可解析的时刻字符串（实得 ${JSON.stringify(line.at)}）`)
   // `tool` 的枚举归 V5：`'read'` 是类型/取值错，不是"空的"。
-  if (line.tool !== 'write' && line.tool !== 'edit') return `tool 只能是 write/edit（实得 ${JSON.stringify(line.tool)}）`
+  if (line.tool !== 'write' && line.tool !== 'edit') return fail('V5', `tool 只能是 write/edit（实得 ${JSON.stringify(line.tool)}）`)
   // ── V1 绝对路径 · V4 长度（三条路径同一把尺子）────────────────────────────────
   for (const key of OFFICE_LEDGER_PATH_KEYS) {
     const value = line[key]
     if (!isAbsolute(value)) {
-      return `${key} 不是绝对路径（实得 ${JSON.stringify(value)}）—— 相对路径会按会话头 cwd 解析，`
-        + '落进会话头那棵树时两个 office 相等 ⇒ 异树判据静默失效'
+      return fail('V1', `${key} 不是绝对路径（实得 ${JSON.stringify(value)}）—— 相对路径会按会话头 cwd 解析，`
+        + '落进会话头那棵树时两个 office 相等 ⇒ 异树判据静默失效')
+    }
+    if (OFFICE_LEDGER_ROOT_RELATIVE.test(value)) {
+      return fail('V1', `${key} 是根相对路径（实得 ${JSON.stringify(value)}）—— 以单个分隔符开头的路径`
+        + '按"验这一行时那个进程的当前盘"解析，含义不稳；绝对路径 = 盘符限定（`E:\\…`）或 UNC（`\\\\server\\share`）')
     }
     if (value.length > OFFICE_LEDGER_PATH_MAX) {
-      return `${key} 超过 ${OFFICE_LEDGER_PATH_MAX} 字符（实得 ${value.length}）—— 单行账的机器读数，超长只可能是拼错 / 注入`
+      return fail('V4', `${key} 超过 ${OFFICE_LEDGER_PATH_MAX} 字符（实得 ${value.length}）—— 单行账的机器读数，超长只可能是拼错 / 注入`)
     }
   }
-  // ── V2 岗位（名单唯一来源：`DEFAULT_OFFICE_BOUND`，不在这里再抄一份）────────────
-  if (!DEFAULT_OFFICE_BOUND.includes(line.role)) {
-    return `role ${JSON.stringify(line.role)} 不在受限岗位名单里（${DEFAULT_OFFICE_BOUND.join('/')}）`
-      + ' —— 账本不替一个不存在的面背书'
+  // ── V2 岗位（在册面：`ROLE_TABLE` 的九个角色，配置怎么改都不影响这一条）────────────
+  if (!ROLE_ENTRY_BY_ROLE.has(line.role)) {
+    return fail('V2', `role ${JSON.stringify(line.role)} 不是一个在册岗位（${[...ROLE_ENTRY_BY_ROLE.keys()].join('/')}）`
+      + ' —— 账本不替一个不存在的面背书')
   }
   // ── V6 跨字段：`tree_differs` 必须与两个 office 的等值关系一致 ─────────────────
-  const sameTree = pathKey(line.office_root) === pathKey(line.header_office)
+  const sameTree = officeKey(line.office_root) === officeKey(line.header_office)
   if (line.tree_differs !== !sameTree) {
-    return `tree_differs=${String(line.tree_differs)} 与两个 office 不一致（normKey(office_root) `
-      + `${sameTree ? '===' : '!=='} normKey(header_office)）—— 契约 §1.2 的 true ⇔ 不等`
+    return fail('V6', `tree_differs=${String(line.tree_differs)} 与两个 office 不一致（officeKey 就是表的 normKey：`
+      + `officeKey(office_root) ${sameTree ? '===' : '!=='} officeKey(header_office)）—— 契约 §1.2 的 true ⇔ 不等`)
   }
-  return null
+  return { rule: null, reason: null }
+}
+
+/**
+ * 一行账合不合规 —— 纯函数，写方与读方**共用**（一个口径一份实现）。
+ *
+ * 判**六样**，缺一不可 —— 逐条对应契约 `.team/test/2026-11-08/CONTRACT-batch15.md` §1.2.1 的值表
+ * （V1–V6；那张表是产品与判据侧 `lineProblems` 共用的唯一真值表）。每条规则的正文
+ * （为什么存在 · 判什么 · 不判什么）在 `officeLedgerRowRule` 上面那段注释里。
+ *
+ * @returns {string|null} `null` = 合规；否则是拒的理由（点名缺哪个 / 多哪个 / 哪个是正文键 / 哪个值不对）
+ */
+export function OFFICE_LEDGER_ROW_VERDICT(line) {
+  const verdict = officeLedgerRowRule(line)
+  return verdict.rule === null ? null : verdict.reason
 }
 
 export function officeLandingLedger(officeRoot) {
