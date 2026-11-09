@@ -197,6 +197,12 @@ export const CODES = Object.freeze({
   // 🔴 它必须与"盘写不进去"分开：那个是 IO 面（`E_OFFICE_LEDGER_UNWRITABLE`），这个是**这一行自己不合契约**。
   //    合成一个码，查的人会去弄盘，而盘一点事都没有（2026-11-09 第 4 关打回 R1）。
   E_OFFICE_LEDGER_SHAPE: { exit: 5, zh: '账行不合契约 §1.2（键集不是恰好七个 / 带正文键 / 七样的值类型不对）—— 这一行没进账，门禁按 fail-closed 拒这次写' },
+  // 🔴 与上面那条同一个理由的另一面：读方的两个面也**必须分开**。
+  //    "最后一行写了一半"（并发追加没写完，重读一次通常就好）与"中间那一行坏了"（要去看那一行）
+  //    如果共用一个码，读的人分不出是哪件事、该去弄什么。
+  //    与 `E_OFFICE_LEDGER_UNREADABLE` 一样**不是 CLI 退出码**：`officeLandingLedger` 只把它放进读数的
+  //    `reason` 前缀；给 5 只为让 `CODES[code].exit` 有确定值。
+  E_OFFICE_LEDGER_PARTIAL_TAIL: { exit: 5, zh: '账本最后一行写了一半（无锁追加没写完）—— 读数 `ok:false` + `partial_tail` 计数，重读一次通常就好' },
 
   // ── 提候选那个动作（`proposal_file` 工具）的四个码 ─────────────────────────
   // ⚠️ 与上面那五个 guard 码同族：**不是 CLI 退出码** —— 它们由工具抛出（`error.code` + 报文以码开头），

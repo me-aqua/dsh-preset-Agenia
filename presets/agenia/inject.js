@@ -1741,8 +1741,11 @@ function officeLandingVerdict(target, agent, strict) {
 // 写方有两个失败面，**两个码**（读的人要分得开）：
 //   · `E_OFFICE_LEDGER_SHAPE` —— 这一行本身不合契约 §1.2（键集 / 正文键 / 值类型）；
 //   · `E_OFFICE_LEDGER_UNWRITABLE` —— 盘写不进去（建目录 / 追加失败）。
-// 读方是第三个面：`officeLandingLedger` 把坏行计入 `unreadable`，`reason` 用 `E_OFFICE_LEDGER_UNREADABLE`。
-// 前两个都是 fail-closed：门禁拿到 `ok:false` 就**拒这次写**（`E_GUARD_OFFICE_LEDGER`）。
+// 读方两个面、**两个码**（"并发写没写完"与"账本坏了"不许是同一个字符串）：
+//   · `E_OFFICE_LEDGER_UNREADABLE` —— **中间行**损坏 / 账本读不动，计入 `unreadable`；
+//   · `E_OFFICE_LEDGER_PARTIAL_TAIL` —— **最后一行**写了一半（无锁追加没写完），计入 `partial_tail`。
+// 两个读面都 `ok:false`（报告了不等于容忍）；fail-closed 只挂在写方那两个码上：
+// 门禁拿到写方的 `ok:false` 就**拒这次写**（`E_GUARD_OFFICE_LEDGER`）。
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 账本相对**某个 office**（`.team` 那一级）的路径 —— 冻结名字（判据与探针按它取）。 */
@@ -1760,8 +1763,19 @@ const OFFICE_LEDGER_UNWRITABLE = 'E_OFFICE_LEDGER_UNWRITABLE'
  */
 export const OFFICE_LEDGER_SHAPE = 'E_OFFICE_LEDGER_SHAPE'
 
-/** 账本读不动 / 有坏行时的码（`officeLandingLedger` 的 `reason` 前缀）。 */
+/** 账本读不动 / **中间行**损坏时的码（`officeLandingLedger` 的 `reason` 前缀）。 */
 const OFFICE_LEDGER_UNREADABLE = 'E_OFFICE_LEDGER_UNREADABLE'
+
+/**
+ * 账本**最后一行写了一半**时的码（`officeLandingLedger` 的 `reason` 前缀）。
+ *
+ * 与 `E_OFFICE_LEDGER_UNREADABLE` 分开的理由：两个面查的人不一样 —— "并发写没写完"重读一次通常就好，
+ * "中间那一行坏了"要去看那一行到底出了什么事。合成一个码，读的人分不出是哪件事。
+ * 仍然是 `ok:false`：半行意味着这本账没被完整读出来，不许装成可信读数。
+ * 与 `E_OFFICE_LEDGER_UNREADABLE` 一样不是 CLI 退出码，登记在 `lib/error-codes.mjs::CODES`
+ * （退出码 5 = 校验拒绝族，只为让 `CODES[code].exit` 有确定值）。
+ */
+const OFFICE_LEDGER_PARTIAL_TAIL = 'E_OFFICE_LEDGER_PARTIAL_TAIL'
 
 /**
  * 账本的绝对路径：`<officeRoot>/state/office-landings.jsonl`（`officeRoot` 就是 `.team` 那一级）。
@@ -1806,9 +1820,10 @@ export function recordOfficeLanding(officeRoot, line) {
 /**
  * 从**盘上**读回这本账（不读任何内存里的 readings）。
  *
- * `ok:false` 只由"读不动"或"有坏行"引起；**`exists:false` 不是 `ok:false`**（新队还没有这本账是正常态），
- * 但它也**不算证据**：任何一格都不许拿"没有账本"当"机制成立"。
- * `unreadable > 0` ⇒ `ok:false`（半行绝不当成 0 行，否则"账坏了"与"账是空的"长得一模一样）。
+ * `ok:false` 只由"读不动"、"中间行坏"或"最后一行写了一半"引起；**`exists:false` 不是 `ok:false`**
+ * （新队还没有这本账是正常态），但它也**不算证据**：任何一格都不许拿"没有账本"当"机制成立"。
+ * `unreadable > 0` ⇒ `ok:false`（半行绝不当成 0 行，否则"账坏了"与"账是空的"长得一模一样）；
+ * `partial_tail > 0` ⇒ `ok:false` + 自己的码（这本账没读完，不许装成可信读数）。
  *
  * @param {string} officeRoot 账本在哪棵树的 `.team` 下
  */
@@ -1906,7 +1921,7 @@ export function officeLandingLedger(officeRoot) {
   if (partial.length > 0) {
     out.partial_tail = partial.length
     out.ok = false
-    out.reason = `${OFFICE_LEDGER_UNREADABLE}: 最后一行像是**写了一半**（第 ${partial.join('、')} 行）`
+    out.reason = `${OFFICE_LEDGER_PARTIAL_TAIL}: 最后一行像是**写了一半**（第 ${partial.join('、')} 行）`
       + ' —— 账本无锁追加，可能是并发写没写完；重读一次通常就好，别当成"账本坏了"'
   }
   if (bad.length > 0) {
