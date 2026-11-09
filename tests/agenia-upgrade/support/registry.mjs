@@ -919,6 +919,17 @@ export const BATCH_AM = ['OFL-07', 'JUD-01', 'JUD-02']
 export const BATCH_AN = ['SMT-01', 'OFL-08']
 
 /**
+ * 批次 AO（2026-11-09 · Gate 2 第四轮 follow-up · `bug-20261109-07` 的落地判据）——
+ * **值表 V1–V6 的判据**（表在 `CONTRACT-batch15.md` §1.2.1；判词在 `CONTRACT-f11-judge-kind.md` §6）：
+ * 写方 `recordOfficeLanding` 对六类坏值（相对路径 / 名单外岗位 / 空串 / 超长 / 类型错 / 跨字段不自洽）
+ * 必须 `E_OFFICE_LEDGER_SHAPE` + `reason` 点名那一格 + **零写入**；合法行必须收（阳性对照，
+ * 否则"全拒"也能让六类看起来绿）；刀 `V-all` 拿掉写方那道值检查 ⇒ 六类全部被收下 ⇒ 本格红出精确六码。
+ * 单开一格而不是并进 `OFL-07` / `OFL-08`：那两格判**读方**与**码位登记面**，这一格判**写方的值闸**。
+ * ⚠️ 不进 `FROZEN_IDS`。
+ */
+export const BATCH_AO = ['OFL-09']
+
+/**
  * 已落笔的二十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -942,7 +953,7 @@ export const BATCH_AN = ['SMT-01', 'OFL-08']
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -981,7 +992,7 @@ const BATCH_OF = (id) =>
                                                                       : BATCH_AJ.includes(id) ? 'AJ'
                                                                         : BATCH_AK.includes(id) ? 'AK'
                                                                           : BATCH_AL.includes(id) ? 'AL'
-                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN'
+                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO'
                                                                   : null
 
 const F = {
@@ -1505,6 +1516,7 @@ const ROWS = [
   // 契约 `.team/test/2026-11-09/CONTRACT-f11-judge-kind.md` §4（`SMT-01`）/ §5（`OFL-08`）。
   ['SMT-01', 'memory-rotation', F.smt, '`memoryRotationRoundOf` 的一轮：F3 配比 / F4 写盘闸 / F5 换版归零（三条腿 + 三把刀）。**判词、夹具形状与翻面集只写在 `CONTRACT-f11-judge-kind.md` §4**（唯一出处）；本行只登记落点：`unit/smt01-memory-rotation.test.mjs`。', '批次 AN'],
   ['OFL-08', 'office-ledger', F.ofl, '账本四码的**登记面**：契约 §2.4 的四个码必须同时出现在产品 `CODES` 与测试侧 `FROZEN.exitCodes` 里，退出码逐项相同（5）；两张表里多出表外的本族码 ⇒ 红。**判词与三个方向的红码只写在 `CONTRACT-f11-judge-kind.md` §5**（唯一出处）；表在 `support/office-ledger-fixtures.mjs::LEDGER_CODE_TABLE`。', '批次 AN'],
+  ['OFL-09', 'office-ledger', F.ofl, '**值表 V1–V6 的判据**（表在 `CONTRACT-batch15.md` §1.2.1；判词在 `CONTRACT-f11-judge-kind.md` §6）：写方 `recordOfficeLanding` 对六类坏值 —— V1 相对路径（三条路径各一行）· V2 名单外岗位 · V3 空串（五键各一行）· V4 超长（三条路径各一行）· V5 类型错（七键逐条 + `at` 不可解析）· V6 `tree_differs` 两个方向不自洽 —— 必须 `E_OFFICE_LEDGER_SHAPE` + `reason` 点名那一格 + **账本字节不变**；合法行必须收（阳性对照，否则"全拒"也能假绿）；两个读者对同一合法行同号（`OFFICE_LEDGER_ROW_VERDICT === null` 且 `lineProblems` 干净）；刀 `V-all` 把写方那处 `shape = OFFICE_LEDGER_ROW_VERDICT(line)` 改成 `shape = null` ⇒ 六类全部被收下 ⇒ 本格红出**恰好** `OFL9-V1…V6`（锚点不在 ⇒ `OFL9-KNIFE-ANCHOR`）', '批次 AO'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1665,8 +1677,9 @@ export const GROUP_COUNTS = {
    *  批次 AM（Gate 2）追加 `OFL-07`：**同一个账本读者的第二个面**（`partial_tail` 与 `unreadable`
    *  必须解释得不一样）⇒ `office-ledger` 6 → 7，不另开一组（它守的还是那本账的读数）。
    *  批次 AN 追加 `OFL-08`：**账本四码的登记面**（`CODES` / `exitCodes` 两处都要在册）⇒ 7 → 8，
-   *  仍不另开一组（同一个账本的码；红的时候一眼看得出是"行为不对"还是"码没登记"）。 */
-  'office-ledger': 8,
+   *  仍不另开一组（同一个账本的码；红的时候一眼看得出是"行为不对"还是"码没登记"）。
+   *  批次 AO 追加 `OFL-09`：**值表 V1–V6 的写方闸**（六类坏值各拒一次 + 零写入 + 合法行必须收）⇒ 8 → 9。 */
+  'office-ledger': 9,
   /** 批次 AN（2026-11-09 · Gate 2 第四轮）—— **记忆轮转的一轮**（`SMT-01`：F3 配比 / F4 写盘闸 / F5 换版归零）。
    *  单开一组而不是并进 `memory`：那一族判**记忆库的不变量**（容量 / 半衰期 / 类型 / 索引），
    *  这一组判**尾巴轮转**（挑哪些条目 / 游标落不落盘 / 换版从哪起）；红的时候一眼看得出是哪一层。 */
@@ -1705,9 +1718,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1734,6 +1747,7 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
+
