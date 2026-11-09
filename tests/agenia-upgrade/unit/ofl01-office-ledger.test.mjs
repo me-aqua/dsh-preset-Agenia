@@ -60,7 +60,7 @@ import {
   CODES, CONTENT_MARKER, CONTROL_SOURCE, HALF_LINE_CODE_CANDIDATE, KNIVES, LEDGER_REL,
   READER_CONTROL_SOURCE, READER_KNIVES,
   applyKnife, bytesOf, callReading, controlCatalog, dropLedgerWrite, ensureLedgerFixtures, fixtureReadings,
-  ledgerLine, ledgerPathOf, ledgerSampleProblems, lineProblems, oracleLedger, readLedgerText, seedLedger,
+  ledgerCodeBookProblems, ledgerLine, ledgerPathOf, ledgerSampleProblems, lineProblems, oracleLedger, readLedgerText, seedLedger,
   withGuardSubject, agentIn, writeStandaloneCopy,
 } from '../support/office-ledger-fixtures.mjs'
 
@@ -474,10 +474,13 @@ async function officeRow5({ mod, fx, subject, tag }) {
 //           候选 `E_OFFICE_LEDGER_PARTIAL_TAIL`）；
 //   · (b) 中间一行坏   ⇒ `unreadable > 0` · `partial_tail === 0` · `ok:false` · `reason` 点名"不合格"
 //         · 码**仍是** `E_OFFICE_LEDGER_UNREADABLE`（组长裁定：坏行不换码）；
-//   · (c) 干净账本     ⇒ 两个 0 且 `ok:true`、`reason:null`。
+//   · (c) 干净账本     ⇒ 两个 0 且 `ok:true`、`reason:null`；
+//   · (d) **组合**       ⇒ 半截尾行 + 中间坏行同时在场：`partial_tail === 1`、`unreadable === 1`、`entries === 2`、
+//         `ok:false`，**码按声明 2 走坏行**（`E_OFFICE_LEDGER_UNREADABLE`；半截事实由 `partial_tail` 承重）。
+//   组合面的设计选择与理由写在 (d) 那段注释里（**不是**"照今天的输出写"）。
 //   `ok:false` 两格是"诚实上限"：**报告了**（不是静默容忍一个坏尾行）。
-//   三个面的码各自独立（`OFL7-LAST-HALF` / `OFL7-MIDDLE-CORRUPT` / `OFL7-CLEAN`），
-//   两把刀（`READER_KNIVES`）各翻自己那一面 —— 刀只切**对照读者**，判据本体只在这一处。
+//   四个面的码各自独立（`OFL7-LAST-HALF` / `OFL7-MIDDLE-CORRUPT` / `OFL7-CLEAN` / `OFL7-COMBINED`），
+//   三把刀（`READER_KNIVES`）各翻自己那一面 —— 刀只切**对照读者**，判据本体只在这一处。
 // ─────────────────────────────────────────────────────────────────────────────
 /** "写了一半"这一面的措辞标记（产品 / 对照的 reason 至少命中一个）。 */
 const HALF_WRITTEN_MARKERS = ['写了一半', 'half-written', 'half written']
@@ -499,9 +502,9 @@ function codeOf(read) {
   return null
 }
 
-/** 三面各自的账：**每格一棵树**（账本天然是空的）。 */
+/** 四面的账：**每格一棵树**（账本天然是空的）。 */
 function seedReaderFaces(fx) {
-  const [lastHalf, middleBad, clean] = fx.trees
+  const [lastHalf, middleBad, clean, combined] = fx.trees
   const first = ledgerLine({ landing: path.join(lastHalf.office, 'review', 'a.md'), officeRoot: lastHalf.office, headerOffice: lastHalf.office, treeDiffers: false })
   const second = ledgerLine({ landing: path.join(lastHalf.office, 'review', 'b.md'), officeRoot: lastHalf.office, headerOffice: lastHalf.office, treeDiffers: false })
   // (a) 一行合法 + 最后一行**没有换行**的半截 JSON —— 并发写没写完的形状。
@@ -510,7 +513,9 @@ function seedReaderFaces(fx) {
   seedLedger(middleBad.office, { raw: `${JSON.stringify(first)}\n{"at": "2026-11-09T0\n${JSON.stringify(second)}\n` })
   // (c) 两行合法。
   seedLedger(clean.office, { lines: [first, second] })
-  return { lastHalf, middleBad, clean }
+  // (d) 组合：合法 + **中间坏** + 合法 + **半截尾行** —— 两个事实同时在场（评审点名的未覆盖组合）。
+  seedLedger(combined.office, { raw: `${JSON.stringify(first)}\n{"at": "broken\n${JSON.stringify(second)}\n{"at": "2026-11-09T0` })
+  return { lastHalf, middleBad, clean, combined }
 }
 
 /** 只留读数里那几格（`lines` 不进证据，免得把整本账抄进去）。 */
@@ -521,7 +526,7 @@ function readerReadingOf(read) {
 }
 
 /**
- * 同一段三面断言 —— 产品、阳性对照、两把刀**喂的是这一份**。
+ * 同一段四面断言 —— 产品、阳性对照、三把刀**喂的是这一份**。
  * @returns {{problems: Array<{code:string,message:string}>, readings: object}}
  */
 async function readerFaces({ mod, fx, label }) {
@@ -543,9 +548,11 @@ async function readerFaces({ mod, fx, label }) {
   const a = readOf(trees.lastHalf, 'last-half')
   const b = readOf(trees.middleBad, 'middle-bad')
   const c = readOf(trees.clean, 'clean')
+  const d = readOf(trees.combined, 'combined')
   readings.last_half = readerReadingOf(a)
   readings.middle_bad = readerReadingOf(b)
   readings.clean = readerReadingOf(c)
+  readings.combined = readerReadingOf(d)
 
   // (a) 最后一行写了一半
   {
@@ -612,6 +619,42 @@ async function readerFaces({ mod, fx, label }) {
       if (c.reason !== null) d.push(`干净账本不该有 reason，实得 ${JSON.stringify(c.reason)}`)
     }
     if (d.length > 0) out.push(problem('OFL7-CLEAN', `${label}：${d.join(' · ')}`))
+  }
+  // (d) 组合：半截尾行 **与** 中间坏行同时在场 —— 选定 **设计 2**（见下面那段注释）。
+  // 🔴 组合面的**设计选择**（组长 2026-11-09 交办）：两种都合法，本格选 **设计 2（一个赢、声明出来）**：
+  //    `reason` 只有一个 `E_…:` 码前缀；把两个码塞进一个前缀会让"这条读数的码是什么"变成二义
+  //    （(a)/(b) 的分面判据也依赖"一个面一个码"）。⇒ **坏行赢**（中间行坏 = 账本已不可信；半截尾行更轻），
+  //    `reason` 走 `E_OFFICE_LEDGER_UNREADABLE`；**半截事实不丢**：它仍在 `partial_tail`（本格断言 === 1）。
+  //    设计 2 与设计 1 的分界也钉在这里：**`reason` 只带赢家（坏行），不许把半截也写进去** ——
+  //    写了就是设计 1（两个事实都进 reason），本格红，要先改契约。
+  //    若产品改成"半截赢"或"两个都写进 reason（设计 1）"⇒ 本格红；那时要先改契约再改这一格，
+  //    不许把今天的输出当标准。夹具：合法 + 中间坏 + 合法 + 半截尾行（`entries:2 · unreadable:1 · partial_tail:1`）。
+  {
+    const dd = []
+    if (d === null || typeof d !== 'object') dd.push('读者没返回对象')
+    else {
+      for (const key of ['entries', 'unreadable', 'partial_tail', 'ok', 'reason']) {
+        if (!(key in d)) dd.push(`读数缺键 \`${key}\``)
+      }
+      if (d.ok !== false) dd.push(`两个坏事实同时在场 ⇒ \`ok:false\`，实得 ${JSON.stringify(d.ok)}`)
+      if (d.partial_tail !== 1) dd.push(`半截尾行仍必须被数出来 ⇒ \`partial_tail\` 应为 1，实得 ${JSON.stringify(d.partial_tail)}（这一格就是防"坏行把半截吞掉"）`)
+      if (d.unreadable !== 1) dd.push(`中间坏行仍必须被数出来 ⇒ \`unreadable\` 应为 1，实得 ${JSON.stringify(d.unreadable)}`)
+      if (d.entries !== 2) dd.push(`坏行两侧各一行合法 ⇒ \`entries\` 应为 2，实得 ${JSON.stringify(d.entries)}`)
+      const code = codeOf(d)
+      if (code === null) dd.push('组合面读不出码 —— 两个事实都没进 `reason` 的 `E_…:` 前缀，也没有 `code` 字段')
+      else if (code !== CODES.unreadable) {
+        dd.push(`**声明的是设计 2：坏行赢**（组合面的码应为 \`${CODES.unreadable}\`），实得 \`${code}\``
+          + `${code === HALF_LINE_CODE_CANDIDATE ? ' —— 半截赢了（那是另一种声明，必须先改契约）' : ''}`)
+      }
+      const reason = String(d.reason ?? '')
+      if (!containsAnyMarker(reason, CORRUPT_MARKERS)) dd.push(`组合面 reason 没点名坏行（声明 2 的赢家是坏行）：${JSON.stringify(reason.slice(0, 200))}`)
+      // 设计 2 与设计 1 的**分界**：设计 2 的 reason 只带赢家（坏行），另一个事实（半截）必须由
+      // `partial_tail` 承重。若 reason 也把半截写进去 ⇒ 那是设计 1，本格红（要先改契约）。
+      if (containsAnyMarker(reason, HALF_WRITTEN_MARKERS)) {
+        dd.push(`声明 2：reason 只带赢家（坏行），半截事实应由 \`partial_tail\` 承重；reason 里也写了半截 ⇒ 这是设计 1（要先改契约）：${JSON.stringify(reason.slice(0, 200))}`)
+      }
+    }
+    if (dd.length > 0) out.push(problem('OFL7-COMBINED', `${label}：${dd.join(' · ')}`))
   }
   return { problems: out, readings }
 }
@@ -887,12 +930,12 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
     })
   })
 
-  test('OFL-07 半行与坏行必须解释得不一样：最后一行半截 ⇒ partial_tail（unreadable 0）且**自己的码** · 中间行坏 ⇒ unreadable（partial_tail 0，码仍是 UNREADABLE） · 干净 ⇒ 两个 0；两格都 ok:false；两把刀各翻一面', async () => {
+  test('OFL-07 半行与坏行必须解释得不一样：最后一行半截 ⇒ partial_tail（unreadable 0）且**自己的码** · 中间行坏 ⇒ unreadable（partial_tail 0，码仍是 UNREADABLE） · 干净 ⇒ 两个 0 · **组合（两个事实同时在场）⇒ 声明 2：坏行赢，半截仍由 partial_tail 读出**；两格都 ok:false；三把刀各翻自己那几面', async () => {
     await runCase('OFL-07', async (rec) => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
-      // ── ① 产品读者（staged `inject.js`）：三个面各一棵空树 ────────────────
-      const fx = ensureLedgerFixtures({ caseId: 'OFL-07', trees: 3 })
+      // ── ① 产品读者（staged `inject.js`）：四个面各一棵空树 ────────────────
+      const fx = ensureLedgerFixtures({ caseId: 'OFL-07', trees: 4 })
       rec.readings.fixtures = fixtureReadings(fx)
       if (!fixtureGate(rec, fx, push)) { caseFail(out); return }
       const mod = await loadSubject(push)
@@ -907,9 +950,9 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
         rec.readings.product_codes = codesOfProblems(product.problems)
       }
 
-      // ── ② 阳性对照 + 两把刀（只切对照；判据本体就是上面那一段）────────────
+      // ── ② 阳性对照 + 三把刀（只切对照；判据本体就是上面那一段）────────────
       const base = path.join(caseDir('OFL-07'), 'ofl07')
-      const controlFx = ensureLedgerFixtures({ caseId: 'OFL-07-control', trees: 3 })
+      const controlFx = ensureLedgerFixtures({ caseId: 'OFL-07-control', trees: 4 })
       if (!controlFx.ok || ledgerSampleProblems(controlFx).length > 0) {
         push('OFL7-SAMPLE-MISSING', `阳性对照的夹具建不出来：${JSON.stringify(controlFx.problems ?? [])}`)
         caseFail(out)
@@ -938,7 +981,7 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
           push('OFL7-KNIFE-ANCHOR', `${knife.id} 在对照上没有落点：${cut.code} ${cut.why} —— 尺子坏了，不许当成"刀咬了"`)
           continue
         }
-        const knifeFx = ensureLedgerFixtures({ caseId: `OFL-07-${knife.id}`, trees: 3 })
+        const knifeFx = ensureLedgerFixtures({ caseId: `OFL-07-${knife.id}`, trees: 4 })
         if (!knifeFx.ok || ledgerSampleProblems(knifeFx).length > 0) {
           push('OFL7-SAMPLE-MISSING', `刀 ${knife.id} 的夹具建不出来：${JSON.stringify(knifeFx.problems ?? [])}`)
           continue
@@ -1036,3 +1079,52 @@ const stripLines = (ledger) => {
   const { lines, malformed, ...rest } = ledger
   return { ...rest, malformed: Array.isArray(malformed) ? malformed.slice(0, 3) : malformed }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `OFL-08` —— 账本四码的**登记面**（评审 r3 §9 的两个缺口：`CODES` 2/4、`exitCodes` 0/4）
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * 这一格判的不是"账本行为"（那是 `OFL-01…07`），而是**码位表的登记面**：
+ *
+ *   · 契约 §2.4 的**四个账本码**（`SHAPE` / `UNWRITABLE` / `UNREADABLE` / `PARTIAL_TAIL`）
+ *     必须出现在产品 `lib/error-codes.mjs` 的 `CODES` 里，且 `exit === 5`；
+ *   · 同四个码必须出现在测试侧 `FROZEN.exitCodes` 里，且值逐项相同（5）；
+ *   · 两张表里**多出**本族的码（`E_OFFICE_LEDGER_*`）而不在码位表里 ⇒ 登记面走样。
+ *
+ * 为什么必须单开一格：`STAT-02` 的退出码对账只把"我有、实现没有"记成 `mine_only`（**读数，不是红**），
+ * 而"实现有、我没有"也只记读数 —— 两个方向都不会让任何一格变红。评审 r3 §9 的原话：
+ * "四个码里 `CODES` 只登记两个、测试侧一个都没有 ⇒ 没有任何断言在守 exit 5"。
+ * 表在 `support/office-ledger-fixtures.mjs::LEDGER_CODE_TABLE`（唯一来源，这里不再抄一份）。
+ *
+ * 今天的读数（预期红）：`CODES` 有 `SHAPE` / `PARTIAL_TAIL`，缺 `UNWRITABLE` / `UNREADABLE`
+ * ⇒ `OFL8-CODES-MISSING` 两条（实现岗补两行 `CODES` 之后本格转绿；测试侧四行本批已补）。
+ */
+describe('unit · office ledger code book (OFL-08)', () => {
+  test('OFL-08 账本四码必须同时登记进 `CODES` 与测试侧 `exitCodes`（exit 5），且两张表里不许有表外的本族码', async () => {
+    await runCase('OFL-08', async (rec) => {
+      const problems = []
+      const push = (code, message) => problems.push(problem(code, message))
+      let codes = null
+      try {
+        const mod = await importStaged(path.join('lib', 'error-codes.mjs'))
+        codes = mod?.CODES ?? null
+      } catch (err) {
+        push(err?.code ?? 'OFL8-SURFACE-MISSING', `staged \`lib/error-codes.mjs\` 载不进来（码位表无从对账）：${String(err?.message ?? err).slice(0, 240)}`)
+      }
+      if (codes === null) {
+        rec.readings.codes_lib = { loaded: false }
+        caseFail(problems)
+        return
+      }
+      const book = ledgerCodeBookProblems({ codes, exitCodes: FROZEN.exitCodes })
+      rec.readings.codes_lib = { loaded: true, count: Object.keys(codes).length }
+      rec.readings.book = book.readings
+      for (const [code, message] of book.problems) push(code, message)
+      // 自证：这张表**真的**有四个码、且每个码的退出码都带着（不是靠空表绿）。
+      rec.readings.table_size = book.readings.table.length
+      if (book.readings.table.length !== 4) push('OFL8-TABLE-SHAPE', `码位表应有 4 行（契约 §2.4 四码），实得 ${book.readings.table.length}`)
+      if (Object.keys(FROZEN.exitCodes).length === 0) push('OFL8-TABLE-SHAPE', '测试侧 `FROZEN.exitCodes` 是空的 —— 对账会变成空转（"查不到期望 ⇒ 静默空过"）')
+      caseFail(problems)
+    })
+  })
+})

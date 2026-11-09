@@ -1,8 +1,8 @@
 /**
  * `OFL-*`（batch 15 · `bug-20261107-10`）的**夹具拓扑** + **判据侧第二读者（oracle）** + **阳性对照** + **七把刀**。
  *
- * 批次 AM（Gate 2 · `OFL-07`）追加：**读者那三个面**（最后一行半截 / 中间行坏 / 干净）的阳性对照
- * `READER_CONTROL_SOURCE` 与两把刀 `READER_KNIVES`。它们**不改**上面那份 `CONTROL_SOURCE`
+ * 批次 AM（Gate 2 · `OFL-07`）追加：**读者那四面**（最后一行半截 / 中间行坏 / 干净 / 组合）的阳性对照
+ * `READER_CONTROL_SOURCE` 与三把刀 `READER_KNIVES`。它们**不改**上面那份 `CONTROL_SOURCE`
  * （那一份没有 `partial_tail` 的概念，`OFL-06` 的七把刀只在它上面切）。
  *
  * 契约：`.team/test/2026-11-08/CONTRACT-batch15.md`（§一 账本形状 / §二 接口面 / §三 读数 / §四 用例与刀 / §五 边界）。
@@ -408,16 +408,16 @@ export const CONTROL_SOURCE = [
   '',
 ].join('\n')
 
-// ── `OFL-07`（F11 · `partial_tail`）的**阳性对照**与**两把刀** ─────────────────
+// ── `OFL-07`（F11 · `partial_tail`）的**阳性对照**与**三把刀** ─────────────────
 /**
  * `OFL-07` 的对照读者：照 `.team/test/2026-11-09/CONTRACT-f11-judge-kind.md` §1 写的最小实现。
  *
  * 为什么单独一份、不改 `CONTROL_SOURCE`：那一份的读者（`OFL-06` 的七把刀切它）**只数 `unreadable`**，
  * 没有 `partial_tail` 这个概念。把 F11 的面塞进同一份，会让 `OFL-06` 的七把刀凭空多出一种行为
- * （刀不咬的句子就变成"看起来咬到了"）。⇒ 这一格自带读者：**同一段断言喂给它必须三面全绿**。
+ * （刀不咬的句子就变成"看起来咬到了"）。⇒ 这一格自带读者：**同一段断言喂给它必须四面全绿**。
  */
 export const READER_CONTROL_SOURCE = [
-  '/** OFL-07 阳性对照：账本读者（最后一行半截 / 中间行坏 / 干净 三面）。不是生产代码。 */',
+  '/** OFL-07 阳性对照：账本读者（最后一行半截 / 中间行坏 / 干净 / 组合 四面）。不是生产代码。 */',
   "import { existsSync, readFileSync } from 'node:fs'",
   "import { join } from 'node:path'",
   '',
@@ -472,7 +472,7 @@ export const READER_CONTROL_SOURCE = [
 ].join('\n')
 
 /**
- * `OFL-07` 的两把刀：**同一段三面断言**喂给切过的读者，必须各翻自己那一面。
+ * `OFL-07` 的三把刀：**同一段四面断言**喂给切过的读者，必须各翻自己那一面。
  *
  * 刀只切**对照**（`READER_CONTROL_SOURCE`）—— 这一点与 `OFL-06` 的七把刀同一个口径：
  * 判据翻得动面，才谈得上"产品这一面被守住了"。`want` 是**精确集合**（多翻 = 刀切宽了）。
@@ -484,7 +484,8 @@ export const READER_KNIVES = [
     delta: '`if (isLast && nonEmpty.length > 1) { partial.push(index + 1); continue }` → `{ partial.push(index + 1); continue }`',
     find: '      if (isLast && nonEmpty.length > 1) { partial.push(index + 1); continue }',
     replace: '      { partial.push(index + 1); continue }',
-    want: ['OFL7-MIDDLE-CORRUPT'],
+    // 组合面（d）也读这两个计数 ⇒ 它也会被这一刀翻；不是刀切宽了，是同一把尺子的两个面。
+    want: ['OFL7-COMBINED', 'OFL7-MIDDLE-CORRUPT'],
   },
   {
     id: 'R2',
@@ -492,7 +493,15 @@ export const READER_KNIVES = [
     delta: '`if (isLast && nonEmpty.length > 1) { ... }` → `if (false && isLast && ...)`',
     find: '      if (isLast && nonEmpty.length > 1) { partial.push(index + 1); continue }',
     replace: '      if (false && isLast && nonEmpty.length > 1) { partial.push(index + 1); continue }',
-    want: ['OFL7-LAST-HALF'],
+    want: ['OFL7-COMBINED', 'OFL7-LAST-HALF'],
+  },
+  {
+    id: 'R3',
+    label: '组合面把半截也写进 `reason`（**设计 1**，而不是声明的设计 2）',
+    delta: '坏行 `reason` 末尾追加 `；另有 N 行写了一半`（仅在 `partial.length > 0` 时）',
+    find: '    out.reason = "E_OFFICE_LEDGER_UNREADABLE: " + bad.length + " 行不合格（第 " + bad.join("、") + " 行）"',
+    replace: '    out.reason = "E_OFFICE_LEDGER_UNREADABLE: " + bad.length + " 行不合格（第 " + bad.join("、") + " 行）" + (partial.length > 0 ? "；另有 " + partial.length + " 行写了一半" : "")',
+    want: ['OFL7-COMBINED'],
   },
 ]
 
@@ -624,3 +633,102 @@ export function writeStandaloneCopy({ dir, presetDir, source }) {
 
 /** 合成工具目录（对照的 `apply` 不裁工具，喂一个最小的就够）。 */
 export const controlCatalog = () => buildCatalog(['read', 'write', 'edit'])
+
+// ── 账本码位表（`OFL-08`；契约 §2.4 + `CONTRACT-f11-judge-kind.md` §1）──────────
+/**
+ * **本族四个码**的登记表 —— `OFL-08` 的**唯一来源**（不在用例里再抄一份）。
+ *
+ * 为什么单独一格判它：四个码的**行为**已经由 `OFL-01…07` 分开判了（写面 / 读面 / 半截 / 组合），
+ * 但"码有没有进 `CODES`、退出码表里有没有它"是**另一件事** —— 行为对、码没登记，
+ * 读数照样会被 CLI 的 catch 折成 `E_INTERNAL`（"该拒"和"程序有 bug"长得一模一样）。
+ * 2026-11-09 评审 §9 的事实：`CODES` 只登记了 2/4（`SHAPE` / `PARTIAL_TAIL`），
+ * 测试侧 `FROZEN.exitCodes` **一个都没有** ⇒ `STAT-02` 只会把它们算成 `mine_only`（读数，不是红）。
+ *
+ * ⚠️ `E_OFFICE_LEDGER_PARTIAL_TAIL` 的**名字**按契约 §1 是"实现定"；产品今天叫这个名字
+ * （`bd3a7d6`）。本表把它钉成**登记名**：改名要同批改契约 §2.4 那一行与本表，不许只改代码。
+ * ⚠️ `E_GUARD_OFFICE_LEDGER`（门禁那一侧）**不在本表**：它不是 `E_OFFICE_LEDGER_*` 族
+ * （门禁另发、也不走 CLI catch）；它的登记状态只进读数（`gate_code_in_codes`），不在这里判。
+ */
+export const LEDGER_CODE_TABLE = [
+  {
+    code: CODES.shape,
+    face: '写：这一行自己不合契约 §1.2（键集 / 正文键 / 值）',
+    who: 'recordOfficeLanding',
+    exit: 5,
+    contract: 'CONTRACT-batch15.md §2.4',
+  },
+  {
+    code: CODES.unwritable,
+    face: '写：盘写不进去（权限 / 盘满 / 路径被目录占着）',
+    who: 'recordOfficeLanding',
+    exit: 5,
+    contract: 'CONTRACT-batch15.md §2.4',
+  },
+  {
+    code: CODES.unreadable,
+    face: '读：中间行坏 / 整本读不动',
+    who: 'officeLandingLedger',
+    exit: 5,
+    contract: 'CONTRACT-batch15.md §2.4',
+  },
+  {
+    code: HALF_LINE_CODE_CANDIDATE,
+    face: '读：最后一行写了一半',
+    who: 'officeLandingLedger',
+    exit: 5,
+    contract: 'CONTRACT-batch15.md §2.4 + CONTRACT-f11-judge-kind.md §1',
+  },
+]
+
+/**
+ * 把**产品码表**（`lib/error-codes.mjs` 的 `CODES`）与**测试侧退出码表**（`FROZEN.exitCodes`）
+ * 逐条对到 `LEDGER_CODE_TABLE` 上。三个方向都报：
+ *   · 表里的码在产品 `CODES` 缺席 / 退出码 ≠ 表 ⇒ `OFL8-CODES-MISSING` / `OFL8-EXIT-MISMATCH`；
+ *   · 表里的码在测试侧 `exitCodes` 缺席 / 退出码 ≠ 表 ⇒ `OFL8-EXITCODES-MISSING` / `OFL8-EXIT-MISMATCH`；
+ *   · 两张表里**多出**本族的码（`E_OFFICE_LEDGER_*`）而不在表里 ⇒ `OFL8-UNLISTED`（登记面走样）。
+ *
+ * @param {{codes: object|null, exitCodes: object|null}} input
+ * @returns {{problems: Array<[string,string]>, readings: object}}
+ */
+export function ledgerCodeBookProblems({ codes, exitCodes }) {
+  const problems = []
+  const product = codes !== null && typeof codes === 'object' ? codes : {}
+  const mine = exitCodes !== null && typeof exitCodes === 'object' ? exitCodes : {}
+  const wanted = new Set(LEDGER_CODE_TABLE.map((row) => row.code))
+  const familyOf = (table) => Object.keys(table).filter((key) => key.startsWith('E_OFFICE_LEDGER_')).sort()
+  const readings = {
+    table: LEDGER_CODE_TABLE.map((row) => ({ code: row.code, face: row.face, who: row.who, exit: row.exit, contract: row.contract })),
+    codes_family: familyOf(product),
+    exitCodes_family: familyOf(mine),
+    gate_code_in_codes: Object.prototype.hasOwnProperty.call(product, CODES.guard),
+    /** `E_GUARD_OFFICE_LEDGER` 只记读数（见上表注释）。 */
+    gate_code_in_exitCodes: Object.prototype.hasOwnProperty.call(mine, CODES.guard),
+    missing_in_codes: [],
+    missing_in_exitCodes: [],
+    mismatched: [],
+  }
+  for (const row of LEDGER_CODE_TABLE) {
+    const entry = product[row.code]
+    if (entry === undefined || entry === null) {
+      readings.missing_in_codes.push(row.code)
+      problems.push(['OFL8-CODES-MISSING', `\`CODES\` 里没有 \`${row.code}\`（${row.face}；契约 ${row.contract}）—— CLI 的 catch 只认表里有的码，漏登记 ⇒ 它会被折成 \`E_INTERNAL\`，"该拒"和"程序有 bug"长得一模一样`])
+    } else if (entry.exit !== row.exit) {
+      readings.mismatched.push({ code: row.code, source: 'CODES', want: row.exit, got: entry.exit })
+      problems.push(['OFL8-EXIT-MISMATCH', `\`CODES\` 里 \`${row.code}.exit\` 应为 ${row.exit}（校验拒绝族），实得 ${JSON.stringify(entry.exit)}`])
+    }
+    if (!Object.prototype.hasOwnProperty.call(mine, row.code)) {
+      readings.missing_in_exitCodes.push(row.code)
+      problems.push(['OFL8-EXITCODES-MISSING', `测试侧 \`FROZEN.exitCodes\` 里没有 \`${row.code}\`（契约 ${row.contract}）—— 这张表是期望值；缺码时"查不到期望 ⇒ 静默空过"，比红更坏`])
+    } else if (mine[row.code] !== row.exit) {
+      readings.mismatched.push({ code: row.code, source: 'exitCodes', want: row.exit, got: mine[row.code] })
+      problems.push(['OFL8-EXIT-MISMATCH', `\`FROZEN.exitCodes\` 里 \`${row.code}\` 应为 ${row.exit}，实得 ${JSON.stringify(mine[row.code])}`])
+    }
+  }
+  for (const extra of readings.codes_family.filter((code) => !wanted.has(code))) {
+    problems.push(['OFL8-UNLISTED', `\`CODES\` 里多了一个本族的码 \`${extra}\`，但 \`LEDGER_CODE_TABLE\` 里没有它 —— 新增/改名本族码要同批改契约 §2.4 与本表`])
+  }
+  for (const extra of readings.exitCodes_family.filter((code) => !wanted.has(code))) {
+    problems.push(['OFL8-UNLISTED', `\`FROZEN.exitCodes\` 里多了一个本族的码 \`${extra}\`，但 \`LEDGER_CODE_TABLE\` 里没有它 —— 期望表与码位表已经分叉`])
+  }
+  return { problems, readings }
+}
