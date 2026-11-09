@@ -835,14 +835,16 @@ function opJudgeCommit({ root, payload }) {
   // ⑦ 发布**之前**（就在下面 `publishUpdate` 上面一行）：「已判」索引该写哪几行（T-MEM-07 §2.3 的行集合）
   //    —— **纯计算，但它的拒绝就在这里发生**。
   //    `judgedRowSpecsOf` 读三处来源：`state.frozen_proposal_ids`（盘上状态）· `payload.accepted`（本轮接受的**提案**）
-  //    · `payload.maintenance_decisions`（本轮**处置过哪些维护案**、处置成什么）。
+  //    · `payload.maintenance_decisions`（本轮**处置过哪些维护案**、处置成什么）；
+  //    **分类的依据**（池子那一行的 `kind`）也在它里面读，并进 `classification` 读数（契约 §2.3）。
   //    两个 id 清单里任何一项不是非空字符串 ⇒ 整体拒（盘上的坏 `E_DATA_CORRUPT` / 入参坏 `E_ARG_SCHEMA`）；
   //    冻结清单里有维护案、而裁决里没有任何一条指向它 ⇒ 也拒（`E_ARG_SCHEMA`）——
   //    它没有裁决就记不出 verdict：写 `rejected` 是"把没处置说成被拒"，写 `accepted` 是"说成生效"。
   //    🔴 **顺序就是判据**：事务一发布就不回滚（见 ⑧ 的 `E_TXN_IO`），在发布之后才拒，
   //    留下的正是"快照已发布、索引没追加"那半截状态。
   //    本函数是纯的（不写盘）⇒ 提前到这里没有副作用，拒绝时三个落点一个字节都不会动。
-  const judgedSpecs = judgedRowSpecsOf({ state, accepted: payload?.accepted, decisions, day, snapshot: version, at })
+  const judged = judgedRowSpecsOf({ root, state, accepted: payload?.accepted, decisions, day, snapshot: version, at })
+  const judgedSpecs = judged.specs
 
   const published = SNAP.publishUpdate(root, { snapshot, report, day, nextState })
   S.appendAudit(root, {
@@ -870,6 +872,9 @@ function opJudgeCommit({ root, payload }) {
     phase: nextState.phase,
     distribution: snapshot.distribution,
     totals: snapshot.totals,
+    // 契约 §2.3：**这一轮的分类靠什么**（池子那一行的 `kind` / 池子读不出来时的 id 前缀）。
+    // 缺这一格，"池子坏了"与"分类本来就该靠前缀"在读数上完全一样。
+    classification: judged.classification,
   }
 }
 
@@ -921,8 +926,18 @@ function uniqueIdsOf(records, guard = {}) {
   return out
 }
 
-/** 维护案的 id 前缀 —— 池子行 / 快照条目的号只由 `lib/proposals.mjs::poolIdOf` 拼：`<kind>-<YYYYMMDD>-<seq4>`。 */
+/**
+ * 维护案 id 的**前缀之一**：`lib/proposals.mjs::poolIdOf` 的拼法是 `<kind>-<YYYYMMDD>-<seq4>`，
+ * 所以 `maintenance-…` 是一种；而 `maintenance_file` 那个工具写的是 `MR-<YYYYMMDD>-<seq4>`（另一套文法，
+ * `MNF-*` 冻着）。两套并存 ⇒ 前缀**认两个**。但前缀只是**兜底**：池子读得到时由那一行的 `kind` 说了算。
+ */
 const MAINTENANCE_CASE_PREFIX = 'maintenance-'
+
+/**
+ * 一条 id **长得像**维护案吗（只看前缀）—— 兜底判据，只在池子给不出这一行的 `kind` 时用
+ * （池子读不出来 / 池里根本没有这一行）。
+ */
+const isMaintenanceIdByPrefix = (id) => String(id).startsWith(MAINTENANCE_CASE_PREFIX) || /^MR-\d{8}-\d+$/.test(String(id))
 
 /**
  * 这一轮该往「已判」索引写哪几行（**纯函数**，不写盘；形状见契约 §2.2/§2.3）。
@@ -956,8 +971,16 @@ const MAINTENANCE_CASE_PREFIX = 'maintenance-'
  *
  * ⚠️ **本函数必须在 ⑦ 发布之前调用**（`opJudgeCommit` 里它就在 `publishUpdate` 上面一行）：
  * 已发布的事务不回滚，拒绝晚一步就变成"快照已发布、索引没追加"。
+ *
+ * 🔴 **分类的依据必须进读数**（契约 §2.3 · `classification`）：`kind` 来自池子那一行时写
+ *    `source:'pool'`；池子读不出来 / 池里没有这一行、只能退回 id 前缀时写 `source:'id-prefix'`。
+ *    没有这一格，"分类靠什么"就看不见 —— 池子坏了会被读成"分类靠前缀本来就是对的"。
+ *
+ * @param {string} root 数据根（池子在它下面；`readPool` 要它）
+ * @returns {{specs: object[], classification: {pool: {ok: boolean, code: string|null, entries: number, message: string},
+ *   by_id: Record<string, {source: 'pool'|'id-prefix', kind: 'maintenance'|'proposal'}>}}}
  */
-function judgedRowSpecsOf({ state, accepted, decisions, day, snapshot, at }) {
+function judgedRowSpecsOf({ root, state, accepted, decisions, day, snapshot, at }) {
   // 两条输入的码写在同一张表里：一处能看全"哪一半该报什么"，不会有人以为它们该统一。
   const halves = [
     {
@@ -979,25 +1002,43 @@ function judgedRowSpecsOf({ state, accepted, decisions, day, snapshot, at }) {
       + ' —— 整体拒：那一项是一条候选的 id，丢掉它就等于那条候选永远没被判过，而没有任何读数会说出这件事',
     ),
   })
-  // 池子里那批 `kind: maintenance` 的 id（真相）。读不到 ⇒ 空集合，后面靠前缀兜底。
-  const maintenanceIdsFromPool = (() => {
+  // 池子是**真相源**（`bug-20261109-01`）。`readPool` 把"读不到 / 有一行坏 JSON"当**返回值**
+  // （`{ok:false, code, entries:[], message}`），不抛 ⇒ 这里读到的 `ok` 就是这一轮分类的依据有没有。
+  // 🔴 从前这里是 `try { … } catch { return new Set() }`，而且用的是**模块作用域里不存在的 `root`**
+  //    （ReferenceError 被那个 catch 吞掉）⇒ 池子这一路**从来没读到过东西**，分类实际只靠 id 前缀，
+  //    而账上什么都不说。现在：`root` 由调用方传进来，失败面进 `classification.pool`。
+  const pool = (() => {
     try {
-      const pool = PROP.readPool(root)
-      const list = Array.isArray(pool?.entries) ? pool.entries : []
-      return new Set(list.filter((row) => row?.kind === 'maintenance').map((row) => row.imported_id))
-    } catch {
-      return new Set()
+      const read = PROP.readPool(root)
+      return {
+        ok: read?.ok === true,
+        code: typeof read?.code === 'string' ? read.code : null,
+        rows: Array.isArray(read?.entries) ? read.entries : [],
+        message: typeof read?.message === 'string' ? read.message : '',
+      }
+    } catch (error) {
+      // `readPool` 自己已经把两种读失败变成返回值了；走到这里说明它自己坏了 —— 同样进读数，不静默降级。
+      return { ok: false, code: 'E_TXN_IO', rows: [], message: `候选池读不出来（${String(error?.message ?? error)}）` }
     }
   })()
+  /** 池子里每个 id 的 `kind`（同一个 id 出现多次时取**第一次**：那是它入池的那一行）。 */
+  const kindById = new Map()
+  for (const row of pool.rows) {
+    const id = row?.imported_id
+    if (typeof id === 'string' && id !== '' && !kindById.has(id)) kindById.set(id, row?.kind)
+  }
   const acceptedIds = new Set(halves[1].ids)
   const dispositions = maintenanceDispositionsOf(decisions)
-  return ids.map((importedId) => {
+  const byId = {}
+  const specs = ids.map((importedId) => {
     // 🔴 `bug-20261109-01`：**id 前缀不是真相，池子那一行的 `kind` 才是**。
     //    判官原来只认 `maintenance-`，而 `maintenance_file` 写的是 `MR-…`（两条路拼的前缀不一样）
-    //    ⇒ 一个冻结的维护案会走"候选"那条判决路。这里先按池子的 `kind` 认，前缀只作兜底。
-    const isMaintenanceCase = maintenanceIdsFromPool.has(importedId)
-      || importedId.startsWith(MAINTENANCE_CASE_PREFIX)
-      || /^MR-\d{8}-\d+$/.test(importedId)
+    //    ⇒ 一个冻结的维护案会走"候选"那条判决路。
+    //    池子给得出这一行 ⇒ 按 `kind` 走（`proposal` 形的 id 也不会被 `MR-` 那套前缀误抓）；
+    //    给不出（池子读不出来 / 池里没有它）⇒ 才退回前缀，并把**来源**写进读数。
+    const fromPool = kindById.has(importedId)
+    const isMaintenanceCase = fromPool ? kindById.get(importedId) === 'maintenance' : isMaintenanceIdByPrefix(importedId)
+    byId[importedId] = { source: fromPool ? 'pool' : 'id-prefix', kind: isMaintenanceCase ? 'maintenance' : 'proposal' }
     const disposition = isMaintenanceCase ? dispositions.get(importedId) : undefined
     if (isMaintenanceCase && disposition === undefined && !acceptedIds.has(importedId)) {
       throw cliError(
@@ -1020,6 +1061,19 @@ function judgedRowSpecsOf({ state, accepted, decisions, day, snapshot, at }) {
       at,
     }
   })
+  return {
+    specs,
+    // 契约 §2.3：`pool.entries` = 真读到的池行数（读不出来 ⇒ 0）；`message` 在 `ok:false` 时点名池子。
+    classification: {
+      pool: {
+        ok: pool.ok,
+        code: pool.ok ? null : pool.code,
+        entries: pool.ok ? pool.rows.length : 0,
+        message: pool.message,
+      },
+      by_id: byId,
+    },
+  }
 }
 
 /**

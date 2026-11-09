@@ -190,6 +190,14 @@ export const CODES = Object.freeze({
   E_GUARD_OFFICE_WRITE: { exit: 5, zh: '受限岗位只能写 .team/ 下的东西' },
   E_GUARD_CONFIG_MISSING: { exit: 5, zh: 'delegationTools 配置缺失/非法 ⇒ 委派一律拒绝（宁可拦错，不许静默放前台）' },
 
+  // ── office 落点账（住在 `inject.js`；码名在这里留一份，供文档与断言共用）──────────
+  // ⚠️ 与上面那五个 guard 码同族：**不是 CLI 退出码** —— `recordOfficeLanding` 只把它放进返回值
+  //    （`ok:false` + `code`），门禁那一侧另发 `E_GUARD_OFFICE_LEDGER`、并按 fail-closed 拒这次写。
+  //    给 5（校验拒绝）只为让 `CODES[code].exit` 有确定值。
+  // 🔴 它必须与"盘写不进去"分开：那个是 IO 面（`E_OFFICE_LEDGER_UNWRITABLE`），这个是**这一行自己不合契约**。
+  //    合成一个码，查的人会去弄盘，而盘一点事都没有（2026-11-09 第 4 关打回 R1）。
+  E_OFFICE_LEDGER_SHAPE: { exit: 5, zh: '账行不合契约 §1.2（键集不是恰好七个 / 带正文键 / 七样的值类型不对）—— 这一行没进账，门禁按 fail-closed 拒这次写' },
+
   // ── 提候选那个动作（`proposal_file` 工具）的四个码 ─────────────────────────
   // ⚠️ 与上面那五个 guard 码同族：**不是 CLI 退出码** —— 它们由工具抛出（`error.code` + 报文以码开头），
   //    给 exit 只是为了让 `CODES[code].exit` 有一个确定值。

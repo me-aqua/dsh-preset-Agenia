@@ -1335,6 +1335,10 @@ function memoryLabel(type) {
  * 读**当前**那一版快照：指针 → 版本号 → 那份 JSON。
  * **缺**与**坏**分开报（与 `lib/snapshot.mjs::readSnapshot` 同一套口径：坏文件绝不读成空库）。
  *
+ * 🔴 **这个文件里读快照只有这一份**，两个读者共用：`sharedMemoryText`（正文注入那一节）与
+ *    `memoryRotationOf`（尾巴那一路的轮转）。两处看到的失败面、坏条目的报数因此是同一份 ——
+ *    从前尾巴那边自己另读一份（`catch { return null }`，六种失败塌成一个 null），已删。
+ *
  * @returns `{ version, file, entries }`；读不到 ⇒ `undefined`（**已经出过声了**）。
  */
 async function currentSnapshotOf(root, say) {
@@ -1734,16 +1738,27 @@ function officeLandingVerdict(target, agent, strict) {
 //
 // 谁写：`apply()` 的 `tools.guard`，在岗位写边界**放行**之后（被拒的写一行都不留：账记的是放行）。
 // 谁读：`officeLandingLedger`（`warning` 由账上的 `cross_tree` 数出来，不从内存 readings 猜）。
-// 写不进去 ⇒ **拒这次写**（`E_GUARD_OFFICE_LEDGER`，fail-closed）。读的时候读不了（缺 / 坏行 / 没权限）
-// 另算一个面：`officeLandingLedger` 计入 `unreadable`，`reason` 是 `E_OFFICE_LEDGER_UNREADABLE`。
-// （`E_OFFICE_LEDGER_UNWRITABLE` 只出现在 `recordOfficeLanding` 的返回值上 —— 别把两个面写成一句话。）
+// 写方有两个失败面，**两个码**（读的人要分得开）：
+//   · `E_OFFICE_LEDGER_SHAPE` —— 这一行本身不合契约 §1.2（键集 / 正文键 / 值类型）；
+//   · `E_OFFICE_LEDGER_UNWRITABLE` —— 盘写不进去（建目录 / 追加失败）。
+// 读方是第三个面：`officeLandingLedger` 把坏行计入 `unreadable`，`reason` 用 `E_OFFICE_LEDGER_UNREADABLE`。
+// 前两个都是 fail-closed：门禁拿到 `ok:false` 就**拒这次写**（`E_GUARD_OFFICE_LEDGER`）。
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 账本相对**某个 office**（`.team` 那一级）的路径 —— 冻结名字（判据与探针按它取）。 */
 export const OFFICE_LANDING_LEDGER_REL = 'state/office-landings.jsonl'
 
-/** `recordOfficeLanding` 失败时返回的码（纯函数层；门禁那一侧另有 `E_GUARD_OFFICE_LEDGER`）。 */
+/** `recordOfficeLanding` 失败时返回的码之一：**盘写不进去**（建目录 / 追加失败）。 */
 const OFFICE_LEDGER_UNWRITABLE = 'E_OFFICE_LEDGER_UNWRITABLE'
+
+/**
+ * `recordOfficeLanding` 失败时返回的另一个码：**这一行本身不合契约 §1.2**。
+ *
+ * 与 `E_OFFICE_LEDGER_UNWRITABLE` 分开的理由：两个面查的人不一样 —— "盘满了 / 没权限"要去弄盘，
+ * "行不成形状"是实现自己拼错了这一行（盘可能一点事都没有）。合成一个码会把查的人支去错的方向。
+ * 登记在 `lib/error-codes.mjs::CODES`（退出码 5 = 校验拒绝族；它不是 CLI 退出码）。
+ */
+export const OFFICE_LEDGER_SHAPE = 'E_OFFICE_LEDGER_SHAPE'
 
 /** 账本读不动 / 有坏行时的码（`officeLandingLedger` 的 `reason` 前缀）。 */
 const OFFICE_LEDGER_UNREADABLE = 'E_OFFICE_LEDGER_UNREADABLE'
@@ -1759,20 +1774,26 @@ export function officeLandingLedgerPath(officeRoot) {
 }
 
 /**
- * 追加一行（**只追加，不重写**）。返回 `{ ok, code, path, reason }`，**不抛** ——
- * 要判"写不进去"必须看 `ok`：`ok:false` 时 `reason` 非空（点名 errno 一族）。
+ * 追加一行（**只追加，不重写**）。返回 `{ ok, code, path, reason }`，**不抛**。
+ *
+ * 两个失败面、两个码（别把两件事写成一句话）：
+ *   · `E_OFFICE_LEDGER_SHAPE` —— 这一行**本身**不合契约 §1.2（键集不是恰好七个 / 带正文键 / 值类型不对）。
+ *     `reason` 点名哪一处不合；这是调用方的 bug，不是盘的问题；
+ *   · `E_OFFICE_LEDGER_UNWRITABLE` —— 盘写不进去（建目录 / 追加失败），`reason` 点名 errno 一族。
+ * 两个面都走 `ok:false`（调用方按 fail-closed 拒这次写），但报文必须分得开。
+ * `path` 恒是这本账的绝对路径 —— 形状失败时也算得出来，报文才点得名"是哪本账"。
  *
  * @param {string} officeRoot 写方那棵树（会话头那棵）的 `.team`
- * @param {object} line 恰好七个键的账行（形状由调用方给；这里不补、不改）
+ * @param {object} line 恰好七个键的账行（**形状由这里强制**，见 `OFFICE_LEDGER_ROW_VERDICT`）
  */
 export function recordOfficeLanding(officeRoot, line) {
-  let path = null
+  // 路径**先算**：形状失败也要给得出落点（否则门禁报文会打出「账本「null」」，把人支去查盘）。
+  const path = officeLandingLedgerPath(officeRoot)
+  // 🔴 F9（第 4 关打回）：**形状由这里强制**，不由调用方自觉 —— 七键闭集、不带正文、七样的值类型。
+  //    从前这里只写不管，于是"账本只记落点、不记正文"这句话没有执行点。
+  const shape = OFFICE_LEDGER_ROW_VERDICT(line)
+  if (shape !== null) return { ok: false, code: OFFICE_LEDGER_SHAPE, path, reason: `账行不成形状：${shape}` }
   try {
-    // 🔴 F9（第 4 关打回）：**形状由这里强制**，不由调用方自觉。七键闭合、多一个少一个都拒，
-    //    正文键一律拒（账本不是日志倾倒场）。从前这里"不补、不改"，于是"账本只记落点"这句话没有执行点。
-    const shape = OFFICE_LEDGER_ROW_VERDICT(line)
-    if (shape !== null) return { ok: false, code: OFFICE_LEDGER_UNWRITABLE, path: null, reason: shape }
-    path = officeLandingLedgerPath(officeRoot)
     mkdirSync(dirname(path), { recursive: true })
     appendFileSync(path, `${JSON.stringify(line)}\n`, 'utf8')
     return { ok: true, code: null, path, reason: null }
@@ -1798,17 +1819,39 @@ export const OFFICE_LEDGER_BODY_KEYS = ['content', 'text', 'body', 'patch', 'old
 
 /**
  * 一行账合不合规 —— 纯函数，写方与读方**共用**（一个口径一份实现）。
- * @returns {string|null} `null` = 合规；否则是拒的理由（点名缺哪个 / 多哪个 / 哪个是正文键）
+ *
+ * 判两样，缺一不可（契约 §1.2）：
+ *   ① **键集恰好七个** —— 少一个 / 多一个都不行，正文键单独点名（账本不是日志倾倒场）；
+ *   ② **七样的值类型** —— `at` 是能 `Date.parse` 的字符串 · `role` 非空字符串 · `tool` ∈ `write`/`edit` ·
+ *      `landing` / `office_root` / `header_office` 非空字符串 · `tree_differs` 布尔。
+ * 判据侧 `tests/agenia-upgrade/support/office-ledger-fixtures.mjs::lineProblems` 对同一批样例逐条查
+ * 同样这七样（它把路径 / 岗位与期望值比，这里没有"期望值"可给，只能判"像不像那个字段"）。
+ *
+ * **不判**：`tree_differs` 与两个 office 是否自洽 —— 契约 §5.7 明写"手改一个 `tree_differs` 能骗过读者，
+ * 本批不防"。今天是自证字段，要防得另开一票（先把这个文件里那三份路径归一化收成一份）。
+ *
+ * @returns {string|null} `null` = 合规；否则是拒的理由（点名缺哪个 / 多哪个 / 哪个是正文键 / 哪个值不对）
  */
 export function OFFICE_LEDGER_ROW_VERDICT(line) {
   if (line === null || typeof line !== 'object' || Array.isArray(line)) return '不是对象'
   const keys = Object.keys(line)
-  const missing = OFFICE_LEDGER_ROW_KEYS.filter((key) => !(key in line))
+  // 缺键与多键用**同一个谓词**（自有可枚举键）：`in` 会认原型链，与 `Object.keys` 不是一把尺子。
+  const missing = OFFICE_LEDGER_ROW_KEYS.filter((key) => !keys.includes(key))
   if (missing.length > 0) return `缺键 ${missing.join('/')}`
+  // 🔴 正文键**先于**"多键"判：正文键也不在那七个里，晚一步就只会得到"多键 content"，
+  //    "正文进账了"这个语义就没人说得出来。
+  const body = keys.filter((key) => OFFICE_LEDGER_BODY_KEYS.includes(key.toLowerCase()))
+  if (body.length > 0) return `有正文键 ${body.join('/')}（账本不记内容）`
   const extra = keys.filter((key) => !OFFICE_LEDGER_ROW_KEYS.includes(key))
   if (extra.length > 0) return `多键 ${extra.join('/')}（一行的键集必须恰好是那七个）`
-  const body = OFFICE_LEDGER_BODY_KEYS.filter((key) => key in line)
-  if (body.length > 0) return `有正文键 ${body.join('/')}`
+  // ── 值（契约 §1.2 那张表第二列）────────────────────────────────────────────
+  if (typeof line.at !== 'string' || Number.isNaN(Date.parse(line.at))) return `at 不是可解析的时刻字符串（实得 ${JSON.stringify(line.at)}）`
+  if (typeof line.role !== 'string' || line.role.trim() === '') return `role 不是非空字符串（实得 ${JSON.stringify(line.role)}）`
+  if (line.tool !== 'write' && line.tool !== 'edit') return `tool 只能是 write/edit（实得 ${JSON.stringify(line.tool)}）`
+  for (const key of ['landing', 'office_root', 'header_office']) {
+    const value = line[key]
+    if (typeof value !== 'string' || value.trim() === '') return `${key} 不是非空字符串（实得 ${JSON.stringify(value)}）`
+  }
   if (typeof line.tree_differs !== 'boolean') return 'tree_differs 不是布尔'
   return null
 }
@@ -1829,20 +1872,20 @@ export function officeLandingLedger(officeRoot) {
     out.reason = `${OFFICE_LEDGER_UNREADABLE}: 账本读不动（${String(err?.code ?? err)}）`
     return out
   }
-  // 🔴 F9：七键闭合（写方承诺的那七个），**且不许有正文**。缺一个也算坏行 —— 只校验一个键
-  //    等于"多塞一个 content 也照收"，那正是"账本不是日志倾倒场"这条承诺的空转。
-  const ROW_KEYS = OFFICE_LEDGER_ROW_KEYS
+  // 🔴 F9：一行合不合规由 `OFFICE_LEDGER_ROW_VERDICT` 判 —— 与**写方同一个函数**（一个口径一份实现）：
+  //    七键闭集 + 不带正文 + 七样的值类型。坏行计入 `unreadable`，绝不当成 0 行。
   const bad = []
   const partial = []
-  const rawLines = String(text).split('\n').filter((line) => line.trim() !== '')
-  for (const [index, raw] of String(text).split('\n').entries()) {
+  const rawLines = String(text).split('\n')
+  const nonEmpty = rawLines.filter((line) => line.trim() !== '')
+  for (const [index, raw] of rawLines.entries()) {
     if (raw.trim() === '') continue
     let row = null
     try { row = JSON.parse(raw) } catch { row = null }
-    const isLast = index === String(text).split('\n').length - 1
+    const isLast = index === rawLines.length - 1
     if (row === null) {
       // 🔴 F11：**最后一行**解析不了 ⇒ 多半是并发写了一半（无锁追加），与中间行损坏不是一回事
-      if (isLast && rawLines.length > 1) { partial.push(index + 1); continue }
+      if (isLast && nonEmpty.length > 1) { partial.push(index + 1); continue }
       out.unreadable += 1
       bad.push(index + 1)
       continue
@@ -2578,6 +2621,88 @@ export function maintenanceFileDefinition(dataRoot) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 记忆轮转的**一轮**（游标文件 + `lib/memory-rotation.mjs` 的纯逻辑）
+//
+// 为什么这一段住在 `apply()` 外面：这一节那三条行为原先全在 `apply()` 的闭包里，
+// 只有 `agent/pre-step` 那一条路走得到 —— 判据一格都驱动不了（"读着对"不是证据）：
+//   · F3 配比 `min(PROJECT_SLOTS, max(1, 池长-1))`（在 `lib/memory-rotation.mjs`，本来就是纯函数）；
+//   · F4 **只有 `block.note === 'ok'` 才写游标**（`empty-pool` / `snapshot-unavailable` 一律不写）；
+//   · F5 **换快照版本 ⇒ 游标从 0 重来**（旧序号在新库里没有意义）。
+// 把"一轮"收成这里：输入是值（数据根 / 项目名 / 上游读好的快照），输出是正文 + 游标的下落
+// （`cursor_written` / `reset` / 盘上那份文件）。判据喂一个临时数据根就能量这三条。
+//
+// ⚠️ `rotation` 由调用方**传进来**：这个文件没有一条顶层 import 脑库（`lib/` 坏了会连人格一起死，
+//    见上面 `── 共享记忆库 ──` 那一段的成文理由）。调用方那边是懒加载的 `loadRotationModule()`。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 跑一轮记忆轮转：读游标 → 组块 → 按闸决定要不要把新游标写回。
+ *
+ * @param {object} input
+ * @param {string} input.root 数据根（游标文件在它下面的 `CURSOR_REL`）
+ * @param {string} input.project 项目名（工作区目录名；由调用方按会话 cwd 算）
+ * @param {{version:string, entries:object[]}|undefined|null} input.snapshot 上游读好的快照
+ *   （`currentSnapshotOf` 的返回值；`undefined` = 读不到 ⇒ 这一轮不贴条目、不写游标）
+ * @param {object} input.rotation `lib/memory-rotation.mjs` 的模块对象（`rotationBlockOf` / `CURSOR_REL`）
+ * @param {(key:string, message:string)=>void} [input.say] 出声（同一个问题只喊一次的那个）
+ * @returns {{text:string, note:string, reset:boolean, cursor_file:string, cursor_written:boolean, cursor:object|null}}
+ */
+export function memoryRotationRoundOf({ root, project, snapshot, rotation, say } = {}) {
+  const sayIt = typeof say === 'function' ? say : () => {}
+  const file = join(String(root ?? ''), ...rotation.CURSOR_REL)
+  let raw = null
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (error) {
+    // 没有游标文件是**正常态**（第一轮）：不吭声，从 0 开始。读不动 / 坏 JSON 才出声。
+    if (error?.code !== 'ENOENT') {
+      sayIt('rotation-cursor', `[agenia] 记忆轮转的游标读不出来（${file}）—— 这一轮从 0 开始。`)
+    }
+  }
+  // 🔴 F5（技术评审 2026-11-09）：**换快照版本 ⇒ 游标从 0 重来并出声**。
+  //    原来 `snapshot` 只写不读 ⇒ 库里条数一变，游标还停在旧序号上（可能已越过新库的长度）。
+  const snapNow = typeof snapshot?.version === 'string' ? snapshot.version : null
+  const snapWas = typeof raw?.snapshot === 'string' ? raw.snapshot : null
+  const reset = snapWas !== null && snapNow !== null && snapWas !== snapNow
+  if (reset) {
+    sayIt('rotation-snapshot-changed', `[agenia] 共享记忆换版（${snapWas} → ${snapNow}）`
+      + ' ⇒ 记忆轮转的游标从 0 重来（旧的序号在新库里没有意义）。')
+  }
+  let cursorGeneral = 0
+  let cursorProject = 0
+  if (!reset) {
+    if (Number.isInteger(raw?.cursor_general) && raw.cursor_general >= 0) cursorGeneral = raw.cursor_general
+    else if (Number.isInteger(raw?.cursor) && raw.cursor >= 0) cursorGeneral = raw.cursor
+    if (Number.isInteger(raw?.cursor_project) && raw.cursor_project >= 0) cursorProject = raw.cursor_project
+  }
+  const block = rotation.rotationBlockOf({ snapshot, project, cursorGeneral, cursorProject })
+  // 🔴 F4（第 4 关打回）：判据是 `note === 'ok'`，**不是**"快照读得到"。
+  //    两个反例：`snapshot-unavailable`（读不到）写游标会把"读不到"记成"转完了"；
+  //    `empty-pool`（挑不到条目）返回的对象里**根本没有**游标键 ⇒ `undefined !== cursor` 成立 ⇒
+  //    从前照样写出一个不含游标键的文件，下一轮静默回到第 0 条。
+  //    只有真挑到条目（`note === 'ok'`）才写 —— 而且游标没动就不重写（不制造无意义的 mtime）。
+  const moved = block.nextCursorGeneral !== cursorGeneral || block.nextCursorProject !== cursorProject
+  let cursor = null
+  let written = false
+  if (block.note === 'ok' && moved) {
+    cursor = { cursor_general: block.nextCursorGeneral, cursor_project: block.nextCursorProject, snapshot: snapNow, updated_at: new Date().toISOString() }
+    try {
+      mkdirSync(dirname(file), { recursive: true })
+      const tmp = `${file}.tmp-${process.pid}`
+      writeFileSync(tmp, `${JSON.stringify(cursor, null, 1)}\n`, 'utf8')
+      renameSync(tmp, file)
+      written = true
+    } catch (error) {
+      sayIt('rotation-cursor-write', `[agenia] 记忆轮转的游标写不回去（${String(error?.message ?? error)}）—— 下一轮可能重贴同一批。`)
+    }
+  }
+  if (block.note !== 'ok') {
+    sayIt(`rotation-${block.note}`, `[agenia] 记忆轮转这一轮「${block.note}」—— 块里写明了，别读成"没有记忆"。`)
+  }
+  return { text: block.text, note: block.note, reset, cursor_file: file, cursor_written: written, cursor }
+}
+
 /**
  * @param ctx - 这个 preset 的作用域。
  * @param config - agent.cordis.yml 里那一行的 config 段。
@@ -2979,11 +3104,17 @@ export async function apply(ctx, config = {}) {
             }
             const written = recordOfficeLanding(officeReadings.header_office, landing)
             if (written.ok !== true) {
-              // 账写不进去 ⇒ **拒绝这次写**（盘满 / 权限 / 路径被占着）。静默放行会让"写错树"永远查不到。
-              console.error(`[agenia] E_GUARD_OFFICE_LEDGER：账写不进去，这次写被拒 —— `
+              // 账这一关没过去 ⇒ **拒绝这次写**（fail-closed）。两个面分开报，别把查的人支去错的地方：
+              //   · 行不成形状 = 实现自己拼错了这一行（盘可能一点事都没有）；`E_OFFICE_LEDGER_SHAPE`
+              //   · 盘写不进去 = 权限 / 盘满 / 路径被占着；`E_OFFICE_LEDGER_UNWRITABLE`
+              // 静默放行会让"写错树"永远查不到，所以两个面都拒。
+              const why = written.code === OFFICE_LEDGER_SHAPE
+                ? `这次放行的账行**形状不合**（${String(written.reason)}）—— 是实现自己拼错了行，盘没坏`
+                : '账写不进去'
+              console.error(`[agenia] E_GUARD_OFFICE_LEDGER：${why}，这次写被拒 —— `
                 + `账本「${String(written.path)}」原因：${String(written.reason)}`
-                + '（定形 batch 15 §二.4：账写不进去不许静默放行）。')
-              return `E_GUARD_OFFICE_LEDGER：账写不进去，这次写被拒。账本「${String(written.path)}」原因：${String(written.reason)}`
+                + '（定形 batch 15 §二.4：账这一关没过不许静默放行）。')
+              return `E_GUARD_OFFICE_LEDGER：${why}，这次写被拒。账本「${String(written.path)}」原因：${String(written.reason)}`
             }
             // 🔴 2026-11-07（`ticket-20261102-02`）：**放行但写错了树** 必须出声。
             //    典型形状：会话头 cwd 在 A 树、落点却在 B 树的 `.team/` 里，而这一轮真正干活的是 A 树。
@@ -3580,85 +3711,35 @@ export async function apply(ctx, config = {}) {
    */
   /**
    * 这一轮的**记忆轮转块**：通用 + 本项目的条目，一次 10 条，按游标轮转。
-   * 读快照走 `current` 指针（与长期记忆那一节同一把尺子）；游标存数据根下，**原子写**。
+   *
+   * 读快照**只有一条路**：`currentSnapshotOf`（`memory` 那一节用的是同一个函数）——
+   * 六种失败面各有码、各有句人话，坏条目逐条报数。这里不再自己读盘。
+   * ⚠️ 所以它是 `async`：唯一的调用点 `agent/pre-step` 本来就是 `async`（`tailBodyOf` 在里面 `await`）。
+   * 一轮全部的动作（读游标 → 组块 → 按 `note === 'ok'` 决定写不写游标）在
+   * `memoryRotationRoundOf`（模块级导出）里，这一层只负责"内容根 + 项目名"这两个闭包值。
+   *
    * 🔴 读不到 / 挑不到 / 游标坏 ⇒ 块里写明（模块给的兜底文本）并出声一次 —— 不许静默变空。
    */
-  /**
-   * **同步**读当前快照（`current` 指针 + 该版本文件）。与 `currentSnapshotOf`（异步、正文注入用）
-   * ⚠️ 这里**只服务同步调用面**（尾块在 `pre-step` 里同步拼）。异步那一份 `currentSnapshotOf` 另有两个职责
-   * （给正文注入回 `file` 与解析后的 entries），两者没有合并 —— 这是**已知的第二份读数**，不是"同一个口径"的证明。
-   */
-  function readSnapshotSync(root) {
-    try {
-      const dir = join(root, ...MEMORY_SNAPSHOTS_REL)
-      const version = readFileSync(join(dir, MEMORY_POINTER_FILE), 'utf8').trim()
-      if (!MEMORY_VERSION_RE.test(version)) return null
-      const parsed = JSON.parse(readFileSync(join(dir, `${version}.json`), 'utf8'))
-      if (!Array.isArray(parsed?.entries)) return null
-      return { version, entries: parsed.entries }
-    } catch {
-      return null
-    }
-  }
-
-  function memoryRotationOf() {
+  async function memoryRotationOf() {
     if (rotationModule === undefined) return undefined
     const root = join(contentDir, RUNTIME_DIR)
-    const snapshot = readSnapshotSync(root)
-    const file = join(root, ...rotationModule.CURSOR_REL)
-    let cursorGeneral = 0
-    let cursorProject = 0
-    try {
-      const raw = JSON.parse(readFileSync(file, 'utf8'))
-      // 🔴 F5（技术评审 2026-11-09）：**换快照版本 ⇒ 游标从 0 重来并出声**。
-      //    原来 `snapshot` 只写不读 ⇒ 库里条数一变，游标还停在旧序号上（可能已越过新库的长度）。
-      const snapNow = snapshot?.version ?? null
-      const snapWas = typeof raw?.snapshot === 'string' ? raw.snapshot : null
-      if (snapWas !== null && snapNow !== null && snapWas !== snapNow) {
-        warnOnce('rotation-snapshot-changed', `[agenia] 共享记忆换版（${snapWas} → ${snapNow}）`
-          + ' ⇒ 记忆轮转的游标从 0 重来（旧的序号在新库里没有意义）。')
-      } else {
-        if (Number.isInteger(raw?.cursor_general) && raw.cursor_general >= 0) cursorGeneral = raw.cursor_general
-        else if (Number.isInteger(raw?.cursor) && raw.cursor >= 0) cursorGeneral = raw.cursor
-        if (Number.isInteger(raw?.cursor_project) && raw.cursor_project >= 0) cursorProject = raw.cursor_project
-      }
-    } catch (error) {
-      if (error?.code !== 'ENOENT') {
-        warnOnce('rotation-cursor', `[agenia] 记忆轮转的游标读不出来（${file}）—— 这一轮从 0 开始。`)
-      }
-    }
+    // ⚠️ `warnOnce` 是 `const warned = new Set()` + 函数：本函数只在运行时（`agent/pre-step`）被调用，
+    //    那时 `warned` 早就初始化完了 —— `await` 不改变这件事（同 ⑤ 末尾 `loadRotationModule` 那条注）。
+    const snapshot = await currentSnapshotOf(root, warnOnce)
     const project = (() => {
       for (const state of moods.values()) {
         if (typeof state?.cwd === 'string' && state.cwd.trim() !== '') return rotationModule.projectNameOf(state.cwd)
       }
       return rotationModule.projectNameOf(process.cwd())
     })()
-    const block = rotationModule.rotationBlockOf({ snapshot, project, cursorGeneral, cursorProject })
-    // 🔴 F4：**读不到快照就不许写游标**。否则这一跑会把游标重写成 0，下一轮从 0 开始，
-    //    而盘上留下的样子和"正常转了一圈"一模一样 —— 「读不到」必须与「转完了」长得不一样。
-    const snapshotReadable = snapshot !== null
-    // 🔴 F4（第 4 关打回）：光看"快照读得到"不够 —— `empty-pool` 那支返回的对象里**没有**游标键，
-    //    `undefined !== cursor` 成立 ⇒ 照样写了一个不含游标键的文件。判据换成 `block.note === 'ok'`（只有真挑到条才算数）。
-    if (block.note === 'ok' && (block.nextCursorGeneral !== cursorGeneral || block.nextCursorProject !== cursorProject)) {
-      try {
-        mkdirSync(dirname(file), { recursive: true })
-        const tmp = `${file}.tmp-${process.pid}`
-        writeFileSync(tmp, `${JSON.stringify({ cursor_general: block.nextCursorGeneral, cursor_project: block.nextCursorProject, snapshot: snapshot?.version ?? null, updated_at: new Date().toISOString() }, null, 1)}\n`, 'utf8')
-        renameSync(tmp, file)
-      } catch (error) {
-        warnOnce('rotation-cursor-write', `[agenia] 记忆轮转的游标写不回去（${String(error?.message ?? error)}）—— 下一轮可能重贴同一批。`)
-      }
-    }
-    if (block.note !== 'ok') {
-      warnOnce(`rotation-${block.note}`, `[agenia] 记忆轮转这一轮「${block.note}」—— 块里写明了，别读成"没有记忆"。`)
-    }
-    return block.text
+    const round = memoryRotationRoundOf({ root, project, snapshot, rotation: rotationModule, say: warnOnce })
+    return round.text
   }
 
-  function tailBodyOf(id, { board } = {}) {
+  async function tailBodyOf(id, { board } = {}) {
     const parts = [styleOf().text]
     // 🔴 老板 2026-11-08：记忆轮转贴**常识那个位置**（常识块暂时还在 —— 它那 5 条还没判进库）。
-    const rotation = memoryRotationOf()
+    const rotation = await memoryRotationOf()
     if (typeof rotation === 'string' && rotation.length > 0) parts.push(rotation)
     // 🔴 老板 2026-11-09：「常识可以整个撤了」—— 这一节不再拼。
     //    替代载体 = **记忆轮转**（`lib/memory-rotation.mjs`）：他写的 5 条已逐字进快照 v26
@@ -3773,7 +3854,7 @@ export async function apply(ctx, config = {}) {
     // 🔴 F-126（2026-10-22 老板拍）：**三条理由贴的是同一个完整的包** —— 常识 + 时间行对
     //    ①②③ 都在（`tailBodyOf` 里没有开关可关；③ 那一条由判据 `G13` 盯着）。
     //    ⚠️ 常识那一段的条件是"那份文件读得到"（`F-145`；读不到 ⇒ 少这一段并出声一次）。
-    const tail = tailBodyOf(id, { board: boardChanged ? boardNow : undefined })
+    const tail = await tailBodyOf(id, { board: boardChanged ? boardNow : undefined })
     const entered = messages.toSpliced(byTwo ? at + 1 : messages.length, 0, {
       id: randomUUID(),
       role: 'user',
