@@ -1468,7 +1468,7 @@ async function sharedMemoryText(contentDir, warn, leaderSide) {
       `[agenia] 共享记忆的常识是空文件（${senseFile}）—— 常识这一节不注入（长期记忆照旧）。`)
   } else if (leaderSide !== true) {
     // F-89：组员侧照旧（他们是一次性作业，很多活不到 10 个工具结果 ⇒ 走尾巴等于永远不看常识）；
-    // 组长改走 ⑤ 那一刀（`commonSenseOf`），这里不 push。
+    // 组长那一侧也不 push —— 常识块已于 2026-11-09 整体撤掉（老板拍板），
     // ⚠️ 判据是**注入侧**，不是"有没有角色"：row 5 / 7 的组员会话没有角色，但它们照样要常识。
     blocks.push(`## 共享记忆 · 常识\n\n${sense.text.trim()}`)
   }
@@ -3143,21 +3143,6 @@ export async function apply(ctx, config = {}) {
     return rotationModule
   }
 
-  function commonSenseOf() {
-    let raw
-    try {
-      raw = readFileSync(join(contentDir, RUNTIME_DIR, COMMON_SENSE_FILE), 'utf8')
-    } catch {
-      raw = undefined
-    }
-    if (raw === undefined || raw.trim().length === 0) {
-      warnOnce('tail-common-sense', `[agenia] 读不到 ${RUNTIME_DIR}/${COMMON_SENSE_FILE}（尾巴那一刀要贴的常识）`
-        + ' —— 这一刀只贴风格。')
-      return undefined
-    }
-    return `## 共享记忆 · 常识\n\n${raw.trim()}`
-  }
-
   /** 上一次贴尾巴的时刻（每个会话一份）—— F-102 的「距上次提醒」只从这儿取。 */
   const lastTailAt = new Map()
   const WEEKDAY = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
@@ -3400,7 +3385,7 @@ export async function apply(ctx, config = {}) {
    * 第 2、3 段**没有开关**：任何一条触发理由（①②③）走的是同一个出口、段序固定
    * （F-126；2026-10-22 老板拍「一条尾巴就是完整的包」）—— 分成几种内容组合只会让下一个
    * 读代码的人重新踩「哪一刀带什么」。所以这里只有一个形参 `board`，没有 `withSense`。
-   * ⚠️ 时间行**无条件**拼；**常识段的条件是"那份文件读得到"**（`commonSenseOf()` 读不到/空 ⇒
+   * ⚠️ 常识那一节**已于 2026-11-09 整体撤掉**（老板：「常识可以整个撤了」）—— 替代载体是「记忆轮转」
    * 这一段不拼，出声一次）—— 契约写准在 `CONTRACT.md` §1.2 / §2.3 第 3 条（`F-145`）。
    */
   /**
@@ -3463,8 +3448,11 @@ export async function apply(ctx, config = {}) {
     // 🔴 老板 2026-11-08：记忆轮转贴**常识那个位置**（常识块暂时还在 —— 它那 5 条还没判进库）。
     const rotation = memoryRotationOf()
     if (typeof rotation === 'string' && rotation.length > 0) parts.push(rotation)
-    const sense = commonSenseOf()
-    if (sense !== undefined) parts.push(sense)
+    // 🔴 老板 2026-11-09：「常识可以整个撤了」—— 这一节不再拼。
+    //    替代载体 = **记忆轮转**（`lib/memory-rotation.mjs`）：他写的 5 条已逐字进快照 v26
+    //    （`cand-20261108-0250…0254`），由上面那一块按轮转贴出。
+    //    ⚠️ `common-sense.md` 原文留在盘上、字节不动 —— 它是那 5 条候选的出处，也是
+    //    `opJudgeCommit` 三处核对（开工 / 现在 / 提交声明）用的那一份；撤的是注入，不是文件。
     parts.push(timeLineOf(id, Date.now()))
     if (typeof board === 'string' && board.length > 0) parts.push(board)
     const state = moods.get(id)
