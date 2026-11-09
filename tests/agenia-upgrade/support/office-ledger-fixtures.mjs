@@ -634,18 +634,18 @@ export function writeStandaloneCopy({ dir, presetDir, source }) {
 /** 合成工具目录（对照的 `apply` 不裁工具，喂一个最小的就够）。 */
 export const controlCatalog = () => buildCatalog(['read', 'write', 'edit'])
 
-// ── 账本码位表（`OFL-08`；契约 §2.4 + `CONTRACT-f11-judge-kind.md` §1）──────────
+// ── 账本码位表（`OFL-08`；契约 §2.4 + `CONTRACT-f11-judge-kind.md` §5）──────────
 /**
  * **本族四个码**的登记表 —— `OFL-08` 的**唯一来源**（不在用例里再抄一份）。
  *
  * 为什么单独一格判它：四个码的**行为**已经由 `OFL-01…07` 分开判了（写面 / 读面 / 半截 / 组合），
  * 但"码有没有进 `CODES`、退出码表里有没有它"是**另一件事** —— 行为对、码没登记，
  * 读数照样会被 CLI 的 catch 折成 `E_INTERNAL`（"该拒"和"程序有 bug"长得一模一样）。
- * 2026-11-09 评审 §9 的事实：`CODES` 只登记了 2/4（`SHAPE` / `PARTIAL_TAIL`），
- * 测试侧 `FROZEN.exitCodes` **一个都没有** ⇒ `STAT-02` 只会把它们算成 `mine_only`（读数，不是红）。
+ * `STAT-02` 的退出码对账对两个方向都只记读数（`mine_only` / `impl_only`）⇒ 缺码、值不等
+ * 必须由 `OFL-08` 的红码说（判词见 `CONTRACT-f11-judge-kind.md` §5）。
  *
- * ⚠️ `E_OFFICE_LEDGER_PARTIAL_TAIL` 的**名字**按契约 §1 是"实现定"；产品今天叫这个名字
- * （`bd3a7d6`）。本表把它钉成**登记名**：改名要同批改契约 §2.4 那一行与本表，不许只改代码。
+ * ⚠️ `E_OFFICE_LEDGER_PARTIAL_TAIL` 的**名字**按契约 §1 是"实现定"；产品现在用的这个名字
+ * 就是本表的登记名。改名要同批改契约 §2.4 那一行与本表，不许只改代码。
  * ⚠️ `E_GUARD_OFFICE_LEDGER`（门禁那一侧）**不在本表**：它不是 `E_OFFICE_LEDGER_*` 族
  * （门禁另发、也不走 CLI catch）；它的登记状态只进读数（`gate_code_in_codes`），不在这里判。
  */

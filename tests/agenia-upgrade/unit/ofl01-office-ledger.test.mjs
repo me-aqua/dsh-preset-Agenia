@@ -806,7 +806,7 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
     })
   })
 
-  test('OFL-06 刀架：阳性对照五格全绿 + 七把刀各翻自己那几码 + 真源码 K1（今天锚缺失，预期红）', async () => {
+  test('OFL-06 刀架：阳性对照五格全绿 + 七把刀各翻自己那几码 + 真源码 K1（锚在 · 基线成立才判）', async () => {
     await runCase('OFL-06', async (rec) => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
@@ -861,7 +861,7 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
       }
       rec.readings.knives = knifeRows
 
-      // ── ③ 真源码那一侧（`K1` 函数体级）：今天没有锚 ⇒ 预期红 ──────────────
+      // ── ③ 真源码那一侧（`K1` 函数体级）：锚在 ⇒ 基线成立才判；锚不在 ⇒ `OFL-KNIFE-ANCHOR` ──
       const realSource = (() => {
         try { return readStagedText('inject.js') } catch (err) { push('OFL-SURFACE-MISSING', `读不到 staged inject.js：${String(err?.message ?? err).slice(0, 160)}`); return null }
       })()
@@ -883,8 +883,8 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
         const cut = dropLedgerWrite(realSource)
         rec.readings.real_knife = { knife: 'K1', anchor: cut.ok ? 'found' : cut.code, why: cut.why }
         if (!cut.ok) {
-          push('OFL-KNIFE-ANCHOR', `真 staged 源码里找不到这一刀的锚（本批还没实现 ⇒ 预期红）：${cut.code} ${cut.why} —— `
-            + '实现落地后这一条必须消失；落地后这一刀该翻的是一组**六**码：`OFL-CROSS-TREE` · `OFL-EXACTLY-TWO` · '
+          push('OFL-KNIFE-ANCHOR', `真 staged 源码里找不到这一刀的锚（契约 §2.1 的冻结名字）：${cut.code} ${cut.why} —— `
+            + '先看锚（名字被改了 / 函数被删了），不是"产品没实现"；这一刀该翻的是一组**六**码：`OFL-CROSS-TREE` · `OFL-EXACTLY-TWO` · '
             + '`OFL-FAIL-CLOSED-ALLOWED` · `OFL-LEDGER-ABSENT` · `OFL-LINE-VALUES` · `OFL-ONE-LINE`'
             + ' —— `OFL-ONE-LINE`（行数 ≠ 2）与 `OFL-LINE-VALUES`（最后一行逐字等于种子行）是**同一条事实的两句话**：'
             + '没有追加行时最后一行就是种子行 ⇒ 「有 `ONE-LINE` 而没有 `LINE-VALUES`」这种形状不存在')
@@ -1081,7 +1081,7 @@ const stripLines = (ledger) => {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// `OFL-08` —— 账本四码的**登记面**（评审 r3 §9 的两个缺口：`CODES` 2/4、`exitCodes` 0/4）
+// `OFL-08` —— 账本四码的**登记面**（判词与红码在 `CONTRACT-f11-judge-kind.md` §5）
 // ─────────────────────────────────────────────────────────────────────────────
 /**
  * 这一格判的不是"账本行为"（那是 `OFL-01…07`），而是**码位表的登记面**：
@@ -1091,13 +1091,10 @@ const stripLines = (ledger) => {
  *   · 同四个码必须出现在测试侧 `FROZEN.exitCodes` 里，且值逐项相同（5）；
  *   · 两张表里**多出**本族的码（`E_OFFICE_LEDGER_*`）而不在码位表里 ⇒ 登记面走样。
  *
- * 为什么必须单开一格：`STAT-02` 的退出码对账只把"我有、实现没有"记成 `mine_only`（**读数，不是红**），
- * 而"实现有、我没有"也只记读数 —— 两个方向都不会让任何一格变红。评审 r3 §9 的原话：
- * "四个码里 `CODES` 只登记两个、测试侧一个都没有 ⇒ 没有任何断言在守 exit 5"。
- * 表在 `support/office-ledger-fixtures.mjs::LEDGER_CODE_TABLE`（唯一来源，这里不再抄一份）。
- *
- * 今天的读数（预期红）：`CODES` 有 `SHAPE` / `PARTIAL_TAIL`，缺 `UNWRITABLE` / `UNREADABLE`
- * ⇒ `OFL8-CODES-MISSING` 两条（实现岗补两行 `CODES` 之后本格转绿；测试侧四行本批已补）。
+ * 判词与三个方向的红码只写在契约 §5（**唯一出处**）；这张表的来源是
+ * `support/office-ledger-fixtures.mjs::LEDGER_CODE_TABLE`（这里不再抄一份）。
+ * 为什么必须是独立一格：`STAT-02` 的退出码对账对两个方向都只记读数（`mine_only` / `impl_only`），
+ * 不会让任何一格变红 ⇒ 缺码、值不等必须由这一格的红码说。
  */
 describe('unit · office ledger code book (OFL-08)', () => {
   test('OFL-08 账本四码必须同时登记进 `CODES` 与测试侧 `exitCodes`（exit 5），且两张表里不许有表外的本族码', async () => {
