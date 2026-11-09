@@ -40,10 +40,21 @@ export const LEDGER_KEYS = ['at', 'role', 'tool', 'landing', 'office_root', 'hea
 export const CONTENT_KEYS = ['content', 'text', 'body', 'patch', 'old_string', 'new_string', 'payload', 'after', 'before']
 export const CODES = {
   unwritable: 'E_OFFICE_LEDGER_UNWRITABLE',
+  /** 一行**自己**不合契约 §1.2（键集 / 正文键 / 值类型）—— 与 IO 面分开（实现提交拆出来的）。 */
+  shape: 'E_OFFICE_LEDGER_SHAPE',
+  /** 读方：坏 JSON / 不合形状的行（**中间行**的码；半截尾行另有独有码，见 `HALF_LINE_CODE_CANDIDATE`）。 */
+  unreadable: 'E_OFFICE_LEDGER_UNREADABLE',
   guard: 'E_GUARD_OFFICE_LEDGER',
   differs: 'OFFICE_TREE_DIFFERS',
   officeWrite: 'E_GUARD_OFFICE_WRITE',
 }
+/**
+ * 半截尾行**独有码**的候选名（契约 `CONTRACT-f11-judge-kind.md` §1）。
+ *
+ * 🔴 判据**不钉这个名字**：`OFL-07` 只要求 (a) 的码 ≠ (b) 的 `E_OFFICE_LEDGER_UNREADABLE`、
+ *    ≠ `E_OFFICE_LEDGER_SHAPE`、且非空。名字由实现定；这个名字只用于**对照读者**与红报文里的建议。
+ */
+export const HALF_LINE_CODE_CANDIDATE = 'E_OFFICE_LEDGER_PARTIAL_TAIL'
 /** 一次放行的 `write` 正文里放这个标记 —— 账本里**不许**出现它（"不记内容"的阴性对照）。 */
 export const CONTENT_MARKER = 'OFL-CONTENT-BODY-MUST-NOT-BE-LOGGED'
 
@@ -449,7 +460,7 @@ export const READER_CONTROL_SOURCE = [
   '  if (partial.length > 0) {',
   '    out.partial_tail = partial.length',
   '    out.ok = false',
-  '    out.reason = "E_OFFICE_LEDGER_UNREADABLE: 最后一行写了一半（第 " + partial.join("、") + " 行）"',
+  '    out.reason = "E_OFFICE_LEDGER_PARTIAL_TAIL: 最后一行写了一半（第 " + partial.join("、") + " 行）"',
   '  }',
   '  if (bad.length > 0) {',
   '    out.ok = false',

@@ -36,12 +36,13 @@
  *     刀在 `OFL-07`（那一面产品已经实现，必须证明判据翻得动）。
  */
 import { before, describe, test } from 'node:test'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { ENV } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
+import { ENV, PATHS } from '../support/env.mjs'
+import { caseFail, caseDir, preflight, problem, runCase } from '../support/evidence.mjs'
 import { ensureMarkedDir } from '../support/root-guard.mjs'
-import { brainPaths, runBrain } from '../support/sut.mjs'
+import { brainPaths, runBrain, runCli, writeFixture } from '../support/sut.mjs'
+import { knifeReplace } from '../support/injector-harness.mjs'
 
 before(() => { preflight() })
 
@@ -102,14 +103,20 @@ const writePool = (bp, rows) => {
 }
 
 /**
+ * 默认跑法：staged `bin/agenia-brain.mjs`，`--data-root` = 这一面的脑根。
+ * `JUD-02` 用同一个形状跑**副本**（`cliPath`）—— 两条腿共用 `firstRound` / `judgedRound`，不另写一份。
+ */
+const defaultRunner = (bp) => (op, payload) => runBrain(op, payload, { dataRoot: bp.root })
+
+/**
  * 第 1 轮：造一个**目标条目**（后面 `retire` 裁决要它出现在基准快照里）。
  * @returns {{ok:boolean, cs:string|null, targetId:string, steps:object, codes:object}}
  */
-function firstRound(bp) {
+function firstRound(bp, run = defaultRunner(bp)) {
   const steps = {}
   const codes = {}
   const call = (label, op, payload) => {
-    const res = runBrain(op, payload, { dataRoot: bp.root })
+    const res = run(op, payload)
     steps[label] = res.exit_code
     codes[label] = res.json?.error?.code ?? null
     return res
@@ -135,12 +142,12 @@ function firstRound(bp) {
  * 第 2 轮：把池子换成这一面要的样本 → claim → freeze([id]) → start → judge-commit。
  * @returns {{ok:boolean, commit:object, rows:Array, judgedText:string, steps:object, codes:object}}
  */
-function judgedRound(bp, { id, rows, accepted = [], decisions = [], cs }) {
+function judgedRound(bp, { id, rows, accepted = [], decisions = [], cs }, run = defaultRunner(bp)) {
   const poolText = writePool(bp, rows)
   const steps = {}
   const codes = {}
   const call = (label, op, payload) => {
-    const res = runBrain(op, payload, { dataRoot: bp.root })
+    const res = run(op, payload)
     steps[label] = res.exit_code
     codes[label] = res.json?.error?.code ?? null
     return res
@@ -343,6 +350,196 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
         B_ok: Array.isArray(cells.B?.judged_rows) && cells.B.judged_rows.join('') === `${MR_ID}:rejected`,
         C_ok: cells.C?.pool_code === 'E_ARG_SCHEMA',
         D_has_reading: cells.D?.classification != null,
+      }
+      caseFail(out)
+    })
+  })
+
+  /**
+   * `JUD-02` —— **一个 `catch` 把编程错误吞成"空池子"**（`bug-20261109-01` 的同胞，组长 2026-11-09 点名）。
+   *
+   * 病：`judgedRowSpecsOf` 里曾经是 `readPool(root)`，而 `root` 是**模块作用域里不存在的自由变量** ⇒
+   * `ReferenceError` 被 `catch { return new Set() }` 吞掉 ⇒ 池子这一路从来没读到过东西，分类只靠前缀，
+   * 而账上一句话都不说。修好之后（实现已落 staging）这里判三件事：
+   *   · **坏字节**（池子一行坏 JSON）⇒ `classification.pool.code === 'E_DATA_CORRUPT'`（**不是**空池子）；
+   *   · **抛出**（`readPool` 自己坏了：TypeError / 未定义变量 / 错参数）⇒ `pool.ok:false` + **非空码**（且
+   *     ≠ `E_DATA_CORRUPT`，坏字节与代码坏必须分得开）+ `message` 带着抛出的原文 + `entries:0`；
+   *     分类退回前缀（`by_id.source:'id-prefix'`），提交不崩、那一行照常 `rejected`；
+   *   · **把它改回"吞成空"**（刀 `T2`：catch 返回 `{ok:true, rows:[], ...}`）⇒ 本格的判据必须红。
+   *
+   * 为什么用**副本 + 刀**：产品不能为了这一格真去抛异常（那是改产品）。副本只改 `readPool` 那一处调用
+   * （刀 `T1`），其余逐字来自 staged；`T1` 的读数证明"抛出被看见"，`T2` 的读数证明"吞成空会被判红"。
+   */
+  test('JUD-02 池子读失败不许吞成"空池子"：坏字节 ⇒ E_DATA_CORRUPT · 抛出的编程错误 ⇒ 非空码 + 抛出原文 + 前缀兜底 · 把 catch 改成吞成空 ⇒ 本格红', async () => {
+    await runCase('JUD-02', async (rec) => {
+      const out = []
+      const push = (code, message) => out.push(problem(code, message))
+      const ID = 'MR-20261109-0003'
+      const THROWN = 'JUD-02-KNIFE-THROWN'
+      const base = path.join(caseDir('JUD-02'), 'judge-copy')
+      const srcPath = path.join(PATHS.stagedPreset, 'bin', 'agenia-brain.mjs')
+
+      // ── 两把刀：T1 让 `readPool` 抛一个**非 IO** 的 TypeError；T2 再把 catch 改成"吞成空"。──
+      const src = readFileSync(srcPath, 'utf8')
+      const throwCut = knifeReplace({
+        source: src,
+        find: '      const read = PROP.readPool(root)',
+        replace: `      const read = (() => { throw new TypeError('${THROWN}') })()`,
+      })
+      const swallowCut = throwCut.ok
+        ? knifeReplace({
+            source: throwCut.source,
+            find: /return \{ ok: false, code: 'E_TXN_IO', rows: \[\], message: .* \}/,
+            replace: "return { ok: true, code: null, rows: [], message: '' }",
+          })
+        : { ok: false, code: throwCut.code, why: throwCut.why, source: null }
+      const knifeReadings = (rec.readings.knives = {
+        T1: { label: 'readPool 抛 TypeError', find: '      const read = PROP.readPool(root)', ok: throwCut.ok, code: throwCut.code, why: throwCut.why },
+        T2: { label: 'catch 返回 {ok:true, rows:[]}', ok: swallowCut.ok, code: swallowCut.code, why: swallowCut.why },
+      })
+      if (!throwCut.ok) push('JUD02-KNIFE-ANCHOR', `T1 在 staged 源码上没有落点：${throwCut.code} ${throwCut.why} —— 尺子坏了，不许当成"刀咬了"`)
+      if (throwCut.ok && !swallowCut.ok) push('JUD02-KNIFE-ANCHOR', `T2 在 T1 的副本上没有落点：${swallowCut.code} ${swallowCut.why}`)
+
+      /** 把一份源码落成"bin + lib"的副本（脑 CLI 只 import `../lib/`）。 */
+      const copyOf = (dir, source) => {
+        mkdirSync(path.join(dir, 'bin'), { recursive: true })
+        writeFileSync(path.join(dir, 'bin', 'agenia-brain.mjs'), source, 'utf8')
+        cpSync(path.join(PATHS.stagedPreset, 'lib'), path.join(dir, 'lib'), { recursive: true })
+        return path.join(dir, 'bin', 'agenia-brain.mjs')
+      }
+      const controlCopy = copyOf(path.join(base, 'control'), src)
+      const throwCopy = throwCut.ok ? copyOf(path.join(base, 'knife-T1'), throwCut.source) : null
+      const swallowCopy = swallowCut.ok ? copyOf(path.join(base, 'knife-T2'), swallowCut.source) : null
+      rec.readings.copies = { control: controlCopy, T1: throwCopy, T2: swallowCopy, source: srcPath }
+
+      /** 副本跑法：与 `runBrain` 同形，只是 `cliPath` 指到副本的 bin。 */
+      const runnerAt = (cliPath, bp) => (op, payload) => runCli('agenia-brain.mjs', {
+        op, dataRoot: bp.root, inFile: writeFixture('JUD-02', op, payload), testMode: true,
+      }, { cliPath })
+
+      /**
+       * 一腿 = 一个独立脑根 + 第 1 轮目标条目 + 第 2 轮分类提交。
+       * @returns {{ok:boolean, where:string, steps:object, codes:object,
+       *            classification:object|null, row:object|null, commit:object|null}}
+       */
+      const legOf = (name, cliPath, { rows, decisions }) => {
+        const bp = caseBrainRoot(`jud02-${name}`)
+        const run = runnerAt(cliPath, bp)
+        const r1 = firstRound(bp, run)
+        if (!r1.ok) return { ok: false, where: 'first', steps: r1.steps, codes: r1.codes, classification: null, row: null, commit: null }
+        const r2 = judgedRound(bp, { id: ID, rows, decisions, cs: r1.cs }, run)
+        if (!r2.ok) return { ok: false, where: 'second', steps: r2.steps, codes: r2.codes, classification: null, row: null, commit: r2.commit }
+        return {
+          ok: true, where: null, steps: r2.steps, codes: r2.codes,
+          classification: classificationOf(r2.commit),
+          row: judgedRowOf(r2.rows, ID),
+          commit: r2.commit,
+          root: bp.root,
+        }
+      }
+
+      const normalRows = [poolRowOf('maintenance', ID)]
+      const declined = [{ maintenance_id: ID, action: null }]
+      const badBytesRows = ['{"broken pool row']
+      const legs = (rec.readings.legs = {})
+      const record = (name, leg) => {
+        legs[name] = leg === null ? null : {
+          ok: leg.ok, where: leg.where, steps: leg.steps, codes: leg.codes,
+          commit_exit: leg.commit?.exit_code ?? null,
+          classification: leg.classification,
+          row: leg.row === null ? null : `${leg.row?.imported_id}:${leg.row?.verdict}`,
+        }
+        return leg
+      }
+
+      /** 控制腿（未切的副本 + 正常池子）：副本本身是一个能跑的判官（否则后面的红是假红）。 */
+      const controlLeg = record('control', legOf('control', controlCopy, { rows: normalRows, decisions: declined }))
+      const controlProblems = (() => {
+        const d = []
+        if (!controlLeg.ok) d.push(`控制腿前置失败（${controlLeg.where}，steps=${JSON.stringify(controlLeg.steps)} codes=${JSON.stringify(controlLeg.codes)}）`)
+        else {
+          const cls = controlLeg.classification
+          if (cls === null) d.push('没有 `classification` 读数（副本不是这一版判官？）')
+          else {
+            if (cls.pool?.ok !== true) d.push(`池子可读 ⇒ pool.ok 应 true，实得 ${JSON.stringify(cls.pool)}`)
+            if (cls.pool?.code !== null) d.push(`池子可读 ⇒ pool.code 应 null，实得 ${JSON.stringify(cls.pool?.code)}`)
+            if (cls.pool?.entries !== 1) d.push(`池子一行 ⇒ pool.entries 应 1，实得 ${JSON.stringify(cls.pool?.entries)}`)
+            if (cls.by_id?.[ID]?.source !== 'pool') d.push(`by_id["${ID}"].source 应 pool，实得 ${JSON.stringify(cls.by_id?.[ID] ?? null)}`)
+          }
+          if (controlLeg.row?.verdict !== 'rejected') d.push(`那一行应 rejected，实得 ${JSON.stringify(controlLeg.row?.verdict ?? null)}`)
+        }
+        return d.length === 0 ? [] : [problem('JUD02-CONTROL', `控制腿：${d.join(' · ')}`)]
+      })()
+
+      /** 坏字节腿：池子一行坏 JSON ⇒ `E_DATA_CORRUPT`（这是"字节坏了"，不是"代码坏了"）。 */
+      const badLeg = record('bad_bytes', legOf('bad-bytes', controlCopy, { rows: badBytesRows, decisions: declined }))
+      const badProblems = (() => {
+        const d = []
+        if (!badLeg.ok) d.push(`前置失败（${badLeg.where}，steps=${JSON.stringify(badLeg.steps)} codes=${JSON.stringify(badLeg.codes)}）`)
+        else {
+          const cls = badLeg.classification
+          if (cls === null) d.push('没有 `classification` 读数')
+          else {
+            if (cls.pool?.ok !== false) d.push(`坏字节 ⇒ pool.ok 应 false，实得 ${JSON.stringify(cls.pool?.ok)}`)
+            if (cls.pool?.code !== 'E_DATA_CORRUPT') d.push(`坏字节 ⇒ pool.code 应 E_DATA_CORRUPT，实得 ${JSON.stringify(cls.pool?.code)}`)
+            const msg = String(cls.pool?.message ?? '')
+            if (!/候选池|pool\.jsonl/i.test(msg)) d.push(`坏字节 ⇒ message 应点名池子，实得 ${JSON.stringify(msg.slice(0, 160))}`)
+            if (cls.pool?.entries !== 0) d.push(`坏字节 ⇒ entries 应 0，实得 ${JSON.stringify(cls.pool?.entries)}`)
+            if (cls.by_id?.[ID]?.source !== 'id-prefix') d.push(`坏字节 ⇒ 分类退回前缀，by_id.source 应 id-prefix，实得 ${JSON.stringify(cls.by_id?.[ID] ?? null)}`)
+          }
+          if (badLeg.row?.verdict !== 'rejected') d.push(`那一行应 rejected，实得 ${JSON.stringify(badLeg.row?.verdict ?? null)}`)
+        }
+        return d.length === 0 ? [] : [problem('JUD02-BAD-BYTES', `坏字节腿：${d.join(' · ')}`)]
+      })()
+
+      /** 同一段断言喂给"抛出"那一腿（T1）与"吞成空"那一腿（T2）。 */
+      const thrownProblems = (leg, label) => {
+        const d = []
+        if (leg === null) return [problem('JUD02-THROWN-NOT-READ', `${label}：这一腿没有读数（副本建不出来）`)]
+        if (!leg.ok) d.push(`前置失败（${leg.where}，steps=${JSON.stringify(leg.steps)} codes=${JSON.stringify(leg.codes)}）`)
+        else {
+          if (leg.commit.exit_code !== 0) d.push(`commit exit=${leg.commit.exit_code} / ${leg.commit.json?.error?.code ?? '(无码)'} —— 池子读失败不许把提交打崩`)
+          const cls = leg.classification
+          if (cls === null) d.push('没有 `classification` 读数 —— 抛出被吞成了"什么都没发生"')
+          else {
+            if (cls.pool?.ok !== false) d.push(`抛出的读失败 ⇒ pool.ok 应 false，实得 ${JSON.stringify(cls.pool?.ok)}（这就是"吞成 empty/ok"）`)
+            if (cls.pool?.code === null || cls.pool?.code === undefined || cls.pool?.code === '') d.push('pool.code 空 —— 读失败没有码，"代码坏了"与"池子本来就空"分不开')
+            if (cls.pool?.code === 'E_DATA_CORRUPT') d.push('pool.code 用了坏字节的码 E_DATA_CORRUPT —— 抛出（代码坏了）与坏字节没分开')
+            const msg = String(cls.pool?.message ?? '')
+            if (msg === '') d.push('pool.message 空 —— 抛出的原文没留下')
+            else if (!msg.includes(THROWN)) d.push(`pool.message 没带抛出的特征串「${THROWN}」：${JSON.stringify(msg.slice(0, 200))}`)
+            if (cls.pool?.entries !== 0) d.push(`抛出的读失败 ⇒ entries 应 0，实得 ${JSON.stringify(cls.pool?.entries)}`)
+            if (cls.by_id?.[ID]?.source !== 'id-prefix') d.push(`抛出的读失败 ⇒ 分类退回前缀，by_id.source 应 id-prefix，实得 ${JSON.stringify(cls.by_id?.[ID] ?? null)}`)
+          }
+          if (leg.row?.verdict !== 'rejected') d.push(`那一行应 rejected（action:null），实得 ${JSON.stringify(leg.row?.verdict ?? null)}`)
+        }
+        return d.length === 0 ? [] : [problem('JUD02-THROWN-NOT-READ', `${label}：${d.join(' · ')}`)]
+      }
+
+      const throwLeg = record('thrown', throwCopy === null ? null : legOf('thrown', throwCopy, { rows: normalRows, decisions: declined }))
+      if (throwCut.ok) {
+        const problems = thrownProblems(throwLeg, 'T1 抛出腿')
+        out.push(...problems)
+      }
+
+      // ── T2（负控）：把 catch 改回"吞成空" ⇒ 同一段断言必须红，且只翻这一个码 ──
+      const swallowLeg = record('swallowed', swallowCopy === null ? null : legOf('swallowed', swallowCopy, { rows: normalRows, decisions: declined }))
+      if (swallowCut.ok) {
+        const codes = thrownProblems(swallowLeg, 'T2 吞成空腿').map((p) => p.code)
+        const want = ['JUD02-THROWN-NOT-READ']
+        rec.readings.swallow_codes = codes
+        rec.readings.swallow_want = want
+        if (JSON.stringify([...new Set(codes)].sort()) !== JSON.stringify(want)) {
+          push('JUD02-KNIFE-VECTOR', `T2（catch 吞成空）翻面集与期望不同：实测 ${JSON.stringify(codes)}，期望 ${JSON.stringify(want)} —— 多翻 = 刀切宽了，少翻 = 那一面没人守`)
+        }
+      }
+
+      out.push(...controlProblems, ...badProblems)
+      rec.readings.summary = {
+        control_ok: controlProblems.length === 0,
+        bad_bytes_ok: badProblems.length === 0,
+        thrown_ok: throwCut.ok ? thrownProblems(throwLeg, 'T1').length === 0 : null,
+        swallow_red: swallowCut.ok ? JSON.stringify([...new Set(thrownProblems(swallowLeg, 'T2').map((p) => p.code))].sort()) === JSON.stringify(['JUD02-THROWN-NOT-READ']) : null,
       }
       caseFail(out)
     })

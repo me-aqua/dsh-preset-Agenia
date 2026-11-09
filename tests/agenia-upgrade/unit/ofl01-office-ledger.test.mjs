@@ -57,7 +57,8 @@ import { FROZEN, PATHS } from '../support/env.mjs'
 import { importStaged, readStagedText } from '../support/sut.mjs'
 import { buildCatalog, buildContentRoot, configFromComposition, importSourceCopy, loadInjector } from '../support/injector-harness.mjs'
 import {
-  CODES, CONTENT_MARKER, CONTROL_SOURCE, KNIVES, LEDGER_REL, READER_CONTROL_SOURCE, READER_KNIVES,
+  CODES, CONTENT_MARKER, CONTROL_SOURCE, HALF_LINE_CODE_CANDIDATE, KNIVES, LEDGER_REL,
+  READER_CONTROL_SOURCE, READER_KNIVES,
   applyKnife, bytesOf, callReading, controlCatalog, dropLedgerWrite, ensureLedgerFixtures, fixtureReadings,
   ledgerLine, ledgerPathOf, ledgerSampleProblems, lineProblems, oracleLedger, readLedgerText, seedLedger,
   withGuardSubject, agentIn, writeStandaloneCopy,
@@ -468,9 +469,12 @@ async function officeRow5({ mod, fx, subject, tag }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // `OFL-07`（F11）：**半截的最后一行**与**中间坏行**必须是两个读数
-//   · (a) 最后一行写了一半 ⇒ `partial_tail > 0` · `unreadable === 0` · `ok:false` · `reason` 点名"写了一半"；
-//   · (b) 中间一行坏   ⇒ `unreadable > 0` · `partial_tail === 0` · `ok:false` · `reason` 点名"不合格"；
-//   · (c) 干净账本     ⇒ 两个 0 且 `ok:true`。
+//   · (a) 最后一行写了一半 ⇒ `partial_tail > 0` · `unreadable === 0` · `ok:false` · `reason` 点名"写了一半"
+//         · **自己的码**（≠ (b) 的 `E_OFFICE_LEDGER_UNREADABLE`、≠ `E_OFFICE_LEDGER_SHAPE`；名字由实现定，
+//           候选 `E_OFFICE_LEDGER_PARTIAL_TAIL`）；
+//   · (b) 中间一行坏   ⇒ `unreadable > 0` · `partial_tail === 0` · `ok:false` · `reason` 点名"不合格"
+//         · 码**仍是** `E_OFFICE_LEDGER_UNREADABLE`（组长裁定：坏行不换码）；
+//   · (c) 干净账本     ⇒ 两个 0 且 `ok:true`、`reason:null`。
 //   `ok:false` 两格是"诚实上限"：**报告了**（不是静默容忍一个坏尾行）。
 //   三个面的码各自独立（`OFL7-LAST-HALF` / `OFL7-MIDDLE-CORRUPT` / `OFL7-CLEAN`），
 //   两把刀（`READER_KNIVES`）各翻自己那一面 —— 刀只切**对照读者**，判据本体只在这一处。
@@ -480,6 +484,20 @@ const HALF_WRITTEN_MARKERS = ['写了一半', 'half-written', 'half written']
 /** "坏行"这一面的措辞标记 —— 两面**不许互相命中**（混成一句就是"分不开"）。 */
 const CORRUPT_MARKERS = ['不合格', '坏行', 'corrupt', 'unparsable']
 const containsAnyMarker = (text, markers) => markers.some((marker) => String(text).toLowerCase().includes(marker.toLowerCase()))
+
+/**
+ * 一个读数的**码**：优先取 `reason` 的 `E_…:` 前缀 —— **那才是人读的那个字符串**；`reason` 没有码前缀时
+ * 才看 `read.code`（实现若加了独立字段）。读不出 ⇒ `null`。
+ * 🔴 半截面与坏行面必须**按码**分得开（组长裁定）：只加一个 `code` 字段、`reason` 仍写着
+ *    `E_OFFICE_LEDGER_UNREADABLE` 不算 —— 那句字符串还是同一个。
+ */
+function codeOf(read) {
+  if (read === null || typeof read !== 'object') return null
+  const hit = /^\s*(E_[A-Z0-9_]+)\s*:/.exec(String(read.reason ?? ''))
+  if (hit !== null) return hit[1]
+  if (typeof read.code === 'string' && read.code.trim() !== '') return read.code.trim()
+  return null
+}
 
 /** 三面各自的账：**每格一棵树**（账本天然是空的）。 */
 function seedReaderFaces(fx) {
@@ -545,6 +563,15 @@ async function readerFaces({ mod, fx, label }) {
       const reason = String(a.reason ?? '')
       if (!containsAnyMarker(reason, HALF_WRITTEN_MARKERS)) d.push(`reason 没点名"写了一半"：${JSON.stringify(reason.slice(0, 200))}`)
       if (containsAnyMarker(reason, CORRUPT_MARKERS)) d.push(`reason 把半截说成了坏行（两个面混成一句）：${JSON.stringify(reason.slice(0, 200))}`)
+      // 🔴 组长裁定（2026-11-09）：`ok:false` 留着，但**码必须分开** —— 半截尾行与中间坏行
+      //    今天共用 `E_OFFICE_LEDGER_UNREADABLE`，读的人分不出"有人边写边读"与"账本坏了"。
+      const code = codeOf(a)
+      if (code === null) {
+        d.push('读数里读不出半截面的码（没有 `code`、`reason` 也没有 `E_…:` 前缀）—— 两个面按码分不开')
+      } else {
+        if (code === CODES.unreadable) d.push(`半截尾行与**中间坏行**共用 \`${CODES.unreadable}\` —— 它必须有自己的码（候选 \`${HALF_LINE_CODE_CANDIDATE}\`），否则"并发写没写完"与"账本坏了"是同一个字符串`)
+        if (code === CODES.shape) d.push(`半截尾行不许复用 \`${CODES.shape}\`（那是"一行不合契约 §1.2"的码，不是"最后一行没写完"）`)
+      }
     }
     if (d.length > 0) out.push(problem('OFL7-LAST-HALF', `${label}：${d.join(' · ')}`))
   }
@@ -564,6 +591,9 @@ async function readerFaces({ mod, fx, label }) {
       const reason = String(b.reason ?? '')
       if (!containsAnyMarker(reason, CORRUPT_MARKERS)) d.push(`reason 没点名"行不合格"：${JSON.stringify(reason.slice(0, 200))}`)
       if (containsAnyMarker(reason, HALF_WRITTEN_MARKERS)) d.push(`reason 把中间坏行说成了"写了一半"（两个面混成一句）：${JSON.stringify(reason.slice(0, 200))}`)
+      // 组长裁定（2026-11-09）：中间坏行**保留** `E_OFFICE_LEDGER_UNREADABLE` —— 半截面的新码不许把它也改掉。
+      const code = codeOf(b)
+      if (code !== CODES.unreadable) d.push(`中间坏行的码必须仍是 \`${CODES.unreadable}\`，实得 ${JSON.stringify(code)}`)
     }
     if (d.length > 0) out.push(problem('OFL7-MIDDLE-CORRUPT', `${label}：${d.join(' · ')}`))
   }
@@ -857,7 +887,7 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
     })
   })
 
-  test('OFL-07 半行与坏行必须解释得不一样：最后一行半截 ⇒ partial_tail（unreadable 0）· 中间行坏 ⇒ unreadable（partial_tail 0）· 干净 ⇒ 两个 0；两格都 ok:false；两把刀各翻一面', async () => {
+  test('OFL-07 半行与坏行必须解释得不一样：最后一行半截 ⇒ partial_tail（unreadable 0）且**自己的码** · 中间行坏 ⇒ unreadable（partial_tail 0，码仍是 UNREADABLE） · 干净 ⇒ 两个 0；两格都 ok:false；两把刀各翻一面', async () => {
     await runCase('OFL-07', async (rec) => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
@@ -867,6 +897,10 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
       if (!fixtureGate(rec, fx, push)) { caseFail(out); return }
       const mod = await loadSubject(push)
       if (mod !== null) {
+        // 契约 §2.4（batch15 补行）：这一族现在有两个写方失败码，`SHAPE` 是**导出面**的一部分。
+        if (mod.OFFICE_LEDGER_SHAPE !== CODES.shape) {
+          push('OFL7-SURFACE', `\`inject.js\` 的 \`OFFICE_LEDGER_SHAPE\` 应为 ${JSON.stringify(CODES.shape)}（契约 §2.4），实得 ${JSON.stringify(mod.OFFICE_LEDGER_SHAPE)}`)
+        }
         const product = await readerFaces({ mod, fx, label: '产品读者' })
         out.push(...product.problems)
         rec.readings.product = product.readings

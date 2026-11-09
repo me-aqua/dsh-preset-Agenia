@@ -892,11 +892,14 @@ export const BATCH_AL = ['MNF-01', 'MNF-02', 'MNF-03', 'MNF-04', 'MNF-05', 'MNF-
  *   · `JUD-01`（`bug-20261109-01` 的同伴）—— 判决侧的分类依据是**池子那一行的 `kind`**，不是 id 前缀：
  *     `kind:maintenance` 的 `proposal-…` 形 id 走维护案路径；`kind:proposal` 的 `MR-…` 形 id 不走；
  *     池子读不出来时退回前缀这件事必须出现在 `classification` 读数里（不许被 `try/catch` 吞掉）。
+ *   · `JUD-02`（组长 2026-11-09 点名的**类**）—— `readPool` 的**抛出**（未定义变量 / 错参数 / 代码坏了）
+ *     不许被 `catch` 吞成"空池子"：坏字节 ⇒ `E_DATA_CORRUPT`；抛出 ⇒ 非空码 + 抛出原文 + `entries:0`；
+ *     把 catch 改回"吞成空"的那把刀必须让本格红。
  *
- * 两条都不新开"功能面"：它们判的是**同一个读数 / 同一个分类事实的第二面**，红的时候一眼看得出是
- * "半行被当成坏行"还是"分类又被前缀劫走了"。⚠️ 不进 `FROZEN_IDS`（后加批次各自以显式清单存在）。
+ * 三条都不新开"功能面"：它们判的是**同一个读数 / 同一个分类事实的第二面**，红的时候一眼看得出是
+ * "半行被当成坏行"还是"分类又被前缀劫走了"还是"读失败被吞成了空"。⚠️ 不进 `FROZEN_IDS`。
  */
-export const BATCH_AM = ['OFL-07', 'JUD-01']
+export const BATCH_AM = ['OFL-07', 'JUD-01', 'JUD-02']
 
 /**
  * 已落笔的二十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
@@ -1473,8 +1476,9 @@ const ROWS = [
   ['MNF-06', 'maintenance-file', F.mnf, '**可达性：判组合，不判散文**（定形 §三 + 老板「给他对的工具」）：① `ROLE_TABLE` 里 `memory-review`（复核岗）的 `tools` 含它 **且** `BASE_TOOL_SET` 含它；② 真跑现役 `inject.js` 的 `apply()`，**实际注册**的工具名里有它（`withHarness` 的注册记账）；③ `.tools/check-notes.mjs` **点名**它 + `EXPECTED_ONLY_AGENIA` 与组合实测增量相等（**若**另外加了 cordis 行 `tool-maintenance-file`，那一行还必须落进体检的点名清单，否则只改一处当场红）。两条阳性对照各自承重：同一个读者必须看得见 `proposal_file`（工具面 / 注册各一处），否则"没看见"不作数。刀 `face-without-tool`（合成注入器去掉工具面与注册）⇒ 本格红、别的五格绿', '批次 AL'],
 
   // ── 批次 AM（2026-11-09 · Gate 2）：两条"判据缺席"的补格（契约 `.team/test/2026-11-09/CONTRACT-f11-judge-kind.md`）──
-  ['OFL-07', 'office-ledger', F.ofl, '`F11`（技术评审 11-09 的 F11）**半截尾行与中间坏行必须解释得不一样**：三个面各一棵空树 —— (a) 一行合法 + 最后一行**没有换行**的半截 JSON（并发追加没写完）⇒ `partial_tail === 1`、`unreadable === 0`、`entries === 1`、`ok:false`、`reason` 点名"写了一半"且**不含**坏行措辞；(b) 第一行合法 + **中间**一行坏 JSON + 最后一行合法 ⇒ `unreadable === 1`、`partial_tail === 0`、`entries === 2`、`ok:false`、`reason` 点名"行不合格"且**不含**"写了一半"；(c) 两行合法 ⇒ 两个计数都 0、`ok:true`、`reason:null`。两格 `ok:false` 是**诚实上限**（报告了，不是静默容忍）。刀架：阳性对照读者三面全绿；两把刀切**对照读者** —— `R1` 每一行解析不了都算 `partial_tail` ⇒ 只翻 `OFL7-MIDDLE-CORRUPT`；`R2` 一行 `partial_tail` 都不数 ⇒ 只翻 `OFL7-LAST-HALF`（精确集合，多翻/少翻都红）。产品读者今天已经有这个读数（`544e0b8`）⇒ 本格产品面**今天是绿的**；它的可翻面性由两把刀承重', '批次 AM'],
+  ['OFL-07', 'office-ledger', F.ofl, '`F11`（技术评审 11-09 的 F11）**半截尾行与中间坏行必须解释得不一样**：三个面各一棵空树 —— (a) 一行合法 + 最后一行**没有换行**的半截 JSON（并发追加没写完）⇒ `partial_tail === 1`、`unreadable === 0`、`entries === 1`、`ok:false`、`reason` 点名"写了一半"且**不含**坏行措辞、**码必须不同于 (b)**（≠ `E_OFFICE_LEDGER_UNREADABLE`、≠ `E_OFFICE_LEDGER_SHAPE`；名字由实现定，候选 `E_OFFICE_LEDGER_PARTIAL_TAIL`）；(b) 第一行合法 + **中间**一行坏 JSON + 最后一行合法 ⇒ `unreadable === 1`、`partial_tail === 0`、`entries === 2`、`ok:false`、`reason` 点名"行不合格"且**不含**"写了一半"、码**仍是** `E_OFFICE_LEDGER_UNREADABLE`；(c) 两行合法 ⇒ 两个计数都 0、`ok:true`、`reason:null`。两格 `ok:false` 是**诚实上限**（报告了，不是静默容忍）。刀架：阳性对照读者三面全绿；两把刀切**对照读者** —— `R1` 每一行解析不了都算 `partial_tail` ⇒ 只翻 `OFL7-MIDDLE-CORRUPT`；`R2` 一行 `partial_tail` 都不数 ⇒ 只翻 `OFL7-LAST-HALF`（精确集合，多翻/少翻都红）。产品读者今天已经有这个读数（`544e0b8`）⇒ 本格产品面**今天是绿的**；它的可翻面性由两把刀承重', '批次 AM'],
   ['JUD-01', 'judge-classification', F.jud, '`bug-20261109-01` 的同伴：**判决侧分类按池子那一行的 `kind`，不按 id 前缀**。四个独立脑根（每个都 init → 造目标条目 → 换池子 → claim/freeze/start/judge-commit）：A `kind:maintenance` 的 `proposal-…` 形 id + 指向它的 `action:"retire"` 裁决 ⇒ 走维护案路径、已判索引记 `accepted`、`classification.by_id[id] = {source:"pool", kind:"maintenance"}`（按前缀判会记 rejected）；B `kind:proposal` 的 `MR-…` 形 id + 没有裁决 ⇒ 走提案路径、记 `rejected`、**exit 0**（按 `MR-` 前缀判会 `E_ARG_SCHEMA`）；C `kind:maintenance` 的提案形 id 既不在 accepted 也没有裁决 ⇒ 整体拒 `exit 2 / E_ARG_SCHEMA` 且报文点名它 + "维护案"、**零已判行**；D **池子读不出来**（一行坏 JSON，测试自己 `JSON.parse` 证伪）⇒ 分类退回前缀这件事必须在 `classification` 里看得见：`pool.ok:false`、`pool.code:"E_DATA_CORRUPT"`、`pool.message` 点名池子、`pool.entries:0`、`by_id[id].source:"id-prefix"`，同时 exit 0 + 那一行 `rejected`。三面（A/B/D）今天都红：A 被前缀当提案、B 被前缀当维护案、D 没有 `classification` 读数', '批次 AM'],
+  ['JUD-02', 'judge-classification', F.jud, '**一个 `catch` 把编程错误吞成"空池子"**（组长 2026-11-09 点名的类；`judgedRowSpecsOf` 曾经 `readPool(root)`，`root` 是模块作用域里不存在的自由变量 ⇒ `ReferenceError` 被 `catch { return new Set() }` 吞掉 ⇒ 池子那一路从来没读到过东西）：用**staged 判官的副本**（bin + lib，其余逐字）+ 两把刀 —— `T1` 把 `readPool` 那一处调用换成 `throw new TypeError("JUD-02-KNIFE-THROWN")`（**非 IO** 的抛出）；`T2` 再把 catch 返回改成 `{ok:true, rows:[]}`（"吞成空"）。四条腿各一个独立脑根：① **控制**（未切副本 + 正常池）⇒ `classification.pool.ok:true`、`code:null`、`entries:1`、`by_id.source:"pool"`；② **坏字节**（未切副本 + 一行坏 JSON）⇒ `pool.ok:false`、`code:"E_DATA_CORRUPT"`、`message` 点名池子、`entries:0`、`by_id.source:"id-prefix"`；③ **T1 抛出** ⇒ commit exit 0、那一行 `rejected`、`pool.ok:false`、**非空码且 ≠ `E_DATA_CORRUPT`**、`message` 含 `JUD-02-KNIFE-THROWN`、`entries:0`、`by_id.source:"id-prefix"`（抛出被看见，不是"空池子"）；④ **T2 吞成空** ⇒ 同一段断言必须红，且只翻 `JUD02-THROWN-NOT-READ`（精确集合）。刀锚点不在 ⇒ `JUD02-KNIFE-ANCHOR`。**产品面不可直接触发抛出**（那要改产品）⇒ 这一格是"副本 + 刀"的守门格：它守住"将来谁把 catch 改回吞掉，判据会红"', '批次 AM'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1637,10 +1641,12 @@ export const GROUP_COUNTS = {
   'office-ledger': 7,
   /** 批次 AM（2026-11-09 · Gate 2）—— **判决侧分类**（`bug-20261109-01` 的同伴）：
    *  `JUD-01` 判"一个冻结 id 走提案路径还是维护案路径，由池子那一行的 `kind` 决定，不由 id 前缀"，
-   *  外加"池子读不出来时退回前缀必须留读数"。单开一组而不是并进 `maintenance-file` / `memory`：
-   *  那一族判"维护案提得进来吗"，这一组判"提进来的那条**下一轮被判到哪条路上**"；
+   *  外加"池子读不出来时退回前缀必须留读数"。`JUD-02` 判同一读数的**失败面**：`readPool` 抛出
+   *  （代码坏了）不许被 `catch` 吞成"空池子"—— 坏字节 `E_DATA_CORRUPT` 与抛出必须分得开。
+   *  单开一组而不是并进 `maintenance-file` / `memory`：
+   *  那一族判"维护案提得进来吗"，这一组判"提进来的那条**下一轮被判到哪条路上**、读失败又怎么说"；
    *  红的时候一眼看得出是"分类被前缀劫走"还是"维护案根本没入池"。 */
-  'judge-classification': 1,
+  'judge-classification': 2,
   /** 批次 AL · 第 2 关（2026-11-09）—— **`maintenance_file`**（`MNF-01`…`MNF-06`）：
    *  `MNF-01` 一次调用 = 文件 + 池行 / `MNF-02` 落点与调用方工作区无关 / `MNF-03` 形状拒绝四格 /
    *  `MNF-04` 重复拒 / `MNF-05` 下一轮看得见 / `MNF-06` 可达性（组合 + 体检同伴）。
