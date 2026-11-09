@@ -979,10 +979,25 @@ function judgedRowSpecsOf({ state, accepted, decisions, day, snapshot, at }) {
       + ' —— 整体拒：那一项是一条候选的 id，丢掉它就等于那条候选永远没被判过，而没有任何读数会说出这件事',
     ),
   })
+  // 池子里那批 `kind: maintenance` 的 id（真相）。读不到 ⇒ 空集合，后面靠前缀兜底。
+  const maintenanceIdsFromPool = (() => {
+    try {
+      const pool = PROP.readPool(root)
+      const list = Array.isArray(pool?.entries) ? pool.entries : []
+      return new Set(list.filter((row) => row?.kind === 'maintenance').map((row) => row.imported_id))
+    } catch {
+      return new Set()
+    }
+  })()
   const acceptedIds = new Set(halves[1].ids)
   const dispositions = maintenanceDispositionsOf(decisions)
   return ids.map((importedId) => {
-    const isMaintenanceCase = importedId.startsWith(MAINTENANCE_CASE_PREFIX)
+    // 🔴 `bug-20261109-01`：**id 前缀不是真相，池子那一行的 `kind` 才是**。
+    //    判官原来只认 `maintenance-`，而 `maintenance_file` 写的是 `MR-…`（两条路拼的前缀不一样）
+    //    ⇒ 一个冻结的维护案会走"候选"那条判决路。这里先按池子的 `kind` 认，前缀只作兜底。
+    const isMaintenanceCase = maintenanceIdsFromPool.has(importedId)
+      || importedId.startsWith(MAINTENANCE_CASE_PREFIX)
+      || /^MR-\d{8}-\d+$/.test(importedId)
     const disposition = isMaintenanceCase ? dispositions.get(importedId) : undefined
     if (isMaintenanceCase && disposition === undefined && !acceptedIds.has(importedId)) {
       throw cliError(
