@@ -1768,6 +1768,10 @@ export function officeLandingLedgerPath(officeRoot) {
 export function recordOfficeLanding(officeRoot, line) {
   let path = null
   try {
+    // 🔴 F9（第 4 关打回）：**形状由这里强制**，不由调用方自觉。七键闭合、多一个少一个都拒，
+    //    正文键一律拒（账本不是日志倾倒场）。从前这里"不补、不改"，于是"账本只记落点"这句话没有执行点。
+    const shape = OFFICE_LEDGER_ROW_VERDICT(line)
+    if (shape !== null) return { ok: false, code: OFFICE_LEDGER_UNWRITABLE, path: null, reason: shape }
     path = officeLandingLedgerPath(officeRoot)
     mkdirSync(dirname(path), { recursive: true })
     appendFileSync(path, `${JSON.stringify(line)}\n`, 'utf8')
@@ -1787,6 +1791,28 @@ export function recordOfficeLanding(officeRoot, line) {
  *
  * @param {string} officeRoot 账本在哪棵树的 `.team` 下
  */
+/** 账本一行的七键（**与测试侧 `LEDGER_KEYS` 同名同序**）—— 冻结。 */
+export const OFFICE_LEDGER_ROW_KEYS = ['at', 'role', 'tool', 'landing', 'office_root', 'header_office', 'tree_differs']
+/** 这些键出现 = 正文进了账（**与测试侧 `CONTENT_KEYS` 对齐的 9 个名字**）。 */
+export const OFFICE_LEDGER_BODY_KEYS = ['content', 'text', 'body', 'patch', 'old_string', 'new_string', 'payload', 'after', 'before']
+
+/**
+ * 一行账合不合规 —— 纯函数，写方与读方**共用**（一个口径一份实现）。
+ * @returns {string|null} `null` = 合规；否则是拒的理由（点名缺哪个 / 多哪个 / 哪个是正文键）
+ */
+export function OFFICE_LEDGER_ROW_VERDICT(line) {
+  if (line === null || typeof line !== 'object' || Array.isArray(line)) return '不是对象'
+  const keys = Object.keys(line)
+  const missing = OFFICE_LEDGER_ROW_KEYS.filter((key) => !(key in line))
+  if (missing.length > 0) return `缺键 ${missing.join('/')}`
+  const extra = keys.filter((key) => !OFFICE_LEDGER_ROW_KEYS.includes(key))
+  if (extra.length > 0) return `多键 ${extra.join('/')}（一行的键集必须恰好是那七个）`
+  const body = OFFICE_LEDGER_BODY_KEYS.filter((key) => key in line)
+  if (body.length > 0) return `有正文键 ${body.join('/')}`
+  if (typeof line.tree_differs !== 'boolean') return 'tree_differs 不是布尔'
+  return null
+}
+
 export function officeLandingLedger(officeRoot) {
   const path = officeLandingLedgerPath(officeRoot)
   const out = {
@@ -1805,8 +1831,7 @@ export function officeLandingLedger(officeRoot) {
   }
   // 🔴 F9：七键闭合（写方承诺的那七个），**且不许有正文**。缺一个也算坏行 —— 只校验一个键
   //    等于"多塞一个 content 也照收"，那正是"账本不是日志倾倒场"这条承诺的空转。
-  const ROW_KEYS = ['at', 'role', 'tool', 'landing', 'office_root', 'header_office', 'tree_differs']
-  const BODY_KEYS = ['content', 'text', 'body', 'payload']
+  const ROW_KEYS = OFFICE_LEDGER_ROW_KEYS
   const bad = []
   const partial = []
   const rawLines = String(text).split('\n').filter((line) => line.trim() !== '')
@@ -1822,13 +1847,10 @@ export function officeLandingLedger(officeRoot) {
       bad.push(index + 1)
       continue
     }
-    const keys = Object.keys(row)
-    const missing = ROW_KEYS.filter((key) => !(key in row))
-    const hasBody = BODY_KEYS.filter((key) => key in row)
-    if (typeof row !== 'object' || Array.isArray(row) || missing.length > 0 || hasBody.length > 0
-        || typeof row.tree_differs !== 'boolean') {
+    const why = OFFICE_LEDGER_ROW_VERDICT(row)
+    if (why !== null) {
       out.unreadable += 1
-      bad.push(missing.length > 0 ? `${index + 1}（缺 ${missing.join('/')}）` : hasBody.length > 0 ? `${index + 1}（有正文键 ${hasBody.join('/')}）` : `${index + 1}`)
+      bad.push(`${index + 1}（${why}）`)
       continue
     }
     out.entries += 1
@@ -3563,8 +3585,8 @@ export async function apply(ctx, config = {}) {
    */
   /**
    * **同步**读当前快照（`current` 指针 + 该版本文件）。与 `currentSnapshotOf`（异步、正文注入用）
-   * 是**同一个口径**：指针是唯一入口，版本号必须合 `MEMORY_VERSION_RE`，`entries` 必须是数组。
-   * 🔴 F7：这段逻辑从前在这一处又手写了一遍 —— 一个口径两份实现，改一处必漏另一处。
+   * ⚠️ 这里**只服务同步调用面**（尾块在 `pre-step` 里同步拼）。异步那一份 `currentSnapshotOf` 另有两个职责
+   * （给正文注入回 `file` 与解析后的 entries），两者没有合并 —— 这是**已知的第二份读数**，不是"同一个口径"的证明。
    */
   function readSnapshotSync(root) {
     try {
@@ -3615,7 +3637,9 @@ export async function apply(ctx, config = {}) {
     // 🔴 F4：**读不到快照就不许写游标**。否则这一跑会把游标重写成 0，下一轮从 0 开始，
     //    而盘上留下的样子和"正常转了一圈"一模一样 —— 「读不到」必须与「转完了」长得不一样。
     const snapshotReadable = snapshot !== null
-    if (snapshotReadable && (block.nextCursorGeneral !== cursorGeneral || block.nextCursorProject !== cursorProject)) {
+    // 🔴 F4（第 4 关打回）：光看"快照读得到"不够 —— `empty-pool` 那支返回的对象里**没有**游标键，
+    //    `undefined !== cursor` 成立 ⇒ 照样写了一个不含游标键的文件。判据换成 `block.note === 'ok'`（只有真挑到条才算数）。
+    if (block.note === 'ok' && (block.nextCursorGeneral !== cursorGeneral || block.nextCursorProject !== cursorProject)) {
       try {
         mkdirSync(dirname(file), { recursive: true })
         const tmp = `${file}.tmp-${process.pid}`

@@ -95,7 +95,10 @@ export function rotationBlockOf({ snapshot, project, cursor = 0, cursorGeneral, 
     }
   }
   // 🔴 配比：先掺 `PROJECT_SLOTS` 条本项目（若够），其余用通用补齐 —— 两条腿各转各的游标。
-  const projectTake = Math.min(PROJECT_SLOTS, pool.project.length)
+  // 🔴 F3（第 4 关打回）：只改说法不算修 —— 池子 2 条、名额 2 条时 `(0+2)%2=0` 游标恒 0，
+  //    相邻两轮贴的是同两条。名额取 `min(PROJECT_SLOTS, max(1, 池长-1))`：池 2 条 ⇒ 每轮取 1 条、游标 0→1→0，
+  //    这样"相邻两轮不重复"（定形 Ⅳ）在池子最小的时候也成立。
+  const projectTake = Math.min(PROJECT_SLOTS, Math.max(1, pool.project.length - 1))
   const generalTake = Math.max(0, size - projectTake)
   const cursorP = Number.isInteger(cursorP0) ? cursorP0 : 0
   const cursorG = Number.isInteger(cursorG0) ? cursorG0 : 0
@@ -111,14 +114,14 @@ export function rotationBlockOf({ snapshot, project, cursor = 0, cursorGeneral, 
 
   const fromProject = picked.filter((e) => e.type === 'project').length
   const lines = picked.map((e) => `- \`${e.id ?? '?'}\` · ${clip(e.text)}`)
-  const exhausted = pool.project.length > 0 && pool.project.length <= projectTake
   const projectNote = pool.project.length === 0
     ? `⚠️ 库里**没有点名「${project || '本项目'}」的条目** ⇒ 这一轮全是通用条目。`
-    : exhausted
-      // 🔴 F3：项目条目比名额还少 ⇒ 每一轮必然是同一批，**不许把它说成在轮转**
-      ? `本项目只有 ${pool.project.length} 条，**已全部贴出** —— 这几条每轮都会重复（名额 ${projectTake} 条），`
-        + '想让它们轮转得等库里本项目条目多于名额。'
-      : `本项目条目 ${pool.project.length} 条 · 本轮挑中 ${fromProject} 条${picked.length < size ? `（不足 ${size} 条，用通用补齐）` : ''}。`
+    : pool.project.length === 1
+      // 只有一条 ⇒ 无法轮转，只能重复，明说
+      ? '本项目只有 1 条，每轮都会重复这一条（换不了，库里没有第二条）。'
+      : `本项目条目 ${pool.project.length} 条 · 本轮挑中 ${fromProject} 条`
+        + `${pool.project.length <= PROJECT_SLOTS ? `（名额 ${projectTake}：池子只比名额多一点点，取池长−1 才能保证相邻两轮不重复）` : ''}`
+        + `${picked.length < size ? '，不足的用通用补齐' : ''}。`
   const text = [
     `## 记忆轮转（快照 ${version} · 本轮 ${picked.length} 条）`,
     '',
