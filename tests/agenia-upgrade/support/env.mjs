@@ -733,6 +733,15 @@ export const FROZEN = {
     E_TICKET_LIVE_TASK: 5,
     /** C1c：派工门禁的"槽被占"（工具调用层的拒绝码；归口 5 只为让 `CODES[code].exit` 有确定值）。 */
     E_GUARD_SLOT_BUSY: 5,
+
+    // ── 批次 AL · `maintenance_file`（2026-11-09 第 2 关，契约 `.team/test/2026-11-09/CONTRACT-maintenance-file.md` §1）──
+    // 四个码，**现在不在** `lib/error-codes.mjs::CODES` 里（工具还没造）⇒ `STAT-02` 的退出码对账里只会落进
+    // `mine_only`（**读数，不是红**）；实现落地时**同批**把四行加进 CODES，两边重叠部分的值必须逐项相同。
+    // 口径与 `E_PROPOSAL_*` 那四行同族：形状/参数类 2、内容重复类 5、写不进去 4；`TARGET` 是"目标校不了 / 不在快照里"⇒ 5。
+    E_MAINTENANCE_SHAPE: 2,
+    E_MAINTENANCE_TARGET: 5,
+    E_MAINTENANCE_DUPLICATE: 5,
+    E_MAINTENANCE_IO: 4,
   },
 
   /**

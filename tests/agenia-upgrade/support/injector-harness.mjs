@@ -171,6 +171,13 @@ const existsSyncFile = (file) => {
 function makeCtx({ contentDir, state, logs }) {
   const handlers = new Map()
   let guardHandler
+  /**
+   * **实际注册上来的工具名**（`apply()` 那一侧是唯一写着 `tools.register(...)` 的地方）。
+   * 只记账、不改行为：注册仍然返回一个空的 disposer（与从前逐字相同）。
+   * 为什么要有它：`MNF-06` 要判"那个岗位拿得到它"，而那件事的**行为面**就是"`apply()` 跑完，
+   * 这个名字进没进注册表"。只读散文（`COMMON_TOOLS` / 描述文字）证明不了它。
+   */
+  const registered = []
   const agentFor = () => ({ id: state.session.id, session: state.session })
   const ctx = {
     baseUrl: pathToFileURL(`${contentDir}${path.sep}`).href,
@@ -183,7 +190,10 @@ function makeCtx({ contentDir, state, logs }) {
             guardHandler = handler
             return () => {}
           },
-          register: () => () => {},
+          register: (definition) => {
+            registered.push(definition?.name ?? '(no-name)')
+            return () => {}
+          },
         }
       }
       return undefined
@@ -197,7 +207,7 @@ function makeCtx({ contentDir, state, logs }) {
       return typeof off === 'function' ? off : () => {}
     },
   }
-  return { ctx, handlers, guard: () => guardHandler, logs }
+  return { ctx, handlers, guard: () => guardHandler, logs, registered }
 }
 
 /**
@@ -290,6 +300,13 @@ export async function withHarness(mod, input, fn) {
         const handler = built.guard()
         if (typeof handler !== 'function') return { ok: false, why: '这个注入器没有注册 tools.guard（门禁没挂上）', reason: undefined }
         return { ok: true, why: null, reason: handler(call) }
+      },
+      /**
+       * 这一跑 `apply()` **实际注册上来的工具名**（按注册次序）。
+       * 量的是行为面：`MNF-06` 用它判"工具真的注册上了"，与"散文里写了它的名字"分开。
+       */
+      registered() {
+        return [...built.registered]
       },
     }
     await fn(harness)

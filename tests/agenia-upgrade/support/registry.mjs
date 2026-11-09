@@ -860,6 +860,28 @@ export const BATCH_AJ = ['TMP-01', 'STM-01', 'WIT-01']
 export const BATCH_AK = ['OFL-01', 'OFL-02', 'OFL-03', 'OFL-04', 'OFL-05', 'OFL-06']
 
 /**
+ * 批次 AL（2026-11-09 · 第 2 关 · 定形 `.team/leader/2026-11-09/定形-maintenance-file.md`）——
+ * **`maintenance_file`：给复核岗一个"提维护案"的工具**（老板：「这不是知识层面的事，应该给他对的工具」）。
+ *
+ * 病：2026-11-08 的复核手里只有 `read`/`write`/`edit` ⇒ **手写 27 份维护案文件**落进它当时所在的
+ * 工作区；判决侧唯一入口是数据根的 `proposals/pool.jsonl`（那天 57 行全是 `proposal`、`MR-` 0 条）
+ * ⇒ 判决岗**结构上看不见**那 27 份，而 `claim → 冻结池 → judge` 一路绿灯、没有任何读数说少了 27 份。
+ *
+ * 六格（契约 `.team/test/2026-11-09/CONTRACT-maintenance-file.md` §8；判据 / 参照实现 / 刀架在
+ * `support/maintenance-file-fixtures.mjs`）：
+ *   · `MNF-01` 一次调用 = 文件 + 池行（跨 kind 号段 / 池子读不了 ⇒ IO 且零草稿）；
+ *   · `MNF-02` **落点与调用方工作区无关**（定形："这一条最重要"）；
+ *   · `MNF-03` 形状拒绝四格 + 零写入（末尾一份合法案当尺子）；
+ *   · `MNF-04` 重复拒（同一天 / 换一天都拒）· 池子仍一行 · 换一字必须收；
+ *   · `MNF-05` **下一轮看得见**（先造"昨天那个现场"⇒ 读数必须是 0；再经工具提 ⇒ ≥ 1）；
+ *   · `MNF-06` 可达性：判**组合**（`ROLE_TABLE` / `BASE_TOOL_SET` / 实际注册）不判散文 + 体检同伴同批。
+ * ⚠️ 这六条**不进** `FROZEN_IDS`（后加批次各自以显式清单存在）。
+ * ⚠️ 每格自带**刀**：今天工具还不存在 ⇒ 六格都红在 `SUT-SURFACE-MISSING` / `MNF-C6-*`；
+ *    而控制面（`tests/` 自带的参照实现 + 合成注入器）**今天就跑得起来** ⇒ "红"与"判据可满足"分得开。
+ */
+export const BATCH_AL = ['MNF-01', 'MNF-02', 'MNF-03', 'MNF-04', 'MNF-05', 'MNF-06']
+
+/**
  * 已落笔的二十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -883,7 +905,7 @@ export const BATCH_AK = ['OFL-01', 'OFL-02', 'OFL-03', 'OFL-04', 'OFL-05', 'OFL-
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -921,6 +943,7 @@ const BATCH_OF = (id) =>
                                                                     : BATCH_AI.includes(id) ? 'AI'
                                                                       : BATCH_AJ.includes(id) ? 'AJ'
                                                                         : BATCH_AK.includes(id) ? 'AK'
+                                                                          : BATCH_AL.includes(id) ? 'AL'
                                                                   : null
 
 const F = {
@@ -1106,6 +1129,8 @@ const F = {
    *  一格是**刀架**（阳性对照 + 七把刀 + 真源码 `K1`）。同住一个文件：账本的读出与写入是**同一个文件**的两头，
    *  翻面读数（刀 → 哪几格红）要在一处读得出来。判据本体与夹具：`support/office-ledger-fixtures.mjs`。 */
   ofl: 'unit/ofl01-office-ledger.test.mjs',
+  /** 批次 AL · 2026-11-09 第 2 关：`maintenance_file`（六格同住一个文件 —— 同一个动作的六条腿）。 */
+  mnf: 'integration/mnf01-maintenance-file.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1413,6 +1438,18 @@ const ROWS = [
   ['OFL-04', 'office-ledger', F.ofl, '`bug-20261107-10` **写不进去就拒（fail-closed）**（定形 §二.4 / §四第四行）：两种"账本不可写"的形状各一格 —— ① 账本路径被一个**目录**占着（`appendFileSync` ⇒ 本机 `EISDIR`）；② `<office>/state` 是一个**文件**（`mkdirSync(recursive)` ⇒ 本机 `EEXIST`）。两次都必须：那次写**被拒** + 报文以 `E_GUARD_OFFICE_LEDGER` 开头 + `console.error` 那一行**点名码 / 账本路径 / 原因**（原因太短 ⇒ `OFL-FAIL-CLOSED-REASON`）+ 账上不多一行。今天账本根本没有写入路径 ⇒ 写照旧被放行 ⇒ 红在 `OFL-FAIL-CLOSED-ALLOWED`（fail-open）', '批次 AK'],
   ['OFL-05', 'office-ledger', F.ofl, '`bug-20261107-10` **每一次放行都有一行**（定形 §四第一行，逐字）：同一个 office 上三次探测 —— ① 同树相对、② 异树绝对、③ `.team` 外（`X/src/x.js`）⇒ 账上**恰好两行**（一同一异）、③ 的落点**不在**账上、③ 的拒绝码仍是 **`E_GUARD_OFFICE_WRITE`**（旧码；账本那道口不许接管 office 边界的拒绝）、三次里只有异树那次该出 `OFFICE_TREE_DIFFERS`。这一格是"被拒的写不落账"的正面判据（契约 §5.1：那是对的）', '批次 AK'],
   ['OFL-06', 'office-ledger', F.ofl, '`bug-20261107-10` **刀架**（判据自己的可满足性 + 七把刀 + 真源码 `K1`）：① **阳性对照** —— 照契约 §2 写的**最小实现**（`tests/**` 自带、不 import 产品）五格必须**全绿**（`OFL-CONTROL-NOT-GREEN` / `OFL-CONTROL-UNAVAILABLE` = 判据不可满足/对照坏了，不是产品的问题）；② **七把刀**（切对照的一个开关，锚点恰好 1 处）—— `K1` 不写账 ⇒ 红"没有那行"那几格 · `K2` `tree_differs` 恒 false · `K3` fail-open · `K4` 读者吞坏行 · `K5` 读者不数异树 · `K6` 账落**落点树** · `K7` 行里多 `content` 键；每把**只许翻它那几码**（多翻 = 刀切宽了，少翻 = 那一面没人守 ⇒ `OFL-KNIFE-VECTOR`；锚点不在 ⇒ `OFL-KNIFE-CONTROL-ANCHOR`）；③ **真源码**：`K1` 按**函数体级**切（锚是契约 §2.1 冻结的名字 `export function recordOfficeLanding(`，不钉文本形状）—— 今天真源码没有它 ⇒ `OFL-KNIFE-ANCHOR` **红（预期的首跑红）**；落地后同一段自动切真源码的自足副本（`inject.js` + `lib/` + `tools/`，缺了会以"找不到 route.mjs"假红），且只在**基线成立**时才有可比对象（不成立 ⇒ 读数记 skip，不冒充刀坏了）', '批次 AK'],
+
+  // ── 批次 AL（2026-11-09 · 第 2 关）：`maintenance_file` —— 给复核岗一个"提维护案"的工具 ──────
+  // 定形 `.team/leader/2026-11-09/定形-maintenance-file.md`；契约 `.team/test/2026-11-09/CONTRACT-maintenance-file.md`；
+  // 判据 / 参照实现（阳性对照）/ 六把刀在 `support/maintenance-file-fixtures.mjs`。
+  // 病：复核岗只有 read/write/edit ⇒ 手写 27 份维护案落进当时那个工作区；判决侧只看 `proposals/pool.jsonl`
+  //（那天 57 行全是 proposal、`MR-` 0 条）⇒ 结构上看不见，而 claim → 冻结池 → judge 一路绿灯。
+  ['MNF-01', 'maintenance-file', F.mnf, '**一次调用 = 文件 + 池行**（定形 §二.2 / §五第一行）：提一份合法草稿 ⇒ 回执 `{ok,draft_id,path,pool_seq}` 四样齐且 `draft_id` 形状 `MR-<YYYYMMDD>-<seq:04>`；草稿文件**恰好八键**（`schema/draft_id/day/filed_at/content_sha256/base_snapshot/draft/pool`）、`draft` 与调用方给的**逐字相同**、`base_snapshot` = 当时读到的快照版本；池子**恰好 +1 行**、末行 `kind:"maintenance"`、`imported_id === draft_id`、`seq === pool_seq`、`content_sha256` 三处同值（文件 / 池行 / `sha256` 那一格）。另两格：**跨 kind 一个号段**（池里已有 `proposal-…-0007` ⇒ 新 id 必须是 `…-0008`，钉的是"发号依据是发出去过哪些、不是池子几行"）· **池子读不了 ⇒ `E_MAINTENANCE_IO` 且一份草稿都不许留**。刀 `id-from-rowcount`（`seq = 行数 + 1`）⇒ 号段那一格红', '批次 AL'],
+  ['MNF-02', 'maintenance-file', F.mnf, '**落点与调用方工作区无关**（定形 §五第二行，组长原话「**这一条最重要**」）：`process.chdir` 到另一个（带 marker 的）工作区里调它 ⇒ 草稿**只**出现在 `<DR>/state/maintenance-drafts/<day>/`、调用方工作区的 `.team/` **零新增**（整棵树也不许多出 `maintenance-drafts`）；本轮自带**量具自检**：测试自己往那个 `.team/` 写一份探针，同一个量具必须数成 +1，且测量那一刻它还在场（探针**不删** —— 它就是"零新增"那次的基线样本；否则"零新增"是空绿）。刀 `path-from-cwd`（草稿落 `process.cwd()`）⇒ 本格红', '批次 AL'],
+  ['MNF-03', 'maintenance-file', F.mnf, '**形状不对要拒 + 零写入**（定形 §五第三行）：四格各拒一次并**点名** —— 缺 `target_original_text` ⇒ `E_MAINTENANCE_SHAPE` 且报文含该键名 · `proposed_op:"delete"` ⇒ `E_MAINTENANCE_SHAPE` 且点名 `proposed_op`（`delete`/`remove` 在 `applyEntriesPatch` 的 switch 里**没有分支**，拿 forbidden 表当白名单会收下一份永远执行不了的处置）· 目标 id 不在当前快照 ⇒ `E_MAINTENANCE_TARGET` 且报文含那个 id · 多给一个键 ⇒ `E_MAINTENANCE_SHAPE` 且点名该键；每格之后**池子行数与草稿文件数都不变**；末尾一份合法案**必须被收**（尺子：计数会动）。刀 `no-target-check`（跳过目标校验）⇒ 本格红', '批次 AL'],
+  ['MNF-04', 'maintenance-file', F.mnf, '**重复要拒**（定形 §五第四行）：同 `content_sha256` 第二次 ⇒ `E_MAINTENANCE_DUPLICATE`（**同一天**与**换一天**各一次，证明判重键不是"当天"），池子**仍只有一行**；换一个字（内容不同）⇒ **必须收**且池子 2 行（尺子：拒的不是"全都拒"）。刀 `no-dedupe`（跳过判重）⇒ 本格红', '批次 AL'],
+  ['MNF-05', 'maintenance-file', F.mnf, '**下一轮看得见**（定形 §五第五行 = 昨天那一整天的病）：先造**昨天那个现场**（草稿文件按约定路径写在盘上、池子里 0 行 `maintenance`）⇒ 真 CLI 三连 `claim-update` + `judge-pending` + `candidates-freeze` 的读数里 `kind: maintenance` **必须是 0**、`frozen_proposal_ids` 里不许有 `MR-`（否则这一格是空的）；再经工具提一份 ⇒ 同一串读数里 `kind: maintenance` 的候选 **≥ 1**、池子那一侧同数、`frozen_proposal_ids` **含**那个 `MR-` id。刀 `no-pool-register`（只写文件、不入池）⇒ 本格红（**这正是昨天 27 份草稿的形状**）', '批次 AL'],
+  ['MNF-06', 'maintenance-file', F.mnf, '**可达性：判组合，不判散文**（定形 §三 + 老板「给他对的工具」）：① `ROLE_TABLE` 里 `memory-review`（复核岗）的 `tools` 含它 **且** `BASE_TOOL_SET` 含它；② 真跑现役 `inject.js` 的 `apply()`，**实际注册**的工具名里有它（`withHarness` 的注册记账）；③ `.tools/check-notes.mjs` **点名**它 + `EXPECTED_ONLY_AGENIA` 与组合实测增量相等（**若**另外加了 cordis 行 `tool-maintenance-file`，那一行还必须落进体检的点名清单，否则只改一处当场红）。两条阳性对照各自承重：同一个读者必须看得见 `proposal_file`（工具面 / 注册各一处），否则"没看见"不作数。刀 `face-without-tool`（合成注入器去掉工具面与注册）⇒ 本格红、别的五格绿', '批次 AL'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1571,6 +1608,13 @@ export const GROUP_COUNTS = {
    *  单开一组而不是并进 `office-tree`：那一组判"落点规则算得对不对"，这一组判"放行留没留下痕迹"；
    *  红的时候一眼看得出是哪一半（`office_root` 算对了但没有痕迹 vs 规则本身错了）。 */
   'office-ledger': 6,
+  /** 批次 AL · 第 2 关（2026-11-09）—— **`maintenance_file`**（`MNF-01`…`MNF-06`）：
+   *  `MNF-01` 一次调用 = 文件 + 池行 / `MNF-02` 落点与调用方工作区无关 / `MNF-03` 形状拒绝四格 /
+   *  `MNF-04` 重复拒 / `MNF-05` 下一轮看得见 / `MNF-06` 可达性（组合 + 体检同伴）。
+   *  单开一组而不是并进 `proposal-file`：那一组判的是**候选**那条路（判重键 = 出处 + 内容、池行 `kind: proposal`），
+   *  这一组判的是**维护案**那条路（判重键 = 内容哈希、池行 `kind: maintenance`、`MR-` 号、落草稿 + 入池一步做完）；
+   *  红的时候一眼看得出是哪条通道坏了（"候选提不了" vs "维护案提不了但候选没事"是两件事）。 */
+  'maintenance-file': 6,
 }
 
 /**
@@ -1590,9 +1634,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1619,6 +1663,6 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
