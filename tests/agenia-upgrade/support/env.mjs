@@ -742,6 +742,17 @@ export const FROZEN = {
     E_MAINTENANCE_TARGET: 5,
     E_MAINTENANCE_DUPLICATE: 5,
     E_MAINTENANCE_IO: 4,
+
+    // ── 账本四码（2026-11-09 · Gate 2 · `OFL-08`；契约 `CONTRACT-batch15.md` §2.4 + `CONTRACT-f11-judge-kind.md` §1）──
+    // 四个都是"校验拒绝"族 ⇒ 5（它们**不是 CLI 退出码**，由 `CODES[code].exit` 与工具/门禁的拒绝面共用）。
+    // 🔴 产品侧 `CODES` 今天只登记了 2/4（`SHAPE` / `PARTIAL_TAIL`）；`UNWRITABLE` / `UNREADABLE` 只在注释里。
+    //    测试侧原来**一个都没有** ⇒ `STAT-02` 只会把它们算成 `mine_only`（读数，不是红）。
+    //    `OFL-08` 就是那条断言：四个码必须在 `CODES` **和**这张表里都在册、且退出码逐项相同。
+    //    ⇒ 这一格在实现岗补上 `CODES` 那两个码之前是**预期的红**（不是测试写错）。
+    E_OFFICE_LEDGER_SHAPE: 5,
+    E_OFFICE_LEDGER_UNWRITABLE: 5,
+    E_OFFICE_LEDGER_UNREADABLE: 5,
+    E_OFFICE_LEDGER_PARTIAL_TAIL: 5,
   },
 
   /**

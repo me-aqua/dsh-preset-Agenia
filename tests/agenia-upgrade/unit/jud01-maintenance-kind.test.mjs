@@ -172,6 +172,72 @@ const judgedRowOf = (rows, id) => rows.find((row) => row?.imported_id === id) ??
 /** 读数 `classification`（缺 ⇒ `null`；形状不对由各面自己点名）。 */
 const classificationOf = (commit) => commit?.json?.classification ?? null
 
+/**
+ * `JUD-RULER` —— **尺子自证**（契约 §2.4 第一条）：把池子**从盘上读回来**，断言种下去的就是设计的那一行。
+ *
+ * 为什么必须写在 A/B/C 三面上：`writePool` 只是把文本写下去（`:99-103` 那次读回**没有断言**），
+ * 于是"夹具写歪了"会以**产品红**的样子出现 —— 分不清是产品没实现还是判据自己种错了行。
+ * 这里读的是**用例自己**种的那份文件（不是产品的 `classification`），与产品的分类读数**互相独立**：
+ * 只有两者同时对上，"按池行的 kind 分类"这句话才算被量到。
+ *
+ * @param {string} label      哪一面（红报文点名）
+ * @param {string} poolText   写池子时读回来的原文（`writePool` 的返回值）
+ * @param {{rows:number, id:string, kind:string}|{unparsable:true}} want
+ * @returns {Array<{code:string,message:string}>}
+ */
+function rulerProblems(label, poolText, want) {
+  const out = []
+  const lines = String(poolText ?? '').split(/\r?\n/).filter((line) => line.trim() !== '')
+  if (want.unparsable === true) {
+    let parses = true
+    try { JSON.parse(lines[0] ?? '') } catch { parses = false }
+    if (parses) out.push(problem('JUD-RULER', `${label}：夹具坏了 —— 那份池子居然能 JSON.parse（"池子读不出来"这一面没造出来）`))
+    return out
+  }
+  if (lines.length !== want.rows) {
+    out.push(problem('JUD-RULER', `${label}：池子应有 ${want.rows} 行（设计如此），读回来 ${lines.length} 行：${JSON.stringify(lines.map((line) => line.slice(0, 80)))}`))
+  }
+  const parsed = []
+  for (const line of lines) {
+    try { parsed.push(JSON.parse(line)) } catch { parsed.push(null) }
+  }
+  const hit = parsed.find((row) => row?.imported_id === want.id)
+  if (hit === undefined) {
+    out.push(problem('JUD-RULER', `${label}：读回来的池子里没有 imported_id=${JSON.stringify(want.id)}（实得 ${JSON.stringify(parsed.map((row) => row?.imported_id ?? null))}）—— 尺子歪了，不是产品红`))
+  } else if (hit.kind !== want.kind) {
+    out.push(problem('JUD-RULER', `${label}：读回来的那一行 kind 应为 ${JSON.stringify(want.kind)}，实得 ${JSON.stringify(hit.kind)} —— 尺子歪了，不是产品红`))
+  }
+  return out
+}
+
+/**
+ * 读数面（契约 §2.3）：`classification.by_id[id]` 必须**同时**带 `source` 与 `kind`。
+ *
+ * 判的是**读数**、不是退出码：`exit 0` 但 by_id 缺这一项（或两项写歪）⇒ 这一面红。
+ * 没有它，"退出码碰巧是 0"就能让一格看起来通过 —— 而分类依据其实一个字都没留下。
+ *
+ * @param {object|null} cls   `judge-commit` 输出的 `classification`
+ * @param {string} id
+ * @param {{source:string, kind:string}} want
+ * @param {string} code       这一面的红码（A/B/D 各自的）
+ * @param {string} label
+ */
+function byIdProblems(cls, id, want, code, label) {
+  const out = []
+  if (cls === null || typeof cls !== 'object') {
+    out.push(problem(code, `${label}：judge-commit 输出没有 \`classification\` 读数（契约 §2.3）—— 分类靠什么，读的人看不见`))
+    return out
+  }
+  const byId = cls.by_id?.[id]
+  if (byId === null || byId === undefined || typeof byId !== 'object') {
+    out.push(problem(code, `${label}：\`classification.by_id[${JSON.stringify(id)}]\` 缺这一项（实得 ${JSON.stringify(cls.by_id ?? null)}）—— 退出码对了不算数，读数里没有它`))
+    return out
+  }
+  if (byId.source !== want.source) out.push(problem(code, `${label}：\`classification.by_id[${JSON.stringify(id)}].source\` 应为 ${JSON.stringify(want.source)}，实得 ${JSON.stringify(byId.source)}`))
+  if (byId.kind !== want.kind) out.push(problem(code, `${label}：\`classification.by_id[${JSON.stringify(id)}].kind\` 应为 ${JSON.stringify(want.kind)}，实得 ${JSON.stringify(byId.kind)}`))
+  return out
+}
+
 /** 三个面各自都能用的一条读数：这一面到底量到了什么。 */
 const faceReading = (bp, round, extra = {}) => ({
   root: bp.root,
@@ -229,6 +295,10 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
             const row = judgedRowOf(round.rows, POOL_ID)
             const cls = classificationOf(round.commit)
             cells.A = faceReading(ctx.bp, round, { row: row === null ? null : `${row.imported_id}:${row.verdict}` })
+            // JUD-RULER：池子**读回来**真的是 `kind:maintenance` + 这个 id（不是"我以为我种了"）。
+            const ruler = (rec.readings.ruler ??= {})
+            ruler.A = rulerProblems(name, round.poolText, { rows: 1, id: POOL_ID, kind: 'maintenance' })
+            out.push(...ruler.A)
             if (round.commit.exit_code !== 0) {
               push('JUD-KIND-MAINTENANCE', `A：kind=maintenance 的池行 + 指向它的裁决 ⇒ judge-commit 必须成功（维护案路径），实得 exit=${round.commit.exit_code} / ${round.commit.json?.error?.code ?? '(无码)'} —— 按 proposal- 前缀判会把它当普通提案`)
             } else {
@@ -240,10 +310,8 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
               else {
                 if (cls.pool?.ok !== true) push('JUD-KIND-MAINTENANCE', `A：池子可读 ⇒ classification.pool.ok 应为 true，实得 ${JSON.stringify(cls.pool)}`)
                 if (cls.pool?.entries !== 1) push('JUD-KIND-MAINTENANCE', `A：池子恰好一行 ⇒ classification.pool.entries 应为 1，实得 ${JSON.stringify(cls.pool?.entries)}`)
-                const byId = cls.by_id?.[POOL_ID]
-                if (byId?.source !== 'pool' || byId?.kind !== 'maintenance') {
-                  push('JUD-KIND-MAINTENANCE', `A：classification.by_id["${POOL_ID}"] 应为 {source:'pool', kind:'maintenance'}，实得 ${JSON.stringify(byId ?? null)}`)
-                }
+                // 读数面（不是退出码）：by_id 必须**同时**带 source 与 kind。
+                out.push(...byIdProblems(cls, POOL_ID, { source: 'pool', kind: 'maintenance' }, 'JUD-KIND-MAINTENANCE', 'A'))
               }
             }
           }
@@ -262,6 +330,10 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
             const row = judgedRowOf(round.rows, MR_ID)
             const cls = classificationOf(round.commit)
             cells.B = faceReading(ctx.bp, round, { row: row === null ? null : `${row.imported_id}:${row.verdict}` })
+            // JUD-RULER：池子读回来真的是 `kind:proposal`（与 A 的 maintenance 行对照）。
+            const ruler = (rec.readings.ruler ??= {})
+            ruler.B = rulerProblems(name, round.poolText, { rows: 1, id: MR_ID, kind: 'proposal' })
+            out.push(...ruler.B)
             if (round.commit.exit_code !== 0) {
               push('JUD-KIND-PROPOSAL', `B：kind=proposal 的池行（id=\`${MR_ID}\`）冻结后不在 accepted 里 ⇒ 必须按**提案**路径记 rejected、exit 0，实得 exit=${round.commit.exit_code} / ${round.commit.json?.error?.code ?? '(无码)'} —— 它被 \`MR-\\d{8}-\\d+\` 那个前缀兜底抓去当维护案了`)
             } else if (row === null || row.verdict !== 'rejected') {
@@ -269,11 +341,9 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
             }
             if (cls === null) push('JUD-KIND-PROPOSAL', 'B：judge-commit 输出没有 `classification` 读数（契约 §2.3）')
             else {
-              const byId = cls.by_id?.[MR_ID]
               if (cls.pool?.ok !== true) push('JUD-KIND-PROPOSAL', `B：池子可读 ⇒ classification.pool.ok 应为 true，实得 ${JSON.stringify(cls.pool)}`)
-              if (byId?.source !== 'pool' || byId?.kind !== 'proposal') {
-                push('JUD-KIND-PROPOSAL', `B：classification.by_id["${MR_ID}"] 应为 {source:'pool', kind:'proposal'}，实得 ${JSON.stringify(byId ?? null)}`)
-              }
+              // 读数面（不是退出码）：by_id 必须**同时**带 source 与 kind。
+              out.push(...byIdProblems(cls, MR_ID, { source: 'pool', kind: 'proposal' }, 'JUD-KIND-PROPOSAL', 'B'))
             }
           }
         }
@@ -289,6 +359,17 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
           if (round !== null) {
             const row = judgedRowOf(round.rows, NO_DECISION_ID)
             cells.C = faceReading(ctx.bp, round, { row: row === null ? null : `${row.imported_id}:${row.verdict}` })
+            // JUD-RULER：池子读回来真的是 `kind:maintenance` —— 这一面**拒**它，理由是"维护案没有 verdict 来源"；
+            // 池行若写成 proposal，这一面就变成"提案没判"，红因会指错地方。
+            const ruler = (rec.readings.ruler ??= {})
+            ruler.C = rulerProblems(name, round.poolText, { rows: 1, id: NO_DECISION_ID, kind: 'maintenance' })
+            out.push(...ruler.C)
+            // C 是**拒绝面**：契约 §2.3 明写它读 `error.message`（点名 id + "维护案"），**不要求** `classification`。
+            // 所以这一面的"读数"就是拒绝报文本身（下面两个 `includes`）+ "零已判行" —— 不是退出码一项。
+            // 若产品将来在拒绝输出里也带 `classification`，它必须说对（source/kind）；今天不带 ⇒ 不触发。
+            if (classificationOf(round.commit) !== null) {
+              out.push(...byIdProblems(classificationOf(round.commit), NO_DECISION_ID, { source: 'pool', kind: 'maintenance' }, 'JUD-RULER', 'C（拒绝输出里带了 classification）'))
+            }
             if (round.commit.exit_code !== 2 || round.commit.json?.error?.code !== 'E_ARG_SCHEMA') {
               push('JUD-KIND-NO-VERDICT', `C：维护案 ${NO_DECISION_ID} 既不在 accepted、也没有任何裁决指向它 ⇒ 必须整体拒 exit 2 / E_ARG_SCHEMA（不许替它猜 verdict），实得 exit=${round.commit.exit_code} / ${round.commit.json?.error?.code ?? '(无码)'}`)
             } else {
@@ -318,10 +399,10 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
             const row = judgedRowOf(round.rows, BROKEN_POOL_ID)
             const cls = classificationOf(round.commit)
             cells.D = faceReading(ctx.bp, round, { row: row === null ? null : `${row.imported_id}:${row.verdict}` })
-            // 尺子自证：这份池子**真的**读不出来（不是我写错了而它其实能 parse）。
-            let poolParses = true
-            try { JSON.parse(raw) } catch { poolParses = false }
-            if (poolParses) push('JUD-RULER', 'D：夹具坏了 —— 那份池子居然能 JSON.parse（"读不出来"这一面没造出来）')
+            // JUD-RULER：这份池子**真的**读不出来（不是我写错了而它其实能 parse）。
+            const ruler = (rec.readings.ruler ??= {})
+            ruler.D = rulerProblems(name, raw, { unparsable: true })
+            out.push(...ruler.D)
             if (round.commit.exit_code !== 0) {
               push('JUD-POOL-UNREADABLE', `D：池子坏 + 裁决 action:null ⇒ 维护案路径有 verdict 来源 ⇒ 必须成功（exit 0），实得 exit=${round.commit.exit_code} / ${round.commit.json?.error?.code ?? '(无码)'}`)
             } else if (row === null || row.verdict !== 'rejected') {
@@ -336,10 +417,8 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
               if (poolMessage === '') push('JUD-POOL-UNREADABLE', 'D：classification.pool.message 空 —— 读不出来却没说是哪份池子')
               else if (!/pool\.jsonl|候选池/i.test(poolMessage)) push('JUD-POOL-UNREADABLE', `D：classification.pool.message 没点名池子：${JSON.stringify(poolMessage.slice(0, 200))}`)
               if (cls.pool?.entries !== 0) push('JUD-POOL-UNREADABLE', `D：读不出来 ⇒ classification.pool.entries 应为 0，实得 ${JSON.stringify(cls.pool?.entries)}`)
-              const byId = cls.by_id?.[BROKEN_POOL_ID]
-              if (byId?.source !== 'id-prefix' || byId?.kind !== 'maintenance') {
-                push('JUD-POOL-UNREADABLE', `D：classification.by_id["${BROKEN_POOL_ID}"] 应写 {source:'id-prefix', kind:'maintenance'}（池子读不出来、只能靠 \`MR-\` 前缀），实得 ${JSON.stringify(byId ?? null)}`)
-              }
+              // 读数面（不是退出码）：池子读不出来时来源必须是 `id-prefix`，且 kind 说得出来。
+              out.push(...byIdProblems(cls, BROKEN_POOL_ID, { source: 'id-prefix', kind: 'maintenance' }, 'JUD-POOL-UNREADABLE', 'D'))
             }
           }
         }
