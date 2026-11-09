@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { PATHS, FROZEN } from './env.mjs'
 import {
-  canonicalOf, chooseOfficeFixtureBase, digestOf, normKey, officeOfPath, officeRunId,
+  chooseOfficeFixtureBase, digestOf, isUnderPath, normKey, officeOfPath, officeRunId,
 } from './office-fixtures.mjs'
 import { decisionBody } from './office-fixtures.mjs'
 import { buildCatalog, importSourceCopy, knifeReplace, withHarness } from './injector-harness.mjs'
@@ -110,13 +110,6 @@ export function ensureLedgerFixtures({ caseId, trees = 1 }) {
   }
 }
 
-/** `true` ⇔ `child` 在 `parent` 之下（含相等）。只给拓扑自检用。 */
-function isUnder(child, parent) {
-  const c = normKey(child)
-  const p = normKey(parent)
-  return c === p || c.startsWith(`${p}/`)
-}
-
 /**
  * 拓扑 / 样本自检（每一格先跑）：**空样本必须红，拓扑被挪走也必须红**。
  * 与"夹具建不出来"分开：建不出来 ⇒ 调用方记 **HOLD**（`OFL-SAMPLE-MISSING` 不走这一条）。
@@ -141,7 +134,7 @@ export function ledgerSampleProblems(fx) {
   }
   const ancestor = officeOfPath(fx.root)
   need(ancestor === null, 'OFL-SAMPLE-TOPOLOGY', `夹具根的祖先里出现了 .team：${ancestor} —— "异树 / 越界"两腿会静默变成同树/放行`)
-  need(!isUnder(fx.root, PATHS.repo), 'OFL-SAMPLE-IN-REPO', `夹具根落在工作区里：${fx.root} ⊂ ${PATHS.repo}`)
+  need(!isUnderPath(fx.root, PATHS.repo), 'OFL-SAMPLE-IN-REPO', `夹具根落在工作区里：${fx.root} ⊂ ${PATHS.repo}`)
   need(!/^c:/i.test(fx.root), 'OFL-SAMPLE-C-DRIVE', `夹具根落在 C 盘：${fx.root}（硬红线）`)
   for (const tree of trees) {
     need(!existsSync(ledgerPathOf(tree.office)), 'OFL-SAMPLE-DIRTY', `这一格的账本不是空的（${ledgerPathOf(tree.office)}）—— "恰好一行"这句话就不成立了`)

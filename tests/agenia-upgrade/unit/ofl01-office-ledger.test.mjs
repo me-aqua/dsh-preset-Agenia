@@ -1205,6 +1205,12 @@ describe('unit · office ledger code book (OFL-08)', () => {
  *   · V5 七键的类型（含 `at` 可解析、`tool` 只能是 write/edit）；
  *   · V6 `tree_differs` 必须与两个 office 的等值关系一致（两个方向）。
  *
+ * 另有**一条正向行**（**不在 `ROWS` 里**，也不进六把逐规则刀）：`role:'dev'` —— `dev` **在册**、**不在编**。
+ * 它守的是 V2 的**真源**：如果 `inject.js` 的 V2 从 `ROLE_ENTRY_BY_ROLE.has(...)` 换回
+ * `DEFAULT_OFFICE_BOUND.includes(...)`（在编名单，今天只有 `review`），这一行的 `rule` 会从 `null`
+ * 变成 `V2`、`ok` 从 `true` 变成 `false` ⇒ 红 `OFL9-ROSTER-NOT-BOUND`。六类坏值矩阵（`role:'admin'`
+ * 两个名单都拒）**看不见**这次回退 —— 这就是它必须单独一行、且要有自己的反转刀的原因。
+ *
  * 每一行都必须：`ok:false` + `code === E_OFFICE_LEDGER_SHAPE`（不是 `UNWRITABLE`，更不是静默收下）+
  * **`officeLedgerRowRule(row).rule === 'Vn'`**（机器可读的"哪一条赢"）+ `reason` 点名那一格 + **账本字节不变**。
  * 阳性对照：一行合法的行必须**收下**（+1 行）；否则"全拒"也能让六类看起来绿。
@@ -1215,12 +1221,12 @@ describe('unit · office ledger code book (OFL-08)', () => {
  * **逐规则刀**（每把只切一条规则的检查；锚点各 1 处；只切副本）：
  * `K-V1` … `K-V6` 各把对应规则整条关掉，然后**重跑全部行**，断言只有"该规则的行"变红
  * （按**行标签**精确比较，不是按码集合 —— 码集合会把"少翻一行"藏起来）。
- * 子检查的 witness 边界：V5 里 `at` 的类型子检查删掉后仍由 `Date.parse` 报 V5（**rule 级不可见**，
- * 只改报文）⇒ `at:null` 那一行只是 message refinement；`tree_differs:'false'` 删掉类型子检查会改报 V6
- * ⇒ 它在 rule 级可见。
+ * 子检查的 witness 边界：V5 里 `at` 的**类型**子检查用 `at:null` 看不见（删掉后仍由 `Date.parse` 报 V5），
+ * 所以另加一条 `at:['<iso>']`（数组能被 `Date.parse` 吃下）与一把只切"at 类型"的刀 `K-V5-at-type`
+ * —— 删掉类型子检查时**只有**这一行翻面。`tree_differs:'false'` 删掉类型子检查会改报 V6 ⇒ 在 rule 级可见。
  */
 describe('unit · office ledger value table (OFL-09)', () => {
-  test('OFL-09 值表 V1–V6：六类坏值各拒一次（E_OFFICE_LEDGER_SHAPE + rule 判别 + reason 点名 + 零写入），合法行必须收；六把逐规则刀各只翻自己那几行', async () => {
+  test('OFL-09 值表 V1–V6：六类坏值各拒一次（E_OFFICE_LEDGER_SHAPE + rule 判别 + reason 点名 + 零写入），合法行必须收；`dev` 在册不在编是**正向行**（换回在编名单只红它）；六把逐规则刀各只翻自己那几行 + at 类型子刀', async () => {
     await runCase('OFL-09', async (rec) => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
@@ -1250,6 +1256,12 @@ describe('unit · office ledger value table (OFL-09)', () => {
       const row = (over = {}) => ({ ...base, ...over })
       /** 三条路径同一上限；4103 字符 > 4096，且仍是一条"看起来合法"的绝对路径。 */
       const longPath = `E:/${'a'.repeat(4100)}`
+      /**
+       * 正向见证（**不在 `ROWS` 里**）：`dev` 在册（`FROZEN.teamRoles`）、不在编（今天的 `officeBound` 只有 `review`）。
+       * V2 若换回在编名单 ⇒ 这一行从 `null` 变 `V2`、`ok` 从 true 变 false（见 `revert_knife`）。
+       */
+      const rosterRow = ledgerLine({ at: '2026-11-08T00:00:00.000Z', role: 'dev', tool: 'write', landing: path.join(office, 'review', 'dev-ok.md'), officeRoot: office, headerOffice: office, treeDiffers: false })
+      const AT_ARRAY_LABEL = 'at:["<iso>"]（V5 类型；类型子检查的可见 witness）'
 
       // ── 阳性对照：合法行必须收下；两个读者必须同号；键形状必须与产品同号 ─────────
       {
@@ -1279,6 +1291,26 @@ describe('unit · office ledger value table (OFL-09)', () => {
             push('OFL9-KEY', `判据侧 normKey 与产品 officeKey 分叉了 ${keyWitness.mismatch.length} 处：${JSON.stringify(keyWitness.mismatch)} —— 一份口径只许有一个形状`)
           }
         }
+
+        // ── 正向见证：`role:'dev'` —— 在册、不在编 ─────────────────────────────
+        // 这一行**不在 `ROWS` 里**：它不是"坏值"，它的作用是让"V2 换回在编名单"这条回退**可见**。
+        const inRoster = FROZEN.teamRoles.includes('dev')
+        const inBound = FROZEN.staged.officeBoundRoles.includes('dev')
+        const premise = (rec.readings.roster_witness = { role: 'dev', in_roster: inRoster, in_bound: inBound })
+        if (!inRoster || inBound) {
+          push('OFL9-ROSTER-PREMISE', `正向见证不成立：\`dev\` 在册=${String(inRoster)}、在编=${String(inBound)} —— 这条行只在"在册但不在编"时才区分得出 V2 的真源`)
+        }
+        const devRes = mod.recordOfficeLanding(office, rosterRow)
+        const devRule = mod.officeLedgerRowRule(rosterRow)
+        const devText = readLedgerText(office) ?? ''
+        const devLines = devText.split(/\r?\n/).filter((line) => line.trim() !== '')
+        premise.record = { ok: devRes?.ok ?? null, code: devRes?.code ?? null, rule: devRule?.rule ?? null, lines: devLines.length }
+        if (devRes?.ok !== true || devRes?.code !== null || devRule?.rule !== null) {
+          push('OFL9-ROSTER-NOT-BOUND', `\`role:'dev'\`（在册 ${String(inRoster)} · 不在编 ${String(!inBound)}）必须是**合规行**（ok:true / code:null / rule:null），实得 ${JSON.stringify({ ok: devRes?.ok ?? null, code: devRes?.code ?? null, rule: devRule?.rule ?? null, reason: devRule?.reason ?? null })} —— V2 的真源若换回在编名单（\`DEFAULT_OFFICE_BOUND\`），这一行会先红`)
+        }
+        if (devLines.length !== 2) push('OFL9-ROSTER-NOT-BOUND', `正向行收下后账本应恰好 2 行（合法行 + dev 行），实得 ${devLines.length}`)
+        const devLp = lineProblems(rosterRow, { tool: 'write', landing: rosterRow.landing, officeRoot: office, headerOffice: office, treeDiffers: false, role: 'dev' })
+        if (devLp.length > 0) push('OFL9-ROSTER-NOT-BOUND', `判据侧 lineProblems 对 \`role:'dev'\` 必须干净（两个读者同号），实得 ${JSON.stringify(devLp)}`)
       }
 
       // ── 六类值：每类至少一行 ─────────────────────────────────────────────────
@@ -1303,6 +1335,7 @@ describe('unit · office ledger value table (OFL-09)', () => {
         { v: 'V4', label: 'header_office 超长', key: 'header_office', row: row({ header_office: longPath }) },
         // V5 · 类型（七键逐条 + at 可解析）
         { v: 'V5', label: 'at:null（类型子检查是 message refinement）', key: 'at', row: row({ at: null }) },
+        { v: 'V5', label: AT_ARRAY_LABEL, key: 'at', row: row({ at: ['2026-11-08T00:00:00.000Z'] }) },
         { v: 'V5', label: 'at 不可解析', key: 'at', row: row({ at: '不是时刻' }) },
         { v: 'V5', label: 'role:42', key: 'role', row: row({ role: 42 }) },
         { v: 'V5', label: 'tool:read', key: 'tool', row: row({ tool: 'read' }) },
@@ -1410,11 +1443,99 @@ describe('unit · office ledger value table (OFL-09)', () => {
         }
       }
 
+      // ── 反转刀：V2 从"在册"换回"在编"（`DEFAULT_OFFICE_BOUND`）⇒ 只红正向那一行 ──
+      // 这一刀模拟的正是 review 说的回退：六类坏值矩阵（含 role:'admin'，两个名单都拒）看不见它。
+      {
+        const cut = knifeReplace({
+          source,
+          find: 'if (!ROLE_ENTRY_BY_ROLE.has(line.role)) {',
+          replace: 'if (!DEFAULT_OFFICE_BOUND.includes(line.role)) {',
+        })
+        const entry = (rec.readings.revert_knife = {
+          cut: 'V2 → DEFAULT_OFFICE_BOUND.includes(line.role)',
+          anchor_ok: cut.ok,
+          before: { base: mod.officeLedgerRowRule(base)?.rule ?? null, roster: mod.officeLedgerRowRule(rosterRow)?.rule ?? null },
+          after: null,
+          changed_rows: [],
+        })
+        if (!cut.ok) {
+          push('OFL9-KNIFE-ANCHOR', `反转刀在 staged \`inject.js\` 上没有落点：${cut.code} ${cut.why} —— 尺子坏了，不许当成"刀咬了"`)
+        } else {
+          const mutant = await importSourceCopy({ dir: path.join(caseDir('OFL-09'), 'knife-v2-revert'), source: cut.source })
+          entry.import_ok = mutant.ok === true
+          if (!mutant.ok) {
+            push('OFL9-KNIFE-IMPORT', `反转刀的副本载不进来：${mutant.code} ${mutant.why}`)
+          } else {
+            const baseAfter = mutant.mod.officeLedgerRowRule(base)?.rule ?? null
+            const rosterAfter = mutant.mod.officeLedgerRowRule(rosterRow)?.rule ?? null
+            const devMutant = mutant.mod.recordOfficeLanding(office, rosterRow)
+            entry.after = { base: baseAfter, roster: rosterAfter, record: { ok: devMutant?.ok ?? null, code: devMutant?.code ?? null } }
+            entry.expected_red = 'OFL9-ROSTER-NOT-BOUND'
+            // 把"回退后本格会红成什么"也量出来：必须是 ok:false / E_OFFICE_LEDGER_SHAPE / rule V2。
+            if (!(devMutant?.ok === false && devMutant?.code === CODES.shape && rosterAfter === 'V2')) {
+              push('OFL9-KNIFE-NOT-BITING', `反转刀没有咬到正向行：回退到在编名单后 \`role:'dev'\` 应得 ok:false / ${CODES.shape} / rule V2（⇒ 红 \`OFL9-ROSTER-NOT-BOUND\`），实得 ${JSON.stringify(entry.after)}`)
+            }
+            // 除正向那一行外，**任何一行**都不许变（包括 role:'admin'：它在两个名单里都拒）。
+            for (const spec of ROWS) {
+              let got = null
+              try { got = mutant.mod.officeLedgerRowRule(spec.row)?.rule ?? null } catch (err) { got = 'THREW' }
+              if (got !== spec.v) entry.changed_rows.push({ label: spec.label, from: spec.v, to: got })
+            }
+            if (rosterAfter !== 'V2') {
+              push('OFL9-KNIFE-NOT-BITING', `反转刀没有咬到正向行：\`role:'dev'\` 的 rule 应为 V2（回退到在编名单后 dev 被拒），实得 ${JSON.stringify(rosterAfter)} —— 这条见证没有区分力`)
+            }
+            if (baseAfter !== null || entry.changed_rows.length > 0) {
+              push('OFL9-KNIFE-VECTOR', `反转刀切宽了：除正向行外还有 ${JSON.stringify(entry.changed_rows)} 变了（合法行 base 应仍为 null，实得 ${JSON.stringify(baseAfter)}）`
+                + ' —— 这一刀只该红 `role:dev` 那一行')
+            }
+          }
+        }
+      }
+
+      // ── 子检查刀：只关掉 `at` 的**类型**检查 ⇒ 只有 `at:["<iso>"]` 翻面 ────────────
+      // 为什么这一刀必要：`at:null` 删掉类型检查后仍由 `Date.parse` 报 V5（看不见类型子检查）；
+      // 数组 `at` 能被 `Date.parse` 吃下（ToString 得到 ISO 串）⇒ 它是类型子检查唯一可见的 witness。
+      {
+        const AT_ROW = ROWS.find((spec) => spec.label === AT_ARRAY_LABEL)
+        const cut = knifeReplace({
+          source,
+          find: "if (typeof line.at !== 'string') return fail('V5', ",
+          replace: "if (false) return fail('V5', ",
+        })
+        const entry = (rec.readings.at_type_knife = { anchor_ok: cut.ok, flipped: [], expected: AT_ROW === undefined ? [] : [AT_ROW.label] })
+        if (!cut.ok) {
+          push('OFL9-KNIFE-ANCHOR', `at 类型子刀在 staged \`inject.js\` 上没有落点：${cut.code} ${cut.why}`)
+        } else if (AT_ROW === undefined) {
+          push('OFL9-TABLE-SHAPE', `找不到 \`at:["<iso>"]\` 那一行（类型子检查的 witness 缺席）`)
+        } else {
+          const mutant = await importSourceCopy({ dir: path.join(caseDir('OFL-09'), 'knife-at-type'), source: cut.source })
+          if (!mutant.ok) {
+            push('OFL9-KNIFE-IMPORT', `at 类型子刀的副本载不进来：${mutant.code} ${mutant.why}`)
+          } else {
+            for (const spec of ROWS) {
+              let got = null
+              let threw = null
+              try { got = mutant.mod.officeLedgerRowRule(spec.row)?.rule ?? null } catch (err) { threw = String(err?.message ?? err) }
+              if (threw !== null || got !== spec.v) entry.flipped.push({ label: spec.label, from: spec.v, to: threw !== null ? 'THREW' : got })
+            }
+            entry.flipped.sort((a, b) => a.label.localeCompare(b.label))
+            const labels = entry.flipped.map((row) => row.label)
+            if (JSON.stringify(labels) !== JSON.stringify(entry.expected)) {
+              push('OFL9-KNIFE-VECTOR', `at 类型子刀翻面集与期望不同：实测 ${JSON.stringify(entry.flipped)}，期望只有 ${JSON.stringify(entry.expected)}`
+                + ' —— 多翻 = 刀切宽了，少翻 = 类型子检查没有可见 witness')
+            }
+          }
+        }
+      }
+
       rec.readings.summary = {
         classes,
         rows: ROWS.length,
         control_ok: (rec.readings.control?.ok === true),
+        roster_ok: (rec.readings.roster_witness?.record?.ok === true),
         knives: Object.fromEntries(Object.entries(knifeReadings).map(([id, row]) => [id, { anchor_ok: row.anchor_ok, flipped: row.flipped.length, expected: row.expected.length }])),
+        revert_knife: rec.readings.revert_knife?.after ?? null,
+        at_type_knife: rec.readings.at_type_knife?.flipped ?? null,
       }
       caseFail(out)
     })

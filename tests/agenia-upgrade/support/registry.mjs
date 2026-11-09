@@ -923,7 +923,9 @@ export const BATCH_AN = ['SMT-01', 'OFL-08']
  * **值表 V1–V6 的判据**（表在 `CONTRACT-batch15.md` §1.2.1；判词在 `CONTRACT-f11-judge-kind.md` §6）：
  * 写方 `recordOfficeLanding` 对六类坏值（相对路径 / 名单外岗位 / 空串 / 超长 / 类型错 / 跨字段不自洽）
  * 必须 `E_OFFICE_LEDGER_SHAPE` + `reason` 点名那一格 + **零写入**；合法行必须收（阳性对照，
- * 否则"全拒"也能让六类看起来绿）；**逐规则刀** `K-V1`…`K-V6` 各关掉一条规则的检查、重跑全部行，
+ * 否则"全拒"也能让六类看起来绿）；**正向行** `role:'dev'`（在册、不在编）**不在六类矩阵里**：
+ * V2 从在册换回在编名单时，`role:'admin'` 两张名单都拒、矩阵全绿，只有 `dev` 那行会翻面 ⇒
+ * `OFL9-ROSTER-NOT-BOUND`；反转刀量这件事；**逐规则刀** `K-V1`…`K-V6` 各关掉一条规则的检查、重跑全部行，
  * 按**行标签**比精确翻面集（删 V3 必须只红 V3 那五行）；`officeLedgerRowRule(row).rule` 是每行的判别读数。
  * 单开一格而不是并进 `OFL-07` / `OFL-08`：那两格判**读方**与**码位登记面**，这一格判**写方的值闸**。
  * ⚠️ 不进 `FROZEN_IDS`。
@@ -1517,7 +1519,7 @@ const ROWS = [
   // 契约 `.team/test/2026-11-09/CONTRACT-f11-judge-kind.md` §4（`SMT-01`）/ §5（`OFL-08`）。
   ['SMT-01', 'memory-rotation', F.smt, '`memoryRotationRoundOf` 的一轮：F3 配比 / F4 写盘闸 / F5 换版归零（三条腿 + 三把刀）。**判词、夹具形状与翻面集只写在 `CONTRACT-f11-judge-kind.md` §4**（唯一出处）；本行只登记落点：`unit/smt01-memory-rotation.test.mjs`。', '批次 AN'],
   ['OFL-08', 'office-ledger', F.ofl, '账本四码的**登记面**：契约 §2.4 的四个码必须同时出现在产品 `CODES` 与测试侧 `FROZEN.exitCodes` 里，退出码逐项相同（5）；两张表里多出表外的本族码 ⇒ 红。**判词与三个方向的红码只写在 `CONTRACT-f11-judge-kind.md` §5**（唯一出处）；表在 `support/office-ledger-fixtures.mjs::LEDGER_CODE_TABLE`。', '批次 AN'],
-  ['OFL-09', 'office-ledger', F.ofl, '**值表 V1–V6 的判据**（表在 `CONTRACT-batch15.md` §1.2.1；判词在 `CONTRACT-f11-judge-kind.md` §6）：写方 `recordOfficeLanding` 对六类坏值 —— V1 相对路径（三条路径各一行）· V2 名单外岗位 · V3 空串（五键各一行）· V4 超长（三条路径各一行）· V5 类型错（七键逐条 + `at` 不可解析）· V6 `tree_differs` 两个方向不自洽 —— 必须 `E_OFFICE_LEDGER_SHAPE` + `reason` 点名那一格 + **账本字节不变**；合法行必须收（阳性对照，否则"全拒"也能假绿）；两个读者对同一合法行同号（`OFFICE_LEDGER_ROW_VERDICT === null` 且 `lineProblems` 干净）；**每行还断言 `officeLedgerRowRule(row).rule === Vn`**（机器可读的"哪一条赢"）；键形状与产品 `officeKey` 逐字同号（`OFL9-KEY` 见证）；**逐规则刀** `K-V1`…`K-V6` 各只关一条规则的检查、重跑全部行，按**行标签**比精确翻面集（删 V3 只红 V3 那五行；`at:null` 那一行只是 V5 的 message refinement，子检查在 rule 级不可见）', '批次 AO'],
+  ['OFL-09', 'office-ledger', F.ofl, '**值表 V1–V6 的判据**（表在 `CONTRACT-batch15.md` §1.2.1；判词在 `CONTRACT-f11-judge-kind.md` §6）：写方 `recordOfficeLanding` 对 25 行六类坏值 —— V1 三条相对 + 两条根相对 · V2 在册外岗位 · V3 五键空串 · V4 三条超长 · V5 七键类型 + `at` 不可解析 + `at:["<iso>"]` · V6 两个方向不自洽 —— 必须 `E_OFFICE_LEDGER_SHAPE` + `reason` 点名那一格 + **账本字节不变**；合法行必须收（阳性对照）；**正向行 `role:"dev"`（在册、不在编）不进矩阵**：V2 换回在编名单时 `role:"admin"` 两张名单都拒、矩阵全绿，只有 `dev` 那行会红 `OFL9-ROSTER-NOT-BOUND`（反转刀量它）；每行断言 `officeLedgerRowRule(row).rule === Vn`；键形状与产品 `officeKey` 逐字同号（`OFL9-KEY`）；**逐规则刀** `K-V1`…`K-V6` 各只关一条规则、按**行标签**比精确翻面集；**at 类型子刀**只翻 `at:["<iso>"]`（`at:null` 是 message refinement）', '批次 AO'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
