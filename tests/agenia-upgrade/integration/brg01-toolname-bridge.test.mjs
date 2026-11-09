@@ -58,7 +58,9 @@
  *     ⇒ 量的就是这一段点名的那一份；`sut_overridden:false` / `acceptance_eligible:true`）。
  *   · 刀 = **本提交**那份 `inject.js` 的副本，只把"按子会话第一条用户消息对号（完整相等）"整条
  *     换成"按队列顺序取队首"（`presets/**` 零字节）：
- *     `.team/test/2026-11-08/_probe/_run/brg07-knife-4724312/inject.js` · 242779 B · sha256 `53a3c99b…`
+ *     `tests/agenia-upgrade/fixtures/brg07-knife-4724312/inject.js` · 242779 B · sha256 `53a3c99b…`（**仓库内**）
+ *     ⚠️ 2026-11-09 挪进 `tests/fixtures/`：它原来住在 `.team/`（被 `.gitignore` 挡着）⇒ **干净克隆拿不到**，
+ *     于是「`185 · RED 0`」在别人的机器上复现不出来（技术评审 F1 实测：副本里是 `RED 3`）。
  *     （造法与自证：`_probe/b13-brg07-knife.mjs 4724312`，printout 在 `_probe/_out/b13-brg07-knife-4724312.stdout.txt`；
  *     `roundtrip_equals_live:true` ⇒ 与现役只差那一刀；⚠️ 目录名用**提交短哈希**、不用现役 sha 前缀 ——
  *     带前缀会让这一行"看着 sha 对、字节不对"）⇒ **RED 1 / GREEN 6**（run `b15-brg-knife-4724312`）：
