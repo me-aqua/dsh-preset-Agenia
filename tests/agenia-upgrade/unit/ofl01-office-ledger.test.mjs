@@ -55,6 +55,7 @@ import path from 'node:path'
 import { caseDir, caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import { FROZEN, PATHS } from '../support/env.mjs'
 import { importStaged, readStagedText } from '../support/sut.mjs'
+import { normKey } from '../support/office-fixtures.mjs'
 import { buildCatalog, buildContentRoot, configFromComposition, importSourceCopy, knifeReplace, loadInjector } from '../support/injector-harness.mjs'
 import {
   CODES, CONTENT_MARKER, CONTROL_SOURCE, HALF_LINE_CODE_CANDIDATE, KNIVES, LEDGER_REL,
@@ -159,7 +160,7 @@ async function officeRow1({ mod, fx, subject, tag }) {
     push('OFL-LEDGER-ABSENT', `放行了同树写（落点 ${path.join(tree.dir, target)}），但账本没有这一行（${ledgerPathOf(tree.office)} 不在）`
       + ' —— `office_root` 只作为 readings 存在，`OFFICE_TREE_DIFFERS` 在这一侧恒不触发 ⇒ 写错树在盘上零痕迹')
   }
-  const oracle = oracleLedger(tree.office)
+  const oracle = oracleLedger(tree.office, { valueRules: subject?.minimal !== true })
   if (text !== null) {
     const rawLines = text.split('\n').filter((line) => line.trim() !== '')
     if (rawLines.length !== 2) {
@@ -229,7 +230,7 @@ async function officeRow2({ mod, fx, subject, tag }) {
     push('OFL-LEDGER-ABSENT', `放行了异树写（落点 ${target}），账本却没有这一行（${ledgerPathOf(tree.office)} 不在）`
       + ' —— 定形 §二.3 第二句要的就是"那一行里两个 office 都写着"')
   }
-  const oracle = oracleLedger(tree.office)
+  const oracle = oracleLedger(tree.office, { valueRules: subject?.minimal !== true })
   const rawCount = text === null ? 0 : text.split('\n').filter((line) => line.trim() !== '').length
   if (text !== null && rawCount !== 1) push('OFL-CROSS-TREE', `异树写应当**恰好一行**，实得 ${rawCount} 行`)
   const event = oracle.lines.length > 0 ? oracle.lines[oracle.lines.length - 1] : null
@@ -286,7 +287,7 @@ const normKeyOf = (value) => {
  * ③ 读数从账上读：账由**测试自己**写（不经产品），产品读者必须数得出来。
  * 这一格是"不再从内存 readings"的**唯一可翻面**的证明：如果读者数的是内存，喂文件就不会变。
  */
-async function officeRow3({ mod, fx }) {
+async function officeRow3({ mod, fx, subject }) {
   const out = []
   const push = (code, message) => out.push(problem(code, message))
   const [crossTree, sameOnly, corrupt, empty, absent] = fx.trees
@@ -321,7 +322,7 @@ async function officeRow3({ mod, fx }) {
   const readings = {}
   for (const [label, tree, want] of cases) {
     const read = mod.officeLandingLedger(tree.office)
-    const oracle = oracleLedger(tree.office)
+    const oracle = oracleLedger(tree.office, { valueRules: subject?.minimal !== true })
     readings[label] = { product: read === null || typeof read !== 'object' ? read : { ...read, lines: undefined }, oracle: { exists: oracle.exists, entries: oracle.entries, same_tree: oracle.same_tree, cross_tree: oracle.cross_tree, unreadable: oracle.unreadable, ok: oracle.ok, warning: oracle.warning } }
     if (read === null || typeof read !== 'object') { push('OFL-READER-SHAPE', `${label}：\`officeLandingLedger\` 没返回对象`); continue }
     for (const key of ['ok', 'path', 'exists', 'entries', 'same_tree', 'cross_tree', 'unreadable', 'warning']) {
@@ -353,6 +354,61 @@ async function officeRow3({ mod, fx }) {
   if (after?.cross_tree !== 1 || after?.same_tree !== 0 || after?.entries !== 1 || after?.unreadable !== 0 || after?.ok !== true) {
     push('OFL-READER-COUNT', `把盘上那一行改成异树之后读者没跟着变（cross_tree=${JSON.stringify(after?.cross_tree)} same_tree=${JSON.stringify(after?.same_tree)} entries=${JSON.stringify(after?.entries)} unreadable=${JSON.stringify(after?.unreadable)} ok=${JSON.stringify(after?.ok)}）—— 数的是内存，不是账；或那一行不是自洽的异树行`)
   }
+  return out
+}
+
+/**
+ * ⑥ **读者侧的 V1–V6**（`bug-20261109-07`）：1 行合法 + 六类值坏各一行（JSON 都解析得出来、值不合规）。
+ * 产品读者必须把它们计入 `unreadable`（`entries` 只数合规的），oracle 必须同判。
+ *
+ * 为什么单独一条函数、不塞进 `officeRow3`：`OFL-06` 的阳性对照（`CONTROL_SOURCE`，照契约 §2 写的
+ * **最小实现**）也跑 `officeRow3`，而它不负责值表 V1–V6（那是 `OFFICE_LEDGER_ROW_VERDICT` 那一层）；
+ * 把值坏行塞进共用行函数会让 OFL-06 的对照自己红 —— 那不是"对照坏了"，是判据放错了层。
+ * 这一腿只在 `OFL-03`（夹具 6 棵树）里跑。
+ *
+ * @param {{mod:object, fx:object, readings:object, label?:string}} input
+ * @returns {Array<{code:string,message:string}>}
+ */
+function readerValueFaces({ mod, fx, readings, label = '六类值坏 + 1 行合法' }) {
+  const out = []
+  const push = (code, message) => out.push(problem(code, message))
+  const tree = fx.trees[5]
+  if (tree === undefined) {
+    push('OFL-READER-COUNT', `${label}：夹具没有第 6 棵树（这一腿判不了）`)
+    return out
+  }
+  const base = (over = {}) => ledgerLine({ landing: path.join(tree.office, 'review', 'ok.md'), officeRoot: tree.office, headerOffice: tree.office, treeDiffers: false, ...over })
+  seedLedger(tree.office, {
+    lines: [
+      base(),
+      base({ landing: '.team/review/x.md' }), // V1 相对路径
+      base({ role: 'admin' }), // V2 不在册
+      base({ role: '' }), // V3 空串
+      base({ landing: `E:/${'a'.repeat(4100)}` }), // V4 超长
+      base({ at: null }), // V5 类型
+      base({ treeDiffers: true }), // V6 跨字段不自洽（同一个 office 却是 true）
+    ],
+  })
+  const read = mod.officeLandingLedger(tree.office)
+  // 这一腿**故意**用值感知的 oracle（产品读者判值；两边必须同号）。
+  const oracle = oracleLedger(tree.office)
+  const want = { exists: true, entries: 1, same_tree: 1, cross_tree: 0, unreadable: 6, ok: false }
+  const bare = (value) => (value === null || typeof value !== 'object' ? value : {
+    exists: value.exists, entries: value.entries, same_tree: value.same_tree,
+    cross_tree: value.cross_tree, unreadable: value.unreadable, ok: value.ok, warning: value.warning,
+  })
+  readings.value_rows = { product: bare(read), oracle: bare(oracle) }
+  if (read === null || typeof read !== 'object') {
+    push('OFL-READER-SHAPE', `${label}：\`officeLandingLedger\` 没返回对象`)
+    return out
+  }
+  for (const [key, value] of Object.entries(want)) {
+    if (read[key] !== value) {
+      push(key === 'unreadable' ? 'OFL-READER-BAD-LINE' : 'OFL-READER-COUNT',
+        `${label}：\`${key}\` 应为 ${JSON.stringify(value)}，实得 ${JSON.stringify(read[key])} —— 值不合规的行必须计入 unreadable（读者不判值的话这一腿会红）`)
+    }
+  }
+  for (const [code, message] of readerCountProblems(mod, tree.office, oracle, { label })) push(code, message)
   return out
 }
 
@@ -450,7 +506,7 @@ async function officeRow5({ mod, fx, subject, tag }) {
     push('OFL-THIRD-CODE', `被拒那次的报文不是既有的岗位写边界报文（前缀「${FROZEN.officeBoundMessagePrefix}${ROLE}）」不在）：`
       + `${JSON.stringify(refused.reason.slice(0, 200))}`)
   }
-  const oracle = oracleLedger(tree.office)
+  const oracle = oracleLedger(tree.office, { valueRules: subject?.minimal !== true })
   if (oracle.entries !== 2) {
     push('OFL-EXACTLY-TWO', `三次探测应恰好两行（同树 + 异树），实得 ${oracle.entries} 行（${JSON.stringify(oracle.lines.map((line) => line.landing))}）`)
   }
@@ -740,16 +796,17 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
     })
   })
 
-  test('OFL-03 读数从账上读：测试自己写账（2 同树 + 1 异树 / 3 同树 / 夹半截 JSON）⇒ 读者必须数得出来', async () => {
+  test('OFL-03 读数从账上读：测试自己写账（2 同树 + 1 异树 / 3 同树 / 夹半截 JSON / 六类值坏 + 1 行合法）⇒ 读者必须数得出来（含读者侧 V1–V6）', async () => {
     await runCase('OFL-03', async (rec) => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
-      const fx = ensureLedgerFixtures({ caseId: 'OFL-03', trees: 5 })
+      const fx = ensureLedgerFixtures({ caseId: 'OFL-03', trees: 6 })
       rec.readings.fixtures = fixtureReadings(fx)
       if (!fixtureGate(rec, fx, push)) { caseFail(out); return }
       const mod = await loadSubject(push)
       if (mod !== null) {
         out.push(...await officeRow3({ mod, fx }))
+        out.push(...readerValueFaces({ mod, fx, readings: rec.readings }))
         rec.readings.row3 = out.map((p) => p.code)
         rec.readings.ledger = {
           '2 同树 + 1 异树': ledgerReading(fx.trees[0].office),
@@ -1041,6 +1098,8 @@ function productSubject(mod, fx, contentRoot) {
     header: headerFor(fx),
     id: `${AGENT_ID}-${path.basename(path.dirname(fx.root))}`,
     catalog: buildCatalog(Array.isArray(mod.BASE_TOOL_SET) ? mod.BASE_TOOL_SET : []),
+    /** 产品层：判 §1.2.1 的值表（读者与 oracle 同一把尺子）。 */
+    minimal: false,
   }
 }
 
@@ -1061,6 +1120,11 @@ function controlSubject(mod, fx, contentRoot) {
     header: headerFor(fx),
     id: `${AGENT_ID}-ctl-${path.basename(path.dirname(fx.root))}`,
     catalog: controlCatalog(),
+    /**
+     * 最小实现（契约 §2 那一层）：**不含** §1.2.1 的值表 ⇒ 拿它比计数时 oracle 只判"解析得出来"。
+     * 拿值表去要求它是拿错了尺子；值表的判据在 `OFL-09` 与 `OFL-03` 的 ⑨ 腿（产品侧）。
+     */
+    minimal: true,
   }
 }
 
@@ -1134,22 +1198,29 @@ describe('unit · office ledger code book (OFL-08)', () => {
 /**
  * 这一格判 `CONTRACT-batch15.md` §1.2.1 的六类值（每类至少一行；表本身就是判词，**唯一出处**）：
  *
- *   · V1 三条路径必须是绝对路径（相对路径 ⇒ 拒）；
- *   · V2 `role` 必须在受限岗位名单里（名单外 ⇒ 拒）；
+ *   · V1 `landing` 一路（三条路径逐条 + 根相对）：必须是**盘符限定**或 **UNC** 的绝对路径；
+ *   · V2 `role` 必须**在册**（`ROLE_TABLE` 九面；不是 `config.officeBound` 在编名单）；
  *   · V3 `role` / `tool` / `landing` / `office_root` / `header_office` 不许是空串（五键逐条）；
  *   · V4 三条路径每条 ≤ 4096 字符（超长 ⇒ 拒，三条同一上限）；
  *   · V5 七键的类型（含 `at` 可解析、`tool` 只能是 write/edit）；
  *   · V6 `tree_differs` 必须与两个 office 的等值关系一致（两个方向）。
  *
  * 每一行都必须：`ok:false` + `code === E_OFFICE_LEDGER_SHAPE`（不是 `UNWRITABLE`，更不是静默收下）+
- * `reason` 点名那一格（键名）+ **账本字节不变**（被拒的行不留痕）。
+ * **`officeLedgerRowRule(row).rule === 'Vn'`**（机器可读的"哪一条赢"）+ `reason` 点名那一格 + **账本字节不变**。
  * 阳性对照：一行合法的行必须**收下**（+1 行）；否则"全拒"也能让六类看起来绿。
  * 两个读者同号：同一行产品 `OFFICE_LEDGER_ROW_VERDICT` 判 `null` **且** 判据侧 `lineProblems` 判干净。
- * 刀 `V-all`：把写方那一处 `shape = OFFICE_LEDGER_ROW_VERDICT(line)` 改成 `shape = null`
- * ⇒ 六类全部被收下 ⇒ 本格必须红出**恰好** `OFL9-V1…V6`（精确集合；多翻/少翻都红）。
+ * 键形状唯一性：`support/office-fixtures.mjs::normKey` 与产品 `officeKey` 在同一批字符串上**逐字同号**
+ * （`OFL9-KEY`）—— 本套件不 import 产品的 `officeKey`（第二读者 + 动态 import 纪律），靠这条见证防漂。
+ *
+ * **逐规则刀**（每把只切一条规则的检查；锚点各 1 处；只切副本）：
+ * `K-V1` … `K-V6` 各把对应规则整条关掉，然后**重跑全部行**，断言只有"该规则的行"变红
+ * （按**行标签**精确比较，不是按码集合 —— 码集合会把"少翻一行"藏起来）。
+ * 子检查的 witness 边界：V5 里 `at` 的类型子检查删掉后仍由 `Date.parse` 报 V5（**rule 级不可见**，
+ * 只改报文）⇒ `at:null` 那一行只是 message refinement；`tree_differs:'false'` 删掉类型子检查会改报 V6
+ * ⇒ 它在 rule 级可见。
  */
 describe('unit · office ledger value table (OFL-09)', () => {
-  test('OFL-09 值表 V1–V6：六类坏值各拒一次（E_OFFICE_LEDGER_SHAPE + reason 点名 + 零写入），合法行必须收；把写方那道值检查拿掉 ⇒ 六类全红', async () => {
+  test('OFL-09 值表 V1–V6：六类坏值各拒一次（E_OFFICE_LEDGER_SHAPE + rule 判别 + reason 点名 + 零写入），合法行必须收；六把逐规则刀各只翻自己那几行', async () => {
     await runCase('OFL-09', async (rec) => {
       const out = []
       const push = (code, message) => out.push(problem(code, message))
@@ -1165,6 +1236,9 @@ describe('unit · office ledger value table (OFL-09)', () => {
       if (mod !== null && typeof mod.OFFICE_LEDGER_ROW_VERDICT !== 'function') {
         push('OFL9-SURFACE-MISSING', '`inject.js` 没有导出 `OFFICE_LEDGER_ROW_VERDICT` —— 值表的判词没有纯函数入口')
       }
+      if (mod !== null && typeof mod.officeLedgerRowRule !== 'function') {
+        push('OFL9-SURFACE-MISSING', '`inject.js` 没有导出 `officeLedgerRowRule` —— 逐规则刀没有"哪一条赢"的读数面')
+      }
       if (out.length > 0) { caseFail(out); return }
 
       const fx = ensureLedgerFixtures({ caseId: 'OFL-09', trees: 1 })
@@ -1177,7 +1251,7 @@ describe('unit · office ledger value table (OFL-09)', () => {
       /** 三条路径同一上限；4103 字符 > 4096，且仍是一条"看起来合法"的绝对路径。 */
       const longPath = `E:/${'a'.repeat(4100)}`
 
-      // ── 阳性对照：合法行必须收下；两个读者必须同号 ──────────────────────────
+      // ── 阳性对照：合法行必须收下；两个读者必须同号；键形状必须与产品同号 ─────────
       {
         const res = mod.recordOfficeLanding(office, base)
         const text = readLedgerText(office) ?? ''
@@ -1189,16 +1263,34 @@ describe('unit · office ledger value table (OFL-09)', () => {
         if (verdict !== null) push('OFL9-CONTROL', `产品纯函数对合法行必须判 null，实得 ${JSON.stringify(verdict)}`)
         const lp = lineProblems(base, { tool: 'write', landing: base.landing, officeRoot: office, headerOffice: office, treeDiffers: false, role: 'review' })
         if (lp.length > 0) push('OFL9-CONTROL', `判据侧 lineProblems 对同一行必须干净（两个读者同号），实得 ${JSON.stringify(lp)}`)
+
+        // `OFL9-KEY`：本套件的 `normKey` 与产品的 `officeKey` 必须逐字同号（一份口径，两个载体）。
+        const KEY_CORPUS = ['E:\\A\\x', 'e:/a/x/', '\\\\server\\share\\x', '//server/share/x/', '\\x', '/x', 'C:foo', 'E:\\A\\.team', 'E:/A/.team/']
+        const keyWitness = (rec.readings.key_witness = { corpus: KEY_CORPUS, mismatch: [] })
+        if (typeof mod.officeKey !== 'function') {
+          push('OFL9-KEY', '`inject.js` 没有导出 `officeKey` —— 账行的键形状没有产品侧的唯一实现可对')
+        } else {
+          for (const sample of KEY_CORPUS) {
+            const mine = normKey(sample)
+            const theirs = mod.officeKey(sample)
+            if (mine !== theirs) keyWitness.mismatch.push({ sample, mine, theirs })
+          }
+          if (keyWitness.mismatch.length > 0) {
+            push('OFL9-KEY', `判据侧 normKey 与产品 officeKey 分叉了 ${keyWitness.mismatch.length} 处：${JSON.stringify(keyWitness.mismatch)} —— 一份口径只许有一个形状`)
+          }
+        }
       }
 
       // ── 六类值：每类至少一行 ─────────────────────────────────────────────────
       const ROWS = [
-        // V1 · 绝对路径（三条路径各一行）
+        // V1 · 绝对路径（三条路径逐条 + 根相对）
         { v: 'V1', label: 'landing 相对路径', key: 'landing', row: row({ landing: '.team/review/x.md' }) },
         { v: 'V1', label: 'office_root 相对路径', key: 'office_root', row: row({ office_root: '.team' }) },
         { v: 'V1', label: 'header_office 相对路径', key: 'header_office', row: row({ header_office: '.team' }) },
-        // V2 · 岗位成员
-        { v: 'V2', label: 'role 不在名单（admin）', key: 'role', row: row({ role: 'admin' }) },
+        { v: 'V1', label: 'landing 根相对（反斜杠）', key: 'landing', row: row({ landing: '\\x' }) },
+        { v: 'V1', label: 'landing 根相对（正斜杠）', key: 'landing', row: row({ landing: '/x' }) },
+        // V2 · 在册岗位
+        { v: 'V2', label: 'role 不在册（admin）', key: 'role', row: row({ role: 'admin' }) },
         // V3 · 空串（五键各一行）
         { v: 'V3', label: 'role 空串', key: 'role', row: row({ role: '' }) },
         { v: 'V3', label: 'tool 空串', key: 'tool', row: row({ tool: '' }) },
@@ -1210,7 +1302,7 @@ describe('unit · office ledger value table (OFL-09)', () => {
         { v: 'V4', label: 'office_root 超长', key: 'office_root', row: row({ office_root: longPath }) },
         { v: 'V4', label: 'header_office 超长', key: 'header_office', row: row({ header_office: longPath }) },
         // V5 · 类型（七键逐条 + at 可解析）
-        { v: 'V5', label: 'at:null', key: 'at', row: row({ at: null }) },
+        { v: 'V5', label: 'at:null（类型子检查是 message refinement）', key: 'at', row: row({ at: null }) },
         { v: 'V5', label: 'at 不可解析', key: 'at', row: row({ at: '不是时刻' }) },
         { v: 'V5', label: 'role:42', key: 'role', row: row({ role: 42 }) },
         { v: 'V5', label: 'tool:read', key: 'tool', row: row({ tool: 'read' }) },
@@ -1232,8 +1324,12 @@ describe('unit · office ledger value table (OFL-09)', () => {
         const res = mod.recordOfficeLanding(office, spec.row)
         const after = readLedgerText(office) ?? ''
         const reason = String(res?.reason ?? '')
-        readings.push({ v: spec.v, label: spec.label, ok: res?.ok ?? null, code: res?.code ?? null, reason: reason.slice(0, 200), bytes_same: before === after })
+        const verdictRule = mod.officeLedgerRowRule(spec.row)
+        readings.push({ v: spec.v, label: spec.label, rule: verdictRule?.rule ?? null, ok: res?.ok ?? null, code: res?.code ?? null, reason: reason.slice(0, 200), bytes_same: before === after })
         const code = `OFL9-${spec.v}`
+        // 机器可读的"哪一条赢"：这是逐规则刀的比较面。`at:null` 那一行在 V5 内部是 message refinement，
+        // 但 rule 级仍是 V5（删掉类型子检查仍由 Date.parse 报 V5）。
+        if (verdictRule?.rule !== spec.v) push(code, `${spec.v}（${spec.label}）: officeLedgerRowRule 应报 ${spec.v}，实得 ${JSON.stringify(verdictRule?.rule ?? null)}（reason=${JSON.stringify(verdictRule?.reason ?? null)}）`)
         if (res?.ok !== false) push(code, `${spec.v}（${spec.label}）必须被拒（ok:false），实得 ${JSON.stringify({ ok: res?.ok, code: res?.code ?? null, reason })}`)
         if (res?.code !== CODES.shape) push(code, `${spec.v}（${spec.label}）的码必须是 ${CODES.shape}（不是 UNWRITABLE、也不是静默收下），实得 ${JSON.stringify(res?.code ?? null)}`)
         if (reason === '') push(code, `${spec.v}（${spec.label}）被拒但 reason 是空的 —— 点名不了那一格`)
@@ -1241,28 +1337,76 @@ describe('unit · office ledger value table (OFL-09)', () => {
         if (before !== after) push(code, `${spec.v}（${spec.label}）被拒了，账本却变了 —— 被拒的行不许留痕`)
       }
 
-      // ── 刀 `V-all`：拿掉写方那道值检查 ⇒ 六类全部被收下 ⇒ 精确翻出六个码 ────
-      {
-        const cut = knifeReplace({ source: readStagedText('inject.js'), find: 'const shape = OFFICE_LEDGER_ROW_VERDICT(line)', replace: 'const shape = null' })
-        const knife = (rec.readings.knife = { id: 'V-all', anchor_ok: cut.ok, code: cut.code ?? null, why: cut.why ?? null, codes: [], want: ['OFL9-V1', 'OFL9-V2', 'OFL9-V3', 'OFL9-V4', 'OFL9-V5', 'OFL9-V6'] })
-        if (!cut.ok) {
-          push('OFL9-KNIFE-ANCHOR', `刀 V-all 在 staged \`inject.js\` 上没有落点：${cut.code} ${cut.why} —— 尺子坏了，不许当成"刀咬了"`)
-        } else {
-          const mutant = await importSourceCopy({ dir: path.join(caseDir('OFL-09'), 'knife-v-all'), source: cut.source })
-          if (!mutant.ok) {
-            knife.import = { ok: false, code: mutant.code, why: mutant.why }
-            push('OFL9-KNIFE-IMPORT', `刀 V-all 的副本载不进来：${mutant.code} ${mutant.why}`)
-          } else {
-            const flipped = new Set()
-            for (const spec of ROWS) {
-              const res = mutant.mod.recordOfficeLanding(office, spec.row)
-              if (res?.ok !== false || res?.code !== CODES.shape) flipped.add(`OFL9-${spec.v}`)
-            }
-            knife.codes = [...flipped].sort()
-            if (JSON.stringify(knife.codes) !== JSON.stringify([...knife.want].sort())) {
-              push('OFL9-KNIFE-VECTOR', `刀 V-all 的翻面集与期望不同：实测 ${JSON.stringify(knife.codes)}，期望 ${JSON.stringify(knife.want)} —— 多翻 = 刀切宽了，少翻 = 那一类没人守`)
-            }
-          }
+      // ── 逐规则刀：每把只关掉一条规则的检查，重跑全部行，按**行标签**比精确翻面集 ──
+      const KNIVES = [
+        {
+          id: 'K-V1',
+          rule: 'V1',
+          cuts: [
+            { find: 'if (!isAbsolute(value)) {', replace: 'if (false) {' },
+            { find: 'if (OFFICE_LEDGER_ROOT_RELATIVE.test(value)) {', replace: 'if (false) {' },
+          ],
+        },
+        { id: 'K-V2', rule: 'V2', cuts: [{ find: 'if (!ROLE_ENTRY_BY_ROLE.has(line.role)) {', replace: 'if (false) {' }] },
+        { id: 'K-V3', rule: 'V3', cuts: [{ find: "for (const key of ['role', 'tool', 'landing', 'office_root', 'header_office']) {", replace: 'for (const key of []) {' }] },
+        { id: 'K-V4', rule: 'V4', cuts: [{ find: 'if (value.length > OFFICE_LEDGER_PATH_MAX) {', replace: 'if (false) {' }] },
+        {
+          id: 'K-V5',
+          rule: 'V5',
+          cuts: [
+            { find: "if (typeof line.at !== 'string') return fail('V5', ", replace: "if (false) return fail('V5', " },
+            { find: "if (typeof line.role !== 'string') return fail('V5', ", replace: "if (false) return fail('V5', " },
+            { find: "if (typeof line.tool !== 'string') return fail('V5', ", replace: "if (false) return fail('V5', " },
+            { find: "if (typeof line[key] !== 'string') return fail('V5', ", replace: "if (false) return fail('V5', " },
+            { find: "if (typeof line.tree_differs !== 'boolean') return fail('V5', ", replace: "if (false) return fail('V5', " },
+            { find: 'if (Number.isNaN(Date.parse(line.at))) return fail(\'V5\', ', replace: "if (false) return fail('V5', " },
+            { find: "if (line.tool !== 'write' && line.tool !== 'edit') return fail('V5', ", replace: "if (false) return fail('V5', " },
+          ],
+        },
+        { id: 'K-V6', rule: 'V6', cuts: [{ find: 'if (line.tree_differs !== !sameTree) {', replace: 'if (false) {' }] },
+      ]
+      const knifeReadings = (rec.readings.knives = {})
+      const source = readStagedText('inject.js')
+      for (const knife of KNIVES) {
+        const entry = (knifeReadings[knife.id] = { rule: knife.rule, cuts: knife.cuts.length, anchor_ok: false, import_ok: false, flipped: [], expected: [] })
+        // 一把刀 = 若干处**各自恰好 1 处**的替换；任何一处 0/多命中 ⇒ 刀不成立（尺子坏了）。
+        let mutantSource = source
+        let anchorFail = null
+        for (const cut of knife.cuts) {
+          const applied = knifeReplace({ source: mutantSource, find: cut.find, replace: cut.replace })
+          if (!applied.ok) { anchorFail = applied; break }
+          mutantSource = applied.source
+        }
+        entry.anchor_ok = anchorFail === null
+        if (anchorFail !== null) {
+          entry.anchor_code = anchorFail.code
+          entry.anchor_why = anchorFail.why
+          push('OFL9-KNIFE-ANCHOR', `${knife.id}（关 ${knife.rule}）在 staged \`inject.js\` 上没有落点：${anchorFail.code} ${anchorFail.why} —— 尺子坏了，不许当成"刀咬了"`)
+          continue
+        }
+        const mutant = await importSourceCopy({ dir: path.join(caseDir('OFL-09'), `knife-${knife.id}`), source: mutantSource })
+        entry.import_ok = mutant.ok === true
+        if (!mutant.ok) {
+          entry.import_code = mutant.code
+          entry.import_why = mutant.why
+          push('OFL9-KNIFE-IMPORT', `${knife.id} 的副本载不进来：${mutant.code} ${mutant.why}`)
+          continue
+        }
+        // 重跑**全部行**：用 rule 读数看哪几行不再是原来的规则（抛错也算翻面）；记下 from → to。
+        for (const spec of ROWS) {
+          let got = null
+          let threw = null
+          try { got = mutant.mod.officeLedgerRowRule(spec.row)?.rule ?? null } catch (err) { threw = String(err?.message ?? err) }
+          if (threw !== null || got !== spec.v) entry.flipped.push({ label: spec.label, from: spec.v, to: threw !== null ? 'THREW' : got })
+        }
+        entry.flipped.sort((a, b) => a.label.localeCompare(b.label))
+        entry.expected = ROWS.filter((spec) => spec.v === knife.rule).map((spec) => spec.label).sort()
+        const flippedLabels = entry.flipped.map((row) => row.label)
+        if (JSON.stringify(flippedLabels) !== JSON.stringify(entry.expected)) {
+          const onlyActual = flippedLabels.filter((label) => !entry.expected.includes(label))
+          const onlyWant = entry.expected.filter((label) => !flippedLabels.includes(label))
+          push('OFL9-KNIFE-VECTOR', `${knife.id}（关 ${knife.rule}）翻面集与期望不同：多翻 ${JSON.stringify(onlyActual)} · 少翻 ${JSON.stringify(onlyWant)}`
+            + ` —— 多翻 = 刀切宽了，少翻 = 那一行没人守；实测 ${JSON.stringify(entry.flipped)}`)
         }
       }
 
@@ -1270,7 +1414,7 @@ describe('unit · office ledger value table (OFL-09)', () => {
         classes,
         rows: ROWS.length,
         control_ok: (rec.readings.control?.ok === true),
-        knife_codes: rec.readings.knife?.codes ?? null,
+        knives: Object.fromEntries(Object.entries(knifeReadings).map(([id, row]) => [id, { anchor_ok: row.anchor_ok, flipped: row.flipped.length, expected: row.expected.length }])),
       }
       caseFail(out)
     })

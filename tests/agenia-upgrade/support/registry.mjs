@@ -849,7 +849,7 @@ export const BATCH_AJ = ['TMP-01', 'STM-01', 'WIT-01']
  * 而**相对路径落进会话头自己那棵树**时 `office_root === header_office` ⇒ `OFFICE_TREE_DIFFERS` 恒不触发。
  *   · `OFL-01` 同树也留一行（相对路径 · 种子行逐字节不变 · 不记正文）；
  *   · `OFL-02` 异树那行 `tree_differs:true` + 两个 office 都写着 + 读者数得出来 + 控制台同源；
- *   · `OFL-03` 读数从**盘上**读（测试自己写账：2 同树 + 1 异树 / 3 同树 / 夹半截 JSON / 空账 / 没有账）；
+ *   · `OFL-03` 读数从**盘上**读（测试自己写账：2 同树 + 1 异树 / 3 同树 / 夹半截 JSON / 空账 / 没有账 / 六类值坏 + 1 行合法）；
  *   · `OFL-04` 账写不进去 ⇒ 那次写被拒 + `E_GUARD_OFFICE_LEDGER`（fail-closed）；
  *   · `OFL-05` 三次探测（同树 / 异树 / `.team` 外被拒）⇒ 恰好两行，被拒的不落账；
  *   · `OFL-06` 刀架：阳性对照五格全绿 + 七把刀各翻自己那几码 + 真源码 `K1`（锚在 · 基线成立才判）。
@@ -923,7 +923,8 @@ export const BATCH_AN = ['SMT-01', 'OFL-08']
  * **值表 V1–V6 的判据**（表在 `CONTRACT-batch15.md` §1.2.1；判词在 `CONTRACT-f11-judge-kind.md` §6）：
  * 写方 `recordOfficeLanding` 对六类坏值（相对路径 / 名单外岗位 / 空串 / 超长 / 类型错 / 跨字段不自洽）
  * 必须 `E_OFFICE_LEDGER_SHAPE` + `reason` 点名那一格 + **零写入**；合法行必须收（阳性对照，
- * 否则"全拒"也能让六类看起来绿）；刀 `V-all` 拿掉写方那道值检查 ⇒ 六类全部被收下 ⇒ 本格红出精确六码。
+ * 否则"全拒"也能让六类看起来绿）；**逐规则刀** `K-V1`…`K-V6` 各关掉一条规则的检查、重跑全部行，
+ * 按**行标签**比精确翻面集（删 V3 必须只红 V3 那五行）；`officeLedgerRowRule(row).rule` 是每行的判别读数。
  * 单开一格而不是并进 `OFL-07` / `OFL-08`：那两格判**读方**与**码位登记面**，这一格判**写方的值闸**。
  * ⚠️ 不进 `FROZEN_IDS`。
  */
@@ -1490,7 +1491,7 @@ const ROWS = [
   // 判据本体 `unit/ofl01-office-ledger.test.mjs` + `support/office-ledger-fixtures.mjs`（夹具 / oracle / 对照 / 七把刀）。
   ['OFL-01', 'office-ledger', F.ofl, '`bug-20261107-10` **同树也留一行**（定形 §二.3 第一句 / §四第三行 = 今天缺的那一半）：`header.cwd` = T1、目标 `.team/review/note.md`（**相对路径**）⇒ 放行；账上 `种子行 + 1 行`（**恰好两行**），新那行**恰好七键**、`office_root === header_office === T1/.team`、`tree_differs:false`、`at` 可解析、**不带正文**（键名闭集 + 写入正文的标记不许出现）、`same_tree` 数得出来；种子行**逐字节不变**（只追加，`OFL-APPEND-ONLY` 量的是字节）；同树写**不许**出 `OFFICE_TREE_DIFFERS`。三个冻结导出（`OFFICE_LANDING_LEDGER_REL` / `recordOfficeLanding` / `officeLandingLedger`）缺哪个点名哪个。今天**零行** ⇒ 红在 `OFL-LEDGER-ABSENT`（"写错树在盘上零痕迹"），不是"文件找不到"', '批次 AK'],
   ['OFL-02', 'office-ledger', F.ofl, '`bug-20261107-10` **异树那行带两个 office**（定形 §二.3 第二句 / §四第二行）：`header.cwd` = T1、落点 `X/.team/review/from-a.md` ⇒ 放行；账上**恰好一行**、`tree_differs:true`、`office_root` = `X/.team` 与 `header_office` = `T1/.team` **两个串都在、都不空、不相等**；`officeLandingLedger(T1/.team)` 的 `cross_tree === 1` 且 `warning === "OFFICE_TREE_DIFFERS"`；控制台那一行**同时**含两个 office 路径（判据在报文里那两个**值**上，不钉措辞）。这一格判"读数从账上读"的用户面：**同一个事件**在盘上与控制台上是同一件事', '批次 AK'],
-  ['OFL-03', 'office-ledger', F.ofl, '`bug-20261107-10` **读数从账上读**（定形 §二.2）：账由**测试自己**写原始 JSONL（不经产品）⇒ ① 2 同树 + 1 异树 ⇒ `entries 3 / same_tree 2 / cross_tree 1 / warning`；② 3 行全同树 ⇒ `cross_tree 0 / warning null`；③ 2 行合法 + 1 行半截 JSON ⇒ `ok:false` + `unreadable:1` + `entries:2`（**不许**塌成"2 行、一切正常"）；④ 空账 `exists:true / entries:0 / ok:true`；⑤ 没有账 `exists:false / ok:true`（读数里明写"不算证据"）；⑥ **翻面**：把盘上那一行改成异树 ⇒ 读者必须跟着变（数内存的话这里不会变）；⑦ `entries === same_tree + cross_tree` 守恒；⑧ 产品读数与判据侧第二读者（oracle）四个计数对数。产品没导出读者 ⇒ `OFL-READER-MISSING`（今天的事实）', '批次 AK'],
+  ['OFL-03', 'office-ledger', F.ofl, '`bug-20261107-10` **读数从账上读**（定形 §二.2）：账由**测试自己**写原始 JSONL（不经产品）⇒ ① 2 同树 + 1 异树 ⇒ `entries 3 / same_tree 2 / cross_tree 1 / warning`；② 3 行全同树 ⇒ `cross_tree 0 / warning null`；③ 2 行合法 + 1 行半截 JSON ⇒ `ok:false` + `unreadable:1` + `entries:2`（**不许**塌成"2 行、一切正常"）；④ 空账 `exists:true / entries:0 / ok:true`；⑤ 没有账 `exists:false / ok:true`（读数里明写"不算证据"）；⑥ **翻面**：把盘上那一行改成异树 ⇒ 读者必须跟着变（数内存的话这里不会变）；⑦ `entries === same_tree + cross_tree` 守恒；⑧ 产品读数与判据侧第二读者（oracle）四个计数对数；⑨ **读者侧 V1–V6**：1 行合法 + 六类值坏各一行 ⇒ `entries 1 / unreadable 6 / ok:false`（产品与 oracle **同判**）。产品没导出读者 ⇒ `OFL-READER-MISSING`', '批次 AK'],
   ['OFL-04', 'office-ledger', F.ofl, '`bug-20261107-10` **写不进去就拒（fail-closed）**（定形 §二.4 / §四第四行）：两种"账本不可写"的形状各一格 —— ① 账本路径被一个**目录**占着（`appendFileSync` ⇒ 本机 `EISDIR`）；② `<office>/state` 是一个**文件**（`mkdirSync(recursive)` ⇒ 本机 `EEXIST`）。两次都必须：那次写**被拒** + 报文以 `E_GUARD_OFFICE_LEDGER` 开头 + `console.error` 那一行**点名码 / 账本路径 / 原因**（原因太短 ⇒ `OFL-FAIL-CLOSED-REASON`）+ 账上不多一行。今天账本根本没有写入路径 ⇒ 写照旧被放行 ⇒ 红在 `OFL-FAIL-CLOSED-ALLOWED`（fail-open）', '批次 AK'],
   ['OFL-05', 'office-ledger', F.ofl, '`bug-20261107-10` **每一次放行都有一行**（定形 §四第一行，逐字）：同一个 office 上三次探测 —— ① 同树相对、② 异树绝对、③ `.team` 外（`X/src/x.js`）⇒ 账上**恰好两行**（一同一异）、③ 的落点**不在**账上、③ 的拒绝码仍是 **`E_GUARD_OFFICE_WRITE`**（旧码；账本那道口不许接管 office 边界的拒绝）、三次里只有异树那次该出 `OFFICE_TREE_DIFFERS`。这一格是"被拒的写不落账"的正面判据（契约 §5.1：那是对的）', '批次 AK'],
   ['OFL-06', 'office-ledger', F.ofl, '`bug-20261107-10` **刀架**（判据自己的可满足性 + 七把刀 + 真源码 `K1`）：① **阳性对照** —— 照契约 §2 写的**最小实现**（`tests/**` 自带、不 import 产品）五格必须**全绿**（`OFL-CONTROL-NOT-GREEN` / `OFL-CONTROL-UNAVAILABLE` = 判据不可满足/对照坏了，不是产品的问题）；② **七把刀**（切对照的一个开关，锚点恰好 1 处）—— `K1` 不写账 ⇒ 红"没有那行"那几格 · `K2` `tree_differs` 恒 false · `K3` fail-open · `K4` 读者吞坏行 · `K5` 读者不数异树 · `K6` 账落**落点树** · `K7` 行里多 `content` 键；每把**只许翻它那几码**（多翻 = 刀切宽了，少翻 = 那一面没人守 ⇒ `OFL-KNIFE-VECTOR`；锚点不在 ⇒ `OFL-KNIFE-CONTROL-ANCHOR`）；③ **真源码**：`K1` 按**函数体级**切（锚是契约 §2.1 冻结的名字 `export function recordOfficeLanding(`，不钉文本形状）；同一段切真源码的自足副本（`inject.js` + `lib/` + `tools/`，缺了会以"找不到 route.mjs"假红），且只在**基线成立**时才有可比对象（不成立 ⇒ 读数记 skip，不冒充刀坏了）', '批次 AK'],
@@ -1516,7 +1517,7 @@ const ROWS = [
   // 契约 `.team/test/2026-11-09/CONTRACT-f11-judge-kind.md` §4（`SMT-01`）/ §5（`OFL-08`）。
   ['SMT-01', 'memory-rotation', F.smt, '`memoryRotationRoundOf` 的一轮：F3 配比 / F4 写盘闸 / F5 换版归零（三条腿 + 三把刀）。**判词、夹具形状与翻面集只写在 `CONTRACT-f11-judge-kind.md` §4**（唯一出处）；本行只登记落点：`unit/smt01-memory-rotation.test.mjs`。', '批次 AN'],
   ['OFL-08', 'office-ledger', F.ofl, '账本四码的**登记面**：契约 §2.4 的四个码必须同时出现在产品 `CODES` 与测试侧 `FROZEN.exitCodes` 里，退出码逐项相同（5）；两张表里多出表外的本族码 ⇒ 红。**判词与三个方向的红码只写在 `CONTRACT-f11-judge-kind.md` §5**（唯一出处）；表在 `support/office-ledger-fixtures.mjs::LEDGER_CODE_TABLE`。', '批次 AN'],
-  ['OFL-09', 'office-ledger', F.ofl, '**值表 V1–V6 的判据**（表在 `CONTRACT-batch15.md` §1.2.1；判词在 `CONTRACT-f11-judge-kind.md` §6）：写方 `recordOfficeLanding` 对六类坏值 —— V1 相对路径（三条路径各一行）· V2 名单外岗位 · V3 空串（五键各一行）· V4 超长（三条路径各一行）· V5 类型错（七键逐条 + `at` 不可解析）· V6 `tree_differs` 两个方向不自洽 —— 必须 `E_OFFICE_LEDGER_SHAPE` + `reason` 点名那一格 + **账本字节不变**；合法行必须收（阳性对照，否则"全拒"也能假绿）；两个读者对同一合法行同号（`OFFICE_LEDGER_ROW_VERDICT === null` 且 `lineProblems` 干净）；刀 `V-all` 把写方那处 `shape = OFFICE_LEDGER_ROW_VERDICT(line)` 改成 `shape = null` ⇒ 六类全部被收下 ⇒ 本格红出**恰好** `OFL9-V1…V6`（锚点不在 ⇒ `OFL9-KNIFE-ANCHOR`）', '批次 AO'],
+  ['OFL-09', 'office-ledger', F.ofl, '**值表 V1–V6 的判据**（表在 `CONTRACT-batch15.md` §1.2.1；判词在 `CONTRACT-f11-judge-kind.md` §6）：写方 `recordOfficeLanding` 对六类坏值 —— V1 相对路径（三条路径各一行）· V2 名单外岗位 · V3 空串（五键各一行）· V4 超长（三条路径各一行）· V5 类型错（七键逐条 + `at` 不可解析）· V6 `tree_differs` 两个方向不自洽 —— 必须 `E_OFFICE_LEDGER_SHAPE` + `reason` 点名那一格 + **账本字节不变**；合法行必须收（阳性对照，否则"全拒"也能假绿）；两个读者对同一合法行同号（`OFFICE_LEDGER_ROW_VERDICT === null` 且 `lineProblems` 干净）；**每行还断言 `officeLedgerRowRule(row).rule === Vn`**（机器可读的"哪一条赢"）；键形状与产品 `officeKey` 逐字同号（`OFL9-KEY` 见证）；**逐规则刀** `K-V1`…`K-V6` 各只关一条规则的检查、重跑全部行，按**行标签**比精确翻面集（删 V3 只红 V3 那五行；`at:null` 那一行只是 V5 的 message refinement，子检查在 rule 级不可见）', '批次 AO'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */

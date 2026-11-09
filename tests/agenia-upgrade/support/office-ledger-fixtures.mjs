@@ -24,7 +24,7 @@
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
-import { PATHS } from './env.mjs'
+import { PATHS, FROZEN } from './env.mjs'
 import {
   canonicalOf, chooseOfficeFixtureBase, digestOf, normKey, officeOfPath, officeRunId,
 } from './office-fixtures.mjs'
@@ -193,10 +193,70 @@ export function ledgerLine({ at = '2026-11-08T00:00:00.000Z', role = 'review', t
 }
 
 /**
- * **oracle（判据侧第二读者）**：自己解析一遍账本，不复用产品那个读者的任何一行。
- * 口径与契约 §2.2 逐条对齐（`entries` 只数解析得出来的；坏行进 `unreadable`，不许被吞）。
+ * 判一行账的**值**（契约 §1.2.1 的 V1–V6 + §1.2 的七键闭集）—— oracle 的第二读者，**不 import 产品**。
+ *
+ * 为什么 oracle 需要它：产品读者用 `OFFICE_LEDGER_ROW_VERDICT` 判"这一行合不合规"，坏行计入
+ * `unreadable`；oracle 原来只判"能 JSON.parse + `tree_differs` 是布尔" ⇒ 谁种一行"JSON 合法、值不合规"、
+ * 两个读者就会以 `entries` 不一致的样子打架。这里的判词按契约那张表重写（**不是**抄产品的代码）。
+ *
+ * 返回 `[{ rule, message }]`；空数组 = 合规。`rule` 与产品 `officeLedgerRowRule` 同号
+ * （`SHAPE` / `V1`…`V6`），便于红报文说清"哪一条"。
+ *
+ * @param {object} line
+ * @returns {Array<{rule:string, message:string}>}
  */
-export function oracleLedger(office) {
+export function rowValueProblems(line) {
+  const fail = (rule, message) => [{ rule, message }]
+  if (line === null || typeof line !== 'object' || Array.isArray(line)) return fail('SHAPE', '不是对象')
+  const keys = Object.keys(line)
+  const missing = LEDGER_KEYS.filter((key) => !keys.includes(key))
+  if (missing.length > 0) return fail('SHAPE', `缺键 ${missing.join('/')}`)
+  const lower = keys.map((key) => key.toLowerCase())
+  const body = CONTENT_KEYS.filter((key) => lower.includes(key))
+  if (body.length > 0) return fail('SHAPE', `有正文键 ${body.join('/')}`)
+  const extra = keys.filter((key) => !LEDGER_KEYS.includes(key))
+  if (extra.length > 0) return fail('SHAPE', `多键 ${extra.join('/')}`)
+  // V5 · 类型（七键逐键）
+  if (typeof line.at !== 'string') return fail('V5', 'at 不是字符串')
+  if (typeof line.role !== 'string') return fail('V5', 'role 不是字符串')
+  if (typeof line.tool !== 'string') return fail('V5', 'tool 不是字符串')
+  for (const key of ['landing', 'office_root', 'header_office']) {
+    if (typeof line[key] !== 'string') return fail('V5', `${key} 不是字符串`)
+  }
+  if (typeof line.tree_differs !== 'boolean') return fail('V5', 'tree_differs 不是布尔')
+  // V3 · 空串（五样）
+  for (const key of ['role', 'tool', 'landing', 'office_root', 'header_office']) {
+    if (line[key].trim() === '') return fail('V3', `${key} 是空串`)
+  }
+  // V5 · at 可解析 / tool 枚举
+  if (Number.isNaN(Date.parse(line.at))) return fail('V5', 'at 不可解析')
+  if (line.tool !== 'write' && line.tool !== 'edit') return fail('V5', 'tool 不是 write/edit')
+  // V1 · 绝对（盘符限定 / UNC；根相对也拒）· V4 · 长度
+  for (const key of ['landing', 'office_root', 'header_office']) {
+    const value = line[key]
+    if (!path.isAbsolute(value) || /^[\\/](?![\\/])/.test(value)) return fail('V1', `${key} 不是绝对路径（盘符限定或 UNC）`)
+    if (value.length > 4096) return fail('V4', `${key} 超过 4096 字符`)
+  }
+  // V2 · 在册岗位（`FROZEN.teamRoles` 是 `ROLE_TABLE` 九面的测试侧镜像；**不是** `officeBound` 在编名单）
+  if (!FROZEN.teamRoles.includes(line.role)) return fail('V2', 'role 不在在册岗位里')
+  // V6 · 跨字段（纯字符串 `normKey`；不碰盘）
+  const same = normKey(line.office_root) === normKey(line.header_office)
+  if (line.tree_differs !== !same) return fail('V6', 'tree_differs 与两个 office 不一致')
+  return []
+}
+
+/**
+ * **oracle（判据侧第二读者）**：自己解析一遍账本，不复用产品那个读者的任何一行。
+ * 口径与契约 §2.2 逐条对齐（`entries` 只数**合规**的；坏 JSON / 值不合规的行进 `unreadable`，不许被吞）。
+ *
+ * `valueRules`（默认 `true`）：判不判 §1.2.1 的 V1–V6。
+ *   · 对**产品**读者：必须判（产品读者就判值）—— 否则"值坏行"在两个读者之间会打架。
+ *   · 对 `OFL-06` 的**最小实现**（`CONTROL_SOURCE`，契约 §2 那一层，**不含**值表）：`false` ——
+ *     拿值表去要求一个"按契约 §2 写的最小实现"是拿错了尺子；那一层只判"解析得出来"。
+ * @param {string} office
+ * @param {{valueRules?: boolean}} [options]
+ */
+export function oracleLedger(office, { valueRules = true } = {}) {
   const file = ledgerPathOf(office)
   const out = { ok: true, path: file, exists: false, entries: 0, same_tree: 0, cross_tree: 0, unreadable: 0, warning: null, reason: null, lines: [], malformed: [] }
   if (!existsSync(file)) return out
@@ -211,10 +271,25 @@ export function oracleLedger(office) {
     if (raw.trim() === '') continue
     let line = null
     try { line = JSON.parse(raw) } catch { line = undefined }
-    if (line === null || line === undefined || typeof line !== 'object' || Array.isArray(line) || typeof line.tree_differs !== 'boolean') {
+    if (line === null || line === undefined) {
       out.unreadable += 1
-      out.malformed.push({ line: index + 1, raw: raw.slice(0, 120) })
+      out.malformed.push({ line: index + 1, raw: raw.slice(0, 120), rules: ['PARSE'] })
       continue
+    }
+    if (!valueRules) {
+      // 最小实现那一层：只判"解析得出来 + `tree_differs` 是布尔"（契约 §2 的读数口径）。
+      if (typeof line !== 'object' || Array.isArray(line) || typeof line.tree_differs !== 'boolean') {
+        out.unreadable += 1
+        out.malformed.push({ line: index + 1, raw: raw.slice(0, 120), rules: ['SHAPE'] })
+        continue
+      }
+    } else {
+      const illegal = rowValueProblems(line)
+      if (illegal.length > 0) {
+        out.unreadable += 1
+        out.malformed.push({ line: index + 1, raw: raw.slice(0, 120), rules: illegal.map((p) => p.rule) })
+        continue
+      }
     }
     out.entries += 1
     if (line.tree_differs === true) out.cross_tree += 1
@@ -224,7 +299,7 @@ export function oracleLedger(office) {
   out.warning = out.cross_tree > 0 ? CODES.differs : null
   if (out.unreadable > 0) {
     out.ok = false
-    out.reason = `E_OFFICE_LEDGER_UNREADABLE: ${out.unreadable} 行解析不了（不许当成 0 行）`
+    out.reason = `E_OFFICE_LEDGER_UNREADABLE: ${out.unreadable} 行不合格（不许当成 0 行）`
   }
   return out
 }

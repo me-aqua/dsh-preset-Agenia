@@ -35,7 +35,14 @@ import path from 'node:path'
 import { ENV, PATHS, optionalEnv } from './env.mjs'
 
 // ── 路径口径 ────────────────────────────────────────────────────────────────
-/** 比较用的形状：小写 + 正斜杠 + 去尾斜杠（与契约 §1.1 的 `norm` 同形；不碰盘）。 */
+/**
+ * 比较用的形状：小写 + 正斜杠 + 去尾斜杠（与契约 §1.1 的 `norm` 同形；不碰盘）。
+ *
+ * 🔴 为什么不 import 产品导出的 `officeKey`：本模块是**第二读者**，且按本套件的规矩
+ *    被测对象只能在用例体内**动态** import（缺面 ⇒ 每格红，而不是整个文件在加载期崩）。
+ *    代价是两份实现 —— 所以 `OFL-09` 有一条 `OFL9-KEY` 见证：同一批字符串上
+ *    `normKey(x) === mod.officeKey(x)`，两边一分叉那一格就红（不是靠注释约定）。
+ */
 export function normKey(p) {
   let s = String(p ?? '').replace(/\\/g, '/')
   while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1)
