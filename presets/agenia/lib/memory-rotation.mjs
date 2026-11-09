@@ -111,9 +111,14 @@ export function rotationBlockOf({ snapshot, project, cursor = 0, cursorGeneral, 
 
   const fromProject = picked.filter((e) => e.type === 'project').length
   const lines = picked.map((e) => `- \`${e.id ?? '?'}\` · ${clip(e.text)}`)
+  const exhausted = pool.project.length > 0 && pool.project.length <= projectTake
   const projectNote = pool.project.length === 0
     ? `⚠️ 库里**没有点名「${project || '本项目'}」的条目** ⇒ 这一轮全是通用条目。`
-    : `本项目条目 ${pool.project.length} 条 · 本轮挑中 ${fromProject} 条${picked.length < size ? `（不足 ${size} 条，用通用补齐）` : ''}。`
+    : exhausted
+      // 🔴 F3：项目条目比名额还少 ⇒ 每一轮必然是同一批，**不许把它说成在轮转**
+      ? `本项目只有 ${pool.project.length} 条，**已全部贴出** —— 这几条每轮都会重复（名额 ${projectTake} 条），`
+        + '想让它们轮转得等库里本项目条目多于名额。'
+      : `本项目条目 ${pool.project.length} 条 · 本轮挑中 ${fromProject} 条${picked.length < size ? `（不足 ${size} 条，用通用补齐）` : ''}。`
   const text = [
     `## 记忆轮转（快照 ${version} · 本轮 ${picked.length} 条）`,
     '',
