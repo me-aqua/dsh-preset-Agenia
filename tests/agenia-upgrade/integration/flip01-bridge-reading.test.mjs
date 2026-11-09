@@ -44,10 +44,10 @@
  */
 import { before, test } from 'node:test'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
+import { caseFail, caseHold, preflight, problem, runCase } from '../support/evidence.mjs'
 import { batchBlobs, git, sha256Of as sha256Buf } from '../support/tree-at-commit.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -191,7 +191,44 @@ test('FLIP-01 BRG-07 的翻面读数点名本提交的「面」（面摘要 + �
     }
 
     // ── ② 本提交那一份（git 对象）与它的「面」 ─────────────────────────────────
-    const head = git(['rev-parse', 'HEAD'], { cwd: REPO })
+    // 🔴 F2（技术评审 2026-11-09 P1）：**先证这棵树是不是它自己的仓**。
+    //    判据原来直接 `git rev-parse HEAD`；副本嵌在活树的工作树里 ⇒ git 会一路走到活树的 `.git`，
+    //    于是"判的是哪个提交"变成了"今天活体是哪个提交"，而且两个面摘要碰巧相等时它连红都不红。
+    //    规则：顶层 == REPO ⇒ 活体（照旧）；否则 = 副本 ⇒ **只认显式来历**（环境变量 / 外部导出 JSON），
+    //    没有来历 ⇒ 判不了，绝不落回一个方便的值。
+    const toplevel = git(['rev-parse', '--show-toplevel'], { cwd: REPO })
+    const topPath = toplevel.status === 0 ? String(toplevel.stdout).trim() : ''
+    const isOwnRepo = (() => {
+      if (topPath === '') return false
+      try {
+        return realpathSync(topPath).toLowerCase() === realpathSync(REPO).toLowerCase()
+      } catch {
+        return false
+      }
+    })()
+    const explicitCommit = (() => {
+      const env = String(process.env.AGENIA_COPY_COMMIT ?? '').trim()
+      if (/^[0-9a-f]{40}$/i.test(env)) return env.toLowerCase()
+      const provFile = String(process.env.AGENIA_COPY_PROVENANCE ?? '').trim()
+      if (provFile === '') return null
+      try {
+        const parsed = JSON.parse(readFileSync(provFile, 'utf8'))
+        const fromFile = String(parsed?.commit ?? '').trim()
+        return /^[0-9a-f]{40}$/i.test(fromFile) ? fromFile.toLowerCase() : null
+      } catch {
+        return null
+      }
+    })()
+    if (!isOwnRepo && explicitCommit === null) {
+      // 判不了就判不了 —— 这一格**不许**用活体的 HEAD 顶上。
+      return caseHold('FLIP-PROVENANCE-UNKNOWN',
+        `这一跑读的是一份**副本**（顶层 ${JSON.stringify(topPath)} ≠ 仓库根），而"它是哪个提交导出来的"没有来历：`
+        + '请用 `AGENIA_COPY_COMMIT=<40 hex>` 或 `AGENIA_COPY_PROVENANCE=<导出 JSON 的路径>` 指过来'
+        + '（副本必须是纯树，所以来历不能写在副本里）。不指 ⇒ 这一格判不了，不许猜。')
+    }
+    const head = isOwnRepo
+      ? git(['rev-parse', 'HEAD'], { cwd: REPO })
+      : { status: 0, stdout: `${explicitCommit}\n` }
     const commit = head.status === 0 ? String(head.stdout).trim() : ''
     const revParse = git(['rev-parse', `HEAD:${INJECTOR_REL}`], { cwd: REPO })
     const blobSha = revParse.status === 0 ? String(revParse.stdout).trim() : ''
