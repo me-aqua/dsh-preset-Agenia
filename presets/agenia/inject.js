@@ -213,6 +213,12 @@ const JUDGE_PROPOSAL_CODE = 'E_GUARD_JUDGE_PROPOSAL'
  * 因为注册发生在 `apply()` 里，而那个模块**不许**在顶层 import（理由见下面 `proposalFileToolModule`）。
  */
 const PROPOSAL_FILE_TOOL = 'proposal_file'
+/**
+ * 提维护案那个工具的名字（`maintenance_file`）。
+ * ⚠️ 与 `tools/maintenance-file.mjs` 的 `MAINTENANCE_FILE_TOOL_NAME` 是**同一个字**；这里只能写字面量，
+ * 理由与上面 `PROPOSAL_FILE_TOOL` 相同（那个模块**不许**在顶层 import）。
+ */
+const MAINTENANCE_FILE_TOOL = 'maintenance_file'
 /** 身份被拒的两个码（`CONTRACT-A` §4 冻的名字）。 */
 const IDENTITY_LEADER_CODE = 'E_IDENTITY_LEADER_PRESET'
 const IDENTITY_TOOL_CODE = 'E_IDENTITY_UNKNOWN_TOOL'
@@ -239,8 +245,9 @@ const BACKGROUND_TOOLS = ['job_list', 'job_output', 'job_kill']
 const COMMON_TOOLS = [
   'skill', 'todo_write', 'ask_user_question', 'web_search', 'web_fetch',
   'create_goal', 'get_goal', 'update_goal', 'exit_plan_mode',
-  // 提候选那个工具由这个注入器自己注册（`proposal_file`）—— 判决岗那一份**注册但调用被拒**。
-  'proposal_file',
+  // 两个**动作类**工具由这个注入器自己注册（`proposal_file` / `maintenance_file`）——
+  // 组合文件里没有它们那一行（那一层拿不到数据根）。判决岗那一份 `proposal_file` **注册但调用被拒**。
+  'proposal_file', 'maintenance_file',
 ]
 export const BASE_TOOL_SET = Object.freeze([
   ...FILE_READ_TOOLS, ...FILE_WRITE_TOOLS, ...SHELL_TOOLS, ...BACKGROUND_TOOLS, ...COMMON_TOOLS,
@@ -2420,6 +2427,110 @@ export function proposalFileDefinition(brainRoot) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// 提维护案那个工具（`maintenance_file`）—— 一次调用 = 一份草稿 + 一行入池。
+//
+// 为什么它住在这里、而不是组合里加一行：与 `proposal_file` **同一个理由**（那一族注释在上面）——
+// 数据根（`<内容Dir>/.runtime`）只有注入器知道，组合文件那一层拿不到；`proposal_file` 也是这么落的
+// （组合全文里 `proposal_file` 0 处）。加 cordis 行等于给同一件事上第二个载体。
+//
+// 🔴 它**对所有角色都注册**：这份预设的 `ROLE_TABLE` 每一条 `tools` 都是 `BASE_TOOL_SET` 的副本，
+//    而名字进了 `COMMON_TOOLS` ⇒ 九条一起拿到（复核岗 `memory-review` 就是靠这一条拿到的）。
+//    它没有"判决岗不许"的那一格：判决岗要判维护案，`proposal_file` 那条 deny 只管候选（`deny: ['proposal']`）。
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 工具的实现模块：**按需**加载（`await import`，不是顶层 import）。
+ * 理由与 `proposalFileToolModule` 逐字相同：那二十来份脑库不许挂到人格注入的顶层。
+ */
+let maintenanceFileModule = null
+async function maintenanceFileToolModule() {
+  if (maintenanceFileModule === null) {
+    maintenanceFileModule = await import(new URL('./tools/maintenance-file.mjs', import.meta.url).href)
+  }
+  return maintenanceFileModule
+}
+
+/**
+ * `maintenance_file` 的工具定义（`ctx.tools.register()` 吃的就是 `ToolDefinition`）。
+ *
+ * ⚠️ **手写这个对象、不调 `defineTool`**：与 `proposalFileDefinition` 同一条理由（预设是"拷一个文件夹"，
+ * 没有 node_modules；`register()` 消费的是裸 JSON Schema）。
+ *
+ * 🔴 `parameters.additionalProperties: true` + 不写 `required` 是刻意的：形状由**工具自己**拒并点名
+ * （`E_MAINTENANCE_SHAPE` 要能指出是 `target_original_text` 还是 `proposed_op`）。在框架那一层挡掉，
+ * 报错就变成框架的话，契约 §2 要的"报文点名那一项"就没了。
+ *
+ * @param {string} dataRoot 数据根（`<内容根>/.runtime`）—— 草稿与候选池都住在它下面
+ *
+ * 为什么导出：不导出就只能隔着整条 `apply()` 验它，而"`output.schema` 能不能被 `ctx.tools.register()`
+ * 吃下"这类事隔着装配验不了（与 `proposalFileDefinition` 同一条理由）。
+ */
+export function maintenanceFileDefinition(dataRoot) {
+  return {
+    name: MAINTENANCE_FILE_TOOL,
+    description:
+      '提一份维护案到共享数据根：一次调用 = 一份草稿文件 + 候选池里一行（kind: maintenance）。'
+      + '草稿住 <数据根>/state/maintenance-drafts/<日>/<草案 id>，**不落在你当前的工作区**；'
+      + '入池之后下一轮的 claim / 冻结池直接看得见它。'
+      + '形参 draft 必填：proposed_op（add / modify / retire / cull / merge / retag）、target_entry_id（必须在当前快照里）、'
+      + 'target_original_text（目标原文全文，逐字）、reason；可选 product_text、source_entry_ids。'
+      + '同一段内容提第二次会被拒（E_MAINTENANCE_DUPLICATE）；草稿 id 由工具发，不许自报。',
+    parameters: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        // ⚠️ 这一格只放**给模型看的散文**：收不收的判据只有一处 —— `tools/maintenance-file.mjs` 的
+        //    `maintenanceFileVerdict`（op 的六个值来自引擎的 switch）。在这里写 `enum` / `required`
+        //    会让框架的 schema 层成为**第二个执行者**：越界的报错就不再是 `E_MAINTENANCE_SHAPE` 点名那一项了。
+        draft: {
+          type: 'object',
+          additionalProperties: true,
+          description: '维护案对象（必填）：proposed_op / target_entry_id / target_original_text / reason，'
+            + '可选 product_text / source_entry_ids；多给别的字段会被拒（报文点名那几个键）',
+          properties: {
+            proposed_op: { type: 'string', description: '六个引擎 op 之一：add / modify / retire / cull / merge / retag' },
+            target_entry_id: { type: 'string', description: '目标条目的 id（必须在当前快照的 entries 里）' },
+            target_original_text: { type: 'string', description: '目标条目的原文全文（逐字，不 trim）—— 只写 id / 摘要会被拒' },
+            reason: { type: 'string', description: '为什么该这么处置（判决那一关要读它）' },
+            product_text: { type: 'string', description: '可选：处置之后这一条的新正文' },
+            source_entry_ids: { type: 'array', items: { type: 'string' }, description: '可选：这一份案引用了哪几条条目' },
+          },
+        },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          ok: { type: 'boolean' },
+          draft_id: { type: 'string', description: '草案 id（工具发：MR-<YYYYMMDD>-<seq:04>）' },
+          path: { type: 'string', description: '草稿文件落在哪（数据根下的绝对路径）' },
+          pool_seq: { type: 'integer', description: '池子编号：池内单调递增、清池后不回落、不是行号' },
+          content_sha256: { type: 'string', description: '内容哈希 = sha256(stableStringify(draft))' },
+          day: { type: 'string' },
+          base_snapshot: { type: 'string', description: '落盘那一刻的当前快照版本' },
+          pool_path: { type: 'string', description: '候选池文件' },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: `已提维护案 ${String(value?.draft_id)}（池子编号 ${String(value?.pool_seq)} · kind: maintenance）\n`
+          + `草稿：${String(value?.path)}\n池子：${String(value?.pool_path)}\n`
+          + '⚠️ 入池**不是受理**：裁不裁归次日判决；下一轮的 claim / 冻结池已经能看见这一条。',
+      }],
+    },
+    async execute(args) {
+      const mod = await maintenanceFileToolModule()
+      // 入参是 `{ draft }`（定形 §二）；draft 是**第一个位置参数**（契约 §1 的冻结签名）。
+      // 少了 draft 这一层 ⇒ 工具自己按 `E_MAINTENANCE_SHAPE` 拒并说清"draft 必须是一个对象"（不静默兜底）。
+      const draft = args === null || typeof args !== 'object' ? undefined : args.draft
+      return mod.maintenanceFileRun(draft, { root: dataRoot })
+    },
+  }
+}
+
 /**
  * @param ctx - 这个 preset 的作用域。
  * @param config - agent.cordis.yml 里那一行的 config 段。
@@ -2888,6 +2999,36 @@ export async function apply(ctx, config = {}) {
     console.error(
       `[agenia] 拿不到 tools.register —— 提候选那个工具（${PROPOSAL_FILE_TOOL}）没有注册上；`
         + '组员没有命令行，提候选就只能写草稿求人代转。',
+    )
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // ③c 注册**动作类**工具：提维护案（`maintenance_file`）。
+  //   与 ③b 同一个模式、同一个 `tools` 服务：一次调用 = 一份草稿落到**数据根** + 池子里一行。
+  //   🔴 为什么必须和 ③b 一起在这里注册：复核岗（`job_memory_review`）拿不到它，就只能手写 JSON，
+  //      落点跟着"它当时在哪个工作区"走（2026-11-08 那 27 份）。工具面由 `COMMON_TOOLS` 决定，
+  //      落点由这里给的**数据根**决定 —— 两样都在这个文件里，缺一样那条病就回来了。
+  //   失败策略同上：注册失败**出声**、绝不拖垮人格注入。
+  // ─────────────────────────────────────────────────────────────
+  if (tools !== undefined && typeof tools.register === 'function') {
+    ctx.effect(
+      () => {
+        try {
+          return tools.register(maintenanceFileDefinition(join(contentDir, RUNTIME_DIR)))
+        } catch (err) {
+          console.error(
+            `[agenia] 工具 ${MAINTENANCE_FILE_TOOL} 注册失败（${String(err?.message ?? err)}）—— `
+              + '这条工具没有；人格注入照旧。复核岗提维护案就只能手写文件，落点又跟着工作区走。',
+          )
+          return undefined
+        }
+      },
+      'agenia：maintenance_file（提维护案）',
+    )
+  } else {
+    console.error(
+      `[agenia] 拿不到 tools.register —— 提维护案那个工具（${MAINTENANCE_FILE_TOOL}）没有注册上；`
+        + '复核岗提维护案就只能手写文件，落点又跟着工作区走。',
     )
   }
 

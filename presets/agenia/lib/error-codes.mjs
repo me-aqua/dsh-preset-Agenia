@@ -17,7 +17,7 @@
  *    `PACKET_CODES`，退出码 5 在本表。）
  *
  * 域：ARG|ROOT|PATH|LOCK|CAS|TXN|STATE|DATA|CAP|STREAK|CS|JOB|CLAIM|FENCE|COVERAGE|RECEIPT|
- *     TICKET|EVIDENCE|STAGE|TASK|ROUTE|GUARD|INSTALL|MANIFEST|PACKET|SCAN|PROPOSAL|INTERNAL
+ *     TICKET|EVIDENCE|STAGE|TASK|ROUTE|GUARD|INSTALL|MANIFEST|PACKET|SCAN|PROPOSAL|MAINTENANCE|INTERNAL
  *
  * 两条纪律：
  *   ① 码名与退出码**不许**在两处各写一份 —— CLI 取 `CODES[code].exit`，测试读 `FROZEN.exitCodes`，
@@ -203,4 +203,17 @@ export const CODES = Object.freeze({
   E_PROPOSAL_DUPLICATE: { exit: 5, zh: '同一句出处 + 同一段正文已经提过（判重键 = (source, sha256(text))）' },
   E_PROPOSAL_IO: { exit: 4, zh: '候选池写不进去（锁争用到超时 / 原子写失败），报文带底层码' },
   E_PROPOSAL_TOO_LONG: { exit: 2, zh: '正文超过每条 400 字的上限（2026-10-18 老板：「以后提案阶段超过400字的不准提」·2026-10-22「不许超」）—— 提候选的工具与两条导入 CLI（proposal / maintenance）共用这一个码；把来历挪进 log.md 再导' },
+
+  // ── 提维护案那个动作（`maintenance_file` 工具）的四个码 ─────────────────────
+  // ⚠️ 与 `E_PROPOSAL_*` 同族：**不是 CLI 退出码** —— 它们由工具抛出（`error.code` + 报文以码开头），
+  //    给 exit 只是为了让 `CODES[code].exit` 有一个确定值。
+  // 🔴 为什么必须进这张表：CLI 的 catch **只认表里有的码**，别的全折成 `E_INTERNAL`
+  //    ⇒「这份维护案该拒」会跟「程序有 bug」在报文里长得一模一样。工具本身不走 CLI，
+  //    但它入池的那一行之后的处置（判决 / 复核 / 报告）会走。
+  // 四格的分工（形状 / 目标 / 重复**必须分开报**）：入参不成形状 · 目标校不了或不在快照里 ·
+  //    同一段内容已经提过 · 池子或落点写不进去。
+  E_MAINTENANCE_SHAPE: { exit: 2, zh: '提维护案的入参不成形状（proposed_op 不在引擎那六个里 / 缺 target_original_text 或 reason / 多给了不认识的字段）' },
+  E_MAINTENANCE_TARGET: { exit: 5, zh: '维护案的目标校不了：当前快照读不到，或 target_entry_id 不在快照的 entries 里（处置没有宾语）' },
+  E_MAINTENANCE_DUPLICATE: { exit: 5, zh: '同一段草稿内容已经提过（判重键 = sha256(stableStringify(draft))，跨 kind、跨天）' },
+  E_MAINTENANCE_IO: { exit: 4, zh: '维护案写不进去（池子锁争用到超时 / 草稿或池行的原子写失败 / 池子读不出来），报文带底层码' },
 })

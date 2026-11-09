@@ -30,7 +30,7 @@
  *      里**两种 kind 都过**的那一层 —— 两条 CLI（`--op maintenance-import` / `--op proposal-import`）
  *      都只经过这里；只挂在其中一支，另一支就是同一个上限下一次静默消失的地方。
  */
-import { mkdirSync, readdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { acquireLock, releaseLock, writeFileAtomic } from './atomic.mjs'
 import { sha256Hex, stableStringify, brainError, judgedLockPath, judgedPath, poolLockPath, poolPath, proposalsArchiveDir, proposalsDir } from './state.mjs'
@@ -708,6 +708,169 @@ export async function appendProposalDeduped(root, spec = {}, options = {}) {
       sha256: record.sha256,
       source,
       kind,
+      payload,
+      bytes: written.bytes,
+    }
+  } finally {
+    releaseLock(poolLockPath(root))
+  }
+}
+
+/**
+ * 尽力删掉一份刚写的文件（回滚用）—— **删之前先自证落点**。
+ *
+ * 契约 §2.5 的三步是：先解析绝对路径 → 校验 marker（那是测试三层里的根标记）→ 校验在 RUN_ID 之下。
+ * 生产这一侧没有 marker 可校：这一处能做的、也**必须**做的，是前一步与最后一步的等价物 ——
+ * 把路径解析成绝对路径，再确认它**就在调用方给的那个数据根之下**（测试跑里 `root` 本身就是
+ * `<RUN_ID>` 那一格，marker 由守卫在入口校验；这一层拿到的只有 root 字符串）。
+ * 不在 root 之下 ⇒ **不删**，回 false（调用方照旧报"写不进去"，报文里带着那个路径）。
+ *
+ * @param {string} file 想删的那个文件
+ * @param {string} root 数据根（删的边界）
+ * @returns {boolean} 真的删了 = true
+ */
+function removeQuietly(file, root) {
+  try {
+    const target = path.resolve(String(file))
+    const base = path.resolve(String(root))
+    if (target === base || !target.startsWith(`${base}${path.sep}`)) return false
+    rmSync(target, { force: true })
+    return true
+  } catch {
+    // 已经在失败路径上：这里再抛一次只会把真正的失败盖掉。
+    return false
+  }
+}
+
+/**
+ * **维护案草稿 + 池行，一次调用两件齐**（`maintenance_file` 工具的落盘口）。
+ *
+ * 骨架与 `appendProposalDeduped` 是同一条（同一把池子锁 → 读池 → 发号 → 原子写），差的只有三处，
+ * 三处都写在这里、**不留第二份**：
+ *   ① **号的形状**：`MR-<YYYYMMDD>-<seq:04>`（这个工具发号，调用方不许自报）。
+ *      不能走 `poolIdOf('maintenance', …)`：那是 `maintenance-…`，而这一条工具的 id 是 `MR-…`。
+ *      ⚠️ 两条路**只选一条**（契约 §4.4）：这里走的是"同族的另一个追加函数"，不改
+ *      `appendProposalDeduped` 的号形状 —— 那条路是别的工具与两条 CLI 在用的。
+ *   ② **判重键**：由 `verdictOf` 交上来（本工具的键是 `content_sha256`、跨 kind 跨天），
+ *      不是这里的 `(source, sha256)`。判重与追加仍在**同一把锁**里。
+ *   ③ **草稿文件先写、池行后写**：文件本身要带 `seq`，所以发号必须早于写文件 ⇒
+ *      "写文件"这一步由 `fileOf` 交进来（它只写文件：不读池、不发号、不碰池行）。
+ *
+ * 两条硬不变量（契约 §5）：
+ *   · **拒绝 = 零写入**：`verdictOf` 说不行的时候，池行与草稿文件一个都还没写。
+ *   · **不许"只有文件"**：池行写失败 ⇒ 删掉刚写的草稿文件，再回写不进去的码。
+ *     （反方向的"只有池行"由次序天然排除：文件先写、池行后写。）
+ *
+ * 错误一律**返回**（不抛）：调用方要把"这份案该拒"与"盘写不进去"分开报，两者都不是"程序坏了"。
+ *
+ * @param {string} root 数据根（`<内容根>/.runtime`）
+ * @param {object} spec
+ *   · `day`（`YYYY-MM-DD`）· `at`（ISO8601，写进 `filed_at` / `imported_at`）
+ *   · `verdictOf({poolEntries, root})` ⇒ `{ok:true, content_sha256, base_snapshot}` | `{ok:false, code, message}`
+ *   · `fileOf({seq, imported_id, content_sha256, base_snapshot})` ⇒ `{ok:true, path}` | `{ok:false, code, message}`
+ *   · `payloadOf({seq, imported_id, source, content_sha256})` ⇒ 池行的 `payload`
+ * @param {{waitMs?: number, retryMs?: number}} [options] 锁等待预算
+ * @returns {Promise<object>} 成功 `{ok:true, imported_id, path, pool_path, seq, content_sha256, base_snapshot, source, bytes}`
+ *   · 被拒 `{ok:false, code, message}`（`code` 原样来自 `verdictOf`）· 写不进去 `{ok:false, code: <底层码>, message}`
+ */
+export async function appendMaintenanceDraftDeduped(root, spec = {}, options = {}) {
+  const { day, at, verdictOf, fileOf, payloadOf } = spec
+  const lock = await acquirePoolLock(root, options)
+  if (!lock.ok) {
+    return { ok: false, code: lock.code, message: `候选池锁拿不到：${lock.message}`, info: lock.info ?? null }
+  }
+  try {
+    const pool = readPool(root)
+    if (!pool.ok) return { ok: false, code: pool.code, message: pool.message, path: pool.path }
+    // 形状 / 目标 / 判重：都在发号之前 ⇒ 被拒的那一次一个字节都不写。
+    const plan = typeof verdictOf === 'function' ? verdictOf({ poolEntries: pool.entries, root }) : null
+    if (plan === null || plan.ok !== true) {
+      return {
+        ok: false,
+        code: plan?.code ?? 'E_INTERNAL',
+        message: plan?.message ?? 'verdictOf 没有给出判词 —— 这一份不落盘',
+        path: pool.path,
+      }
+    }
+    const ceiling = seqCeilingOf(root, { poolEntries: pool.entries, day })
+    if (!ceiling.ok) return { ok: false, code: ceiling.code, message: ceiling.message, path: pool.path }
+    const seq = ceiling.max + 1
+    const importedId = `MR-${String(day).replace(/-/g, '')}-${String(seq).padStart(4, '0')}`
+    const drafted = fileOf({
+      seq,
+      imported_id: importedId,
+      content_sha256: plan.content_sha256,
+      base_snapshot: plan.base_snapshot ?? null,
+    })
+    if (drafted === null || drafted?.ok !== true) {
+      return {
+        ok: false,
+        code: drafted?.code ?? 'E_INTERNAL',
+        message: drafted?.message ?? 'fileOf 没有给出结果 —— 这一份不落盘',
+        path: drafted?.path ?? null,
+      }
+    }
+    // 🔴 从这里往下，草稿文件**已经在盘上**了 ⇒ 任何一条抛出去的路都必须先把它删掉：
+    //    "只有文件、没有池行"正是 2026-11-08 那 27 份的形状（草稿在、判决侧看不见）。
+    //    回调（`payloadOf`）与拼行都在这个 try 里，所以"抛了"与"写失败"走同一个出口。
+    let source
+    let payload
+    let record
+    let written
+    try {
+      // `source` = 草稿文件的**数据根相对路径**（下一轮"这一条从哪来"的唯一线索，且不随机器变）。
+      // 它是从刚落盘的那个路径算出来的 —— 不是手拼的第二个字符串，歪了也对得上盘。
+      source = path.relative(root, drafted.path).split(path.sep).join('/')
+      payload = typeof payloadOf === 'function'
+        ? payloadOf({ seq, imported_id: importedId, source, content_sha256: plan.content_sha256 })
+        : null
+      record = poolRecordOf({
+        kind: 'maintenance',
+        importedId,
+        at,
+        seq,
+        source,
+        // 这条路没有"调用方声明的哈希"：两格放同一个值（写 null 会让草稿完整性那条规则读到假话）。
+        sha256: plan.content_sha256,
+        contentSha256: plan.content_sha256,
+        baseSnapshot: plan.base_snapshot ?? null,
+        // 入池**不是受理**：fence 的宾语是导入信封，判决那一关按它自己那一轮算。
+        updateGeneration: null,
+        reviewAttempt: null,
+        payload,
+      })
+      written = writeFileAtomic(pool.path, poolTextWith(pool, record))
+    } catch (error) {
+      const rolledBack = removeQuietly(drafted.path, root)
+      return {
+        ok: false,
+        code: 'THREW',
+        message: `候选池追加时抛了（${String(error?.name ?? 'Error')}: ${String(error?.message ?? error)}）—— `
+          + `${rolledBack ? '草稿已回滚' : '草稿没删掉（落点校验没过）'}：${drafted.path}`,
+        path: pool.path,
+      }
+    }
+    if (!written.ok) {
+      const rolledBack = removeQuietly(drafted.path, root)
+      return {
+        ok: false,
+        code: written.code,
+        message: `候选池追加失败：${written.message}`
+          + `（${rolledBack ? '草稿已回滚' : '草稿没删掉（落点校验没过）'}：${drafted.path}）`,
+        path: pool.path,
+      }
+    }
+    return {
+      ok: true,
+      code: null,
+      imported_id: importedId,
+      path: drafted.path,
+      pool_path: pool.path,
+      seq,
+      content_sha256: record.content_sha256,
+      sha256: record.sha256,
+      base_snapshot: plan.base_snapshot ?? null,
+      source,
       payload,
       bytes: written.bytes,
     }

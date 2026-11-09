@@ -833,6 +833,40 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     oldDenyInYml ? 'yml / 补丁的有效行里还留着 @member-deny 或 proposalFile'
       : (oldDenyInCode ? 'inject.js 里还留着 config.proposalFile 那条分支' : '干净'))
 
+  // 🔴 2026-11-09（批次 AL）：**由注入器自己注册的两个动作工具**（`proposal_file` / `maintenance_file`）。
+  //    组合文件里没有它们那一行（那一层拿不到数据根 —— `proposal_file` 全文 0 处，先例见它），
+  //    所以它们的"工具面"与"注册"两处都住在 `inject.js`：
+  //      ① 名字进 `COMMON_TOOLS`（`ROLE_TABLE` 每一条的 `tools` 是 `BASE_TOOL_SET` 的副本 ⇒ 九个角色一起拿到）；
+  //      ② `apply()` 里 `tools.register(<x>Definition(<内容根>/.runtime))`。
+  //    这条判据盯的正是这两处：只改一处 ⇒ 那个岗位结构上拿不到那个工具，而散文里到处都写着它的名字。
+  //    来历：「这不是知识层面的事，应该给他对的工具」（2026-11-09 老板）—— 复核岗只有 read/write/edit，
+  //    手写 27 份维护案落进它当时所在的那个工作区，判决侧一行都看不见。
+  const commonToolsBlock = (() => {
+    const at = identitySrc.indexOf('const COMMON_TOOLS = [')
+    if (at < 0) return ''
+    const end = identitySrc.indexOf(']', at)
+    return end < 0 ? '' : identitySrc.slice(at, end + 1)
+  })()
+  const injectorActionTools = [
+    { name: 'proposal_file', definition: 'proposalFileDefinition' },
+    { name: 'maintenance_file', definition: 'maintenanceFileDefinition' },
+  ]
+  const toolFaceMissing = injectorActionTools
+    .filter((t) => !commonToolsBlock.includes(`'${t.name}'`))
+    .map((t) => t.name)
+  yes('preset', '注入器自己注册的两个动作工具都在 COMMON_TOOLS 里（proposal_file / maintenance_file）',
+    commonToolsBlock !== '' && toolFaceMissing.length === 0,
+    commonToolsBlock === '' ? 'inject.js 里找不到 COMMON_TOOLS 那个数组 —— 工具面判不了'
+      : (toolFaceMissing.length === 0 ? '两个都在' : `不在里面的：${toolFaceMissing.join(', ')}`))
+  const registerMissing = injectorActionTools
+    .filter((t) => !identitySrc.includes(`export function ${t.definition}`)
+      || !identitySrc.includes(`tools.register(${t.definition}(`))
+    .map((t) => t.name)
+  yes('preset', '两个动作工具都由 apply() 真的注册（定义导出 + `tools.register(<x>Definition(...))`）',
+    registerMissing.length === 0,
+    registerMissing.length === 0 ? '两个都注册了'
+      : `缺定义或缺注册：${registerMissing.join(', ')}`)
+
   // 旧结构的残留 —— 换预设时最容易留下半截。
   for (const gone of ['process.md', 'DESIGN.md', 'codebase-practices.md', 'persona-plugin']) {
     yes('preset', `旧结构已清干净：没有 ${gone}`, !existsSync(join(PRESET, gone)))
