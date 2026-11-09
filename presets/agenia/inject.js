@@ -3555,9 +3555,18 @@ export async function apply(ctx, config = {}) {
     let cursorProject = 0
     try {
       const raw = JSON.parse(readFileSync(file, 'utf8'))
-      if (Number.isInteger(raw?.cursor_general) && raw.cursor_general >= 0) cursorGeneral = raw.cursor_general
-      else if (Number.isInteger(raw?.cursor) && raw.cursor >= 0) cursorGeneral = raw.cursor
-      if (Number.isInteger(raw?.cursor_project) && raw.cursor_project >= 0) cursorProject = raw.cursor_project
+      // 🔴 F5（技术评审 2026-11-09）：**换快照版本 ⇒ 游标从 0 重来并出声**。
+      //    原来 `snapshot` 只写不读 ⇒ 库里条数一变，游标还停在旧序号上（可能已越过新库的长度）。
+      const snapNow = snapshot?.version ?? null
+      const snapWas = typeof raw?.snapshot === 'string' ? raw.snapshot : null
+      if (snapWas !== null && snapNow !== null && snapWas !== snapNow) {
+        warnOnce('rotation-snapshot-changed', `[agenia] 共享记忆换版（${snapWas} → ${snapNow}）`
+          + ' ⇒ 记忆轮转的游标从 0 重来（旧的序号在新库里没有意义）。')
+      } else {
+        if (Number.isInteger(raw?.cursor_general) && raw.cursor_general >= 0) cursorGeneral = raw.cursor_general
+        else if (Number.isInteger(raw?.cursor) && raw.cursor >= 0) cursorGeneral = raw.cursor
+        if (Number.isInteger(raw?.cursor_project) && raw.cursor_project >= 0) cursorProject = raw.cursor_project
+      }
     } catch (error) {
       if (error?.code !== 'ENOENT') {
         warnOnce('rotation-cursor', `[agenia] 记忆轮转的游标读不出来（${file}）—— 这一轮从 0 开始。`)
