@@ -1,6 +1,10 @@
 /**
  * `OFL-*`（batch 15 · `bug-20261107-10`）的**夹具拓扑** + **判据侧第二读者（oracle）** + **阳性对照** + **七把刀**。
  *
+ * 批次 AM（Gate 2 · `OFL-07`）追加：**读者那三个面**（最后一行半截 / 中间行坏 / 干净）的阳性对照
+ * `READER_CONTROL_SOURCE` 与两把刀 `READER_KNIVES`。它们**不改**上面那份 `CONTROL_SOURCE`
+ * （那一份没有 `partial_tail` 的概念，`OFL-06` 的七把刀只在它上面切）。
+ *
  * 契约：`.team/test/2026-11-08/CONTRACT-batch15.md`（§一 账本形状 / §二 接口面 / §三 读数 / §四 用例与刀 / §五 边界）。
  * 定形：`.team/leader/2026-11-08/定形-batch15.md`。
  *
@@ -392,6 +396,94 @@ export const CONTROL_SOURCE = [
   '}',
   '',
 ].join('\n')
+
+// ── `OFL-07`（F11 · `partial_tail`）的**阳性对照**与**两把刀** ─────────────────
+/**
+ * `OFL-07` 的对照读者：照 `.team/test/2026-11-09/CONTRACT-f11-judge-kind.md` §1 写的最小实现。
+ *
+ * 为什么单独一份、不改 `CONTROL_SOURCE`：那一份的读者（`OFL-06` 的七把刀切它）**只数 `unreadable`**，
+ * 没有 `partial_tail` 这个概念。把 F11 的面塞进同一份，会让 `OFL-06` 的七把刀凭空多出一种行为
+ * （刀不咬的句子就变成"看起来咬到了"）。⇒ 这一格自带读者：**同一段断言喂给它必须三面全绿**。
+ */
+export const READER_CONTROL_SOURCE = [
+  '/** OFL-07 阳性对照：账本读者（最后一行半截 / 中间行坏 / 干净 三面）。不是生产代码。 */',
+  "import { existsSync, readFileSync } from 'node:fs'",
+  "import { join } from 'node:path'",
+  '',
+  "export const OFFICE_LANDING_LEDGER_REL = 'state/office-landings.jsonl'",
+  '',
+  'export function officeLandingLedgerPath(officeRoot) {',
+  "  return join(String(officeRoot), 'state', 'office-landings.jsonl')",
+  '}',
+  '',
+  'export function officeLandingLedger(officeRoot) {',
+  '  const path = officeLandingLedgerPath(officeRoot)',
+  '  const out = { ok: true, path, exists: false, entries: 0, same_tree: 0, cross_tree: 0, unreadable: 0, partial_tail: 0, warning: null, reason: null, lines: [] }',
+  '  if (!existsSync(path)) return out',
+  '  out.exists = true',
+  '  let text = ""',
+  '  try { text = readFileSync(path, "utf8") } catch (err) { out.ok = false; out.reason = "E_OFFICE_LEDGER_UNREADABLE: 读不动（" + String(err?.code ?? err) + "）"; return out }',
+  '  const raw = String(text).split("\\n")',
+  '  const nonEmpty = raw.filter((line) => line.trim() !== "")',
+  '  const bad = []',
+  '  const partial = []',
+  '  for (let index = 0; index < raw.length; index += 1) {',
+  '    const line = raw[index]',
+  '    if (line.trim() === "") continue',
+  '    let row = null',
+  '    try { row = JSON.parse(line) } catch { row = null }',
+  '    const isLast = index === raw.length - 1',
+  '    if (row === null) {',
+  '      if (isLast && nonEmpty.length > 1) { partial.push(index + 1); continue }',
+  '      out.unreadable += 1',
+  '      bad.push(index + 1)',
+  '      continue',
+  '    }',
+  '    if (typeof row !== "object" || Array.isArray(row) || typeof row.tree_differs !== "boolean") { out.unreadable += 1; bad.push(index + 1); continue }',
+  '    out.entries += 1',
+  '    if (row.tree_differs === true) out.cross_tree += 1',
+  '    else out.same_tree += 1',
+  '    out.lines.push(row)',
+  '  }',
+  '  out.warning = out.cross_tree > 0 ? "OFFICE_TREE_DIFFERS" : null',
+  '  if (partial.length > 0) {',
+  '    out.partial_tail = partial.length',
+  '    out.ok = false',
+  '    out.reason = "E_OFFICE_LEDGER_UNREADABLE: 最后一行写了一半（第 " + partial.join("、") + " 行）"',
+  '  }',
+  '  if (bad.length > 0) {',
+  '    out.ok = false',
+  '    out.reason = "E_OFFICE_LEDGER_UNREADABLE: " + bad.length + " 行不合格（第 " + bad.join("、") + " 行）"',
+  '  }',
+  '  return out',
+  '}',
+  '',
+].join('\n')
+
+/**
+ * `OFL-07` 的两把刀：**同一段三面断言**喂给切过的读者，必须各翻自己那一面。
+ *
+ * 刀只切**对照**（`READER_CONTROL_SOURCE`）—— 这一点与 `OFL-06` 的七把刀同一个口径：
+ * 判据翻得动面，才谈得上"产品这一面被守住了"。`want` 是**精确集合**（多翻 = 刀切宽了）。
+ */
+export const READER_KNIVES = [
+  {
+    id: 'R1',
+    label: '每一行解析不了都算 `partial_tail`（把中间坏行也算成"写了一半"）',
+    delta: '`if (isLast && nonEmpty.length > 1) { partial.push(index + 1); continue }` → `{ partial.push(index + 1); continue }`',
+    find: '      if (isLast && nonEmpty.length > 1) { partial.push(index + 1); continue }',
+    replace: '      { partial.push(index + 1); continue }',
+    want: ['OFL7-MIDDLE-CORRUPT'],
+  },
+  {
+    id: 'R2',
+    label: '一行 `partial_tail` 都不数（半截最后一行退化成 `unreadable`）',
+    delta: '`if (isLast && nonEmpty.length > 1) { ... }` → `if (false && isLast && ...)`',
+    find: '      if (isLast && nonEmpty.length > 1) { partial.push(index + 1); continue }',
+    replace: '      if (false && isLast && nonEmpty.length > 1) { partial.push(index + 1); continue }',
+    want: ['OFL7-LAST-HALF'],
+  },
+]
 
 /**
  * 七把刀（契约 §4.3）。每把**只切一个开关**；锚点必须恰好命中 1 处（`knifeReplace` 判）。

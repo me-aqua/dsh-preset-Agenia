@@ -57,9 +57,10 @@ import { FROZEN, PATHS } from '../support/env.mjs'
 import { importStaged, readStagedText } from '../support/sut.mjs'
 import { buildCatalog, buildContentRoot, configFromComposition, importSourceCopy, loadInjector } from '../support/injector-harness.mjs'
 import {
-  CODES, CONTENT_MARKER, CONTROL_SOURCE, KNIVES, LEDGER_REL, applyKnife, bytesOf, callReading, controlCatalog,
-  dropLedgerWrite, ensureLedgerFixtures, fixtureReadings, ledgerLine, ledgerPathOf, ledgerSampleProblems,
-  lineProblems, oracleLedger, readLedgerText, seedLedger, withGuardSubject, agentIn, writeStandaloneCopy,
+  CODES, CONTENT_MARKER, CONTROL_SOURCE, KNIVES, LEDGER_REL, READER_CONTROL_SOURCE, READER_KNIVES,
+  applyKnife, bytesOf, callReading, controlCatalog, dropLedgerWrite, ensureLedgerFixtures, fixtureReadings,
+  ledgerLine, ledgerPathOf, ledgerSampleProblems, lineProblems, oracleLedger, readLedgerText, seedLedger,
+  withGuardSubject, agentIn, writeStandaloneCopy,
 } from '../support/office-ledger-fixtures.mjs'
 
 /** 受试者的假会话 id（装配一次，多次调用；岗位由 `header.toolName` 决定）。 */
@@ -465,6 +466,128 @@ async function officeRow5({ mod, fx, subject, tag }) {
   return out
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// `OFL-07`（F11）：**半截的最后一行**与**中间坏行**必须是两个读数
+//   · (a) 最后一行写了一半 ⇒ `partial_tail > 0` · `unreadable === 0` · `ok:false` · `reason` 点名"写了一半"；
+//   · (b) 中间一行坏   ⇒ `unreadable > 0` · `partial_tail === 0` · `ok:false` · `reason` 点名"不合格"；
+//   · (c) 干净账本     ⇒ 两个 0 且 `ok:true`。
+//   `ok:false` 两格是"诚实上限"：**报告了**（不是静默容忍一个坏尾行）。
+//   三个面的码各自独立（`OFL7-LAST-HALF` / `OFL7-MIDDLE-CORRUPT` / `OFL7-CLEAN`），
+//   两把刀（`READER_KNIVES`）各翻自己那一面 —— 刀只切**对照读者**，判据本体只在这一处。
+// ─────────────────────────────────────────────────────────────────────────────
+/** "写了一半"这一面的措辞标记（产品 / 对照的 reason 至少命中一个）。 */
+const HALF_WRITTEN_MARKERS = ['写了一半', 'half-written', 'half written']
+/** "坏行"这一面的措辞标记 —— 两面**不许互相命中**（混成一句就是"分不开"）。 */
+const CORRUPT_MARKERS = ['不合格', '坏行', 'corrupt', 'unparsable']
+const containsAnyMarker = (text, markers) => markers.some((marker) => String(text).toLowerCase().includes(marker.toLowerCase()))
+
+/** 三面各自的账：**每格一棵树**（账本天然是空的）。 */
+function seedReaderFaces(fx) {
+  const [lastHalf, middleBad, clean] = fx.trees
+  const first = ledgerLine({ landing: path.join(lastHalf.office, 'review', 'a.md'), officeRoot: lastHalf.office, headerOffice: lastHalf.office, treeDiffers: false })
+  const second = ledgerLine({ landing: path.join(lastHalf.office, 'review', 'b.md'), officeRoot: lastHalf.office, headerOffice: lastHalf.office, treeDiffers: false })
+  // (a) 一行合法 + 最后一行**没有换行**的半截 JSON —— 并发写没写完的形状。
+  seedLedger(lastHalf.office, { raw: `${JSON.stringify(first)}\n{"at": "2026-11-09T0` })
+  // (b) 第一行合法 + **中间**一行坏 JSON + 最后一行合法。
+  seedLedger(middleBad.office, { raw: `${JSON.stringify(first)}\n{"at": "2026-11-09T0\n${JSON.stringify(second)}\n` })
+  // (c) 两行合法。
+  seedLedger(clean.office, { lines: [first, second] })
+  return { lastHalf, middleBad, clean }
+}
+
+/** 只留读数里那几格（`lines` 不进证据，免得把整本账抄进去）。 */
+function readerReadingOf(read) {
+  if (read === null || typeof read !== 'object') return read
+  const { lines, ...rest } = read
+  return rest
+}
+
+/**
+ * 同一段三面断言 —— 产品、阳性对照、两把刀**喂的是这一份**。
+ * @returns {{problems: Array<{code:string,message:string}>, readings: object}}
+ */
+async function readerFaces({ mod, fx, label }) {
+  const out = []
+  const readings = {}
+  if (typeof mod?.officeLandingLedger !== 'function') {
+    out.push(problem('OFL7-READER-MISSING', `${label}：没有 \`officeLandingLedger\` —— 这一格没有读者可判`))
+    return { problems: out, readings }
+  }
+  const trees = seedReaderFaces(fx)
+  const readOf = (tree, face) => {
+    try {
+      return mod.officeLandingLedger(tree.office)
+    } catch (err) {
+      out.push(problem('OFL7-READER-THREW', `${label}/${face} 抛了：${String(err?.message ?? err).slice(0, 200)}`))
+      return null
+    }
+  }
+  const a = readOf(trees.lastHalf, 'last-half')
+  const b = readOf(trees.middleBad, 'middle-bad')
+  const c = readOf(trees.clean, 'clean')
+  readings.last_half = readerReadingOf(a)
+  readings.middle_bad = readerReadingOf(b)
+  readings.clean = readerReadingOf(c)
+
+  // (a) 最后一行写了一半
+  {
+    const d = []
+    if (a === null || typeof a !== 'object') d.push('读者没返回对象')
+    else {
+      for (const key of ['exists', 'entries', 'unreadable', 'partial_tail', 'ok', 'reason']) {
+        if (!(key in a)) d.push(`读数缺键 \`${key}\``)
+      }
+      if (a.exists !== true) d.push(`exists 必须 true（账本已种下）实得 ${JSON.stringify(a.exists)}`)
+      if (a.partial_tail !== 1) d.push(`最后一行半截 ⇒ \`partial_tail\` 应为 1（>0），实得 ${JSON.stringify(a.partial_tail)}`)
+      if (a.unreadable !== 0) d.push(`半截最后一行不是"中间行坏" ⇒ \`unreadable\` 应为 0，实得 ${JSON.stringify(a.unreadable)}`)
+      if (a.entries !== 1) d.push(`半截之前那一行合法 ⇒ \`entries\` 应为 1，实得 ${JSON.stringify(a.entries)}`)
+      if (a.ok !== false) d.push(`半行必须让 \`ok:false\`（"报告了"不等于"容忍"），实得 ${JSON.stringify(a.ok)}`)
+      const reason = String(a.reason ?? '')
+      if (!containsAnyMarker(reason, HALF_WRITTEN_MARKERS)) d.push(`reason 没点名"写了一半"：${JSON.stringify(reason.slice(0, 200))}`)
+      if (containsAnyMarker(reason, CORRUPT_MARKERS)) d.push(`reason 把半截说成了坏行（两个面混成一句）：${JSON.stringify(reason.slice(0, 200))}`)
+    }
+    if (d.length > 0) out.push(problem('OFL7-LAST-HALF', `${label}：${d.join(' · ')}`))
+  }
+  // (b) 中间一行坏
+  {
+    const d = []
+    if (b === null || typeof b !== 'object') d.push('读者没返回对象')
+    else {
+      for (const key of ['exists', 'entries', 'unreadable', 'partial_tail', 'ok', 'reason']) {
+        if (!(key in b)) d.push(`读数缺键 \`${key}\``)
+      }
+      if (b.exists !== true) d.push(`exists 必须 true（账本已种下）实得 ${JSON.stringify(b.exists)}`)
+      if (b.unreadable !== 1) d.push(`中间一行坏 ⇒ \`unreadable\` 应为 1（>0），实得 ${JSON.stringify(b.unreadable)}`)
+      if (b.partial_tail !== 0) d.push(`中间行坏不是"最后一行写了一半" ⇒ \`partial_tail\` 必须 0，实得 ${JSON.stringify(b.partial_tail)}`)
+      if (b.entries !== 2) d.push(`坏行两侧各一行合法 ⇒ \`entries\` 应为 2，实得 ${JSON.stringify(b.entries)}`)
+      if (b.ok !== false) d.push(`坏行必须让 \`ok:false\`，实得 ${JSON.stringify(b.ok)}`)
+      const reason = String(b.reason ?? '')
+      if (!containsAnyMarker(reason, CORRUPT_MARKERS)) d.push(`reason 没点名"行不合格"：${JSON.stringify(reason.slice(0, 200))}`)
+      if (containsAnyMarker(reason, HALF_WRITTEN_MARKERS)) d.push(`reason 把中间坏行说成了"写了一半"（两个面混成一句）：${JSON.stringify(reason.slice(0, 200))}`)
+    }
+    if (d.length > 0) out.push(problem('OFL7-MIDDLE-CORRUPT', `${label}：${d.join(' · ')}`))
+  }
+  // (c) 干净账本
+  {
+    const d = []
+    if (c === null || typeof c !== 'object') d.push('读者没返回对象')
+    else {
+      for (const key of ['entries', 'unreadable', 'partial_tail', 'ok', 'reason']) {
+        if (!(key in c)) d.push(`读数缺键 \`${key}\``)
+      }
+      if (c.entries !== 2) d.push(`两行合法 ⇒ \`entries\` 应为 2，实得 ${JSON.stringify(c.entries)}`)
+      if (c.partial_tail !== 0) d.push(`干净账本 ⇒ \`partial_tail\` 应为 0，实得 ${JSON.stringify(c.partial_tail)}`)
+      if (c.unreadable !== 0) d.push(`干净账本 ⇒ \`unreadable\` 应为 0，实得 ${JSON.stringify(c.unreadable)}`)
+      if (c.ok !== true) d.push(`干净账本 ⇒ \`ok:true\`，实得 ${JSON.stringify(c.ok)}`)
+      if (c.reason !== null) d.push(`干净账本不该有 reason，实得 ${JSON.stringify(c.reason)}`)
+    }
+    if (d.length > 0) out.push(problem('OFL7-CLEAN', `${label}：${d.join(' · ')}`))
+  }
+  return { problems: out, readings }
+}
+
+const codesOfProblems = (problems) => [...new Set((problems ?? []).map((p) => p.code))].sort()
+
 const ROWS = [
   ['row1', officeRow1, 1],
   ['row2', officeRow2, 1],
@@ -730,6 +853,79 @@ describe('unit · office landing ledger (OFL) · bug-20261107-10', () => {
           }
         }
       }
+      caseFail(out)
+    })
+  })
+
+  test('OFL-07 半行与坏行必须解释得不一样：最后一行半截 ⇒ partial_tail（unreadable 0）· 中间行坏 ⇒ unreadable（partial_tail 0）· 干净 ⇒ 两个 0；两格都 ok:false；两把刀各翻一面', async () => {
+    await runCase('OFL-07', async (rec) => {
+      const out = []
+      const push = (code, message) => out.push(problem(code, message))
+      // ── ① 产品读者（staged `inject.js`）：三个面各一棵空树 ────────────────
+      const fx = ensureLedgerFixtures({ caseId: 'OFL-07', trees: 3 })
+      rec.readings.fixtures = fixtureReadings(fx)
+      if (!fixtureGate(rec, fx, push)) { caseFail(out); return }
+      const mod = await loadSubject(push)
+      if (mod !== null) {
+        const product = await readerFaces({ mod, fx, label: '产品读者' })
+        out.push(...product.problems)
+        rec.readings.product = product.readings
+        rec.readings.product_codes = codesOfProblems(product.problems)
+      }
+
+      // ── ② 阳性对照 + 两把刀（只切对照；判据本体就是上面那一段）────────────
+      const base = path.join(caseDir('OFL-07'), 'ofl07')
+      const controlFx = ensureLedgerFixtures({ caseId: 'OFL-07-control', trees: 3 })
+      if (!controlFx.ok || ledgerSampleProblems(controlFx).length > 0) {
+        push('OFL7-SAMPLE-MISSING', `阳性对照的夹具建不出来：${JSON.stringify(controlFx.problems ?? [])}`)
+        caseFail(out)
+        return
+      }
+      const control = await importSourceCopy({ dir: path.join(base, 'control'), source: READER_CONTROL_SOURCE })
+      if (!control.ok) {
+        push('OFL7-CONTROL-UNAVAILABLE', `阳性对照 import 不了：${control.code} ${control.why}`)
+        caseFail(out)
+        return
+      }
+      const controlResult = await readerFaces({ mod: control.mod, fx: controlFx, label: '阳性对照' })
+      const controlCodes = codesOfProblems(controlResult.problems)
+      rec.readings.control = { codes: controlCodes, readings: controlResult.readings }
+      if (controlCodes.length > 0) {
+        push('OFL7-CONTROL-NOT-GREEN', `阳性对照自己没有全绿（${JSON.stringify(controlCodes)}）—— 判据不可满足，先修尺子：`
+          + JSON.stringify(controlResult.problems.map((p) => p.message.slice(0, 120))))
+      }
+      const knifeRows = {}
+      for (const knife of READER_KNIVES) {
+        const row = { label: knife.label, delta: knife.delta, want: [...knife.want].sort(), codes: null }
+        knifeRows[knife.id] = row
+        const cut = applyKnife(READER_CONTROL_SOURCE, knife)
+        if (!cut.ok) {
+          row.control = { ok: false, code: cut.code, why: cut.why }
+          push('OFL7-KNIFE-ANCHOR', `${knife.id} 在对照上没有落点：${cut.code} ${cut.why} —— 尺子坏了，不许当成"刀咬了"`)
+          continue
+        }
+        const knifeFx = ensureLedgerFixtures({ caseId: `OFL-07-${knife.id}`, trees: 3 })
+        if (!knifeFx.ok || ledgerSampleProblems(knifeFx).length > 0) {
+          push('OFL7-SAMPLE-MISSING', `刀 ${knife.id} 的夹具建不出来：${JSON.stringify(knifeFx.problems ?? [])}`)
+          continue
+        }
+        const mutant = await importSourceCopy({ dir: path.join(base, `knife-${knife.id}`), source: cut.source })
+        if (!mutant.ok) {
+          push('OFL7-KNIFE-IMPORT', `${knife.id}：切过的对照 import 不了（那不是"咬到了"，是换个崩法）：${mutant.why}`)
+          continue
+        }
+        const mutantResult = await readerFaces({ mod: mutant.mod, fx: knifeFx, label: `刀 ${knife.id}` })
+        const codes = codesOfProblems(mutantResult.problems)
+        row.codes = codes
+        row.readings = mutantResult.readings
+        if (JSON.stringify(codes) !== JSON.stringify(row.want)) {
+          const onlyActual = codes.filter((c) => !row.want.includes(c))
+          const onlyWant = row.want.filter((c) => !codes.includes(c))
+          push('OFL7-KNIFE-VECTOR', `${knife.id}：翻面集与期望不同（多翻 ${JSON.stringify(onlyActual)} · 少翻 ${JSON.stringify(onlyWant)}）`
+            + ` —— 多翻 = 刀切宽了，少翻 = 那一面没人守；实测 ${JSON.stringify(codes)}，期望 ${JSON.stringify(row.want)}`)
+        }
+      }
+      rec.readings.knives = knifeRows
       caseFail(out)
     })
   })
