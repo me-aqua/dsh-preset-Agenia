@@ -364,6 +364,12 @@ export const COMMON_SENSE_CODES = {
   unreadable: 'SURF-COMMON-SENSE-UNREADABLE',
   /** 注入器那一侧**不出声**（读不到 / 空文件时不警告）—— 见 `commonSenseSayNeedles`。 */
   silent: 'SURF-COMMON-SENSE-SILENT',
+  /** 代码里**既没有注入那一节、也没有声明"撤注入"** —— 两个合法状态一个都不在。 */
+  declMissing: 'SURF-COMMON-SENSE-DECL-MISSING',
+  /** 状态 (b)：声明里点名的**替代载体**不在盘上（点了名就必须真有那个模块）。 */
+  carrierMissing: 'SURF-COMMON-SENSE-CARRIER-MISSING',
+  /** 注入那一节的代码信号与"撤注入"声明**同时在** —— 两个状态互斥，读不出一个答案。 */
+  ambiguous: 'SURF-COMMON-SENSE-AMBIGUOUS',
   /** 量具自证（合成事实那一组对不上）。 */
   control: 'SURF-COMMON-SENSE-CONTROL',
 }
@@ -379,7 +385,7 @@ export const COMMON_SENSE_CODES = {
  * @returns {{problems: Array<{code:string,message:string,detail:object|null}>,
  *            readings: {status:string|null, bytes:number|null, chars:number|null, path:string|null}}}
  */
-export function commonSenseFileProblems({ read, where = '真那份常识文件', path: filePath = null }) {
+export function commonSenseFileProblems({ read, where = '真那份常识文件', path: filePath = null, state = null }) {
   const problems = []
   const readings = { status: null, bytes: null, chars: null, path: filePath }
   let r
@@ -395,7 +401,8 @@ export function commonSenseFileProblems({ read, where = '真那份常识文件',
   if (status === 'missing') {
     problems.push({
       code: COMMON_SENSE_CODES.missing,
-      message: `${whereText} **不在盘上**。它是常识那一份正文（老板直写、Agenia 只读）：`
+      message: `${whereText} **不在盘上**${state === 'removed' ? '（代码已声明撤注入，而声明同时说它「留在盘上」——**声明与事实相反**）' : ''}。`
+        + '它是常识那一份正文（老板直写、Agenia 只读）：'
         + '注入器读不到它就**只出声一次、这一节不注入** —— 于是每一份包都静默薄成「style + 时间行」，'
         + '没有红、没有停，只有一条 warn（老板 2026-10-22 报的就是这个毛病）。'
         + '`SURF-01` / `SURF-03` 那张 13 份名单**盖不住它**：那张名单的根是内容根（`*.md` + `team/*.md`），'
@@ -419,7 +426,9 @@ export function commonSenseFileProblems({ read, where = '真那份常识文件',
       problems.push({
         code: COMMON_SENSE_CODES.empty,
         message: `${whereText} 是**空壳**：${readings.bytes === null ? '' : `${readings.bytes} 字节、`}去掉空白后 **0 个字符**。`
-          + '文件在盘上、内容等于没有：注入器读到空正文 ⇒ 这一节不注入（同样只有一条 warn）。'
+          + (state === 'removed'
+            ? '文件在盘上、但**内容等于没有**：代码已声明撤注入，而声明说它「原文留在盘上、字节不动」—— 空壳与声明相反。'
+            : '文件在盘上、内容等于没有：注入器读到空正文 ⇒ 这一节不注入（同样只有一条 warn）。')
           + '口径与 `SURF-03` 同一把尺子：**去掉空白后非空**，不是 `bytes >= 2`'
           + '（Windows 上 `\\r\\n` 恰好 2 字节、一个 BOM 3 字节，都会被 `bytes >= 2` 放过）',
         detail: { path: filePath, where, bytes: readings.bytes, chars },
@@ -523,6 +532,180 @@ export function commonSenseSayNeedles(src) {
     })
   }
   return { problems, readings }
+}
+
+// ── ①c 的二选一：状态 (a) 注入 / 状态 (b) 撤注入（`F-135` · 2026-11-09 重瞄）──────────
+/**
+ * 两个**代码信号**（都是"代码面"上的，注释不算）：
+ *   · 注入那一节还在（`共享记忆 · 常识` / `commonSenseOf(` / `tail-common-sense` 任一）；
+ *   · "撤注入"的声明在（原文里，注释保留）。
+ * 两个状态互斥：都在 ⇒ `ambiguous`；都不在 ⇒ `neither`。
+ */
+const BLOCK_CODE_MARKERS = [/共享记忆\s*·\s*常识/, /commonSenseOf\s*\(/, /tail-common-sense/]
+const DECL_DECISION = /老板\s*2026-11-09\s*[：:]\s*「常识可以整个撤了」/
+const DECL_CARRIER = /替代载体[^\n]{0,160}?`([^`\n]+)`/
+const DECL_FILE_STAYS = /common-sense\.md[^\n]{0,80}(留在盘上|字节不动)/
+
+/**
+ * 把 **`memory` 那一节**的正文从"代码面"里剔掉（只剔这一个函数，别的一律不动）。
+ *
+ * 为什么要剔：`共享记忆 · 常识` 这个标题在 `inject.js` 里活着**两处载体**——
+ *   ① 尾巴那一刀（`commonSenseOf()` / `parts.push(sense)`，**2026-11-09 已撤**）；
+ *   ② `memory` 快照那一节（`sharedMemoryText`，**组员侧照旧拼**，`presets-two` 的 `SIDE-MEMORY`
+ *      专门要求它在）。②是**另一条载体**，不是被撤掉的那一条 —— 拿标题当"注入信号"会把它算进来，
+ *      于是"声明齐了"与"标题还在"同时在 ⇒ 这一格**永远是 `ambiguous`**（改之前实测：`state: "ambiguous"`）。
+ *      ⚠️ 剔的失败方向是**报警**，不是静默绿：`sharedMemoryText` 一旦改名，标题又会被算成注入信号 ⇒ 红。
+ */
+const stripMemberMemoryCarrier = (code) => code.replace(/async\s+function\s+sharedMemoryText\s*\([\s\S]*?\n\}/, '')
+
+/** @returns {'injected'|'removed'|'neither'|'ambiguous'} */
+export function commonSenseStateOf(src) {
+  const raw = String(src ?? '')
+  const code = stripMemberMemoryCarrier(stripComments(raw))
+  const block = BLOCK_CODE_MARKERS.some((re) => re.test(code))
+  // 声明有两个信号就够"宣布过"：完整与否由 `commonSenseCarrierVerdict` 判（缺一样 ⇒ DECL-MISSING）。
+  const declared = DECL_DECISION.test(raw) || /替代载体/.test(raw)
+  if (block && declared) return 'ambiguous'
+  if (block) return 'injected'
+  if (declared) return 'removed'
+  return 'neither'
+}
+
+/**
+ * `SURF-03` 的 `F-135` 子块：**两个合法状态二选一**。
+ *
+ * @param {{src: string,
+ *          fileFact: {status:'ok', text:string, bytes?:number}|{status:'missing'}|{status:'unreadable', error?:string},
+ *          carrierExists: (rel: string) => boolean,
+ *          where?: string, filePath?: string|null}} args
+ * @returns {{problems: Array<{code:string,message:string,detail:object|null}>, readings: object}}
+ */
+export function commonSenseCarrierVerdict({ src, fileFact, carrierExists, where = '真那份常识', filePath = null }) {
+  const problems = []
+  const raw = String(src ?? '')
+  const state = commonSenseStateOf(raw)
+  const file = commonSenseFileProblems({ read: () => fileFact, path: filePath ?? where, where, state })
+  for (const p of file.problems) problems.push(p)
+  const declaration = {
+    decision: DECL_DECISION.test(raw),
+    carrier: (DECL_CARRIER.exec(raw) ?? [])[1] ?? null,
+    file_stays: DECL_FILE_STAYS.test(raw),
+  }
+  const readings = { state, file: file.readings, declaration, carrier_exists: null, say: null }
+  if (state === 'ambiguous') {
+    problems.push({
+      code: COMMON_SENSE_CODES.ambiguous,
+      message: '`inject.js` 里**同时**有"常识注入那一节"的代码信号与"撤注入"的声明 —— 两个合法状态互斥，'
+        + '读代码的人与跑代码的人会拿到两个答案。修法：只留一个状态（要么真的注入，要么撤掉并声明）',
+      detail: { state },
+    })
+  } else if (state === 'neither') {
+    problems.push({
+      code: COMMON_SENSE_CODES.declMissing,
+      message: '`inject.js` 里**既没有常识注入那一节、也没有"撤注入"的声明** —— 两个合法状态一个都不在：'
+        + '读者分不出"这一节从来没注入过"与"有人把它删了却没说"。'
+        + '状态 (a)：把那一节装回去（读不到 / 空文件时出声）；状态 (b)：在代码里写明'
+        + '「老板 2026-11-09：常识可以整个撤了」+ `替代载体 = <模块路径>` + `common-sense.md` 原文留在盘上',
+      detail: { state },
+    })
+  } else if (state === 'removed') {
+    const missingParts = []
+    if (!declaration.decision) missingParts.push('缺「老板 2026-11-09：常识可以整个撤了」那句决定')
+    if (declaration.carrier === null) missingParts.push('缺 `替代载体` 点名的模块（反引号里的路径）')
+    if (!declaration.file_stays) missingParts.push('缺「`common-sense.md` 原文留在盘上」那句')
+    if (missingParts.length > 0) {
+      problems.push({
+        code: COMMON_SENSE_CODES.declMissing,
+        message: `代码撤掉了常识注入，但**声明不完整**：${missingParts.join('；')} —— `
+          + '撤注入不是"删掉就行"：替身在哪、原文为什么留，必须写在代码里（否则下一个人只能靠考古）',
+        detail: { state, missing: missingParts },
+      })
+    } else {
+      let exists = false
+      try { exists = carrierExists(declaration.carrier) === true } catch { exists = false }
+      readings.carrier_exists = exists
+      if (!exists) {
+        problems.push({
+          code: COMMON_SENSE_CODES.carrierMissing,
+          message: `状态 (b) 的声明点名了替代载体 \`${declaration.carrier}\`，但**盘上没有那个模块** —— `
+            + '"替代载体"不是一句话，是一个必须存在的落点（它不在，"替代"就不成立）',
+          detail: { state, carrier: declaration.carrier },
+        })
+      }
+    }
+  } else {
+    const say = commonSenseSayNeedles(raw)
+    readings.say = say.readings
+    for (const p of say.problems) problems.push(p)
+  }
+  return { problems, readings }
+}
+
+/**
+ * `F-135` 重瞄的控制面：**两个合法状态各自绿** + **三条刀各翻自己那一面** + 两个边界
+ * （两边信号同时在 / 载体不在盘上）。
+ *
+ * 三条刀（组长 2026-11-09 点名的那三条）：
+ *   · `K1` 撤注入但声明删掉 ⇒ `DECL-MISSING`；
+ *   · `K2` 状态 (b) 但 `common-sense.md` 不在盘上 ⇒ `MISSING`；
+ *   · `K3` 状态 (a) 但尾巴那条 warn 删掉 ⇒ `SILENT`。
+ * 另加 `K4` 两边信号同时在 ⇒ `AMBIGUOUS`、`K5` 载体不在盘上 ⇒ `CARRIER-MISSING`；
+ * 没有这两条，"二选一"会漏成"写一半也绿"。
+ *
+ * @returns {{controls: Array<{name:string, want:string[], got:string[], state:string, ok:boolean}>, failures: string[]}}
+ */
+export function commonSenseCarrierControls() {
+  const REMOVED = [
+    '// 老板 2026-11-09：「常识可以整个撤了」—— 这一节不再拼。',
+    '// 替代载体 = **记忆轮转**（`lib/memory-rotation.mjs`）。',
+    '// ⚠️ `common-sense.md` 原文留在盘上、字节不动。',
+    'function tailBodyOf() { parts.push(timeLineOf()) }',
+  ].join('\n')
+  const INJECTED = [
+    "const heading = '## 共享记忆 · 常识'",
+    'function commonSenseOf() {',
+    "  say('memory-common-sense', '读不到或空文件 ⇒ 这一节不注入')",
+    "  warnOnce('tail-common-sense', '读不到常识 ⇒ 这一节不注入')",
+    '}',
+    'function tailBodyOf() { parts.push(heading) }',
+  ].join('\n')
+  const OK_FILE = { status: 'ok', text: '# 常识\n\n- 一条。\n', bytes: 20 }
+  const run = ({ src, fileFact, carrierExists }) => commonSenseCarrierVerdict({ src, fileFact, carrierExists, where: '<control>' })
+  const cases = [
+    ['状态 (b)：撤注入 + 声明齐全 + 载体在 + 文件在 ⇒ 0 问题（绿的那一头）',
+      { src: REMOVED, fileFact: OK_FILE, carrierExists: () => true }, [], 'removed'],
+    ['状态 (a)：注入 + 三句出声都在 + 文件在 ⇒ 0 问题（另一头也认）',
+      { src: INJECTED, fileFact: OK_FILE, carrierExists: () => true }, [], 'injected'],
+    ['K1 撤注入但声明删掉 ⇒ `DECL-MISSING`（"删了不说"不许绿）',
+      { src: REMOVED.replace(/^\/\/.*\n/gm, ''), fileFact: OK_FILE, carrierExists: () => true },
+      [COMMON_SENSE_CODES.declMissing], 'neither'],
+    ['K2 状态 (b) 但 `common-sense.md` 不在盘上 ⇒ `MISSING`（声明说它留在盘上）',
+      { src: REMOVED, fileFact: { status: 'missing' }, carrierExists: () => true },
+      [COMMON_SENSE_CODES.missing], 'removed'],
+    ['K3 状态 (a) 但尾巴那条 warn 删掉 ⇒ `SILENT`（原病：常识没了没人说）',
+      { src: INJECTED.replace(/^\s*warnOnce\('tail-common-sense'.*\n/m, ''), fileFact: OK_FILE, carrierExists: () => true },
+      [COMMON_SENSE_CODES.silent], 'injected'],
+    ['K4 注入信号与撤注入声明同时在 ⇒ `AMBIGUOUS`（两个状态互斥）',
+      { src: `${INJECTED}\n${REMOVED}`, fileFact: OK_FILE, carrierExists: () => true },
+      [COMMON_SENSE_CODES.ambiguous], 'ambiguous'],
+    ['K5 状态 (b) 但载体不在盘上 ⇒ `CARRIER-MISSING`（点名了就必须有）',
+      { src: REMOVED, fileFact: OK_FILE, carrierExists: () => false },
+      [COMMON_SENSE_CODES.carrierMissing], 'removed'],
+  ]
+  const controls = []
+  const failures = []
+  for (const [name, args, wantCodes, wantState] of cases) {
+    const out = run(args)
+    const got = out.problems.map((p) => p.code)
+    const state = out.readings.state
+    const ok = JSON.stringify(got) === JSON.stringify(wantCodes) && state === wantState
+    controls.push({ name, want: wantCodes, got, state, ok })
+    if (!ok) {
+      failures.push(`${COMMON_SENSE_CODES.control}：控制面「${name}」期望码 ${JSON.stringify(wantCodes)} / 状态 ${wantState}，`
+        + `实得 ${JSON.stringify(got)} / ${JSON.stringify(state)} —— 判据翻不了面，这一跑的红绿都不算数`)
+    }
+  }
+  return { controls, failures }
 }
 
 // ── ② 兜底名单的注释 ↔ 常量 ─────────────────────────────────────────────────

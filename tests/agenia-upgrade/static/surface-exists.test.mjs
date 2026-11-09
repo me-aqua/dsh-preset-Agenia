@@ -45,20 +45,34 @@
  * · `SURF-03` 不判"正文写得对不对 / 有没有被截断成半份" —— 它只回答「有没有字」。
  *   `bytes` 与"非空白字符数"只当读数落盘（用来一眼看出"1 字节"），不是判据。
  *
- * ## 🔴 `F-135` 那一格（2026-10-25）：真那份常识在不在 / 空不空
+ * ## 🔴 `F-135` 那一格（2026-10-25；**2026-11-09 重瞄成二选一**）：真那份常识在不在 / 空不空
  *
- * 病：`presets/agenia/.runtime/common-sense.md`（常识正文）**没有任何一条套件判据**问过它在不在。
- * 注入器读不到 / 读到空文件时只**出声一次、这一节不注入** ⇒ 包静默薄成「style + 时间行」，
- * 全套照旧绿 —— 老板 2026-10-22 报的那个毛病可以原样回来而没人知道。
- * 为什么不并进上面那张 13 份名单：**根不同**（那张是内容根 `*.md` + `team/*.md`，这一份在 `.runtime/` 数据段），
- * 混在一起就把"同一张表"的口径弄坏了（探针 `I18` 的注释里写着同一条判断）。
+ * 病（重瞄前）：`presets/agenia/.runtime/common-sense.md`（常识正文）**没有任何一条套件判据**问过它在不在；
+ * 注入器读不到 / 读到空文件时只**出声一次、这一节不注入** ⇒ 包静默薄成「style + 时间行」，全套照旧绿。
+ * **2026-11-09 老板「常识可以整个撤了」`036f38f`**：那一节整体撤掉 ⇒ 旧断言（`warnOnce('tail-common-sense', …)`）
+ * 所守的代码**已经不存在**。这一格不能删，只能**重瞄**：它现在只认**两个合法状态**，并点名落在哪一个。
  *
- * 这一格钉三样（`SURF-COMMON-SENSE-*` 四个码各说各的）：
- * 1. **活体那份在盘上 + 去掉空白后非空**（口径与 `SURF-03` 同一把尺子）—— 不在 / 空壳 / 读不出是三句话；
- * 2. **抽走对照**：运行根里放一份**活体正文的逐字节副本**，把副本改名搬开 ⇒ 必须报 `-MISSING` 并点名那个路径，
+ * | 状态 | 代码信号 | 还要成立的 |
+ * | --- | --- | --- |
+ * | **(a) 注入** | 代码面（去注释）里还有那一节（`共享记忆 · 常识` / `commonSenseOf(` / `tail-common-sense`） | 读不到 / 空文件时**出声**（三条针）+ 文件在盘上且非空 |
+ * | **(b) 撤注入** | 代码里声明了撤：`老板 2026-11-09：「常识可以整个撤了」` + `替代载体 = <反引号里的模块路径>` + `common-sense.md` 留在盘上 | 三样齐全 + 载体**真在盘上** + 文件在盘上且非空 |
+ *
+ * 两个信号同时在 ⇒ `SURF-COMMON-SENSE-AMBIGUOUS`；都没有 ⇒ `SURF-COMMON-SENSE-DECL-MISSING`；
+ * 状态 (b) 声明缺一样 ⇒ `-DECL-MISSING`；载体不在 ⇒ `-CARRIER-MISSING`；文件不在 ⇒ `-MISSING`。
+ * **不并进 13 份名单**：根不同（那一份在 `.runtime/` 数据段），混在一起会弄坏"同一张表"。
+ *
+ * 这一格钉三样（每样各报各的）：
+ * 1. **活体那份在盘上 + 去掉空白后非空**（与 `SURF-03` 同一把尺子）—— 不在 / 空壳 / 读不出是三句话；
+ * 2. **抽走对照**：运行根里放一份**活体正文的逐字节副本**，把副本改名搬开 ⇒ 必须报 `-MISSING` 并点名；
  *    搬回来 ⇒ 重新绿且逐字节相同（老板那份正文一个字节不碰 —— 只读它的字节）；
- * 3. **注入器得出声**：读不到 / 空文件两条分支都必须说清"这一节不注入"（`-SILENT`）。
- *   ⚠️ 第 3 样是**文本针**（证"字在"），不是行为证明 —— 行为那一半归探针的 `I3` / `I18`。
+ * 3. **两个状态二选一**：`commonSenseCarrierVerdict({src, fileFact, carrierExists})`
+ *    —— 状态 (a) 要三句出声；状态 (b) 要声明齐全 + 载体在盘上。控制面 `commonSenseCarrierControls()`
+ *    带**三条刀**：K1 撤注入但声明删掉 ⇒ `-DECL-MISSING`；K2 状态 (b) 但文件不在 ⇒ `-MISSING`；
+ *    K3 状态 (a) 但尾巴 warn 删掉 ⇒ `-SILENT`；另 K4 两边同时在 ⇒ `-AMBIGUOUS`、K5 载体不在 ⇒ `-CARRIER-MISSING`。
+ *   ⚠️ (a) 的出声是**文本针**（证"字在"），不是行为证明 —— 行为那一半归探针的 `I3` / `I18`。
+ *   ⚠️ 代码信号里的 `共享记忆 · 常识` 只扫**尾巴那一条载体**：`memory` 那一节（`sharedMemoryText`，
+ *   组员侧照旧拼、由 `presets-two` 的 `SIDE-MEMORY` 单独要求）是另一条载体，理由写在
+ *   `declared-surface.mjs::stripMemberMemoryCarrier` 上。
  */
 import { before, describe, test } from 'node:test'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
@@ -69,9 +83,9 @@ import { readStagedText, stagingExists, stagingPath, stagingRoot } from '../supp
 import {
   CODES,
   COMMON_SENSE_CODES,
+  commonSenseCarrierControls,
+  commonSenseCarrierVerdict,
   commonSenseControls,
-  commonSenseFileProblems,
-  commonSenseSayNeedles,
   declaredFilesControls,
   declaredFilesNonemptyProblems,
   declaredFilesProblems,
@@ -241,33 +255,47 @@ describe('static · surface-declared', () => {
         rec.readings.summary = { judged: false, why: '被测 staging 不在盘上（见上面那条问题）' }
       }
 
-      // ── 🔴 `F-135` 格：**真那份 `.runtime/common-sense.md`（常识）在不在 / 空不空** ────────────
-      // 【为什么单列在这里】它是**数据段**里的一份正文，不在那张 13 份名单里（根不同：见
-      //   `declared-surface.mjs::COMMON_SENSE_CODES` 上面那段）。而注入器对它只做"读不到 / 空文件 ⇒
-      //   这一节不注入 + 一条 warn" ⇒ 悄悄薄成「style + 时间行」，套件全绿 —— 老板 2026-10-22 报的就是这个。
-      // 【钉什么】① 活体那份**在盘上 + 去掉空白后非空**（与 `SURF-03` 同一把尺子）；
-      //   ② **拿掉它 ⇒ 红并点名**（在运行根里对一份**夹具副本**做抽走/还原 —— 老板那份正文一个字节不碰）；
-      //   ③ 注入器那一侧**得出声**（读不到 / 空文件两句都点名"这一节不注入"）。
-      // 【怎么翻面】把 `presets/agenia/.runtime/common-sense.md` 删掉/清空 ⇒ ① 红
-      //   （`SURF-COMMON-SENSE-MISSING` / `-EMPTY`，报文点名那份文件）；放回去 ⇒ 绿。
-      //   ② ③ 每次跑都重新证一遍（抽走对照与文本针）。
+      // ── 🔴 `F-135` 格（2026-11-09 重瞄）：**两个合法状态二选一** ────────────────────────
+      //    (a) 注入：代码面里那一节还在 ⇒ 读不到 / 空文件必须**出声**（三条针）+ 文件在盘上且非空；
+      //    (b) 撤注入：代码里声明了「老板 2026-11-09：常识可以整个撤了」+ 替代载体（模块路径）+
+      //        `common-sense.md` 留在盘上 ⇒ 三样齐全 + 载体真在盘上 + 文件在盘上且非空。
+      //    两个信号同时在 ⇒ AMBIGUOUS；都没有 ⇒ DECL-MISSING；声明缺一样 ⇒ DECL-MISSING；载体不在 ⇒ CARRIER-MISSING。
+      //    控制面 `commonSenseCarrierControls()` 带三条刀（K1 声明删 / K2 文件删 / K3 warn 删）+ K4 两边同 in + K5 载体不在。
       {
         const csPath = path.join(PATHS.finalPreset, '.runtime', 'common-sense.md')
         const where = '真那份常识（presets/agenia/.runtime/common-sense.md）'
 
-        // ② 量具自证：五组合成事实（有正文 / 不在 / 1 字节 / 只剩空白 / 读不出）
+        // ② 控制面：文件事实五组（旧 `commonSenseControls`：有正文 / 不在 / 1 字节 / 只剩空白 / 读不出）
+        //    + 两个状态与三条刀（`commonSenseCarrierControls`）—— 判据自己先翻面
         const csControls = commonSenseControls()
-        rec.readings.common_sense_controls = csControls.controls
+        rec.readings.common_sense_file_controls = csControls.controls
         for (const f of csControls.failures) push(COMMON_SENSE_CODES.control, f)
+        const carrierControls = commonSenseCarrierControls()
+        rec.readings.common_sense_controls = carrierControls.controls
+        for (const f of carrierControls.failures) push(COMMON_SENSE_CODES.control, f)
 
-        // ① 主判据：活体那份
-        const live = commonSenseFileProblems({ read: () => inspectAbs(csPath), path: csPath, where })
+        // ① 主判据：真那份文件 + 真 inject.js（哪个合法状态，读数里点名）
+        let injectorSrc = null
+        try {
+          injectorSrc = readStagedText('inject.js')
+        } catch (err) {
+          push(err?.code ?? 'SUT-SURFACE-MISSING', `读不到 staged 的 \`inject.js\`，常识那一侧的二选一判不了：${String(err?.message ?? err)}`)
+        }
+        const live = injectorSrc === null
+          ? { problems: [], readings: { state: null, why: 'inject.js 读不到' } }
+          : commonSenseCarrierVerdict({
+            src: injectorSrc,
+            fileFact: inspectAbs(csPath),
+            carrierExists: (rel) => stagingExists(rel),
+            where,
+            filePath: csPath,
+          })
         rec.readings.common_sense = live.readings
         /**
          * 🔴 技术评审 2026-11-03 `F4`：这份常识住在**数据段**（`presets/agenia/.runtime/`），不随提交走
          * ⇒ 从提交导出的只读副本里它必然不在。那时这一格**判不了**（`HOLD`），不是"常识没了"那种红；
          * 红只留给活树（活树里它不在 ⇒ 老板那份正文真的没了，`F-135` 的病）。
-         * ⚠️ 空壳 / 读不出**照旧红**：副本里若真有人放了一份空文件，那是真缺陷，不是"副本答不了"。
+         * ⚠️ 空壳 / 读不出 / 状态坏了**照旧红**：副本里若真有人放了一份空文件，那是真缺陷，不是"副本答不了"。
          */
         const copyTree = commitCopyReading()
         rec.readings.copy_tree = copyTree
@@ -282,51 +310,51 @@ describe('static · surface-declared', () => {
         }
 
         // ② 抽走 / 还原对照（夹具副本，落在**运行根**里）：证明"这份文件没了 ⇒ 这一格真的红"。
-        //    副本正文 = **活体那份的逐字节副本**（读它的字节，绝不改它）；活体那份已经坏了就用合成正文，
-        //    否则"抽走还不红"这句话就证不了。**老板那份正文一个字节都不碰**（只读 + 另存一份在运行根）。
-        const fixtureDir = path.join(runRoot(), 'ws-surf-03-common-sense')
-        mkdirSync(fixtureDir, { recursive: true })
-        const fixtureFile = path.join(fixtureDir, 'common-sense.md')
-        const liveFact = inspectAbs(csPath)
-        const liveUsable = liveFact.status === 'ok' && nonWhitespaceLength(liveFact.text) > 0
-        const fixtureText = liveUsable
-          ? liveFact.text
-          : '# 常识（SURF-03 夹具 · 不是老板那份）\n\n- 这条只用来证明"抽走那份文件 ⇒ 这一格会红"。\n'
-        writeFileSync(fixtureFile, fixtureText, 'utf8')
-        const codesOf = () => commonSenseFileProblems({ read: () => inspectAbs(fixtureFile), path: fixtureFile, where: '<抽走对照>' })
-          .problems.map((p) => p.code)
-        const fresh = codesOf()
-        renameSync(fixtureFile, `${fixtureFile}.off`) // 只改名搬开，**从不删除**
-        const gone = codesOf()
-        renameSync(`${fixtureFile}.off`, fixtureFile)
-        const back = codesOf()
-        const restoredSame = existsSync(fixtureFile) && readFileSync(fixtureFile, 'utf8') === fixtureText
-        rec.readings.common_sense_ablation = {
-          fixture: fixtureFile,
-          fresh,
-          without_file: gone,
-          restored: back,
-          restored_byte_identical: restoredSame,
-        }
-        if (fresh.length !== 0) {
-          push(COMMON_SENSE_CODES.control, `抽走对照的**起点**不绿（${JSON.stringify(fresh)}）—— 那个夹具副本本应有正文，`
-            + '所以"抽走它 ⇒ 红"这句话不能成立')
-        }
-        if (JSON.stringify(gone) !== JSON.stringify([COMMON_SENSE_CODES.missing])) {
-          push(COMMON_SENSE_CODES.control, `把常识**抽走**之后这一格必须报 \`${COMMON_SENSE_CODES.missing}\`，实得 ${JSON.stringify(gone)}`
-            + ' —— 抽走还不红，说明"文件没了"这件事根本没人判（`F-135` 的病）')
-        }
-        if (back.length !== 0 || !restoredSame) {
-          push(COMMON_SENSE_CODES.control, `把常识**放回原位**之后必须重新绿且逐字节相同，实得 ${JSON.stringify(back)} / 逐字节相同=${restoredSame}`)
-        }
-
-        // ③ 注入器那一侧：读不到 / 空文件都得**出声**（"不拼 + 说一句"那半）
-        try {
-          const say = commonSenseSayNeedles(readStagedText('inject.js'))
-          rec.readings.common_sense_say = say.readings
-          for (const p of say.problems) push(p.code, p.message, p.detail)
-        } catch (err) {
-          push(err?.code ?? 'SUT-SURFACE-MISSING', `读不到 staged 的 \`inject.js\`，常识那一侧的"出声"判不了：${String(err?.message ?? err)}`)
+        //    副本正文 = **活体那份的逐字节副本**（读它的字节，绝不改它）；活体那份已经坏了就用合成正文。
+        //    🔴 这是组长点名的 **K2**：状态 (b) 声明它留在盘上，而它不在 ⇒ 必须是 `-MISSING`。
+        if (injectorSrc !== null) {
+          const fixtureDir = path.join(runRoot(), 'ws-surf-03-common-sense')
+          mkdirSync(fixtureDir, { recursive: true })
+          const fixtureFile = path.join(fixtureDir, 'common-sense.md')
+          const liveFact = inspectAbs(csPath)
+          const liveUsable = liveFact.status === 'ok' && nonWhitespaceLength(liveFact.text) > 0
+          const fixtureText = liveUsable
+            ? liveFact.text
+            : '# 常识（SURF-03 夹具 · 不是老板那份）\n\n- 这条只用来证明"抽走那份文件 ⇒ 这一格会红"。\n'
+          writeFileSync(fixtureFile, fixtureText, 'utf8')
+          const verdictOf = (fileFact) => commonSenseCarrierVerdict({
+            src: injectorSrc, fileFact, carrierExists: (rel) => stagingExists(rel), where: '<抽走对照>', filePath: fixtureFile,
+          })
+          const factOf = (p) => (existsSync(p)
+            ? { status: 'ok', text: readFileSync(p, 'utf8'), bytes: statSync(p).size }
+            : { status: 'missing' })
+          const freshV = verdictOf(factOf(fixtureFile))
+          renameSync(fixtureFile, `${fixtureFile}.off`) // 只改名搬开，**从不删除**
+          const goneV = verdictOf(factOf(fixtureFile))
+          renameSync(`${fixtureFile}.off`, fixtureFile)
+          const backV = verdictOf(factOf(fixtureFile))
+          const codes = (v) => v.problems.map((p) => p.code)
+          const restoredSame = existsSync(fixtureFile) && readFileSync(fixtureFile, 'utf8') === fixtureText
+          rec.readings.common_sense_ablation = {
+            fixture: fixtureFile,
+            state: freshV.readings.state,
+            fresh: codes(freshV),
+            without_file: codes(goneV),
+            restored: codes(backV),
+            restored_byte_identical: restoredSame,
+          }
+          if (freshV.problems.length !== 0) {
+            push(COMMON_SENSE_CODES.control, `抽走对照的**起点**不绿（${JSON.stringify(codes(freshV))}）—— 那个夹具副本本应有正文，`
+              + '所以"抽走它 ⇒ 红"这句话不能成立')
+          }
+          const gone = codes(goneV)
+          if (JSON.stringify(gone) !== JSON.stringify([COMMON_SENSE_CODES.missing])) {
+            push(COMMON_SENSE_CODES.control, `把常识**抽走**之后这一格必须报 \`${COMMON_SENSE_CODES.missing}\`，实得 ${JSON.stringify(gone)}`
+              + ' —— 抽走还不红，说明"文件没了"这件事根本没人判（`F-135` 的病）')
+          }
+          if (backV.problems.length !== 0 || !restoredSame) {
+            push(COMMON_SENSE_CODES.control, `把常识**放回原位**之后必须重新绿且逐字节相同，实得 ${JSON.stringify(codes(backV))} / 逐字节相同=${restoredSame}`)
+          }
         }
       }
 
