@@ -1790,7 +1790,8 @@ export function recordOfficeLanding(officeRoot, line) {
 export function officeLandingLedger(officeRoot) {
   const path = officeLandingLedgerPath(officeRoot)
   const out = {
-    ok: true, path, exists: false, entries: 0, same_tree: 0, cross_tree: 0, unreadable: 0, warning: null, reason: null, lines: [],
+    ok: true, path, exists: false, entries: 0, same_tree: 0, cross_tree: 0, unreadable: 0, partial_tail: 0,
+    warning: null, reason: null, lines: [],
   }
   if (!existsSync(path)) return out
   out.exists = true
@@ -1802,14 +1803,32 @@ export function officeLandingLedger(officeRoot) {
     out.reason = `${OFFICE_LEDGER_UNREADABLE}: 账本读不动（${String(err?.code ?? err)}）`
     return out
   }
+  // 🔴 F9：七键闭合（写方承诺的那七个），**且不许有正文**。缺一个也算坏行 —— 只校验一个键
+  //    等于"多塞一个 content 也照收"，那正是"账本不是日志倾倒场"这条承诺的空转。
+  const ROW_KEYS = ['at', 'role', 'tool', 'landing', 'office_root', 'header_office', 'tree_differs']
+  const BODY_KEYS = ['content', 'text', 'body', 'payload']
   const bad = []
+  const partial = []
+  const rawLines = String(text).split('\n').filter((line) => line.trim() !== '')
   for (const [index, raw] of String(text).split('\n').entries()) {
     if (raw.trim() === '') continue
     let row = null
     try { row = JSON.parse(raw) } catch { row = null }
-    if (row === null || typeof row !== 'object' || Array.isArray(row) || typeof row.tree_differs !== 'boolean') {
+    const isLast = index === String(text).split('\n').length - 1
+    if (row === null) {
+      // 🔴 F11：**最后一行**解析不了 ⇒ 多半是并发写了一半（无锁追加），与中间行损坏不是一回事
+      if (isLast && rawLines.length > 1) { partial.push(index + 1); continue }
       out.unreadable += 1
       bad.push(index + 1)
+      continue
+    }
+    const keys = Object.keys(row)
+    const missing = ROW_KEYS.filter((key) => !(key in row))
+    const hasBody = BODY_KEYS.filter((key) => key in row)
+    if (typeof row !== 'object' || Array.isArray(row) || missing.length > 0 || hasBody.length > 0
+        || typeof row.tree_differs !== 'boolean') {
+      out.unreadable += 1
+      bad.push(missing.length > 0 ? `${index + 1}（缺 ${missing.join('/')}）` : hasBody.length > 0 ? `${index + 1}（有正文键 ${hasBody.join('/')}）` : `${index + 1}`)
       continue
     }
     out.entries += 1
@@ -1819,9 +1838,15 @@ export function officeLandingLedger(officeRoot) {
   }
   // 这一行是"读数从账上来"的那一半：`warning` 只由盘上的行数出来，不从内存 readings 猜。
   out.warning = out.cross_tree > 0 ? 'OFFICE_TREE_DIFFERS' : null
+  if (partial.length > 0) {
+    out.partial_tail = partial.length
+    out.ok = false
+    out.reason = `${OFFICE_LEDGER_UNREADABLE}: 最后一行像是**写了一半**（第 ${partial.join('、')} 行）`
+      + ' —— 账本无锁追加，可能是并发写没写完；重读一次通常就好，别当成"账本坏了"'
+  }
   if (bad.length > 0) {
     out.ok = false
-    out.reason = `${OFFICE_LEDGER_UNREADABLE}: ${bad.length} 行解析不了（第 ${bad.join('、')} 行）—— 不许当成 0 行`
+    out.reason = `${OFFICE_LEDGER_UNREADABLE}: ${bad.length} 行不合格（第 ${bad.join('、')}）—— 不许当成 0 行`
   }
   return out
 }
@@ -3536,20 +3561,28 @@ export async function apply(ctx, config = {}) {
    * 读快照走 `current` 指针（与长期记忆那一节同一把尺子）；游标存数据根下，**原子写**。
    * 🔴 读不到 / 挑不到 / 游标坏 ⇒ 块里写明（模块给的兜底文本）并出声一次 —— 不许静默变空。
    */
-  function memoryRotationOf() {
-    if (rotationModule === undefined) return undefined
-    const root = join(contentDir, RUNTIME_DIR)
-    let snapshot = null
+  /**
+   * **同步**读当前快照（`current` 指针 + 该版本文件）。与 `currentSnapshotOf`（异步、正文注入用）
+   * 是**同一个口径**：指针是唯一入口，版本号必须合 `MEMORY_VERSION_RE`，`entries` 必须是数组。
+   * 🔴 F7：这段逻辑从前在这一处又手写了一遍 —— 一个口径两份实现，改一处必漏另一处。
+   */
+  function readSnapshotSync(root) {
     try {
       const dir = join(root, ...MEMORY_SNAPSHOTS_REL)
       const version = readFileSync(join(dir, MEMORY_POINTER_FILE), 'utf8').trim()
-      if (MEMORY_VERSION_RE.test(version)) {
-        const parsed = JSON.parse(readFileSync(join(dir, `${version}.json`), 'utf8'))
-        if (Array.isArray(parsed?.entries)) snapshot = { version, entries: parsed.entries }
-      }
-    } catch (error) {
-      snapshot = null
+      if (!MEMORY_VERSION_RE.test(version)) return null
+      const parsed = JSON.parse(readFileSync(join(dir, `${version}.json`), 'utf8'))
+      if (!Array.isArray(parsed?.entries)) return null
+      return { version, entries: parsed.entries }
+    } catch {
+      return null
     }
+  }
+
+  function memoryRotationOf() {
+    if (rotationModule === undefined) return undefined
+    const root = join(contentDir, RUNTIME_DIR)
+    const snapshot = readSnapshotSync(root)
     const file = join(root, ...rotationModule.CURSOR_REL)
     let cursorGeneral = 0
     let cursorProject = 0
@@ -3579,7 +3612,10 @@ export async function apply(ctx, config = {}) {
       return rotationModule.projectNameOf(process.cwd())
     })()
     const block = rotationModule.rotationBlockOf({ snapshot, project, cursorGeneral, cursorProject })
-    if (block.nextCursorGeneral !== cursorGeneral || block.nextCursorProject !== cursorProject) {
+    // 🔴 F4：**读不到快照就不许写游标**。否则这一跑会把游标重写成 0，下一轮从 0 开始，
+    //    而盘上留下的样子和"正常转了一圈"一模一样 —— 「读不到」必须与「转完了」长得不一样。
+    const snapshotReadable = snapshot !== null
+    if (snapshotReadable && (block.nextCursorGeneral !== cursorGeneral || block.nextCursorProject !== cursorProject)) {
       try {
         mkdirSync(dirname(file), { recursive: true })
         const tmp = `${file}.tmp-${process.pid}`
