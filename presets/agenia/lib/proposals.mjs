@@ -30,10 +30,10 @@
  *      里**两种 kind 都过**的那一层 —— 两条 CLI（`--op maintenance-import` / `--op proposal-import`）
  *      都只经过这里；只挂在其中一支，另一支就是同一个上限下一次静默消失的地方。
  */
-import { mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { readdirSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { acquireLock, releaseLock, writeFileAtomic } from './atomic.mjs'
-import { sha256Hex, stableStringify, brainError, judgedLockPath, judgedPath, poolLockPath, poolPath, proposalsArchiveDir, proposalsDir } from './state.mjs'
+import { sha256Hex, stableStringify, brainError, judgedLockPath, judgedPath, poolLockPath, poolPath, proposalsArchiveDir } from './state.mjs'
 import { listVersions } from './snapshot.mjs'
 // 尺子只有一把：`charCountOf`（去开头 BOM → `\r\n` 归成 `\n` → 数 code point）住在 `lib/memory.mjs`。
 // 正文上限那一关（`bodyCapVerdict`）量字数时只许用它 —— 另写一份 `.length` 判据就是"同一个 400 长出第二个数"。
@@ -138,12 +138,12 @@ export function readJudged(root) {
  *
  * 落地形状照 `appendProposal`：已有行原样 + 新行，同目录临时件 + rename 原子写回。
  * 空数组 ⇒ **什么都不做**（空候选批不许为了"有文件"写一行空的）。
+ * 目录不在这里建：`acquireLock` / `writeFileAtomic` 各自建父目录（建不出来都返回 `E_TXN_IO`）。
  */
 export function appendJudgedRows(root, rows = []) {
   const specs = Array.isArray(rows) ? rows : []
   const file = judgedPath(root)
   if (specs.length === 0) return { ok: true, code: null, rows: 0, path: file, start_seq: null, end_seq: null, message: '' }
-  mkdirSync(proposalsDir(root), { recursive: true })
   const lock = acquireLock(judgedLockPath(root), { purpose: 'judged-index' })
   if (!lock.ok) throw brainError(lock.code, `已判索引锁拿不到：${lock.message}`)
   try {
