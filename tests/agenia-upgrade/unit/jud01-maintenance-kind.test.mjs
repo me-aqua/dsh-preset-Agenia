@@ -169,6 +169,17 @@ function judgedRound(bp, { id, rows, accepted = [], decisions = [], cs }, run = 
 /** 这一轮写进已判索引的那一行（没有 ⇒ `null`）。 */
 const judgedRowOf = (rows, id) => rows.find((row) => row?.imported_id === id) ?? null
 
+/**
+ * 把一份 `agenia-brain.mjs` 源码落成"bin + lib"的副本（CLI 只 import `../lib/`）。
+ * `JUD-01` 的 `pending_kinds` 那一面用它做刀（`T2` / `T3`）：产品不能为了这一格真去丢默认值 / 丢计数。
+ */
+function copyBrainInto(dir, source) {
+  mkdirSync(path.join(dir, 'bin'), { recursive: true })
+  writeFileSync(path.join(dir, 'bin', 'agenia-brain.mjs'), source, 'utf8')
+  cpSync(path.join(PATHS.stagedPreset, 'lib'), path.join(dir, 'lib'), { recursive: true })
+  return path.join(dir, 'bin', 'agenia-brain.mjs')
+}
+
 /** 读数 `classification`（缺 ⇒ `null`；形状不对由各面自己点名）。 */
 const classificationOf = (commit) => commit?.json?.classification ?? null
 
@@ -420,6 +431,155 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
               // 读数面（不是退出码）：池子读不出来时来源必须是 `id-prefix`，且 kind 说得出来。
               out.push(...byIdProblems(cls, BROKEN_POOL_ID, { source: 'id-prefix', kind: 'maintenance' }, 'JUD-POOL-UNREADABLE', 'D'))
             }
+          }
+        }
+      }
+
+      /**
+       * ── E · `judge-pending` 的 `pending_kinds` / `kind_missing`（`bug-20261110-03` 的判据面）────────
+       * `judge-commit` 按池行 `kind` 分类；只给 id 会让下游去猜（猜错那一轮整轮被 `E_ARG_SCHEMA` 拒）。
+       * 这一面判**读数本身**，四件事各自承重：
+       *   ① `pending_kinds` 的键集合与**次序** = `pending_ids`（键顺序是输出的合同，不是巧合）；
+       *   ② `kind` 说的是池行那一个，**id 前缀说什么都不算**（`proposal-` 形 id 也可以是 maintenance）；
+       *   ③ `kind` 缺失 / 第三个值 ⇒ **缺省 `proposal`** 且进 `kind_missing` 计数（"它本来就是提案"
+       *      与"它没写 kind"必须在读数上分得开 —— 静默缺省就是上一轮错 kind 的老路）；
+       *   ④ 判过一条之后 `pending_ids` 少一条、`pending_kinds` 跟着少那个键（**按差集现算**，不是常量）。
+       * 两把刀（`T2` 丢缺省值 / `T3` 丢计数）各切一份副本：`T2` ⇒ ③ 的缺省值那一半红；`T3` ⇒ 计数那一半红。
+       */
+      {
+        const name = 'E judge-pending 的逐 id kind'
+        const bp = caseBrainRoot('e-pending-kinds')
+        const ID_MAINT = 'proposal-20261109-0101' // 提案形 id · kind=maintenance
+        const ID_PROP = 'MR-20261109-0102' // 维护案形 id · kind=proposal
+        const ID_MISSING = 'MR-20261109-0103' // **没有** kind
+        const ID_BOGUS = 'proposal-20261109-0104' // kind='delete'（第三个值）
+        const missingRow = poolRowOf('proposal', ID_MISSING, 3)
+        delete missingRow.kind
+        const rows = [
+          poolRowOf('maintenance', ID_MAINT, 1),
+          poolRowOf('proposal', ID_PROP, 2),
+          missingRow,
+          poolRowOf('delete', ID_BOGUS, 4),
+        ]
+        const poolText = writePool(bp, rows)
+        const ruler = (rec.readings.ruler ??= {})
+        ruler.E = (() => {
+          const got = readJsonl(bp.poolFile)
+          const out = []
+          if (got.length !== 4) out.push(problem('JUD-RULER', `E：池子应有 4 行（设计如此），读回来 ${got.length} 行`))
+          const byId = new Map(got.map((row) => [row?.imported_id, row]))
+          for (const [id, kind] of [[ID_MAINT, 'maintenance'], [ID_PROP, 'proposal'], [ID_BOGUS, 'delete']]) {
+            if (!byId.has(id)) out.push(problem('JUD-RULER', `E：读回来的池子里没有 ${id}`))
+            else if (byId.get(id)?.kind !== kind) out.push(problem('JUD-RULER', `E：${id} 的 kind 应为 ${JSON.stringify(kind)}，实得 ${JSON.stringify(byId.get(id)?.kind)}`))
+          }
+          if (byId.has(ID_MISSING) && Object.prototype.hasOwnProperty.call(byId.get(ID_MISSING), 'kind')) {
+            out.push(problem('JUD-RULER', `E：${ID_MISSING} 这一行**不该有** kind 键（它就是"缺 kind"那一份）`))
+          }
+          return out
+        })()
+        out.push(...ruler.E)
+
+        const pendingOf = (cliPath = null) => runCli('agenia-brain.mjs', {
+          op: 'judge-pending', dataRoot: bp.root, inFile: writeFixture('JUD-01', 'judge-pending', {}), testMode: true,
+        }, cliPath === null ? {} : { cliPath })
+        const decode = (res) => ({
+          exit: res.exit_code,
+          code: res.json?.error?.code ?? null,
+          ids: Array.isArray(res.json?.pending_ids) ? res.json.pending_ids : null,
+          kinds: res.json?.pending_kinds ?? null,
+          kindKeys: res.json?.pending_kinds !== null && typeof res.json?.pending_kinds === 'object' ? Object.keys(res.json.pending_kinds) : null,
+          kindMissing: res.json?.kind_missing ?? null,
+          count: res.json?.count ?? null,
+        })
+        const base = pendingOf()
+        const b = decode(base)
+        cells.E = { pool_text: poolText, first: b }
+        if (b.exit !== 0) {
+          push('JUD-JUDGE-PENDING-KINDS', `E：judge-pending 必须 exit 0，实得 exit=${b.exit} / ${b.code ?? '(无码)'}`)
+        } else {
+          const wantIds = [ID_MAINT, ID_PROP, ID_MISSING, ID_BOGUS]
+          if (JSON.stringify(b.ids) !== JSON.stringify(wantIds)) {
+            push('JUD-JUDGE-PENDING-KINDS', `E：pending_ids 应为 ${JSON.stringify(wantIds)}（按 seq），实得 ${JSON.stringify(b.ids)}`)
+          }
+          if (JSON.stringify(b.kindKeys) !== JSON.stringify(b.ids)) {
+            push('JUD-JUDGE-PENDING-KINDS', `E：\`pending_kinds\` 的**键集合与次序**必须等于 \`pending_ids\`，实得 ${JSON.stringify(b.kindKeys)} vs ${JSON.stringify(b.ids)}`
+              + ' —— 键顺序是输出的合同（下游按它对齐 id 与 kind）')
+          }
+          if (b.kinds?.[ID_MAINT] !== 'maintenance') {
+            push('JUD-JUDGE-PENDING-KINDS', `E：\`pending_kinds[${JSON.stringify(ID_MAINT)}]\` 应为 'maintenance'（池行说的），实得 ${JSON.stringify(b.kinds?.[ID_MAINT])} —— 按 id 前缀猜会猜成 proposal`)
+          }
+          if (b.kinds?.[ID_PROP] !== 'proposal') {
+            push('JUD-JUDGE-PENDING-KINDS', `E：\`pending_kinds[${JSON.stringify(ID_PROP)}]\` 应为 'proposal'（池行说的），实得 ${JSON.stringify(b.kinds?.[ID_PROP])} —— 按 \`MR-\` 前缀猜会猜成 maintenance`)
+          }
+          // ③ 缺省 `proposal` + 计数：两半各判一次（缺省值看得见，计数也在）。
+          if (b.kinds?.[ID_MISSING] !== 'proposal' || b.kinds?.[ID_BOGUS] !== 'proposal') {
+            push('JUD-JUDGE-PENDING-KINDS', `E：kind 缺失 / 第三个值的那两条必须缺省成 'proposal'，实得 ${JSON.stringify({ [ID_MISSING]: b.kinds?.[ID_MISSING] ?? null, [ID_BOGUS]: b.kinds?.[ID_BOGUS] ?? null })}`
+              + ' —— 缺省值必须给出来，否则下游拿不到 kind')
+          }
+          if (b.kindMissing !== 2) {
+            push('JUD-JUDGE-PENDING-KINDS', `E：\`kind_missing\` 应为 2（缺 kind 1 条 + 第三个值 1 条），实得 ${JSON.stringify(b.kindMissing)}`
+              + ' —— 静默缺省 = "它本来就是提案"与"它没写 kind"在读数上同形（上一轮错 kind 的老路）')
+          }
+          if (b.count !== 4) push('JUD-JUDGE-PENDING-KINDS', `E：\`count\` 应为 4，实得 ${JSON.stringify(b.count)}`)
+        }
+
+        // ④ 判过一条：`pending_ids` 少一条、`pending_kinds` 跟着少那个键（按差集现算）。
+        writeFileSync(bp.judgedFile, `${JSON.stringify({ imported_id: ID_PROP, verdict: 'rejected', seq: 1 })}\n`, 'utf8')
+        const after = decode(pendingOf())
+        cells.E.after_one_judged = after
+        const wantAfter = [ID_MAINT, ID_MISSING, ID_BOGUS]
+        if (JSON.stringify(after.ids) !== JSON.stringify(wantAfter)) {
+          push('JUD-JUDGE-PENDING-KINDS', `E：判过 ${ID_PROP} 之后 \`pending_ids\` 应为 ${JSON.stringify(wantAfter)}，实得 ${JSON.stringify(after.ids)}`)
+        }
+        if (JSON.stringify(after.kindKeys) !== JSON.stringify(after.ids)) {
+          push('JUD-JUDGE-PENDING-KINDS', `E：判过一条之后 \`pending_kinds\` 的键仍须与 \`pending_ids\` 逐位相同，实得 ${JSON.stringify(after.kindKeys)} vs ${JSON.stringify(after.ids)}`
+            + ' —— 多留一个键说明它印的是"池子里的全部"而不是"还没判的"')
+        }
+        if (after.kindMissing !== 2) {
+          push('JUD-JUDGE-PENDING-KINDS', `E：判掉的那一条是 proposal（有 kind）⇒ \`kind_missing\` 仍应为 2，实得 ${JSON.stringify(after.kindMissing)}`)
+        }
+
+        // ── 两把刀：T2 丢缺省值 / T3 丢计数 ──────────────────────────────────
+        const srcPath = path.join(PATHS.stagedPreset, 'bin', 'agenia-brain.mjs')
+        const src = readFileSync(srcPath, 'utf8')
+        const t2 = knifeReplace({
+          source: src,
+          find: "    pendingKinds[id] = kind ?? 'proposal'",
+          replace: '    pendingKinds[id] = kind',
+        })
+        const t3 = knifeReplace({
+          source: src,
+          find: '    if (kind === null) kindMissing += 1',
+          replace: '    if (false) kindMissing += 1',
+        })
+        rec.readings.knives_pending = {
+          T2: { label: '丢缺省值（pendingKinds[id] = kind）', ok: t2.ok, code: t2.code, why: t2.why },
+          T3: { label: '丢计数（kindMissing 不再 ++）', ok: t3.ok, code: t3.code, why: t3.why },
+        }
+        if (!t2.ok) push('JUD01-KNIFE-ANCHOR', `T2 在 staged 源码上没有落点：${t2.code} ${t2.why} —— 尺子坏了，不许当成"刀咬了"`)
+        if (!t3.ok) push('JUD01-KNIFE-ANCHOR', `T3 在 staged 源码上没有落点：${t3.code} ${t3.why} —— 尺子坏了，不许当成"刀咬了"`)
+        const legOfKnife = (tag, source) => {
+          const cp = copyBrainInto(path.join(caseDir('JUD-01'), 'pending-knife', tag), source)
+          const res = decode(pendingOf(cp))
+          return { exit: res.exit, kinds: res.kinds, kindMissing: res.kindMissing, ids: res.ids, cli: cp }
+        }
+        if (t2.ok) {
+          const k2 = legOfKnife('T2', t2.source)
+          cells.E.knife_T2 = k2
+          if (k2.exit !== 0 || k2.kinds?.[ID_MISSING] !== null || k2.kinds?.[ID_BOGUS] !== null) {
+            push('JUD01-KNIFE-NOT-BITING', `[T2 丢缺省值] 副本必须把缺 kind 的两条给成 \`null\`（缺省值没了），实得 ${JSON.stringify({ [ID_MISSING]: k2.kinds?.[ID_MISSING] ?? null, [ID_BOGUS]: k2.kinds?.[ID_BOGUS] ?? null })}`
+              + ' —— 这一刀没切开"缺省值"那一半')
+          }
+        }
+        if (t3.ok) {
+          const k3 = legOfKnife('T3', t3.source)
+          cells.E.knife_T3 = k3
+          if (k3.exit !== 0 || k3.kindMissing !== 0) {
+            push('JUD01-KNIFE-NOT-BITING', `[T3 丢计数] 副本必须把 \`kind_missing\` 报成 0（计数没了），实得 ${JSON.stringify(k3.kindMissing)}`
+              + ' —— 这一刀没切开"计数"那一半')
+          }
+          if (k3.kinds?.[ID_MISSING] !== 'proposal') {
+            push('JUD01-KNIFE-NOT-BITING', `[T3 对照] 丢计数**不该**改变缺省值：\`pending_kinds[${JSON.stringify(ID_MISSING)}]\` 仍应是 'proposal'，实得 ${JSON.stringify(k3.kinds?.[ID_MISSING])}`)
           }
         }
       }

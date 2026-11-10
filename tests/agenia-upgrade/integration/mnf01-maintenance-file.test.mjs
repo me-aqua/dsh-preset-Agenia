@@ -250,7 +250,7 @@ test('MNF-01 提一份案 ⇒ 数据根下有一份草稿、池子末行 kind: m
 // ═════════════════════════════════════════════════════════════════════════════
 // MNF-02 · 落点与调用方工作区无关（**定形："这一条最重要"**）
 // ═════════════════════════════════════════════════════════════════════════════
-test('MNF-02 在另一个工作区里调 ⇒ 草稿只落数据根、那个工作区的 .team/ 零新增（刀：落点跟调用方 ⇒ 本格红）', async () => {
+test('MNF-02 在另一个工作区里调 ⇒ 草稿只落数据根、那个工作区的 .team/ 零新增；相对 root 当场拒且零写入（两把刀：落点跟调用方 / 收下相对 root）', async () => {
   await runCase('MNF-02', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -275,6 +275,43 @@ test('MNF-02 在另一个工作区里调 ⇒ 草稿只落数据根、那个工�
       workspace_new: knifed.readings?.new_paths_in_workspace ?? null,
       flip: row,
       ...verdict,
+    }
+
+    /**
+     * ── 刀 2：**收下相对 root**（`bug-20261110-01` 的判据面）────────────────────────────────
+     * 参照实现里那四行 `path.isAbsolute` 拿掉 ⇒ 相对 root 会被收下、按 cwd 折进去、
+     * 建出 `state/maintenance-drafts/` 并写一份草稿 ⇒ 本格的相对 root 那一组断言必须红，
+     * 而且红的必须是**那一组**（`MNF-C2-RELATIVE-ROOT*`）——不是"整套坏了"。
+     */
+    const relDefect = 'relative-root-accepted'
+    if (!F.referenceTool().defects.includes(relDefect)) {
+      push('MNF-KNIFE-ANCHOR', `参照实现的刀清单里没有 ${JSON.stringify(relDefect)} —— 刀换过写法，这把要同批更新`)
+    } else {
+      const relKnifeTool = F.referenceTool({ defect: relDefect })
+      const relKnifed = await runSide({ id: 'MNF-02', dir: path.join(dir, 'knife-relative'), tool: relKnifeTool })
+      const relCodes = relKnifed.problems.map((p) => p.code)
+      const relRow = await flipRow({ tool: relKnifeTool, injectorInputs: await syntheticInjectorInputs({ withTool: true }), dir: path.join(dir, 'knife-relative-flip') })
+      const relVerdict = assertKnife({ id: 'MNF-02', push, row: relRow, label: relDefect })
+      rec.readings.knife_relative_root = {
+        defect: relDefect,
+        must_include: ['MNF-C2-RELATIVE-ROOT'],
+        own_problems: relCodes,
+        receipt: relKnifed.readings?.relative_root?.p2_zero_write?.receipt ?? null,
+        drafts_dir_in_sent_root: relKnifed.readings?.relative_root?.p2_zero_write?.drafts_dir_in_sent_root ?? null,
+        new_paths: relKnifed.readings?.relative_root?.p2_zero_write?.new_paths ?? null,
+        flip: relRow,
+        ...relVerdict,
+      }
+      if (!relCodes.includes('MNF-C2-RELATIVE-ROOT')) {
+        push('MNF-KNIFE-NOT-BITING', `[${relDefect}] 去掉"root 必须是绝对路径"那一道之后，本格必须红 \`MNF-C2-RELATIVE-ROOT\`，`
+          + `实得 ${JSON.stringify(relCodes)} —— 相对 root 这一格没有判据（或者判据只看了码、没看它写没写盘）`)
+      }
+      const wrote = relKnifed.readings?.relative_root?.p2_zero_write
+      if (wrote?.drafts_dir_in_sent_root !== true || (wrote?.new_paths ?? []).length === 0) {
+        push('MNF-KNIFE-NOT-BITING', `[${relDefect}] 刀切过之后，相对 root 的调用**应当**在 cwd 折出来的那个根里建出 \`state/maintenance-drafts/\` 并写一份草稿`
+          + `（实得 目录=${JSON.stringify(wrote?.drafts_dir_in_sent_root)} · 新增=${JSON.stringify(wrote?.new_paths)}）`
+          + ' —— 刀没复现那个形状，本格的"零写入"断言就没被它量到')
+      }
     }
     caseFail(problems)
   })

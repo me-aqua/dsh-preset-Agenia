@@ -304,6 +304,16 @@ export function referenceTool({ defect = null } = {}) {
   async function run(draft, options = {}) {
     const root = options?.root
     if (!isNonEmptyString(root)) throw err(CODES.SHAPE, 'root 必须是数据根的绝对路径（<内容根>/.runtime 那一层）')
+    /**
+     * 🔴 **相对 root 当场拒**（`bug-20261110-01`），而且这一拒在**快照 / 时钟 / 任何写入之前**：
+     * 相对 root（`'.runtime'` / `'relative-data-root'`）会被 `path.join` 折到 `process.cwd()` 之下 ⇒
+     * 草稿与池行落进调用方当时的工作区，判决侧只读数据根 ⇒ 结构上看不见它们。
+     * 刀 `relative-root-accepted` 就是把这四行拿掉 —— `MNF-02` 的相对 root 那一格必须因此红。
+     */
+    if (defect !== 'relative-root-accepted' && !path.isAbsolute(root)) {
+      throw err(CODES.SHAPE, `${CODES.SHAPE}: root 必须是**绝对路径**（数据根 = <内容根>/.runtime 那一层），实得 ${JSON.stringify(root)}`
+        + ' —— 相对路径会按调用方的 cwd 解析，草稿与池行会落进调用方的工作区')
+    }
     const day = isNonEmptyString(options?.day) ? options.day.trim() : DAY
     const at = isNonEmptyString(options?.at) ? options.at : new Date().toISOString()
 
@@ -375,7 +385,7 @@ export function referenceTool({ defect = null } = {}) {
     return { ok: true, draft_id: draftId, path: file, pool_seq: seq, content_sha256: contentSha, day, base_snapshot: baseSnapshot }
   }
 
-  return { name: TOOL_NAME, codes: CODES, run, defects: ['id-from-rowcount', 'path-from-cwd', 'no-target-check', 'no-dedupe', 'no-pool-register'] }
+  return { name: TOOL_NAME, codes: CODES, run, defects: ['id-from-rowcount', 'path-from-cwd', 'relative-root-accepted', 'no-target-check', 'no-dedupe', 'no-pool-register'] }
 }
 
 /** 真工具 → 同一个调用面（缺面时 `run` 抛 `SUT-SURFACE-MISSING`）。 */
@@ -584,6 +594,119 @@ export async function checkC2({ tool, dir }) {
   const strays = wsAll.filter((p) => p.includes('maintenance-drafts'))
   if (strays.length > 0) {
     problems.push(problem('MNF-C2-WORKSPACE-DRAFT', `调用方工作区里出现了草稿：${JSON.stringify(strays)} —— 落点跟了调用方`))
+  }
+
+  // ── 相对 root 必须**当场**拒，且这一拒在快照 / 时钟 / 任何写入之前（`bug-20261110-01`）──────────
+  // 两发探针，各钉一件事：
+  //   P1 **次序**：相对 root 指向一个**不存在**的根 ⇒ 必须报 `E_MAINTENANCE_SHAPE`；
+  //      若 root 校验排在"读快照"之后，这一发会先报 `E_MAINTENANCE_TARGET`（快照读不到）。
+  //   P2 **零写入 + 刀**：相对 root 指向一个**读得动**的数据根（快照/目标都在，只是路径是相对的）⇒
+  //      产品必须报 SHAPE，且 cwd 沙盒里一个文件、一个 `state/` 都不许出现；
+  //      刀（收下相对 root）会把它读出来、按 cwd 折进去、建目录、写草稿 —— 那一组断言必须因此红。
+  const relBase = path.join(dir, 'rel-root')
+  const p1Dir = path.join(relBase, 'p1-order')
+  const p2Dir = path.join(relBase, 'p2-zero-write')
+  for (const d of [p1Dir, p2Dir]) mkdirSync(d, { recursive: true })
+  const p1RootText = 'no-such-relative-root' // ← 相对 + 不存在
+  const p2RootText = 'relative-data-root' // ← 相对 + 存在（下面造一份真的）
+  await makeDataRoot(path.join(p2Dir, p2RootText))
+  const witnessRoot = await makeDataRoot(path.join(dir, 'rel-witness'))
+  const witnessCall = await callTool(tool, draftFixture({ reason: '夹具：相对 root 那一格的量具自检' }), { root: witnessRoot.root, day: DAY, at: AT })
+  const witnessDrafts = countFiles(draftsRoot(witnessRoot.root))
+  /**
+   * 真数据根在这一段的**前基线**（不写死 1）：上面那次合法调用在 `path-from-cwd` 那把刀下
+   * 落到 cwd、而不是 `data.root` —— 写死 1 会让那一刀多吃一条与它无关的红（归因错）。
+   * 这一格只判"**这一发**对真数据根零写入"，所以比的是"没变"。
+   */
+  const drDraftsBeforeRel = countFiles(draftsRoot(data.root))
+  readings.relative_root = {
+    rule: 'root 必须是**绝对路径**（相对 ⇒ E_MAINTENANCE_SHAPE，exit 2 族），且拒在读快照 / 读时钟 / 任何写入之前',
+    witness: {
+      root: witnessRoot.root,
+      ok: witnessCall.ok,
+      code: witnessCall.ok ? null : witnessCall.code,
+      drafts: witnessDrafts,
+      drafts_dir_exists: existsSync(draftsRoot(witnessRoot.root)),
+      note: '量具自检：同一个量具在**绝对** root 上必须量到 1 份草稿 + maintenance-drafts 目录',
+    },
+    p1_order: { sent_root: p1RootText, cwd_sandbox: p1Dir },
+    p2_zero_write: { sent_root: p2RootText, cwd_sandbox: p2Dir, relative_root_created: true },
+  }
+  if (witnessCall.ok !== true || witnessDrafts !== 1 || !existsSync(draftsRoot(witnessRoot.root))) {
+    problems.push(problem('MNF-C2-DETECTOR', `量具自检失败：同一份量具在**绝对** root 上必须量到 1 份草稿 + \`maintenance-drafts\` 目录`
+      + `（实得 ok=${String(witnessCall.ok)} · ${witnessDrafts} 份 · 目录=${String(existsSync(draftsRoot(witnessRoot.root)))}）—— 那样下面的"零草稿"就是空绿`))
+  }
+  /** 在某个 cwd 沙盒里发一次相对 root 的调用（`finally` 一定把 cwd 放回去）。 */
+  const callWithRelativeRoot = async (sandbox, sentRoot, reason) => {
+    const before = process.cwd()
+    try {
+      process.chdir(sandbox)
+      return await callTool(tool, draftFixture({ reason }), { root: sentRoot, day: DAY, at: AT })
+    } finally {
+      process.chdir(before)
+    }
+  }
+  // P1：次序（不存在的那份根）
+  const p1 = await callWithRelativeRoot(p1Dir, p1RootText, '夹具：相对 root（不存在的那份）必须当场拒')
+  readings.relative_root.p1_order.receipt = p1.ok
+    ? { ok: true, draft_id: p1.value?.draft_id ?? null, path: p1.value?.path ?? null }
+    : { ok: false, code: p1.code, message: String(p1.message ?? '').slice(0, 300) }
+  if (p1.ok !== false) {
+    problems.push(problem('MNF-C2-RELATIVE-ROOT', `相对 root（${JSON.stringify(p1RootText)}）**必须**被拒，实得它收下了：${JSON.stringify(p1.value ?? null)}`
+      + ' —— 相对路径会按调用方 cwd 解析，草稿与池行落进调用方的工作区（这份工具存在的理由就是不那样）'))
+  } else {
+    if (p1.code !== CODES.SHAPE) {
+      problems.push(problem('MNF-C2-RELATIVE-ROOT', `相对 root 必须以 \`${CODES.SHAPE}\` 拒，实得 ${JSON.stringify(p1.code)} —— ${String(p1.message).slice(0, 200)}`
+        + '（若是 `E_MAINTENANCE_TARGET`，说明 root 校验排到了"读快照"之后：这一发用的根是**不存在**的）'))
+    }
+    const p1Message = String(p1.message ?? '')
+    if (!p1Message.includes('root')) {
+      problems.push(problem('MNF-C2-RELATIVE-ROOT', `拒绝报文必须点名 \`root\`：${JSON.stringify(p1Message.slice(0, 200))}`))
+    }
+    if (!p1Message.includes('绝对')) {
+      problems.push(problem('MNF-C2-RELATIVE-ROOT', `拒绝报文必须说清"必须是绝对路径"（读的人才知道该给什么）：${JSON.stringify(p1Message.slice(0, 200))}`))
+    }
+  }
+  const p1Paths = pathsUnder(p1Dir)
+  readings.relative_root.p1_order.paths_after = p1Paths
+  readings.relative_root.p1_order.state_dir_exists = existsSync(path.join(p1Dir, 'state'))
+  if (p1Paths.length !== 0 || readings.relative_root.p1_order.state_dir_exists !== false) {
+    problems.push(problem('MNF-C2-RELATIVE-ROOT-WROTE', `P1 被拒之后，cwd 沙盒里**一个文件、一个 state/ 都不许有**`
+      + `（文件 ${JSON.stringify(p1Paths)} · state=${String(readings.relative_root.p1_order.state_dir_exists)}）—— 这一拒发生在任何写入之前`))
+  }
+  // P2：零写入（读得动的那份相对根）
+  // 基线取"这一发之前"的整棵沙盒：刀（收下相对 root）会把草稿写到
+  // `<cwd>/relative-data-root/state/maintenance-drafts/…`（= 相对根被 cwd 折出来的那一处）——
+  // 所以要比**新增**，不能只比"相对根之外"（那会把这一刀正好漏掉）。
+  const p2Before = pathsUnder(p2Dir)
+  const p2 = await callWithRelativeRoot(p2Dir, p2RootText, '夹具：相对 root（读得动的那份）必须当场拒')
+  const p2After = pathsUnder(p2Dir)
+  const p2New = p2After.filter((p) => !p2Before.includes(p))
+  readings.relative_root.p2_zero_write.receipt = p2.ok
+    ? { ok: true, draft_id: p2.value?.draft_id ?? null, path: p2.value?.path ?? null }
+    : { ok: false, code: p2.code, message: String(p2.message ?? '').slice(0, 300) }
+  readings.relative_root.p2_zero_write.paths_before = p2Before.length
+  readings.relative_root.p2_zero_write.new_paths = p2New
+  readings.relative_root.p2_zero_write.state_dir_in_sent_root = existsSync(path.join(p2Dir, p2RootText, 'state'))
+  readings.relative_root.p2_zero_write.drafts_dir_in_sent_root = existsSync(path.join(p2Dir, p2RootText, 'state', 'maintenance-drafts'))
+  readings.relative_root.p2_zero_write.cwd_state_dir_exists = existsSync(path.join(p2Dir, 'state'))
+  readings.relative_root.dr_drafts_before = drDraftsBeforeRel
+  readings.relative_root.dr_drafts_after = countFiles(draftsRoot(data.root))
+  if (p2.ok !== false || p2.code !== CODES.SHAPE) {
+    problems.push(problem('MNF-C2-RELATIVE-ROOT', `相对 root（${JSON.stringify(p2RootText)}，**读得动**的一份）也必须报 \`${CODES.SHAPE}\`，`
+      + `实得 ok=${String(p2.ok)} · code=${JSON.stringify(p2.ok ? null : p2.code)} —— 根校验不许因为"这份根恰好读得动"就放过`))
+  }
+  if (p2New.length !== 0 || readings.relative_root.p2_zero_write.drafts_dir_in_sent_root !== false
+    || readings.relative_root.p2_zero_write.state_dir_in_sent_root !== false
+    || readings.relative_root.p2_zero_write.cwd_state_dir_exists !== false) {
+    problems.push(problem('MNF-C2-RELATIVE-ROOT-WROTE', `相对 root 被拒之后**一个字节都不许落盘**：沙盒里新增 ${JSON.stringify(p2New)}`
+      + `（state/=${String(readings.relative_root.p2_zero_write.state_dir_in_sent_root)}`
+      + ` · maintenance-drafts/=${String(readings.relative_root.p2_zero_write.drafts_dir_in_sent_root)}`
+      + ` · cwd/state/=${String(readings.relative_root.p2_zero_write.cwd_state_dir_exists)}）`
+      + ' —— 这一拒发生在快照 / 时钟 / 任何写入之前'))
+  }
+  if (readings.relative_root.dr_drafts_after !== drDraftsBeforeRel) {
+    problems.push(problem('MNF-C2-RELATIVE-ROOT-WROTE', `这一发对**真数据根**必须零写入（前后同值），实得 ${drDraftsBeforeRel} → ${readings.relative_root.dr_drafts_after} 份`))
   }
   return { problems, readings }
 }

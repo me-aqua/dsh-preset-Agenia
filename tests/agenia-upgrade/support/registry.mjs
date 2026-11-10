@@ -949,6 +949,13 @@ export const BATCH_AO = ['OFL-09']
 export const BATCH_AP = ['HCA-01']
 
 /**
+ * 批次 AQ（2026-11-10 · Gate 3 第三条）：**池子 / 已判索引的写盘纪律**（`PWL-01`）。
+ * 契约 `.team/test/2026-11-10/CONTRACT-gate2-anchors-and-holds.md` §5；判据本体 `support/pool-writer-shape.mjs`。
+ * ⚠️ 不进 `FROZEN_IDS`。
+ */
+export const BATCH_AQ = ['PWL-01']
+
+/**
  * 已落笔的二十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -972,7 +979,7 @@ export const BATCH_AP = ['HCA-01']
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP, AQ: BATCH_AQ }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -1011,7 +1018,7 @@ const BATCH_OF = (id) =>
                                                                       : BATCH_AJ.includes(id) ? 'AJ'
                                                                         : BATCH_AK.includes(id) ? 'AK'
                                                                           : BATCH_AL.includes(id) ? 'AL'
-                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP'
+                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP' : BATCH_AQ.includes(id) ? 'AQ'
                                                                   : null
 
 const F = {
@@ -1210,6 +1217,8 @@ const F = {
    *  单开一个文件而不是并进 `data-root` / `wit01`：它判的是**所有判据共用**的那一个出口，
    *  与结算行/守卫都没有共享夹具；红的时候一眼看得出"是某条判据写错了"，而不是"被测对象坏了"。 */
   hca: 'unit/hca01-hold-call-shape.test.mjs',
+  /** 批次 AQ：池子 / 已判索引的写盘纪律（结构判据，文本面）。 */
+  pwl: 'unit/pwl01-pool-writer-discipline.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1543,6 +1552,9 @@ const ROWS = [
 
   // ── 批次 AP（2026-11-10 · Gate 2 第三轮）：技术评审 `F2` 的判据面（契约 §3）──
   ['HCA-01', 'measuring-integrity', F.hca, '**判据自己的调用形状**（技术评审 2026-11-09 `F2`）：`caseHold(rec, code, why)` 收到少于 3 个实参时 —— ① 形状判据（纯函数 `caseHoldCallProblem`）六个喂法给五个互不相同的码（三参合法 / 两参 / 一参 / 第 1 个不是记录 / code 空 / why 不是字符串），并自述边界"多于三参不判"；② 活体闸：形状错 ⇒ 抛 `CaseHoldShapeError`（码 `CASE-HOLD-ARITY` 等）+ 报文点名调用点 file:line + **一条 HOLD 都不许被记下来**，三参合法调用必须照常记 `{code,why,at}`（阳性对照）；③ 端到端两跑（独立运行根，真 `runCase`）：两参的用例体 ⇒ `result:"RED"` 且 `problems[0].code === "CASE-HOLD-ARITY"`（**不是** `TypeError`）、`holds` 为空；三参的 ⇒ `result:"HOLD"`、`holds[0].code` 就是那个码。⚠️ 它**不**静态扫源码：一个永远不被执行的坏调用点这把闸看不见（`flip01-bridge-reading.test.mjs:224` 就是这种），那一支在副本跑里以 `CASE-HOLD-ARITY` 的形状出现', '批次 AP'],
+
+  // ── 批次 AQ（2026-11-10 · Gate 3 第三条）：池子 / 已判索引的写盘纪律（契约 §5）──
+  ['PWL-01', 'pool-writer', F.pwl, '**池子 / 已判索引的写盘纪律**（`bug-20261110-10` 的判据面 · 契约 §5）：`lib/proposals.mjs` 里 ① **不许有 `mkdirSync`**（目录由 `writeFileAtomic` 在调用方持有的锁里建 —— 锁外那条抛的是不以码开头的裸 `EACCES`/`EEXIST`，与"程序有 bug"同形；**宽口径**：不猜哪几行在锁里、也不只看 `proposalsDir(`，任何一处都算）② 写**池子那一份文件**的调用只能出现在 `writePoolRowLocked` 里（三条入口共用一条写路径）③ 一处 `poolPath(` / `pool.path` 都没看见 ⇒ `PWL-SCAN-BLIND`（瞎子不许报绿）。刀：三份合成源码（干净 ⇒ 0 条 · 锁外 mkdir ⇒ **只**翻 ① 且点名函数与行号 · 池写跑到别的函数 ⇒ **只**翻 ② · 没有池子路径 ⇒ **只**翻 ③）+ 真 `lib/proposals.mjs` 的真读数。⚠️ 写这一格时真源码里还有 `appendJudgedRows` 的锁外 mkdir ⇒ 本格**红得对**（`bug-20261110-10` 未修之前是预期红）', '批次 AQ'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1697,6 +1709,12 @@ export const GROUP_COUNTS = {
    *  批次 AP 追加 `HCA-01`：判据共用出口 `caseHold` 的**调用形状**（`F2`）⇒ 3 → 4，仍不另开一组
    *  （它守的还是"量具自己不许骗人"）。 */
   'measuring-integrity': 4,
+  /** 批次 AQ（2026-11-10 · Gate 3 第三条）—— **池子 / 已判索引的写盘纪律**（`PWL-01`）：
+   *  判的是 `lib/proposals.mjs` 的**文本形状**（有没有锁外 `mkdirSync` / 池子写有没有跑到
+   *  `writePoolRowLocked` 之外）。单开一组而不是并进 `maintenance-file` / `judge-classification`：
+   *  那一族判"提得进 / 判得对"，这一格判"写盘路径的口径有没有被守住"；
+   *  红的时候一眼看得出是"某条行为坏了"还是"写盘纪律被破了"。 */
+  'pool-writer': 1,
   /** 批次 AK · batch 15（2026-11-08）—— **office 放行时的持久读数**（`bug-20261107-10`）：
    *  `OFL-01` 同树也留一行 / `OFL-02` 异树那行带两个 office / `OFL-03` 读数从账上读 /
    *  `OFL-04` fail-closed / `OFL-05` 三次探测恰好两行 / `OFL-06` 刀架。
@@ -1746,9 +1764,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO/AP 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO/AP/AQ 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1775,7 +1793,7 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
 
