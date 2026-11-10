@@ -964,6 +964,27 @@ export const BATCH_AQ = ['PWL-01']
 export const BATCH_AR = ['RCA-01', 'SHN-01']
 
 /**
+ * 批次 AS（2026-11-10 · Gate 2 第五轮）：**撤 / 恢复宿主级行的那条命令**（`bug-20261110-14`）。
+ *
+ * 契约：`.team/test/2026-11-10/CONTRACT-gate2-unmount-host-row.md`（唯一出处）。
+ * 定形：`.team/leader/2026-11-10/定形-撤挂载命令.md`。被测：`.tools/unmount-host-row.mjs`
+ * （写这一批时**不存在** ⇒ 五格**预期红**，红因 `UMH-TOOL-ABSENT`；契约 §九）。
+ *
+ * 一句话：**"撤挂载"今天不是一个可执行的动作** —— 宿主级这一事实同时写在组合的 `# @host-level` 标记
+ * 与生成器的 `HOST_LEVEL_IDS` 里，只改一处生成器自己拒（`E_BUNDLE_HOST_UNMARKED` / `_UNLISTED`）。
+ * 五格各判一面（同住 `integration/umh01-unmount-host-row.test.mjs`，同一个副本夹具、同一把尺子、同一批刀）：
+ *   · `UMH-01` **两条腿**：`--apply` ⇒ 补丁里 `{insert:0, preset_bodies:2}` · `--restore` ⇒ `{1,0}` ·
+ *     来回一圈回原字节 · 未知 id ⇒ exit 3 · 补丁必须是**派生物**（`--check` exit 0）；
+ *   · `UMH-02` **负控①**只撤了标记 ⇒ 拒绝并点名 `marker` + 生成器一次都不许被调用；
+ *   · `UMH-03` **负控②**只撤了名单 ⇒ 同一个形状、另一个码（两条负控的码写反就两格都红）；
+ *   · `UMH-04` **幂等**：目标态上再跑 ⇒ `UMH-NOOP` / `changed: 0` / 字节不动（两个方向）；
+ *   · `UMH-05` **回滚**：生成器步 / 自证步各注入一次失败 ⇒ 两份载体**逐字节**回到跑之前（注入器见证为证）。
+ * 🔴 **GUI 不在这一批的判定范围**（定形 §五）：撤 / 恢复之后面板在不在，属 R5 实机验证，由人在界面上点一次。
+ * ⚠️ 这五条**不进** `FROZEN_IDS`（后加批次各自以显式清单存在）。
+ */
+export const BATCH_AS = ['UMH-01', 'UMH-02', 'UMH-03', 'UMH-04', 'UMH-05']
+
+/**
  * 已落笔的二十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -987,7 +1008,7 @@ export const BATCH_AR = ['RCA-01', 'SHN-01']
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP, AQ: BATCH_AQ, AR: BATCH_AR }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP, AQ: BATCH_AQ, AR: BATCH_AR, AS: BATCH_AS }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -1026,7 +1047,7 @@ const BATCH_OF = (id) =>
                                                                       : BATCH_AJ.includes(id) ? 'AJ'
                                                                         : BATCH_AK.includes(id) ? 'AK'
                                                                           : BATCH_AL.includes(id) ? 'AL'
-                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP' : BATCH_AQ.includes(id) ? 'AQ' : BATCH_AR.includes(id) ? 'AR'
+                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP' : BATCH_AQ.includes(id) ? 'AQ' : BATCH_AR.includes(id) ? 'AR' : BATCH_AS.includes(id) ? 'AS'
                                                                   : null
 
 const F = {
@@ -1232,6 +1253,10 @@ const F = {
    *  一个要真入口多跑几发（活树 / 副本 / 喂错提交），一个要合成证据根 + 副本刀 —— 夹具不同。 */
   rca: 'unit/rca01-run-commit-anchor.test.mjs',
   shn: 'unit/shn01-settle-hold-names.test.mjs',
+  /** 批次 AS：**撤 / 恢复宿主级行的那条命令**（`bug-20261110-14`）—— 五格同住一个文件：
+   *  两条行为腿 / 两条错配负控 / 幂等 / 回滚。同一个副本夹具 + 同一把尺子（`client-ui-placement.mjs`）+
+   *  七把刀 ⇒ 翻面读数要在一处读得出来（同 `MKP-01` / `OFB-*` / `OFL-*` 的规矩）。 */
+  umh: 'integration/umh01-unmount-host-row.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1572,6 +1597,13 @@ const ROWS = [
   // ── 批次 AR（2026-11-10 · Gate 2 第四轮）：**一份读数要说得清自己是谁**（契约 §7）──────
   ['RCA-01', 'settle-reading', F.rca, '`bug-20261109-08` **`judgement.txt` 里这一跑属于哪个提交**（契约 §7.1）：唯一解析器 `support/run-anchor.mjs::readRunAnchor` —— `git rev-parse --show-toplevel` 的顶层 == 仓库根 ⇒ 活树的 `HEAD`；否则 = 副本 ⇒ 只认 `AGENIA_COPY_COMMIT=<40 hex>` / `AGENIA_COPY_PROVENANCE=<导出 JSON>`，没有来历 ⇒ `state:"unknown"`（判不了，**不许**落回活树的 `HEAD`）。入口在**建运行根之前量一次**，落盘 `<运行根>/run-anchor.json`，`[锚] 提交 <40hex> · 来源=…` 那一行**只渲染这份读数**（渲染是纯函数 ⇒ 重测不了）。腿：(a) 活树跑 ⇒ 行 = 起跑那一刻的 `HEAD`（测试自己在 spawn 前量一次）、`head_git_calls === 1`、`run-anchor.json.measured_at` 早于 `stdout.txt` 的 mtime；(b) 副本（**嵌在活树里**，git 会走到活树的 `.git`）无来历 ⇒ 行 = `[锚] 提交 判不了` + 原因，整行 40 位十六进制命中 **0** 处（`RCA-GUESSED-HASH`）；(c) **刀**：喂一个形状合法的错提交（副本 + `AGENIA_COPY_COMMIT`）⇒ 行里就是那个错值，判官拿真值比 ⇒ `RCA-COMMIT-MISMATCH`（**不是"只是不同"**）；另加"`HEAD` 在渲染前又动了一个提交 ⇒ 行不许跟着动"（fixture 仓）+ 与 `FLIP-01` **同一个解析器**的静态腿（`run-all.mjs` / `flip01-*.test.mjs` 里 `rev-parse` + `HEAD` 命中 0 处）。⚠️ 边界：副本的来历只有一处来源 ⇒ 被**误报**的来历无法从内部发现；这把刀证明的是"行与真值不符会红"', '批次 AR'],
   ['SHN-01', 'settle-reading', F.shn, '`bug-20261110-05` **`F57-SETTLE` 报 `HOLD 2` 不点名**（契约 §7.2）：结算行之后逐条非绿 —— `HOLD <id> <code> env|case` / `RED <id> <code>`（一行 = 一个用例 × 一个成因码；同一个用例两个码就两行），再一行 `[结算·成因] 非绿 <n> 例（<m> 条成因）= HOLD <h> / RED <r> · 成因 <code>=<条数> … · 环境性 <e> 条`；整组由 `support/settle-reading.mjs::settleGroupLines` 一处产出（控制台与 `judgement.txt` 同一份数组）。判据 `settleGroupVerdict` **双向对账**：盘上每条非绿都有名 / 每个名都在盘上 / 行的码集 = `_evidence/<ID>/result.json` 的码集 / 直方图条数 = 行数 / 每个 verdict 的不同 id 数 = `F57-SETTLE` 行里的数（也从**行里**解析，不只看结算 JSON）/ kind 词与 `holds[].kind` 同值 / 无重复名 / 非绿无码 ⇒ `SHN-UNNAMED-CODE` / 缺 `result.json` ⇒ `SHN-EVIDENCE-MISSING`。`kind` 由生产侧 `caseHold(rec, code, why, {kind})` 写入（今天 `environment` 的四处：`DR02-EXCLUSION-NO-DATA-ROOT` · `STM-SETUP-DR02-HOLD`/`-NO-READING` · `FLIP-PROVENANCE-UNKNOWN` · `DR01-BRAIN-WITNESS-ABSENT`；BOOT 那两条留在 `case`，归类是组长的取舍）。腿：(a) 真 `--settle` 跑在 2 条 HOLD 的合成证据根上 ⇒ 两条各自点名带码、直方图求和 2、逐份 `result.json` 读回对上；(b) 环境性 HOLD（`dataSegmentExclusionVerdict({files:[],pinned:[".runtime"],dataRootOnDisk:false})` 现算的 DR02 形状）⇒ 行在且带 `env`；(c) **刀**：副本里把 `settle-reading.mjs` 改成少发一行 ⇒ 用**同一段用例体**跑 ⇒ `result:"RED"` 且 `problems[0].code === "SHN-NAME-MISSING"`；(d) 数与名不许分家：一个用例两个码 ⇒ 3 行 / 2 个 id；把行里的 `HOLD 2` 改成 `HOLD 1` ⇒ `SHN-COUNTS-DISAGREE`，改直方图一个数 ⇒ `SHN-HISTOGRAM-DRIFT`', '批次 AR'],
+
+  // ── 批次 AS（2026-11-10 · Gate 2 第五轮）：**撤 / 恢复宿主级行的命令**（契约全文见 `CONTRACT-gate2-unmount-host-row.md`）──
+  ['UMH-01', 'unmount-host-row', F.umh, '`bug-20261110-14` **撤挂载 / 恢复的两条腿**（契约 §五.1）：真工具跑在**副本**上（`--repo <copy>`；副本无 `.git`）—— ① `--apply`（入口 M）⇒ exit 0 · `UMH-APPLIED` · `changed: 3` · **尺子从补丁文本**复算 `row_landing {insert:0, preset_bodies:2}` 且与工具打印一致 · 三处载体到位（`# @host-level` 不在 / 名单改过 / `disabled: true` 在）· `make-bundle-patch.mjs --check` exit 0（补丁是**派生物**）；② `--restore`（接①的产物）⇒ `UMH-RESTORED` · `{1,0}` · **两份载体文件逐字节 + 文件集合回到①之前**（"精确的逆"）；③ 未知 id ⇒ exit 3、不写字节。刀：K1 `printf-liar`（只说 `{0,2}` 不写）⇒ `UMH-LANDING-MISMATCH` · K2 `forge-patch`（换掉补丁字节伪造派生物）⇒ `UMH-PATCH-NOT-DERIVED` · K3 `silent-proceed`（未知 id 也 exit 0）⇒ `UMH-USAGE-SILENT-GREEN`。⚠️ 写这一格时工具**不在盘上** ⇒ 预期红 `UMH-TOOL-ABSENT`', '批次 AS'],
+  ['UMH-02', 'unmount-host-row', F.umh, '**错配负控①：只撤了标记**（契约 §五.2）：入口 B = 组合里 `# @host-level` 不在、`HOST_LEVEL_IDS` 还在、没 `disabled: true`（**生成器换成见证**：一被调用就落一个 `generator-called.json`）⇒ 工具必须 exit 2 · `E_UNMOUNT_MARKER_MISSING` · `carrier: "marker"` · `changed: 0` · **一个字节不写** · **生成器一次都没被调用**（见证文件不在）。刀：K3 静默放行 ⇒ `UMH-REFUSAL-EXIT` · K4 报另一个载体的码 ⇒ `UMH-CARRIER-NAMED-WRONG`', '批次 AS'],
+  ['UMH-03', 'unmount-host-row', F.umh, '**错配负控②：只撤了名单**（契约 §五.3）：入口 C = 标记还在、`HOST_LEVEL_IDS` 里没有那一项 ⇒ 同一个形状、**另一个码**：exit 2 · `E_UNMOUNT_LIST_MISSING` · `carrier: "list"` · `changed: 0` · 字节不变 · 生成器不调用。与 `UMH-02` **逐字比码**：两个负控必须是两个名字，写反 ⇒ 两格都红（`UMH-CARRIER-NAMED-WRONG`）。刀：K3 / K4 同上（K4 喂 `E_UNMOUNT_MARKER_MISSING`）', '批次 AS'],
+  ['UMH-04', 'unmount-host-row', F.umh, '**幂等**（契约 §五.4）：① U 态（夹具造的一致 U 树）上再 `--apply` ⇒ exit 0 · `UMH-NOOP` · `changed: 0` · 补丁仍 `{0,2}` · 字节/文件集合不动；② M 态 `--apply` 两次 ⇒ 第二次同形、且**第二次之后字节 === 第一次之后**；③ U 态 `--restore` 两次 ⇒ 第二次同形、落点回 `{1,0}`。刀：K5 恒报 `changed: 1` ⇒ `UMH-CHANGED-NOT-ZERO` · K6 报 no-op 却写一个换行 ⇒ `UMH-NOOP-TOUCHED-BYTES`', '批次 AS'],
+  ['UMH-05', 'unmount-host-row', F.umh, '**回滚**（契约 §五.5）：在**副本**上注入两次失败 —— ① 生成器步换成"见证 + 抛"（先把它被调用那一刻的三处载体写进 `generator-called.json` 再 exit 1）⇒ exit 1 · `E_UNMOUNT_STEP_FAILED` · `failed_step: "generator"` · `rolled_back: true` · `changed: 0` · stderr 非空 · 见证显示 **marker=false / disabled=true / 生成器文件 sha 变过**（三处**已经写过** ⇒ 回滚不是空转）· 两份载体**逐字节**回到跑之前、文件集合不变；② 生成器换成"成功但产物不翻面"的 stub ⇒ `failed_step: "verify"`、同样回滚（自证那一步也是**一步**）。刀：K7 跳到"三处都写好了"再跑生成器、**不回滚** ⇒ `UMH-ROLLBACK-NOT-BYTE-IDENTICAL`', '批次 AS'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1737,6 +1769,11 @@ export const GROUP_COUNTS = {
    *  这一组判**结算句组**（`judgement.txt` 里那几行）能不能说出"哪个提交 / 哪几条非绿"；
    *  红的时候一眼看得出是"锚点丢了或猜了"还是"名单少一条"。 */
   'settle-reading': 2,
+  /** 批次 AS（2026-11-10 · Gate 2 第五轮）—— **撤 / 恢复宿主级行的那条命令**（`UMH-01`…`UMH-05`）。
+   *  单开一组而不是并进 `bundle-patch`（`MKP-01`）：那一格判的是**生成器自己在层归属上的联锁**（控制流），
+   *  这一组判的是**改挂载这条命令**（原子性 / 拒绝 / 幂等 / 回滚 + 产物落点）；
+   *  红的时候一眼看得出是"命令写歪了"还是"生成器不认这个组合"。 */
+  'unmount-host-row': 5,
   /** 批次 AK · batch 15（2026-11-08）—— **office 放行时的持久读数**（`bug-20261107-10`）：
    *  `OFL-01` 同树也留一行 / `OFL-02` 异树那行带两个 office / `OFL-03` 读数从账上读 /
    *  `OFL-04` fail-closed / `OFL-05` 三次探测恰好两行 / `OFL-06` 刀架。
@@ -1786,7 +1823,7 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
   if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO/AP/AQ/AR 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
@@ -1815,7 +1852,7 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
 
