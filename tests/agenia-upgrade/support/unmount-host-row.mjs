@@ -15,8 +15,9 @@
  *      副本里**没有 `.git`** ⇒ 任何"往上爬找仓库 / 用 git 定位"的实现会写到**活树**；`liveSentinel()` 抓它。
  *   ② **尺子**：落点只有一个口径 —— `client-ui-placement.mjs::describePlacement()`（`DASH-15`/`DASH-16` 的判据本体）。
  *      本模块**不另造解析器**：`rowLanding()` 只是把它的 `rows` 数一下。
- *   ③ **四种入口态 + 三种生成器 + 刀**：`M` / `B` / `C` / `U` 的文本构造、见证生成器、失败注入 stub、
- *      七把刀的假工具，外加一把"把真工具改坏一行"的变体（`staleBlindTool`，刀 K9）。
+ *   ③ **四种入口态 + 三种生成器 + 刀**：`M` / `B` / `C` / `U` 的文本构造、见证 / 探子生成器、失败注入 stub、
+ *      七把刀的假工具，外加把**真工具**的某几道闸摘掉的变体（`gateBlindTool`：落点闸 / `--check` 闸）。
+ *      `readGeneratorCalls()` 把"写那一支被调了几次"与"只读 `--check` 被调了几次"分开记（`argv` 说话）。
  *
  * ## 两条边界（写下来，别当假设）
  *   · **不钉 `HOST_LEVEL_IDS` 的形状**：`carrierFacts().listed` 只用于**夹具自检**与诊断读数，
@@ -40,6 +41,12 @@ export const ROW_ID = 'agenia-dashboard'
  * 判据只认这一个名字：一句不说清是哪件事的失败，读的人分不出"入口态不对"与"树被中断过"。
  */
 export const STALE_CODE = 'E_UNMOUNT_PATCH_STALE'
+
+/**
+ * 工具对「落点读对了、但补丁不是派生物」的那个码（第二道签字）。
+ * 与 `STALE_CODE` 是**两件事**：落点是从文本里数出来的两个数，半截的补丁照样数得出 `{0,2}`。
+ */
+export const NOT_DERIVED_CODE = 'E_UNMOUNT_PATCH_NOT_DERIVED'
 
 /** 工具的**运行集** + 被写的那一份补丁，相对 `<repo>` 的路径。 */
 export const REL = Object.freeze({
@@ -326,24 +333,31 @@ export function preState(state, { compositionText, generatorText }) {
   }
 }
 
-// ── 生成器：真 / 见证 / 失败 stub ─────────────────────────────────────────
+// ── 生成器：真 / 见证 / 探子 / 失败 stub ───────────────────────────────────
 /**
- * **见证生成器** = 一段抬头 + 真生成器的正文。
+ * **见证 / 探子**共用的一段抬头（包着真生成器的正文）。
  *
- * 抬头做的事：把"我被调用时，组合里那两格载体是什么 / 生成器自己那份文件的 sha256 / cwd 是什么"
- * 写进 `outFile`（**副本外面**，免得它自己把副本的文件集合弄脏），然后 `exit 1`。
+ * 抬头做的事：把"我被调用时，argv 是什么 / 组合里那两格载体是什么 / 生成器自己那份文件的 sha256 / cwd"
+ * **追加**一行 JSON 到 `outFile`（**副本外面**，免得它自己把副本的文件集合弄脏）。两种收尾：
+ *   · `fail: true`（**见证**）—— 写完就 `exit 1`：用来证明"工具在这一步被调用过"，并让那一步失败；
+ *   · `fail: false`（**探子**）—— 记完**继续跑真生成器的正文**：用来**只观察**（`--check` 要拿到真答案，
+ *     一次 `--check` 就是一次真实调用）而不改变被测行为。
+ *
+ * 🔴 为什么要分清"写"与"`--check`"：`argv` 里带 `--check` 的是**只读**那一次调用（生成器只把内存里那份
+ * 与盘上补丁逐字节比，不写文件）。工具的 no-op 分支会调它，所以"生成器被调用过"这句话单独说会把人骗到
+ * —— 判据读 `generator_writes` / `generator_checks` 两个数，别读一个数当两个意思（`mig-rules-18`）。
  *
  * 为什么抬头要**包着真正文**而不是替换掉：工具要能从这份文件里读到 `HOST_LEVEL_IDS`（契约 §一.2 的 B），
  * 替换掉它 = 把被测入口态弄坏，那一格就变成"夹具坏了"。
  * ⚠️ 这条夹具假设工具**定点修改**生成器（只动名单那一处）。若工具整份重写生成器，抬头会被抹掉 ⇒
- *    生成器不会失败 ⇒ 那一格报 `UMH-INJECTION-NOT-REACHED`（红），**不会**假绿。
+ *    见证那一路不会失败 ⇒ 那一格报 `UMH-INJECTION-NOT-REACHED`（红），**不会**假绿。
  */
-export function witnessGenerator(realText, outFile) {
+function witnessHeader(realText, outFile, { fail }) {
   const out = String(outFile).replace(/\\/g, '\\\\').replace(/'/g, "\\'")
   const header = [
-    '// ── 见证抬头（`UMH-05` / `UMH-02` / `UMH-03` 的夹具；不是产品代码）────────────────',
+    `// ── ${fail ? '见证' : '探子'}抬头（\`UMH-*\` 的夹具；不是产品代码）────────────────`,
     "import { createHash as __xSha } from 'node:crypto'",
-    "import { readFileSync as __xRead, writeFileSync as __xWrite } from 'node:fs'",
+    "import { appendFileSync as __xAppend, readFileSync as __xRead } from 'node:fs'",
     "import { dirname as __xDir, join as __xJoin, resolve as __xResolve } from 'node:path'",
     "import { fileURLToPath as __xUrl } from 'node:url'",
     'const __xSelf = __xUrl(import.meta.url)',
@@ -365,12 +379,27 @@ export function witnessGenerator(realText, outFile) {
     '  generator_sha256: __xShaOf(__xSelf),',
     '  composition_sha256: __xShaOf(__xComposition),',
     '}',
-    `__xWrite('${out}', JSON.stringify(__xWitness, null, 2) + '\\n', 'utf8')`,
-    'process.stderr.write("WITNESS-GENERATOR：这一步是被注入的失败（不许写补丁）\\n")',
-    'process.exit(1)',
-    '',
-  ].join('\n')
-  return `${header}${realText}`
+    `__xAppend('${out}', JSON.stringify(__xWitness) + '\\n', 'utf8')`,
+  ]
+  if (fail) {
+    header.push('process.stderr.write("WITNESS-GENERATOR：这一步是被注入的失败（不许写补丁）\\n")')
+    header.push('process.exit(1)')
+  }
+  header.push('')
+  return `${header.join('\n')}${realText}`
+}
+
+/** **见证生成器**：记一行"我被调用了"然后 `exit 1`（失败注入用）。 */
+export function witnessGenerator(realText, outFile) {
+  return witnessHeader(realText, outFile, { fail: true })
+}
+
+/**
+ * **探子生成器**：记一行调用（`argv` 里能分出 `--check` 与"写那一支"）然后**照常跑真生成器**。
+ * 用它观察"工具到底调了哪一支"，又不会把被测行为改坏。
+ */
+export function spyGenerator(realText, outFile) {
+  return witnessHeader(realText, outFile, { fail: false })
 }
 
 /**
@@ -470,28 +499,83 @@ export const FAKE_TOOL = Object.freeze({
   ].join('\n'),
 })
 
-// ── 刀 K9：把真工具改坏一行（不是另写一个假工具）────────────────────────────
+// ── 刀：把真工具的某几道闸摘掉（不是另写一个假工具）──────────────────────────
 /**
- * **刀 K9**：把真工具的 no-op 落点检查摘掉（退回到"补丁文件在就行"），其余一字不动 ——
- * 这正是 round-4 那个洞的形状：载体翻过的树 + 旧补丁 ⇒ `exit 0 · UMH-NOOP`，一条红都没有。
+ * 把**真工具**的 no-op 签字闸按名字摘掉，其余一字不动 —— 用来问"这一格的红是谁给的"。
  *
- * 怎么改：`code: 'E_UNMOUNT_PATCH_STALE'` 在工具里**只有一处** ⇒ 拿它当锚，把它**之前**最近的那个
- * `if (landing.insert !== want.insert || landing.preset_bodies !== want.preset_bodies) {` 换成 `if (false) {`。
- * 为什么不用 replaceAll：那个条件在工具里出现两次（no-op 分支 + 自证步），replaceAll 会把自证那一步也切掉
- * ⇒ 刀就切到别处去了（`UMH-KNIFE-VECTOR` 的教训：刀切宽了，红因就指不准）。
+ * 两道闸（工具里各一处，锚点都唯一/可定点）：
+ *   · `landing` —— no-op 分支里那个 `if (landing.insert !== want.insert || …)`：摘掉 ⇒ 只看"落点"这件事
+ *     不再判（第二道还在，所以通常**不会**掉回 `UMH-NOOP`，而是换一个码拒 —— 那正是"两道签字"的证据）；
+ *   · `check` —— `const derived = derivationCheck({ generatorAbs: abs.generator, repo })` 那一行：摘掉 ⇒
+ *     "补丁是不是派生物"不再问（落点对就说 no-op）。
+ * 两道都摘 ⇒ 才有可能回到 `UMH-NOOP`。
  *
- * @returns {{text:string, applied:boolean, why:string|null}}  `applied:false` ⇒ 刀没装上（判据要红，不是静默）
+ * 为什么 `landing` 用 `lastIndexOf` 而不是 replaceAll：那个条件在工具里出现两次（no-op 分支 + 自证步），
+ * replaceAll 会把自证那一步也切掉 ⇒ 刀切到别处去了（`UMH-KNIFE-VECTOR` 的教训）。
+ *
+ * @param {string} realText 工具正文
+ * @param {{landing?:boolean, check?:boolean}} gates 要摘哪几道（缺省：只摘 `landing`）
+ * @returns {{text:string, applied:string[], missing:string[], ok:boolean, why:string|null}}
+ *   `ok:false`（锚点不见了）⇒ 调用方必须**红**，不许静默当"刀装上了"
  */
-export function staleBlindTool(realText) {
-  const text = String(realText)
-  const anchor = "code: 'E_UNMOUNT_PATCH_STALE'"
-  const cond = 'if (landing.insert !== want.insert || landing.preset_bodies !== want.preset_bodies) {'
-  const atAnchor = text.indexOf(anchor)
-  if (atAnchor < 0) return { text, applied: false, why: `工具文本里找不到锚点 ${anchor}（工具改过？刀没装上）` }
-  const at = text.lastIndexOf(cond, atAnchor)
-  if (at < 0) return { text, applied: false, why: `锚点之前找不到那个 \`want\` 检查（工具改过？刀没装上）` }
-  const patched = `${text.slice(0, at)}if (false) { // 刀 K9：want 检查被摘掉（只剩"补丁文件在"）${text.slice(at + cond.length)}`
-  return { text: patched, applied: patched !== text, why: patched === text ? '刀一个字节都没改到' : null }
+export function gateBlindTool(realText, { landing = false, check = false } = {}) {
+  let text = String(realText)
+  const applied = []
+  const missing = []
+  if (!landing && !check) missing.push('没说要摘哪道闸（landing / check 至少给一个）')
+  if (landing) {
+    const anchor = "code: 'E_UNMOUNT_PATCH_STALE'"
+    const cond = 'if (landing.insert !== want.insert || landing.preset_bodies !== want.preset_bodies) {'
+    const atAnchor = text.indexOf(anchor)
+    if (atAnchor < 0) {
+      missing.push(`landing（找不到锚点 ${anchor}）`)
+    } else {
+      const at = text.lastIndexOf(cond, atAnchor)
+      if (at < 0) {
+        missing.push('landing（锚点之前找不到那个 `want` 检查）')
+      } else {
+        text = `${text.slice(0, at)}if (false) { // 刀：落点闸被摘掉（只看"补丁文件在"）${text.slice(at + cond.length)}`
+        applied.push('landing')
+      }
+    }
+  }
+  if (check) {
+    const anchor = 'const derived = derivationCheck({ generatorAbs: abs.generator, repo })'
+    const hits = text.split(anchor).length - 1
+    if (hits !== 1) {
+      missing.push(`check（锚点在工具里出现 ${hits} 次，要 1 次）`)
+    } else {
+      text = text.replace(anchor, "const derived = { ok: true, exit: 0, detail: '' } // 刀：`--check` 那一行被拿走")
+      applied.push('check')
+    }
+  }
+  return { text, applied, missing, ok: missing.length === 0, why: missing.length === 0 ? null : `锚点不见了：${missing.join(' · ')}` }
+}
+
+// ── 半截补丁：把派生物砍掉尾巴，落点照样读得对（刀 K10 的输入）──────────────
+/**
+ * 从 `patchText` 的**尾部**一行一行地砍，砍到落点读数不再是目标落点为止，取**还能读对**的最深那一刀。
+ *
+ * 为什么这是"半截"的真实形状：生成器自己那次 `writeFileSync` 被杀在中间，留下的就是"两行 `- id` 都在、
+ * 尾巴没了"的补丁 —— 而落点是从文本里数出来的两个数，**照样读作 `{0,2}`**。所以只看落点的判据放它过去。
+ *
+ * @returns {{text:string, dropped:number, landing:object}|null}  `null` = 一刀都砍不动（夹具造不出来，要红）
+ */
+export function truncatePatch(patchText, { id = ROW_ID, want = { insert: 0, preset_bodies: 2 }, maxDrop = 60 } = {}) {
+  const lines = String(patchText).replace(/\r\n/g, '\n').split('\n')
+  let best = null
+  for (let drop = 1; drop <= maxDrop && drop < lines.length; drop += 1) {
+    const text = lines.slice(0, lines.length - drop).join('\n')
+    let landing = null
+    try {
+      landing = rowLanding(text, id)
+    } catch {
+      break // 砍到这里 YAML 读不动了 ⇒ 再砍也没意义
+    }
+    if (landing.insert !== want.insert || landing.preset_bodies !== want.preset_bodies) break
+    best = { text, dropped: drop, landing }
+  }
+  return best
 }
 
 // ── 一次跑：搭夹具 → 跑 → 读回 ────────────────────────────────────────────
@@ -513,8 +597,37 @@ const bytesOf = (snap, rel) => {
   return hit === undefined ? null : hit.sha256
 }
 
+/**
+ * 读见证 / 探子写下的**调用记录**：一行一个 JSON（`witnessHeader` 用 `appendFileSync` 追加）。
+ * 兼容"整份文件是一个 JSON 对象"的旧形状（`--check` 之前那些跑留下的文件）。
+ * @returns {object[]} 每次调用一条；读不出来的行不算一条（半截行不是证据）
+ */
+export function readGeneratorCalls(file) {
+  if (!existsSync(file)) return []
+  const text = String(readFileSync(file, 'utf8')).trim()
+  if (text === '') return []
+  try {
+    const whole = JSON.parse(text)
+    return Array.isArray(whole) ? whole : [whole]
+  } catch { /* 一行一个的那种 */ }
+  const out = []
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (trimmed === '') continue
+    try {
+      out.push(JSON.parse(trimmed))
+    } catch { /* 这一刻正被写的那一行不算 */ }
+  }
+  return out
+}
+
+/** 这一次调用是不是**只读**那一次（`argv` 里有 `--check`）。 */
+const isCheckCall = (call) => Array.isArray(call?.argv) && call.argv.includes('--check')
+
 /** 把"跑之前 / 跑 / 跑之后"收成一份读数（每一格只从这里取，不再自己读盘）。 */
-function summarize({ name, pre, generator, tool, action, id, copy, dir, tool_present, before, run, after, checkRun, witness, extra = {} }) {
+function summarize({ name, pre, generator, tool, action, id, copy, dir, tool_present, before, run, after, checkRun, calls, extra = {} }) {
+  const witness = calls.length > 0 ? calls[0] : null
+  const checks = calls.filter(isCheckCall).length
   return {
     name, pre, generator, tool, action, id,
     copy, dir, tool_present,
@@ -537,7 +650,14 @@ function summarize({ name, pre, generator, tool, action, id, copy, dir, tool_pre
       .concat(after.tree.filter((x) => bytesOf(before.tree, x.rel) === null).map((x) => `+${x.rel}`))
       .concat(before.tree.filter((x) => bytesOf(after.tree, x.rel) === null).map((x) => `-${x.rel}`)),
     live_touched: sentinelDiff(before.live, after.live),
-    generator_called: witness !== null,
+    /** 调用过**任意**一支（判据别只用它：`--check` 是只读的，见下面两个数）。 */
+    generator_called: calls.length > 0,
+    /** 每一次调用的 `argv`（只读 / 写那一支由它分得开）。 */
+    generator_calls: calls.map((call) => call?.argv ?? []),
+    /** 调过**写**那一支几次（= `argv` 里没有 `--check` 的调用数）。 */
+    generator_writes: calls.length - checks,
+    /** 调过**只读** `--check` 几次。 */
+    generator_checks: checks,
     witness,
     check: checkRun === null ? null : { status: checkRun.status, stdout: checkRun.stdout.slice(0, 4000), stderr: checkRun.stderr.slice(0, 2000) },
     ...extra,
@@ -547,13 +667,14 @@ function summarize({ name, pre, generator, tool, action, id, copy, dir, tool_pre
 /**
  * 搭一棵副本、造入口态、装生成器 / 工具、**量活树哨兵**、跑一发、读回。
  *
- * @param {{name:string, pre?:'M'|'B'|'C'|'U', generator?:'real'|'witness'|'stub', tool?:'real'|keyof FAKE_TOOL,
+ * @param {{name:string, pre?:'M'|'B'|'C'|'U', generator?:'real'|'witness'|'spy'|'stub', tool?:'real'|keyof FAKE_TOOL,
  *          fakeArgs?:string[], toolText?:string|null, action?:'apply'|'restore', id?:string, check?:boolean,
  *          extraArgs?:string[], extraCopyFiles?:Record<string,string>, witnessOutFile?:string,
  *          sourceRepo?:string}} spec
  *   `sourceRepo` 只给**夹具**用（阳性对照要从一棵带"照契约写对的工具"的探针树取材）；判据永远用缺省值 = 产品树。
- *   `toolText` 是**真工具改坏一行**之后的文本（刀 K9 用：把 want 检查摘掉）——它装进副本的 `.tools/`，
+ *   `toolText` 是**真工具改坏几行**之后的文本（刀用：摘掉哪一道闸由调用方给）——它装进副本的 `.tools/`，
  *   所以 `tool_present` 仍是 true、`runTool()` 照跑；`tool` 那一格记成 `mutated`，读数里看得出来跑的不是产品那份。
+ *   `generator: 'spy'` = 探子：记下每一次调用（`argv`）+ **照常跑真生成器**，所以 `--check` 拿到的是真答案。
  */
 export function runScenario(spec) {
   const {
@@ -579,10 +700,13 @@ export function runScenario(spec) {
     fixtureGenerator = { status: g.status, stderr: g.stderr.slice(0, 1000) }
   }
 
-  // ② 生成器替换（见证 / stub）—— 必须在入口态**之后**（见证要包着改过的那份正文）
+  // ② 生成器替换（见证 / 探子 / stub）—— 必须在入口态**之后**（抬头要包着改过的那份正文）
   if (generator === 'witness') {
     const live = readFileSync(path.join(copy, REL.generator), 'utf8')
     writeFileSync(path.join(copy, REL.generator), witnessGenerator(live, witnessOut), 'utf8')
+  } else if (generator === 'spy') {
+    const live = readFileSync(path.join(copy, REL.generator), 'utf8')
+    writeFileSync(path.join(copy, REL.generator), spyGenerator(live, witnessOut), 'utf8')
   } else if (generator === 'stub') {
     writeFileSync(path.join(copy, REL.generator), stalePatchStub(witnessOut), 'utf8')
   } else if (generator !== 'real') {
@@ -616,11 +740,11 @@ export function runScenario(spec) {
     : runTool(copy, { action, id, extraArgs })
   const after = measure(copy)
   const checkRun = check ? runGeneratorCheck(copy) : null
-  const witness = existsSync(witnessOut) ? JSON.parse(readFileSync(witnessOut, 'utf8')) : null
+  const calls = readGeneratorCalls(witnessOut)
 
   return summarize({
     name, pre, generator, tool: toolSource, action, id, copy, dir,
-    tool_present: copied.tool_present, before, run, after, checkRun, witness,
+    tool_present: copied.tool_present, before, run, after, checkRun, calls,
     extra: { want_carriers: state.want_carriers, fixture_generator: fixtureGenerator },
   })
 }
@@ -638,7 +762,7 @@ export function runAgain(readings, { action = 'apply', id = ROW_ID, check = fals
   const tree_unchanged = JSON.stringify(before.tree) === JSON.stringify(after.tree)
   return summarize({
     name: `${readings.name}+${action}`, pre: readings.pre, generator: readings.generator, tool: readings.tool,
-    action, id, copy, dir: readings.dir, tool_present: readings.tool_present, before, run, after, checkRun, witness: null,
+    action, id, copy, dir: readings.dir, tool_present: readings.tool_present, before, run, after, checkRun, calls: [],
     extra: { tree_unchanged, second_run: true },
   })
 }
@@ -709,6 +833,8 @@ export const CODE = {
   usageSilentGreen: 'UMH-USAGE-SILENT-GREEN',
   staleNoop: 'UMH-STALE-PATCH-NOOP',
   staleUnnamed: 'UMH-STALE-PATCH-UNNAMED',
+  noopUnderived: 'UMH-NOOP-UNDERIVED',
+  underivedUnnamed: 'UMH-UNDERIVED-UNNAMED',
   changedNotZero: 'UMH-CHANGED-NOT-ZERO',
   noopTouchedBytes: 'UMH-NOOP-TOUCHED-BYTES',
   rollbackBytes: 'UMH-ROLLBACK-NOT-BYTE-IDENTICAL',
@@ -745,6 +871,7 @@ export function slim(r) {
     after: { carriers: r.after.carriers, landing: r.after.landing, tree_files: r.after.tree_files, files: r.after.files },
     files_equal: r.files_equal, tree_equal: r.tree_equal, changed_files: r.changed_files,
     live_touched: r.live_touched, generator_called: r.generator_called, witness: r.witness,
+    generator_calls: r.generator_calls, generator_writes: r.generator_writes, generator_checks: r.generator_checks,
     check: r.check === null ? null : { status: r.check.status, stderr_head: String(r.check.stderr ?? '').slice(0, 600) },
     copy: path.relative(PATHS.repo, r.copy).replace(/\\/g, '/'),
   }
@@ -893,32 +1020,32 @@ export function noopProblems(r, { insert, presetBodies, label }) {
 }
 
 /**
- * ⑧ 半截的树：入口已经是这一步的目标态，但盘上补丁的落点**不是**目标落点。
+ * ⑧ **no-op 的两道签字**：入口已经是这一步的目标态，但"已经在目标态"这句话要盘上那份补丁签字 ——
+ * 「落点对」（`E_UNMOUNT_PATCH_STALE`）与「是派生物」（`E_UNMOUNT_PATCH_NOT_DERIVED`）是**两件事**：
+ * 杀在生成器自己那次 `writeFileSync` 里的补丁，两行 `- id` 都在、落点照样读作 `{0,2}`，尾巴却没了。
  *
- * 这是 no-op 分支的另一面（`⑦` 判"落点对 ⇒ 还是 no-op"）：载体翻过了、生成器没翻过补丁
- * （上一次跑到 ③ 被打断 / 并发的两个 `--apply`）⇒ 必须**具名拒绝**（exit 1 · `E_UNMOUNT_PATCH_STALE`），
- * 一个字节都不写，而且**不许调用生成器**（跑一发生成器会把补丁"顺手"修好，把"被打断过"的证据抹掉）。
- *
- * 为什么"补丁文件在不在"不够：那正是 round-4 的洞 —— 载体翻过的树 + 旧补丁 ⇒ `exit 0 · UMH-NOOP`，
- * 一条红都没有。所以这一面钉的是**落点**，不是"文件存在"。
+ * 两个码、两条腿、同一段判读（下面 `noopGateProblems`）：
+ *   · 落点不对 ⇒ `stalePatchProblems`（`--apply` 与 `--restore` 各一条腿）；
+ *   · 落点对、但不是派生物 ⇒ `underivedPatchProblems`。
+ * 两者都必须：**不记成 no-op** · 具名拒绝（各自的码）· exit 1 · `changed: 0` · 字节与文件集合不动 ·
+ * **不许调写那一支的生成器**（`generator_writes === 0`；`--check` 是只读的，允许）。
  *
  * @returns {object[]} 有问题就返回；空 = 这一格过
  */
-export function stalePatchProblems(r, { label }) {
+function noopGateProblems(r, { label, wantCode, wantWhat, noopCode, unnamedCode, signature }) {
   const out = []
   const code = r.json?.code ?? null
-  const stale = r.before?.landing ?? null
+  const target = r.action === 'restore' ? '--restore' : '--apply'
   if (r.exit === 0 || code === 'UMH-NOOP') {
-    out.push(problem(CODE.staleNoop, `${label}：入口已经是 --apply 的目标态，但盘上补丁的落点还是 ${JSON.stringify(stale)}`
-      + `（不是 {insert:0,preset_bodies:2}）⇒ 工具 exit ${r.exit} / code=${JSON.stringify(code)}：`
-      + '把一棵**半截的树**记成了 no-op。载体翻过了、补丁没跟着翻 —— 这是"上一次跑到生成器那一步被打断"的形状，'
-      + '静默放行等于把证据抹掉（契约 §二 · §4.2）'))
-  } else if (code !== STALE_CODE) {
-    out.push(problem(CODE.staleUnnamed, `${label}：工具没把 no-op 记成成功，但也没点名这是"补丁过期"：`
-      + `code=${JSON.stringify(code)}，期望 ${JSON.stringify(STALE_CODE)} —— 一个不说清是哪件事的失败，`
-      + '读的人分不出"入口态不合法"（exit 2）与"树被中断过"（这一支）'))
+    out.push(problem(noopCode, `${label}：入口已经是 ${target} 的目标态，但盘上那份补丁**没有签字**：${wantWhat}`
+      + `（落点读作 ${JSON.stringify(r.before?.landing ?? null)}）⇒ 工具 exit ${r.exit} / code=${JSON.stringify(code)}：`
+      + '把一棵**半截的树**记成了 no-op。静默放行等于把证据抹掉（契约 §二 · §4.2）'))
+  } else if (code !== wantCode) {
+    out.push(problem(unnamedCode, `${label}：工具没把 no-op 记成成功，但也没点名是哪一件事（${wantWhat}）：`
+      + `code=${JSON.stringify(code)}，期望 ${JSON.stringify(wantCode)} —— 一个不说清是哪件事的失败，`
+      + `读的人分不出"入口态不合法"（exit 2）、"补丁过期"与"补丁不是派生物"（${signature}）`))
   } else if (r.exit !== 1) {
-    out.push(problem(CODE.exit, `${label}：exit ${r.exit}，期望 1 —— 补丁过期是**失败**（这一跑什么都没写），`
+    out.push(problem(CODE.exit, `${label}：exit ${r.exit}，期望 1 —— 这是**失败**（这一跑什么都没写），`
       + '不是"入口态不是规范态"的拒绝（那是 exit 2）'))
   }
   if (r.json?.changed !== 0) {
@@ -926,11 +1053,36 @@ export function stalePatchProblems(r, { label }) {
   }
   if (!r.files_equal) out.push(problem(CODE.refusalWrote, `${label}：之后载体文件的字节变了：${JSON.stringify(r.changed_files)}`))
   if (!r.tree_equal) out.push(problem(CODE.refusalWrote, `${label}：之后文件集合变了（留了临时件 / 账本）：${JSON.stringify(r.changed_files)}`))
-  if (r.generator_called) {
-    out.push(problem(CODE.refusalRanGenerator, `${label}：**调用过生成器**（见证文件在）—— 这一跑一个字节都没写，`
-      + '跑生成器只会把补丁顺手修好、把"上一次被打断"的证据抹掉'))
+  const writes = Number(r.generator_writes ?? (r.generator_called ? 1 : 0))
+  if (writes > 0) {
+    out.push(problem(CODE.refusalRanGenerator, `${label}：**调了写那一支的生成器** ${writes} 次（argv=${JSON.stringify(r.generator_calls ?? [])}）`
+      + '—— 这一跑一个字节都没写，跑那一支只会把补丁顺手修好、把"上一次被打断"的证据抹掉（只读 `--check` 不算）'))
   }
   return out
+}
+
+/** ⑧′ 载体翻过了、补丁没跟着翻（落点不对）。 */
+export function stalePatchProblems(r, { label }) {
+  return noopGateProblems(r, {
+    label,
+    wantCode: STALE_CODE,
+    wantWhat: '它的落点不是这一步的目标落点（载体翻过了、补丁没跟着翻）',
+    noopCode: CODE.staleNoop,
+    unnamedCode: CODE.staleUnnamed,
+    signature: '这两个码各有名字，写混了与写成了一个都算错',
+  })
+}
+
+/** ⑧″ 落点对、但补丁不是派生物（半截 / 被换过的字节）。 */
+export function underivedPatchProblems(r, { label }) {
+  return noopGateProblems(r, {
+    label,
+    wantCode: NOT_DERIVED_CODE,
+    wantWhat: '它的落点读对了，但那份字节不是"当前组合 + 名单"派生出来的（半截 / 被换过）',
+    noopCode: CODE.noopUnderived,
+    unnamedCode: CODE.underivedUnnamed,
+    signature: '落点对 ≠ 补丁对',
+  })
 }
 
 /** ⑨ 未知 id：exit 3，一个字节不写。 */
