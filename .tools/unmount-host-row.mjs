@@ -43,14 +43,13 @@
  *
  * ## 写盘：一份文件是"原子换"的，不是原地覆写
  *
- *   组合与生成器（以及回滚时那三份）都走**同目录临时件 → `fsync` → `rename`**，与
- *   `presets/agenia/lib/atomic.mjs:69 writeFileAtomic` 是同一套三步。
+ *   组合与生成器（以及回滚时那三份）都用 `presets/agenia/lib/atomic.mjs` 的
+ *   `writeFileAtomic(file, data)` 换上去：同目录临时件 → `fsync` → `rename`。
  *   为什么不用裸 `writeFileSync`：它先截断再顺序写，被杀在中间会把**一个文件**劈成两半
  *   （组合里标记已经删了、`disabled` 还没写上）—— 那正是"两份文件、三处载体"最坏的半截形状。
- *   为什么不 import 那份 `writeFileAtomic`：本工具按契约是**单文件**命令、`--repo` 指到哪就在哪干活，
- *   而判据把它跑在**只复制了四份文件**的副本里（`.tools/` 两份 + `presets/agenia/` 两份，没有 `lib/`）——
- *   静态 import 会让工具在副本里**加载即失败**（`ERR_MODULE_NOT_FOUND`），五格判据全红。
- *   所以那三步在这里内联；哪天判据的副本把 `lib/` 也带上，这一处可以换回那份。
+ *   这份依赖是**运行期**依赖（相对路径 import，不往上爬）：它跟生成器那三份一样，属于"这棵树里
+ *   工具要读的文件"，所以判据的副本也带上它（`tests/agenia-upgrade/support/unmount-host-row.mjs`
+ *   的 `copyFixture()`）—— 少这一份，副本里的工具会**加载即失败**（`ERR_MODULE_NOT_FOUND`）。
  *
  * ⚠️ 这几份文件的写**不是一次事务**：两次 rename 之间被杀仍会留下"两个一致、一个不一致"。
  *    但两种半截都不再静默：载体不一致 ⇒ 入口态被判出来（exit 2 + 点名的码）；
@@ -77,9 +76,9 @@
  * `--restore` 把 id **追加在表尾**；今天表里只有一条，所以恢复后的字节与 `--apply` 之前逐字节相同。
  */
 import { spawnSync } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
+import { writeFileAtomic } from '../presets/agenia/lib/atomic.mjs'
 
 const EXIT = Object.freeze({ OK: 0, FAILED: 1, REFUSED: 2, USAGE: 3 })
 
@@ -155,38 +154,15 @@ function parseArgv(argv) {
   return out
 }
 
-// ── 写盘：原子换一份文件 ──────────────────────────────────────────────────
+// ── 写盘：原子换一份文件（`presets/agenia/lib/atomic.mjs`）──────────────────
 /**
- * 把一份文本（或 Buffer）**原子地换**到 `file` 上：同目录临时件 → `fsync` → `rename`。
- *
- * 临时件必须与目标**同目录**（同卷 `rename` 才原子）；名字带 pid + 随机串，撞名会当场炸而不是静默覆盖。
- * 失败**抛** —— 调用方（写载体 / 回滚）都把它包在同一条回滚账里；不许静默留下半截文件。
- * 这三步与 `presets/agenia/lib/atomic.mjs:69 writeFileAtomic` 对齐；那份在这棵树上不 import 的理由写在文件头。
+ * 那个模块**不抛**：返回 `{ok:true, …}` 或 `{ok:false, code:'E_TXN_IO', message}`。
+ * 这里只用它的两个实参形态（`writeFileAtomic(file, data)`，文本或 Buffer 都行；父目录它自己建），
+ * 把"没写成"转成一次抛 —— 调用方（写载体 / 回滚）都包在同一条回滚账里，不许静默留下半截文件。
  */
-function writeFileAtomicSync(file, data) {
-  const target = path.resolve(String(file))
-  const buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf8')
-  const tmp = `${target}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`
-  let handle = null
-  try {
-    handle = openSync(tmp, 'wx')
-    writeSync(handle, buf)
-    fsyncSync(handle)
-    closeSync(handle)
-    handle = null
-  } catch (err) {
-    if (handle !== null) {
-      try { closeSync(handle) } catch { /* 已经在失败路径上，关不掉就算了 */ }
-    }
-    try { unlinkSync(tmp) } catch { /* 临时件可能压根没建起来 */ }
-    throw err
-  }
-  try {
-    renameSync(tmp, target)
-  } catch (err) {
-    try { unlinkSync(tmp) } catch { /* 尽力清掉，别留残渣 */ }
-    throw err
-  }
+function atomicWrite(file, data) {
+  const result = writeFileAtomic(file, data)
+  if (result.ok !== true) throw new Error(`${result.code ?? 'E_TXN_IO'}：${result.message ?? '原子写失败'}`)
 }
 
 // ── 文本：行块 / 三处载体 ──────────────────────────────────────────────────
@@ -490,12 +466,12 @@ function main() {
     let ok = false
     let why = ''
     try {
-      writeFileAtomicSync(abs.composition, snapshot.composition)
-      writeFileAtomicSync(abs.generator, snapshot.generator)
+      atomicWrite(abs.composition, snapshot.composition)
+      atomicWrite(abs.generator, snapshot.generator)
       if (snapshot.patch === null) {
         if (existsSync(abs.patch)) unlinkSync(abs.patch)
       } else {
-        writeFileAtomicSync(abs.patch, snapshot.patch)
+        atomicWrite(abs.patch, snapshot.patch)
       }
       ok = readFileSync(abs.composition).equals(snapshot.composition)
         && readFileSync(abs.generator).equals(snapshot.generator)
@@ -511,8 +487,8 @@ function main() {
 
   // ② 写载体（两份都原子换：被杀在中间不会把一份文件劈成两半）。写失败也走同一条回滚。
   try {
-    writeFileAtomicSync(abs.composition, compositionEdit.text)
-    writeFileAtomicSync(abs.generator, listEdit.text)
+    atomicWrite(abs.composition, compositionEdit.text)
+    atomicWrite(abs.generator, listEdit.text)
   } catch (err) {
     return rollback('generator', `写载体文件失败：${String(err?.message ?? err)}`)
   }
