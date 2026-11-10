@@ -968,19 +968,24 @@ export const BATCH_AR = ['RCA-01', 'SHN-01']
  *
  * 契约：`.team/test/2026-11-10/CONTRACT-gate2-unmount-host-row.md`（唯一出处）。
  * 定形：`.team/leader/2026-11-10/定形-撤挂载命令.md`。被测：`.tools/unmount-host-row.mjs`
- * （写这一批时**不存在** ⇒ 五格**预期红**，红因 `UMH-TOOL-ABSENT`；契约 §九）。
+ * （写这一批时**不存在** ⇒ 五格预期红；现在在盘上，五格绿）。
  *
  * 一句话：**"撤挂载"今天不是一个可执行的动作** —— 宿主级这一事实同时写在组合的 `# @host-level` 标记
  * 与生成器的 `HOST_LEVEL_IDS` 里，只改一处生成器自己拒（`E_BUNDLE_HOST_UNMARKED` / `_UNLISTED`）。
  * 五格各判一面（同住 `integration/umh01-unmount-host-row.test.mjs`，同一个副本夹具、同一把尺子、同一批刀）：
  *   · `UMH-01` **两条腿**：`--apply` ⇒ 补丁里 `{insert:0, preset_bodies:2}` · `--restore` ⇒ `{1,0}` ·
  *     来回一圈回原字节 · 未知 id ⇒ exit 3 · 补丁必须是**派生物**（`--check` exit 0）；
+ *     夹具腿 `copy-runnable-set`：副本必须带着工具的**运行集**（工具 + `presets/agenia/lib/atomic.mjs` +
+ *     生成器 + 组合 + 补丁）—— 工具 import 那份 `writeFileAtomic`，少一份它加载即失败；
  *   · `UMH-02` **负控①**只撤了标记 ⇒ 拒绝并点名 `marker` + 生成器一次都不许被调用；
  *   · `UMH-03` **负控②**只撤了名单 ⇒ 同一个形状、另一个码（两条负控的码写反就两格都红）；
  *   · `UMH-04` **幂等**：目标态上再跑 ⇒ `UMH-NOOP` / `changed: 0` / 字节不动（两个方向）；
+ *     **另一面**：载体翻过了、补丁没跟着翻 ⇒ 不许记成 no-op，必须具名拒绝（`E_UNMOUNT_PATCH_STALE`）；
  *   · `UMH-05` **回滚**：生成器步 / 自证步各注入一次失败 ⇒ 两份载体**逐字节**回到跑之前（注入器见证为证）。
  * 🔴 **GUI 不在这一批的判定范围**（定形 §五）：撤 / 恢复之后面板在不在，属 R5 实机验证，由人在界面上点一次。
  * ⚠️ 这五条**不进** `FROZEN_IDS`（后加批次各自以显式清单存在）。
+ * ⚠️ 本轮只加**腿与刀**（`UMH-01` 的 `copy-runnable-set`/K8、`UMH-02` 的 K4b、`UMH-04` 的 `stale-patch`/K9·K9b），
+ *    分母与 `GROUP_COUNTS` 不变（一条格 = 一条用例，腿不是格）。
  */
 export const BATCH_AS = ['UMH-01', 'UMH-02', 'UMH-03', 'UMH-04', 'UMH-05']
 
@@ -1599,10 +1604,10 @@ const ROWS = [
   ['SHN-01', 'settle-reading', F.shn, '`bug-20261110-05` **`F57-SETTLE` 报 `HOLD 2` 不点名**（契约 §7.2）：结算行之后逐条非绿 —— `HOLD <id> <code> env|case` / `RED <id> <code>`（一行 = 一个用例 × 一个成因码；同一个用例两个码就两行），再一行 `[结算·成因] 非绿 <n> 例（<m> 条成因）= HOLD <h> / RED <r> · 成因 <code>=<条数> … · 环境性 <e> 条`；整组由 `support/settle-reading.mjs::settleGroupLines` 一处产出（控制台与 `judgement.txt` 同一份数组）。判据 `settleGroupVerdict` **双向对账**：盘上每条非绿都有名 / 每个名都在盘上 / 行的码集 = `_evidence/<ID>/result.json` 的码集 / 直方图条数 = 行数 / 每个 verdict 的不同 id 数 = `F57-SETTLE` 行里的数（也从**行里**解析，不只看结算 JSON）/ kind 词与 `holds[].kind` 同值 / 无重复名 / 非绿无码 ⇒ `SHN-UNNAMED-CODE` / 缺 `result.json` ⇒ `SHN-EVIDENCE-MISSING`。`kind` 由生产侧 `caseHold(rec, code, why, {kind})` 写入（今天 `environment` 的四处：`DR02-EXCLUSION-NO-DATA-ROOT` · `STM-SETUP-DR02-HOLD`/`-NO-READING` · `FLIP-PROVENANCE-UNKNOWN` · `DR01-BRAIN-WITNESS-ABSENT`；BOOT 那两条留在 `case`，归类是组长的取舍）。腿：(a) 真 `--settle` 跑在 2 条 HOLD 的合成证据根上 ⇒ 两条各自点名带码、直方图求和 2、逐份 `result.json` 读回对上；(b) 环境性 HOLD（`dataSegmentExclusionVerdict({files:[],pinned:[".runtime"],dataRootOnDisk:false})` 现算的 DR02 形状）⇒ 行在且带 `env`；(c) **刀**：副本里把 `settle-reading.mjs` 改成少发一行 ⇒ 用**同一段用例体**跑 ⇒ `result:"RED"` 且 `problems[0].code === "SHN-NAME-MISSING"`；(d) 数与名不许分家：一个用例两个码 ⇒ 3 行 / 2 个 id；把行里的 `HOLD 2` 改成 `HOLD 1` ⇒ `SHN-COUNTS-DISAGREE`，改直方图一个数 ⇒ `SHN-HISTOGRAM-DRIFT`', '批次 AR'],
 
   // ── 批次 AS（2026-11-10 · Gate 2 第五轮）：**撤 / 恢复宿主级行的命令**（契约全文见 `CONTRACT-gate2-unmount-host-row.md`）──
-  ['UMH-01', 'unmount-host-row', F.umh, '`bug-20261110-14` **撤挂载 / 恢复的两条腿**（契约 §五.1）：真工具跑在**副本**上（`--repo <copy>`；副本无 `.git`）—— ① `--apply`（入口 M）⇒ exit 0 · `UMH-APPLIED` · `changed: 3` · **尺子从补丁文本**复算 `row_landing {insert:0, preset_bodies:2}` 且与工具打印一致 · 三处载体到位（`# @host-level` 不在 / 名单改过 / `disabled: true` 在）· `make-bundle-patch.mjs --check` exit 0（补丁是**派生物**）；② `--restore`（接①的产物）⇒ `UMH-RESTORED` · `{1,0}` · **两份载体文件逐字节 + 文件集合回到①之前**（"精确的逆"）；③ 未知 id ⇒ exit 3、不写字节。刀：K1 `printf-liar`（只说 `{0,2}` 不写）⇒ `UMH-LANDING-MISMATCH` · K2 `forge-patch`（换掉补丁字节伪造派生物）⇒ `UMH-PATCH-NOT-DERIVED` · K3 `silent-proceed`（未知 id 也 exit 0）⇒ `UMH-USAGE-SILENT-GREEN`。⚠️ 写这一格时工具**不在盘上** ⇒ 预期红 `UMH-TOOL-ABSENT`', '批次 AS'],
-  ['UMH-02', 'unmount-host-row', F.umh, '**错配负控①：只撤了标记**（契约 §五.2）：入口 B = 组合里 `# @host-level` 不在、`HOST_LEVEL_IDS` 还在、没 `disabled: true`（**生成器换成见证**：一被调用就落一个 `generator-called.json`）⇒ 工具必须 exit 2 · `E_UNMOUNT_MARKER_MISSING` · `carrier: "marker"` · `changed: 0` · **一个字节不写** · **生成器一次都没被调用**（见证文件不在）。刀：K3 静默放行 ⇒ `UMH-REFUSAL-EXIT` · K4 报另一个载体的码 ⇒ `UMH-CARRIER-NAMED-WRONG`', '批次 AS'],
+  ['UMH-01', 'unmount-host-row', F.umh, '`bug-20261110-14` **撤挂载 / 恢复的两条腿**（契约 §五.1）：真工具跑在**副本**上（`--repo <copy>`；副本无 `.git`）—— ① `--apply`（入口 M）⇒ exit 0 · `UMH-APPLIED` · `changed: 3` · **尺子从补丁文本**复算 `row_landing {insert:0, preset_bodies:2}` 且与工具打印一致 · 三处载体到位（`# @host-level` 不在 / 名单改过 / `disabled: true` 在）· `make-bundle-patch.mjs --check` exit 0（补丁是**派生物**）；② `--restore`（接①的产物）⇒ `UMH-RESTORED` · `{1,0}` · **两份载体文件逐字节 + 文件集合回到①之前**（"精确的逆"）；③ 未知 id ⇒ exit 3、不写字节；④ 夹具腿 `copy-runnable-set`：副本的运行集（工具 + `presets/agenia/lib/atomic.mjs` + 生成器 + 组合 + 补丁）逐字节到齐 —— 工具 import 那份 `writeFileAtomic`，少一份它加载即失败（`ERR_MODULE_NOT_FOUND` · exit 1 · 零 stdout），五格会红在与产品无关的事上。刀：K1 `printf-liar`（只说 `{0,2}` 不写）⇒ `UMH-LANDING-MISMATCH` · K2 `forge-patch`（换掉补丁字节伪造派生物）⇒ `UMH-PATCH-NOT-DERIVED` · K3 `silent-proceed`（未知 id 也 exit 0）⇒ `UMH-USAGE-SILENT-GREEN` · K8 `trim-runnable-set`（把副本里那份原子写剪掉）⇒ `UMH-FIXTURE-BROKEN`', '批次 AS'],
+  ['UMH-02', 'unmount-host-row', F.umh, '**错配负控①：只撤了标记**（契约 §五.2）：入口 B = 组合里 `# @host-level` 不在、`HOST_LEVEL_IDS` 还在、没 `disabled: true`（**生成器换成见证**：一被调用就落一个 `generator-called.json`）⇒ 工具必须 exit 2 · `E_UNMOUNT_MARKER_MISSING` · `carrier: "marker"` · `changed: 0` · **一个字节不写** · **生成器一次都没被调用**（见证文件不在）。刀：K3 静默放行 ⇒ `UMH-REFUSAL-EXIT` · K4 报另一个载体的码（码与载体一起换）⇒ `UMH-CARRIER-NAMED-WRONG` · K4b `carrier-only`（**码对、载体报成 `list`**）⇒ 只翻 `UMH-CARRIER-NAMED-WRONG`：四码对三载体，`carrier` 是不是 `code` 的复述由这一刀切出来', '批次 AS'],
   ['UMH-03', 'unmount-host-row', F.umh, '**错配负控②：只撤了名单**（契约 §五.3）：入口 C = 标记还在、`HOST_LEVEL_IDS` 里没有那一项 ⇒ 同一个形状、**另一个码**：exit 2 · `E_UNMOUNT_LIST_MISSING` · `carrier: "list"` · `changed: 0` · 字节不变 · 生成器不调用。与 `UMH-02` **逐字比码**：两个负控必须是两个名字，写反 ⇒ 两格都红（`UMH-CARRIER-NAMED-WRONG`）。刀：K3 / K4 同上（K4 喂 `E_UNMOUNT_MARKER_MISSING`）', '批次 AS'],
-  ['UMH-04', 'unmount-host-row', F.umh, '**幂等**（契约 §五.4）：① U 态（夹具造的一致 U 树）上再 `--apply` ⇒ exit 0 · `UMH-NOOP` · `changed: 0` · 补丁仍 `{0,2}` · 字节/文件集合不动；② M 态 `--apply` 两次 ⇒ 第二次同形、且**第二次之后字节 === 第一次之后**；③ U 态 `--restore` 两次 ⇒ 第二次同形、落点回 `{1,0}`。刀：K5 恒报 `changed: 1` ⇒ `UMH-CHANGED-NOT-ZERO` · K6 报 no-op 却写一个换行 ⇒ `UMH-NOOP-TOUCHED-BYTES`', '批次 AS'],
+  ['UMH-04', 'unmount-host-row', F.umh, '**幂等**（契约 §五.4）：① U 态（夹具造的一致 U 树）上再 `--apply` ⇒ exit 0 · `UMH-NOOP` · `changed: 0` · 补丁仍 `{0,2}` · 字节/文件集合不动；② M 态 `--apply` 两次 ⇒ 第二次同形、且**第二次之后字节 === 第一次之后**；③ U 态 `--restore` 两次 ⇒ 第二次同形、落点回 `{1,0}`；④ 腿 `stale-patch`（幂等的**另一面**）：U 载体 + **故意过期**的补丁（还是 `{1,0}` = "三处载体翻过了、生成器没翻过补丁"）⇒ **不许** exit 0 / `UMH-NOOP`，必须具名拒绝（`E_UNMOUNT_PATCH_STALE` · exit 1）· `changed: 0` · 字节与文件集合不动 · **生成器一次都不调用**（见证）。刀：K5 恒报 `changed: 1` ⇒ `UMH-CHANGED-NOT-ZERO` · K6 报 no-op 却写一个换行 ⇒ `UMH-NOOP-TOUCHED-BYTES` · K9 `stale-blind`（把**真工具**的 `want` 检查摘掉、退回"补丁文件在就行"）⇒ `UMH-STALE-PATCH-NOOP` · K9b（拒绝，但报一个与"补丁过期"无关的码）⇒ `UMH-STALE-PATCH-UNNAMED`', '批次 AS'],
   ['UMH-05', 'unmount-host-row', F.umh, '**回滚**（契约 §五.5）：在**副本**上注入两次失败 —— ① 生成器步换成"见证 + 抛"（先把它被调用那一刻的三处载体写进 `generator-called.json` 再 exit 1）⇒ exit 1 · `E_UNMOUNT_STEP_FAILED` · `failed_step: "generator"` · `rolled_back: true` · `changed: 0` · stderr 非空 · 见证显示 **marker=false / disabled=true / 生成器文件 sha 变过**（三处**已经写过** ⇒ 回滚不是空转）· 两份载体**逐字节**回到跑之前、文件集合不变；② 生成器换成"成功但产物不翻面"的 stub ⇒ `failed_step: "verify"`、同样回滚（自证那一步也是**一步**）。刀：K7 跳到"三处都写好了"再跑生成器、**不回滚** ⇒ `UMH-ROLLBACK-NOT-BYTE-IDENTICAL`', '批次 AS'],
 ]
 

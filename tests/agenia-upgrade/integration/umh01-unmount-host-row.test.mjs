@@ -4,7 +4,7 @@
  * 契约：`.team/test/2026-11-10/CONTRACT-gate2-unmount-host-row.md`（**唯一出处**；本文件是它的实现）。
  * 定形：`.team/leader/2026-11-10/定形-撤挂载命令.md`（binding；超出它的三处写在契约 §三，逐条带实测）。
  * 被测：`<repo>/.tools/unmount-host-row.mjs --repo <root> --id agenia-dashboard --apply|--restore`
- *       —— **写这一格时它还不存在** ⇒ 五格**预期红**，红因首个 = `UMH-TOOL-ABSENT`（契约 §九）。
+ *       （在盘上；它不在盘上时这一族每格记 `UMH-TOOL-ABSENT` = 红，不是 skip / HOLD）。
  *
  * ── 判什么（只认补丁文本；printf 只是第二个读数）──────────────────────────────────
  *   · **落点**：`row_landing = {insert, preset_bodies}` 由**尺子**从生成器写出来的
@@ -17,19 +17,27 @@
  *     C 行字段（`  disabled: true`）。判据只读 A / C 的文本 + B 的**后果**（契约 §六.2 不钉名单形状）。
  *   · **字节**：no-op / 拒绝 / 回滚之后，两份载体文件（+ 补丁）逐字节回到跑之前；
  *     `--restore` 之后同理；并且**文件集合**也要回到跑之前（工具不许留账本 / 临时件）。
- *   · **枪口朝哪**：真工具不在盘上 ⇒ `UMH-TOOL-ABSENT`（红）；红是设计的一部分，不是回归。
+ *   · **枪口朝哪**：工具缺位 ⇒ `UMH-TOOL-ABSENT`（红，不是回归）；判据的刀腿不依赖它。
  *
  * ── 五格与它们的刀（每把刀跑**同一段判读函数**，不另写一条断言）────────────────────
  *   `UMH-01` 两条腿：`--apply` ⇒ `{0,2}`；`--restore` ⇒ `{1,0}`；来回一圈回原字节；未知 id ⇒ exit 3。
+ *      夹具腿 `copy-runnable-set`：副本必须带着工具的**运行集**（含 `presets/agenia/lib/atomic.mjs`，
+ *      工具 import 那份 `writeFileAtomic`）—— 少了它，副本里的工具加载即失败，五格会红在与产品无关的事上。
  *      刀 K1 `printf-liar`（只说 `{0,2}`、一个字节不写）⇒ `UMH-LANDING-MISMATCH`；
  *      刀 K2 `forge-patch`（换掉补丁文件伪造派生物）⇒ `UMH-PATCH-NOT-DERIVED`；
- *      刀 K3 `silent-proceed`（未知 id 也 exit 0）⇒ `UMH-USAGE-SILENT-GREEN`。
+ *      刀 K3 `silent-proceed`（未知 id 也 exit 0）⇒ `UMH-USAGE-SILENT-GREEN`；
+ *      刀 K8 `trim-runnable-set`（把副本里那一份原子写剪掉）⇒ `UMH-FIXTURE-BROKEN`。
  *   `UMH-02` 负控①：B 态（只撤了标记）⇒ 拒绝、点名 `marker`、**生成器一次都没被调用**、字节不变。
- *      刀 K3 ⇒ `UMH-REFUSAL-EXIT`；刀 K4（报另一个载体的码）⇒ `UMH-CARRIER-NAMED-WRONG`。
+ *      刀 K3 ⇒ `UMH-REFUSAL-EXIT`；刀 K4（报另一个载体的码/载体）⇒ `UMH-CARRIER-NAMED-WRONG`；
+ *      刀 K4b（**码对、载体报成 `list`**）⇒ 只翻 `UMH-CARRIER-NAMED-WRONG`：`carrier` 不是 `code` 的复述。
  *   `UMH-03` 负控②：C 态（只撤了名单）⇒ 同样的形状，码是 `E_UNMOUNT_LIST_MISSING`。
  *      两格的码**逐字比**：工具把两个码写反 ⇒ 两格都红（各自钉死自己那一个）。
  *   `UMH-04` 幂等：U 态 `--apply` ⇒ `UMH-NOOP` / `changed: 0` / 字节不动；`--apply` 两次、`--restore` 两次同形。
- *      刀 K5（恒报 `changed: 1`）⇒ `UMH-CHANGED-NOT-ZERO`；刀 K6（报 no-op 却写了一个换行）⇒ `UMH-NOOP-TOUCHED-BYTES`。
+ *      腿 `stale-patch`（幂等的**另一面**）：U 载体 + 故意过期的补丁（还是 `{1,0}`）⇒ **不许** exit 0 / `UMH-NOOP`，
+ *      必须具名拒绝（`E_UNMOUNT_PATCH_STALE` · exit 1）· `changed: 0` · 字节与文件集合不动 · **生成器一次都不调用**。
+ *      刀 K5（恒报 `changed: 1`）⇒ `UMH-CHANGED-NOT-ZERO`；刀 K6（报 no-op 却写了一个换行）⇒ `UMH-NOOP-TOUCHED-BYTES`；
+ *      刀 K9（把真工具的 `want` 检查摘掉，退回到"补丁文件在就行"）⇒ `UMH-STALE-PATCH-NOOP`；
+ *      刀 K9b（拒绝，但报一个与"补丁过期"无关的码）⇒ `UMH-STALE-PATCH-UNNAMED`。
  *   `UMH-05` 回滚：生成器步注入"见证 + 抛"⇒ 三处**已经写过**（见证为证）、之后字节逐字节回到跑之前；
  *      自证步注入"成功但产物不翻面"⇒ `failed_step: verify` 也要回滚。
  *      刀 K7（跳到"三处都写好了"再跑生成器、**不回滚**）⇒ `UMH-ROLLBACK-NOT-BYTE-IDENTICAL`。
@@ -40,29 +48,38 @@
  *   · 不判宿主级那套设计（两份真相不合并）；不判"哪几行该是宿主级"；不判 profile 层退役路线。
  *   · 不判 `--id` 指向**非宿主级行**的行为；不判 D / E 两态（契约 §八.4 登记为漏）。
  *   · 不判工具内部结构（函数名 / 常量名 / 是否用账本）；不判 `HOST_LEVEL_IDS` 的形状（数组 / Set / 排法）。
+ *   · 不判 `--restore` 那一侧的"半截树"（载体还是 M、补丁已经翻成 U）：它与 `--apply` 那一支是**同一段代码**、
+ *     只有 `want` 不同；本轮只判 `--apply` 那一支（round-4 漏的就是它）。登记为漏（契约 §八.6）——
+ *     别把 `UMH-04` 的绿读成"两个方向都判过了"。
  *
- * ── 今天为什么红（说清楚，别当回归）────────────────────────────────────────────────
- *   `.tools/unmount-host-row.mjs` 不在盘上 ⇒ 五格**全红**、红因 `UMH-TOOL-ABSENT`。
- *   但**刀腿今天就跑**（假工具是判据自己的夹具，不依赖真工具）⇒ "该红时会红"不是自述。
- *   工具落地后若 `UMH-01` 还红在 `E_BUNDLE_CLIENT_UI_ENABLED` 上 ⇒ 第 3 关漏了契约 §三 D-1 的第三处载体。
+ * ── 今天为什么是绿的（说清这一跑覆盖了哪一层）──────────────────────────────────────
+ *   `.tools/unmount-host-row.mjs` 在盘上（`e052f0f`）：五格 + 本轮加的三条腿全绿。
+ *   🔴 绿的这一层是**判据**：副本上跑那条命令、读它留下的字节与补丁文本 —— **不是** "GUI 好了"、不是 R5。
+ *   · 副本的运行集含 `presets/agenia/lib/atomic.mjs`（工具 import 那份 `writeFileAtomic`：返回 `{ok, code}`、
+ *     **不抛**）：`copy-runnable-set` 腿 + 刀 K8 守着它 —— 谁把这一份从夹具里剪掉，那一格红。
+ *   · 本文件不判工具**内部结构**（契约 §六.4）：它怎么落那三处载体、走哪一份原子写，换了都不该有一条断言翻面
+ *     —— 会翻面的只有"它留下的字节"与"补丁文本"。
  *
  * 证据：`<_evidence>/<RUN_ID>/UMH-0x/result.json`（`readings.legs` / `readings.scenarios` 逐格带读数）。
  */
 import { before, test } from 'node:test'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
 import { withHostRowInPresetBodies } from '../support/client-ui-placement.mjs'
 import {
   CODE,
+  STALE_CODE,
   carrierFacts,
   carrierProblems,
+  copyFixture,
   derivedProblems,
   forgedPatchOf,
   knife,
   landingProblems,
   legBook,
   liveEntryState,
+  liveSentinel,
   noopProblems,
   pushToolAbsent,
   refusalProblems,
@@ -70,9 +87,13 @@ import {
   rowLanding,
   runAgain,
   runScenario,
+  runnableSetProblems,
   scratchDir,
   shapeProblems,
   slim,
+  snapshotTree,
+  staleBlindTool,
+  stalePatchProblems,
   unmountedTexts,
   usageProblems,
   REL,
@@ -89,8 +110,8 @@ before(() => {
  * **阳性对照**：一份"照契约写对的工具"会给出的读数**长什么样**，判读函数必须对它说 0 条
  * （`OFL-06` / `OFB-06` 的同款规矩）。
  *
- * 为什么要有它：判据今天全红（工具不在盘上）。如果**连一份合规读数也判不成绿**，
- * 那这五格与"永远红"长得一模一样 —— 第 3 关交活时谁也分不出是工具没做对还是判据坏了。
+ * 为什么要有它：判读函数一旦写坏，**红的那一格与"工具没做对"长得一模一样**。一份合规读数必须判成 0 条，
+ * 否则这一格的红不能算在工具头上（先修判据）—— 这也是"判据可满足"的唯一证据。
  * 🔴 它不是夹具期望值：真正的断言只读**真工具**在副本上留下的字节与补丁文本；
  *    这里判的是**判读函数自己的可满足性**（`UMH-CONTROL-NOT-GREEN` = 判据坏了，不是工具坏了）。
  */
@@ -178,6 +199,17 @@ test('UMH-01 撤挂载/恢复两条腿：--apply ⇒ 补丁里 {insert:0,preset_
       return undefined
     })
 
+    // ── ①′ 夹具腿：副本必须带着工具的**运行集**（少一份 ⇒ 副本里工具加载即失败，红因会指错）──
+    book.run('copy-runnable-set', () => {
+      const got = runnableSetProblems(apply.before, { label: '--apply 副本' })
+      rec.readings.runnable_set = {
+        copied: Object.keys(apply.before.files_map).filter((rel) => [REL.atomic, REL.generator, REL.composition, REL.patch, REL.tool].includes(rel)),
+        problems: got.map((p) => p.code),
+      }
+      for (const p of got) problems.push(p)
+      return undefined
+    })
+
     // ── ② 腿 restore：在①的产物上跑 ⇒ 回到 {1,0}，两份文件逐字节 + 文件集合回到①之前 ──
     const restore = apply.tool_present ? runAgain(apply, { action: 'restore', check: true }) : null
     scenarios.restore = restore === null ? null : slim(restore)
@@ -252,6 +284,22 @@ test('UMH-01 撤挂载/恢复两条腿：--apply ⇒ 补丁里 {insert:0,preset_
       return undefined
     })
 
+    // ── ⑦′ 刀 K8：把副本里那份原子写剪掉（"谁把运行集剪了一角"的形状）⇒ 夹具腿必须红 ─────
+    //   这一刀**不依赖真工具**（它量的是夹具），所以工具缺位的那些日子它也照跑。
+    const trimCopy = path.join(scratchDir('umh-01-k8-trim'), 'copy')
+    copyFixture(trimCopy)
+    unlinkSync(path.join(trimCopy, REL.atomic))
+    const trimmedCopy = { files_map: Object.fromEntries(snapshotTree(trimCopy).map((x) => [x.rel, x.sha256])) }
+    scenarios.knife_trim_runnable_set = { files: Object.keys(trimmedCopy.files_map) }
+    book.run('knife-K8', () => {
+      knife(problems, {
+        label: 'K8·trim-runnable-set',
+        got: runnableSetProblems(trimmedCopy, { label: 'K8·trim-runnable-set' }),
+        want: CODE.fixture,
+      })
+      return undefined
+    })
+
     // ── ⑦ 阳性对照：一份"照契约写对的工具"的读数必须判成 0 条（判据可满足）───────────
     book.run('control', () => {
       const conforming = controlReading({
@@ -268,7 +316,7 @@ test('UMH-01 撤挂载/恢复两条腿：--apply ⇒ 补丁里 {insert:0,preset_
       return undefined
     })
 
-    book.require(['ruler-control', 'apply', 'restore', 'unknown-id', 'knife-K1', 'knife-K2', 'knife-K3', 'control'])
+    book.require(['ruler-control', 'copy-runnable-set', 'apply', 'restore', 'unknown-id', 'knife-K1', 'knife-K2', 'knife-K3', 'knife-K8', 'control'])
     rec.readings.legs = book.legs
     rec.readings.scenarios = scenarios
     caseFail(problems)
@@ -335,6 +383,28 @@ test('UMH-02 错配负控①只撤了标记：工具拒绝并点名 marker · �
       return undefined
     })
 
+    // ── ③′ 刀 K4b：**码对、载体报成 `list`** ⇒ 只翻 `UMH-CARRIER-NAMED-WRONG` ─────────────
+    //   为什么还要这一把：K4 把码与载体**一起**换掉 ⇒ 它翻的两面分不开；四码对三载体，
+    //   `carrier` 是 `code` 的复述这件事就没人判。这一刀只动载体一个维度。
+    const k4b = runScenario({
+      name: 'umh-02-k4b-carrier-only', pre: 'B', generator: 'witness', tool: 'wrongCarrier',
+      fakeArgs: ['E_UNMOUNT_MARKER_MISSING', 'list'], action: 'apply',
+    })
+    scenarios.knife_carrier_only = slim(k4b)
+    book.run('knife-K4b', () => {
+      knife(problems, {
+        label: 'K4b·carrier-only',
+        got: refusalProblems(k4b, { code: 'E_UNMOUNT_MARKER_MISSING', carrier: 'marker', label: 'K4b·carrier-only' }),
+        want: CODE.carrierNamedWrong,
+      })
+      // 刀的入口：码必须是**对的**（否则它又与 K4 同形，切不开一个维度）。
+      if (k4b.json?.code !== 'E_UNMOUNT_MARKER_MISSING' || k4b.json?.carrier !== 'list') {
+        push(CODE.fixture, `K4b 的夹具坏了：它应当报「对的码 + 错的载体」，实得 `
+          + `code=${JSON.stringify(k4b.json?.code)} / carrier=${JSON.stringify(k4b.json?.carrier)}`)
+      }
+      return undefined
+    })
+
     // ── ④ 阳性对照：一份合规的拒绝（exit 2 / 码 / 载体 / changed 0 / 字节不变 / 生成器不调用）必须判成 0 条 ──
     book.run('control', () => {
       const conforming = controlReading({
@@ -348,7 +418,7 @@ test('UMH-02 错配负控①只撤了标记：工具拒绝并点名 marker · �
       return undefined
     })
 
-    book.require(['fixture-B', 'refusal', 'knife-K3', 'knife-K4', 'control'])
+    book.require(['fixture-B', 'refusal', 'knife-K3', 'knife-K4', 'knife-K4b', 'control'])
     rec.readings.legs = book.legs
     rec.readings.scenarios = scenarios
     caseFail(problems)
@@ -432,7 +502,7 @@ test('UMH-03 错配负控②只撤了名单：工具拒绝并点名 list（与 U
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-test('UMH-04 幂等：已经在目标态 ⇒ UMH-NOOP / changed:0 / 字节不动（apply 与 restore 两个方向都判）', async () => {
+test('UMH-04 幂等：已经在目标态 ⇒ UMH-NOOP / changed:0 / 字节不动（两个方向）· 载体翻过但补丁没翻 ⇒ 具名拒绝，不许当 no-op', async () => {
   await runCase('UMH-04', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -456,7 +526,33 @@ test('UMH-04 幂等：已经在目标态 ⇒ UMH-NOOP / changed:0 / 字节不动
       return undefined
     })
 
-    // ── ② M 态上 --apply 两次：第二次必须是 no-op，且第二次之后字节 === 第一次之后 ────
+    // ── ①′ 腿 stale-patch：U 载体 + **故意过期**的补丁（还是 `{1,0}`）⇒ 不许 no-op ─────────
+    //   造法：入口态摆成 U，但**不**重派生补丁（`generator: 'witness'` ⇒ `runScenario` 跳过重派生），
+    //   盘上那份补丁就还是 M 态的 `{1,0}` = "载体翻过了、生成器没翻过补丁、上一次被打断"的形状。
+    //   与①成对：①证明"落点对 ⇒ 还是 no-op"，这一条证明"落点不对 ⇒ 不许记成 no-op"。
+    const stale = runScenario({ name: 'umh-04-stale-patch', pre: 'U', generator: 'witness', tool: 'real', action: 'apply' })
+    scenarios.stale_patch = slim(stale)
+    book.run('stale-patch', () => {
+      if (!stale.tool_present) {
+        pushToolAbsent(problems, stale, 'U 态 + 过期补丁 --apply')
+        return CODE.toolAbsent
+      }
+      // 夹具自检：入口必须是"载体已翻、补丁没翻"，否则这一格测的是别的形状。
+      const c = stale.before.carriers
+      const l = stale.before.landing
+      if (!(c.marker === false && c.disabled === true && l !== null && l.insert === 1 && l.preset_bodies === 0)) {
+        push(CODE.fixture, `过期补丁夹具坏了：入口应是 U 载体（marker:false / disabled:true）+ 旧补丁 {1,0}，实得 `
+          + `${JSON.stringify({ carriers: c, landing: l })}`)
+        return undefined
+      }
+      rec.readings.stale_patch = {
+        exit: stale.exit, code: stale.json?.code ?? null, changed: stale.json?.changed ?? null,
+        row_landing_printed: stale.json?.row_landing ?? null, generator_called: stale.generator_called,
+      }
+      for (const p of stalePatchProblems(stale, { label: 'U 态 + 过期补丁 --apply' })) problems.push(p)
+      return undefined
+    })
+
     const first = runScenario({ name: 'umh-04-apply-once', pre: 'M', generator: 'real', tool: 'real', action: 'apply' })
     const second = first.tool_present ? runAgain(first, { action: 'apply' }) : null
     scenarios.apply_twice = { first: slim(first), second: second === null ? null : slim(second) }
@@ -509,7 +605,51 @@ test('UMH-04 幂等：已经在目标态 ⇒ UMH-NOOP / changed:0 / 字节不动
       return undefined
     })
 
-    // ── ⑥ 阳性对照：一份合规的 no-op 读数必须判成 0 条 ────────────────────────────
+    // ── ⑤′ 刀 K9：把真工具的 `want` 检查摘掉（退回"补丁文件在就行"）⇒ stale 腿必须红 ───────
+    //   为什么用真工具改一行、不另写假工具：这一刀要证明的是"**真工具**少了这一步就不行"，
+    //   而另写的假工具证明不了这一件事（它会顺带缺别的东西）。`staleBlindTool` 只把那一个 `if` 换成 `if (false)`。
+    const blinded = staleBlindTool(readFileSync(SOURCE.tool, 'utf8'))
+    scenarios.knife_stale_blind = { applied: blinded.applied, why: blinded.why }
+    const k9 = blinded.applied
+      ? runScenario({
+        name: 'umh-04-k9-stale-blind', pre: 'U', generator: 'witness', tool: 'real',
+        toolText: blinded.text, action: 'apply',
+      })
+      : null
+    scenarios.knife_stale_blind_reading = k9 === null ? null : slim(k9)
+    book.run('knife-K9', () => {
+      if (k9 === null) {
+        push(CODE.fixture, `K9 的刀没装上：${blinded.why} —— 工具改过？这一格的红不能算在工具头上`)
+        return undefined
+      }
+      knife(problems, { label: 'K9·stale-blind', got: stalePatchProblems(k9, { label: 'K9·stale-blind' }), want: CODE.staleNoop })
+      // 刀的入口：它必须真的走到"载体已翻、补丁没翻"那一刻，且跑的确实是那份被改过的工具。
+      const c = k9.before.carriers
+      if (k9.tool !== 'mutated' || !(c.marker === false && c.disabled === true) || k9.before.landing?.insert !== 1) {
+        push(CODE.fixture, `K9 的夹具坏了：tool=${k9.tool} / carriers=${JSON.stringify(c)} / landing=${JSON.stringify(k9.before.landing)}`
+          + ' —— 这一刀没走到半截树那一刻')
+      }
+      return undefined
+    })
+
+    // ── ⑤″ 刀 K9b：拒绝，但报一个**与"补丁过期"无关的码** ⇒ 只翻 `UMH-STALE-PATCH-UNNAMED` ──
+    //   没有这一刀，"任何拒绝"都能让 stale 腿变绿 —— 那一格就分不出"说清了"与"没说清"。
+    const k9b = runScenario({
+      name: 'umh-04-k9b-unrelated-refusal', pre: 'U', generator: 'witness', tool: 'wrongCarrier',
+      fakeArgs: ['E_UNMOUNT_ROW_NOT_DISABLED', 'disabled'], action: 'apply',
+    })
+    scenarios.knife_stale_unnamed = slim(k9b)
+    book.run('knife-K9b', () => {
+      knife(problems, {
+        label: 'K9b·unrelated-refusal',
+        got: stalePatchProblems(k9b, { label: 'K9b·unrelated-refusal' }),
+        want: CODE.staleUnnamed,
+        allow: [CODE.exit],
+      })
+      return undefined
+    })
+
+    // ── ⑥ 阳性对照：一份合规的 no-op 读数必须判成 0 条（`stale-patch` 那一面也带一份，判据要可满足）──
     book.run('control', () => {
       const conforming = controlReading({
         json: { code: 'UMH-NOOP', changed: 0, row_landing: { insert: 0, preset_bodies: 2 } },
@@ -518,10 +658,19 @@ test('UMH-04 幂等：已经在目标态 ⇒ UMH-NOOP / changed:0 / 字节不动
         changed_files: [],
       })
       controlFails(problems, '阳性对照·no-op', noopProblems(conforming, { insert: 0, presetBodies: 2, label: 'control' }))
+      const staleOk = controlReading({
+        exit: 1,
+        json: { code: STALE_CODE, changed: 0, row_landing: { insert: 1, preset_bodies: 0 }, failed_step: 'patch', rolled_back: false },
+        files_equal: true,
+        tree_equal: true,
+        changed_files: [],
+        generator_called: false,
+      })
+      controlFails(problems, '阳性对照·过期补丁', stalePatchProblems(staleOk, { label: 'control' }))
       return undefined
     })
 
-    book.require(['apply-noop', 'apply-twice', 'restore-twice', 'knife-K5', 'knife-K6', 'control'])
+    book.require(['apply-noop', 'stale-patch', 'apply-twice', 'restore-twice', 'knife-K5', 'knife-K6', 'knife-K9', 'knife-K9b', 'control'])
     rec.readings.legs = book.legs
     rec.readings.scenarios = scenarios
     caseFail(problems)

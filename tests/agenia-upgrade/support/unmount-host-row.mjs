@@ -4,11 +4,19 @@
  * 契约：`.team/test/2026-11-10/CONTRACT-gate2-unmount-host-row.md`（唯一出处；本文件只实现它，不追加口径）。
  *
  * ## 这个模块回答的三件事
- *   ① **副本**：把产品那三份文件（生成器 / 组合 / 补丁）逐字节复制进运行根，工具一律用 `--repo <copy>` 跑。
+ *   ① **副本**：把工具的**运行集**逐字节复制进运行根，工具一律用 `--repo <copy>` 跑。运行集是
+ *      「工具 + 它 import 的 `presets/agenia/lib/atomic.mjs` + 生成器 + 组合 + 补丁」这五份。
+ *      🔴 `presets/agenia/lib/atomic.mjs` 是运行集的**必需件**，不是"顺手多带一份"：工具写盘走那份
+ *      `writeFileAtomic(file, data) → {ok, code}`（临时件 → fsync → rename），第二套同样的三步是自造轮子。
+ *      副本的目录结构就是产品的目录结构 ⇒ 少这一份，副本里的工具**加载即**失败
+ *      （`ERR_MODULE_NOT_FOUND` · exit 1 · 零 stdout），五格会红在**与产品无关**的一件事上。
+ *      所以它和另外三份一样是 `copyFixture()` 的**必需**输入：源树里没有 ⇒ 当场拒（`副本缺源文件`），
+ *      不许安静地造一棵"工具跑不起来"的副本。守它的是 `UMH-01` 的 `copy-runnable-set` 腿 + 刀 K8。
  *      副本里**没有 `.git`** ⇒ 任何"往上爬找仓库 / 用 git 定位"的实现会写到**活树**；`liveSentinel()` 抓它。
  *   ② **尺子**：落点只有一个口径 —— `client-ui-placement.mjs::describePlacement()`（`DASH-15`/`DASH-16` 的判据本体）。
  *      本模块**不另造解析器**：`rowLanding()` 只是把它的 `rows` 数一下。
- *   ③ **四种入口态 + 三种生成器 + 假工具**：`M` / `B` / `C` / `U` 的文本构造、见证生成器、失败注入 stub、七把刀的假工具。
+ *   ③ **四种入口态 + 三种生成器 + 刀**：`M` / `B` / `C` / `U` 的文本构造、见证生成器、失败注入 stub、
+ *      七把刀的假工具，外加一把"把真工具改坏一行"的变体（`staleBlindTool`，刀 K9）。
  *
  * ## 两条边界（写下来，别当假设）
  *   · **不钉 `HOST_LEVEL_IDS` 的形状**：`carrierFacts().listed` 只用于**夹具自检**与诊断读数，
@@ -27,13 +35,26 @@ import { problem, runRoot } from './evidence.mjs'
 /** 契约 §六.3：判据只钉这一个行 id（今天 `HOST_LEVEL_IDS` 与组合里都只有它）。 */
 export const ROW_ID = 'agenia-dashboard'
 
-/** 三份产品文件 + 工具，相对 `<repo>` 的路径。 */
+/**
+ * 工具对「载体翻过了、补丁没跟着翻」的那个码（被测命令自己的名字）。
+ * 判据只认这一个名字：一句不说清是哪件事的失败，读的人分不出"入口态不对"与"树被中断过"。
+ */
+export const STALE_CODE = 'E_UNMOUNT_PATCH_STALE'
+
+/** 工具的**运行集** + 被写的那一份补丁，相对 `<repo>` 的路径。 */
 export const REL = Object.freeze({
   tool: '.tools/unmount-host-row.mjs',
+  atomic: 'presets/agenia/lib/atomic.mjs',
   generator: '.tools/make-bundle-patch.mjs',
   composition: 'presets/agenia/agent.cordis.yml',
   patch: 'presets/agenia/cordis.patch.yml',
 })
+
+/**
+ * `copyFixture()` 的**必需**件（`REL` 的键）：少一份，副本里那条命令就跑不起来 ⇒ 这一格判不了。
+ * 工具自己（`tool`）不在盘上时是**另行处理**的（`UMH-TOOL-ABSENT`），所以它不在这张表里。
+ */
+const RUNNABLE = Object.freeze(['atomic', 'generator', 'composition', 'patch'])
 
 /** 工具必须打的那一行标记（组合里 `- id: <id>` 的下一行、两格缩进）。 */
 const MARK_LINE = /^ {2}#\s*@host-level\b/
@@ -136,10 +157,11 @@ export function scratchDir(name) {
   return mkdtempSync(path.join(base, `${safe}-`))
 }
 
-/** 产品四份文件的绝对路径。 */
+/** 产品那几份的绝对路径（`RUNNABLE` + 工具）。 */
 export const SOURCE = Object.freeze({
   repo: PATHS.repo,
   tool: path.join(PATHS.repo, REL.tool),
+  atomic: path.join(PATHS.repo, REL.atomic),
   generator: PATHS.generator,
   composition: PATHS.liveComposition,
   patch: PATHS.livePatch,
@@ -150,7 +172,13 @@ export function toolExists(repo = PATHS.repo) {
 }
 
 /**
- * 把产品那三份（+ 工具，若在盘上）逐字节复制进 `dest`。**副本里没有 `.git`**。
+ * 把工具的**运行集**（`RUNNABLE`：原子写 / 生成器 / 组合 / 补丁）逐字节复制进 `dest`，工具在盘上时连它一起。
+ * **副本里没有 `.git`**。
+ *
+ * 🔴 `RUNNABLE` 的每一份都是**必需**的：副本的目录结构就是产品的目录结构，少一份 ⇒ 副本里那条命令
+ * 加载即失败（`ERR_MODULE_NOT_FOUND` 之类）⇒ 五格红在一个与产品无关的事上。所以缺了**当场拒**，
+ * 不安静地造一棵跑不起来的副本（理由逐条写在文件头 ①）。
+ *
  * @returns {{dest:string, tool_present:boolean, source:object}}
  */
 export function copyFixture(dest, { repo = PATHS.repo } = {}) {
@@ -158,20 +186,23 @@ export function copyFixture(dest, { repo = PATHS.repo } = {}) {
   if (existsSync(dest) && readdirSync(dest).length > 0) {
     throw new Error(`夹具坏了：${dest} 不是新目录（copyFixture 不删旧目录）`)
   }
-  mkdirSync(path.join(dest, '.tools'), { recursive: true })
-  mkdirSync(path.join(dest, 'presets', 'agenia'), { recursive: true })
-  const src = {
-    generator: path.join(repo, REL.generator),
-    composition: path.join(repo, REL.composition),
-    patch: path.join(repo, REL.patch),
-    tool: path.join(repo, REL.tool),
-  }
-  for (const key of ['generator', 'composition', 'patch']) {
-    if (!existsSync(src[key])) throw new Error(`副本缺源文件：${src[key]}（产品树不完整 ⇒ 这一格判不了）`)
-    cpSync(src[key], path.join(dest, REL[key]))
+  const src = {}
+  for (const key of [...RUNNABLE, 'tool']) src[key] = path.join(repo, REL[key])
+  for (const key of RUNNABLE) {
+    if (!existsSync(src[key])) {
+      throw new Error(`副本缺源文件：${src[key]}（产品树不完整 ⇒ 这一格判不了）`
+        + `—— 这一份属于工具的运行集（${RUNNABLE.map((k) => REL[k]).join(' · ')}），不是可选附件`)
+    }
+    const to = path.join(dest, REL[key])
+    mkdirSync(path.dirname(to), { recursive: true })
+    cpSync(src[key], to)
   }
   const toolPresent = existsSync(src.tool)
-  if (toolPresent) cpSync(src.tool, path.join(dest, REL.tool))
+  if (toolPresent) {
+    const to = path.join(dest, REL.tool)
+    mkdirSync(path.dirname(to), { recursive: true })
+    cpSync(src.tool, to)
+  }
   return { dest, tool_present: toolPresent, source: src }
 }
 
@@ -192,10 +223,13 @@ export function snapshotTree(dir) {
   return out.sort((a, b) => a.rel.localeCompare(b.rel))
 }
 
-/** 活树哨兵：产品的三份 + 工具（存在才算）—— 跑之前 / 跑之后各量一次。 */
+/**
+ * 活树哨兵：工具的**运行集** + 补丁 + 工具（存在才算）—— 跑之前 / 跑之后各量一次。
+ * 原子写那一份也在里面：它是副本运行集的一员，工具在活树上往它旁边写临时件同样是"写到活树"。
+ */
 export function liveSentinel({ repo = PATHS.repo } = {}) {
   const files = {}
-  for (const rel of [REL.generator, REL.composition, REL.patch, REL.tool]) {
+  for (const rel of [REL.atomic, REL.generator, REL.composition, REL.patch, REL.tool]) {
     const abs = path.join(repo, rel)
     files[rel] = existsSync(abs) ? sha256OfFile(abs) : null
   }
@@ -436,6 +470,30 @@ export const FAKE_TOOL = Object.freeze({
   ].join('\n'),
 })
 
+// ── 刀 K9：把真工具改坏一行（不是另写一个假工具）────────────────────────────
+/**
+ * **刀 K9**：把真工具的 no-op 落点检查摘掉（退回到"补丁文件在就行"），其余一字不动 ——
+ * 这正是 round-4 那个洞的形状：载体翻过的树 + 旧补丁 ⇒ `exit 0 · UMH-NOOP`，一条红都没有。
+ *
+ * 怎么改：`code: 'E_UNMOUNT_PATCH_STALE'` 在工具里**只有一处** ⇒ 拿它当锚，把它**之前**最近的那个
+ * `if (landing.insert !== want.insert || landing.preset_bodies !== want.preset_bodies) {` 换成 `if (false) {`。
+ * 为什么不用 replaceAll：那个条件在工具里出现两次（no-op 分支 + 自证步），replaceAll 会把自证那一步也切掉
+ * ⇒ 刀就切到别处去了（`UMH-KNIFE-VECTOR` 的教训：刀切宽了，红因就指不准）。
+ *
+ * @returns {{text:string, applied:boolean, why:string|null}}  `applied:false` ⇒ 刀没装上（判据要红，不是静默）
+ */
+export function staleBlindTool(realText) {
+  const text = String(realText)
+  const anchor = "code: 'E_UNMOUNT_PATCH_STALE'"
+  const cond = 'if (landing.insert !== want.insert || landing.preset_bodies !== want.preset_bodies) {'
+  const atAnchor = text.indexOf(anchor)
+  if (atAnchor < 0) return { text, applied: false, why: `工具文本里找不到锚点 ${anchor}（工具改过？刀没装上）` }
+  const at = text.lastIndexOf(cond, atAnchor)
+  if (at < 0) return { text, applied: false, why: `锚点之前找不到那个 \`want\` 检查（工具改过？刀没装上）` }
+  const patched = `${text.slice(0, at)}if (false) { // 刀 K9：want 检查被摘掉（只剩"补丁文件在"）${text.slice(at + cond.length)}`
+  return { text: patched, applied: patched !== text, why: patched === text ? '刀一个字节都没改到' : null }
+}
+
 // ── 一次跑：搭夹具 → 跑 → 读回 ────────────────────────────────────────────
 /** 量一次副本 + 活树（`runScenario` / `runAgain` 共用；**只读**）。 */
 function measure(copy) {
@@ -490,14 +548,17 @@ function summarize({ name, pre, generator, tool, action, id, copy, dir, tool_pre
  * 搭一棵副本、造入口态、装生成器 / 工具、**量活树哨兵**、跑一发、读回。
  *
  * @param {{name:string, pre?:'M'|'B'|'C'|'U', generator?:'real'|'witness'|'stub', tool?:'real'|keyof FAKE_TOOL,
- *          fakeArgs?:string[], action?:'apply'|'restore', id?:string, check?:boolean, extraArgs?:string[],
- *          extraCopyFiles?:Record<string,string>, witnessOutFile?:string, sourceRepo?:string}} spec
+ *          fakeArgs?:string[], toolText?:string|null, action?:'apply'|'restore', id?:string, check?:boolean,
+ *          extraArgs?:string[], extraCopyFiles?:Record<string,string>, witnessOutFile?:string,
+ *          sourceRepo?:string}} spec
  *   `sourceRepo` 只给**夹具**用（阳性对照要从一棵带"照契约写对的工具"的探针树取材）；判据永远用缺省值 = 产品树。
+ *   `toolText` 是**真工具改坏一行**之后的文本（刀 K9 用：把 want 检查摘掉）——它装进副本的 `.tools/`，
+ *   所以 `tool_present` 仍是 true、`runTool()` 照跑；`tool` 那一格记成 `mutated`，读数里看得出来跑的不是产品那份。
  */
 export function runScenario(spec) {
   const {
     name, pre = 'M', generator = 'real', tool = 'real', fakeArgs = [],
-    action = 'apply', id = ROW_ID, check = false, extraArgs = [],
+    toolText = null, action = 'apply', id = ROW_ID, check = false, extraArgs = [],
     extraCopyFiles = {}, witnessOutFile = null, sourceRepo = PATHS.repo,
   } = spec
   const dir = scratchDir(name)
@@ -535,9 +596,12 @@ export function runScenario(spec) {
     writeFileSync(abs, text, 'utf8')
   }
 
-  // ③ 工具：真的一份（不在盘上 ⇒ 记 tool_present:false）或一把假刀
+  // ③ 工具：真的一份（不在盘上 ⇒ 记 tool_present:false）· 一把假刀 · 或"真工具改坏一行"的变体（`toolText`）
   let toolSource = 'real'
-  if (tool === 'real') {
+  if (toolText !== null) {
+    writeFileSync(path.join(copy, REL.tool), String(toolText), 'utf8')
+    toolSource = 'mutated'
+  } else if (tool === 'real') {
     // 源里没有工具 ⇒ 副本里本来就没有（`copyFixture` 只在存在时复制）—— 不删任何东西。
   } else {
     const fake = FAKE_TOOL[tool]
@@ -643,6 +707,8 @@ export const CODE = {
   refusalWrote: 'UMH-REFUSAL-WROTE',
   refusalRanGenerator: 'UMH-REFUSAL-RAN-GENERATOR',
   usageSilentGreen: 'UMH-USAGE-SILENT-GREEN',
+  staleNoop: 'UMH-STALE-PATCH-NOOP',
+  staleUnnamed: 'UMH-STALE-PATCH-UNNAMED',
   changedNotZero: 'UMH-CHANGED-NOT-ZERO',
   noopTouchedBytes: 'UMH-NOOP-TOUCHED-BYTES',
   rollbackBytes: 'UMH-ROLLBACK-NOT-BYTE-IDENTICAL',
@@ -702,7 +768,7 @@ export function legBook(problems) {
     require(list) {
       const missing = list.filter((name) => !(name in legs))
       if (missing.length > 0) {
-        problems.push(problem(CODE.legsIncomplete, `这些腿一条都没跑：${missing.join(' / ')} —— 没判过的格不许当绿（契约 §九）`))
+        problems.push(problem(CODE.legsIncomplete, `这些腿一条都没跑：${missing.join(' / ')} —— 没判过的格不许当绿（契约 §七 / §5.0）`))
       }
     },
   }
@@ -826,7 +892,48 @@ export function noopProblems(r, { insert, presetBodies, label }) {
   return out
 }
 
-/** ⑧ 未知 id：exit 3，一个字节不写。 */
+/**
+ * ⑧ 半截的树：入口已经是这一步的目标态，但盘上补丁的落点**不是**目标落点。
+ *
+ * 这是 no-op 分支的另一面（`⑦` 判"落点对 ⇒ 还是 no-op"）：载体翻过了、生成器没翻过补丁
+ * （上一次跑到 ③ 被打断 / 并发的两个 `--apply`）⇒ 必须**具名拒绝**（exit 1 · `E_UNMOUNT_PATCH_STALE`），
+ * 一个字节都不写，而且**不许调用生成器**（跑一发生成器会把补丁"顺手"修好，把"被打断过"的证据抹掉）。
+ *
+ * 为什么"补丁文件在不在"不够：那正是 round-4 的洞 —— 载体翻过的树 + 旧补丁 ⇒ `exit 0 · UMH-NOOP`，
+ * 一条红都没有。所以这一面钉的是**落点**，不是"文件存在"。
+ *
+ * @returns {object[]} 有问题就返回；空 = 这一格过
+ */
+export function stalePatchProblems(r, { label }) {
+  const out = []
+  const code = r.json?.code ?? null
+  const stale = r.before?.landing ?? null
+  if (r.exit === 0 || code === 'UMH-NOOP') {
+    out.push(problem(CODE.staleNoop, `${label}：入口已经是 --apply 的目标态，但盘上补丁的落点还是 ${JSON.stringify(stale)}`
+      + `（不是 {insert:0,preset_bodies:2}）⇒ 工具 exit ${r.exit} / code=${JSON.stringify(code)}：`
+      + '把一棵**半截的树**记成了 no-op。载体翻过了、补丁没跟着翻 —— 这是"上一次跑到生成器那一步被打断"的形状，'
+      + '静默放行等于把证据抹掉（契约 §二 · §4.2）'))
+  } else if (code !== STALE_CODE) {
+    out.push(problem(CODE.staleUnnamed, `${label}：工具没把 no-op 记成成功，但也没点名这是"补丁过期"：`
+      + `code=${JSON.stringify(code)}，期望 ${JSON.stringify(STALE_CODE)} —— 一个不说清是哪件事的失败，`
+      + '读的人分不出"入口态不合法"（exit 2）与"树被中断过"（这一支）'))
+  } else if (r.exit !== 1) {
+    out.push(problem(CODE.exit, `${label}：exit ${r.exit}，期望 1 —— 补丁过期是**失败**（这一跑什么都没写），`
+      + '不是"入口态不是规范态"的拒绝（那是 exit 2）'))
+  }
+  if (r.json?.changed !== 0) {
+    out.push(problem(CODE.refusalChanged, `${label}：changed=${JSON.stringify(r.json?.changed)}，这一跑一个字节都不该写`))
+  }
+  if (!r.files_equal) out.push(problem(CODE.refusalWrote, `${label}：之后载体文件的字节变了：${JSON.stringify(r.changed_files)}`))
+  if (!r.tree_equal) out.push(problem(CODE.refusalWrote, `${label}：之后文件集合变了（留了临时件 / 账本）：${JSON.stringify(r.changed_files)}`))
+  if (r.generator_called) {
+    out.push(problem(CODE.refusalRanGenerator, `${label}：**调用过生成器**（见证文件在）—— 这一跑一个字节都没写，`
+      + '跑生成器只会把补丁顺手修好、把"上一次被打断"的证据抹掉'))
+  }
+  return out
+}
+
+/** ⑨ 未知 id：exit 3，一个字节不写。 */
 export function usageProblems(r, label) {
   const out = []
   if (r.exit !== 3) {
@@ -837,7 +944,7 @@ export function usageProblems(r, label) {
   return out
 }
 
-/** ⑨ 刀：同一份判读函数喂一把假工具，必须吐出**指定**的那一个码（外加事先点名的次生码）。 */
+/** ⑩ 刀：同一份判读函数喂一把假工具，必须吐出**指定**的那一个码（外加事先点名的次生码）。 */
 export function knife(problems, { label, got, want, allow = [] }) {
   const codes = got.map((p) => p.code)
   if (!codes.includes(want)) {
@@ -852,8 +959,40 @@ export function knife(problems, { label, got, want, allow = [] }) {
   }
 }
 
+/**
+ * ⑪ 副本的运行集：`RUNNABLE` 那几份必须在副本里，且与产品树**逐字节**相同。
+ *
+ * 只判"文件在不在 + 字节一样"，不判工具怎么用它们。为什么单独一条腿：副本里少了
+ * `presets/agenia/lib/atomic.mjs` 时，工具（它 import 那份 `writeFileAtomic`）加载即失败
+ * （`ERR_MODULE_NOT_FOUND` · exit 1 · 零 stdout）—— 五格会红在一个**与产品无关**的事上，
+ * 而"夹具被剪了一角"看起来会像"工具坏了"。所以这一面要能单独翻面（刀 K8）。
+ *
+ * @param {{files_map?:Record<string,string>}} before  `runScenario()` 里跑之前那份副本（`slim()` 会丢掉它）
+ * @returns {object[]} 有问题就返回；空 = 运行集完整
+ */
+export function runnableSetProblems(before, { label, source = SOURCE } = {}) {
+  const out = []
+  const map = before?.files_map ?? {}
+  for (const key of RUNNABLE) {
+    const rel = REL[key]
+    const got = map[rel] ?? null
+    if (got === null) {
+      out.push(problem(CODE.fixture, `${label}：副本里没有 \`${rel}\` —— 工具的运行集少一份：`
+        + '副本里的工具加载即失败（ERR_MODULE_NOT_FOUND · exit 1 · 零 stdout），'
+        + '这一格会红在一个与产品无关的事上'))
+      continue
+    }
+    const want = existsSync(source[key]) ? sha256OfFile(source[key]) : null
+    if (want !== null && got !== want) {
+      out.push(problem(CODE.fixture, `${label}：副本里的 \`${rel}\` 与产品树不是同一份字节（${got} ≠ ${want}）`
+        + '—— 副本必须是逐字节复制，不许有人"顺手"改它'))
+    }
+  }
+  return out
+}
+
 /** 工具缺位时每格都要说同一句话（红因首个；不是 skip、不是 HOLD）。 */
 export function pushToolAbsent(problems, r, label) {
-  problems.push(problem(CODE.toolAbsent, `${label}：\`${REL.tool}\` 不在盘上（${r.copy}）—— 被测命令今天不存在，`
-    + '这一格判不了 ⇒ RED（不是绿、不是 HOLD、不是 skip）。契约 §九 写着这是**预期红**'))
+  problems.push(problem(CODE.toolAbsent, `${label}：\`${REL.tool}\` 不在盘上（${r.copy}）—— 被测命令不存在，`
+    + '这一格判不了 ⇒ RED（不是绿、不是 HOLD、不是 skip）'))
 }
