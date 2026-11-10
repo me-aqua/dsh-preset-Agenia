@@ -432,18 +432,89 @@ export function problem(code, message, detail) {
 }
 
 /**
+ * **判据自己的调用形状**（`HCA-01`）—— 纯函数，入口与刀共用同一份。
+ *
+ * 病（技术评审 2026-11-09 `F2`）：`caseHold(rec, code, why)` 收 3 个实参，而
+ * `integration/flip01-bridge-reading.test.mjs` 里有一处写成 `return caseHold('FLIP-PROVENANCE-UNKNOWN', \`…\`)`
+ * —— 只传了 2 个。那一跑的真事：`rec` 收到的是那个字符串、`rec.holds` 是 `undefined`
+ * ⇒ `Cannot read properties of undefined (reading 'push')` ⇒ 用例判 **RED**
+ * ⇒ "这一格判不了" 被记成了 "被测对象红了"。**判据自己的笔误，不许长成产品的红。**
+ *
+ * 三条判据（都是"形状"，不是"内容"）：
+ *   · 实参**个数**必须是 3 —— 少了就点名 `CASE-HOLD-ARITY`；
+ *   · 第 1 个必须是 `runCase` 的记录（有数组型 `holds`）—— 否则 `CASE-HOLD-REC`；
+ *   · 第 2 / 3 个必须是字符串（`code` 还要求非空）—— 否则 `CASE-HOLD-CODE` / `CASE-HOLD-WHY`。
+ * ⚠️ **多于 3 个实参不判**：多传是噪音，不是"这一格判错了"。边界写在这里，读的人不必回推。
+ *
+ * @param {{argc:number, rec:any, code:any, why:any}} input
+ * @returns {null|{code:string, message:string}}
+ */
+export function caseHoldCallProblem({ argc, rec, code, why } = {}) {
+  if (typeof argc !== 'number' || argc < 3) {
+    return {
+      code: 'CASE-HOLD-ARITY',
+      message: `判据自己写错了：\`caseHold\` 只收到 ${argc ?? '?'} 个实参（要 3 个：rec, code, why）`
+        + ' —— 这是 harness 的缺陷，不是被测对象的红。修调用点，别把这条当产品红报。',
+    }
+  }
+  if (rec === null || typeof rec !== 'object' || !Array.isArray(rec.holds)) {
+    return {
+      code: 'CASE-HOLD-REC',
+      message: `判据自己写错了：\`caseHold\` 的第 1 个实参不是 \`runCase\` 的记录（收到 ${rec === null ? 'null' : typeof rec}；`
+        + '要求有数组型 `holds`）—— 这是 harness 的缺陷，不是被测对象的红。',
+    }
+  }
+  if (typeof code !== 'string' || code.trim() === '') {
+    return { code: 'CASE-HOLD-CODE', message: `判据自己写错了：\`caseHold\` 的第 2 个实参（code）必须是非空字符串，收到 ${JSON.stringify(code)}` }
+  }
+  if (typeof why !== 'string') {
+    return { code: 'CASE-HOLD-WHY', message: `判据自己写错了：\`caseHold\` 的第 3 个实参（why）必须是字符串，收到 ${JSON.stringify(why)}` }
+  }
+  return null
+}
+
+/** 调 `caseHold` 的那一行在哪儿（`evidence.mjs` 自己那几帧跳掉）—— 报文里要指名道姓。 */
+function callerFrameOfCaseHold() {
+  const lines = String(new Error().stack ?? '').split(/\r?\n/).slice(1)
+  for (const line of lines) {
+    const t = line.trim()
+    if (t === '' || !t.startsWith('at ')) continue
+    if (t.includes('evidence.mjs')) continue
+    if (t.includes('caseHoldCallProblem')) continue
+    return t.replace(/^at\s+/, '')
+  }
+  return '(调用点读不出来)'
+}
+
+/** `caseHold` 的形状不对时抛这个 —— `code` 会原样进 `result.json` 的 `problems[0].code`。 */
+export class CaseHoldShapeError extends Error {
+  constructor(shape, callSite) {
+    super(`[${shape.code}] ${shape.message}（调用点：${callSite}）`)
+    this.name = 'CaseHoldShapeError'
+    this.code = shape.code
+    this.call_site = callSite
+    this.detail = shape.message
+  }
+}
+
+/**
  * **第三态 `HOLD`（裁定 v1.14）** —— "这一档本来就不适用，所以判不了"。
  *
  * 什么时候用（判据来自 v1.14）：
  *   · **前置本不该失败** ⇒ **红**（写进 `problems`，例如"CLI 必须能读出来"）；
  *   · **这一档不适用** ⇒ **`HOLD`**（例如"旧通知被 fence 合法拒了 ⇒ 没有'有没有覆盖状态'可判"）。
  * 🔴 `HOLD` **绝不计绿**，也不算失败 —— 它在结算里单独一栏，读的人一眼看得见"这条没判"。
+ * 🔴 调用形状不对（少传实参 / 第 1 个不是记录 / code / why 类型不对）⇒ **抛**
+ *    （`CASE-HOLD-ARITY` 等，见 `caseHoldCallProblem`），**不许**静默记成一条 HOLD、
+ *    也不许让它长成 `TypeError` 形状的产品红。`HCA-01` 守这一条。
  *
  * @param {object} rec  `runCase` 给的记录（`rec.holds` 就是出口）
  * @param {string} code 短码（稳定、可 grep）
  * @param {string} why  为什么这一档不适用（人话）
  */
 export function caseHold(rec, code, why) {
+  const shape = caseHoldCallProblem({ argc: arguments.length, rec, code, why })
+  if (shape !== null) throw new CaseHoldShapeError(shape, callerFrameOfCaseHold())
   const entry = { code, why, at: new Date().toISOString() }
   rec.holds.push(entry)
   return entry

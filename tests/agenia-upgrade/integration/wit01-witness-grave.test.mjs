@@ -19,6 +19,12 @@
  *     ⇒ `DR-02` 自己**不红**（今天的事实，读数里如实记下），**但文件外的读者必须红**：
  *     结算 `real_roots.problems` 含 `SETTLE-DR02-GUARD-READING-MISSING`、那一行 🔴、退出码非零。
  *   对照：**同一份副本不做任何删除**必须 GREEN、结算 exit 0 —— 没有这一条，"两把刀都红"可能只是副本坏了。
+ *   ⚠️ **`F3`（技术评审 2026-11-09）之后**：副本上 `DR-02` 可能是**环境性 HOLD**
+ *   （`DR02-EXCLUSION-NO-DATA-ROOT`：只读副本里没有 `presets/agenia/.runtime`）。
+ *   ⇒ 对照那一条不再是"必须 GREEN"，而是**"必须与 DR-02 的判词同态"**：
+ *   `GREEN ⇒ 绿` · `HOLD ⇒ 挂起（且点名 STM-SETUP-DR02-HOLD）` · `RED ⇒ 红`。
+ *   "把环境性 HOLD 当红"正是 F3 的原形状 —— 它让副本上必红两格，红因与被测对象无关。
+ *   判据本体是 `support/settlement-probe.mjs::dr02FeedVerdict`（纯函数，真跑与刀喂同一份）。
  *
  * 【刀自带尺子】期望（哪条码、报文提哪个键、结算行是不是 🔴、退出码）全部手写在下面，
  * 不 import 被切的那份文件的任何符号；副本的支撑模块 import 改成**绝对 `file://`**（否则跑不起来，
@@ -32,7 +38,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { ENV, PATHS } from '../support/env.mjs'
 import { caseFail, problem, realRootsSnapshot, runCase, runRoot } from '../support/evidence.mjs'
-import { evidenceDirOfRunRoot, runSettleCLI, realRootsLineOf, writeJsonFile } from '../support/settlement-probe.mjs'
+import { dr02FeedVerdict, evidenceDirOfRunRoot, runSettleCLI, realRootsLineOf, writeJsonFile } from '../support/settlement-probe.mjs'
 
 const A_JUDGED_START = '// ── ④ 真实根的见证：'
 const A_GUARD_START = '// ── ④ 见证的**段外兜底**（2026-11-07 MF-5）'
@@ -102,7 +108,7 @@ function envFor(runRoot) {
   return childEnv
 }
 
-test('WIT-01 最后一层守卫不与所守同亡：只删被判那段 ⇒ 红点名；只删守卫 ⇒ 文件外读者红（两把源码删除刀 + 对照）', async () => {
+test('WIT-01 最后一层守卫不与所守同亡：只删被判那段 ⇒ 红点名；只删守卫 ⇒ 文件外读者红（两把源码删除刀 + 对照必须与 DR-02 同态，环境性 HOLD 只许挂起）', async () => {
   await runCase('WIT-01', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -171,6 +177,7 @@ test('WIT-01 最后一层守卫不与所守同亡：只删被判那段 ⇒ 红�
         /** 同文件里另一条也读 DR-02 读数的用例（`STM-01`）：副本里它跟着红是**预期的**，记下来当读数。 */
         stm01_result: stm01?.result ?? null,
         stm01_problems: (stm01?.problems ?? []).map((p) => p?.code ?? null),
+        stm01_holds: (stm01?.holds ?? []).map((h) => h?.code ?? null),
         settle: {
           present: settle.present,
           exit: settle.exit,
@@ -186,7 +193,33 @@ test('WIT-01 最后一层守卫不与所守同亡：只删被判那段 ⇒ 红�
     const control = runVariant('control', rw.out)
     const judged = runVariant('judged-gone', judgedGone.text)
     const guard = runVariant('guard-gone', guardGone.text)
-    rec.readings.knife_control = { node_exit: control.node_exit, evidence_found: control.evidence_found, dr02_result: control.dr02?.result ?? null, problems: (control.dr02?.problems ?? []).map((p) => p.code), stm01_result: control.stm01_result, stm01_problems: control.stm01_problems, settle: control.settle }
+    /**
+     * 🔴 `F3`：对照的判词必须**与 DR-02 同态**（`GREEN ⇒ 绿` · `HOLD ⇒ 挂起` · `RED ⇒ 红`）。
+     * 环境性 HOLD（`DR02-EXCLUSION-NO-DATA-ROOT`）不是这一格的失败：它证明的是"副本跑得通"，
+     * 而"DR-02 判绿"本来就不是这条对照的对象。**但它也不许变成绿** —— 与 DR-02 一致才算同态。
+     * 判据本体是纯函数 `dr02FeedVerdict`（与 `STM-01` 同一个）。
+     */
+    const controlFeed = dr02FeedVerdict(control.dr02)
+    const expectStm = controlFeed.kind
+    rec.readings.knife_control = {
+      node_exit: control.node_exit,
+      evidence_found: control.evidence_found,
+      dr02_result: control.dr02?.result ?? null,
+      dr02_holds: (control.dr02?.holds ?? []).map((h) => h?.code ?? null),
+      feed: controlFeed,
+      expect_stm01: expectStm,
+      /**
+       * `HOLD` 那一支（本机的活树上跑不到，因为活体预设里有 `.runtime`）由 `STM-01` 的
+       * `readings.feed_variants.env_hold` 端到端证明：环境性 HOLD 记录喂进同一个用例体
+       * ⇒ `result:"HOLD"` + `STM-SETUP-DR02-HOLD`。这里只负责"同态"。
+       */
+      hold_branch_proven_by: 'STM-01 · readings.feed_variants.env_hold（子进程 + 环境性 HOLD 记录 ⇒ result HOLD）',
+      problems: (control.dr02?.problems ?? []).map((p) => p.code),
+      stm01_result: control.stm01_result,
+      stm01_problems: control.stm01_problems,
+      stm01_holds: control.stm01_holds,
+      settle: control.settle,
+    }
     rec.readings.knife_judged_gone = {
       node_exit: judged.node_exit, evidence_found: judged.evidence_found, dr02_result: judged.dr02?.result ?? null,
       problems: (judged.dr02?.problems ?? []).map((p) => p.code),
@@ -204,22 +237,41 @@ test('WIT-01 最后一层守卫不与所守同亡：只删被判那段 ⇒ 红�
       settle: guard.settle,
     }
 
-    // ── 对照：同一份副本不删任何东西 ⇒ DR-02 绿、结算 exit 0 ───────────────────
+    // ── 对照：同一份副本不删任何东西 ⇒ DR-02 与 STM-01 **同态**（GREEN/HOLD/RED 各归各位）──
     if (!control.evidence_found) {
       push('WIT-KNIFE-UNAVAILABLE', `[对照] 副本没写出 DR-02 的证据（node exit=${control.node_exit} · spec 尾=${JSON.stringify(control.spec_tail)}）`)
     } else {
-      if (control.dr02?.result !== 'GREEN') {
-        push('WIT-KNIFE-CONTROL', `[对照] 未切的同一份副本必须 GREEN，实得 ${JSON.stringify(control.dr02?.result)} · problems=${JSON.stringify((control.dr02?.problems ?? []).map((p) => p.code))}`)
+      // ① 同态表：三个判词各有一个期望，**不许**"一律当绿"也不许"一律当红"。
+      const FEED_TABLE = [
+        { dr02: 'GREEN', want: 'GREEN' },
+        { dr02: 'HOLD', want: 'HOLD' }, // ← F3：环境性 HOLD 只许挂起
+        { dr02: 'RED', want: 'RED' }, // ← 反过来：真红不许被 HOLD 那一支吃掉
+      ]
+      const tableReading = FEED_TABLE.map((row) => ({ dr02: row.dr02, want: row.want, got: dr02FeedVerdict({ result: row.dr02, holds: [] }).kind }))
+      rec.readings.control_feed_table = tableReading
+      for (const row of tableReading) {
+        if (row.got !== row.want) push('WIT-KNIFE-CONTROL', `[对照·同态表] DR-02=${row.dr02} 时期望 STM-01=${row.want}，实得 ${row.got} —— 同态表坏了，"环境性 HOLD"与"真红"又分不开了`)
+      }
+      if (control.dr02?.result !== 'GREEN' && control.dr02?.result !== 'HOLD') {
+        push('WIT-KNIFE-CONTROL', `[对照] 未切的同一份副本上 DR-02 只许是 GREEN 或**环境性 HOLD**，实得 ${JSON.stringify(control.dr02?.result)}`
+          + ` · problems=${JSON.stringify((control.dr02?.problems ?? []).map((p) => p.code))} —— 这是红（R5 之前的形状是"一律红"，F3 改的就是它）`)
+      }
+      if (control.dr02?.result === 'HOLD' && !(control.dr02?.holds ?? []).some((h) => String(h?.code ?? '').startsWith('DR02-'))) {
+        push('WIT-KNIFE-CONTROL', `[对照] DR-02 挂起时必须点名**它自己的**成因码（DR02-…），实得 ${JSON.stringify((control.dr02?.holds ?? []).map((h) => h?.code ?? null))}`)
+      }
+      if (control.stm01_result !== expectStm) {
+        push('WIT-KNIFE-CONTROL', `[对照] 副本里 STM-01 必须与 DR-02 同态（期望 ${expectStm}），实得 ${JSON.stringify(control.stm01_result)}`
+          + ` · problems=${JSON.stringify(control.stm01_problems)} · holds=${JSON.stringify(control.stm01_holds)}`
+          + ' —— 它红就说明"读同一份真读数"这条路自己坏了（F3 的原形状：环境性 HOLD 被记成红）')
+      }
+      if (control.stm01_result === 'HOLD' && !(control.stm01_holds ?? []).includes('STM-SETUP-DR02-HOLD')) {
+        push('WIT-KNIFE-CONTROL', `[对照] STM-01 挂起时码必须是 STM-SETUP-DR02-HOLD（点名"因为 DR-02 挂起"），实得 ${JSON.stringify(control.stm01_holds)}`)
       }
       if (control.settle.problems.length > 0 || control.settle.exit !== 0) {
         push('WIT-KNIFE-CONTROL', `[对照] 未切的副本结算必须 exit 0 且无 real_roots 问题，实得 exit=${control.settle.exit} · problems=${JSON.stringify(control.settle.problems)}`)
       }
       if (control.settle.line === null || !control.settle.line.includes('DR-02')) {
         push('WIT-KNIFE-CONTROL', `[对照] 结算那一行必须点名 DR-02，实得 ${JSON.stringify(control.settle.line)}`)
-      }
-      // 副本里另一条读 DR-02 读数的用例（`STM-01`）在**未切**的副本上必须绿 —— 它红就说明副本本身不干净。
-      if (control.stm01_result !== 'GREEN') {
-        push('WIT-KNIFE-CONTROL', `[对照] 副本里 STM-01 必须 GREEN（它读的是同一份真读数），实得 ${JSON.stringify(control.stm01_result)} · ${JSON.stringify(control.stm01_problems)}`)
       }
     }
 

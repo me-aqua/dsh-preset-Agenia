@@ -86,7 +86,7 @@ import {
 } from '../support/evidence.mjs'
 import { TEMP_SCAN_CODES, tempScanTargets, tempScanVerdict } from '../support/temp-scan.mjs'
 import { COVERAGE_MISSING_TOKEN, coverageSettlementLine } from '../support/coverage-line.mjs'
-import { buildSettlementProbe, coverageLineOf, realRootsLineOf, runSettleCLI } from '../support/settlement-probe.mjs'
+import { buildSettlementProbe, coverageLineOf, dr02FeedVerdict, realRootsLineOf, runSettleCLI, spawnTestFileVariant } from '../support/settlement-probe.mjs'
 import { canonical, driveOf, ensureMarkedDir, isUnc, REAL_BRAIN_ROOT, REAL_ROUTE_ROOT } from '../support/root-guard.mjs'
 import { brainPaths, loadStagedModule, routePaths, runBrain, runCli, runRoute, stagingExists, writeFixture } from '../support/sut.mjs'
 // 端到端正例的两块料（来历见各自的文件头）：
@@ -2356,27 +2356,163 @@ test('TMP-01 临时件扫描必须有样本：空/缺目录 ⇒ HOLD 点名 TEMP
  *   D `windows` 清空 ⇒ 行变 🔴 且点名"没判过的窗口"；
  *   E 改 `baseline.brain.count` ⇒ 行里那个数**跟着变**（同一来源，不是自己另算的）。
  * 期望侧全部手写（不 import 结算的实现来反推）；证据根本身由 `support/settlement-probe.mjs` 复算并核对。
+ *
+ * ── 🔴 `F3`（技术评审 2026-11-09）：**DR-02 环境性 HOLD 不许变成这一格的红** ──────────────
+ * 病：这一格原来只读 `realDr02.result !== 'GREEN'` ⇒ **一律** `push('STM-SETUP', …)` 记红。
+ * 而 `DR-02` 有一格是**环境性 HOLD**（`DR02-EXCLUSION-NO-DATA-ROOT`：只读副本里没有
+ * `presets/agenia/.runtime` ⇒ 命中 0 分不清"排除生效了"与"没东西可排"）。那条件与被测对象无关，
+ * 却在副本上让这一格必红；`WIT-01` 又要求"副本里 STM-01 必须 GREEN" ⇒ 一天里同一条病红两格，
+ * 红因都指向别处。⇒ 判词改成三态（`support/settlement-probe.mjs::dr02FeedVerdict`，纯函数）：
+ * **GREEN ⇒ 五条腿照跑 · HOLD ⇒ `caseHold`（点名 DR-02 的成因码）· RED ⇒ 仍然红**。
+ * 两条腿证明它（`GH` / `GR`）：把**环境条件自己产出的那份判词**喂进这一格的用例体（子进程 + 独立运行根），
+ * `HOLD` 那一跑必须 `result:"HOLD"` + `holds[0].code === "STM-SETUP-DR02-HOLD"`（**不是** RED），
+ * `RED` 那一跑必须仍然是 RED（HOLD 不许变成藏身处）。环境条件不是手写的：它由
+ * `dataSegmentExclusionVerdict({files:[], pinned:['.runtime'], dataRootOnDisk:false})` 现算出来。
  */
-test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的读数 ⇒ 行红/变字，绝不停在"差异=无"', async () => {
+test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的读数 ⇒ 行红/变字，绝不停在"差异=无"；环境性 HOLD 只许仍是 HOLD', async () => {
   await runCase('STM-01', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
     const realEvidence = evidenceRoot()
     const realDr02File = path.join(realEvidence, 'DR-02', 'result.json')
     if (!existsSync(realDr02File)) {
-      push('STM-SETUP', `本跑的 DR-02 读数不在（${realDr02File}）—— 这格判不了（它是"结算读 DR-02"的前提）`)
+      push('STM-SETUP-DR02-NO-READING', `本跑的 DR-02 读数不在（${realDr02File}）—— 这格判不了（它是"结算读 DR-02"的前提）`)
       caseFail(problems)
       return
     }
     const realDr02 = JSON.parse(readFileSync(realDr02File, 'utf8'))
-    if (realDr02?.result !== 'GREEN') {
-      push('STM-SETUP', `本跑的 DR-02 不是 GREEN（实得 ${JSON.stringify(realDr02?.result)}）—— 下面那些"读数完好"的前提不成立，先看 DR-02 自己的红`)
-    }
+    /**
+     * 🔴 **三态喂法**（`F3`）：`GREEN` 往下跑；`HOLD` ⇒ 这一格也 HOLD（点名 DR-02 的成因码，
+     * 并落进 `caseHold`）；`RED` ⇒ 仍然是红。判据本体是纯函数（真跑与刀喂同一份）。
+     */
+    const feed = dr02FeedVerdict(realDr02)
+    rec.readings.dr02_feed = feed
     rec.readings.dr02_source = {
       file: realDr02File,
       result: realDr02?.result ?? null,
+      holds: (realDr02?.holds ?? []).map((h) => h?.code ?? null),
       has_real_roots: realDr02?.readings?.real_roots !== undefined,
       has_guard_reading: realDr02?.readings?.dr02_witness_outside !== undefined,
+      feed_kind: feed.kind,
+      feed_code: feed.code,
+    }
+
+    // ── ⓪ 三态判定器的翻面（四个喂法，四个答案）──────────────────────────────
+    const feedTable = [
+      { name: 'GREEN', input: { result: 'GREEN', holds: [] }, want: 'GREEN|—' },
+      { name: '环境性 HOLD（DR-02 的原样）', input: { result: 'HOLD', holds: [{ code: 'DR02-EXCLUSION-NO-DATA-ROOT', why: '只读副本里没有数据根' }] }, want: 'HOLD|STM-SETUP-DR02-HOLD' },
+      { name: 'RED', input: { result: 'RED', holds: [], problems: [{ code: 'DR02-EXCLUSION-NOT-APPLIED' }] }, want: 'RED|STM-SETUP' },
+      { name: '读不到判词', input: null, want: 'HOLD|STM-SETUP-DR02-NO-READING' },
+    ].map((row) => {
+      const got = dr02FeedVerdict(row.input)
+      return { name: row.name, kind: got.kind, code: got.code, dr02_codes: got.dr02_codes, want: row.want }
+    })
+    rec.readings.feed_table = feedTable
+    for (const row of feedTable) {
+      if (`${row.kind}|${row.code ?? '—'}` !== row.want) {
+        push('STM-FEED-TABLE', `[⓪] 判词表：${row.name} 判成 ${row.kind}|${row.code ?? '—'}，期望 ${row.want} —— 三态分不开（HOLD 与 RED 必须各有名字）`)
+      }
+    }
+    if (!(feedTable[1].dr02_codes ?? []).includes('DR02-EXCLUSION-NO-DATA-ROOT')) {
+      push('STM-FEED-TABLE', `[⓪] HOLD 那一格必须**点名 DR-02 的成因码**（DR02-EXCLUSION-NO-DATA-ROOT），实得 ${JSON.stringify(feedTable[1].dr02_codes)}`
+        + ' —— 不点名，读的人还得回 DR-02 那一格去猜"为什么挂起"')
+    }
+
+    // ── ⓪' 端到端：把**环境条件自己产出的**那份判词喂进这一格的用例体（子进程 + 独立运行根）──
+    // 环境条件不是手写的：它由 DR-02 自己的纯函数在"没有数据根"这件事上现算出来。
+    const envVerdict = dataSegmentExclusionVerdict({ files: [], pinned: ['.runtime'], dataRootOnDisk: false })
+    const envHoldCode = envVerdict?.hold?.code ?? null
+    rec.readings.env_condition = {
+      function: 'dataSegmentExclusionVerdict({files:[], pinned:[".runtime"], dataRootOnDisk:false})',
+      ok: envVerdict.ok,
+      hold: envHoldCode,
+      detail: envVerdict.detail,
+    }
+    if (envHoldCode !== 'DR02-EXCLUSION-NO-DATA-ROOT') {
+      push('STM-ENV-CONDITION', `[⓪'] 环境条件没产出预期的 HOLD 码（实得 ${JSON.stringify(envHoldCode)}，期望 \`DR02-EXCLUSION-NO-DATA-ROOT\`）—— 这条腿的料不成立`)
+    }
+    const holdingRecord = {
+      ...realDr02,
+      result: 'HOLD',
+      problems: [],
+      holds: [{ code: envHoldCode, why: envVerdict?.hold?.why ?? '（环境性 HOLD）', at: new Date().toISOString() }],
+    }
+    const redRecord = { ...realDr02, result: 'RED', problems: [{ code: 'DR02-EXCLUSION-NOT-APPLIED', message: '（刀：假装数据段进了哈希）', detail: null }], holds: [] }
+    const variantBase = path.join(runRoot(), 'stm01', 'feed')
+    /**
+     * 🔴 **嵌套深度**：`WIT-01` 会把整份 `data-root.test.mjs` 放进子进程（刀），那一跑里的
+     * `STM-01` 再开自己的端到端探针就是套娃。⇒ 深度 > 0 时**显式跳过**内层探针，
+     * 并把"跳过了、理由是什么"写进读数（不是静默省略）。主跑（深度 0）两条腿照跑。
+     */
+    const probeDepth = Number(process.env.AGENIA_PROBE_DEPTH ?? 0)
+    if (probeDepth > 0) {
+      rec.readings.feed_variants = {
+        skipped: `AGENIA_PROBE_DEPTH=${probeDepth} > 0（本进程是另一格的探针副本；两条腿在主跑里量，这里不套娃）`,
+        still_covered_by: '主跑 STM-01 的 readings.feed_variants.env_hold / dr02_red',
+        pure_table_still_ran: true,
+      }
+    } else {
+      const holdRun = spawnTestFileVariant({
+        baseDir: variantBase,
+        name: 'env-hold',
+        file: path.join(PATHS.testRoot, 'integration', 'data-root.test.mjs'),
+        testNamePattern: '^STM-01',
+        seed: { 'DR-02': holdingRecord },
+        runRootName: 'run-env-hold',
+      })
+      const redRun = spawnTestFileVariant({
+        baseDir: variantBase,
+        name: 'dr02-red',
+        file: path.join(PATHS.testRoot, 'integration', 'data-root.test.mjs'),
+        testNamePattern: '^STM-01',
+        seed: { 'DR-02': redRecord },
+        runRootName: 'run-dr02-red',
+      })
+      const variantSummary = (v) => ({
+        exit: v.exit,
+        stm01: v.results['STM-01'] === null ? null : {
+          result: v.results['STM-01']?.result ?? null,
+          problems: (v.results['STM-01']?.problems ?? []).map((p) => p?.code ?? null),
+          holds: (v.results['STM-01']?.holds ?? []).map((h) => h?.code ?? null),
+          feed: v.results['STM-01']?.readings?.dr02_feed ?? null,
+          holds_why: (v.results['STM-01']?.holds ?? []).map((h) => String(h?.why ?? '').slice(0, 400)),
+        },
+        stdout_tail: String(v.stdout ?? '').split(/\r?\n/).filter((l) => l.trim() !== '').slice(-6),
+        stderr_head: String(v.stderr ?? '').slice(0, 200),
+      })
+      rec.readings.feed_variants = { env_hold: variantSummary(holdRun), dr02_red: variantSummary(redRun) }
+      const hv = rec.readings.feed_variants.env_hold
+      if (hv.stm01 === null) {
+        push('STM-ENV-VARIANT-UNAVAILABLE', `[⓪'] 环境性 HOLD 那一跑没写出 STM-01 的结果（exit=${hv.exit} · stderr=${JSON.stringify(hv.stderr_head)} · 尾=${JSON.stringify(hv.stdout_tail)}）`)
+      } else {
+        if (hv.stm01.result !== 'HOLD') {
+          push('STM-ENV-NOT-HOLD', `[⓪'] 环境性 HOLD 喂进来时这一格必须判 **HOLD**，实得 ${JSON.stringify(hv.stm01.result)}`
+            + `（problems=${JSON.stringify(hv.stm01.problems)}）—— "判不了"不许长成红（F3 的原形状）`)
+        }
+        if (!hv.stm01.holds.includes('STM-SETUP-DR02-HOLD')) {
+          push('STM-ENV-NOT-HOLD', `[⓪'] HOLD 的码必须点名成因（STM-SETUP-DR02-HOLD），实得 ${JSON.stringify(hv.stm01.holds)}`)
+        }
+        if (!hv.stm01.holds_why.some((w) => w.includes('DR02-EXCLUSION-NO-DATA-ROOT'))) {
+          push('STM-ENV-NOT-HOLD', `[⓪'] HOLD 的人话里必须带 DR-02 的成因码 DR02-EXCLUSION-NO-DATA-ROOT，实得 ${JSON.stringify(hv.stm01.holds_why)}`)
+        }
+      }
+      const rv = rec.readings.feed_variants.dr02_red
+      if (rv.stm01 === null) {
+        push('STM-ENV-VARIANT-UNAVAILABLE', `[⓪'] DR-02 RED 那一跑没写出 STM-01 的结果（exit=${rv.exit} · stderr=${JSON.stringify(rv.stderr_head)}）`)
+      } else if (rv.stm01.result !== 'RED' || !rv.stm01.problems.includes('STM-SETUP')) {
+        push('STM-ENV-SWALLOWED-RED', `[⓪'] DR-02 是 RED 时这一格必须仍然是 RED 且点名 STM-SETUP，实得 ${JSON.stringify(rv.stm01.result)} / ${JSON.stringify(rv.stm01.problems)}`
+          + ' —— HOLD 那一支把真红也吃掉了，比原来更坏')
+      }
+    }
+    // 环境性 HOLD / DR-02 RED 的输入下，A–E 没有对象可判 —— 直接返回（这一格的结论已经落在 holds / problems 里）。
+    if (feed.kind !== 'GREEN') {
+      if (feed.kind === 'HOLD') {
+        caseHold(rec, feed.code, feed.why)
+      } else {
+        push(feed.code, feed.why)
+      }
+      caseFail(problems)
+      return
     }
     const snapshot = realRootsSnapshot()
     const base = path.join(runRoot(), 'stm01')

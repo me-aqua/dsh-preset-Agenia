@@ -14,14 +14,25 @@
  *      同时两条交叉必须成立：`zstd-frames.mjs` 全解出来的头 = `zstdDecompressSync`（只解第一帧）
  *      解出来的头；不等 ⇒ `BOOT-R2-HEADER-NOT-IN-FIRST-FRAME`（尺子坏了）。
  *      🔴 **阴性的那一份是"续跑回来的老会话"**（头写于 2026-10-19T03:03:54.661Z）—— 它证明的是
- *      "这个探测器会翻面"，**不是**"重启之后预设没注册"。两者别混：判据只看 `createdAt >= T`。
+ *      "这个探测器会翻面"，**不是**"重启之后预设没注册"。
+ *   ⓪' **锚点翻面（合成会话流）**：`bug-20261110-07` 之后，这一格比的时刻是
+ *      **首轮对话开始的时刻**（`IDENTITY_ANCHOR`：会话流里第一条 `turn/start` 帧的 `time`），
+ *      不是 `header.createdAt`。三条合成流各喂一次真读取器（`readSessionHeader`）：
+ *      · **A 建于 11-06、今天才第一次说话** ⇒ 必须算"T 之后的新会话"（**GREEN**，这是负控①）；
+ *      · **B 建于 11-06、11-06 就说过话** ⇒ **不许**算（负控②；它进 `resumed`，不当证据）；
+ *      · **C 今天建、今天说话** ⇒ 算（阳性对照）；
+ *      外加两把刀：**旧锚点刀**（按 `createdAt >= T` 选 ⇒ A 必须选不中 —— 那就是本病的形状）
+ *      与 **T 翻面**（把 T 挪到 A 的首轮之后 ⇒ 一个都选不中 ⇒ 判词必须变 HOLD）。
+ *      ⇒ 这一格既证明"新锚点选得中"，也证明"它选得中**是因为**首轮那个时刻"。
  *   ① **身份**：`T` = 这一次客户端启动的时刻（`AGENIA_BOOT_AT` 或宿主进程启动时刻）；
- *      取该工作区里**创建**于 `T` 之后、**顶层**（`delegationDepth === 0` 且不是委派会话）的
+ *      取该工作区里**首轮对话在 `T` 之后**、**顶层**（`delegationDepth === 0` 且不是委派会话）的
  *      最新一份会话，判它的 `agentPreset`：
  *        · 没有这样的会话 ⇒ `HOLD BOOT-NO-SESSION-AFTER-RESTART`（**永远不是绿**）；
  *        · `agentPreset === 'agenia'` ⇒ 这一格成立；
  *        · `'standard'` ⇒ `RED BOOT-PRESET-NOT-REGISTERED`（= 事故形态：无角色 ⇒ 窄权限）；
  *        · 别的值 ⇒ `RED BOOT-PRESET-UNEXPECTED`。
+ *      ⚠️ 读数里**两个时刻都给**（`createdAt` 只当上下文）：`readings.identity.anchor` 点名用的
+ *      是哪个锚点，`readings.identity.selected_anchor` 写出**比的那个时刻**（`firstTurnAt >= T`）。
  *      同批落一份**反向读数**：同一个 `T` 下**不过滤**顶层会把谁选中（今天 = 委派出去的组员会话，
  *      `agenia-member`）—— 证明那个过滤器是承重的，不是装饰。
  *   ② **回滚（R5）**：**撤挂载 = 删 `# @host-level` 标记 + 重跑生成器**（2026-11-05 深夜组长裁定：
@@ -76,13 +87,15 @@
  */
 import { before, test } from 'node:test'
 import path from 'node:path'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import zlib from 'node:zlib'
 import { caseDir, caseHold, preflight, problem, runCase } from '../support/evidence.mjs'
 import { PATHS } from '../support/env.mjs'
 import { bundleMountReading } from '../support/client-ui-placement.mjs'
 import {
   BOOT_CODES,
   EXPECTED_PRESET,
+  IDENTITY_ANCHOR,
   bootPayloadReading,
   findWorkspaceKey,
   hostBootReading,
@@ -180,12 +193,164 @@ function findPositiveControl({ sessions, tmpDir, hintPrefix = 'session-e0ed642a'
     const got = readHeader(s, tmpDir)
     if (!got.ok) continue
     if (got.identity.agentPreset !== EXPECTED_PRESET || !got.identity.is_top_level) continue
-    if (best === null || (got.identity.createdAt ?? 0) > (best.identity.createdAt ?? 0)) best = got
+    if (best === null || (got.identity.firstTurnAt ?? 0) > (best.identity.firstTurnAt ?? 0)) best = got
   }
   return best === null ? null : { source: 'scan', ...best }
 }
 
-test('BOOT-01 启动后读数 A（身份）：重启之后新建的会话头 agentPreset 必须是 agenia，standard ⇒ 塌了；R5 撤挂载 = 删标记 + 重跑生成器', async () => {
+// ── ⓪' 锚点翻面：三条**合成**会话流（与盘上有没有活会话无关）────────────────────
+/**
+ * 造一份最小的会话流（`session.v4.jsonl.zstd`）：头 + 一条 `turn/start` + 一条 `turn/end`。
+ * **一份 zstd 帧**就够 —— 头在第一帧，`readSessionHeader()` 的交叉尺子（只解第一帧）与
+ * `zstd-frames.mjs`（全解）会给出同一个头（这正是我们要的那条等式）。
+ */
+function writeFixtureStream(dir, { id, createdAt, firstTurnAt, agentPreset = EXPECTED_PRESET, cwd = PATHS.repo }) {
+  const sub = path.join(dir, id)
+  mkdirSync(sub, { recursive: true })
+  const lines = [
+    JSON.stringify({ type: 'session', version: 4, id, createdAt, cwd, agentPreset, delegationDepth: 0, origin: null, parentSession: null }),
+    JSON.stringify({ type: 'turn/start', seq: 1, time: firstTurnAt, data: { turn: 1 } }),
+    JSON.stringify({ type: 'turn/end', seq: 2, time: firstTurnAt + 8000, data: { turn: 1, reason: { kind: 'completed' } } }),
+  ].join('\n') + '\n'
+  const file = path.join(sub, 'session.v4.jsonl.zstd')
+  writeFileSync(file, zlib.zstdCompressSync(Buffer.from(lines, 'utf8')))
+  return file
+}
+
+/**
+ * `bug-20261110-07` 的翻面读数。**两条负控是这一格的必需品**（少了它们，"选得中"只是运气）：
+ *   · A `created-1106-spoken-today`：头建于 11-06、**今天**才第一次说话 ⇒ **必须**算 T 之后的新会话；
+ *   · B `created-1106-spoken-1106`：头建于 11-06、**11-06** 就说过话 ⇒ **必须不**算（进 resumed）；
+ *   · C `created-today-spoken-today`：今天建、今天说话 ⇒ 算（阳性对照，证明规则不是"凡是 11-06 建的都算"）。
+ * 两把刀：
+ *   · **旧锚点刀**：同一批读数按 `createdAt >= T` 选 ⇒ A 必须**选不中**（那就是本病的形状）；
+ *   · **T 翻面**：把 T 挪到 A 的首轮之后 ⇒ 一个都选不中 ⇒ 判词必须变 `HOLD`（证明"之后"是时间关系）。
+ */
+function firstTurnAnchorLeg({ tmpDir }) {
+  const dir = tmpDir
+  const T = Date.parse('2026-11-10T03:00:00.000Z') // 本地 11-10 11:00
+  const FIXTURES = [
+    { key: 'A-created-1106-spoken-today', id: 'session-fixture-a', createdAt: Date.parse('2026-11-06T07:03:30.836Z'), firstTurnAt: Date.parse('2026-11-10T03:15:10.565Z'), want: 'selected' },
+    { key: 'B-created-1106-spoken-1106', id: 'session-fixture-b', createdAt: Date.parse('2026-11-06T07:03:30.836Z'), firstTurnAt: Date.parse('2026-11-06T07:10:00.000Z'), want: 'not-selected' },
+    { key: 'C-created-today-spoken-today', id: 'session-fixture-c', createdAt: Date.parse('2026-11-10T03:05:00.000Z'), firstTurnAt: Date.parse('2026-11-10T03:06:00.000Z'), want: 'selected' },
+  ]
+  const problems = []
+  const rows = FIXTURES.map((f) => {
+    const file = writeFixtureStream(dir, f)
+    const reading = readSessionHeader(file, { tmpDir: path.join(dir, '_jsonl') })
+    if (!reading.ok) {
+      problems.push(problem(BOOT_CODES.headerUnreadable, `[⓪'] 合成会话流读不动（${f.key}）：${reading.code} · ${reading.why}`))
+      return { ...f, file, ok: false }
+    }
+    const identity = identityOf(reading)
+    return {
+      key: f.key,
+      id: f.id,
+      file,
+      ok: true,
+      created_at_ms: identity.createdAt,
+      first_turn_at_ms: identity.firstTurnAt,
+      header_created_at_iso: identity.createdAt_iso,
+      first_turn_at_iso: identity.firstTurnAt_iso,
+      first_turn_turn: identity.firstTurn_turn,
+      first_turn_is_first: identity.firstTurn_is_first,
+      first_turn_why: identity.firstTurn_why,
+      cross_check_agree: reading.cross_check?.agree ?? null,
+      agent_preset: identity.agentPreset,
+      want: f.want,
+      identity,
+    }
+  })
+  for (const row of rows) {
+    if (!row.ok) continue
+    if (row.first_turn_is_first !== true) {
+      problems.push(problem(BOOT_CODES.headerUnreadable, `[⓪'] ${row.key} 的首轮读数不成立（${row.first_turn_why}）—— 锚点在这一份流上取不到时刻`))
+    }
+    if (row.cross_check_agree !== true) {
+      problems.push(problem(BOOT_CODES.headerNotFirstFrame, `[⓪'] ${row.key} 的两把尺子不一致（${JSON.stringify(row.cross_check_agree)}）—— 合成流的头不在第一帧里，这一格不能用来量锚点`))
+    }
+  }
+  const identities = rows.filter((r) => r.ok).map((r) => r.identity)
+  const pick = selectNewestAfter(identities, { T, mode: 'top-level' })
+  const legacy = identities
+    .filter((x) => typeof x.createdAt === 'number' && x.createdAt >= T)
+    .filter((x) => x.is_top_level)
+    .sort((a, b) => b.createdAt - a.createdAt)
+  const legacyIds = legacy.map((x) => x.id)
+  const pickId = pick.newest?.id ?? null
+
+  // ① 锚点自己点名（读数里要写出"比的是哪个时刻"）
+  if (pick.anchor !== IDENTITY_ANCHOR.name || pick.anchor_field !== IDENTITY_ANCHOR.field) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[⓪'] 选择器没说自己用的锚点（anchor=${JSON.stringify(pick.anchor)} · field=${JSON.stringify(pick.anchor_field)}），`
+      + `期望 \`${IDENTITY_ANCHOR.name}\` / \`${IDENTITY_ANCHOR.field}\` —— 下一个人没法知道它比的是哪个时刻`))
+  }
+  // ② 负控①：11-06 建、今天第一次说话 ⇒ 必须被选中
+  const a = rows.find((r) => r.id === 'session-fixture-a')
+  if (pickId !== 'session-fixture-a') {
+    problems.push(problem(BOOT_CODES.noSessionAfterRestart, `[⓪' 负控①] 建于 11-06、**今天**才第一次说话的会话（firstTurnAt=${a?.first_turn_at_iso}）必须算"T 之后的新会话"（T=${new Date(T).toISOString()}），`
+      + `实得选中 ${JSON.stringify(pickId)} —— 锚点没在看首轮时刻（这正是 bug-20261110-07 的形状）`))
+  }
+  const pickedVersion = pickId === 'session-fixture-a' ? presetVerdict(pick.newest) : null
+  if (pickedVersion !== null && pickedVersion.verdict !== 'GREEN') {
+    problems.push(problem(BOOT_CODES.presetNotRegistered, `[⓪' 负控①] 负控①的判词必须是 GREEN（预设 agenia），实得 ${pickedVersion.verdict}（${pickedVersion.code ?? '—'}）`))
+  }
+  // ③ 负控②：11-06 建、11-06 就说过话 ⇒ 不许算
+  const b = rows.find((r) => r.id === 'session-fixture-b')
+  if (pickId === 'session-fixture-b' || (pick.candidates ?? []).some((c) => c.id === 'session-fixture-b')) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[⓪' 负控②] 11-06 就说过话的会话（firstTurnAt=${b?.first_turn_at_iso}）**不许**算"T 之后的新会话"——它已经进过候选集了`))
+  }
+  if (!(pick.resumed_touched_after_T ?? []).some((x) => x.id === 'session-fixture-b')) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[⓪' 负控②] 11-06 说过话的那一份必须出现在 \`resumed_touched_after_T\` 里（它是"早就说过话、之后又被碰过"），`
+      + `实得 ${JSON.stringify((pick.resumed_touched_after_T ?? []).map((x) => x.id))}`))
+  }
+  // ④ 阳性对照：今天建、今天说话的那一份也必须算（规则不是"只认 11-06"）
+  if (!(pick.candidates ?? []).some((c) => c.id === 'session-fixture-c')) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[⓪' 阳性对照] 今天建、今天说话的那一份也必须进候选集，实得 ${JSON.stringify((pick.candidates ?? []).map((c) => c.id))}`))
+  }
+  // ⑤ 旧锚点刀：同一批读数按 `createdAt >= T` 选 ⇒ A 必须选不中
+  if (legacyIds.includes('session-fixture-a')) {
+    problems.push(problem(BOOT_CODES.selectorDead, '[⓪\' 旧锚点刀] 按 `createdAt >= T` 居然也能选中负控①——那这把刀切不开新旧两个锚点，这一格证明不了锚点换了'))
+  }
+  if (a?.ok && !(typeof a.created_at_ms === 'number' && a.created_at_ms < T && typeof a.first_turn_at_ms === 'number' && a.first_turn_at_ms >= T)) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[⓪' 负控①] 这一份的前提不成立：它的 header.createdAt 必须早于 T 而首轮晚于 T（createdAt=${a.header_created_at_iso} · firstTurn=${a.first_turn_at_iso} · T=${new Date(T).toISOString()}）`))
+  }
+  // ⑥ T 翻面：把 T 挪到 A 的首轮之后 ⇒ 一个都选不中 ⇒ HOLD
+  const laterT = Date.parse('2026-11-10T04:00:00.000Z')
+  const flipped = selectNewestAfter(identities, { T: laterT, mode: 'top-level' })
+  const flippedVerdict = presetVerdict(flipped.newest)
+  if (flipped.newest !== null || flippedVerdict.verdict !== 'HOLD' || flippedVerdict.code !== BOOT_CODES.noSessionAfterRestart) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[⓪' T 翻面] T 挪到 ${new Date(laterT).toISOString()}（晚于每一份的首轮）之后必须一个都选不中、判词变 HOLD，`
+      + `实得 ${JSON.stringify(flipped.newest?.id ?? null)} / ${flippedVerdict.verdict}`))
+  }
+  return {
+    readings: {
+      measured_at: new Date().toISOString(),
+      anchor: { name: IDENTITY_ANCHOR.name, source: IDENTITY_ANCHOR.source, field: IDENTITY_ANCHOR.field, chosen_because: IDENTITY_ANCHOR.chosen_because, rejected: IDENTITY_ANCHOR.rejected },
+      T,
+      T_iso: new Date(T).toISOString(),
+      fixtures_dir: dir,
+      pool: rows.map(({ identity, ...rest }) => rest),
+      selected: pickId,
+      selected_anchor_compared: pick.newest === null ? null : {
+        session_id: pick.newest.id,
+        first_turn_at: pick.newest.firstTurnAt,
+        first_turn_at_iso: pick.newest.firstTurnAt_iso,
+        T,
+        T_iso: new Date(T).toISOString(),
+        comparison: 'firstTurnAt >= T',
+      },
+      verdict: pickedVersion === null ? null : { verdict: pickedVersion.verdict, code: pickedVersion.code ?? null },
+      candidates: pick.candidates,
+      resumed: (pick.resumed_touched_after_T ?? []).map((x) => ({ id: x.id, firstTurnAt_iso: x.firstTurnAt_iso, createdAt_iso: x.createdAt_iso })),
+      anchor_unavailable: pick.anchor_unavailable,
+      legacy_anchor: { rule: 'header.createdAt >= T', picked_ids: legacyIds, newest: legacy[0] === undefined ? null : { id: legacy[0].id, createdAt_iso: legacy[0].createdAt_iso } },
+      t_flip: { T: laterT, T_iso: new Date(laterT).toISOString(), picked: flipped.newest?.id ?? null, verdict: flippedVerdict.verdict, code: flippedVerdict.code ?? null },
+    },
+    problems,
+  }
+}
+
+test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 之后的会话，头里 agentPreset 必须是 agenia（锚点 = 会话流 turn/start）；standard ⇒ 塌了；R5 撤挂载 = 删标记 + 重跑生成器', async () => {
   await runCase('BOOT-01', async (rec) => {
     const tmpDir = path.join(caseDir('BOOT-01'), 'tmp')
     const tree = treeIdentity()
@@ -203,6 +368,17 @@ test('BOOT-01 启动后读数 A（身份）：重启之后新建的会话头 age
       const p = packageReading(DASHBOARD_PKG_DIR())
       return { name: p.name ?? null, dir: p.dir, client_exists: p.client_exists ?? false, client_sha256: p.client_sha256 ?? null, platform: p.platform ?? null }
     })()
+
+    /**
+     * ── ⓪' **锚点翻面**（`bug-20261110-07`）────────────────────────────────────
+     * 与"盘上有没有活会话"无关：三条**合成**会话流各喂一次真读取器。
+     * 两条负控（11-06 建、今天才说话 ⇒ 必须是新会话 · 11-06 建、11-06 说过话 ⇒ 必须不是）
+     * + 阳性对照 + 两把刀（旧锚点刀 / T 翻面）。**这一层不过，下面的身份读数没意义** ——
+     * 它证明的是"比的是哪个时刻"，而上一版正是错在这里。
+     */
+    const anchorLeg = firstTurnAnchorLeg({ tmpDir: path.join(caseDir('BOOT-01'), 'anchor-fixtures') })
+    rec.readings.anchor_leg = anchorLeg.readings
+    for (const p of anchorLeg.problems) rec.problems.push(problem(p.code, p.message))
 
     // ── 0 前置：会话流根 + 工作区键 + 启动时刻 ────────────────────────────────
     if (!store.exists) {
@@ -246,12 +422,14 @@ test('BOOT-01 启动后读数 A（身份）：重启之后新建的会话头 age
         }
       }
       // 阴性的那一份**必须是"续跑回来的老会话"**：这样读的人不会拿它当"重启后的读数"。
-      rec.readings.controls.negative_is_resumed = negative.identity.createdAt !== null && negative.identity.createdAt < T
+      //   锚点换了之后仍然成立 —— 它**首轮**在 T 之前（不再是"createdAt 在 T 之前"）。
+      rec.readings.controls.negative_is_resumed = negative.identity.firstTurnAt !== null && negative.identity.firstTurnAt < T
+      rec.readings.controls.negative_first_turn_before_restart_ms = negative.identity.firstTurnAt === null ? null : T - negative.identity.firstTurnAt
       rec.readings.controls.negative_created_before_restart_ms = negative.identity.createdAt === null ? null : T - negative.identity.createdAt
     }
 
-    // ── ① 身份：T 之后**新建**的顶层会话 ───────────────────────────────────────
-    // 只看"文件 mtime ≥ T"的那一小把（创建于 T 之后的会话，文件 mtime 必然也 ≥ T）——
+    // ── ① 身份：**首轮在 T 之后**的顶层会话（锚点 = `IDENTITY_ANCHOR`，不是 `createdAt`）──────────
+    // 只看"文件 mtime ≥ T"的那一小把（首轮在 T 之后的会话，文件 mtime 必然也 ≥ T）——
     // 这样不必扫整棵树；上限自报。
     const pool = sessions.filter((s) => s.mtimeMs >= T)
     const scan = scanHeaders(pool, { tmpDir, limit: 20 })
@@ -263,28 +441,57 @@ test('BOOT-01 启动后读数 A（身份）：重启之后新建的会话头 age
       T,
       T_iso: new Date(T).toISOString(),
       T_source: boot.source,
+      /** 🔴 这一格比的是**哪个时刻** —— 点名，别让下一个人去猜（`bug-20261110-07`）。 */
+      anchor: {
+        name: IDENTITY_ANCHOR.name,
+        source: IDENTITY_ANCHOR.source,
+        field: IDENTITY_ANCHOR.field,
+        chosen_because: IDENTITY_ANCHOR.chosen_because,
+        rejected: IDENTITY_ANCHOR.rejected,
+        comparison: 'firstTurnAt >= T',
+      },
       pool: { sessions_with_mtime_ge_T: pool.length, scanned: scan.scanned, capped: scan.capped, limit: scan.limit, failures: scan.failures },
-      created_after_T: identities.filter((x) => x.createdAt >= T).map((x) => ({ id: x.id, createdAt_iso: x.createdAt_iso, agentPreset: x.agentPreset, is_top_level: x.is_top_level, file_sha256: x.file_sha256, first_frame_sha256: x.first_frame_sha256 })),
+      /** ⚠️ **上下文，不是判据**：`header.createdAt >= T` 的会话（旧锚点会选的那一批）。 */
+      header_created_after_T: identities.filter((x) => typeof x.createdAt === 'number' && x.createdAt >= T)
+        .map((x) => ({ id: x.id, createdAt_iso: x.createdAt_iso, firstTurnAt_iso: x.firstTurnAt_iso, agentPreset: x.agentPreset, is_top_level: x.is_top_level })),
+      first_turn_after_T: identities.filter((x) => x.firstTurn_is_first === true && typeof x.firstTurnAt === 'number' && x.firstTurnAt >= T)
+        .map((x) => ({ id: x.id, firstTurnAt_iso: x.firstTurnAt_iso, created_at_iso: x.createdAt_iso, turn: x.firstTurn_turn, seq: x.firstTurn_seq, agentPreset: x.agentPreset, is_top_level: x.is_top_level, file_sha256: x.file_sha256, first_frame_sha256: x.first_frame_sha256 })),
+      anchor_unavailable: pick.anchor_unavailable,
       resumed_touched_after_T: pick.resumed_touched_after_T,
       resumed_count: pick.resumed_count,
       selected: pick.newest === null ? null : whereOf(pick.newest),
+      /** 🔴 判词**比的那个时刻**（一个数、一个来源、一个会话 id）—— 下一句就能重复这一跑的比较。 */
+      selected_anchor: pick.newest === null ? null : {
+        session_id: pick.newest.id,
+        anchor: IDENTITY_ANCHOR.name,
+        first_turn_at: pick.newest.firstTurnAt,
+        first_turn_at_iso: pick.newest.firstTurnAt_iso,
+        first_turn_turn: pick.newest.firstTurn_turn,
+        first_turn_seq: pick.newest.firstTurn_seq,
+        header_created_at_iso: pick.newest.createdAt_iso,
+        T,
+        T_iso: new Date(T).toISOString(),
+        comparison: `firstTurnAt(${pick.newest.firstTurnAt_iso}) >= T(${new Date(T).toISOString()})`,
+      },
       selected_detail: pick.newest,
       naive_selection: naive.newest === null ? null : { id: naive.newest.id, agentPreset: naive.newest.agentPreset, is_top_level: naive.newest.is_top_level, why: '不过滤顶层 ⇒ 会选中委派出去的组员会话' },
       filter_is_load_bearing: naive.newest?.agentPreset !== pick.newest?.agentPreset,
     }
     // **选择器自证**：同一条选择规则，换一个 `T` 就应该换一个判词 —— 否则"现在 HOLD"读起来像"它只会 HOLD"。
-    // `T` 取阳性对照（16:15 那份新建会话）之前 1 秒；pool 只含**这一跑已经读过**的那几份（不是全树，标签写清）。
+    // `T` 取阳性对照的首轮之前 1 秒；pool 只含**这一跑已经读过**的那几份（不是全树，标签写清）。
     if (positive !== null) {
-      const probeT = positive.identity.createdAt - 1000
+      const probeBase = typeof positive.identity.firstTurnAt === 'number' ? positive.identity.firstTurnAt : positive.identity.createdAt
+      const probeT = probeBase - 1000
       const probePool = [positive.identity, negative?.identity, ...identities].filter((x) => x !== null && x !== undefined)
       const probe = selectNewestAfter(probePool, { T: probeT, mode: 'top-level' })
       const probeVerdict = presetVerdict(probe.newest)
       rec.readings.identity.selection_flip_probe = {
         T: probeT,
         T_iso: new Date(probeT).toISOString(),
+        anchor: IDENTITY_ANCHOR.name,
         pool_ids: probePool.map((x) => x.id),
         pool_note: '只含这一跑已经读过的那几份（阳性 / 阴性 / T 之后那几份）—— 不是全树',
-        picked: probe.newest === null ? null : { id: probe.newest.id, createdAt_iso: probe.newest.createdAt_iso, agentPreset: probe.newest.agentPreset },
+        picked: probe.newest === null ? null : { id: probe.newest.id, firstTurnAt_iso: probe.newest.firstTurnAt_iso, createdAt_iso: probe.newest.createdAt_iso, agentPreset: probe.newest.agentPreset },
         verdict: probeVerdict.verdict,
         code: probeVerdict.code ?? null,
       }
@@ -296,11 +503,14 @@ test('BOOT-01 启动后读数 A（身份）：重启之后新建的会话头 age
     rec.readings.identity.verdict = v
     if (pick.newest === null) {
       caseHold(rec, BOOT_CODES.noSessionAfterRestart,
-        `工作区 ${key.key} 里**没有**创建于 ${new Date(T).toISOString()}（${boot.source}）之后的顶层会话 —— 最近被写过的是 ${pick.resumed_count} 份**续跑回来的老会话**`
-          + `${pick.resumed_touched_after_T.length === 0 ? '' : `（例如 ${JSON.stringify(pick.resumed_touched_after_T.slice(0, 2))}）`}：它们的头写于**启动之前**，不是这一次启动的读数。`
-          + ' ⇒ 请老板在客户端里**新建一个会话**，再跑这一条；在那之前这一格是 HOLD（**不是绿**）')
+        `工作区 ${key.key} 里**没有**首轮对话发生在 ${new Date(T).toISOString()}（${boot.source}）**之后**的顶层会话 `
+          + `（锚点 = ${IDENTITY_ANCHOR.name}：${IDENTITY_ANCHOR.source}）—— `
+          + `这一跑读了 ${identities.length} 份会话：${pick.resumed_count} 份的首轮在 T 之前（早就说过话、之后又被碰过，`
+          + `例如 ${JSON.stringify((pick.resumed_touched_after_T ?? []).slice(0, 2).map((x) => ({ id: x.id, firstTurnAt_iso: x.firstTurnAt_iso })))}），`
+          + `${pick.anchor_unavailable_count} 份**读不到首轮**（${JSON.stringify((pick.anchor_unavailable ?? []).slice(0, 2))}）。`
+          + ' ⇒ 请老板在客户端里**新建一个会话并说一句话**，再跑这一条；在那之前这一格是 HOLD（**不是绿**）')
     } else if (v.verdict === 'RED') {
-      rec.problems.push(problem(v.code, `${v.why}（${whereOf(pick.newest)}；T = ${new Date(T).toISOString()}，来源 ${boot.source}）`))
+      rec.problems.push(problem(v.code, `${v.why}（${whereOf(pick.newest)}；锚点 ${IDENTITY_ANCHOR.name} 比的时刻 = ${rec.readings.identity.selected_anchor?.comparison}；T 来源 ${boot.source}）`))
     }
 
     // ── ② R5 回滚：**撤挂载 = 删标记 + 重跑生成器**（2026-11-05 深夜 · 组长裁定"重定义，不退役"）──

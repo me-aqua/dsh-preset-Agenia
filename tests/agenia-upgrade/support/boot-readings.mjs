@@ -14,15 +14,20 @@
  *     `zstdDecompressSync(整份)`（= 只解第一帧）做交叉，两边解析出的头**必须逐字段相同**；
  *     不同 ⇒ `BOOT-R2-HEADER-NOT-IN-FIRST-FRAME`（尺子坏了，不是对象坏了）。
  *
- * 🔴 **会话头是"创建那一刻"的快照** —— 这条口径是本票的关键，也是 §十三 那次误判的判别面：
- *   · `header.createdAt` = 那次会话**被创建**的时刻，不是它最后一次被写的时刻；
- *   · 客户端的 profile 补丁是**热重载层**，重启后**续跑（resume）回来的老会话仍然带着它出生时的
- *     `agentPreset`**（实测：`session-cc5c68d1` 头写于 2026-10-19T03:03:54.661Z，`standard`；
- *     它在 2026-11-01 有过一次 `agent-preset/selected → agenia`，**但那一帧不改头**；
- *     2026-11-05 16:07 它续跑起来，守卫读的还是 `standard` ⇒ 窄权限）。
- *   ⇒ **只有 `createdAt >= T` 的会话才是"这一次启动之后的读数"**；`mtime` 晚但 `createdAt` 早的
- *     会话叫 **resumed**，它进 `readings.resumed_touched_after_T`，**不当证据**。
- *     没有 `createdAt >= T` 的会话 ⇒ `HOLD BOOT-NO-SESSION-AFTER-RESTART`（**永远不是绿**）。
+ * 🔴 **锚点 = 首轮对话开始的时刻，不是 `header.createdAt`**（`bug-20261110-07`，2026-11-10）：
+ *   · 这个客户端的"新建会话"**沿用空会话对象** ⇒ `header.createdAt` 是那个**空对象当初被建出来**的时刻。
+ *     实测：`session-41f0e8d7`（`title = Meow access test`，`agentPreset = agenia`）11:15 建出并答了一轮，
+ *     而 `createdAt` = 2026-11-06T07:03:30Z。旧锚点按 `createdAt >= T` 选 ⇒ **永远选不中**，
+ *     判据永远 HOLD `BOOT-NO-SESSION-AFTER-RESTART` —— 一把"锚点选错字段"说成了"缺样本"。
+ *   · 现在的锚点是 `IDENTITY_ANCHOR`：会话流里**第一条 `turn/start` 帧的 `time`**（首轮必须 `turn === 1`）。
+ *     选它 / 否掉另外两个候选的理由，逐条写在 `IDENTITY_ANCHOR` 上（只此一份）。
+ *   · ⇒ **只有"首轮在 T 之后"的会话才是"这一次启动之后的读数"**；首轮在 T 之前的叫 **resumed**
+ *     （它进 `readings.resumed_touched_after_T`，**不当证据**）；流里读不到首轮的进
+ *     `readings.anchor_unavailable`（**判不了**，不是绿）。
+ *     没有"首轮在 T 之后"的会话 ⇒ `HOLD BOOT-NO-SESSION-AFTER-RESTART`（**永远不是绿**）。
+ *   · ⚠️ 续跑（resume）回来的老会话仍然带着**它出生时**的 `agentPreset`（实测：`session-cc5c68d1`
+ *     头写于 2026-10-19T03:03:54.661Z，`standard`；2026-11-05 16:07 续跑起来守卫读的还是 `standard`
+ *     ⇒ 窄权限）。它现在是"resumed"，判法没变。
  *
  * 顶层会话（"老板新建的那个"）= `delegationDepth === 0` **且** 头里没有
  * `origin: "subagent"` / `parentSession` —— 委派出去的组员会话头是 `agenia-member` + `depth: 1`，
@@ -166,6 +171,46 @@ export const BOOT_CODES = {
 
 /** 期望的预设名（定形 R2）。 */
 export const EXPECTED_PRESET = 'agenia'
+
+/**
+ * 🔴 `BOOT-01` 的**锚点**（`bug-20261110-07`）—— 常量只此一份，读数里点名的那句话就是它。
+ *
+ * **选的是**：`turn/start` —— 会话流里**第一轮对话开始的那一帧**的 `time`（全解后的 JSONL）。
+ * **为什么不是 `identity.createdAt`**（旧锚点，错的那个）：这个客户端的"新建会话"**沿用空会话对象**
+ * —— `createdAt` 是那个空对象**当初被建出来**的时刻，不是老板开始说话的時刻。
+ * 2026-11-10 实测：`session-41f0e8d7`（`title = Meow access test`，`agentPreset = agenia`，depth 0，
+ * cwd `E:\Harness`）11:15 建出并答了一轮，而它的 `createdAt` = `2026-11-06T07:03:30.836Z`。
+ * 按旧锚点它**永远**选不中 ⇒ 判据永远 HOLD `BOOT-NO-SESSION-AFTER-RESTART`，
+ * 把一个"锚点选错字段"说成了"缺样本"。
+ *
+ * **为什么是会话流里那一帧的 `time`**（三条都在同一份文件里，不另开证据源）：
+ *   · `readSessionHeader()` 本来就要把整份流解成 JSONL（`zstd-frames.mjs --json-out`），
+ *     那一帧**已经在手上** —— 不新增一次 IO、不新增一个证据载体；
+ *   · 生产者是同一个（客户端写流的那一支），与头同一份文件、同一次落盘 ⇒ 不会出现"头在 A 源、时刻在 B 源"；
+ *   · `turn/start` 是**行为**（老板真的开口了），不是对象被建出来的时刻 —— 与判据要问的问题同义。
+ *
+ * **被否掉的两个候选**（都写在这儿，省得下一个人再走一遍）：
+ *   · `session_projcache` 的 `record.rows.turnOutline.turns[0]` —— ① 它是**另一份store**
+ *     （`~/.dsh/storages/session_projcache/…`，与 `.zstd` 流两套落盘）；② 那个 `turn` 对象里
+ *     **没有时刻**（只有 `seq`：2026-11-10 实测 `{turn:1, seq:11, prompt, response}`），
+ *     要拿到时刻仍得回到流里把 `seq` 换回 `time` —— 绕一圈回到同一个答案；
+ *     ③ `turns` 是**投影摘要**，长会话里可能被裁/轮转，"`turns[0]`"不等于"这个会话的第一轮"。
+ *   · `session_projcache` 的 `sessionListMetadata.lastPromptAt` —— ① 同一个 projcache 依赖；
+ *     ② 名字就写着 **last**（最后一次说话），多轮会话里它不是首轮；
+ *     ③ 判据要能在**只读副本 / 夹具**上跑，而那份 store 不在提交里 ⇒ 每个夹具都得造两份盘。
+ */
+export const IDENTITY_ANCHOR = Object.freeze({
+  name: 'first-turn-start',
+  source: '会话流（session.v4.jsonl.zstd 全解后的 JSONL）里第一条 `turn/start` 帧的 `time`',
+  field: 'firstTurnAt',
+  chosen_because: '它是"老板真的开口了"这件事的时刻，与"这次重启之后有没有新会话在说话"同义；而且它与会话头同文件、同一次落盘，不新增证据源',
+  rejected: Object.freeze([
+    'identity.createdAt —— 客户端新建会话沿用空会话对象，这个时刻是空对象当初被建出来的时刻（bug-20261110-07）',
+    'session_projcache · turnOutline.turns[0] —— 另一份 store；那个 turn 对象没有时刻（只有 seq）；投影摘要可能被裁，turns[0] 不等于首轮',
+    'session_projcache · sessionListMetadata.lastPromptAt —— 另一份 store；名字写着 last（最后一次说话），多轮会话里不是首轮',
+  ]),
+})
+
 /** 看板包的目录（在现役预设树里）。 */
 export const DASHBOARD_PKG_DIR = () => path.join(PATHS.finalPreset, 'client-ui-dashboard')
 
@@ -291,6 +336,11 @@ export function readSessionHeader(file, { tmpDir, timeoutMs = 120000 } = {}) {
   }
   // 字节级证据：`agentPreset` 那一格在**第一行的原文**里出现在哪、原文那一段是什么。
   const field = /"agentPreset"\s*:\s*("(?:[^"\\]|\\.)*"|null)/.exec(firstLine)
+  /**
+   * 🔴 **锚点**（`IDENTITY_ANCHOR`）：首轮对话的时刻，从这份已经解出来的 JSONL 里取。
+   * 全解的结果就在 `outFile` 里（`zstd-frames.mjs --json-out` 写的），**不再多解一遍**。
+   */
+  const firstTurn = firstTurnOfFile(outFile)
   return {
     ok: true,
     ...base,
@@ -300,9 +350,86 @@ export function readSessionHeader(file, { tmpDir, timeoutMs = 120000 } = {}) {
     first_frame_head: firstLine.slice(0, 220),
     agent_preset_literal: field === null ? null : { index: field.index, match: field[0], value_text: field[1] },
     header,
+    first_turn: firstTurn,
     cross_check: cross,
     tool: toolReading,
   }
+}
+
+/**
+ * **第一轮对话开始的时刻**（`IDENTITY_ANCHOR` 的实现）—— 从**已经解出来的** JSONL 里取。
+ *
+ * 为什么要单独一个函数、还要带 `turn === 1` 这条判据：
+ *   · `turn/start` 帧带 `data.turn`；一个会话的**首轮**必须是 `turn === 1`。
+ *     流若从第 5 轮才开始（被裁 / 轮转 / 续跑进来的那一段），我们**没有**它的首轮时刻
+ *     ⇒ 返回 `ok:false, why:'first-turn-not-in-stream'`，调用方按"判不了"处理
+ *     （**不许**拿第 5 轮的时刻冒充首轮 —— 那会把"这会话早就说过话"读成"今天才第一次说话"）。
+ *   · 头写的 `createdAt` 只当**上下文**记在读数里，不参与判定。
+ *
+ * @param {string} file `readSessionHeader()` 的 `tool.out_file`（全解后的 JSONL）
+ * @returns {{ok:boolean, time?:number, time_iso?:string, turn?:number|null, seq?:number|null,
+ *            line_index?:number, frame?:string, turn_is_first?:boolean, why?:string,
+ *            text_bytes?:number, how?:string, anchor?:string}}
+ */
+export function firstTurnOfFile(file) {
+  if (typeof file !== 'string' || file === '' || !existsSync(file)) {
+    return { ok: false, why: `解压后的 JSONL 不在（${String(file)}）`, anchor: IDENTITY_ANCHOR.name }
+  }
+  let text = null
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch (err) {
+    return { ok: false, why: `解压后的 JSONL 读不动：${String(err?.message ?? err).slice(0, 160)}`, anchor: IDENTITY_ANCHOR.name }
+  }
+  let from = 0
+  let lineIndex = 0
+  let seenTurnStart = 0
+  while (from <= text.length) {
+    const at = text.indexOf('"turn/start"', from)
+    if (at < 0) break
+    const lineStart = text.lastIndexOf('\n', at) + 1
+    const nextNl = text.indexOf('\n', at)
+    const lineEnd = nextNl < 0 ? text.length : nextNl
+    lineIndex = text.slice(0, lineStart).split('\n').length
+    from = at + 1
+    let obj = null
+    try {
+      obj = JSON.parse(text.slice(lineStart, lineEnd))
+    } catch {
+      continue
+    }
+    if (obj?.type !== 'turn/start') continue
+    seenTurnStart += 1
+    const time = typeof obj?.time === 'number' ? obj.time : null
+    if (time === null) continue
+    const turn = typeof obj?.data?.turn === 'number' ? obj.data.turn : null
+    const base = {
+      anchor: IDENTITY_ANCHOR.name,
+      how: IDENTITY_ANCHOR.source,
+      time,
+      time_iso: new Date(time).toISOString(),
+      turn,
+      seq: typeof obj?.seq === 'number' ? obj.seq : null,
+      line_index: lineIndex,
+      frame: `turn/start（第 ${lineIndex} 行）`,
+      text_bytes: Buffer.byteLength(text, 'utf8'),
+    }
+    if (turn !== 1) {
+      return { ...base, ok: false, turn_is_first: false, why: `流里第一条 turn/start 是第 ${JSON.stringify(turn)} 轮 —— 首轮不在流里（被裁/轮转/续跑），不能拿它冒充"第一次说话"` }
+    }
+    return { ...base, ok: true, turn_is_first: true }
+  }
+  return {
+    ok: false,
+    why: `整份流里${seenTurnStart === 0 ? '一条 `turn/start` 帧都没有' : '的 turn/start 都读不出 time'} —— 这个会话没有"第一轮"可当锚点`,
+    text_bytes: Buffer.byteLength(text, 'utf8'),
+    anchor: IDENTITY_ANCHOR.name,
+  }
+}
+
+/** `readSessionHeader()` 的读数 → 首轮读数（没有解出来的文件就如实说"判不了"）。 */
+export function firstTurnOf(reading) {
+  return firstTurnOfFile(reading?.tool?.out_file ?? null)
 }
 
 /** 头 → 一份可比的会话身份读数（**不猜**：字段不在就写 null）。 */
@@ -312,11 +439,24 @@ export function identityOf(reading) {
   const origin = h.origin ?? null
   const parentSession = h.parentSession ?? null
   const isSubagent = (depth !== null && depth > 0) || origin === 'subagent' || parentSession !== null
+  const firstTurn = reading.first_turn ?? null
   return {
     id: h.id ?? null,
     dir: path.basename(path.dirname(reading.file)),
     createdAt: typeof h.createdAt === 'number' ? h.createdAt : null,
     createdAt_iso: typeof h.createdAt === 'number' ? new Date(h.createdAt).toISOString() : null,
+    /**
+     * 🔴 **锚点**（`IDENTITY_ANCHOR`）：首轮对话开始的时刻。`createdAt` 只当上下文，
+     * 与判定无关（`bug-20261110-07`）。读数里两个都给 —— 读的人不必回推"它用的是哪一个"。
+     */
+    anchor: IDENTITY_ANCHOR.name,
+    firstTurnAt: firstTurn?.ok === true ? firstTurn.time : null,
+    firstTurnAt_iso: firstTurn?.ok === true ? firstTurn.time_iso : null,
+    firstTurn_turn: typeof firstTurn?.turn === 'number' ? firstTurn.turn : null,
+    firstTurn_seq: typeof firstTurn?.seq === 'number' ? firstTurn.seq : null,
+    /** `true` = 流里第一条 `turn/start` 就是第 1 轮（锚点成立）；`false`/`null` = 判不了。 */
+    firstTurn_is_first: firstTurn?.ok === true ? firstTurn.turn_is_first === true : (firstTurn === null ? null : false),
+    firstTurn_why: firstTurn?.ok === true ? null : (firstTurn?.why ?? 'not-measured'),
     agentPreset: typeof h.agentPreset === 'string' ? h.agentPreset : null,
     cwd: h.cwd ?? null,
     delegationDepth: depth,
@@ -390,14 +530,23 @@ export function scanHeaders(sessions, { tmpDir, sinceMs = null, limit = 40 }) {
 }
 
 /**
- * "最近一次**创建**于 T 之后"的会话（R2 的选择器）。
+ * "最近一次**首轮对话**发生在 T 之后"的会话（R2 的选择器，锚点见 `IDENTITY_ANCHOR`）。
  * `mode: 'top-level'`（默认，老板新建的那个）/ `'all'`（不过滤 —— 只用来当**反向读数**）。
+ *
+ * 四类，各自有名字（读的人不必回推）：
+ *   · `eligible` / `newest` —— 首轮在 T 之后（`firstTurnAt >= T`）、且是顶层 ⇒ 这一次启动的读数；
+ *   · `resumed_touched_after_T` —— 首轮在 T **之前**（这个会话**早就说过话**，之后又被碰过）⇒ **不当证据**；
+ *   · `anchor_unavailable` —— 流里读不到首轮（没有 `turn/start` / 首轮被裁）⇒ **判不了**，既不是证据也不是绿；
+ *   · 其余（`firstTurnAt < T` 且 mtime < T 的）不在这一跑的样本里，**不列**。
  */
 export function selectNewestAfter(identities, { T, mode = 'top-level' }) {
-  const after = identities.filter((x) => typeof x.createdAt === 'number' && x.createdAt >= T)
+  const list = Array.isArray(identities) ? identities : []
+  const judged = list.filter((x) => x.firstTurn_is_first === true && typeof x.firstTurnAt === 'number')
+  const anchorUnavailable = list.filter((x) => x.firstTurn_is_first !== true)
+  const after = judged.filter((x) => x.firstTurnAt >= T)
   const eligible = mode === 'top-level' ? after.filter((x) => x.is_top_level) : after
-  const resumed = identities.filter((x) => typeof x.createdAt === 'number' && x.createdAt < T)
-  eligible.sort((a, b) => b.createdAt - a.createdAt)
+  const resumed = judged.filter((x) => x.firstTurnAt < T)
+  eligible.sort((a, b) => b.firstTurnAt - a.firstTurnAt)
   // `mtime` 可能缺（只在"扫过目录"的那条路上有）—— 缺就沉到最后，**不许**让排序抛错
   const mtimeOf = (x) => (typeof x.mtime === 'string' ? x.mtime : '')
   resumed.sort((a, b) => mtimeOf(b).localeCompare(mtimeOf(a)))
@@ -405,12 +554,26 @@ export function selectNewestAfter(identities, { T, mode = 'top-level' }) {
     T,
     T_iso: new Date(T).toISOString(),
     mode,
-    created_after_T: after.length,
+    /** 🔴 这一格比的是**哪个时刻** —— 读数自己说出来，不让下一个人猜。 */
+    anchor: IDENTITY_ANCHOR.name,
+    anchor_source: IDENTITY_ANCHOR.source,
+    anchor_field: IDENTITY_ANCHOR.field,
+    first_turn_after_T: after.length,
     eligible: eligible.length,
     newest: eligible[0] ?? null,
-    candidates: eligible.slice(0, 5),
-    resumed_touched_after_T: resumed.slice(0, 10).map((x) => ({ id: x.id, createdAt_iso: x.createdAt_iso, agentPreset: x.agentPreset, mtime: x.mtime })),
+    candidates: eligible.slice(0, 5).map((x) => ({ id: x.id, firstTurnAt_iso: x.firstTurnAt_iso, agentPreset: x.agentPreset, is_top_level: x.is_top_level })),
+    resumed_touched_after_T: resumed.slice(0, 10).map((x) => ({
+      id: x.id,
+      firstTurnAt_iso: x.firstTurnAt_iso,
+      createdAt_iso: x.createdAt_iso,
+      agentPreset: x.agentPreset,
+      mtime: x.mtime,
+    })),
     resumed_count: resumed.length,
+    anchor_unavailable_count: anchorUnavailable.length,
+    anchor_unavailable: anchorUnavailable.slice(0, 10).map((x) => ({ id: x.id, createdAt_iso: x.createdAt_iso, why: x.firstTurn_why ?? null })),
+    /** ⚠️ 只当**上下文**：`createdAt` 是旧锚点，今天它一个判词都不决定（`bug-20261110-07`）。 */
+    header_created_after_T: list.filter((x) => typeof x.createdAt === 'number' && x.createdAt >= T).length,
   }
 }
 
@@ -424,7 +587,8 @@ export function presetVerdict(identity, expected = EXPECTED_PRESET) {
   return {
     verdict: 'RED',
     code,
-    why: `会话 ${identity.id}（建于 ${identity.createdAt_iso}）头里的 \`agentPreset\` 是 ${JSON.stringify(identity.agentPreset)}，`
+    why: `会话 ${identity.id}（首轮 ${identity.firstTurnAt_iso ?? '?'} · 头里的 createdAt ${identity.createdAt_iso ?? '?'}）`
+      + `头里的 \`agentPreset\` 是 ${JSON.stringify(identity.agentPreset)}，`
       + `期望 ${JSON.stringify(expected)} ⇒ ${identity.agentPreset === 'standard' ? '预设没注册上（标准档 = 无角色 ⇒ 窄权限）' : '注册成了别的预设'}`,
   }
 }

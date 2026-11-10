@@ -679,9 +679,12 @@ export const BATCH_AC = ['DASH-01', 'DASH-02', 'DASH-03', 'DASH-04', 'DASH-05', 
  *
  * 那一票的病根不是"面板没写出来"，是**没有任何一条读数在启动之后回答过两个问题**：
  *   预设还注册得上吗？浏览器真收到那个包了吗？ ⇒ 塌了和没塌在盘上长得一模一样。
- *   · `BOOT-01` **身份（R2 + R5）**：`T`（这一次客户端启动的时刻）之后**新建**的顶层会话，
- *     头里 `agentPreset` 必须是 `agenia`；`standard` ⇒ 塌了。没有 `createdAt >= T` 的会话 ⇒ **HOLD**
+ *   · `BOOT-01` **身份（R2 + R5）**：`T`（这一次客户端启动的时刻）之后**首轮对话**的顶层会话，
+ *     头里 `agentPreset` 必须是 `agenia`；`standard` ⇒ 塌了。没有"首轮在 `T` 之后"的会话 ⇒ **HOLD**
  *     （`BOOT-NO-SESSION-AFTER-RESTART`，**不是绿**）。
+ *     🔴 锚点是**首轮 `turn/start` 的时刻**，不是 `header.createdAt`（2026-11-10 `bug-20261110-07`：
+ *     新建会话沿用空会话对象 ⇒ `createdAt` 是空对象被建出来的时刻）；两个被否掉的候选与理由见
+ *     `support/boot-readings.mjs::IDENTITY_ANCHOR`。
  *     **R5（2026-11-05 深夜组长裁定"重定义，不退役"）**：撤挂载 = **删 `# @host-level` 标记 + 重跑生成器**
  *     （一条命令序列，一次提交可回滚），判两半：① 两件产物 × 落点（标记在 ⇒ 只住顶层 insert；
  *     标记不在 ⇒ 回到两份预设体），任一端不合契约 ⇒ `RED BOOT-R5-ROLLBACK-CONTRACT-BROKEN`；
@@ -933,6 +936,19 @@ export const BATCH_AN = ['SMT-01', 'OFL-08']
 export const BATCH_AO = ['OFL-09']
 
 /**
+ * 批次 AP（2026-11-10 · Gate 2 第三轮 · 技术评审 2026-11-09 `F2` 的判据面）——
+ * **判据自己的调用形状**（`HCA-01`）：`caseHold(rec, code, why)` 少传一个实参时，
+ * harness **不许**把它吞成一条 `TypeError` 形状的产品红，也不许静默记成 HOLD。
+ * 契约 `.team/test/2026-11-10/CONTRACT-gate2-anchors-and-holds.md` §3。
+ *
+ * 为什么单开一格而不是并进 `STM-01` / `WIT-01`：那两格判的是**结算行读谁**与**守卫不许同亡**；
+ * 这一格判的是**所有判据共用的那个出口**（`caseHold`）。并进去会让那一格的红变成两义的
+ * （"结算读错了" vs "某条判据少打了一个实参"），而这块病恰恰就是"红因指向了错的东西"。
+ * ⚠️ 不进 `FROZEN_IDS`。
+ */
+export const BATCH_AP = ['HCA-01']
+
+/**
  * 已落笔的二十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -956,7 +972,7 @@ export const BATCH_AO = ['OFL-09']
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -995,7 +1011,7 @@ const BATCH_OF = (id) =>
                                                                       : BATCH_AJ.includes(id) ? 'AJ'
                                                                         : BATCH_AK.includes(id) ? 'AK'
                                                                           : BATCH_AL.includes(id) ? 'AL'
-                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO'
+                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP'
                                                                   : null
 
 const F = {
@@ -1190,6 +1206,10 @@ const F = {
    *  单开一个文件而不是并进 `memory.test.mjs`：那一族判的是**记忆库的不变量**（容量 / 半衰期 / 类型），
    *  这一格判的是**尾巴轮转**（挑哪些条目 / 游标落不落盘 / 换版从哪起）；红的时候一眼看得出是哪一层。 */
   smt: 'unit/smt01-memory-rotation.test.mjs',
+  /** 批次 AP · 2026-11-10：`HCA-01`（判据共用出口 `caseHold` 的调用形状）。
+   *  单开一个文件而不是并进 `data-root` / `wit01`：它判的是**所有判据共用**的那一个出口，
+   *  与结算行/守卫都没有共享夹具；红的时候一眼看得出"是某条判据写错了"，而不是"被测对象坏了"。 */
+  hca: 'unit/hca01-hold-call-shape.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1432,7 +1452,7 @@ const ROWS = [
   // ── 批次 AD（2026-11-05 第 2 关）：**启动之后的读数** —— 事故（log §十三）真正的漏洞 ─────────
   // 一句话：塌了和没塌在盘上长得一模一样，因为**没有一条读数**在启动之后问过"预设还注册得上吗 / 浏览器真收到包了吗"。
   // 量具与口径（含"会话头是创建时快照、续跑的老会话不算证据"）逐条写在 `support/boot-readings.mjs`。
-  ['BOOT-01', 'boot-readings', F.bootReadings, '**启动后读数 A（身份）**（定形 R2 + R5，`定形-看板挂载profile层.md`）：`T` = 这一次客户端启动的时刻（`AGENIA_BOOT_AT`，否则量宿主进程启动时刻；都没有 ⇒ `BOOT-R2-RESTART-TIME-UNKNOWN` 的 HOLD）；取该工作区里**创建（`header.createdAt`）于 `T` 之后**、**顶层**（`delegationDepth === 0` 且不是 `origin: subagent` / 带 `parentSession` 的委派会话）的最新一份会话，判头里的 `agentPreset`：`agenia` ⇒ 成立 · `standard` ⇒ `BOOT-PRESET-NOT-REGISTERED`（= 事故形态：无角色 ⇒ 窄权限）· 别的值 ⇒ `BOOT-PRESET-UNEXPECTED`；**没有创建于 `T` 之后的顶层会话 ⇒ HOLD `BOOT-NO-SESSION-AFTER-RESTART`**（`mtime` 晚但 `createdAt` 早的**续跑会话**单独列进 `readings.identity.resumed_touched_after_T`，**不当证据** —— 事故现场那份 `session-cc5c68d1` 的头写于 2026-10-19，16:07 续跑起来守卫读的还是 `standard`）。**尺子自证两条**：① 拿盘上真实的两份流各喂一次（`standard` 那份必须 RED、`agenia` 那份必须 GREEN，判词不同，否则 `BOOT-R2-DETECTOR-DEAD`）；② `zstd-frames.mjs` 全解的头必须等于 `zstdDecompressSync`（只解第一帧）解出来的头，否则 `BOOT-R2-HEADER-NOT-IN-FIRST-FRAME`。同批 **R5 的条件式**（不是故事）：`profile 补丁里那一行` × 上面的判词 —— 行不在而判 RED ⇒ `BOOT-ROLLBACK-DID-NOT-RESTORE`；行在而判 RED ⇒ `BOOT-MOUNT-BROKE-IDENTITY`；行在还必须能**一步撤掉**（顶层 `- insert:` 一个 item、整块拿掉后仍解析干净、文件里再无第二处引用），否则 `BOOT-ROLLBACK-NOT-REMOVABLE`。读数带 `{repo, head, T 与来源, 每份会话的 bytes/sha256/首帧 sha256/createdAt, measured_at}`', '批次 AD'],
+  ['BOOT-01', 'boot-readings', F.bootReadings, '**启动后读数 A（身份）**（定形 R2 + R5，`定形-看板挂载profile层.md`；锚点 2026-11-10 换过，见 `bug-20261110-07`）：`T` = 这一次客户端启动的时刻（`AGENIA_BOOT_AT`，否则量宿主进程启动时刻；都没有 ⇒ `BOOT-R2-RESTART-TIME-UNKNOWN` 的 HOLD）；🔴 **锚点 = 该会话第一轮对话开始的时刻**（`IDENTITY_ANCHOR`：会话流 `session.v4.jsonl.zstd` 全解后第一条 `turn/start` 帧的 `time`，且必须 `turn === 1`）—— **不是 `header.createdAt`**：客户端"新建会话"沿用空会话对象，那个时刻是空对象当初被建出来的时刻（实测 `session-41f0e8d7`：11-10 11:15 建出并答了一轮，`createdAt` = 11-06）；被否掉的两个候选（projcache 的 `turnOutline.turns[0]` / `sessionListMetadata.lastPromptAt`）与理由写在 `support/boot-readings.mjs::IDENTITY_ANCHOR`（只此一份）。取该工作区里**首轮在 `T` 之后**、**顶层**（`delegationDepth === 0` 且不是 `origin: subagent` / 带 `parentSession` 的委派会话）的最新一份会话，判头里的 `agentPreset`：`agenia` ⇒ 成立 · `standard` ⇒ `BOOT-PRESET-NOT-REGISTERED`（= 事故形态：无角色 ⇒ 窄权限）· 别的值 ⇒ `BOOT-PRESET-UNEXPECTED`；**没有"首轮在 T 之后"的顶层会话 ⇒ HOLD `BOOT-NO-SESSION-AFTER-RESTART`**（首轮在 `T` 之前的**续跑会话**进 `readings.identity.resumed_touched_after_T`，**不当证据**；流里读不到首轮的进 `readings.identity.anchor_unavailable`，**判不了**）。**锚点翻面（⓪\'，合成会话流、与盘上有无活会话无关）**：负控① 11-06 建、**今天**才第一次说话 ⇒ 必须算（GREEN）· 负控② 11-06 建、11-06 说过话 ⇒ **不许**算 · 阳性对照 今天建今天说话 ⇒ 算；两把刀：**旧锚点刀**（同一批读数按 `createdAt >= T` 选 ⇒ 负控①必须选不中，那就是本病形状）· **T 翻面**（T 挪到首轮之后 ⇒ 一个都选不中 ⇒ 判词变 HOLD）。读数**点名**用的锚点与**比的那个时刻**（`readings.identity.anchor` / `selected_anchor.comparison`）。**尺子自证两条**：① 拿盘上真实的两份流各喂一次（`standard` 那份必须 RED、`agenia` 那份必须 GREEN，判词不同，否则 `BOOT-R2-DETECTOR-DEAD`）；② `zstd-frames.mjs` 全解的头必须等于 `zstdDecompressSync`（只解第一帧）解出来的头，否则 `BOOT-R2-HEADER-NOT-IN-FIRST-FRAME`。同批 **R5 的条件式**（不是故事）：`profile 补丁里那一行` × 上面的判词 —— 行不在而判 RED ⇒ `BOOT-ROLLBACK-DID-NOT-RESTORE`；行在而判 RED ⇒ `BOOT-MOUNT-BROKE-IDENTITY`；行在还必须能**一步撤掉**（顶层 `- insert:` 一个 item、整块拿掉后仍解析干净、文件里再无第二处引用），否则 `BOOT-ROLLBACK-NOT-REMOVABLE`。读数带 `{repo, head, T 与来源, 每份会话的 bytes/sha256/首帧 sha256/firstTurnAt/createdAt, measured_at}`', '批次 AD'],
   ['BOOT-02', 'boot-readings', F.bootReadings, '**启动后读数 B（包可达）**（定形 R3；「两条读数都要有，缺一不算挂上」）：宿主侧的**两条**读数 —— A **boot 载荷**：页面（`GET /` / `/index.html`）里 `window.__DSH_BOOT__` 的 entry 表有没有这个**包名**（`@agenia/dsh-client-ui-dashboard`；表键是包名，不是 cordis 行 id —— 所以 `/plugins/agenia-dashboard/client.js` 那种写法必然 404，**404 不是"不在"的证据**）；B **插件路由**：`GET /plugins/<包名>/client.js?rev=<rev>` 是否 200 **且**前 N B 与盘上那份逐字节相同（`rev` 按平台的 `artifactRevision()` 从 `[mtimeMs, ctimeMs, size]` 算；抄错了只会 404 ⇒ HOLD，不会假绿）。三态：200 证据 / 404 **判不了**（`BOOT-R3-ROUTE-404-AMBIGUOUS`，同批三个对照：未知包名 404、错 rev 404、根页面 401 ⇒ 路由在、门禁不归它管）/ 连不上（`BOOT-R3-NO-HOST`）。⇒ GREEN 只在 A、B 都拿到证据；任一条读不到 ⇒ **HOLD `BOOT-R3-HALF-PROOF`**（带两条各自的码）；只有 A 读到 200 而表里没有这个包 ⇒ `RED BOOT-R3-ENTRY-NOT-IN-BOOT`。挂载行不在 / 关着 / 住错层 ⇒ HOLD `BOOT-R3-MOUNT-ABSENT` / HOLD `BOOT-R3-MOUNT-DISABLED` / RED `BOOT-R3-MOUNT-NOT-TOP-LEVEL-INSERT`。**不判像素、不判浏览器真的执行了那份 JS**（归 GUI 清单，人点一次）', '批次 AD'],
   // ── 批次 AE（2026-11-06 · `ticket-20261106-02`）：**回执卡的两族判据**（复审 §7 的 E5 + E6）──
   // 复审的判词是同一句：**输出的句子对了，但没有任何测试读这一页**。两格各补一条能翻面的判据；
@@ -1485,8 +1505,8 @@ const ROWS = [
   // 定形 `.team/leader/2026-11-08/定形-batch11.md`；判据本体在 `support/temp-scan.mjs` /
   // `support/evidence.mjs`（结算）与 `integration/wit01-witness-grave.test.mjs`（两把源码删除刀）。
   ['TMP-01', 'measuring-integrity', F.dataRoot, '`bug-20261107-05` **空样本不许报绿**（与 `DR-01` 的真空真同族）：`support/temp-scan.mjs` 的四个行为格 —— A 空目录 ⇒ `HOLD` + `TEMP-SCAN-NO-SAMPLE`（且点名那个目标）· B 缺目录 ⇒ 同上 · C 有样本且干净 ⇒ `GREEN` 且 **`scanned` 恰为 3**（"干净"必须带份数）· D 有样本 + 一份 `.tmp-*` ⇒ `RED` + `TEMP-LEFTOVER` + 残渣点名 · E 扫描目标从 `AGENIA_TEST_RUN_ROOT` 算（两个不同运行根 ⇒ 两个不同 `<env>/tmp`，写死日期在这里红）；**两把刀**（切 `support/temp-scan.mjs` 的副本）：F 把"空 ⇒ HOLD"改成"空 ⇒ 绿"⇒ 同一空目录真模块 HOLD / 变体 GREEN；G 把目标改回写死 `2026-10-14` ⇒ 变体不再含 `<env>/tmp`。锚点不在 ⇒ `TMP-KNIFE-ANCHOR`；刀不咬 ⇒ `TMP-KNIFE-NOT-BITING`。`DR-02` ② 同批复用同一个函数，读数里带 `scanned` / 每目标份数 / 无样本目标', '批次 AJ'],
-  ['STM-01', 'measuring-integrity', F.dataRoot, '`bug-20261107-06` **结算那一行读 `DR-02` 的读数**（同一个来源）：用**真入口** `node support/evidence.mjs --settle` 跑在一份合成证据根上（`DR-02` 的记录是这一跑的**真读数**，兄弟用例是明确标注的夹具），五格 —— A 读数完好 ⇒ 行点名 `DR-02` + 写出它的 brain 基线/窗口数，`real_roots.problems=[]`、`settlement_ok:true`、exit 0；B 删 `readings.real_roots`（副本）⇒ `SETTLE-DR02-WITNESS-READING-MISSING` + 行 🔴 + exit≠0；C 删 `readings.real_roots.content_uncovered` ⇒ 覆盖边界那一行跟着红（`SETTLE-DR02-CONTENT-UNCOVERED-MISSING`，不是 `evidence.mjs` 里另一份手写字面量）；D `windows` 清空 ⇒ `SETTLE-DR02-WINDOWS-UNJUDGED` + 行 🔴；E 改 `baseline.brain.count` ⇒ 行里那个数跟着变（`12345`）', '批次 AJ'],
-  ['WIT-01', 'measuring-integrity', F.wit01, '`bug-20261107-07` **最后一层守卫不许与被守的东西同亡**（两把**源码删除刀**，副本落在运行根、真文件零字节）：对照（不删）⇒ 副本 `DR-02` GREEN + 结算 exit 0；刀 A `judged-gone`（只删 §④：`// ── ④ 真实根的见证：` → `// ── ④ 见证的**段外兜底**`，守卫留着）⇒ `DR-02` RED + `DR02-WITNESS-READINGS-UNGUARDED`（报文点名 `real_roots` 缺）+ 结算 `SETTLE-DR02-WITNESS-READING-MISSING`；刀 B `guard-gone`（只删守卫：段外兜底 → `rec.readings.controlled_env = {`，§④ 留着）⇒ 副本 `DR-02` 自己**不红**（今天的事实，读数里记下），但**文件外的读者**必须红：结算 `SETTLE-DR02-GUARD-READING-MISSING` + 行 🔴 + exit≠0。锚点须恰好 1 处（否则 `WIT-KNIFE-ANCHOR`）；副本支撑 import 改绝对 `file://`（否则 `WIT-KNIFE-UNAVAILABLE`）', '批次 AJ'],
+  ['STM-01', 'measuring-integrity', F.dataRoot, '`bug-20261107-06` **结算那一行读 `DR-02` 的读数**（同一个来源）：用**真入口** `node support/evidence.mjs --settle` 跑在一份合成证据根上（`DR-02` 的记录是这一跑的**真读数**，兄弟用例是明确标注的夹具），五格 —— A 读数完好 ⇒ 行点名 `DR-02` + 写出它的 brain 基线/窗口数，`real_roots.problems=[]`、`settlement_ok:true`、exit 0；B 删 `readings.real_roots`（副本）⇒ `SETTLE-DR02-WITNESS-READING-MISSING` + 行 🔴 + exit≠0；C 删 `readings.real_roots.content_uncovered` ⇒ 覆盖边界那一行跟着红（`SETTLE-DR02-CONTENT-UNCOVERED-MISSING`，不是 `evidence.mjs` 里另一份手写字面量）；D `windows` 清空 ⇒ `SETTLE-DR02-WINDOWS-UNJUDGED` + 行 🔴；E 改 `baseline.brain.count` ⇒ 行里那个数跟着变（`12345`）。**另加 `F3`（技术评审 2026-11-09）的三态腿 ⓪/⓪\'**：DR-02 的判词按 `GREEN`（照跑）/`HOLD`（`caseHold` `STM-SETUP-DR02-HOLD`，**点名** DR-02 的成因码）/`RED`（仍是 `STM-SETUP` 红）分流，**环境性 HOLD 不许变成红**；两条端到端腿（子进程 + 独立运行根）把**环境条件自己产出的**那份记录（由 `dataSegmentExclusionVerdict({files:[],pinned:[".runtime"],dataRootOnDisk:false})` 现算）喂进这一格的用例体：HOLD 那一跑必须 `result:"HOLD"` + `holds:["STM-SETUP-DR02-HOLD"]`（**不是 RED**），RED 那一跑必须仍是 RED（HOLD 不许当藏身处）；嵌套深度 > 0 时内层探针**显式跳过**并写进读数', '批次 AJ'],
+  ['WIT-01', 'measuring-integrity', F.wit01, '`bug-20261107-07` **最后一层守卫不许与被守的东西同亡**（两把**源码删除刀**，副本落在运行根、真文件零字节）：对照（不删）⇒ 副本 `DR-02` 与 `STM-01` **同态**（`GREEN ⇒ 绿` / `HOLD ⇒ 挂起` / `RED ⇒ 红`，三行同态表 + 未切副本的实际判词都要对得上；`F3` 之前是"必须 GREEN" ⇒ 环境性 HOLD 在副本上必红）且结算 exit 0 + 行点名 `DR-02`；刀 A `judged-gone`（只删 §④：`// ── ④ 真实根的见证：` → `// ── ④ 见证的**段外兜底**`，守卫留着）⇒ `DR-02` RED + `DR02-WITNESS-READINGS-UNGUARDED`（报文点名 `real_roots` 缺）+ 结算 `SETTLE-DR02-WITNESS-READING-MISSING`；刀 B `guard-gone`（只删守卫：段外兜底 → `rec.readings.controlled_env = {`，§④ 留着）⇒ 副本 `DR-02` 自己**不红**（今天的事实，读数里记下），但**文件外的读者**必须红：结算 `SETTLE-DR02-GUARD-READING-MISSING` + 行 🔴 + exit≠0。锚点须恰好 1 处（否则 `WIT-KNIFE-ANCHOR`）；副本支撑 import 改绝对 `file://`（否则 `WIT-KNIFE-UNAVAILABLE`）', '批次 AJ'],
 
   // ── 批次 AK（2026-11-08 · batch 15）：office 放行时的**持久读数**（`bug-20261107-10`）──────────
   // 定形 `.team/leader/2026-11-08/定形-batch15.md`；契约 `.team/test/2026-11-08/CONTRACT-batch15.md`；
@@ -1520,6 +1540,9 @@ const ROWS = [
   ['SMT-01', 'memory-rotation', F.smt, '`memoryRotationRoundOf` 的一轮：F3 配比 / F4 写盘闸 / F5 换版归零（三条腿 + 三把刀）。**判词、夹具形状与翻面集只写在 `CONTRACT-f11-judge-kind.md` §4**（唯一出处）；本行只登记落点：`unit/smt01-memory-rotation.test.mjs`。', '批次 AN'],
   ['OFL-08', 'office-ledger', F.ofl, '账本四码的**登记面**：契约 §2.4 的四个码必须同时出现在产品 `CODES` 与测试侧 `FROZEN.exitCodes` 里，退出码逐项相同（5）；两张表里多出表外的本族码 ⇒ 红。**判词与三个方向的红码只写在 `CONTRACT-f11-judge-kind.md` §5**（唯一出处）；表在 `support/office-ledger-fixtures.mjs::LEDGER_CODE_TABLE`。', '批次 AN'],
   ['OFL-09', 'office-ledger', F.ofl, '**值表 V1–V6 的判据**（表在 `CONTRACT-batch15.md` §1.2.1；判词在 `CONTRACT-f11-judge-kind.md` §6）：写方 `recordOfficeLanding` 对 25 行六类坏值 —— V1 三条相对 + 两条根相对 · V2 在册外岗位 · V3 五键空串 · V4 三条超长 · V5 七键类型 + `at` 不可解析 + `at:["<iso>"]` · V6 两个方向不自洽 —— 必须 `E_OFFICE_LEDGER_SHAPE` + `reason` 点名那一格 + **账本字节不变**；合法行必须收（阳性对照）；**正向行 `role:"dev"`（在册、不在编）不进矩阵**：V2 换回在编名单时 `role:"admin"` 两张名单都拒、矩阵全绿，只有 `dev` 那行会红 `OFL9-ROSTER-NOT-BOUND`（反转刀量它）；每行断言 `officeLedgerRowRule(row).rule === Vn`；键形状与产品 `officeKey` 逐字同号（`OFL9-KEY`）；**逐规则刀** `K-V1`…`K-V6` 各只关一条规则、按**行标签**比精确翻面集；**at 类型子刀**只翻 `at:["<iso>"]`（`at:null` 是 message refinement）', '批次 AO'],
+
+  // ── 批次 AP（2026-11-10 · Gate 2 第三轮）：技术评审 `F2` 的判据面（契约 §3）──
+  ['HCA-01', 'measuring-integrity', F.hca, '**判据自己的调用形状**（技术评审 2026-11-09 `F2`）：`caseHold(rec, code, why)` 收到少于 3 个实参时 —— ① 形状判据（纯函数 `caseHoldCallProblem`）六个喂法给五个互不相同的码（三参合法 / 两参 / 一参 / 第 1 个不是记录 / code 空 / why 不是字符串），并自述边界"多于三参不判"；② 活体闸：形状错 ⇒ 抛 `CaseHoldShapeError`（码 `CASE-HOLD-ARITY` 等）+ 报文点名调用点 file:line + **一条 HOLD 都不许被记下来**，三参合法调用必须照常记 `{code,why,at}`（阳性对照）；③ 端到端两跑（独立运行根，真 `runCase`）：两参的用例体 ⇒ `result:"RED"` 且 `problems[0].code === "CASE-HOLD-ARITY"`（**不是** `TypeError`）、`holds` 为空；三参的 ⇒ `result:"HOLD"`、`holds[0].code` 就是那个码。⚠️ 它**不**静态扫源码：一个永远不被执行的坏调用点这把闸看不见（`flip01-bridge-reading.test.mjs:224` 就是这种），那一支在副本跑里以 `CASE-HOLD-ARITY` 的形状出现', '批次 AP'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1670,8 +1693,10 @@ export const GROUP_COUNTS = {
   'foundation-brief': 2,
   /** 批次 AJ · batch 11（2026-11-08）—— **量具层**的三条（`bug-20261107-05` / `-06` / `-07`）：
    *  `TMP-01` 临时件扫描的样本与份数 / `STM-01` 结算行读 `DR-02` 的读数 / `WIT-01` 最后一层守卫
-   *  不与所守同亡（两把源码删除刀）。单开一组：红的时候一眼看得出是"量具坏了"还是"被测对象坏了"。 */
-  'measuring-integrity': 3,
+   *  不与所守同亡（两把源码删除刀）。单开一组：红的时候一眼看得出是"量具坏了"还是"被测对象坏了"。
+   *  批次 AP 追加 `HCA-01`：判据共用出口 `caseHold` 的**调用形状**（`F2`）⇒ 3 → 4，仍不另开一组
+   *  （它守的还是"量具自己不许骗人"）。 */
+  'measuring-integrity': 4,
   /** 批次 AK · batch 15（2026-11-08）—— **office 放行时的持久读数**（`bug-20261107-10`）：
    *  `OFL-01` 同树也留一行 / `OFL-02` 异树那行带两个 office / `OFL-03` 读数从账上读 /
    *  `OFL-04` fail-closed / `OFL-05` 三次探测恰好两行 / `OFL-06` 刀架。
@@ -1721,9 +1746,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO/AP 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1750,7 +1775,7 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
 
