@@ -246,7 +246,8 @@ export function maintenanceDraftPathOf(root, day, draftId) {
  * @param {object} draft 维护案对象（契约 §2 的六键：`proposed_op` / `target_entry_id` /
  *   `target_original_text` / `reason` 必填，`product_text` / `source_entry_ids` 可选）
  * @param {{root: string, at?: string|Date, day?: string}} options
- *   `root` = **共享数据根**（`<内容根>/.runtime`；CLI 的 `--data-root` 那一层）；
+ *   `root` = **共享数据根**（`<内容根>/.runtime`；CLI 的 `--data-root` 那一层），**必须是绝对路径**
+ *   —— 相对路径 ⇒ `E_MAINTENANCE_SHAPE`，且这一拒发生在任何写入之前；
  *   `at` / `day` 只为可复跑的用例准备，生产留空 = 读时钟 / 由时钟算日子
  * @returns {Promise<object>} `{ok, draft_id, path, pool_seq, content_sha256, day, base_snapshot, pool_path}`
  */
@@ -256,10 +257,21 @@ export async function maintenanceFileRun(draft, options = {}) {
   // （那条路在框架那边会被物化成 `E_INTERNAL`，跟"程序有 bug"长得一模一样）。
   const opts = options ?? {}
   const root = opts.root
+  // 🔴 根必须是**绝对路径**，而且这一关要挡在**任何写入之前**（`bug-20261110-01`）：
+  //    相对 root（`'.runtime'` / `'./x'`）会被 `path.join` 折到 `process.cwd()` 之下 ⇒ 草稿与池行
+  //    落进调用方当时所在的工作区，判决侧只读数据根 ⇒ 结构上看不见它们。那正是这个工具要治的病。
+  //    码用形状族那一个（`E_MAINTENANCE_SHAPE`，`lib/error-codes.mjs` 里 exit 2），报文点名 `root`。
   if (typeof root !== 'string' || root.trim() === '') {
     throw maintenanceError(
       codes.SHAPE,
       `${codes.SHAPE}: root 必须是数据根的绝对路径（<内容根>/.runtime 那一层），实得 ${describeValue(root)}`,
+    )
+  }
+  if (!path.isAbsolute(root)) {
+    throw maintenanceError(
+      codes.SHAPE,
+      `${codes.SHAPE}: root 必须是**绝对路径**（数据根 = <内容根>/.runtime 那一层），实得 ${describeValue(root)}`
+        + ' —— 相对路径会按调用方的 cwd 解析，草稿与池行会落进调用方的工作区（这份工具存在的理由就是不那样）',
     )
   }
   const at = atOf(opts.at)

@@ -1125,6 +1125,12 @@ function maintenanceCaseIdOf(decision) {
  *   · **孤儿不静默**：索引里有、池子里没有的 id 进 `orphan_ids`（按索引行顺序去重）+ `orphan_count`，
  *     照常 exit 0 —— 池子被换过 / 索引来自另一个根 / 有人手改，哪一种都要说出来，不许吞掉；
  *   · **两个文件都不存在不是错误**（根上还没导入过任何候选）⇒ `pending_ids: []` / `count: 0`；
+ *   · 🔴 **每一个 pending id 的 `kind` 都要给出来**（`bug-20261110-03`）：`judge-commit` 按池行的 `kind`
+ *     分类裁决，只给 id 会让"这条 `MR-…` 该走 `maintenance_decisions`"变成下游的猜测；猜错的那一轮
+ *     会被 `E_ARG_SCHEMA` 整轮拒（零写入，但那一轮判决白跑）。`pending_kinds[id]` 逐 id 给
+ *     `'proposal'|'maintenance'`，来源 = 池子那一行（与 `judgedRowSpecsOf` 同一条真相）；
+ *     `kind` 缺失 / 不是那两个值 ⇒ 缺省 `'proposal'` 并记进 `kind_missing` 计数（缺省值必须看得见，
+ *     否则"它本来就是提案"与"它没写 kind"在读数上同形）。
  *   · 🔴 **输出里没有任何时钟字段** —— 同一份输入两次跑必须逐字节相同（V1 的稳定口径）。
  * 坏行一律整体拒（`E_DATA_CORRUPT`），**不跳过坏行再算**；读得出 JSON、但**读不出 `imported_id`**
  * 的记录同样整体拒（T-MEM-10）—— 跳过一个 id 等于替一个还活着的候选宣布"没这回事"。
@@ -1175,9 +1181,32 @@ function opJudgePending({ root }) {
   const poolSet = new Set(poolIds)
   const pendingIds = poolIds.filter((id) => !judgedSet.has(id))
   const orphanIds = judgedIds.filter((id) => !poolSet.has(id))
+  // 🔴 逐 id 的 `kind`（`bug-20261110-03`）：来源是**池子那一行**，与 `judgedRowSpecsOf` 同一条真相。
+  //    重复 id 取 `orderedPoolEntries` 里**第一次**出现的那一行 —— `pending_ids` 的位置也是按这个数组定的，
+  //    两处必须是同一个"那一条"，否则 id 与 kind 在重复行上会各指一行。
+  //    `kind` 缺失 / 不是 `proposal|maintenance` ⇒ 缺省 `proposal` 并记进 `kind_missing`：
+  //    缺省值不许静默 —— 否则"它本来就是提案"与"它没写 kind"在读数上长得一模一样。
+  const kindById = new Map()
+  for (const entry of orderedPoolEntries) {
+    const id = entry?.imported_id
+    if (typeof id !== 'string' || id === '' || kindById.has(id)) continue
+    const kind = entry?.kind
+    kindById.set(id, kind === 'maintenance' || kind === 'proposal' ? kind : null)
+  }
+  const pendingKinds = {}
+  let kindMissing = 0
+  for (const id of pendingIds) {
+    const kind = kindById.get(id) ?? null
+    if (kind === null) kindMissing += 1
+    pendingKinds[id] = kind ?? 'proposal'
+  }
   return {
     pending_ids: pendingIds,
+    // `judge-commit` 靠这一格决定每条走 `accepted` 还是 `maintenance_decisions`（池行说它是什么，它就走哪条路）。
+    pending_kinds: pendingKinds,
     count: pendingIds.length,
+    // 池行没写 `kind`（或写了第三个值）的 pending 条数 —— 它们按缺省值算作提案。
+    kind_missing: kindMissing,
     // `pool_count` / `judged_rows` 是**行数**，`judged_ids` 是**去重后的 id 数** —— 两者不许混着用。
     pool_count: pool.entries.length,
     judged_rows: judged.rows.length,

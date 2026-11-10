@@ -620,6 +620,200 @@ async function acquirePoolLock(root, { waitMs = 2000, retryMs = 50 } = {}) {
 }
 
 /**
+ * **池子写入的唯一一条路（锁里的那一段）**：读池 → 判词 / 判重 → 发号 → 拼行 → 原子写。
+ *
+ * 🔴 调用方**必须已经持有池子锁**：锁怎么等（有界等待 / 不等待）是入口那一层的事，
+ *    这一层只做锁里的那一半。三个入口（`appendProposal` / `appendProposalDeduped` /
+ *    `appendMaintenanceDraftDeduped`）都只走这一份 —— 改发号 / 落盘规则只改这里一次，
+ *    不会出现"改了两处、第三处还是旧的"。
+ * 🔴 **锁覆盖建目录**：池子目录由 `writeFileAtomic` 在锁里建（建不出来返回 `E_TXN_IO`）；
+ *    这里与入口都**没有**锁外的 `mkdirSync`（R8：锁外那条会抛裸 `EACCES`/`EEXIST`，报文不以码开头）。
+ *
+ * 三条路的差异全部由 `spec` 的钩子交进来（这里不分叉）：
+ *   · `verdictOf({poolEntries, root})` —— 维护案的判词（形状 / 目标 / 判重）；`ok:false` ⇒ 原样返回。
+ *   · `duplicateOf(poolEntries)` —— 提案的判重（键是 `(source, sha256)`，各入口自己定）；
+ *     命中 ⇒ 返回 `duplicate` 那一行，报文由入口拼（两条路的重复语不是一句话）。
+ *   · `idOf(seq)` —— 号的文法（默认 `poolIdOf(kind, day, seq)`；维护案是 `MR-…`）。
+ *   · `entryIdOf(seq)` —— 提案工具回执里的 `entry_id`（`proposal` → `cand`）。
+ *   · `fileOf({seq, imported_id, content_sha256, base_snapshot})` —— 先写草稿文件（维护案）；
+ *     失败 ⇒ 返回它的码；写成功之后任何失败都由 `rollbackOf(path)` 删掉它（不许"只有文件"）。
+ *   · `payloadOf(...)` / `payload` · `contentSha256`（调用方声明）· `sha256`。
+ *
+ * @param {string} root 脑根（锁在它下面的 `proposals/.pool.lock`）
+ * @param {object} spec 见上
+ * @returns {object} 成功 `{ok:true, …}`；失败 `{ok:false, stage, code, message, path, …}`
+ *   `stage` 让入口按自己的合同拼报文（`read` / `verdict` / `duplicate` / `ceiling` / `file` / `write` / `threw`）
+ */
+function writePoolRowLocked(root, spec = {}) {
+  const {
+    kind, day, at, source, sha256, contentSha256: givenContentSha, payload: givenPayload,
+    baseSnapshot = null, updateGeneration = null, reviewAttempt = null,
+    verdictOf = null, duplicateOf = null, idOf = null, entryIdOf = null,
+    fileOf = null, payloadOf = null, sourceOf = null, rollbackOf = null,
+  } = spec
+
+  // ① 读池：读不出来就整体拒（一行坏 = 整份池子不可判，不跳过坏行）。
+  const pool = readPool(root)
+  if (!pool.ok) return { ok: false, stage: 'read', code: pool.code, message: pool.message, path: pool.path }
+
+  // ② 判词（维护案）：在发号之前 ⇒ 被拒的那一次一个字节都不写。
+  let plan = null
+  if (typeof verdictOf === 'function') {
+    plan = verdictOf({ poolEntries: pool.entries, root })
+    if (plan === null || plan?.ok !== true) {
+      return {
+        ok: false,
+        stage: 'verdict',
+        code: plan?.code ?? 'E_INTERNAL',
+        message: plan?.message ?? 'verdictOf 没有给出判词 —— 这一份不落盘',
+        path: pool.path,
+      }
+    }
+  }
+
+  // ③ 判重（提案工具那一支）：与追加在**同一把锁**里判，命中就在发号之前返回。
+  if (typeof duplicateOf === 'function') {
+    const prior = duplicateOf(pool.entries)
+    if (prior !== null && prior !== undefined) return { ok: false, stage: 'duplicate', duplicate: prior, path: pool.path }
+  }
+
+  // ④ 发号：依据是"已经发出去过哪些号"，不是"池子现在几行"（`seqCeilingOf`）。
+  const ceiling = seqCeilingOf(root, { poolEntries: pool.entries, day })
+  if (!ceiling.ok) return { ok: false, stage: 'ceiling', code: ceiling.code, message: ceiling.message, path: pool.path }
+  const seq = ceiling.max + 1
+  const importedId = typeof idOf === 'function' ? idOf(seq) : poolIdOf(kind, day, seq)
+  const entryId = typeof entryIdOf === 'function' ? entryIdOf(seq) : null
+
+  // ⑤ 草稿文件先写（维护案）：它自己带 seq / id，所以只能在发号之后写。
+  let drafted = null
+  if (typeof fileOf === 'function') {
+    drafted = fileOf({
+      seq,
+      imported_id: importedId,
+      content_sha256: plan?.content_sha256 ?? null,
+      base_snapshot: plan?.base_snapshot ?? null,
+    })
+    if (drafted === null || drafted?.ok !== true) {
+      return {
+        ok: false,
+        stage: 'file',
+        code: drafted?.code ?? 'E_INTERNAL',
+        message: drafted?.message ?? 'fileOf 没有给出结果 —— 这一份不落盘',
+        path: drafted?.path ?? null,
+      }
+    }
+  }
+
+  /** 池行写失败 / 抛了时删掉刚写的草稿文件（只有维护案那条路有 `rollbackOf`）。 */
+  const rollback = () => {
+    if (typeof rollbackOf !== 'function' || drafted === null) return null
+    return rollbackOf(drafted.path)
+  }
+  try {
+    // `source`：维护案那条路的来源是**草稿文件的数据根相对路径**（从刚落盘的那个路径算出来，
+    // 不是手拼的第二个字符串）；别的路用调用方给的那一句。
+    const rowSource = typeof sourceOf === 'function' ? sourceOf({ drafted, root }) : source
+    const payload = typeof payloadOf === 'function'
+      ? payloadOf({
+        seq,
+        imported_id: importedId,
+        entry_id: entryId,
+        source: rowSource,
+        content_sha256: plan?.content_sha256 ?? null,
+      })
+      : givenPayload
+    // 内容哈希的三个来源各取一路（不互相顶替）：判词给的（维护案）/ 调用方声明的（CLI）/ 现算的（工具提案）。
+    const contentSha256 = plan?.content_sha256 ?? givenContentSha ?? contentShaOf(payload)
+    const record = poolRecordOf({
+      kind,
+      importedId,
+      at,
+      seq,
+      source: rowSource,
+      // 维护案那条路没有"调用方声明的哈希"：两格放同一个值（写 null 会让草稿完整性那条规则读到假话）。
+      sha256: plan !== null ? plan.content_sha256 : sha256,
+      contentSha256,
+      baseSnapshot: plan?.base_snapshot ?? baseSnapshot,
+      updateGeneration,
+      reviewAttempt,
+      payload,
+    })
+    const written = writeFileAtomic(pool.path, poolTextWith(pool, record))
+    if (!written.ok) {
+      return {
+        ok: false,
+        stage: 'write',
+        code: written.code,
+        message: written.message,
+        path: pool.path,
+        drafted_path: drafted?.path ?? null,
+        rolled_back: rollback(),
+      }
+    }
+    return {
+      ok: true,
+      imported_id: importedId,
+      entry_id: entryId,
+      imported_at: at,
+      pool_path: pool.path,
+      path: drafted?.path ?? pool.path,
+      seq,
+      content_sha256: record.content_sha256,
+      sha256: record.sha256,
+      base_snapshot: record.base_snapshot,
+      source: rowSource,
+      kind,
+      payload,
+      bytes: written.bytes,
+    }
+  } catch (error) {
+    // 只有维护案那条路把"抛了"折成返回码 —— 它有一条已经落盘的草稿要回滚。
+    // 别的路保持原样：钩子自己抛的异常继续上抛（那是调用方的 bug，不许在这里静默改判）。
+    if (typeof rollbackOf !== 'function') throw error
+    return {
+      ok: false,
+      stage: 'threw',
+      code: 'THREW',
+      thrown: { name: String(error?.name ?? 'Error'), message: String(error?.message ?? error) },
+      message: String(error?.message ?? error),
+      path: pool.path,
+      drafted_path: drafted?.path ?? null,
+      rolled_back: rollback(),
+    }
+  }
+}
+
+/**
+ * **异步口**：有界等待抢锁 → `writePoolRowLocked` → 放锁（两个工具那条路）。
+ * 锁失败也**返回码**（不抛）：调用方要把"锁拿不到"与"写不进去"分开报。
+ */
+async function withPoolRow(root, spec, options) {
+  const lock = await acquirePoolLock(root, options)
+  if (!lock.ok) {
+    return { ok: false, stage: 'lock', code: lock.code, message: `候选池锁拿不到：${lock.message}`, info: lock.info ?? null }
+  }
+  try {
+    return writePoolRowLocked(root, spec)
+  } finally {
+    releaseLock(poolLockPath(root))
+  }
+}
+
+/**
+ * **同步口**：抢锁**不等待**（CLI 的 `--op proposal-import` 原行为：抢一次，抢不到就报）→
+ * 同一条骨架 → 放锁。为什么不用 `withPoolRow`：那个等锁是 `await` 出来的，同步口等不了。
+ */
+function withPoolRowSync(root, spec) {
+  const lock = acquireLock(poolLockPath(root), { purpose: 'proposal-pool' })
+  if (!lock.ok) return { ok: false, stage: 'lock', code: lock.code, message: `候选池锁拿不到：${lock.message}` }
+  try {
+    return writePoolRowLocked(root, spec)
+  } finally {
+    releaseLock(poolLockPath(root))
+  }
+}
+
+/**
  * **读池 → 判重 → 发号 → 原子追加，全在**一次** `acquireLock` 里**（一个动作 = 一条候选）。
  *
  * 为什么不"先自己拿锁、再调 `appendProposal`"：`appendProposal` 自己会拿同一把锁，
@@ -647,73 +841,61 @@ export async function appendProposalDeduped(root, spec = {}, options = {}) {
     kind = 'proposal', source, sha256, payload: givenPayload, payloadOf,
     day, at, baseSnapshot = null, updateGeneration = null, reviewAttempt = null,
   } = spec
-  // 🔴 这里**不** `mkdirSync`（原来那一行在锁外：权限不足 / 路径是个文件时抛的是裸 `EACCES`/`EEXIST`，
+  // 🔴 这一层**没有** `mkdirSync`（原来那一行在锁外：权限不足 / 路径是个文件时抛的是裸 `EACCES`/`EEXIST`，
   //    报文不以码开头，`proposalFileRun` 那边接不住 —— 评审 R8）。
-  //    两处建目录都在库里面，而且都**返回**码、不抛：
+  //    两处建目录都在锁里、而且都**返回**码、不抛：
   //      · 锁目录 —— `acquireLock` 自己建，建不出来返回 `E_TXN_IO`；
-  //      · 池子目录 —— `writeFileAtomic` 自己建，建不出来返回 `E_TXN_IO`。
+  //      · 池子目录 —— `writeFileAtomic` 自己建（在池子锁里），建不出来返回 `E_TXN_IO`。
   //    ⇒ 这一层于是没有任何"锁外的裸 fs 调用"；两种失败都变成返回码，工具那边折成 `E_PROPOSAL_IO`。
-  const lock = await acquirePoolLock(root, options)
-  if (!lock.ok) {
-    return { ok: false, code: lock.code, message: `候选池锁拿不到：${lock.message}`, info: lock.info ?? null }
-  }
-  try {
-    const pool = readPool(root)
-    if (!pool.ok) return { ok: false, code: pool.code, message: pool.message, path: pool.path }
-    const prior = duplicateProposalOf(pool.entries, { source, sha256 })
-    if (prior !== null) {
-      return {
-        ok: false,
-        code: 'E_PROPOSAL_DUPLICATE',
-        message: `候选池里已经有「同一句出处 + 同一段正文」的那一条：${prior.imported_id}（池子编号 ${prior.seq}：池内单调递增、清池后不回落、不是行号）`,
-        existing: prior,
-        path: pool.path,
-      }
-    }
-    const ceiling = seqCeilingOf(root, { poolEntries: pool.entries, day })
-    if (!ceiling.ok) return { ok: false, code: ceiling.code, message: ceiling.message, path: pool.path }
-    const seq = ceiling.max + 1
-    const importedId = poolIdOf(kind, day, seq)
+  const result = await withPoolRow(root, {
+    kind,
+    day,
+    at,
+    source,
+    sha256,
+    payload: givenPayload,
+    payloadOf: typeof payloadOf === 'function' ? (ctx) => payloadOf(ctx) : null,
     // `entry.id` 与 `imported_id` 是**同一个号**，只换前缀（`proposal` → `cand`）。
-    const entryId = poolIdOf('cand', day, seq)
-    const payload = typeof payloadOf === 'function'
-      ? payloadOf({ seq, imported_id: importedId, entry_id: entryId })
-      : givenPayload
-    const record = poolRecordOf({
-      kind,
-      importedId,
-      at,
-      seq,
-      source,
-      sha256,
-      contentSha256: contentShaOf(payload),
-      baseSnapshot,
-      updateGeneration,
-      reviewAttempt,
-      payload,
-    })
-    const written = writeFileAtomic(pool.path, poolTextWith(pool, record))
-    if (!written.ok) {
-      return { ok: false, code: written.code, message: `候选池追加失败：${written.message}`, path: pool.path }
-    }
+    entryIdOf: (seq) => poolIdOf('cand', day, seq),
+    baseSnapshot,
+    updateGeneration,
+    reviewAttempt,
+    duplicateOf: (poolEntries) => duplicateProposalOf(poolEntries, { source, sha256 }),
+  }, options)
+  if (result.ok === true) {
     return {
       ok: true,
       code: null,
-      imported_id: importedId,
-      entry_id: entryId,
+      imported_id: result.imported_id,
+      entry_id: result.entry_id,
       imported_at: at,
-      path: pool.path,
-      seq,
-      content_sha256: record.content_sha256,
-      sha256: record.sha256,
+      path: result.pool_path,
+      seq: result.seq,
+      content_sha256: result.content_sha256,
+      sha256: result.sha256,
       source,
       kind,
-      payload,
-      bytes: written.bytes,
+      payload: result.payload,
+      bytes: result.bytes,
     }
-  } finally {
-    releaseLock(poolLockPath(root))
   }
+  if (result.stage === 'lock') {
+    return { ok: false, code: result.code, message: result.message, info: result.info ?? null }
+  }
+  if (result.stage === 'duplicate') {
+    const prior = result.duplicate
+    return {
+      ok: false,
+      code: 'E_PROPOSAL_DUPLICATE',
+      message: `候选池里已经有「同一句出处 + 同一段正文」的那一条：${prior.imported_id}（池子编号 ${prior.seq}：池内单调递增、清池后不回落、不是行号）`,
+      existing: prior,
+      path: result.path,
+    }
+  }
+  if (result.stage === 'write') {
+    return { ok: false, code: result.code, message: `候选池追加失败：${result.message}`, path: result.path }
+  }
+  return { ok: false, code: result.code, message: result.message, path: result.path }
 }
 
 /**
@@ -775,108 +957,65 @@ function removeQuietly(file, root) {
  */
 export async function appendMaintenanceDraftDeduped(root, spec = {}, options = {}) {
   const { day, at, verdictOf, fileOf, payloadOf } = spec
-  const lock = await acquirePoolLock(root, options)
-  if (!lock.ok) {
-    return { ok: false, code: lock.code, message: `候选池锁拿不到：${lock.message}`, info: lock.info ?? null }
-  }
-  try {
-    const pool = readPool(root)
-    if (!pool.ok) return { ok: false, code: pool.code, message: pool.message, path: pool.path }
+  // `fileOf` 不是可选的：没有它就只能落一条没有草稿的池行（"只有池行、没有文件"）。
+  // 调用方传坏了 ⇒ 保持原来的 TypeError 形状（`maintenanceFileRun` 那边折成 `E_MAINTENANCE_IO`）。
+  if (typeof fileOf !== 'function') throw new TypeError('fileOf is not a function')
+  const result = await withPoolRow(root, {
+    kind: 'maintenance',
+    day,
+    at,
     // 形状 / 目标 / 判重：都在发号之前 ⇒ 被拒的那一次一个字节都不写。
-    const plan = typeof verdictOf === 'function' ? verdictOf({ poolEntries: pool.entries, root }) : null
-    if (plan === null || plan.ok !== true) {
-      return {
-        ok: false,
-        code: plan?.code ?? 'E_INTERNAL',
-        message: plan?.message ?? 'verdictOf 没有给出判词 —— 这一份不落盘',
-        path: pool.path,
-      }
-    }
-    const ceiling = seqCeilingOf(root, { poolEntries: pool.entries, day })
-    if (!ceiling.ok) return { ok: false, code: ceiling.code, message: ceiling.message, path: pool.path }
-    const seq = ceiling.max + 1
-    const importedId = `MR-${String(day).replace(/-/g, '')}-${String(seq).padStart(4, '0')}`
-    const drafted = fileOf({
-      seq,
-      imported_id: importedId,
-      content_sha256: plan.content_sha256,
-      base_snapshot: plan.base_snapshot ?? null,
-    })
-    if (drafted === null || drafted?.ok !== true) {
-      return {
-        ok: false,
-        code: drafted?.code ?? 'E_INTERNAL',
-        message: drafted?.message ?? 'fileOf 没有给出结果 —— 这一份不落盘',
-        path: drafted?.path ?? null,
-      }
-    }
-    // 🔴 从这里往下，草稿文件**已经在盘上**了 ⇒ 任何一条抛出去的路都必须先把它删掉：
+    verdictOf: typeof verdictOf === 'function' ? (ctx) => verdictOf(ctx) : null,
+    // 号的形状是 `MR-…`，不走 `poolIdOf('maintenance', …)`（那是 `maintenance-…`）。
+    idOf: (seq) => `MR-${String(day).replace(/-/g, '')}-${String(seq).padStart(4, '0')}`,
+    // 草稿文件先写、池行后写：文件自己带 seq / id ⇒ 只能在发号之后写。
+    fileOf: (ctx) => fileOf(ctx),
+    payloadOf: typeof payloadOf === 'function' ? (ctx) => payloadOf(ctx) : null,
+    // `source` = 草稿文件的**数据根相对路径**（下一轮"这一条从哪来"的唯一线索，且不随机器变）。
+    // 它是从刚落盘的那个路径算出来的 —— 不是手拼的第二个字符串，歪了也对得上盘。
+    sourceOf: ({ drafted }) => path.relative(root, drafted.path).split(path.sep).join('/'),
+    // 🔴 从这里往下，草稿文件**已经在盘上**了 ⇒ 任何一条写失败 / 抛出去的路都必须先把它删掉：
     //    "只有文件、没有池行"正是 2026-11-08 那 27 份的形状（草稿在、判决侧看不见）。
-    //    回调（`payloadOf`）与拼行都在这个 try 里，所以"抛了"与"写失败"走同一个出口。
-    let source
-    let payload
-    let record
-    let written
-    try {
-      // `source` = 草稿文件的**数据根相对路径**（下一轮"这一条从哪来"的唯一线索，且不随机器变）。
-      // 它是从刚落盘的那个路径算出来的 —— 不是手拼的第二个字符串，歪了也对得上盘。
-      source = path.relative(root, drafted.path).split(path.sep).join('/')
-      payload = typeof payloadOf === 'function'
-        ? payloadOf({ seq, imported_id: importedId, source, content_sha256: plan.content_sha256 })
-        : null
-      record = poolRecordOf({
-        kind: 'maintenance',
-        importedId,
-        at,
-        seq,
-        source,
-        // 这条路没有"调用方声明的哈希"：两格放同一个值（写 null 会让草稿完整性那条规则读到假话）。
-        sha256: plan.content_sha256,
-        contentSha256: plan.content_sha256,
-        baseSnapshot: plan.base_snapshot ?? null,
-        // 入池**不是受理**：fence 的宾语是导入信封，判决那一关按它自己那一轮算。
-        updateGeneration: null,
-        reviewAttempt: null,
-        payload,
-      })
-      written = writeFileAtomic(pool.path, poolTextWith(pool, record))
-    } catch (error) {
-      const rolledBack = removeQuietly(drafted.path, root)
-      return {
-        ok: false,
-        code: 'THREW',
-        message: `候选池追加时抛了（${String(error?.name ?? 'Error')}: ${String(error?.message ?? error)}）—— `
-          + `${rolledBack ? '草稿已回滚' : '草稿没删掉（落点校验没过）'}：${drafted.path}`,
-        path: pool.path,
-      }
-    }
-    if (!written.ok) {
-      const rolledBack = removeQuietly(drafted.path, root)
-      return {
-        ok: false,
-        code: written.code,
-        message: `候选池追加失败：${written.message}`
-          + `（${rolledBack ? '草稿已回滚' : '草稿没删掉（落点校验没过）'}：${drafted.path}）`,
-        path: pool.path,
-      }
-    }
+    rollbackOf: (file) => removeQuietly(file, root),
+  }, options)
+  if (result.ok === true) {
     return {
       ok: true,
       code: null,
-      imported_id: importedId,
-      path: drafted.path,
-      pool_path: pool.path,
-      seq,
-      content_sha256: record.content_sha256,
-      sha256: record.sha256,
-      base_snapshot: plan.base_snapshot ?? null,
-      source,
-      payload,
-      bytes: written.bytes,
+      imported_id: result.imported_id,
+      path: result.path,
+      pool_path: result.pool_path,
+      seq: result.seq,
+      content_sha256: result.content_sha256,
+      sha256: result.sha256,
+      base_snapshot: result.base_snapshot,
+      source: result.source,
+      payload: result.payload,
+      bytes: result.bytes,
     }
-  } finally {
-    releaseLock(poolLockPath(root))
   }
+  if (result.stage === 'lock') {
+    return { ok: false, code: result.code, message: result.message, info: result.info ?? null }
+  }
+  if (result.stage === 'threw') {
+    return {
+      ok: false,
+      code: 'THREW',
+      message: `候选池追加时抛了（${result.thrown.name}: ${result.thrown.message}）—— `
+        + `${result.rolled_back ? '草稿已回滚' : '草稿没删掉（落点校验没过）'}：${String(result.drafted_path)}`,
+      path: result.path,
+    }
+  }
+  if (result.stage === 'write') {
+    return {
+      ok: false,
+      code: result.code,
+      message: `候选池追加失败：${result.message}`
+        + `（${result.rolled_back ? '草稿已回滚' : '草稿没删掉（落点校验没过）'}：${String(result.drafted_path)}）`,
+      path: result.path,
+    }
+  }
+  return { ok: false, code: result.code, message: result.message, path: result.path }
 }
 
 /**
@@ -894,25 +1033,33 @@ export function appendProposal(root, spec = {}) {
     kind = 'proposal', source, sha256, contentSha256, baseSnapshot,
     updateGeneration, reviewAttempt, payload, day, at,
   } = spec
-  mkdirSync(proposalsDir(root), { recursive: true })
-  const lock = acquireLock(poolLockPath(root), { purpose: 'proposal-pool' })
-  if (!lock.ok) throw brainError(lock.code, `候选池锁拿不到：${lock.message}`)
-  try {
-    const pool = readPool(root)
-    if (!pool.ok) throw brainError(pool.code, pool.message, { path: pool.path })
-    const ceiling = seqCeilingOf(root, { poolEntries: pool.entries, day })
-    if (!ceiling.ok) throw brainError(ceiling.code, ceiling.message, { path: pool.path })
-    const seq = ceiling.max + 1
-    const importedId = poolIdOf(kind, day, seq)
-    const record = poolRecordOf({
-      kind, importedId, at, seq, source, sha256, contentSha256,
-      baseSnapshot, updateGeneration, reviewAttempt, payload,
-    })
-    const written = writeFileAtomic(pool.path, poolTextWith(pool, record))
-    if (!written.ok) throw brainError(written.code, `候选池追加失败：${written.message}`, { path: pool.path })
-    return { ok: true, code: null, imported_id: importedId, imported_at: at, path: pool.path, seq, bytes: written.bytes }
-  } finally {
-    releaseLock(poolLockPath(root))
+  // 🔴 这里**没有** `mkdirSync`：池子目录由 `writeFileAtomic` 在池子锁里建
+  //    （建不出来返回 `E_TXN_IO`，不走裸 `EACCES`/`EEXIST` —— 评审 R8）。
+  //    锁目录由 `withPoolRowSync` 里的 `acquireLock` 自己建（同样返回码）。
+  const result = withPoolRowSync(root, {
+    kind,
+    day,
+    at,
+    source,
+    sha256,
+    contentSha256,
+    baseSnapshot,
+    updateGeneration,
+    reviewAttempt,
+    payload,
+  })
+  if (result.ok !== true) {
+    const details = result.path === undefined ? null : { path: result.path }
+    throw brainError(result.code, result.stage === 'write' ? `候选池追加失败：${result.message}` : result.message, details)
+  }
+  return {
+    ok: true,
+    code: null,
+    imported_id: result.imported_id,
+    imported_at: result.imported_at,
+    path: result.pool_path,
+    seq: result.seq,
+    bytes: result.bytes,
   }
 }
 
