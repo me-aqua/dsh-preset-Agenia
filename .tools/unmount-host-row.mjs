@@ -83,7 +83,8 @@
  *   node .tools/unmount-host-row.mjs --repo <root> --id <row id> --apply
  *   node .tools/unmount-host-row.mjs --repo <root> --id <row id> --restore
  *
- *   0 成功（含 no-op）· 1 失败：`E_UNMOUNT_STEP_FAILED`（已逐字节回滚）· `E_UNMOUNT_PATCH_STALE`
+ *   0 成功（含 no-op）· 1 失败：`E_UNMOUNT_STEP_FAILED`（回滚逐字节成功 ⇒ `rolled_back: true`；
+ *   没做到 ⇒ `rolled_back: false`，那几份由 `rollback.drifted` 逐个点名）· `E_UNMOUNT_PATCH_STALE`
  *   （no-op 落点不符）· `E_UNMOUNT_PATCH_NOT_DERIVED`（no-op 落点对、但补丁不是派生物：半截 / 被换过）。
  *   后两个都是 `rolled_back: false`、这一跑一个字节都没写（第二个只多一次只读的 `--check`）
  *   · 2 拒绝（入口态不是规范态）· 3 用法 / 环境
@@ -92,7 +93,10 @@
  *   实机验证（撤完要重启宿主客户端、恢复后再重启一次），本命令不读 GUI、不重启任何东西。
  *
  * stdout 恰好一行 JSON（`schema` / `action` / `id` / `repo` / `code` / `changed` /
- * `row_landing` / `carrier` / `failed_step` / `rolled_back`）；人话走 stderr。
+ * `row_landing` / `carrier` / `failed_step` / `rolled_back` / `rollback`）；人话走 stderr。
+ *
+ * `changed` 数的是**这一跑结束时仍与跑前快照不同的文件数**（组合 / 生成器 / 补丁三份逐字节比；
+ * 不是"尝试写了几次"）—— 成功写盘 3、回滚成功 0、回滚没做到逐字节时 ≥ 1，那几份由 `rollback.drifted` 逐个点名。
  *
  * 载体 B 的形状不钉：读的是 `HOST_LEVEL_IDS = … [ … ]` 这一个字面量，改的是它里面的项。
  * `--restore` 把 id **追加在表尾**；今天表里只有一条，所以恢复后的字节与 `--apply` 之前逐字节相同。
@@ -454,7 +458,7 @@ function rowLanding(patchText, id) {
 
 // ── 输出 ──────────────────────────────────────────────────────────────────
 /** stdout 恰好一行 JSON；人话走 stderr。 */
-function emit({ action, id, repo, code, changed, row_landing = null, carrier = null, failed_step = null, rolled_back = false }, exit, human = null) {
+function emit({ action, id, repo, code, changed, row_landing = null, carrier = null, failed_step = null, rolled_back = false, rollback = null }, exit, human = null) {
   process.stdout.write(`${JSON.stringify({
     schema: 1,
     action,
@@ -466,6 +470,7 @@ function emit({ action, id, repo, code, changed, row_landing = null, carrier = n
     carrier,
     failed_step,
     rolled_back,
+    rollback,
   })}\n`)
   if (human !== null) process.stderr.write(`${human}\n`)
   return exit
@@ -598,8 +603,30 @@ function main() {
     generator: readFileSync(abs.generator),
     patch: existsSync(abs.patch) ? readFileSync(abs.patch) : null,
   }
+  /**
+   * 三份目标与跑前快照的**逐字节**比对 —— `changed` 与 `rollback.drifted` 的**唯一来源**
+   * （成功路径与回滚账共用这一个比较器，别在别处再写一遍）。
+   *
+   * 返回 repo 相对的路径，按 `REL` 的顺序（组合 / 生成器 / 补丁）。读不出来（权限没了 / 被换成目录）
+   * 也算掉队：「证不成一致」与「不一致」在回滚账里是同一个答案 —— 这一份得有人去看。
+   */
+  const driftFromSnapshot = () => {
+    const drifted = []
+    for (const key of ['composition', 'generator', 'patch']) {
+      let same
+      try {
+        same = snapshot[key] === null
+          ? !existsSync(abs[key])
+          : existsSync(abs[key]) && readFileSync(abs[key]).equals(snapshot[key])
+      } catch {
+        same = false
+      }
+      if (!same) drifted.push(REL[key])
+    }
+    return drifted
+  }
+
   const rollback = (failedStep, detail) => {
-    let ok = false
     let why = ''
     try {
       atomicWrite(abs.composition, snapshot.composition)
@@ -609,16 +636,22 @@ function main() {
       } else {
         atomicWrite(abs.patch, snapshot.patch)
       }
-      ok = readFileSync(abs.composition).equals(snapshot.composition)
-        && readFileSync(abs.generator).equals(snapshot.generator)
-        && (snapshot.patch === null ? !existsSync(abs.patch) : readFileSync(abs.patch).equals(snapshot.patch))
     } catch (err) {
-      ok = false
       why = `；回滚本身失败：${String(err?.message ?? err)}`
     }
-    return emit({ ...out, code: 'E_UNMOUNT_STEP_FAILED', changed: 0, failed_step: failedStep, rolled_back: ok },
-      EXIT.FAILED, `E_UNMOUNT_STEP_FAILED 失败步骤 ${failedStep}：${detail}${why}`
-        + `（${ok ? '三份文件已逐字节回到跑之前' : '回滚没做到逐字节 — 立刻人工看'}）`)
+    // 回滚账在 **emit 这一刻现量**：`changed` 就是"还与跑前不同"的文件数 —— 回滚半路抛了也要数，
+    // 否则 JSON 说 `changed: 0`、盘上却留着改过的字节，读的人会当场相信前一句。
+    const drifted = driftFromSnapshot()
+    const ok = drifted.length === 0
+    return emit({
+      ...out,
+      code: 'E_UNMOUNT_STEP_FAILED',
+      changed: drifted.length,
+      failed_step: failedStep,
+      rolled_back: ok,
+      rollback: { ok, drifted },
+    }, EXIT.FAILED, `E_UNMOUNT_STEP_FAILED 失败步骤 ${failedStep}：${detail}${why}`
+      + `（${ok ? '三份文件已逐字节回到跑之前' : `回滚没做到逐字节 — 立刻人工看，这三份仍与跑前不同：${drifted.join(' · ')}`}）`)
   }
 
   // ② 写载体（两份都原子换：被杀在中间不会把一份文件劈成两半）。写失败也走同一条回滚。
@@ -648,9 +681,8 @@ function main() {
     return rollback('verify', `落点没翻面：补丁文本读出 ${JSON.stringify(landing)}，期望 ${JSON.stringify(want)}`)
   }
 
-  const changed = Number(compositionEdit.changed.marker)
-    + Number(compositionEdit.changed.disabled)
-    + Number(listEdit.changed)
+  // 成功这一路也现量（不是数"改了几处载体"）：`changed` 只有一个口径 —— 跑完之后仍与跑前不同的文件数。
+  const changed = driftFromSnapshot().length
   return emit({
     ...out,
     code: args.mode === 'apply' ? 'UMH-APPLIED' : 'UMH-RESTORED',
