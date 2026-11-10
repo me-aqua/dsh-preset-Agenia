@@ -444,7 +444,9 @@ export function problem(code, message, detail) {
  *   · 实参**个数**必须是 3 —— 少了就点名 `CASE-HOLD-ARITY`；
  *   · 第 1 个必须是 `runCase` 的记录（有数组型 `holds`）—— 否则 `CASE-HOLD-REC`；
  *   · 第 2 / 3 个必须是字符串（`code` 还要求非空）—— 否则 `CASE-HOLD-CODE` / `CASE-HOLD-WHY`。
- * ⚠️ **多于 3 个实参不判**：多传是噪音，不是"这一格判错了"。边界写在这里，读的人不必回推。
+ * ⚠️ **多于 3 个实参不判**：多传不会让 `rec` / `code` / `why` 错位（这三类笔误都是"少传/错位"），
+ *   它只是死文本；把闸开到"多一个也红"就是把"判据写脏了"记成"这一格判不了"，而闸一吵人就会绕过它。
+ *   边界写在这里，读的人不必回推。
  *
  * @param {{argc:number, rec:any, code:any, why:any}} input
  * @returns {null|{code:string, message:string}}

@@ -221,7 +221,10 @@ test('FLIP-01 BRG-07 的翻面读数点名本提交的「面」（面摘要 + �
     })()
     if (!isOwnRepo && explicitCommit === null) {
       // 判不了就判不了 —— 这一格**不许**用活体的 HEAD 顶上。
-      return caseHold('FLIP-PROVENANCE-UNKNOWN',
+      // ⚠️ `rec` 不可省：`caseHold(rec, code, why)` 收三个实参，少传一个会让 `rec.holds` 变成 `undefined`
+      //    ⇒ 一条"判不了"的分支以 `TypeError` 的形状变成红（技术评审 2026-11-09 `F2`；
+      //    闸在 `support/evidence.mjs::caseHoldCallProblem`，守它的是 `HCA-01`）。
+      return caseHold(rec, 'FLIP-PROVENANCE-UNKNOWN',
         `这一跑读的是一份**副本**（顶层 ${JSON.stringify(topPath)} ≠ 仓库根），而"它是哪个提交导出来的"没有来历：`
         + '请用 `AGENIA_COPY_COMMIT=<40 hex>` 或 `AGENIA_COPY_PROVENANCE=<导出 JSON 的路径>` 指过来'
         + '（副本必须是纯树，所以来历不能写在副本里）。不指 ⇒ 这一格判不了，不许猜。')
