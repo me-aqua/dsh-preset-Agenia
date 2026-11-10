@@ -39,12 +39,18 @@
  *      腿 `restore-stale` —— `--restore` 的同一形状（M 载体 + 已翻成 `{0,2}` 的补丁）⇒ 同样的码；
  *      腿 `truncated-patch` —— 落点**读得对**、但补丁是半截（尾巴没了、两行 `- id` 都在）⇒ 不许 no-op，
  *         必须 `E_UNMOUNT_PATCH_NOT_DERIVED`；同一棵树上**未截断**的那份 ⇒ 仍 `UMH-NOOP`（阳性那一半）。
+ *      腿 `residue-sweep` —— 工具自己上一次被杀留下的 `<补丁>.tmp-<死 pid>-<hex>` ⇒ 它收掉那份残渣、
+ *         产品字节不动、仍是 `UMH-NOOP`（契约 §4.4 的例外）。
+ *      🔴 三条失败腿都断言**失败形状**（契约 §4.1）：`failed_step: "patch"` · `rolled_back: false` ·
+ *         `row_landing` = 盘上那份补丁读出来的落点 —— 只判"码对不对"的话，工具把这三格乱填也照样绿。
  *      刀 K5（恒报 `changed: 1`）⇒ `UMH-CHANGED-NOT-ZERO`；刀 K6（报 no-op 却写了一个换行）⇒ `UMH-NOOP-TOUCHED-BYTES`；
- *      刀 K9（只摘**落点**闸）⇒ stale 腿翻 `UMH-STALE-PATCH-UNNAMED`：它**不再**掉回 no-op —— 第二道闸
- *         （只读 `--check`）还在，换一个码拒（`witness.argv` 记着那一次 `--check`，所以红因指得准）；
+ *      刀 K9（只摘**落点**闸）⇒ stale 腿翻 `UMH-STALE-PATCH-UNNAMED`，**而且必须落在"第二道闸拒"那一面**
+ *         （换出来的码是 `NOT_DERIVED` · exit 1 · `--check` 真跑过 —— 只证明"别处也拒了"不算咬住）；
  *      刀 K9b（摘**两道**闸）⇒ stale 腿翻 `UMH-STALE-PATCH-NOOP`（只有这样才能回到 no-op）；
  *      刀 K10（只摘 `--check` 那一行）⇒ 半截补丁腿翻 `UMH-NOOP-UNDERIVED`；
- *      刀 K11（落点闸，`--restore` 方向）⇒ restore-stale 腿翻 `UMH-STALE-PATCH-UNNAMED`。
+ *      刀 K11（落点闸，`--restore` 方向）⇒ restore-stale 腿翻 `UMH-STALE-PATCH-UNNAMED`（落点同 K9）；
+ *      刀 K12（只摘**扫残渣**那一行）⇒ residue-sweep 腿翻 `UMH-RESIDUE-NOT-SWEPT`；
+ *      刀 K13（把失败形状改回旧的 `verify` / `true` / `null`）⇒ 翻 `UMH-PATCH-FAILURE-SHAPE`。
  *   `UMH-05` 回滚：生成器步注入"见证 + 抛"⇒ 三处**已经写过**（见证为证）、之后字节逐字节回到跑之前；
  *      自证步注入"成功但产物不翻面"⇒ `failed_step: verify` 也要回滚。
  *      刀 K7（跳到"三处都写好了"再跑生成器、**不回滚**）⇒ `UMH-ROLLBACK-NOT-BYTE-IDENTICAL`。
@@ -55,8 +61,8 @@
  *   · 不判宿主级那套设计（两份真相不合并）；不判"哪几行该是宿主级"；不判 profile 层退役路线。
  *   · 不判 `--id` 指向**非宿主级行**的行为；不判 D / E 两态（契约 §八.4 登记为漏）。
  *   · 不判工具内部结构（函数名 / 常量名 / 是否用账本）；不判 `HOST_LEVEL_IDS` 的形状（数组 / Set / 排法）。
- *   · 不判**清理上次被杀留下的 `.tmp-*` 残渣**那件事：它是工具自己的 housekeeping，红在"残渣让文件集合多一份"上
- *     （`tree_equal` 会咬），但"先有残渣、再被清掉"这条序列没有腿 —— 那是工具自己的行为，不是夹具的判据。
+ *   · 不判**活 pid** 的 `.tmp-*`（工具必须留着它 —— 那是别人正在写）。判的只有"死 pid 那份被扫掉"
+ *     （`residue-sweep` 腿）；活 pid 那一支登记在契约 §八.7，别把这一格的绿读成"扫残渣全判了"。
  *
  * ── 今天为什么是绿的（说清这一跑覆盖了哪一层）──────────────────────────────────────
  *   `.tools/unmount-host-row.mjs` 在盘上（`6443098`）：五格全绿。
@@ -80,6 +86,7 @@ import {
   carrierFacts,
   carrierProblems,
   copyFixture,
+  deadResidueName,
   derivedProblems,
   forgedPatchOf,
   gateBlindTool,
@@ -91,12 +98,14 @@ import {
   noopProblems,
   pushToolAbsent,
   refusalProblems,
+  residueSweepProblems,
   rollbackProblems,
   rowLanding,
   runAgain,
   runScenario,
   runnableSetProblems,
   scratchDir,
+  shapeLiarTool,
   shapeProblems,
   slim,
   snapshotTree,
@@ -726,6 +735,18 @@ test('UMH-04 幂等：目标态再跑 ⇒ UMH-NOOP / changed:0 / 字节不动（
         return undefined
       }
       knife(problems, { label: 'K9·landing-blind', got: stalePatchProblems(k9, { label: 'K9·landing-blind' }), want: CODE.staleUnnamed })
+      // 🔴 这一刀必须**落在第二道闸拒**那一面，而不是"反正有别的地方拒了"：
+      //   换出来的码是 `E_UNMOUNT_PATCH_NOT_DERIVED`、exit 1、而且那一次只读 `--check` 真的跑过。
+      //   只判"某个别的码"分不出"修对了"与"换了个地方拒"（评审 §4 的原话）。
+      const drifted = []
+      if (k9.json?.code !== NOT_DERIVED_CODE) drifted.push(`code=${JSON.stringify(k9.json?.code)}（期望 ${NOT_DERIVED_CODE}）`)
+      if (k9.exit !== 1) drifted.push(`exit=${k9.exit}（期望 1）`)
+      if (!(Number(k9.generator_checks) >= 1)) drifted.push(`generator_checks=${JSON.stringify(k9.generator_checks)}（期望 ≥1 —— 第二道闸没被走到）`)
+      if (Number(k9.generator_writes) !== 0) drifted.push(`generator_writes=${JSON.stringify(k9.generator_writes)}（期望 0）`)
+      if (drifted.length > 0) {
+        push(CODE.knifeVector, `K9 摘了落点闸，但没有落在"第二道闸拒"那一面：${drifted.join(' · ')} —— `
+          + '这一刀只证明"别的地方也拒了"，分不出对的修法与错的修法')
+      }
       // 刀的入口：它必须真的走到"载体已翻、补丁没翻"那一刻，且跑的确实是那份被改过的工具。
       const c = k9.before.carriers
       if (k9.tool !== 'mutated' || !(c.marker === false && c.disabled === true) || k9.before.landing?.insert !== 1) {
@@ -799,7 +820,86 @@ test('UMH-04 幂等：目标态再跑 ⇒ UMH-NOOP / changed:0 / 字节不动（
         return undefined
       }
       knife(problems, { label: 'K11·restore-landing-blind', got: stalePatchProblems(k11, { label: 'K11·restore-landing-blind' }), want: CODE.staleUnnamed })
+      // 与 K9 同一条口径：必须落在"第二道闸拒"那一面（同一个码、exit 1、`--check` 真跑过）。
+      const drifted = []
+      if (k11.json?.code !== NOT_DERIVED_CODE) drifted.push(`code=${JSON.stringify(k11.json?.code)}（期望 ${NOT_DERIVED_CODE}）`)
+      if (k11.exit !== 1) drifted.push(`exit=${k11.exit}（期望 1）`)
+      if (!(Number(k11.generator_checks) >= 1)) drifted.push(`generator_checks=${JSON.stringify(k11.generator_checks)}（期望 ≥1）`)
+      if (drifted.length > 0) {
+        push(CODE.knifeVector, `K11（restore 方向）摘了落点闸，但没有落在"第二道闸拒"那一面：${drifted.join(' · ')}`)
+      }
       rec.readings.knife_k11 = { exit: k11.exit, code: k11.json?.code ?? null, checks: k11.generator_checks, writes: k11.generator_writes }
+      return undefined
+    })
+
+    // ── ①⁗ 腿 residue-sweep：上一次被杀留下的 `.tmp-*` 残渣 ⇒ 工具自己收掉，no-op 仍是 no-op ──────
+    //   契约 §4.4 的那个例外：清扫发生在**判入口态之前**，所以一次 no-op 之后**文件集合会少一份**。
+    //   钉三件事：那一份（pid 已死的）没了 · 没删别的、也没加东西 · 产品那三份的字节不动、仍然是 `UMH-NOOP`。
+    const residue = deadResidueName()
+    const sweptRun = runScenario({
+      name: 'umh-04-residue-sweep', pre: 'U', generator: 'real', tool: 'real', action: 'apply',
+      extraCopyFiles: { [residue.rel]: residue.content },
+    })
+    scenarios.residue_sweep = sweptRun.tool_present ? slim(sweptRun) : null
+    scenarios.residue_fixture = { rel: residue.rel, pid: residue.pid }
+    book.run('residue-sweep', () => {
+      if (!sweptRun.tool_present) {
+        pushToolAbsent(problems, sweptRun, 'U 态 + 上一次的 `.tmp-*` 残渣 --apply')
+        return CODE.toolAbsent
+      }
+      rec.readings.residue_sweep = {
+        exit: sweptRun.exit, code: sweptRun.json?.code ?? null, changed: sweptRun.json?.changed ?? null,
+        seeded: residue.rel, removed: Object.keys(sweptRun.before.files_map).filter((rel) => !(rel in sweptRun.after.files_map)),
+        stderr_head: String(sweptRun.stderr ?? '').split(/\r?\n/).slice(0, 2).join('\n').slice(0, 400),
+      }
+      for (const p of residueSweepProblems(sweptRun, { residue: residue.rel, label: 'U 态 + 上一次的 `.tmp-*` 残渣 --apply' })) problems.push(p)
+      return undefined
+    })
+
+    // ── ⑤‴‴ 刀 K12（摘掉**扫残渣**那一行）⇒ residue-sweep 腿必须红 ──────────────────────
+    //   工具的清扫发生在**判入口态之前** ⇒ 一次 no-op 之后文件集合会少一份（契约 §4.4 的那个例外）。
+    //   这一刀把清扫换成空账本，于是那份死 pid 的残渣留在原地 ⇒ 腿翻 `UMH-RESIDUE-NOT-SWEPT`。
+    const blindSweep = gateBlindTool(readFileSync(SOURCE.tool, 'utf8'), { sweep: true })
+    scenarios.knife_sweep_blind = { applied: blindSweep.applied, missing: blindSweep.missing, why: blindSweep.why }
+    const k12 = blindSweep.ok
+      ? runScenario({
+        name: 'umh-04-k12-sweep-blind', pre: 'U', generator: 'real', tool: 'real',
+        toolText: blindSweep.text, action: 'apply', extraCopyFiles: { [residue.rel]: residue.content },
+      })
+      : null
+    scenarios.knife_sweep_blind_reading = k12 === null ? null : slim(k12)
+    book.run('knife-K12', () => {
+      if (k12 === null) {
+        push(CODE.fixture, `K12 的刀没装上：${blindSweep.why} —— 工具改过？这一格的红不能算在工具头上`)
+        return undefined
+      }
+      knife(problems, { label: 'K12·sweep-blind', got: residueSweepProblems(k12, { residue: residue.rel, label: 'K12·sweep-blind' }), want: CODE.residueUnswept })
+      return undefined
+    })
+
+    // ── ⑤⁵ 刀 K13（把两道签字的**失败形状**改坏）⇒ 那三格断言必须红 ───────────────────────
+    //   契约 §4.1 钉了失败也要说清 `failed_step` / `rolled_back` / `row_landing`；只判"码对不对"的腿
+    //   在工具把这三格乱填时照样绿。这一刀把三者一起改回旧形状（`verify` / `true` / `null`）。
+    const shapeLiar = shapeLiarTool(readFileSync(SOURCE.tool, 'utf8'))
+    scenarios.knife_shape_liar = { applied: shapeLiar.applied, missing: shapeLiar.missing, why: shapeLiar.why }
+    const k13 = shapeLiar.ok
+      ? runScenario({
+        name: 'umh-04-k13-failure-shape-liar', pre: 'U', generator: 'spy', tool: 'real',
+        toolText: shapeLiar.text, action: 'apply',
+      })
+      : null
+    scenarios.knife_shape_liar_reading = k13 === null ? null : slim(k13)
+    book.run('knife-K13', () => {
+      if (k13 === null) {
+        push(CODE.fixture, `K13 的刀没装上：${shapeLiar.why} —— 工具改过？这一格的红不能算在工具头上`)
+        return undefined
+      }
+      knife(problems, { label: 'K13·failure-shape-liar', got: stalePatchProblems(k13, { label: 'K13·failure-shape-liar' }), want: CODE.patchFailureShape })
+      rec.readings.knife_k13 = {
+        exit: k13.exit, code: k13.json?.code ?? null,
+        failed_step: k13.json?.failed_step ?? null, rolled_back: k13.json?.rolled_back ?? null,
+        row_landing: k13.json?.row_landing ?? null,
+      }
       return undefined
     })
 
@@ -815,15 +915,17 @@ test('UMH-04 幂等：目标态再跑 ⇒ UMH-NOOP / changed:0 / 字节不动（
       const staleOk = controlReading({
         exit: 1,
         json: { code: STALE_CODE, changed: 0, row_landing: { insert: 1, preset_bodies: 0 }, failed_step: 'patch', rolled_back: false },
+        before: { carriers: { marker: false, disabled: true, listed: false }, landing: { insert: 1, preset_bodies: 0 }, files: { composition: 'c-before', generator: 'g-before', patch: 'p-before' } },
         files_equal: true,
         tree_equal: true,
         changed_files: [],
         generator_called: false,
       })
       controlFails(problems, '阳性对照·过期补丁', stalePatchProblems(staleOk, { label: 'control' }))
-      const underivedOk = controlReading({
+      const underivedControl = controlReading({
         exit: 1,
         json: { code: NOT_DERIVED_CODE, changed: 0, row_landing: { insert: 0, preset_bodies: 2 }, failed_step: 'patch', rolled_back: false },
+        before: { carriers: { marker: false, disabled: true, listed: false }, landing: { insert: 0, preset_bodies: 2 }, files: { composition: 'c-before', generator: 'g-before', patch: 'p-before' } },
         files_equal: true,
         tree_equal: true,
         changed_files: [],
@@ -831,13 +933,13 @@ test('UMH-04 幂等：目标态再跑 ⇒ UMH-NOOP / changed:0 / 字节不动（
         generator_writes: 0,
         generator_calls: [],
       })
-      controlFails(problems, '阳性对照·半截补丁', underivedPatchProblems(underivedOk, { label: 'control' }))
+      controlFails(problems, '阳性对照·半截补丁', underivedPatchProblems(underivedControl, { label: 'control' }))
       return undefined
     })
 
     book.require([
-      'apply-noop', 'stale-patch', 'restore-stale', 'truncated-patch', 'apply-twice', 'restore-twice',
-      'knife-K5', 'knife-K6', 'knife-K9', 'knife-K9b', 'knife-K10', 'knife-K11', 'control',
+      'apply-noop', 'stale-patch', 'restore-stale', 'truncated-patch', 'residue-sweep', 'apply-twice', 'restore-twice',
+      'knife-K5', 'knife-K6', 'knife-K9', 'knife-K9b', 'knife-K10', 'knife-K11', 'knife-K12', 'knife-K13', 'control',
     ])
     rec.readings.legs = book.legs
     rec.readings.scenarios = scenarios

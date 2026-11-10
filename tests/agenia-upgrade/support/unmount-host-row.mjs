@@ -26,7 +26,7 @@
  *     每一个都缺一件必需的事（写盘 / 派生 / 拒绝 / 回滚 / 幂等），别照着抄。
  */
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describePlacement } from './client-ui-placement.mjs'
@@ -514,15 +514,15 @@ export const FAKE_TOOL = Object.freeze({
  * replaceAll 会把自证那一步也切掉 ⇒ 刀切到别处去了（`UMH-KNIFE-VECTOR` 的教训）。
  *
  * @param {string} realText 工具正文
- * @param {{landing?:boolean, check?:boolean}} gates 要摘哪几道（缺省：只摘 `landing`）
+ * @param {{landing?:boolean, check?:boolean, sweep?:boolean}} gates 要摘哪几道（缺省：不摘）
  * @returns {{text:string, applied:string[], missing:string[], ok:boolean, why:string|null}}
  *   `ok:false`（锚点不见了）⇒ 调用方必须**红**，不许静默当"刀装上了"
  */
-export function gateBlindTool(realText, { landing = false, check = false } = {}) {
+export function gateBlindTool(realText, { landing = false, check = false, sweep = false } = {}) {
   let text = String(realText)
   const applied = []
   const missing = []
-  if (!landing && !check) missing.push('没说要摘哪道闸（landing / check 至少给一个）')
+  if (!landing && !check && !sweep) missing.push('没说要摘哪道闸（landing / check / sweep 至少给一个）')
   if (landing) {
     const anchor = "code: 'E_UNMOUNT_PATCH_STALE'"
     const cond = 'if (landing.insert !== want.insert || landing.preset_bodies !== want.preset_bodies) {'
@@ -549,7 +549,77 @@ export function gateBlindTool(realText, { landing = false, check = false } = {})
       applied.push('check')
     }
   }
+  if (sweep) {
+    const anchor = 'const swept = sweepTempResidue([abs.composition, abs.generator, abs.patch])'
+    const hits = text.split(anchor).length - 1
+    if (hits !== 1) {
+      missing.push(`sweep（锚点在工具里出现 ${hits} 次，要 1 次）`)
+    } else {
+      text = text.replace(anchor, 'const swept = { removed: [], kept: [], failed: [] } // 刀：扫残渣那一行被拿走')
+      applied.push('sweep')
+    }
+  }
   return { text, applied, missing, ok: missing.length === 0, why: missing.length === 0 ? null : `锚点不见了：${missing.join(' · ')}` }
+}
+
+/**
+ * 造一个"上一次被杀留下的"临时件的**名字**：`<目标>.tmp-<pid>-<随机串>`，`pid` 是一个**已经死了**的进程
+ * （起一个秒退的 node，拿它的 pid）。不写盘 —— 由调用方用 `extraCopyFiles` 摆进副本（这样"跑之前"的快照里就有它）。
+ *
+ * 为什么要有它：工具在判入口态**之前**就扫这三份目标旁边的残渣（只删 pid 已死的），所以一次 no-op /
+ * 拒绝之后**文件集合会少一份** —— 契约 §4.4 的"文件集合不动"必须带上这个例外，判据也得真判一次。
+ *
+ * @returns {{rel:string, name:string, pid:number, content:string}}  `rel` 是相对 `<copy>` 的路径（快照里用它）
+ */
+export function deadResidueName({ target = REL.patch } = {}) {
+  const quick = spawnSync(process.execPath, ['-e', ''], { encoding: 'utf8', timeout: 60000 })
+  const pid = Number.isInteger(quick.pid) && quick.pid > 0 ? quick.pid : 2147480000
+  const dir = path.dirname(String(target)).replace(/\\/g, '/')
+  const name = `${path.basename(String(target))}.tmp-${pid}-${randomBytes(6).toString('hex')}`
+  return { rel: `${dir}/${name}`, name, pid, content: 'half-written bytes from a killed run\n' }
+}
+
+// ── 刀：把真工具的**失败形状**改坏（不是另写一个假工具）──────────────────────────
+/**
+ * **刀 K13**：让两道签字失败时的 JSON 退回**旧形状** —— `failed_step: 'verify'` · `rolled_back: true` ·
+ * `row_landing: null`，其余一字不动。
+ *
+ * 为什么这三格要单独有一把刀：契约 §4.1 钉的是"失败了也要说清是哪一步、有没有回滚、判它用的落点是哪个数"。
+ * 只判"码对不对"的腿，在工具把这三个字段乱填时**照样绿** —— 一把专切这三个字段的刀才证明那几格在判。
+ *
+ * 改法：两道签字的 `emit` 参数块各自只出现一次 `row_landing: landing,` 与 `failed_step: 'patch',` ⇒ 以
+ * `code: 'E_UNMOUNT_PATCH_STALE'` / `code: 'E_UNMOUNT_PATCH_NOT_DERIVED'` 当锚，限制在**那一块**里替换
+ * （`row_landing: landing,` 在工具里一共三处：成功那一处不许动）。
+ *
+ * @returns {{text:string, applied:string[], missing:string[], ok:boolean, why:string|null}}  `ok:false` ⇒ 调用方必须红
+ */
+export function shapeLiarTool(realText) {
+  let text = String(realText)
+  const applied = []
+  const missing = []
+  for (const anchor of ["code: 'E_UNMOUNT_PATCH_STALE'", "code: 'E_UNMOUNT_PATCH_NOT_DERIVED'"]) {
+    const at = text.indexOf(anchor)
+    if (at < 0) {
+      missing.push(`找不到 ${anchor}`)
+      continue
+    }
+    const end = text.indexOf('}, EXIT.', at)
+    if (end < 0) {
+      missing.push(`${anchor} 之后找不到 emit 的收尾`)
+      continue
+    }
+    const before = text.slice(at, end)
+    let block = before
+      .replace('row_landing: landing,', 'row_landing: null,')
+      .replace("failed_step: 'patch',", "failed_step: 'verify', rolled_back: true,")
+    if (block === before) {
+      missing.push(`${anchor} 那一支里没改到字节`)
+      continue
+    }
+    text = text.slice(0, at) + block + text.slice(end)
+    applied.push(anchor.includes('NOT_DERIVED') ? 'not-derived' : 'stale')
+  }
+  return { text, applied, missing, ok: missing.length === 0, why: missing.length === 0 ? null : missing.join(' · ') }
 }
 
 // ── 半截补丁：把派生物砍掉尾巴，落点照样读得对（刀 K10 的输入）──────────────
@@ -835,6 +905,8 @@ export const CODE = {
   staleUnnamed: 'UMH-STALE-PATCH-UNNAMED',
   noopUnderived: 'UMH-NOOP-UNDERIVED',
   underivedUnnamed: 'UMH-UNDERIVED-UNNAMED',
+  patchFailureShape: 'UMH-PATCH-FAILURE-SHAPE',
+  residueUnswept: 'UMH-RESIDUE-NOT-SWEPT',
   changedNotZero: 'UMH-CHANGED-NOT-ZERO',
   noopTouchedBytes: 'UMH-NOOP-TOUCHED-BYTES',
   rollbackBytes: 'UMH-ROLLBACK-NOT-BYTE-IDENTICAL',
@@ -1051,6 +1123,31 @@ function noopGateProblems(r, { label, wantCode, wantWhat, noopCode, unnamedCode,
   if (r.json?.changed !== 0) {
     out.push(problem(CODE.refusalChanged, `${label}：changed=${JSON.stringify(r.json?.changed)}，这一跑一个字节都不该写`))
   }
+  // 失败也要有**形状**（契约 §4.1）：哪一步失败 · 有没有回滚 · 补丁读出来是什么。
+  // 🔴 只在**点了名的那一支**上判（`code === wantCode`）：`UMH-NOOP` 是成功，没有"失败形状"可判，
+  //    拿这三格去套 no-op 会把"这一刀翻到了 NOOP"误报成"刀切宽了"（K9b / K10 就是这么被抓出来的）。
+  if (code === wantCode) {
+    const shape = []
+    if (r.json?.failed_step !== 'patch') {
+      shape.push(`failed_step=${JSON.stringify(r.json?.failed_step)}（期望 "patch"）`)
+    }
+    if (r.json?.rolled_back !== false) {
+      shape.push(`rolled_back=${JSON.stringify(r.json?.rolled_back)}（期望 false —— 这一跑一个字节都没写，没有可回滚的东西）`)
+    }
+    const printed = r.json?.row_landing ?? null
+    const measured = r.before?.landing ?? null
+    if (printed === null || measured === null
+      || printed.insert !== measured.insert || printed.preset_bodies !== measured.preset_bodies) {
+      shape.push(`row_landing=${JSON.stringify(printed)}（期望 ${measured === null
+        ? '盘上那份补丁的落点 —— 夹具读不出来'
+        : JSON.stringify({ insert: measured.insert, preset_bodies: measured.preset_bodies })}）`)
+    }
+    if (shape.length > 0) {
+      out.push(problem(CODE.patchFailureShape, `${label}：这个失败的**形状**不对：${shape.join(' · ')} —— `
+        + '契约 §4.1 钉的是"失败了也要说清是哪一步（`failed_step: patch`）、没有可回滚的东西（`rolled_back: false`）、'
+        + '判它用的落点是盘上那份补丁读出来的那个数"'))
+    }
+  }
   if (!r.files_equal) out.push(problem(CODE.refusalWrote, `${label}：之后载体文件的字节变了：${JSON.stringify(r.changed_files)}`))
   if (!r.tree_equal) out.push(problem(CODE.refusalWrote, `${label}：之后文件集合变了（留了临时件 / 账本）：${JSON.stringify(r.changed_files)}`))
   const writes = Number(r.generator_writes ?? (r.generator_called ? 1 : 0))
@@ -1139,6 +1236,50 @@ export function runnableSetProblems(before, { label, source = SOURCE } = {}) {
       out.push(problem(CODE.fixture, `${label}：副本里的 \`${rel}\` 与产品树不是同一份字节（${got} ≠ ${want}）`
         + '—— 副本必须是逐字节复制，不许有人"顺手"改它'))
     }
+  }
+  return out
+}
+
+/**
+ * ⑫ 扫残渣：工具在判入口态**之前**会清掉自己上一次被杀留下的 `<目标>.tmp-<pid>-<随机串>`
+ * （只删 **pid 已死** 的那一份）。所以一次 no-op 之后**文件集合会少一份** —— 这不是"工具写了东西"，
+ * 而是它把自己上一跑的垃圾收了。
+ *
+ * 钉三件事：① 那一份**死 pid** 的残渣真的没了；② 除了它**没删别的**、也没**加**东西；
+ * ③ 产品那三份的字节不动，而且这一跑仍然是 `UMH-NOOP`（扫残渣不许把 no-op 变成失败）。
+ *
+ * @param {{residue:string}} opts `residue` = `seedDeadResidue()` 给的 `rel`
+ * @returns {object[]} 有问题就返回；空 = 这一格过
+ */
+export function residueSweepProblems(r, { residue, label }) {
+  const out = []
+  const before = r.before?.files_map ?? {}
+  const after = r.after?.files_map ?? {}
+  const removed = Object.keys(before).filter((rel) => !(rel in after))
+  const added = Object.keys(after).filter((rel) => !(rel in before))
+  if (!(residue in before)) {
+    out.push(problem(CODE.fixture, `${label}：夹具没把残渣摆进去（\`${residue}\` 不在跑之前的文件集合里）—— 这一格判不了`))
+  }
+  if (r.exit !== 0 || r.json?.code !== 'UMH-NOOP') {
+    out.push(problem(CODE.residueUnswept, `${label}：扫残渣不许把一次 no-op 变成失败 —— `
+      + `exit ${r.exit} / code=${JSON.stringify(r.json?.code)}（stderr 头：${String(r.stderr ?? '').slice(0, 200)}）`))
+  }
+  if (residue in after) {
+    out.push(problem(CODE.residueUnswept, `${label}：死 pid 的残渣还在（\`${residue}\`）—— 工具在判入口态之前扫它，`
+      + '扫不掉就永远在那儿（这一份是它自己上一跑被杀留下的）'))
+  }
+  const extraRemoved = removed.filter((rel) => rel !== residue)
+  if (extraRemoved.length > 0) {
+    out.push(problem(CODE.residueUnswept, `${label}：除了那一份残渣，还删了别的：${JSON.stringify(extraRemoved)}`))
+  }
+  if (added.length > 0) {
+    out.push(problem(CODE.refusalWrote, `${label}：这一跑往副本里加了东西：${JSON.stringify(added)}`))
+  }
+  if (r.json?.changed !== 0) {
+    out.push(problem(CODE.refusalChanged, `${label}：changed=${JSON.stringify(r.json?.changed)}，no-op 必须是 0`))
+  }
+  if (!r.files_equal) {
+    out.push(problem(CODE.refusalWrote, `${label}：产品那三份的字节变了（收残渣不许碰产品字节）`))
   }
   return out
 }
