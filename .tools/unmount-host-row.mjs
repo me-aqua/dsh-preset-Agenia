@@ -19,9 +19,15 @@
  * ## 入口态（只认两个规范态；其余一律拒绝）
  *
  *   M（挂载）= A 在 · B 有 · C 没有；U（撤下）= A 不在 · B 没有 · C 有。
- *   `--apply` 只接 M、目标 U；`--restore` 只接 U、目标 M；入口已经是目标态 ⇒ `UMH-NOOP`，
- *   但**落点要签字**：no-op 读盘上那份补丁，落点必须等于这一步的目标落点，否则 exit 1 +
- *   `E_UNMOUNT_PATCH_STALE`（"三处载体翻过了、补丁没跟着翻" —— 上一次跑到生成器那一步被打断）。
+ *   `--apply` 只接 M、目标 U；`--restore` 只接 U、目标 M。入口已经是目标态时，要**两道签字**
+ *   才敢报 `UMH-NOOP`：
+ *     ① **落点**：盘上补丁的落点必须等于这一步的目标落点，否则 exit 1 + `E_UNMOUNT_PATCH_STALE`
+ *        （"三处载体翻过了、补丁没跟着翻" —— 上一次跑到生成器那一步被打断）；
+ *     ② **派生**：落点对了，再让生成器自己 `--check` 一次（**只读**、不写一个字节）：盘上补丁必须与
+ *        "当前组合 + 名单"派生出来的那一份**逐字节相同**，不同 ⇒ exit 1 + `E_UNMOUNT_PATCH_NOT_DERIVED`
+ *        （落点是从文本里**读**出来的两个数，不是**派生**出来的字节：杀在生成器自己的写里会留下
+ *        "两行 `- id` 都在、尾巴没了"的半截补丁，落点照样读作 `{0,2}`）。
+ *   两个拒都是 `changed: 0`、一个字节都不写、不回滚（第二道只多跑一次只读的 `--check`）。
  *   其余六种组合 ⇒ **exit 2**、`changed: 0`、**一个字节都不写、生成器一次都不调用**，
  *   码点名是哪个载体不在位（`E_UNMOUNT_MARKER_MISSING` / `E_UNMOUNT_LIST_MISSING` /
  *   `E_UNMOUNT_ROW_DISABLED` / `E_UNMOUNT_ROW_NOT_DISABLED`）。
@@ -34,10 +40,12 @@
  *   ② 写组合、写生成器；
  *   ③ **就地**跑 `<repo>/.tools/make-bundle-patch.mjs`（不 import 它 —— 它加载即 `build()` +
  *      `writeFileSync(TARGET, …)`；只读写它的文本）；
- *   ④ 回读 `<repo>/presets/agenia/cordis.patch.yml`，自己数一遍落点，必须等于
+ *   ④ 回读补丁，自己数一遍落点，必须等于
  *      `--apply` 的 `{insert:0, preset_bodies:2}` / `--restore` 的 `{insert:1, preset_bodies:0}`；
- *      **no-op 那条路也数**：入口已经是目标态时，盘上补丁的落点必须正是这一步的目标落点，
- *      否则 exit 1 + `E_UNMOUNT_PATCH_STALE`（不写、不调生成器、不回滚 —— 这一跑什么都没碰）。
+ *      **no-op 那条路也数，而且数两遍**：先落点（不符 ⇒ exit 1 + `E_UNMOUNT_PATCH_STALE`），
+ *      再跑一次 `<repo>/.tools/make-bundle-patch.mjs --check` 对账"补丁 = 派生物"
+ *      （不符 ⇒ exit 1 + `E_UNMOUNT_PATCH_NOT_DERIVED`）。两条都不写、不回滚；这一跑只多一次
+ *      只读子进程。
  *   ⑤ 任一步失败 ⇒ 组合、生成器、补丁三份文件逐字节回到跑之前（补丁本来是派生物，回滚也要一起回，
  *      否则恢复后的载体与被污染的补丁对不上），exit 1 + `E_UNMOUNT_STEP_FAILED`。
  *
@@ -52,8 +60,18 @@
  *   的 `copyFixture()`）—— 少这一份，副本里的工具会**加载即失败**（`ERR_MODULE_NOT_FOUND`）。
  *
  * ⚠️ 这几份文件的写**不是一次事务**：两次 rename 之间被杀仍会留下"两个一致、一个不一致"。
- *    但两种半截都不再静默：载体不一致 ⇒ 入口态被判出来（exit 2 + 点名的码）；
- *    载体一致而补丁没翻 ⇒ `E_UNMOUNT_PATCH_STALE`（exit 1）。
+ *    **三种半截各有具名出口，没有一个会被记成 `UMH-NOOP` exit 0**：
+ *      · 载体不一致（只写完一份）          ⇒ 入口态判出来：exit 2 + 点名的载体码；
+ *      · 载体一致、补丁落点不对（旧补丁）  ⇒ exit 1 · `E_UNMOUNT_PATCH_STALE`；
+ *      · 载体一致、落点对但补丁是半截 / 被换过的字节 ⇒ exit 1 · `E_UNMOUNT_PATCH_NOT_DERIVED`
+ *        （只有生成器自己的 `--check` 看得见这一种：落点那两个数是从文本里读出来的，
+ *        截断落在行边界上时它照样读作 `{0,2}`）。
+ *    ⚠️ 生成器写补丁仍是它自己的 `writeFileSync`（不是原子的，本工具**不**替它写）：
+ *    所以本工具保证的是"半截补丁不会被读成 no-op"，**不是**"半截补丁不会出现"。
+ *    另一种残渣：被杀在 `writeFileAtomic` 的 write 与 rename 之间，目标文件还是旧字节
+ *    （rename 没发生），只多一个 `<目标>.tmp-<pid>-<rand>` 临时件。本工具读完两份文本、
+ *    判入口态之前先扫掉这三份目标的这种残渣：只删 **pid 已死** 的；pid 还活着的那一份可能是
+ *    并发的一跑，不碰。所以 no-op / 拒绝 / 回滚的**产品字节**不变，清掉的只是本工具自己的残渣。
  *
  * ## 根在哪
  *
@@ -65,9 +83,13 @@
  *   node .tools/unmount-host-row.mjs --repo <root> --id <row id> --apply
  *   node .tools/unmount-host-row.mjs --repo <root> --id <row id> --restore
  *
- *   0 成功（含 no-op）· 1 失败：`E_UNMOUNT_STEP_FAILED`（已逐字节回滚）或 `E_UNMOUNT_PATCH_STALE`
- *   （no-op 落点不符 —— `rolled_back: false`，这一跑一个字节都没写）· 2 拒绝（入口态不是规范态）
- *   · 3 用法 / 环境
+ *   0 成功（含 no-op）· 1 失败：`E_UNMOUNT_STEP_FAILED`（已逐字节回滚）· `E_UNMOUNT_PATCH_STALE`
+ *   （no-op 落点不符）· `E_UNMOUNT_PATCH_NOT_DERIVED`（no-op 落点对、但补丁不是派生物：半截 / 被换过）。
+ *   后两个都是 `rolled_back: false`、这一跑一个字节都没写（第二个只多一次只读的 `--check`）
+ *   · 2 拒绝（入口态不是规范态）· 3 用法 / 环境
+ *
+ *   这条命令只改**盘上的三处载体与补丁**：撤 / 恢复之后面板在不在**不在这里判**——那一格是 R5 的
+ *   实机验证（撤完要重启宿主客户端、恢复后再重启一次），本命令不读 GUI、不重启任何东西。
  *
  * stdout 恰好一行 JSON（`schema` / `action` / `id` / `repo` / `code` / `changed` /
  * `row_landing` / `carrier` / `failed_step` / `rolled_back`）；人话走 stderr。
@@ -76,7 +98,7 @@
  * `--restore` 把 id **追加在表尾**；今天表里只有一条，所以恢复后的字节与 `--apply` 之前逐字节相同。
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 import { writeFileAtomic } from '../presets/agenia/lib/atomic.mjs'
 
@@ -163,6 +185,91 @@ function parseArgv(argv) {
 function atomicWrite(file, data) {
   const result = writeFileAtomic(file, data)
   if (result.ok !== true) throw new Error(`${result.code ?? 'E_TXN_IO'}：${result.message ?? '原子写失败'}`)
+}
+
+/**
+ * 清掉**上一次被杀时自己留下的临时件**：`writeFileAtomic` 的临时件名是
+ * `<目标>.tmp-<pid>-<随机串>`（同目录，这样 `rename` 才是原子的）。
+ *
+ * 正常路径与回滚路径都不留残渣（失败分支自己 `unlink`）；只有被杀在 write 与 rename 之间才会
+ * 剩一个。那一次 `rename` 没发生 ⇒ 目标文件还是旧字节，盘上多的只是一份垃圾。
+ *
+ * 只认这三份目标的同目录同名前缀，只删 **pid 已经不在** 的那一份：pid 还活着 ⇒ 可能是另一个
+ * 正在写这一份文件的进程，删它等于拆并发保护（本工具没有锁，更不能顺手破坏别人的写）。
+ *
+ * @param {string[]} targets 三份目标的绝对路径
+ * @returns {{removed:string[], kept:string[], failed:string[]}}
+ */
+function sweepTempResidue(targets) {
+  const removed = []
+  const kept = []
+  const failed = []
+  for (const target of targets) {
+    const dir = path.dirname(target)
+    const base = path.basename(target)
+    let names = []
+    try {
+      names = readdirSync(dir)
+    } catch {
+      continue // 目录不在 ⇒ 没有可扫的
+    }
+    for (const name of names) {
+      if (!name.startsWith(`${base}.tmp-`)) continue
+      const hit = /^(\d+)-[0-9A-Za-z]+$/.exec(name.slice(base.length + '.tmp-'.length))
+      if (hit === null) continue // 不是这个 writer 的形状 ⇒ 不碰
+      const pid = Number(hit[1])
+      if (!Number.isInteger(pid) || pid <= 0) continue
+      let alive = true
+      try {
+        process.kill(pid, 0)
+      } catch (err) {
+        alive = err?.code === 'EPERM' // EPERM = 进程在、只是不归我管 ⇒ 算活着
+      }
+      if (alive) {
+        kept.push(name)
+        continue
+      }
+      try {
+        unlinkSync(path.join(dir, name))
+        removed.push(name)
+      } catch (err) {
+        failed.push(`${name}（${err?.code ?? 'UNKNOWN'}）`)
+      }
+    }
+  }
+  return { removed, kept, failed }
+}
+
+// ── 派生：生成器自己的 `--check`（只读）──────────────────────────────────
+/**
+ * 盘上补丁是不是**当前组合 + 名单派生出来的那一份**。
+ *
+ * 跑的是生成器自己的 `--check`：它 `build()` 之后只把内存里那份文本与 `readFileSync(TARGET)`
+ * 逐字节比（`--check` 那条路**不写文件**），所以这是一次只读调用 —— 与"写那条路"的生成器
+ * 是同一个文件、同一条判据，不是本工具另造一个解析器。
+ *
+ * @param {{generatorAbs:string, repo:string}} spec
+ * @returns {{ok:boolean, exit:number|null, detail:string}}
+ */
+function derivationCheck({ generatorAbs, repo }) {
+  const check = spawnSync(process.execPath, [generatorAbs, '--check'], {
+    cwd: repo,
+    encoding: 'utf8',
+    timeout: 180000,
+    maxBuffer: 64 * 1024 * 1024,
+  })
+  if (check.error !== undefined) {
+    return { ok: false, exit: null, detail: `起不来：${head(check.error?.message ?? check.error)}` }
+  }
+  if (check.status !== 0) {
+    return {
+      ok: false,
+      exit: check.status,
+      detail: head(check.stdout) || head(check.stderr)
+        || `exit ${check.status}${check.signal ? ` signal=${check.signal}` : ''}`,
+    }
+  }
+  return { ok: true, exit: 0, detail: '' }
 }
 
 // ── 文本：行块 / 三处载体 ──────────────────────────────────────────────────
@@ -405,6 +512,16 @@ function main() {
     return usage('E_UNMOUNT_LIST_UNREADABLE', `生成器里读不出 \`HOST_LEVEL_IDS = … [ … ]\` 这一个字面量`, out)
   }
 
+  // 判入口态之前先扫掉**自己上一次被杀**留下的临时件（只删这三份目标的、只删 pid 已死的）。
+  // 它是残渣，不是证据；留着会让"文件集合"比产品应有的多一份。清不掉也不拦这一跑（只出声）。
+  const swept = sweepTempResidue([abs.composition, abs.generator, abs.patch])
+  if (swept.removed.length > 0) {
+    process.stderr.write(`清掉上一次被杀留下的临时件 ${swept.removed.length} 个：${swept.removed.join(' · ')}\n`)
+  }
+  if (swept.failed.length > 0) {
+    process.stderr.write(`临时件没清掉（不影响这一跑的判断）：${swept.failed.join(' · ')}\n`)
+  }
+
   const verdict = classify(carrier)
   if (verdict.state === undefined) {
     return emit({
@@ -416,10 +533,14 @@ function main() {
       + '没有写任何字节，也没有调用生成器。')
   }
 
-  // 入口已经是这一步的目标态 ⇒ no-op。**不写、不跑生成器**；落点读盘上那份补丁（第二个读数）。
-  // 但"已经在目标态"这句话要由落点签字：补丁的落点必须就是这一步的目标落点，否则那是
-  // 「载体翻过了、补丁没跟着翻」（上一次跑到 ③ 被打断 / 并发的两个 --apply）—— 静默放行会
-  // exit 0 报 UMH-NOOP 而树是半截的。这里拒（exit 1 + 码），一个字节都没写，所以不回滚。
+  // 入口已经是这一步的目标态 ⇒ 可能是 no-op。**不写、不跑写那条路的生成器**；先读盘上那份补丁。
+  // 但"已经在目标态"这句话要**两道签字**：
+  //   ① 落点：补丁的落点必须就是这一步的目标落点，否则那是「载体翻过了、补丁没跟着翻」
+  //      （上一次跑到 ③ 被打断 / 并发的两个 --apply）；
+  //   ② 派生：落点对**不等于**补丁是对的 —— 落点是从文本里读出来的两个数，杀在生成器自己的
+  //      writeFileSync 里会留下"两行 `- id` 都在、尾巴没了"的半截补丁，落点照样读作 {0,2}。
+  //      所以再让生成器自己 `--check` 一次（只读）：盘上那份必须与当前组合 + 名单派生的逐字节相同。
+  // 两个拒都是 exit 1、一个字节都没写（第二道只多一次只读子进程），所以都不回滚。
   const target = args.mode === 'apply' ? 'U' : 'M'
   const want = args.mode === 'apply'
     ? { insert: 0, preset_bodies: 2 }
@@ -441,8 +562,23 @@ function main() {
         + '（上一次跑到生成器那一步被打断，或补丁被换过）。没有写任何字节，也没有调用生成器：'
         + `重派生一次（node .tools/make-bundle-patch.mjs），或 --restore 退回挂载态再重来。`)
     }
+    const derived = derivationCheck({ generatorAbs: abs.generator, repo })
+    if (!derived.ok) {
+      return emit({
+        ...out,
+        code: 'E_UNMOUNT_PATCH_NOT_DERIVED',
+        changed: 0,
+        row_landing: landing,
+        failed_step: 'patch',
+      }, EXIT.FAILED, `E_UNMOUNT_PATCH_NOT_DERIVED 入口已经是 --${args.mode} 的目标态、盘上补丁的落点也读作 `
+        + `${JSON.stringify(landing)}，但那份补丁**不是**"当前组合 + 名单"派生出来的`
+        + `（\`--check\` exit ${derived.exit}：${derived.detail || '无输出'}）—— 它是半截 / 被换过的字节`
+        + '（杀在生成器自己的写里就会这样）。没有写任何字节，也没有回滚；只读地跑了一次 `--check`。'
+        + `修法：重派生（node .tools/make-bundle-patch.mjs），然后再跑这次 --${args.mode}。`)
+    }
     return emit({ ...out, code: 'UMH-NOOP', changed: 0, row_landing: landing }, EXIT.OK,
-      `UMH-NOOP 入口已经是 --${args.mode} 的目标态；没有写任何字节（落点 ${JSON.stringify(landing)}）。`)
+      `UMH-NOOP 入口已经是 --${args.mode} 的目标态；没有写任何字节（落点 ${JSON.stringify(landing)}`
+      + ' · 生成器 `--check` exit 0）。')
   }
 
   // ① 三处改动先在内存里算好：任何一处算不出来 ⇒ 还没写就失败。
