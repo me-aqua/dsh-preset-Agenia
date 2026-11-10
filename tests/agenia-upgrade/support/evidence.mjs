@@ -413,6 +413,8 @@ function newRecord(id) {
     problems: [],
     /**
      * **第三态 `HOLD`（裁定 v1.14）**：前置未成立、**且这一档本来就不适用** ⇒ 记在这儿。
+     * `{code, why, kind, at}` —— `kind` 由 `caseHold` 的第四参给（`case` 缺省 / `environment`），
+     * 结算句组的 `HOLD <id> <code> env|case` 只**读**它（`SHN-01`）。
      * 🔴 `HOLD` **绝不计绿**：结算里与 `red`/`green` 并列单独计数、逐条写明原因，分母照旧计它。
      * ⚠️ 判据分界：**"前置本不该失败" ⇒ 红**（进 `problems`）；"这一档不适用" ⇒ `HOLD`。
      */
@@ -444,8 +446,9 @@ export function problem(code, message, detail) {
  *   · 实参**个数**必须是 3 —— 少了就点名 `CASE-HOLD-ARITY`；
  *   · 第 1 个必须是 `runCase` 的记录（有数组型 `holds`）—— 否则 `CASE-HOLD-REC`；
  *   · 第 2 / 3 个必须是字符串（`code` 还要求非空）—— 否则 `CASE-HOLD-CODE` / `CASE-HOLD-WHY`。
- * ⚠️ **多于 3 个实参不判**：多传不会让 `rec` / `code` / `why` 错位（这三类笔误都是"少传/错位"），
- *   它只是死文本；把闸开到"多一个也红"就是把"判据写脏了"记成"这一格判不了"，而闸一吵人就会绕过它。
+ * ⚠️ **多于 3 个实参不判**：第 4 个是文档化的 `opts`（`kind`）；多传不会让 `rec` / `code` / `why` 错位
+ *   （这三类笔误都是"少传/错位"），它只是**不参与形状判定**的附加信息；
+ *   把闸开到"多一个也红"就是把"判据写脏了"记成"这一格判不了"，而闸一吵人就会绕过它。
  *   边界写在这里，读的人不必回推。
  *
  * @param {{argc:number, rec:any, code:any, why:any}} input
@@ -510,14 +513,21 @@ export class CaseHoldShapeError extends Error {
  *    （`CASE-HOLD-ARITY` 等，见 `caseHoldCallProblem`），**不许**静默记成一条 HOLD、
  *    也不许让它长成 `TypeError` 形状的产品红。`HCA-01` 守这一条。
  *
+ * `opts.kind`（第四参，可选；`SHN-01` 的结算行读它）：
+ *   · `'case'`（缺省）—— 被测对象 / 判据自己的问题；
+ *   · `'environment'` —— **环境给不给**的问题（副本没有数据根、没有来历、宿主读数不在、见证根不在盘上……）。
+ * 白名单之外的值按 `'case'` 记（多写的值不许把 kind 变成第三档）。
+ *
  * @param {object} rec  `runCase` 给的记录（`rec.holds` 就是出口）
  * @param {string} code 短码（稳定、可 grep）
  * @param {string} why  为什么这一档不适用（人话）
+ * @param {{kind?: 'case'|'environment'}} [opts]
  */
-export function caseHold(rec, code, why) {
+export function caseHold(rec, code, why, opts = {}) {
   const shape = caseHoldCallProblem({ argc: arguments.length, rec, code, why })
   if (shape !== null) throw new CaseHoldShapeError(shape, callerFrameOfCaseHold())
-  const entry = { code, why, at: new Date().toISOString() }
+  const kind = opts !== null && typeof opts === 'object' && opts.kind === 'environment' ? 'environment' : 'case'
+  const entry = { code, why, kind, at: new Date().toISOString() }
   rec.holds.push(entry)
   return entry
 }

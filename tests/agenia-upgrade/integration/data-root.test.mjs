@@ -318,7 +318,7 @@ function copyLivePresetForKnife(to) {
  * 评审副本里 `.runtime` 是数据段、永远不在提交里 ⇒ 任何评审副本都会这样红。
  *
  * @param {{files:Array<{rel:string}>, pinned:string[], dataRootOnDisk:boolean, dataRoot?:string}} input
- * @returns {{label:string, ok:boolean|null, hold:null|{code:string, why:string}, code:string|null, detail:string, hits:string[]}}
+ * @returns {{label:string, ok:boolean|null, hold:null|{code:string, why:string, kind:'environment'}, code:string|null, detail:string, hits:string[]}}
  */
 export function dataSegmentExclusionVerdict({ files, pinned, dataRootOnDisk, dataRoot = null } = {}) {
   const hits = (Array.isArray(files) ? files : [])
@@ -338,6 +338,8 @@ export function dataSegmentExclusionVerdict({ files, pinned, dataRootOnDisk, dat
     return {
       label, ok: null, hold: {
         code: 'DR02-EXCLUSION-NO-DATA-ROOT',
+        /** `kind` 由**产出判词的那一处**声明（结算句组的 `HOLD <id> <code> env` 读它；`SHN-01`）。 */
+        kind: 'environment',
         why: `这棵树里**没有顶层数据段**（盘上 \`${rootText}\` 不存在）⇒ 命中数 0 分不清「排除生效了」与「没有东西可排」，`
           + '这一格判不了。**不是绿**，也不是红。（评审副本里 `.runtime` 是数据段、永远不在提交里 ⇒ 这是常态；'
           + `要给样本就在活树上跑，或把 ${ENV.LIVE_BRAIN_ROOT} 指向 <活体预设>/.runtime 那些命令的根）`,
@@ -403,7 +405,8 @@ describe('integration · data-root (DR)', () => {
         caseHold(rec, 'DR01-BRAIN-WITNESS-ABSENT',
           `真脑根（写保护见证）不在盘上：${realRoot}（来源 ${witness.source}）⇒ 前后都是"不存在"，`
           + '路径集合"没变"是**空对空**，这一格判不了。**不是绿。** 要量活体那个根，把 '
-          + `${ENV.LIVE_BRAIN_ROOT} 指向 <活体预设>/.runtime 再跑；不要拿 AGENIA_REPO_ROOT 把整棵树钉回活树（那会红 MCR-03）`)
+          + `${ENV.LIVE_BRAIN_ROOT} 指向 <活体预设>/.runtime 再跑；不要拿 AGENIA_REPO_ROOT 把整棵树钉回活树（那会红 MCR-03）`,
+          { kind: 'environment' })
       }
 
       // ── ① 清单本身（分母）：必须存在、必须与冻结 op 表一致 ──────────────
@@ -1634,7 +1637,7 @@ describe('integration · data-root (DR)', () => {
       rec.readings.exclusion_verdict = exclusionVerdict
       if (exclusionVerdict.hold !== null) {
         rulerVerdicts.push({ label: exclusionVerdict.label, kind: 'hold', code: exclusionVerdict.hold.code })
-        caseHold(rec, exclusionVerdict.hold.code, exclusionVerdict.hold.why)
+        caseHold(rec, exclusionVerdict.hold.code, exclusionVerdict.hold.why, { kind: exclusionVerdict.hold.kind })
       } else cell(exclusionVerdict.label, exclusionVerdict.ok === true, exclusionVerdict.code, exclusionVerdict.detail)
       const presentRels = new Set((before.livePreset.files ?? []).map((f) => f.rel))
       cell(
@@ -2435,7 +2438,8 @@ test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的�
       ...realDr02,
       result: 'HOLD',
       problems: [],
-      holds: [{ code: envHoldCode, why: envVerdict?.hold?.why ?? '（环境性 HOLD）', at: new Date().toISOString() }],
+      // `kind` 从**产出这个 HOLD 的那一处**（`dataSegmentExclusionVerdict`）读回来 —— 不在这里另判一次。
+      holds: [{ code: envHoldCode, why: envVerdict?.hold?.why ?? '（环境性 HOLD）', kind: envVerdict?.hold?.kind ?? 'case', at: new Date().toISOString() }],
     }
     const redRecord = { ...realDr02, result: 'RED', problems: [{ code: 'DR02-EXCLUSION-NOT-APPLIED', message: '（刀：假装数据段进了哈希）', detail: null }], holds: [] }
     const variantBase = path.join(runRoot(), 'stm01', 'feed')
@@ -2507,7 +2511,8 @@ test('STM-01 结算行读 DR-02 的读数（同一来源）：改坏 DR-02 的�
     // 环境性 HOLD / DR-02 RED 的输入下，A–E 没有对象可判 —— 直接返回（这一格的结论已经落在 holds / problems 里）。
     if (feed.kind !== 'GREEN') {
       if (feed.kind === 'HOLD') {
-        caseHold(rec, feed.code, feed.why)
+        // `feed.hold_kind` 由 `dr02FeedVerdict()` 给（DR-02 挂起 / 读数缺失 = 环境没给到读数，不是被测对象坏了）。
+        caseHold(rec, feed.code, feed.why, { kind: feed.hold_kind })
       } else {
         push(feed.code, feed.why)
       }

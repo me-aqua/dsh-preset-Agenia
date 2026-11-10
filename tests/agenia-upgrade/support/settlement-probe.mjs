@@ -260,7 +260,8 @@ export function coverageLineOf(markdown) {
  * 纯函数：真跑与刀喂同一份（`cand-20261020-0064`：判断先抽成纯函数，再用假输入量它翻不翻面）。
  *
  * @param {object|null} record  `_evidence/<run>/DR-02/result.json` 的内容
- * @returns {{kind:'GREEN'|'HOLD'|'RED', code:string|null, why:string, dr02_codes:string[]}}
+ * @returns {{kind:'GREEN'|'HOLD'|'RED', code:string|null, why:string, dr02_codes:string[], hold_kind?:'environment'|'case'}}
+ *   `hold_kind` 只在那两态是 HOLD 时给（结算句组的 `HOLD … env|case` 读它，见 `SHN-01`）。
  */
 export function dr02FeedVerdict(record) {
   const dr02Codes = (Array.isArray(record?.holds) ? record.holds : [])
@@ -274,6 +275,8 @@ export function dr02FeedVerdict(record) {
     return {
       kind: 'HOLD',
       code: 'STM-SETUP-DR02-HOLD',
+      /** 结算句组读的 kind：DR-02 自己挂起了 ⇒ 这一格是**环境**没给到读数，不是被测对象坏了（`SHN-01`）。 */
+      hold_kind: 'environment',
       why: `本跑的 DR-02 是 **HOLD**（成因码 ${JSON.stringify(dr02Codes)}）—— 它是"判不了"，不是"坏了"：`
         + '这一格要的是 DR-02 的**真读数**，而 DR-02 自己没判出来 ⇒ 这里没有对象可判。'
         + '**不记红**（红是"被测对象错了"）；要看成因就读 DR-02 那一格。',
@@ -292,6 +295,7 @@ export function dr02FeedVerdict(record) {
   return {
     kind: 'HOLD',
     code: 'STM-SETUP-DR02-NO-READING',
+    hold_kind: 'environment',
     why: `读不到本跑 DR-02 的判词（result=${JSON.stringify(result)}）—— 没有"DR-02 的读数"这个对象，这一格判不了`,
     dr02_codes: dr02Codes,
   }

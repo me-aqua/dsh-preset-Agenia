@@ -31,8 +31,13 @@
  *   [尺子] 覆盖：E:\Harness\tests\agenia-upgrade 那棵树（开跑 / 收口各量一次它自己的指纹）—— **不覆盖**"执行的是哪一份入口"
  *   [尺子·入口] run-all.mjs <绝对路径> · <字节> B · sha256 <HEX> · self-check.mjs <绝对路径> · <字节> B · sha256 <HEX>
  *   F57-SETTLE 分母 66 · 盘上发现 66 · 跑到 20 文件/66 条 · RED 0 / GREEN 64 / HOLD 2 · 登记=盘上 ✓ · node --test exit 0（tests 66 · fail 0） · settle exit 0
+ *   [锚] 提交 <40hex> · 来源=现役活树的 HEAD（起跑时量一次 · git rev-parse HEAD）
+ *   HOLD <id> <cause-code> env|case · RED <id> <cause-code>（每条非绿一行）
+ *   [结算·成因] 非绿 2 例（2 条成因）= HOLD 2 / RED 0 · 成因 <code>=<条数> … · 环境性 <n> 条
  *   [尺子] 测试树 <指纹> · <份数> 份 · 开跑 <时刻> 与收口一致 ⇒ 这一跑跑的**就是** `sources` 里那版
  *     （判不了 / 变过时是另外两句；变过那一支是两行：判定 + `差异 …`）
+ * 🔴 结算那一组（`F57-SETTLE` / `[锚]` / 名字 / `[结算·成因]`）是**同一句组**：锚点紧跟结算行、
+ *    名字在锚点之后、直方图收尾（`support/settle-reading.mjs` 一处产出；`RCA-01` / `SHN-01` 判它）。
  *
  * 🔴 这几行回答的是**四件不同的事**，别混着读：
  *   · `[平台]` = 这一跑跑在**哪个平台版本**上（`resources/app.asar` 里的版本号，`F-106`）——
@@ -44,7 +49,7 @@
  *     `support/self-check.mjs`）。"哪一份在跑"只有这一行说了算；入口不在 `[尺子]` 那棵树里时，
  *     紧跟一行 🔴 明写这一跑的 `[尺子]` 读数不是关于跑着的这份代码的。
  *
- * `judgement.txt` 里逐行是：`[平台]` → `F57-TARGET` → `[尺子] 覆盖` → `[尺子·入口]` → `[尺子] 测试树 …`（同树判定，1–2 行）→ `F57-SETTLE` → 判词 → `exit=`。
+ * `judgement.txt` 里逐行是：`[平台]` → `F57-TARGET` → `[尺子] 覆盖` → `[尺子·入口]` → `[尺子] 测试树 …`（同树判定，1–2 行）→ `F57-SETTLE` → `[锚] 提交 …` → 逐条非绿 → `[结算·成因]` → 判词 → `exit=`。
  * 🔴 **顺序不是随手排的**（gate-4 2026-11-08 `MF-2`）：`[尺子] 覆盖` 那一行自己写着「那一格由**下一行**
  *   `[尺子·入口]` 回答」—— 同树判定必须插在 **`[尺子·入口]` 之后**，否则那一句在这个载体上就成了假话
  *   （控制台上它仍是下一行 ⇒ 一句话两个载体、一个真一个假，正是这一批要修的病）。改顺序前先改那句话。
@@ -70,6 +75,8 @@ import { targetReport } from './support/target.mjs'
 import { platformReading, platformLine } from './support/platform.mjs'
 import { DISCOVERY } from './support/registry.mjs'
 import { PATHS } from './support/env.mjs'
+import { readRunAnchor } from './support/run-anchor.mjs'
+import { nonGreenOf, settleGroupLines } from './support/settle-reading.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ARGV = process.argv.slice(2)
@@ -98,6 +105,16 @@ if (!existsSync(REPO)) {
   console.error(`F57-USAGE: --repo 指到的地方不存在：${REPO}`)
   process.exit(3)
 }
+
+/**
+ * 🔴 **这一跑属于哪个提交** —— **起跑那一刻量一次**（`RCA-01`；契约 §7.1）。
+ *
+ * 为什么在自检之前、在建运行根之前：判据钉的是"**起跑**那一刻的 `HEAD`"。
+ * 量晚了（例如收口时）就会把"收口时的提交"记成"这一跑的提交"，而行看上去仍然有提交号。
+ * ⇒ 这里只调一次 `readRunAnchor()`，之后整条路径**只渲染这份读数**（`settleGroupLines` 的渲染是纯函数，
+ *   拿不到 `repo` ⇒ 重测不了）。读数连同时刻落盘到 `<运行根>/run-anchor.json`。
+ */
+const ANCHOR = readRunAnchor({ repo: REPO })
 
 // ── 🔴 这一跑执行的是**哪一份入口代码** ────────────────────────────────────
 /**
@@ -215,6 +232,8 @@ const ENV = {
   AGENIA_ORACLE_SHA256: '6CD2F197737FC94A45E487D0BB57869461DD6F392D45F6429B576E75D973EDA8',
 }
 mkdirSync(path.join(RUN_ROOT, 'dsh-home'), { recursive: true })
+// 起跑那一刻的锚点读数（**这一跑属于哪个提交**）—— 落盘一次，`judgement.txt` 的 `[锚]` 行只渲染它。
+writeJsonFile(path.join(RUN_ROOT, 'run-anchor.json'), ANCHOR)
 // 入口身份与自检读数进运行根（与 `<上一级>/<RUN_ID>.*` 那两份同一次测量、同一份内容）
 writeJsonFile(path.join(RUN_ROOT, 'self-check.json'), SELF_CHECK_READING)
 writeFileSync(path.join(RUN_ROOT, 'entry-identity.txt'), IDENTITY_TEXT, 'utf8')
@@ -338,16 +357,25 @@ const verdict = entryVerdict({
   targetProblems: target.problems.map((p) => p.message),
 })
 
-const line = [
-  `F57-SETTLE 分母 ${denominator}`,
-  `· 盘上发现 ${discovered === null ? '(缺失)' : discovered}`,
-  `· 跑到 ${ranFiles} 文件/${settled} 条${verdict.fullScope ? '' : `（scope ${scopeCases ?? '?'}/${denominator}）`}`,
-  `· RED ${s.settled.red} / GREEN ${s.settled.green} / HOLD ${hold}`,
-  `· 登记=盘上 ${consistent ? '✓' : `✗（${diffs.length} 处）`}`,
-  `· node --test exit ${testRun.code}（tests ${nodeTests ?? '?'} · fail ${nodeFail ?? '?'}）`,
-  `· settle exit ${settleRun.code}`,
-].join(' ')
-console.log(line)
+/**
+ * 🔴 **结算句组**（`RCA-01` + `SHN-01`；契约 §7）：结算行 → `[锚] 提交 …` → 逐条非绿 → 成因直方图。
+ *    · `line` 是组里第一行（结算行，逐字是原来那一句）；
+ *    · `[锚]` 行**只渲染起跑那一刻落盘的那份读数**（`ANCHOR`）—— 这里没有 `repo`，重测不了；
+ *    · 非绿名单从 `settlement.cases[]` 派生，而那一份是逐份 `_evidence/<ID>/result.json` 读回来的
+ *      ⇒ 计数与名字同源（`SHN-01` 的判据再独立对一遍盘）。
+ * 控制台与 `judgement.txt` 用**同一个数组**（两处消费，不许两边各写一句）。
+ */
+const settleGroup = settleGroupLines({
+  settle: {
+    denominator, discovered, ranFiles, settled, fullScope: verdict.fullScope, scopeCases,
+    red: s.settled.red, green: s.settled.green, hold, consistent,
+    diffCount: diffs.length, nodeExit: testRun.code, nodeTests, nodeFail, settleExit: settleRun.code,
+  },
+  anchor: ANCHOR,
+  nonGreen: nonGreenOf(s),
+})
+const line = settleGroup[0]
+for (const l of settleGroup) console.log(l)
 /**
  * 判词（`F57-SCOPE` / `F57-FAIL …` / `F57-OK`）由 `judgementLines()` 一处产生，并且**默认落盘**
  * 到运行根的 `judgement.txt` —— 不靠 `--json` 才留得下。
@@ -359,7 +387,7 @@ for (const l of judgement) console.log(l)
 // 🔴 落盘顺序：同树判定**紧跟 `[尺子·入口]`**（不是紧跟 `[尺子] 覆盖`）——
 //    `[尺子] 覆盖` 那一行自己写着"那一格由**下一行** `[尺子·入口]` 回答"，插在它后面会让那句话在文件里变成假话
 //    （gate-4 2026-11-08 `MF-2`；控制台顺序不变，因为控制台上它本来就印在 settle 之后）。
-writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[PLATFORM_LINE, target.line, RULER_SCOPE_LINE, IDENTITY_LINE, ...RULER_TREE_LINES, line, ...judgement, `exit=${verdict.exitCode}`].join('\n')}\n`, 'utf8')
+writeFileSync(path.join(RUN_ROOT, 'judgement.txt'), `${[PLATFORM_LINE, target.line, RULER_SCOPE_LINE, IDENTITY_LINE, ...RULER_TREE_LINES, ...settleGroup, ...judgement, `exit=${verdict.exitCode}`].join('\n')}\n`, 'utf8')
 
 if (JSON_OUT !== null) {
   writeFileSync(path.resolve(JSON_OUT), `${JSON.stringify({
@@ -387,6 +415,9 @@ if (JSON_OUT !== null) {
     },
     exit_code: verdict.exitCode, ok: verdict.ok, full_scope: verdict.fullScope,
     problems: verdict.failures, line, judgement,
+    /** 🔴 这一跑属于哪个提交（起跑那一刻量一次）+ 结算句组的逐行文字（`[锚]` / 名字 / 直方图）。 */
+    anchor: ANCHOR,
+    settle_group: settleGroup,
   }, null, 2)}\n`, 'utf8')
 }
 
