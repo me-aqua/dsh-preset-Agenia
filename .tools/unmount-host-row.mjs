@@ -19,7 +19,9 @@
  * ## 入口态（只认两个规范态；其余一律拒绝）
  *
  *   M（挂载）= A 在 · B 有 · C 没有；U（撤下）= A 不在 · B 没有 · C 有。
- *   `--apply` 只接 M、目标 U；`--restore` 只接 U、目标 M；入口已经是目标态 ⇒ `UMH-NOOP`。
+ *   `--apply` 只接 M、目标 U；`--restore` 只接 U、目标 M；入口已经是目标态 ⇒ `UMH-NOOP`，
+ *   但**落点要签字**：no-op 读盘上那份补丁，落点必须等于这一步的目标落点，否则 exit 1 +
+ *   `E_UNMOUNT_PATCH_STALE`（"三处载体翻过了、补丁没跟着翻" —— 上一次跑到生成器那一步被打断）。
  *   其余六种组合 ⇒ **exit 2**、`changed: 0`、**一个字节都不写、生成器一次都不调用**，
  *   码点名是哪个载体不在位（`E_UNMOUNT_MARKER_MISSING` / `E_UNMOUNT_LIST_MISSING` /
  *   `E_UNMOUNT_ROW_DISABLED` / `E_UNMOUNT_ROW_NOT_DISABLED`）。
@@ -34,8 +36,25 @@
  *      `writeFileSync(TARGET, …)`；只读写它的文本）；
  *   ④ 回读 `<repo>/presets/agenia/cordis.patch.yml`，自己数一遍落点，必须等于
  *      `--apply` 的 `{insert:0, preset_bodies:2}` / `--restore` 的 `{insert:1, preset_bodies:0}`；
+ *      **no-op 那条路也数**：入口已经是目标态时，盘上补丁的落点必须正是这一步的目标落点，
+ *      否则 exit 1 + `E_UNMOUNT_PATCH_STALE`（不写、不调生成器、不回滚 —— 这一跑什么都没碰）。
  *   ⑤ 任一步失败 ⇒ 组合、生成器、补丁三份文件逐字节回到跑之前（补丁本来是派生物，回滚也要一起回，
  *      否则恢复后的载体与被污染的补丁对不上），exit 1 + `E_UNMOUNT_STEP_FAILED`。
+ *
+ * ## 写盘：一份文件是"原子换"的，不是原地覆写
+ *
+ *   组合与生成器（以及回滚时那三份）都走**同目录临时件 → `fsync` → `rename`**，与
+ *   `presets/agenia/lib/atomic.mjs:69 writeFileAtomic` 是同一套三步。
+ *   为什么不用裸 `writeFileSync`：它先截断再顺序写，被杀在中间会把**一个文件**劈成两半
+ *   （组合里标记已经删了、`disabled` 还没写上）—— 那正是"两份文件、三处载体"最坏的半截形状。
+ *   为什么不 import 那份 `writeFileAtomic`：本工具按契约是**单文件**命令、`--repo` 指到哪就在哪干活，
+ *   而判据把它跑在**只复制了四份文件**的副本里（`.tools/` 两份 + `presets/agenia/` 两份，没有 `lib/`）——
+ *   静态 import 会让工具在副本里**加载即失败**（`ERR_MODULE_NOT_FOUND`），五格判据全红。
+ *   所以那三步在这里内联；哪天判据的副本把 `lib/` 也带上，这一处可以换回那份。
+ *
+ * ⚠️ 这几份文件的写**不是一次事务**：两次 rename 之间被杀仍会留下"两个一致、一个不一致"。
+ *    但两种半截都不再静默：载体不一致 ⇒ 入口态被判出来（exit 2 + 点名的码）；
+ *    载体一致而补丁没翻 ⇒ `E_UNMOUNT_PATCH_STALE`（exit 1）。
  *
  * ## 根在哪
  *
@@ -47,7 +66,9 @@
  *   node .tools/unmount-host-row.mjs --repo <root> --id <row id> --apply
  *   node .tools/unmount-host-row.mjs --repo <root> --id <row id> --restore
  *
- *   0 成功（含 no-op）· 1 某一步失败、已回滚 · 2 拒绝（入口态不是规范态）· 3 用法 / 环境
+ *   0 成功（含 no-op）· 1 失败：`E_UNMOUNT_STEP_FAILED`（已逐字节回滚）或 `E_UNMOUNT_PATCH_STALE`
+ *   （no-op 落点不符 —— `rolled_back: false`，这一跑一个字节都没写）· 2 拒绝（入口态不是规范态）
+ *   · 3 用法 / 环境
  *
  * stdout 恰好一行 JSON（`schema` / `action` / `id` / `repo` / `code` / `changed` /
  * `row_landing` / `carrier` / `failed_step` / `rolled_back`）；人话走 stderr。
@@ -56,7 +77,8 @@
  * `--restore` 把 id **追加在表尾**；今天表里只有一条，所以恢复后的字节与 `--apply` 之前逐字节相同。
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import path from 'node:path'
 
 const EXIT = Object.freeze({ OK: 0, FAILED: 1, REFUSED: 2, USAGE: 3 })
@@ -69,8 +91,8 @@ const REL = Object.freeze({
 })
 
 const MARKER_LINE = '  # @host-level'
+/** 认与删**同一个谓词**：`readCarriers()` 认出哪几行，`editComposition()` 就只删那几行。 */
 const MARKER_LINE_RE = /^ {2}#\s*@host-level\b/
-const MARKER_ANY_RE = /@host-level\b/
 const DISABLED_LINE = '  disabled: true'
 const DISABLED_LINE_RE = /^ {2}disabled:\s*true\s*$/
 /** 生成器的点名表字面量：前缀（到 `[`，含）+ 项列表 + `]`。 */
@@ -131,6 +153,40 @@ function parseArgv(argv) {
     out.errors.push(`不认识的参数：${arg}`)
   }
   return out
+}
+
+// ── 写盘：原子换一份文件 ──────────────────────────────────────────────────
+/**
+ * 把一份文本（或 Buffer）**原子地换**到 `file` 上：同目录临时件 → `fsync` → `rename`。
+ *
+ * 临时件必须与目标**同目录**（同卷 `rename` 才原子）；名字带 pid + 随机串，撞名会当场炸而不是静默覆盖。
+ * 失败**抛** —— 调用方（写载体 / 回滚）都把它包在同一条回滚账里；不许静默留下半截文件。
+ * 这三步与 `presets/agenia/lib/atomic.mjs:69 writeFileAtomic` 对齐；那份在这棵树上不 import 的理由写在文件头。
+ */
+function writeFileAtomicSync(file, data) {
+  const target = path.resolve(String(file))
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf8')
+  const tmp = `${target}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`
+  let handle = null
+  try {
+    handle = openSync(tmp, 'wx')
+    writeSync(handle, buf)
+    fsyncSync(handle)
+    closeSync(handle)
+    handle = null
+  } catch (err) {
+    if (handle !== null) {
+      try { closeSync(handle) } catch { /* 已经在失败路径上，关不掉就算了 */ }
+    }
+    try { unlinkSync(tmp) } catch { /* 临时件可能压根没建起来 */ }
+    throw err
+  }
+  try {
+    renameSync(tmp, target)
+  } catch (err) {
+    try { unlinkSync(tmp) } catch { /* 尽力清掉，别留残渣 */ }
+    throw err
+  }
 }
 
 // ── 文本：行块 / 三处载体 ──────────────────────────────────────────────────
@@ -213,7 +269,7 @@ function editComposition({ carrier, id, mode }) {
   let disabledChanged = false
   if (mode === 'apply') {
     for (let i = next.length - 1; i >= span.start; i -= 1) {
-      if (i < span.end && MARKER_ANY_RE.test(next[i])) {
+      if (i < span.end && MARKER_LINE_RE.test(next[i])) {
         next.splice(i, 1)
         markerChanged = true
       }
@@ -385,12 +441,30 @@ function main() {
   }
 
   // 入口已经是这一步的目标态 ⇒ no-op。**不写、不跑生成器**；落点读盘上那份补丁（第二个读数）。
+  // 但"已经在目标态"这句话要由落点签字：补丁的落点必须就是这一步的目标落点，否则那是
+  // 「载体翻过了、补丁没跟着翻」（上一次跑到 ③ 被打断 / 并发的两个 --apply）—— 静默放行会
+  // exit 0 报 UMH-NOOP 而树是半截的。这里拒（exit 1 + 码），一个字节都没写，所以不回滚。
   const target = args.mode === 'apply' ? 'U' : 'M'
+  const want = args.mode === 'apply'
+    ? { insert: 0, preset_bodies: 2 }
+    : { insert: 1, preset_bodies: 0 }
   if (verdict.state === target) {
     if (!existsSync(abs.patch)) {
       return usage('E_UNMOUNT_PATCH_MISSING', `入口已经是目标态，但补丁文件不在：${abs.patch} —— 落点判不了`, out)
     }
     const landing = rowLanding(readFileSync(abs.patch, 'utf8'), id)
+    if (landing.insert !== want.insert || landing.preset_bodies !== want.preset_bodies) {
+      return emit({
+        ...out,
+        code: 'E_UNMOUNT_PATCH_STALE',
+        changed: 0,
+        row_landing: landing,
+        failed_step: 'patch',
+      }, EXIT.FAILED, `E_UNMOUNT_PATCH_STALE 入口已经是 --${args.mode} 的目标态，但盘上补丁的落点是 `
+        + `${JSON.stringify(landing)}，不是 ${JSON.stringify(want)} —— 载体翻过了、补丁没跟着翻`
+        + '（上一次跑到生成器那一步被打断，或补丁被换过）。没有写任何字节，也没有调用生成器：'
+        + `重派生一次（node .tools/make-bundle-patch.mjs），或 --restore 退回挂载态再重来。`)
+    }
     return emit({ ...out, code: 'UMH-NOOP', changed: 0, row_landing: landing }, EXIT.OK,
       `UMH-NOOP 入口已经是 --${args.mode} 的目标态；没有写任何字节（落点 ${JSON.stringify(landing)}）。`)
   }
@@ -416,12 +490,12 @@ function main() {
     let ok = false
     let why = ''
     try {
-      writeFileSync(abs.composition, snapshot.composition)
-      writeFileSync(abs.generator, snapshot.generator)
+      writeFileAtomicSync(abs.composition, snapshot.composition)
+      writeFileAtomicSync(abs.generator, snapshot.generator)
       if (snapshot.patch === null) {
         if (existsSync(abs.patch)) unlinkSync(abs.patch)
       } else {
-        writeFileSync(abs.patch, snapshot.patch)
+        writeFileAtomicSync(abs.patch, snapshot.patch)
       }
       ok = readFileSync(abs.composition).equals(snapshot.composition)
         && readFileSync(abs.generator).equals(snapshot.generator)
@@ -435,10 +509,10 @@ function main() {
         + `（${ok ? '三份文件已逐字节回到跑之前' : '回滚没做到逐字节 — 立刻人工看'}）`)
   }
 
-  // ② 写载体。写失败也走同一条回滚（此时可能一份都没变，回滚是幂等的）。
+  // ② 写载体（两份都原子换：被杀在中间不会把一份文件劈成两半）。写失败也走同一条回滚。
   try {
-    writeFileSync(abs.composition, compositionEdit.text, 'utf8')
-    writeFileSync(abs.generator, listEdit.text, 'utf8')
+    writeFileAtomicSync(abs.composition, compositionEdit.text)
+    writeFileAtomicSync(abs.generator, listEdit.text)
   } catch (err) {
     return rollback('generator', `写载体文件失败：${String(err?.message ?? err)}`)
   }
@@ -458,9 +532,6 @@ function main() {
   // ④ 自证落点：只认生成器写出来的那份补丁文本。
   if (!existsSync(abs.patch)) return rollback('verify', `生成器 exit 0，但补丁文件不在：${abs.patch}`)
   const landing = rowLanding(readFileSync(abs.patch, 'utf8'), id)
-  const want = args.mode === 'apply'
-    ? { insert: 0, preset_bodies: 2 }
-    : { insert: 1, preset_bodies: 0 }
   if (landing.insert !== want.insert || landing.preset_bodies !== want.preset_bodies) {
     return rollback('verify', `落点没翻面：补丁文本读出 ${JSON.stringify(landing)}，期望 ${JSON.stringify(want)}`)
   }
