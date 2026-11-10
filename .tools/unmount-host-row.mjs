@@ -83,8 +83,9 @@
  *   node .tools/unmount-host-row.mjs --repo <root> --id <row id> --apply
  *   node .tools/unmount-host-row.mjs --repo <root> --id <row id> --restore
  *
- *   0 成功（含 no-op）· 1 失败：`E_UNMOUNT_STEP_FAILED`（回滚逐字节成功 ⇒ `rolled_back: true`；
- *   没做到 ⇒ `rolled_back: false`，那几份由 `rollback.drifted` 逐个点名）· `E_UNMOUNT_PATCH_STALE`
+ *   0 成功（含 no-op）· 1 失败：`E_UNMOUNT_STEP_FAILED`（`rolled_back` 只认"回滚跑过、且三份逐字节
+ *   回到跑之前"：回滚成功 ⇒ `true`；没做到 ⇒ `false` + `rollback.drifted` 点名；**还没写盘就失败** ⇒
+ *   `false` + `rollback.nothing_written: true`）· `E_UNMOUNT_PATCH_STALE`
  *   （no-op 落点不符）· `E_UNMOUNT_PATCH_NOT_DERIVED`（no-op 落点对、但补丁不是派生物：半截 / 被换过）。
  *   后两个都是 `rolled_back: false`、这一跑一个字节都没写（第二个只多一次只读的 `--check`）
  *   · 2 拒绝（入口态不是规范态）· 3 用法 / 环境
@@ -593,8 +594,18 @@ function main() {
     compositionEdit = editComposition({ carrier, id, mode: args.mode })
     listEdit = editList(base.generatorText, id, args.mode)
   } catch (err) {
-    return emit({ ...out, code: 'E_UNMOUNT_STEP_FAILED', changed: 0, failed_step: 'marker', rolled_back: true },
-      EXIT.FAILED, `E_UNMOUNT_STEP_FAILED 还没写盘就失败了（载体文本改不动）：${head(err?.message ?? err)}`)
+    // 上面那两个编辑函数只改字符串、不碰盘 ⇒ 到这一刻盘上还是跑之前的样子：没有可回滚的东西。
+    // `rolled_back` 只认"回滚跑过、且三份逐字节回到跑之前"，所以这一支是 `false`（报 `true` 是谎）；
+    // `nothing_written` 把"一个字节都没写"写在明面上，`changed: 0` 才有据可查。
+    return emit({
+      ...out,
+      code: 'E_UNMOUNT_STEP_FAILED',
+      changed: 0,
+      failed_step: 'marker',
+      rolled_back: false,
+      rollback: { ok: true, drifted: [], nothing_written: true },
+    }, EXIT.FAILED, `E_UNMOUNT_STEP_FAILED 还没写盘就失败了（载体文本改不动）：${head(err?.message ?? err)}`
+      + '—— 一个字节都没写，没有可回滚的东西（`rolled_back: false`）。')
   }
 
   // 回滚账：两份载体文件 + 补丁（补丁是派生物，失败时一起回，别留下与载体对不上的字节）。
