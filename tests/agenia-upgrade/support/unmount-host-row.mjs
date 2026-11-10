@@ -352,12 +352,17 @@ export function preState(state, { compositionText, generatorText }) {
  * ⚠️ 这条夹具假设工具**定点修改**生成器（只动名单那一处）。若工具整份重写生成器，抬头会被抹掉 ⇒
  *    见证那一路不会失败 ⇒ 那一格报 `UMH-INJECTION-NOT-REACHED`（红），**不会**假绿。
  */
-function witnessHeader(realText, outFile, { fail }) {
+function witnessHeader(realText, outFile, { fail, sabotage = null }) {
   const out = String(outFile).replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+  const sabotageMode = sabotage === null ? null : Number(sabotage.mode ?? 0o444)
+  // `sabotage.rel` 相对**副本根**（`__xRepo` 就是副本根）—— 抬头跑起来才知道副本在哪，所以这里给相对路径。
+  const sabotageJoin = sabotage === null
+    ? null
+    : `__xJoin(__xRepo, ${String(sabotage.rel).split(/[\\/]/).map((part) => `"${part}"`).join(', ')})`
   const header = [
     `// ── ${fail ? '见证' : '探子'}抬头（\`UMH-*\` 的夹具；不是产品代码）────────────────`,
     "import { createHash as __xSha } from 'node:crypto'",
-    "import { appendFileSync as __xAppend, readFileSync as __xRead } from 'node:fs'",
+    "import { appendFileSync as __xAppend, chmodSync as __xChmod, readFileSync as __xRead } from 'node:fs'",
     "import { dirname as __xDir, join as __xJoin, resolve as __xResolve } from 'node:path'",
     "import { fileURLToPath as __xUrl } from 'node:url'",
     'const __xSelf = __xUrl(import.meta.url)',
@@ -381,6 +386,10 @@ function witnessHeader(realText, outFile, { fail }) {
     '}',
     `__xAppend('${out}', JSON.stringify(__xWitness) + '\\n', 'utf8')`,
   ]
+  if (sabotageJoin !== null) {
+    // 「载体已经写好了、回滚能不能做到」那一格：在**这一刻**把某一份目标变成只读 ⇒ 回滚的原子换写不动它。
+    header.push(`__xChmod(${sabotageJoin}, ${sabotageMode})`)
+  }
   if (fail) {
     header.push('process.stderr.write("WITNESS-GENERATOR：这一步是被注入的失败（不许写补丁）\\n")')
     header.push('process.exit(1)')
@@ -389,17 +398,20 @@ function witnessHeader(realText, outFile, { fail }) {
   return `${header.join('\n')}${realText}`
 }
 
-/** **见证生成器**：记一行"我被调用了"然后 `exit 1`（失败注入用）。 */
-export function witnessGenerator(realText, outFile) {
-  return witnessHeader(realText, outFile, { fail: true })
+/**
+ * **见证生成器**：记一行"我被调用了"然后 `exit 1`（失败注入用）。
+ * `sabotage` 可选：`{rel, mode}` —— 退出前把副本里 `rel` 那一份 `chmod` 成只读（造"回滚本身失败"）。
+ */
+export function witnessGenerator(realText, outFile, { sabotage = null } = {}) {
+  return witnessHeader(realText, outFile, { fail: true, sabotage })
 }
 
 /**
  * **探子生成器**：记一行调用（`argv` 里能分出 `--check` 与"写那一支"）然后**照常跑真生成器**。
  * 用它观察"工具到底调了哪一支"，又不会把被测行为改坏。
  */
-export function spyGenerator(realText, outFile) {
-  return witnessHeader(realText, outFile, { fail: false })
+export function spyGenerator(realText, outFile, { sabotage = null } = {}) {
+  return witnessHeader(realText, outFile, { fail: false, sabotage })
 }
 
 /**
@@ -622,6 +634,27 @@ export function shapeLiarTool(realText) {
   return { text, applied, missing, ok: missing.length === 0, why: missing.length === 0 ? null : missing.join(' · ') }
 }
 
+// ── 刀：把真工具的**回滚账**改回旧的谎（不是另写一个假工具）────────────────────
+/**
+ * **刀 K14**：让 `rollback()` 在 emit 那一刻把 drift 量成**空**（= 旧行为）—— 于是
+ * `changed: 0` · `rolled_back: true` · `rollback: {ok:true, drifted:[]}`，**而盘上两份文件明明还差**。
+ *
+ * 为什么要这一把：`82251bd` 之前工具就是这么报的（探针 (c)：旧工具 `changed:0`，而两份文件真的不同）。
+ * 只判 `failed_step` / `stderr` 的腿抓不到它 —— 这一格的红必须来自"账与盘对不上"。
+ *
+ * @returns {{text:string, applied:string[], missing:string[], ok:boolean, why:string|null}}
+ */
+export function rollbackLiarTool(realText) {
+  const text = String(realText)
+  const anchor = 'const drifted = driftFromSnapshot()'
+  const hits = text.split(anchor).length - 1
+  if (hits !== 1) {
+    return { text, applied: [], missing: [`rollback 层的 drift 量法（锚点在工具里出现 ${hits} 次，要 1 次）`], ok: false, why: `锚点不见了（出现 ${hits} 次）` }
+  }
+  const patched = text.replace(anchor, 'const drifted = [] // 刀：回滚账不再现量（旧行为）')
+  return { text: patched, applied: ['rollback-drift'], missing: [], ok: patched !== text, why: patched === text ? '刀一个字节都没改到' : null }
+}
+
 // ── 半截补丁：把派生物砍掉尾巴，落点照样读得对（刀 K10 的输入）──────────────
 /**
  * 从 `patchText` 的**尾部**一行一行地砍，砍到落点读数不再是目标落点为止，取**还能读对**的最深那一刀。
@@ -745,12 +778,13 @@ function summarize({ name, pre, generator, tool, action, id, copy, dir, tool_pre
  *   `toolText` 是**真工具改坏几行**之后的文本（刀用：摘掉哪一道闸由调用方给）——它装进副本的 `.tools/`，
  *   所以 `tool_present` 仍是 true、`runTool()` 照跑；`tool` 那一格记成 `mutated`，读数里看得出来跑的不是产品那份。
  *   `generator: 'spy'` = 探子：记下每一次调用（`argv`）+ **照常跑真生成器**，所以 `--check` 拿到的是真答案。
+ *   `sabotage: {rel, mode}` 只配见证 / 探子：那一步退出前把副本里的 `rel` 改成只读（造"回滚本身失败"）。
  */
 export function runScenario(spec) {
   const {
     name, pre = 'M', generator = 'real', tool = 'real', fakeArgs = [],
     toolText = null, action = 'apply', id = ROW_ID, check = false, extraArgs = [],
-    extraCopyFiles = {}, witnessOutFile = null, sourceRepo = PATHS.repo,
+    extraCopyFiles = {}, witnessOutFile = null, sourceRepo = PATHS.repo, sabotage = null,
   } = spec
   const dir = scratchDir(name)
   const copy = path.join(dir, 'copy')
@@ -773,10 +807,10 @@ export function runScenario(spec) {
   // ② 生成器替换（见证 / 探子 / stub）—— 必须在入口态**之后**（抬头要包着改过的那份正文）
   if (generator === 'witness') {
     const live = readFileSync(path.join(copy, REL.generator), 'utf8')
-    writeFileSync(path.join(copy, REL.generator), witnessGenerator(live, witnessOut), 'utf8')
+    writeFileSync(path.join(copy, REL.generator), witnessGenerator(live, witnessOut, { sabotage }), 'utf8')
   } else if (generator === 'spy') {
     const live = readFileSync(path.join(copy, REL.generator), 'utf8')
-    writeFileSync(path.join(copy, REL.generator), spyGenerator(live, witnessOut), 'utf8')
+    writeFileSync(path.join(copy, REL.generator), spyGenerator(live, witnessOut, { sabotage }), 'utf8')
   } else if (generator === 'stub') {
     writeFileSync(path.join(copy, REL.generator), stalePatchStub(witnessOut), 'utf8')
   } else if (generator !== 'real') {
@@ -907,6 +941,7 @@ export const CODE = {
   underivedUnnamed: 'UMH-UNDERIVED-UNNAMED',
   patchFailureShape: 'UMH-PATCH-FAILURE-SHAPE',
   residueUnswept: 'UMH-RESIDUE-NOT-SWEPT',
+  rollbackDrift: 'UMH-ROLLBACK-DRIFT',
   changedNotZero: 'UMH-CHANGED-NOT-ZERO',
   noopTouchedBytes: 'UMH-NOOP-TOUCHED-BYTES',
   rollbackBytes: 'UMH-ROLLBACK-NOT-BYTE-IDENTICAL',
@@ -1280,6 +1315,49 @@ export function residueSweepProblems(r, { residue, label }) {
   }
   if (!r.files_equal) {
     out.push(problem(CODE.refusalWrote, `${label}：产品那三份的字节变了（收残渣不许碰产品字节）`))
+  }
+  return out
+}
+
+/**
+ * ⑬ 回滚失败时的**账**：`changed` 与 `rollback.drifted` 必须与**盘上量到的那几份**一致。
+ *
+ * 为什么要有这一格：`changed` 的口径是"这一跑结束时**仍与跑前快照不同**的文件数"（不是"改过几处载体"）。
+ * 回滚半路失败时，工具必须报 `rolled_back: false`、`changed` = 那几份的**个数**、`rollback.drifted` 逐个点名 ——
+ * 否则 JSON 说 `changed: 0`、盘上却留着改过的字节，读的人会当场相信前一句（`82251bd` 之前就是这样）。
+ *
+ * 判据不钉"哪几份"（那取决于回滚写的次序）：**个数与集合都从夹具自己的前后快照算**，只要求工具说的一样。
+ *
+ * @returns {object[]} 有问题就返回；空 = 这一格过
+ */
+export function rollbackDriftProblems(r, { label }) {
+  const out = []
+  const before = r.before?.files_map ?? {}
+  const after = r.after?.files_map ?? {}
+  const measured = Object.keys(before).filter((rel) => !(rel in after) || after[rel] !== before[rel])
+  const accounted = r.json?.rollback?.drifted ?? null
+  const mismatches = []
+  if (r.exit !== 1) mismatches.push(`exit=${r.exit}（期望 1）`)
+  if (r.json?.code !== 'E_UNMOUNT_STEP_FAILED') mismatches.push(`code=${JSON.stringify(r.json?.code)}（期望 'E_UNMOUNT_STEP_FAILED'）`)
+  if (r.json?.rolled_back !== false) {
+    mismatches.push(`rolled_back=${JSON.stringify(r.json?.rolled_back)}（期望 false —— 回滚没做到逐字节）`)
+  }
+  if (r.json?.rollback?.ok !== false) mismatches.push(`rollback.ok=${JSON.stringify(r.json?.rollback?.ok)}（期望 false）`)
+  if (r.json?.changed !== measured.length) {
+    mismatches.push(`changed=${JSON.stringify(r.json?.changed)}（盘上量到 ${measured.length} 份不同：${JSON.stringify(measured)}）`)
+  }
+  if (accounted === null) {
+    mismatches.push('没打 rollback.drifted（回滚账必须点名哪几份还在差）')
+  } else {
+    const got = [...accounted].sort()
+    const want = [...measured].sort()
+    if (JSON.stringify(got) !== JSON.stringify(want)) {
+      mismatches.push(`rollback.drifted=${JSON.stringify(got)}（盘上量到 ${JSON.stringify(want)}）`)
+    }
+  }
+  if (mismatches.length > 0) {
+    out.push(problem(CODE.rollbackDrift, `${label}：回滚的**账**与盘对不上：${mismatches.join(' · ')} —— `
+      + '`changed` 的口径是"结束时仍与跑前快照不同的文件数"，回滚半路失败时它 ≥ 1，`rollback.drifted` 点名那几份'))
   }
   return out
 }

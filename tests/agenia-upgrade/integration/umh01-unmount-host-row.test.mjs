@@ -53,7 +53,10 @@
  *      刀 K13（把失败形状改回旧的 `verify` / `true` / `null`）⇒ 翻 `UMH-PATCH-FAILURE-SHAPE`。
  *   `UMH-05` 回滚：生成器步注入"见证 + 抛"⇒ 三处**已经写过**（见证为证）、之后字节逐字节回到跑之前；
  *      自证步注入"成功但产物不翻面"⇒ `failed_step: verify` 也要回滚。
- *      刀 K7（跳到"三处都写好了"再跑生成器、**不回滚**）⇒ `UMH-ROLLBACK-NOT-BYTE-IDENTICAL`。
+ *      腿 `rollback-broken`（回滚**没做到**那一支）：见证 + 抛 **并且**把组合改成只读 ⇒ 回滚的原子换写不动它
+ *      ⇒ `rolled_back: false` · `changed` = **夹具前后快照量到的份数** · `rollback: {ok:false, drifted:[…那几份]}`。
+ *      刀 K7（跳到"三处都写好了"再跑生成器、**不回滚**）⇒ `UMH-ROLLBACK-NOT-BYTE-IDENTICAL`；
+ *      刀 K14（把回滚账里的 drift 量成空 = 旧行为）⇒ `UMH-ROLLBACK-DRIFT`。
  *
  * ── 不判（写给下一个读的人，别把这份绿读大）──────────────────────────────────────
  *   🔴 **GUI 不在这里判。** 撤 / 恢复之后面板在不在，属于 R5 那一次实机验证，只能由人在界面上点一次；
@@ -65,7 +68,7 @@
  *     （`residue-sweep` 腿）；活 pid 那一支登记在契约 §八.7，别把这一格的绿读成"扫残渣全判了"。
  *
  * ── 今天为什么是绿的（说清这一跑覆盖了哪一层）──────────────────────────────────────
- *   `.tools/unmount-host-row.mjs` 在盘上（`6443098`）：五格全绿。
+ *   `.tools/unmount-host-row.mjs` 在盘上（`20b6cfb`）：五格全绿。
  *   🔴 绿的这一层是**判据**：副本上跑那条命令、读它留下的字节与补丁文本 —— **不是** "GUI 好了"、不是 R5。
  *   · 副本的运行集含 `presets/agenia/lib/atomic.mjs`（工具 import 那份 `writeFileAtomic`：返回 `{ok, code}`、
  *     **不抛**）：`copy-runnable-set` 腿 + 刀 K8 守着它 —— 谁把这一份从夹具里剪掉，那一格红。
@@ -100,6 +103,8 @@ import {
   refusalProblems,
   residueSweepProblems,
   rollbackProblems,
+  rollbackDriftProblems,
+  rollbackLiarTool,
   rowLanding,
   runAgain,
   runScenario,
@@ -948,7 +953,7 @@ test('UMH-04 幂等：目标态再跑 ⇒ UMH-NOOP / changed:0 / 字节不动（
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-test('UMH-05 回滚：生成器步注入失败 ⇒ 三处写过也必须逐字节回到跑之前（见证为证）· 自证失败同样回滚', async () => {
+test('UMH-05 回滚：生成器步注入失败 ⇒ 三处写过也必须逐字节回到跑之前（见证为证）· 自证失败同样回滚 · 回滚没做到时账要如实', async () => {
   await runCase('UMH-05', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -990,6 +995,64 @@ test('UMH-05 回滚：生成器步注入失败 ⇒ 三处写过也必须逐字�
       if (!stale.generator_called) {
         push(CODE.injectionNotReached, '自证步注入：stub 生成器一次都没被调用（见证文件不在）—— '
           + '那一跑并没有走到"生成器成功、落点不对"这一步')
+      }
+      return undefined
+    })
+
+    // ── ②′ 腿 rollback-broken：载体写完、生成器步失败、**回滚本身做不到** ⇒ 账必须如实 ─────────
+    //   造法：见证生成器在 `exit 1` 之前把**组合** chmod 成只读（实测：Windows 上 rename 覆盖只读件 ⇒ EPERM）
+    //   ⇒ 回滚的第一次原子换写不动它 ⇒ 回滚半路抛。盘上于是还剩"载体翻过"的字节。
+    //   期望（`changed` 的口径 = **结束时仍与跑前快照不同的文件数**）：
+    //     exit 1 · `E_UNMOUNT_STEP_FAILED` · `failed_step: "generator"` · `rolled_back: false` ·
+    //     `changed` = **夹具自己前后快照量到的份数** · `rollback: {ok:false, drifted:[…同样的那几份]}`。
+    const sabotage = { rel: REL.composition, mode: 0o444 }
+    const broken = runScenario({
+      name: 'umh-05-rollback-broken', pre: 'M', generator: 'witness', tool: 'real', action: 'apply', sabotage,
+    })
+    scenarios.rollback_broken = slim(broken)
+    book.run('rollback-broken', () => {
+      if (!broken.tool_present) {
+        pushToolAbsent(problems, broken, 'M 态 --apply（回滚本身失败）')
+        return CODE.toolAbsent
+      }
+      // 刀的入口：载体确实写过了（见证），否则"回滚失败"可能是"根本没写"。
+      if (broken.witness === null || broken.witness.marker !== false || broken.witness.disabled !== true) {
+        push(CODE.injectionNotReached, `回滚失败那一跑：见证 ${JSON.stringify(broken.witness)} —— `
+          + '这一跑没走到"三处载体已写好、生成器步失败"那一刻')
+        return undefined
+      }
+      rec.readings.rollback_broken = {
+        exit: broken.exit, code: broken.json?.code ?? null, failed_step: broken.json?.failed_step ?? null,
+        changed: broken.json?.changed ?? null, rolled_back: broken.json?.rolled_back ?? null,
+        rollback: broken.json?.rollback ?? null,
+        measured: Object.keys(broken.before.files_map).filter((rel) => broken.after.files_map[rel] !== broken.before.files_map[rel]),
+      }
+      for (const p of rollbackDriftProblems(broken, { label: 'M 态 --apply（回滚本身失败）' })) problems.push(p)
+      return undefined
+    })
+
+    // ── ③′ 刀 K14：把回滚账改回旧的谎（`drift` 量成空）⇒ rollback-broken 腿必须红 ─────────────
+    //   `82251bd` 之前工具就是这么报的：`changed: 0` / `rolled_back: true`，而盘上两份文件明明还差着
+    //   （组长探针 (c)）。只判 `failed_step` / stderr 的腿抓不到它 —— 红必须来自"账与盘对不上"。
+    const liar = rollbackLiarTool(readFileSync(SOURCE.tool, 'utf8'))
+    scenarios.knife_rollback_liar = { applied: liar.applied, missing: liar.missing, why: liar.why }
+    const k14 = liar.ok
+      ? runScenario({
+        name: 'umh-05-k14-rollback-liar', pre: 'M', generator: 'witness', tool: 'real',
+        toolText: liar.text, action: 'apply', sabotage,
+      })
+      : null
+    scenarios.knife_rollback_liar_reading = k14 === null ? null : slim(k14)
+    book.run('knife-K14', () => {
+      if (k14 === null) {
+        push(CODE.fixture, `K14 的刀没装上：${liar.why} —— 工具改过？这一格的红不能算在工具头上`)
+        return undefined
+      }
+      knife(problems, { label: 'K14·rollback-liar', got: rollbackDriftProblems(k14, { label: 'K14·rollback-liar' }), want: CODE.rollbackDrift })
+      rec.readings.knife_k14 = {
+        exit: k14.exit, code: k14.json?.code ?? null, changed: k14.json?.changed ?? null,
+        rolled_back: k14.json?.rolled_back ?? null, rollback: k14.json?.rollback ?? null,
+        measured: Object.keys(k14.before.files_map).filter((rel) => k14.after.files_map[rel] !== k14.before.files_map[rel]),
       }
       return undefined
     })
@@ -1038,7 +1101,7 @@ test('UMH-05 回滚：生成器步注入失败 ⇒ 三处写过也必须逐字�
       return undefined
     })
 
-    book.require(['generator-throws', 'verify-fails', 'knife-K7', 'control'])
+    book.require(['generator-throws', 'verify-fails', 'rollback-broken', 'knife-K7', 'knife-K14', 'control'])
     rec.readings.legs = book.legs
     rec.readings.scenarios = scenarios
     caseFail(problems)

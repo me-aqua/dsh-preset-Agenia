@@ -983,12 +983,13 @@ export const BATCH_AR = ['RCA-01', 'SHN-01']
  *     **另一面**：盘上补丁没签字 ⇒ 不许记成 no-op —— 落点过期（`E_UNMOUNT_PATCH_STALE`）与
  *     "落点对、但不是派生物"（`E_UNMOUNT_PATCH_NOT_DERIVED`）各有名字，`--apply` / `--restore` 两个方向都判；
  *     外加"工具收自己上一跑的残渣"（契约 §4.4 的例外）与失败的三格形状（`failed_step` / `rolled_back` / `row_landing`）；
- *   · `UMH-05` **回滚**：生成器步 / 自证步各注入一次失败 ⇒ 两份载体**逐字节**回到跑之前（注入器见证为证）。
+ *   · `UMH-05` **回滚**：生成器步 / 自证步各注入一次失败 ⇒ 两份载体**逐字节**回到跑之前（注入器见证为证）；
+ *     **另一支**：回滚**没做到**逐字节 ⇒ `rolled_back: false` · `changed` = 仍与跑前不同的份数 · `rollback.drifted` 点名；
  * 🔴 **GUI 不在这一批的判定范围**（定形 §五）：撤 / 恢复之后面板在不在，属 R5 实机验证，由人在界面上点一次。
  * ⚠️ 这五条**不进** `FROZEN_IDS`（后加批次各自以显式清单存在）。
- * ⚠️ 这三轮只加**腿与刀**（`UMH-01` 的 `copy-runnable-set`/K8、`UMH-02` 的 K4b、
- *    `UMH-04` 的 `stale-patch`/`restore-stale`/`truncated-patch`/`residue-sweep` 与 K9·K9b·K10·K11·K12·K13），
- *    分母与 `GROUP_COUNTS` 不变（一条格 = 一条用例，腿不是格）。
+ * ⚠️ 这几轮只加**腿与刀**（`UMH-01` 的 `copy-runnable-set`/K8、`UMH-02` 的 K4b、
+ *    `UMH-04` 的 `stale-patch`/`restore-stale`/`truncated-patch`/`residue-sweep` 与 K9·K9b·K10·K11·K12·K13、
+ *    `UMH-05` 的 `rollback-broken`/K14），分母与 `GROUP_COUNTS` 不变（一条格 = 一条用例，腿不是格）。
  */
 export const BATCH_AS = ['UMH-01', 'UMH-02', 'UMH-03', 'UMH-04', 'UMH-05']
 
@@ -1611,7 +1612,7 @@ const ROWS = [
   ['UMH-02', 'unmount-host-row', F.umh, '**错配负控①：只撤了标记**（契约 §五.2）：入口 B = 组合里 `# @host-level` 不在、`HOST_LEVEL_IDS` 还在、没 `disabled: true`（**生成器换成见证**：一被调用就落一个 `generator-called.json`）⇒ 工具必须 exit 2 · `E_UNMOUNT_MARKER_MISSING` · `carrier: "marker"` · `changed: 0` · **一个字节不写** · **生成器一次都没被调用**（见证文件不在）。刀：K3 静默放行 ⇒ `UMH-REFUSAL-EXIT` · K4 报另一个载体的码（码与载体一起换）⇒ `UMH-CARRIER-NAMED-WRONG` · K4b `carrier-only`（**码对、载体报成 `list`**）⇒ 只翻 `UMH-CARRIER-NAMED-WRONG`：四码对三载体，`carrier` 是不是 `code` 的复述由这一刀切出来', '批次 AS'],
   ['UMH-03', 'unmount-host-row', F.umh, '**错配负控②：只撤了名单**（契约 §五.3）：入口 C = 标记还在、`HOST_LEVEL_IDS` 里没有那一项 ⇒ 同一个形状、**另一个码**：exit 2 · `E_UNMOUNT_LIST_MISSING` · `carrier: "list"` · `changed: 0` · 字节不变 · 生成器不调用。与 `UMH-02` **逐字比码**：两个负控必须是两个名字，写反 ⇒ 两格都红（`UMH-CARRIER-NAMED-WRONG`）。刀：K3 / K4 同上（K4 喂 `E_UNMOUNT_MARKER_MISSING`）', '批次 AS'],
   ['UMH-04', 'unmount-host-row', F.umh, '**幂等 + no-op 的两道签字**（契约 §五.4）：① U 态（夹具造的一致 U 树）上再 `--apply` ⇒ exit 0 · `UMH-NOOP` · `changed: 0` · 补丁仍 `{0,2}` · 字节/文件集合不动；② M 态 `--apply` 两次 ⇒ 第二次同形、且**第二次之后字节 === 第一次之后**；③ U 态 `--restore` 两次 ⇒ 第二次同形、落点回 `{1,0}`。**no-op 那一支要盘上补丁签两次字，每条腿判一次**：④ 腿 `stale-patch`（载体 U + 故意过期的补丁 `{1,0}`）⇒ 不许 exit 0 / `UMH-NOOP`，必须 `E_UNMOUNT_PATCH_STALE`（exit 1）· `changed: 0` · 字节与文件集合不动 · **不调写那一支的生成器**（只读 `--check` 不算调用）；⑤ 腿 `restore-stale`（`--restore` 的同一形状：M 载体 + 已翻成 `{0,2}` 的补丁）⇒ 同一个码；⑥ 腿 `truncated-patch`（落点**读得对**、补丁却是半截：尾巴没了、两行 `- id` 都在）⇒ 不许 no-op，必须 `E_UNMOUNT_PATCH_NOT_DERIVED`；**同一棵树上未截断的那份 ⇒ 仍 `UMH-NOOP`**（阳性那一半，证明红只来自"不是派生物"）；⑦ 腿 `residue-sweep`（工具自己上一次被杀留下的 `<补丁>.tmp-<死 pid>-<hex>`）⇒ 那份残渣被扫掉、没删别的也没加东西、产品字节不动、仍是 `UMH-NOOP`（契约 §4.4 的例外）。🔴 三条失败腿还断言**失败形状**（契约 §4.1）：`failed_step: "patch"` · `rolled_back: false` · `row_landing` = 盘上那份补丁读出来的落点。刀：K5 恒报 `changed: 1` ⇒ `UMH-CHANGED-NOT-ZERO` · K6 报 no-op 却写一个换行 ⇒ `UMH-NOOP-TOUCHED-BYTES` · K9（只摘**落点**闸）⇒ stale 腿翻 `UMH-STALE-PATCH-UNNAMED`，**且必须落在"第二道闸拒"那一面**（`NOT_DERIVED` · exit 1 · `generator_checks ≥ 1`；只证明"别处也拒了"不算咬住）· K9b（摘**两道**闸）⇒ stale 腿翻 `UMH-STALE-PATCH-NOOP`（只有这样才能回到 no-op）· K10（只摘 `--check` 那一行）⇒ 半截补丁腿翻 `UMH-NOOP-UNDERIVED` · K11（落点闸，`--restore` 方向）⇒ restore-stale 腿翻 `UMH-STALE-PATCH-UNNAMED`（落点同 K9）· K12（只摘**扫残渣**那一行）⇒ `UMH-RESIDUE-NOT-SWEPT` · K13（失败形状改回 `verify`/`true`/`null`）⇒ `UMH-PATCH-FAILURE-SHAPE`。判据码：`UMH-STALE-PATCH-NOOP` / `UMH-STALE-PATCH-UNNAMED` / `UMH-NOOP-UNDERIVED` / `UMH-UNDERIVED-UNNAMED` / `UMH-PATCH-FAILURE-SHAPE` / `UMH-RESIDUE-NOT-SWEPT`', '批次 AS'],
-  ['UMH-05', 'unmount-host-row', F.umh, '**回滚**（契约 §五.5）：在**副本**上注入两次失败 —— ① 生成器步换成"见证 + 抛"（先把它被调用那一刻的三处载体写进 `generator-called.json` 再 exit 1）⇒ exit 1 · `E_UNMOUNT_STEP_FAILED` · `failed_step: "generator"` · `rolled_back: true` · `changed: 0` · stderr 非空 · 见证显示 **marker=false / disabled=true / 生成器文件 sha 变过**（三处**已经写过** ⇒ 回滚不是空转）· 两份载体**逐字节**回到跑之前、文件集合不变；② 生成器换成"成功但产物不翻面"的 stub ⇒ `failed_step: "verify"`、同样回滚（自证那一步也是**一步**）。刀：K7 跳到"三处都写好了"再跑生成器、**不回滚** ⇒ `UMH-ROLLBACK-NOT-BYTE-IDENTICAL`', '批次 AS'],
+  ['UMH-05', 'unmount-host-row', F.umh, '**回滚**（契约 §五.5）：在**副本**上注入两次失败 —— ① 生成器步换成"见证 + 抛"（先把它被调用那一刻的三处载体写进 `generator-called.json` 再 exit 1）⇒ exit 1 · `E_UNMOUNT_STEP_FAILED` · `failed_step: "generator"` · `rolled_back: true` · `changed: 0` · stderr 非空 · 见证显示 **marker=false / disabled=true / 生成器文件 sha 变过**（三处**已经写过** ⇒ 回滚不是空转）· 两份载体**逐字节**回到跑之前、文件集合不变；② 生成器换成"成功但产物不翻面"的 stub ⇒ `failed_step: "verify"`、同样回滚（自证那一步也是**一步**）；③ 腿 `rollback-broken`：同一个"见证 + 抛"，但**在 exit 1 之前把组合 chmod 成只读** ⇒ 回滚的原子换写不动它（Windows 上 rename 覆盖只读件 ⇒ `EPERM`）⇒ exit 1 · `E_UNMOUNT_STEP_FAILED` · `failed_step: "generator"` · **`rolled_back: false`** · **`changed` = 夹具前后快照量到的份数**（`changed` 的口径是"结束时仍与跑前不同的文件数"，不是"改过几处载体"）· `rollback: {ok:false, drifted:[…那几份]}` · 见证证明三处载体**已经写过**（否则"回滚失败"可能是"根本没写"）。刀：K7 跳到"三处都写好了"再跑生成器、**不回滚** ⇒ `UMH-ROLLBACK-NOT-BYTE-IDENTICAL` · K14 `rollback-liar`（把 `rollback()` 里那次 drift 现量换成空数组 = `82251bd` 之前的旧行为）⇒ `UMH-ROLLBACK-DRIFT`（`changed:0` / `rolled_back:true` / `drifted:[]` 而盘上两份还差）', '批次 AS'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
