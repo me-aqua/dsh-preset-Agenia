@@ -27,12 +27,20 @@
  *      ⇒ `--apply` 记原下标 1、`--restore` 按旁证插回 1（`restore_position.source: sidecar`），三份产品
  *      文件逐字节回到 `--apply` 之前；**没有旁证**那一支 ⇒ `source: "tail"`、名单顺序真的变了
  *      （`[a, b, id]`）**而且 stderr 说出来**（变了并说了，不是静默）。
+ *      腿 `stale-sidecar`（第二轮 · 评审 `M2`）：旁证记着 apply 当时那份名单；apply 之后**把剩下那两条换位**
+ *      ⇒ 那个下标**已经过期**，必须报 **`stale-sidecar`**（不是 `sidecar`）+ 退回表尾 + `reason`/stderr
+ *      点名"名单在 --apply 之后变过"（静默按旧下标插 = 顺序错而读数说"我按旁证插的"）。
+ *      腿 `duplicate-listed`：U 载体 + **名单里已经有 id** ⇒ 入口态闸先拒（exit 2 `E_UNMOUNT_MARKER_MISSING`、
+ *      一个字节不写、禁止插第二次）；这一支**走不到** `stale-sidecar`（契约 §8.10 —— `[a,c,b]` 那个现场
+ *      到不了那里，别再拿它当 stale 的样本）。
  *      刀 K1 `printf-liar`（只说 `{0,2}`、一个字节不写）⇒ `UMH-LANDING-MISMATCH`；
  *      刀 K2 `forge-patch`（换掉补丁文件伪造派生物）⇒ `UMH-PATCH-NOT-DERIVED`；
  *      刀 K3 `silent-proceed`（未知 id 也 exit 0）⇒ `UMH-USAGE-SILENT-GREEN`；
  *      刀 K8 `trim-runnable-set`（把副本里那一份原子写剪掉）⇒ `UMH-FIXTURE-BROKEN`；
  *      刀 K16 `no-sidecar`（真工具不记旁证 = 改之前的形状）⇒ `position-sidecar` 腿翻
- *         `UMH-RESTORE-POSITION`（`source: "tail"`、名单顺序变了）+ 次生 `UMH-RESTORE-NOT-INVERSE`。
+ *         `UMH-RESTORE-POSITION`（`source: "tail"`、名单顺序变了）+ 次生 `UMH-RESTORE-NOT-INVERSE`；
+ *      刀 K18 `stale-sidecar-blind`（真工具摘掉"旁证过期"那道核）⇒ `stale-sidecar` 腿翻
+ *         `UMH-RESTORE-POSITION`（刀跑出 `sidecar` + 按过期下标插）。
  *   `UMH-02` 负控①：B 态（只撤了标记）⇒ 拒绝、点名 `marker`、**生成器一次都没被调用**、字节不变。
  *      刀 K3 ⇒ `UMH-REFUSAL-EXIT`；刀 K4（报另一个载体的码/载体）⇒ `UMH-CARRIER-NAMED-WRONG`；
  *      刀 K4b（**码对、载体报成 `list`**）⇒ 只翻 `UMH-CARRIER-NAMED-WRONG`：`carrier` 不是 `code` 的复述。
@@ -145,6 +153,10 @@ import {
   tailFallbackProblems,
   threeItemListTexts,
   listOrderInCopy,
+  rewriteHostLevelList,
+  staleSidecarBlindTool,
+  staleSidecarProblems,
+  duplicateListedRefusal,
   REL,
   ROW_ID,
   SOURCE,
@@ -400,6 +412,121 @@ test('UMH-01 撤挂载/恢复两条腿：--apply ⇒ 补丁里 {insert:0,preset_
       return undefined
     })
 
+    // ── ②‴ 腿 stale-sidecar：旁证在、但**名单在 apply 之后被换过序** ⇒ 下标过期，必须报 stale 并退回表尾 ──
+    //   `bug-20261110-16` 第二轮（评审 `M2`）：旁证记的是"apply 当时那份名单"，光有 id/index 形状对不算数。
+    //   造法：三条名单跑完 `--apply`（名单剩两条），把**那两条换位**，再 `--restore`。
+    //   期望：`source: "stale-sidecar"`（**不是** `sidecar` —— 那是在说"我按旁证插的"，谎）· 退回表尾 ·
+    //   `reason` 与 stderr 都点名"名单在 --apply 之后变过" · 仍是 exit 0 / `UMH-RESTORED`（退回表尾不是失败）。
+    /**
+     * `--apply` 跑完、把名单里**剩下那两条换位**，再 `--restore`（= "另一个岗位在窗口里动了名单"）。
+     * 换位只动副本里那份生成器文本 —— 旁证不动（它记的是 apply 当时那份名单）。
+     */
+    const swapThenRestore = (scenario) => {
+      const copyOfList = readFileSync(path.join(scenario.copy, REL.generator), 'utf8')
+      writeFileSync(path.join(scenario.copy, REL.generator), rewriteHostLevelList(copyOfList, [three.order[2], three.order[0]]), 'utf8')
+      return runAgain(scenario, { action: 'restore' })
+    }
+    const swapped = positioned.tool_present
+      ? runScenario({
+        name: 'umh-01-stale-sidecar', pre: 'M', generator: 'real', tool: 'real', action: 'apply', rederivePatch: true,
+        extraCopyFiles: { [REL.composition]: three.M.compositionText, [REL.generator]: three.M.generatorText },
+      })
+      : null
+    const staleOrderAfterSwap = swapped === null || swapped.exit !== 0 ? null : swapThenRestore(swapped)
+    scenarios.stale_sidecar = { apply: swapped === null ? null : slim(swapped), restore: staleOrderAfterSwap === null ? null : slim(staleOrderAfterSwap) }
+    book.run('stale-sidecar', () => {
+      if (!positioned.tool_present) {
+        pushToolAbsent(problems, positioned, '三条名单 · 名单被换位后 --restore')
+        return CODE.toolAbsent
+      }
+      if (swapped === null || staleOrderAfterSwap === null) {
+        push(CODE.fixture, '换位现场没跑成（apply / restore 缺一）—— 这一格判不了')
+        return undefined
+      }
+      if (swapped.exit !== 0 || staleOrderAfterSwap.exit !== 0) {
+        push(CODE.exit, `换位那一圈没跑成（apply exit ${swapped.exit} / restore exit ${staleOrderAfterSwap.exit}）—— 这一格判不了`)
+        return undefined
+      }
+      // 夹具自检：restore 之前名单必须**真的**被换过（否则这一腿测的是 fresh-sidecar）。
+      if (staleOrderAfterSwap.before.list_order !== undefined
+        && JSON.stringify(staleOrderAfterSwap.before.list_order) === JSON.stringify([three.order[0], three.order[2]])) {
+        push(CODE.fixture, '换位夹具坏了：restore 之前名单还是原顺序 —— 这一腿会退化成 sidecar 那条')
+        return undefined
+      }
+      rec.readings.stale_sidecar = {
+        restore_position: staleOrderAfterSwap.json?.restore_position ?? null,
+        order_before_restore: staleOrderAfterSwap.before.list_order,
+        order_after_restore: staleOrderAfterSwap.after.list_order,
+        stderr_head: String(staleOrderAfterSwap.stderr ?? '').slice(0, 600),
+      }
+      for (const p of staleSidecarProblems(staleOrderAfterSwap, {
+        label: '三条名单 · 名单被换位后 --restore',
+        orderAfter: [three.order[2], three.order[0], ROW_ID],
+      })) problems.push(p)
+      return undefined
+    })
+
+    // ── ②⁗ 腿 duplicate-listed：U 态载体 + **名单里已经有 id** ⇒ 入口态闸先拒，绝不插第二次 ──────────
+    //   这一支是 §二 的第 7 行（标记不在 + 名单在 + 关着）⇒ exit 2 `E_UNMOUNT_MARKER_MISSING`。
+    //   🔴 它**走不到** `stale-sidecar`（入口态闸在 `editList()` 之前）：评审报告里那个 `[a,c,b]` 现场
+    //   就是这一支 —— 写进契约 §1.5 / §8.10，免得下一个人再拿它当 stale 的样本。
+    const duplicateListed = runScenario({
+      name: 'umh-01-duplicate-listed', pre: 'U', generator: 'real', tool: 'real', action: 'restore',
+      extraCopyFiles: { [REL.composition]: three.U.compositionText, [REL.generator]: three.M.generatorText },
+    })
+    scenarios.duplicate_listed = slim(duplicateListed)
+    book.run('duplicate-listed', () => {
+      if (!duplicateListed.tool_present) {
+        pushToolAbsent(problems, duplicateListed, 'U 载体 + 名单里已有 id --restore')
+        return CODE.toolAbsent
+      }
+      // 夹具自检：入口必须是"标记不在 + 名单在 + 关着"（否则这一腿测的是别的入口态）。
+      const c = duplicateListed.before.carriers
+      if (!(c.marker === false && c.listed === true && c.disabled === true)) {
+        push(CODE.fixture, `重复项夹具坏了：入口应是 (marker:false, listed:true, disabled:true)，实得 ${JSON.stringify(c)}`)
+        return undefined
+      }
+      rec.readings.duplicate_listed = {
+        exit: duplicateListed.exit, code: duplicateListed.json?.code ?? null, changed: duplicateListed.json?.changed ?? null,
+        order_after: duplicateListed.after.list_order,
+        stderr_head: String(duplicateListed.stderr ?? '').slice(0, 400),
+      }
+      for (const p of duplicateListedRefusal(duplicateListed, { label: 'U 载体 + 名单里已有 id --restore', id: ROW_ID })) problems.push(p)
+      return undefined
+    })
+
+    // ── ②⁵ 刀 K18：摘掉"旁证过期"那道核 ⇒ stale-sidecar 腿必须红（工具会报 `sidecar`、按过期下标插） ──
+    const k18Tool = staleSidecarBlindTool(readFileSync(SOURCE.tool, 'utf8'))
+    scenarios.knife_stale_sidecar_blind = { ok: k18Tool.ok, applied: k18Tool.applied, why: k18Tool.why }
+    const k18Apply = k18Tool.ok
+      ? runScenario({
+        name: 'umh-01-k18-stale-blind', pre: 'M', generator: 'real', tool: 'real', action: 'apply', rederivePatch: true, toolText: k18Tool.text,
+        extraCopyFiles: { [REL.composition]: three.M.compositionText, [REL.generator]: three.M.generatorText },
+      })
+      : null
+    const k18Restore = k18Apply !== null && k18Apply.exit === 0 ? swapThenRestore(k18Apply) : null
+    scenarios.knife_k18 = k18Restore === null ? null : slim(k18Restore)
+    book.run('knife-K18', () => {
+      if (!k18Tool.ok) {
+        push(CODE.knifeNotBiting, `K18 的锚点不见了（${k18Tool.why}）—— 刀不咬`)
+        return undefined
+      }
+      if (k18Restore === null) {
+        push(CODE.fixture, `K18 那一圈没跑成（apply exit ${k18Apply?.exit ?? '(没跑)'}）—— 刀不咬`)
+        return undefined
+      }
+      knife(problems, {
+        label: 'K18·stale-sidecar-blind',
+        got: staleSidecarProblems(k18Restore, {
+          label: 'K18·stale-sidecar-blind',
+          orderAfter: [three.order[2], three.order[0], ROW_ID],
+        }),
+        want: CODE.position,
+        allow: [CODE.positionSilent],
+      })
+      return undefined
+    })
+
     // ── ③ 腿 unknown-id：组合里没有那一行 ⇒ exit 3，一个字节不写 ─────────────────
     const unknown = runScenario({ name: 'umh-01-unknown-id', pre: 'M', generator: 'real', tool: 'real', action: 'apply', id: 'agenia-dashboard-typo' })
     scenarios.unknown_id = slim(unknown)
@@ -481,7 +608,7 @@ test('UMH-01 撤挂载/恢复两条腿：--apply ⇒ 补丁里 {insert:0,preset_
       return undefined
     })
 
-    book.require(['ruler-control', 'copy-runnable-set', 'apply', 'restore', 'position-sidecar', 'position-tail', 'unknown-id', 'knife-K1', 'knife-K2', 'knife-K3', 'knife-K8', 'knife-K16', 'control'])
+    book.require(['ruler-control', 'copy-runnable-set', 'apply', 'restore', 'position-sidecar', 'position-tail', 'stale-sidecar', 'duplicate-listed', 'unknown-id', 'knife-K1', 'knife-K2', 'knife-K3', 'knife-K8', 'knife-K16', 'knife-K18', 'control'])
     rec.readings.legs = book.legs
     rec.readings.scenarios = scenarios
     caseFail(problems)

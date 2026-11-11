@@ -354,6 +354,24 @@ export function preState(state, { compositionText, generatorText }) {
 
 // ── 名单里三条的现场：`--restore` 凭什么插回原位（`bug-20261110-16`）──────────
 /**
+ * 把生成器里的 `HOST_LEVEL_IDS` 字面量**整段换成给定的项**（保留其余字节）。
+ * 三件套夹具与"名单被人动过"那些现场共用一条路 —— 别在两处各写一份切片算术。
+ * @param {string} generatorText
+ * @param {string[]} items
+ * @returns {string}
+ */
+export function rewriteHostLevelList(generatorText, items) {
+  const list = /HOST_LEVEL_IDS\s*=\s*[^[]*\[([\s\S]*?)\]/.exec(String(generatorText))
+  if (list === null) throw new Error('生成器里读不出 `HOST_LEVEL_IDS = … [ … ]` 这一个字面量')
+  // 正则吃到 `]` 为止，剩下的 `)` 要跟着一起替换（否则新写的 `Object.freeze([...])` 会多一个右括号）。
+  const rest = String(generatorText).slice(list.index + list[0].length)
+  const tail = rest.startsWith(')') ? rest.slice(1) : rest
+  return String(generatorText).slice(0, list.index)
+    + `HOST_LEVEL_IDS = Object.freeze([${items.map((x) => `'${x}'`).join(', ')}])`
+    + tail
+}
+
+/**
  * 名单里**三条**的夹具（`HOST_LEVEL_IDS = ['persona', '<id>', 'agent-instructions']`，我们的 id 在**中间**）。
  *
  * 为什么要三条：名单里只有一条时"插回原位"与"追加在表尾"是**同一个结果**——
@@ -368,16 +386,10 @@ export function preState(state, { compositionText, generatorText }) {
  *            order:string[]}}
  */
 export function threeItemListTexts({ compositionText, generatorText }, id = ROW_ID) {
-  const list = /HOST_LEVEL_IDS\s*=\s*[^[]*\[([\s\S]*?)\]/.exec(String(generatorText))
-  if (list === null) throw new Error('三件套夹具造不出来：生成器里读不出 `HOST_LEVEL_IDS` 字面量')
+  // 先确认生成器里那个字面量读得出来（读不出来是**夹具坏了**，不是产品坏了）。
+  if (hostLevelListOrder(generatorText) === null) throw new Error('三件套夹具造不出来：生成器里读不出 `HOST_LEVEL_IDS` 字面量')
   const order = [EXTRA_HOST_IDS[0], id, EXTRA_HOST_IDS[1]]
-  // 字面量长这样：`const HOST_LEVEL_IDS = Object.freeze(['agenia-dashboard'])` ——
-  // 正则吃到 `]` 为止，剩下的 `)` 要跟着**一起**替换掉（否则新写的 `Object.freeze([...])` 会多一个右括号）。
-  const rest = String(generatorText).slice(list.index + list[0].length)
-  const tailOfCall = rest.startsWith(')') ? rest.slice(1) : rest
-  const generatorM = String(generatorText).slice(0, list.index)
-    + `HOST_LEVEL_IDS = Object.freeze([${order.map((x) => `'${x}'`).join(', ')}])`
-    + tailOfCall
+  const generatorM = rewriteHostLevelList(generatorText, order)
   // 给两条被点名的行各补一行标记（`- id:` 的**下一行**、两格缩进 —— 生成器只认这个位置）。
   let compositionM = String(compositionText)
   for (const extra of EXTRA_HOST_IDS) {
@@ -1479,12 +1491,13 @@ export function restorePositionProblems(r, { label, want, orderAfter, filesBefor
     out.push(problem(CODE.position, `${label}：工具没给 \`restore_position\`（实得 ${JSON.stringify(pos)}）—— `
       + '契约 §4.1：跑成的 apply / restore 必须说得出"这一条插在第几位、凭什么"'))
   } else {
-    if (!['recorded', 'sidecar', 'tail'].includes(pos.source)) {
-      out.push(problem(CODE.position, `${label}：\`restore_position.source\` = ${JSON.stringify(pos.source)}，不在 {recorded, sidecar, tail} 里`))
+    if (!['recorded', 'sidecar', 'tail', 'stale-sidecar'].includes(pos.source)) {
+      out.push(problem(CODE.position, `${label}：\`restore_position.source\` = ${JSON.stringify(pos.source)}，不在 {recorded, sidecar, tail, stale-sidecar} 里`))
     }
     if (pos.source !== want.source) {
       out.push(problem(CODE.position, `${label}：\`restore_position.source\` = ${JSON.stringify(pos.source)}，期望 ${JSON.stringify(want.source)}`
-        + '（`recorded` = apply 记下的原下标 · `sidecar` = restore 按旁证插回 · `tail` = 没有可用旁证、退回表尾）'))
+        + '（`recorded` = apply 记下的原下标 · `sidecar` = restore 核过名单、按旁证插回 · `tail` = 没有可用旁证、退回表尾 · '
+        + '`stale-sidecar` = 旁证在、但名单在 apply 之后变过）'))
     }
     if (pos.index !== want.index) {
       out.push(problem(CODE.position, `${label}：\`restore_position.index\` = ${JSON.stringify(pos.index)}，期望 ${JSON.stringify(want.index)}`
@@ -1532,9 +1545,103 @@ export function tailFallbackProblems(r, { label, orderAfter }) {
 }
 
 /**
+ * ⑨⁗ **旁证过期**（`bug-20261110-16` 第二轮 · 契约 §1.5）：旁证在、但名单在 `--apply` 之后变过
+ * ⇒ 那个下标**已经不作数**，工具必须报 **`stale-sidecar`** 并退回表尾，而且在读数里说清"名单变过"。
+ *
+ * 为什么这一条不能只判"退回表尾"：`tail` 的意思是"**没有**可用旁证"，`stale-sidecar` 的意思是
+ * "有旁证、但它对不上"。两件事给读的人两种下一步（去查谁动了名单 vs 去查旁证为什么没写），
+ * 混成一个词就等于把"我没信它"藏起来 —— 而错插一次顺序，三份文件就不再逐字节回原。
+ *
+ * 钉四样：① `source = "stale-sidecar"`（**不是** `sidecar` —— 那是在说"我按旁证插的"，谎）；
+ * ② 结果**退回表尾**（名单顺序 = 当前名单 + id 在最后）；③ `reason`（JSON 里与 stderr 上）
+ * 点名"名单在 --apply 之后变过"；④ 这一跑仍是成功（exit 0 / `UMH-RESTORED` —— 退回表尾不是失败）。
+ *
+ * @returns {object[]} 有问题就返回；空 = 这一格过
+ */
+export function staleSidecarProblems(r, { label, orderAfter }) {
+  const out = [...restorePositionProblems(r, { label, want: { source: 'stale-sidecar', index: orderAfter.length - 1 }, orderAfter })]
+  const why = String(r.json?.restore_position?.reason ?? '')
+  if (!/名单在 --apply 之后变过/.test(why)) {
+    out.push(problem(CODE.positionSilent, `${label}：\`restore_position.reason\` 没点名"名单在 --apply 之后变过"（实得 ${JSON.stringify(why)}）`
+      + ' —— 旁证过期与"没有旁证"是两件事；读数里说不出来，读的人就不知道该去查谁动了名单'))
+  }
+  const said = String(r.stderr ?? '')
+  if (!/名单在 --apply 之后变过|位置旁证过期/.test(said)) {
+    out.push(problem(CODE.positionSilent, `${label}：stderr 没说出"旁证过期"（实得 ${JSON.stringify(said.slice(0, 300))}）—— `
+      + '契约 §1.5：静默退回会让"顺序变了"与"没变"在读数里长得一样'))
+  }
+  if (r.exit !== 0 || r.json?.code !== 'UMH-RESTORED') {
+    out.push(problem(CODE.exit, `${label}：旁证过期的那次 \`--restore\` 仍是**成功**（退回表尾不是失败），`
+      + `实得 exit ${r.exit} / code=${JSON.stringify(r.json?.code)}`))
+  }
+  return out
+}
+
+/**
+ * ⑨⁘ **"id 已经自己回到名单里"那一支**（契约 §1.5 / §8.10）：入口态闸要先拒，**不许**插第二次。
+ *
+ * 造法：U 态载体（标记不在 / 行关着）+ **名单里已经有 id** ⇒ 这是 §二 的第 7 行
+ * （"标记不在 + 名单在 + 关着"）⇒ exit 2 · `E_UNMOUNT_MARKER_MISSING` · 一个字节都不写。
+ * 这一支**走不到** `stale-sidecar`：入口态那一道闸在 `editList()` 之前就把它拒了（实测；
+ * 评审报告里那个 `[a,c,b]` 现场就是这一支，别再去跑它当 stale 的样本）。
+ *
+ * @returns {object[]} 有问题就返回；空 = 这一格过
+ */
+export function duplicateListedRefusal(r, { label, id = ROW_ID }) {
+  const out = []
+  if (r.exit !== 2 || r.json?.code !== 'E_UNMOUNT_MARKER_MISSING') {
+    out.push(problem(CODE.refusalCode, `${label}：U 态载体 + 名单里已经有 ${id} ⇒ 入口态闸必须先拒（exit 2 · `
+      + `\`E_UNMOUNT_MARKER_MISSING\`），实得 exit ${r.exit} / code=${JSON.stringify(r.json?.code)} —— `
+      + '这一支不许走到"插回去"那一步（插第二次会让名单里出现两个同名项）'))
+  }
+  if (r.json?.changed !== 0) {
+    out.push(problem(CODE.refusalChanged, `${label}：changed=${JSON.stringify(r.json?.changed)}，这一跑一个字节都不该写`))
+  }
+  if (!r.files_equal) {
+    out.push(problem(CODE.refusalWrote, `${label}：拒绝之后产品字节变了：${JSON.stringify(r.changed_files)}`))
+  }
+  const order = r.after?.list_order ?? null
+  const hits = Array.isArray(order) ? order.filter((value) => value === id).length : null
+  if (hits !== 1) {
+    out.push(problem(CODE.position, `${label}：跑完之后名单里 ${id} 出现 ${JSON.stringify(hits)} 次（期望恰好 1 次）`
+      + `（名单实得 ${JSON.stringify(order)}）—— 第二个同名项就是"插了第二次"的痕迹`))
+  }
+  return out
+}
+
+/**
+ * 刀：**把"旁证过期"那道核拿掉**（`const stale = expected !== null && …` → `const stale = false && …`）。
+ *
+ * 效果：名单在 apply 之后被换过序，工具仍报 `source: "sidecar"` 并按**过期下标**插回 ⇒
+ * 顺序错、三份不再逐字节回原，而读数说"我按旁证插的"。`UMH-01` 的 `stale-sidecar` 腿必须红。
+ *
+ * @returns {{text:string, applied:string[], missing:string[], ok:boolean, why:string|null}}
+ */
+export function staleSidecarBlindTool(realText) {
+  const anchor = 'const stale = expected !== null'
+  const hits = String(realText).split(anchor).length - 1
+  if (hits !== 1) {
+    return { text: String(realText), applied: [], missing: [`\`${anchor}\` 出现 ${hits} 次（要 1 次）`], ok: false, why: `锚点不见了：${anchor}` }
+  }
+  return {
+    text: String(realText).replace(anchor, 'const stale = false && expected !== null // 刀：旁证过期那道核被摘掉'),
+    applied: [anchor],
+    missing: [],
+    ok: true,
+    why: null,
+  }
+}
+
+/** 刀 K17（`failed_step: "state"` 报成 `"patch"`）：见下方 `stateStepLiarTool`。 */
+
+/**
  * ⑨‴ **`--apply` 记不下旁证 ⇒ 一个产品字节都不写**（`failed_step: "state"`，契约 §4.2 ①‴）。
- * 这一支从入口走不到（旁证目录写不进去要先造出那种环境），所以判据**不**造现场，只钉形状：
- * 一旦有人把它做成可达，读数里必须是 `state` + `changed: 0` + `nothing_written: true` + `rolled_back: false`。
+ *
+ * 🔴 **这一支可达**（2026-11-11 实测，不是"登记在 §八 的那种走不到的分支"）：副本里把 `.team/state`
+ * 做成**一个文件**（不是目录）⇒ 旁证的原子写建父目录时 `ENOTDIR` ⇒ 工具在任何产品字节之前停下。
+ * `UMH-04` 的 `state-step` 腿就这么造现场（顺手把 `.team/state` 那一份当夹具输入），
+ * 刀 K17 把 `failed_step: "state"` 报成 `"patch"` ⇒ 那条腿翻 `UMH-STATE-STEP-UNNAMED`。
+ * 判据钉形状：`state` + `changed: 0` + `nothing_written: true` + `rolled_back: false`。
  */
 export function stateStepProblems(r, { label }) {
   const out = []

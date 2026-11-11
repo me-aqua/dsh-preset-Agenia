@@ -189,16 +189,22 @@ export function slaDebtReading({ entries = [], cycle = DAY } = {}) {
 }
 
 /**
- * **卡面欠账判据**（契约 §3.7.1-A 的三条翻面）：卡上印的数与欠账必须同值、两个方向都不许自相矛盾。
+ * 卡面欠账判据（契约 §3.7.1-A）：卡上印的数、印的**归属**都与欠账同值；两个方向都不许自相矛盾。
  *
  *   · `remaining > 0` 而这格 **绿** ⇒ `C2-SLA-DEBT-HIDDEN`（有一条欠账，卡却说没欠）；
  *   · `remaining > 0` 而卡上的数读不出 / ≠ `remaining` ⇒ `C2-SLA-DEBT-COUNT`（"还剩几条"说不清）；
  *   · `remaining > 0` 而 `card.reasons` 里没有 `SLA_OVER_CYCLE` ⇒ `C2-SLA-DEBT-REASON`；
+ *   · `remaining > 0` 而卡面 **没印归属**（`（<label> 欠 · owed_by=<machine>）` 读不出）⇒
+ *     `C2-SLA-DEBT-OWNER-UNNAMED`（"谁欠的"说不清 = 这一格的核心没印出来）；
+ *   · 印出来了但 **≠ `owner` 那张表**（`owed_by_label` / `owed_by` 任一项）⇒ `C2-SLA-DEBT-OWNER-DRIFT`
+ *     （卡面自己抄了一个词 / 表改了卡没改 / 读的是别的树上的表）；
  *   · `remaining === 0` 而这格 **红** ⇒ `C2-SLA-DEBT-EMPTY`（红了却没欠账 = 这条红不是这个原因）。
  *
- * @param {{cell:object|null, reasons?:Array, debt:object, where?:string, push:Function}} input
+ * @param {{cell:object|null, reasons?:Array, debt:object, where?:string, push:Function,
+ *          owner?:{owed_by:string, owed_by_label:string}}} input
+ *   `owner` = **判据期望的那张归属表**（缺省 `SLA_DEBT`；合成表的腿显式传它自己写进工作区那份）。
  */
-export function slaDebtProblems({ cell, reasons = [], debt, where = 'sla', push }) {
+export function slaDebtProblems({ cell, reasons = [], debt, where = 'sla', push, owner = SLA_DEBT }) {
   const label = String(where)
   const state = cell === null || typeof cell !== 'object' ? null : cell.state
   const reading = cell === null || typeof cell !== 'object' ? '' : String(cell.reading ?? '')
@@ -206,17 +212,34 @@ export function slaDebtProblems({ cell, reasons = [], debt, where = 'sla', push 
   if (remaining > 0) {
     if (state === 'green') {
       push('C2-SLA-DEBT-HIDDEN', `${label}：\`${SLA_DEBT.closes_on}\` 还欠 ${remaining} 条（${debt.ids.join(' · ')}），卡上 \`sla\` 格却是 \`green\``
-        + ` —— 欠账归 ${SLA_DEBT.owed_by_label}，卡不许把"还没评估"印成"没欠账"（契约 §3.7.1-A）`)
+        + ` —— 欠账归 ${owner.owed_by_label}，卡不许把"还没评估"印成"没欠账"（契约 §3.7.1-A）`)
     }
     const m = /超期\s*(\d+)\s*条/.exec(reading)
     if (m === null || Number(m[1]) !== remaining) {
       push('C2-SLA-DEBT-COUNT', `${label}：卡上 \`sla\` 格的 \`reading\` 必须印出"这一批还剩 ${remaining} 条"，`
-        + `实得 ${JSON.stringify(reading)} —— 谁欠的归 ${SLA_DEBT.owed_by_label}，"还剩几条"必须与欠账同值`)
+        + `实得 ${JSON.stringify(reading)} —— 谁欠的归 ${owner.owed_by_label}，"还剩几条"必须与欠账同值`)
     }
     const hasReason = (Array.isArray(reasons) ? reasons : []).some((r) => r?.code === 'SLA_OVER_CYCLE')
     if (!hasReason) {
       push('C2-SLA-DEBT-REASON', `${label}：欠 ${remaining} 条评估而 \`card.reasons\` 里没有 \`SLA_OVER_CYCLE\``
         + `（实得 ${JSON.stringify((Array.isArray(reasons) ? reasons : []).map((r) => r?.code))}）`)
+    }
+    // 🔴 归属（`bug-20261110-09` 的尾款 · M1）：卡面必须印**表里那个词**，而且印出机器名。
+    const printedLabel = /（([^（）]*?)\s*欠/.exec(reading)
+    const printedMachine = /owed_by=([A-Za-z0-9_-]+)/.exec(reading)
+    if (printedLabel === null || printedMachine === null) {
+      push('C2-SLA-DEBT-OWNER-UNNAMED', `${label}：卡上 \`sla\` 格没印出**归属**（要 \`（<label> 欠 · owed_by=<machine>）\` 那个形状），`
+        + `实得 ${JSON.stringify(reading)} —— "谁欠的"是这一格的核心；缺了它，读者只知道欠几条、不知道找谁`)
+    } else {
+      if (printedLabel[1] !== owner.owed_by_label) {
+        push('C2-SLA-DEBT-OWNER-DRIFT', `${label}：卡上印的归属是 ${JSON.stringify(printedLabel[1])}，`
+          + `归属表 \`SLA_DEBT.owed_by_label\` 是 ${JSON.stringify(owner.owed_by_label)} —— `
+          + '卡面自己抄了一个词（表改了卡没改 / 抄的是别的树上的表）：改表不会让卡跟着改，这一格就白判了')
+      }
+      if (printedMachine[1] !== owner.owed_by) {
+        push('C2-SLA-DEBT-OWNER-DRIFT', `${label}：卡上印的机器名是 \`owed_by=${printedMachine[1]}\`，`
+          + `归属表 \`SLA_DEBT.owed_by\` 是 ${JSON.stringify(owner.owed_by)} —— 两个名字必须同一个来源`)
+      }
     }
   } else if (state === 'red') {
     push('C2-SLA-DEBT-EMPTY', `${label}：卡上 \`sla\` 格是红的，但欠账读数是 0（没有一条"超期未评估"）——`
@@ -224,6 +247,30 @@ export function slaDebtProblems({ cell, reasons = [], debt, where = 'sla', push 
   }
   return undefined
 }
+
+/**
+ * **归属表的合成副本**（写进工作区的那一份；`CARD-05` 的 `owner-*` 腿用）：只动 `SLA_DEBT` 块里的两个字段。
+ *
+ * 为什么这样造现场：卡面读表是"**工作区优先**、其次仓库"（`daily-cards.py::sla_owner_fields()` 的走法）。
+ * 所以把一份合成表放进工作区，就能在**不改产品文件、不改仓库里那张真表**的前提下，判
+ * "改表 ⇒ 卡跟着改"。`null` = 那个字段**不写**（造"表缺字段 ⇒ unknown"那个现场）。
+ *
+ * @param {{owed_by?:string|null, owed_by_label?:string|null}} [fields]
+ * @returns {string}
+ */
+export function slaOwnerTableText({ owed_by = SLA_DEBT.owed_by, owed_by_label = SLA_DEBT.owed_by_label } = {}) {
+  const lines = [
+    '/** 夹具：`SLA_DEBT` 归属表的一份合成副本（`CARD-05` 的 `owner-*` 腿；不是产品文件）。 */',
+    'export const SLA_DEBT = Object.freeze({',
+  ]
+  if (owed_by !== null && owed_by !== undefined) lines.push(`  owed_by: '${owed_by}',`)
+  if (owed_by_label !== null && owed_by_label !== undefined) lines.push(`  owed_by_label: '${owed_by_label}',`)
+  lines.push('})', '')
+  return lines.join('\n')
+}
+
+/** 合成表在工作区里的落点（与 `daily-cards.py::SLA_DEBT_TABLE_REL` 同一个相对路径）。 */
+export const SLA_OWNER_TABLE_REL = 'tests/agenia-upgrade/support/card-surface.mjs'
 
 /** 只许"探针降级"的两格（A0b / A0d 不成立 ⇒ 卡槽格黄；C1 §11）。 */
 export const PROBE_DEGRADED_KEYS = Object.freeze(['slot_not_enforced', 'stale_slot'])
@@ -1098,6 +1145,13 @@ export function scene(caseId, tag, {
   identity = undefined,
   reviews = undefined,
   legacy = undefined,
+  /**
+   * 生成器跑之前先摆进工作区的**额外文件**（`{相对路径: 文本}`，先 `mkdir -p`）。
+   * 今天只有一个用它的现场：把**归属表**（`tests/agenia-upgrade/support/card-surface.mjs`）
+   * 的一份合成副本放进工作区 —— 卡面必须读工作区那一份（`sla_owner_fields()` 的"工作区优先"），
+   * 于是"改表 ⇒ 卡跟着改"这条**能在不改产品文件的前提下**被判到（`bug-20261110-09` 的尾款 · M1）。
+   */
+  extraFiles = {},
 } = {}) {
   const roots = makeCardRoots(caseId, tag)
   if (memorySource) writeMemorySource(roots.ws)
@@ -1109,6 +1163,9 @@ export function scene(caseId, tag, {
   if (identity !== undefined && identity !== null) writeIdentity(roots.ws, day, identity)
   if (reviews !== undefined && reviews !== null) writeReviewReports(roots.ws, day, reviews)
   if (legacy !== undefined && legacy !== null) writeLegacyStore(roots.ws, legacy)
+  for (const [rel, text] of Object.entries(extraFiles)) {
+    writeJsonAtText(path.join(roots.ws, ...String(rel).split('/')), text)
+  }
   const run = runCards(roots, { day, nowIso })
   const card = readCard(cardFile(roots.ws, day))
   const card2 = readCard2(card2File(roots.ws, day))

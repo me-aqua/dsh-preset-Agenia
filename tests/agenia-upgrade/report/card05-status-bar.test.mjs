@@ -44,9 +44,17 @@
  *       评估回答"是不是真的"，两个问题不许互相顶账）；② 卡上 `sla` 格 `red` 且 `SLA_OVER_CYCLE` 点名它；
  *       ③ 欠账读数 `owed_by = test`（**测试岗**）/ `remaining` = 卡上印的"超期 N 条"
  *       （`slaDebtProblems()`，契约 §3.7.1-A：卡面必须说得出**谁欠的**与**这一批还剩几条**）。
- *       ⚠️ 这一格判的是**数 + 归属表**（`SLA_DEBT` 一处），不判措辞：卡面还没印"测试岗"四个字，
- *       印上那天**不加第二条判据**。四份合成卡（proper / hidden-green / count-drift / red-without-debt）
+ *       ⚠️ 这一格判的是**数 + 归属**（`SLA_DEBT` 一处），归属那一半在下面 `I` 段；
+ *       四份合成卡（proper / hidden-green / count-drift / red-without-debt）
  *       证明每一条码单独能翻面。
+ *   `I` 🔴 **归属从表里读**（2026-11-11 第二轮 · `bug-20261111-05` · 契约 §3.7.1-B）：
+ *       卡面 `sla` 格必须印 `（<owed_by_label> 欠 · owed_by=<owed_by>）`，两个值都来自 `SLA_DEBT`：
+ *       ① **没印归属** ⇒ `C2-SLA-DEBT-OWNER-UNNAMED`；② 印了但**与表不符** ⇒ `C2-SLA-DEBT-OWNER-DRIFT`；
+ *       ③ **工作区里放一份合成表**（`测试组` / `qa-group`）⇒ 卡面必须跟着换词（`C2-SLA-DEBT-OWNER-TABLE`）
+ *          —— 这一条就是**翻面**：卡面若还抄着 `测试岗`，它当场红（表变 ⇒ 卡变，从此刻起看得见）；
+ *       ④ 合成表里**删掉 `owed_by`** ⇒ 卡面印 `owed_by=unknown`，**不许**退回旧词（`C2-SLA-DEBT-OWNER-UNKNOWN`）。
+ *       ⚠️ 这一格**没有源码刀**：判的是"卡面 vs 判据喂进去的那张表"，合成表那条腿本身就是翻面；
+ *       再切一刀只能切"删掉读表"，那会同时打红两条码、分不开（契约 §3.7.1-B 末段）。
  *
  * ── 未接线那两条判据怎么证明自己翻得动面 ───────────────────────────────
  * 主夹具里十二格全接线 ⇒ "`wired:false ⇒ red`" 这条判据在主夹具上**没有样本**。
@@ -75,7 +83,8 @@ import {
   CARD_SHEET, DAY, DAY_PREV, NOW, NOW_PREV, PROBE_DEGRADED_KEYS, PROBE_IDS, RED_CODES, STATUS_CELLS,
   STATUS_STATES, SLA_DEBT, assertReasonCodes, bugEntry, bugLedger, cardFile, hasRed, keysMissing, localState,
   makeCardRoots, opUnavailable, pythonMirror, readBugOp, readCard, redCodes, redDetails, routeLedger,
-  routeTask, runCards, scene, setClock, sheetMissing, slaDebtProblems, slaDebtReading, statOf, writeBug, writeDataRoot, writeIdentity,
+  routeTask, runCards, scene, setClock, sheetMissing, SLA_OWNER_TABLE_REL, slaDebtProblems, slaDebtReading,
+  slaOwnerTableText, statOf, writeBug, writeDataRoot, writeIdentity,
   writeLegacyStore, writeLocal, writeMemorySource, writeReviewReports, writeRoute,
 } from '../support/card-surface.mjs'
 
@@ -621,41 +630,60 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
         // ③ 卡上"还剩几条"必须与欠账同值（谁欠的 = 测试岗，写在 SLA_DEBT 一处）。
         slaDebtProblems({ cell, reasons: cells['card.reasons'], debt, where: 'E2d/真卡', push })
       }
-      // ④ 判据自己的阳性对照 + 三把合成刀（每一码单独承重）：没有这一组，"欠账说不清"就只是字面承诺。
+      // ④ 判据自己的阳性对照 + 六把合成刀（每一码单独承重）：没有这一组，"欠账说不清"就只是字面承诺。
+      //    ⚠️ `proper` / `count-drift` 的 reading 必须带**归属**那一段（`（测试岗 欠 · owed_by=test）`）——
+      //    卡面从 M1 起印它；不带就等于"没印归属"，那是另一条码（`OWNER-UNNAMED`），会把这把刀的期望弄脏。
+      const ownerText = `（${SLA_DEBT.owed_by_label} 欠 · owed_by=${SLA_DEBT.owed_by}）`
       const synthetics = [
         {
           key: 'proper',
-          cell: { key: 'sla', state: 'red', reading: `超期 1 条 · 最老 1 天 · 周期 ${DAY}` },
+          cell: { key: 'sla', state: 'red', reading: `超期 1 条${ownerText} · 最老 1 天 · 周期 ${DAY}` },
           reasons: [{ code: 'SLA_OVER_CYCLE', detail: `1 条 bug 超一个开工周期仍未评估：${SLA_DISPOSITION_ID}` }],
           debt,
           want: [],
         },
         {
           key: 'hidden-green',
-          cell: { key: 'sla', state: 'green', reading: `超期 0 条 · 最老 0 天 · 周期 ${DAY}` },
+          cell: { key: 'sla', state: 'green', reading: `超期 0 条${ownerText} · 最老 0 天 · 周期 ${DAY}` },
           reasons: [],
           debt,
           want: ['C2-SLA-DEBT-HIDDEN', 'C2-SLA-DEBT-COUNT', 'C2-SLA-DEBT-REASON'],
         },
         {
           key: 'count-drift',
-          cell: { key: 'sla', state: 'red', reading: `超期 2 条 · 最老 1 天 · 周期 ${DAY}` },
+          cell: { key: 'sla', state: 'red', reading: `超期 2 条${ownerText} · 最老 1 天 · 周期 ${DAY}` },
           reasons: [{ code: 'SLA_OVER_CYCLE', detail: '（合成：数说 2 条）' }],
           debt,
           want: ['C2-SLA-DEBT-COUNT'],
         },
         {
           key: 'red-without-debt',
-          cell: { key: 'sla', state: 'red', reading: `超期 0 条 · 最老 0 天 · 周期 ${DAY}` },
+          cell: { key: 'sla', state: 'red', reading: `超期 0 条${ownerText} · 最老 0 天 · 周期 ${DAY}` },
           reasons: [],
           debt: slaDebtReading({ entries: [], cycle: DAY }),
           want: ['C2-SLA-DEBT-EMPTY'],
+        },
+        {
+          // 卡面没印归属（M1 之前的形状）⇒ 必须点名"谁欠的说不清"。
+          key: 'owner-unnamed',
+          cell: { key: 'sla', state: 'red', reading: `超期 1 条 · 最老 1 天 · 周期 ${DAY}` },
+          reasons: [{ code: 'SLA_OVER_CYCLE', detail: `1 条 bug 超一个开工周期仍未评估：${SLA_DISPOSITION_ID}` }],
+          debt,
+          want: ['C2-SLA-DEBT-OWNER-UNNAMED'],
+        },
+        {
+          // 卡面自己抄了别的词（表是 test/测试岗，卡上写 测试组/qa）⇒ 必须红"与表不符"。
+          key: 'owner-drift',
+          cell: { key: 'sla', state: 'red', reading: `超期 1 条（测试组 欠 · owed_by=qa）· 最老 1 天 · 周期 ${DAY}` },
+          reasons: [{ code: 'SLA_OVER_CYCLE', detail: `1 条 bug 超一个开工周期仍未评估：${SLA_DISPOSITION_ID}` }],
+          debt,
+          want: ['C2-SLA-DEBT-OWNER-DRIFT', 'C2-SLA-DEBT-OWNER-DRIFT'],
         },
       ]
       const syntheticReadings = []
       for (const s of synthetics) {
         const got = []
-        slaDebtProblems({ cell: s.cell, reasons: s.reasons, debt: s.debt, where: `synthetic:${s.key}`, push: (code) => got.push(code) })
+        slaDebtProblems({ cell: s.cell, reasons: s.reasons, debt: s.debt, where: `synthetic:${s.key}`, push: (code) => got.push(code), ...(s.owner === undefined ? {} : { owner: s.owner }) })
         syntheticReadings.push({ key: s.key, want: s.want, got })
         if (JSON.stringify(got) !== JSON.stringify(s.want)) {
           push('C2-SLA-DEBT-KNIFE',
@@ -665,6 +693,85 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
       }
       readings.sla_debt_synthetic = syntheticReadings
     }
+
+    // ── E2e · 🔴 归属**从表里读**（M1 · 契约 §3.7.1-A）：改表 ⇒ 卡跟着改；表缺字段 ⇒ `unknown` ──────
+    /**
+     * 三个现场，同一份 `scene()`：
+     *   ① **仓库里那张真表**（E2d 已经跑过）—— 卡面必须印 `SLA_DEBT.owed_by_label` / `owed_by`；
+     *   ② **工作区里放一份合成表**（`测试组` / `qa-group`）—— 卡面必须跟着改成那两个词。
+     *      这就是这一格的**翻面**：卡面若还抄着 `测试岗`，② 会红；表改了卡不改这件事从此刻起看得见。
+     *   ③ **合成表里删掉 `owed_by`** —— 卡面必须印 `owed_by=unknown`，**且不许**退回那个旧词 `测试岗`。
+     *      （"猜一个词"会让"谁欠的"在表改坏之后继续印旧的，而所有断言都还绿着。）
+     */
+    const OWNER_SWAPPED = { owed_by: 'qa-group', owed_by_label: '测试组' }
+    const ownerScene = (tag, table) => scene('CARD-05', tag, {
+      route: routeLedger({ tickets: [] }),
+      bug: bugLedger({
+        entries: [bugEntry(SLA_DISPOSITION_ID, {
+          opened_at: `${DAY_PREV}T09:00:00+08:00`,
+          registered_at: `${DAY_PREV}T09:00:00+08:00`,
+          assessment: null,
+          disposition: { value: 'adopted', by: 'leader', at: NOW_PREV, reason: '夹具：组长已处置，测试岗还没评估' },
+        })],
+      }),
+      local: localState({ day: DAY, technical: 'done', conversation: 'done' }),
+      identity: {},
+      reviews: {},
+      legacy: { remaining: 0 },
+      extraFiles: { [SLA_OWNER_TABLE_REL]: table },
+    })
+    const ownerReadings = {}
+    for (const spec of [
+      { key: 'table-driven', table: slaOwnerTableText(OWNER_SWAPPED), owner: OWNER_SWAPPED },
+      { key: 'field-missing', table: slaOwnerTableText({ owed_by: null }), owner: { owed_by: 'unknown', owed_by_label: 'unknown' } },
+    ]) {
+      const s = ownerScene(`sla-owner-${spec.key}`, spec.table)
+      if (s.run.exit_code !== 0) {
+        push('C2-GENERATOR-FAILED', `归属表现场 ${spec.key}：生成器 exit=${s.run.exit_code}`)
+        ownerReadings[spec.key] = { error: s.run.stderr?.slice(0, 400) ?? null }
+        continue
+      }
+      if (s.card.sheet === null) {
+        push('C2-SHEET-MISSING', `归属表现场 ${spec.key}：卡上没有机器读面`)
+        ownerReadings[spec.key] = { error: s.card.error ?? null }
+        continue
+      }
+      const cells = s.card.cells
+      const cell = cellOf(cells['statusbar'], 'sla')
+      const got = []
+      slaDebtProblems({ cell, reasons: cells['card.reasons'], debt: slaDebtReading({
+        entries: [{ id: SLA_DISPOSITION_ID, kind: 'bug', opened_at: `${DAY_PREV}T09:00:00+08:00`, assessment: null }],
+        cycle: DAY,
+      }), where: `owner:${spec.key}`, push: (code) => got.push(code), owner: spec.owner })
+      ownerReadings[spec.key] = { cell, reasons: cells['card.reasons'], owner: spec.owner, codes: got }
+      for (const code of got) {
+        push(code, `归属表现场 ${spec.key}：${JSON.stringify(cell?.reading ?? null)} —— 期望卡面印 `
+          + `\`（${spec.owner.owed_by_label} 欠 · owed_by=${spec.owner.owed_by}）\`（契约 §3.7.1-A 的 M1：表是唯一出处）`)
+      }
+      if (spec.key === 'table-driven') {
+        // 合成表必须**真的**顶掉仓库里那张（否则"卡跟着表改"这件事没被测到）。
+        const reading = String(cell?.reading ?? '')
+        if (!reading.includes('测试组') || !reading.includes('owed_by=qa-group')) {
+          push('C2-SLA-DEBT-OWNER-TABLE',
+            `工作区里放了一份合成归属表（\`测试组\` / \`qa-group\`），卡面却印 ${JSON.stringify(reading)} —— `
+            + '卡面必须读**工作区那一份**表（`daily-cards.py::sla_owner_fields()` 的走法）：'
+            + '读不到它，"改表 ⇒ 卡跟着改"就没有样本，这一格会退化成"抄来的词恰好对"')
+        }
+      }
+      if (spec.key === 'field-missing') {
+        const reading = String(cell?.reading ?? '')
+        if (!reading.includes('owed_by=unknown')) {
+          push('C2-SLA-DEBT-OWNER-UNKNOWN',
+            `归属表里删掉 \`owed_by\` ⇒ 卡面必须印 \`owed_by=unknown\`（**不猜一个词**），实得 ${JSON.stringify(reading)}`)
+        }
+        if (reading.includes(SLA_DEBT.owed_by_label)) {
+          push('C2-SLA-DEBT-OWNER-UNKNOWN',
+            `归属表里删掉 \`owed_by\` 之后卡面仍印着 \`${SLA_DEBT.owed_by_label}\`（${JSON.stringify(reading)}）—— `
+            + '那是一个**兜底字符串**：表改坏时它会把旧词继续印下去，而读数看不出表已经读不出来了')
+        }
+      }
+    }
+    readings.sla_owner_table = ownerReadings
 
     // ── E3 · carrier_missing：评审报告不在 ⇒ 红 ─────────────────────────
     {
