@@ -27,6 +27,9 @@
     <WS>/.team/state/identity/<day>.json      身份报警（未知预设 / 预设降级；注入器写）
     <WS>/.team/tickets/legacy.json            legacy 票店（还剩几张 = 迁移没做完）
     <WS>/presets/agenia/lib/memory.mjs        容量参考线（CAP_COUNT / CAP_CHARS）
+    <WS>|仓库/tests/agenia-upgrade/support/card-surface.mjs
+                                              SLA 欠账的**归属表**（只读 `SLA_DEBT.owed_by` /
+                                              `owed_by_label`；卡面不写第二份字符串）
 
 出什么：
     <WS>/.team/leader/<day>/记忆更新报告-<day>.xlsx     ← 人读四页 + `C2 · 验收格`（40 格机器读面：
@@ -646,11 +649,42 @@ def cap_of(entries, now):
 # `unknown` 是"判不了"，**不是**"已评估" —— 它让条目保留 open，SLA 照样算超期。
 ASSESSED_VERDICTS = ("true", "false", "duplicate")
 
-# SLA 欠账**归谁**（卡面只印给人看的那个词）。归属表本身不在这一份里 —— 唯一出处是
-# `tests/agenia-upgrade/support/card-surface.mjs::SLA_DEBT`（`owed_by: 'test'` /
-# `owed_by_label: '测试岗'`，契约 §3.7.1-A）。判据判"数 + 归属表"，不判措辞；
-# 这里印的只是把那张表里的**人话**搬到卡上（`bug-20261110-09` 的尾款）。
-SLA_OWED_BY_LABEL = "测试岗"
+# SLA 欠账的**归属表**不在这一份里，卡面也不许再抄一份字符串：
+# 唯一出处是 `tests/agenia-upgrade/support/card-surface.mjs::SLA_DEBT`（`owed_by` = 机器名、
+# `owed_by_label` = 人话；契约 §3.7.1-A）。这里只把那张表**读出来**印到卡上 ——
+# 表改了（例如 owed_by 换成"测试组"），卡跟着改；表不在 / 读不出来 / 没有 owed_by ⇒ `unknown`
+# （**不猜一个词**：猜出来的词会让"谁欠的"在表改了之后继续印旧的，而所有断言都还绿着）。
+SLA_DEBT_TABLE_REL = os.path.join("tests", "agenia-upgrade", "support", "card-surface.mjs")
+
+
+def sla_owner_fields():
+    """从冻结归属表里读 `(owed_by, owed_by_label)`；读不出来 ⇒ `("unknown", "unknown")`。
+
+    只认 `SLA_DEBT = Object.freeze({ … })` 那一段里的两个标量（先剥 `//` 注释，免得注释里的
+    同名文字被当成表项）。工作区自己那一份优先、其次生成器所在仓库那一份 —— 与
+    `route_source_path()` 同一个走法（工作区可以带自己那份表，测试夹具就靠这一条造"表被改过"的现场）。
+    """
+    roots = [WS, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))]
+    for root in roots:
+        if not root:
+            continue
+        path = os.path.join(root, SLA_DEBT_TABLE_REL)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        block = re.search(r"SLA_DEBT\s*=\s*Object\.freeze\(\s*\{(.*?)\n\}\)", text, re.S)
+        if block is None:
+            continue
+        body = re.sub(r"//[^\n]*", "", block.group(1))
+        machine = re.search(r"\bowed_by\s*:\s*(['\"])(.*?)\1", body)
+        if machine is None:
+            return ("unknown", "unknown")
+        label = re.search(r"\bowed_by_label\s*:\s*(['\"])(.*?)\1", body)
+        owed = machine.group(2).strip() or "unknown"
+        return (owed, (label.group(2).strip() if label else owed) or "unknown")
+    return ("unknown", "unknown")
 
 
 def is_assessed(entry):
@@ -1185,9 +1219,10 @@ def main():
     add_cell("memory_chain", "green" if (os.path.isfile(os.path.join(DR, "reports", "memory-update", day + ".json")) and snap_ok) else "red",
              "报告 %s=%s · 快照 %s=%s" % (report_rel, "在" if os.path.isfile(os.path.join(DR, "reports", "memory-update", day + ".json")) else "不在",
                                         snap_name, "可读" if snap_ok else "读不出来"))
+    sla_owed_by, sla_owed_by_label = sla_owner_fields()
     add_cell("sla", "red" if sla["over"] else "green",
-             "超期 %d 条（%s 欠）· 最老 %d 天 · 周期 %s"
-             % (len(sla["over"]), SLA_OWED_BY_LABEL, sla["oldest_age"], sla["cycle"]))
+             "超期 %d 条（%s 欠 · owed_by=%s）· 最老 %d 天 · 周期 %s"
+             % (len(sla["over"]), sla_owed_by_label, sla_owed_by, sla["oldest_age"], sla["cycle"]))
     add_cell("carrier_missing", "red" if (receipt_required and not (carriers["technical"] and carriers["conversation"])) else "green",
              "需要回执=%s · 技术评审.md=%s · 会话评审.md=%s"
              % ("是" if receipt_required else "否（未建账期无活动）",

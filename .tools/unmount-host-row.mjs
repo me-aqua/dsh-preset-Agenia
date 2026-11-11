@@ -89,15 +89,17 @@
  *
  * ## 位置旁证：`--restore` 凭什么插回原位
  *
- *   `--apply` 在写任何产品字节之前，把 id 在名单里的**原始下标**写进
+ *   `--apply` 在写任何产品字节之前，把 id 在名单里的**原始下标**与**当时那份名单**写进
  *   `<repo>/.team/state/unmount/<id>.json`（`id` 按 `encodeURIComponent` 编码；`.team/` 是队伍
  *   工具状态、被 `.gitignore` 挡着，测试副本里没有它，工具自己建）：
  *
  *     { schema: 1, id, index, list_length, list_items: [...], applied_at }
  *
- *   `--restore` 读它，按那个下标插回原来的位置。旁证缺 / 读不出来 / 形状不对 / id 对不上 ⇒
- *   **退回表尾追加**，而且**在输出里说出来**（stdout 的 `restore_position.source` = `tail` +
- *   `reason`；人话同时走 stderr）—— 静默退回就是这一格的病。
+ *   `--restore` 读它，但**先核**：当前名单必须仍是"旁证记的那份名单减掉 id"（`list_items` 是
+ *   下标唯一的凭据）。改过 ⇒ 下标过期，报告 **`stale-sidecar`** 并退回表尾；没改过才按原下标
+ *   插回（`Math.min` 只是最后一道夹紧，**不是**检查）。旁证缺 / 读不出来 / 形状不对 / id 对不上 /
+ *   没记名单 ⇒ 同样退回表尾 —— 这些情况都**在输出里说出来**（`restore_position.source` =
+ *   `tail` / `stale-sidecar` + `reason`；人话同时走 stderr）。静默退回就是这一格的病。
  *   成功的那一次 `--restore` 删掉旁证（并清掉空出来的目录）；回滚时旁证也回到跑之前
  *   （本来没有就删掉），免得下一次 apply 读到别人的位置。
  *   旁证**不进** `changed` / `rollback.drifted`：那两格数的是三份**产品**文件。
@@ -124,8 +126,10 @@
  * `changed` 数的是**这一跑结束时仍与跑前快照不同的文件数**（组合 / 生成器 / 补丁三份逐字节比；
  * 不是"尝试写了几次"）—— 成功写盘 3、回滚成功 0、回滚没做到逐字节时 ≥ 1，那几份由 `rollback.drifted` 逐个点名。
  * `restore_position` 只在 `--apply` / `--restore` 真正跑成时非 null：`{ source: 'recorded' | 'sidecar' |
- * 'tail', index, list_length, reason? }` —— `recorded` = apply 记下的原下标，`sidecar` = restore 按旁证
- * 插回，`tail` = **没有可用旁证，退回表尾**（理由写在 `reason`）。
+ * 'tail' | 'stale-sidecar', index, list_length, reason? }` —— `recorded` = apply 记下的原下标，
+ * `sidecar` = restore 核过名单、按旁证插回，`tail` = **没有可用旁证，退回表尾**，
+ * `stale-sidecar` = **旁证在、但名单在 `--apply` 之后变过**（下标过期，退回表尾；若 id 已经在
+ * 名单里就不插第二次）。后两种情况都把理由写在 `reason` 里。
  *
  * 载体 B 的形状不钉：读的是 `HOST_LEVEL_IDS = … [ … ]` 这一个字面量，改的是它里面的项。
  * `--apply` 把 id 的**原始下标**记进位置旁证，`--restore` 按那个下标插回 —— 所以"来回一圈逐字节
@@ -258,7 +262,11 @@ function pruneEmptyDirs(dir, levels = SIDECAR_TMP_LEVELS) {
  * 读一份位置旁证。**读不出来 ≠ 没有旁证**，但两者的后果一样（退回表尾），
  * 所以 `reason` 必须说清是哪一种 —— 静默退回是这一格的病。
  *
- * @returns {{ok:true, index:number, list_length:number}|{ok:false, reason:string}}
+ * 🔴 `list_items` **要读**：它是"那个下标还作不作数"的唯一凭据（`bug-20261110-16` 的
+ *    第二轮）。只有 id / index 形状对，不代表名单没在 `--apply` 之后被人改过 ——
+ *    拿一个过期下标去插，插出来的顺序是错的，而 `source: 'sidecar'` 会让读数说"我按旁证插的"。
+ *
+ * @returns {{ok:true, index:number, list_length:number|null, list_items:string[]}|{ok:false, reason:string}}
  */
 function readSidecar(file, id) {
   if (!existsSync(file)) return { ok: false, reason: `没有位置旁证（${SIDECAR_DIR}/${encodeURIComponent(id)}.json 不在）` }
@@ -271,7 +279,19 @@ function readSidecar(file, id) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: '位置旁证不是 JSON 对象' }
   if (raw.id !== id) return { ok: false, reason: `位置旁证记的是 ${JSON.stringify(raw.id)}，不是 ${JSON.stringify(id)}` }
   if (!Number.isInteger(raw.index) || raw.index < 0) return { ok: false, reason: `位置旁证的 index 不是非负整数（${JSON.stringify(raw.index)}）` }
-  return { ok: true, index: raw.index, list_length: Number.isInteger(raw.list_length) ? raw.list_length : null }
+  const items = Array.isArray(raw.list_items) && raw.list_items.every((item) => typeof item === 'string')
+    ? raw.list_items
+    : null
+  if (items === null) return { ok: false, reason: '位置旁证没有记录 `--apply` 当时那份名单（`list_items`）—— 下标没有凭据' }
+  return { ok: true, index: raw.index, list_length: Number.isInteger(raw.list_length) ? raw.list_length : null, list_items: items }
+}
+
+/**
+ * 名单的**键**（逐项剥引号）：比较"名单变没变"只比 id，不比引号写法。
+ * @param {string[]} items
+ */
+function listKeysOf(items) {
+  return items.map((item) => plainScalar(item))
 }
 
 /** 旁证只记"这一条原本在第几位"：原名单（保留引号写法）+ 时刻，读的人能自己核。 */
@@ -519,24 +539,23 @@ function insertCarrierLine(lines, id, { line, at }) {
  *
  * 次序：**先删后插**（与两条腿原来的次序逐字节等价：删永远在前面，插的位置按改完之后的文本现算）。
  *
- * @returns {{text:string, changed:{marker:boolean, disabled:boolean}}}
+ * 只返回文本：**没有 `changed` 账**（grep 过，没有任何调用方读它；`changed` 的唯一口径是
+ * `driftFromSnapshot()` —— 多一份"改了几行"的账只会变成第二个真相）。
+ *
+ * @returns {{text:string}}
  */
 function editComposition({ carrier, id, mode }) {
   const { eol, lines, span } = carrier
   if (span === null) throw new Error(`组合里没有 \`- id: ${id}\``)
   const next = [...lines]
-  const changed = { marker: false, disabled: false }
   const entryState = mode === 'apply' ? 'M' : 'U'
   for (const row of COMPOSITION_CARRIERS) {
-    if (row.present === entryState) changed[row.key] = dropCarrierLines(next, id, row.re) > 0
+    if (row.present === entryState) dropCarrierLines(next, id, row.re)
   }
   for (const row of COMPOSITION_CARRIERS) {
-    if (row.present !== entryState) {
-      insertCarrierLine(next, id, row)
-      changed[row.key] = true
-    }
+    if (row.present !== entryState) insertCarrierLine(next, id, row)
   }
-  return { text: next.join(eol), changed }
+  return { text: next.join(eol) }
 }
 
 /**
@@ -545,35 +564,57 @@ function editComposition({ carrier, id, mode }) {
  * **定点改**那一个字面量，不整份重写 —— 判据会在生成器前面插一段见证抬头
  * （`UMH-05` 的注入器），整份重写会把抬头抹掉、失败注入就测不到任何东西。
  *
- * `--restore` 的落点是**位置旁证里的原下标**（`bug-20261110-16`）；没有可用旁证（`at === null`）
- * 才退回表尾**并说自己退回了**（`position.source = 'tail'`）—— 静默退回会让"精确的逆"在
- * 名单长到两条以上时悄悄不成立，而所有断言都还绿着。
+ * `--restore` 的落点是**位置旁证里的原下标**，但旁证**要先核**（`bug-20261110-16` 第二轮）：
+ * 旁证记着 `--apply` 当时那份名单（`list_items`），当前名单必须**仍是"那份名单减掉 id"**。
+ * 改过 ⇒ 下标过期，退回表尾，`source` 报 **`stale-sidecar`**（不是 `sidecar` —— 读数必须说得出
+ * "我没信它"）；没改过才按原下标插回（`Math.min` 只是最后一道夹紧，**不是**检查）。
+ * `id` 在名单里已经在 ⇒ 不插第二次（`source` 只有 stale 时才报，其余是 `null`）。
  *
  * @param {string} generatorText
  * @param {string} id
  * @param {'apply'|'restore'} mode
- * @param {number|null} at 旁证里的原下标（只有 restore 用）
+ * @param {object|null} sidecar `readSidecar()` 的读数（只有 restore 用）
  * @returns {{text:string, changed:boolean, position:object|null, list:object}}
  */
-function editList(generatorText, id, mode, at = null) {
+function editList(generatorText, id, mode, sidecar = null) {
   const list = listLiteral(generatorText)
   if (list === null) throw new Error('生成器里读不出 `HOST_LEVEL_IDS = … [ … ]` 这一个字面量')
   const found = list.items.findIndex((item) => plainScalar(item) === id)
+  // 旁证过期 = 它记的那份名单（减掉 id）与当前名单不是同一份。没有旁证不算"过期"（那是另一种）。
+  const current = listKeysOf(list.items)
+  const expected = sidecar?.ok === true ? listKeysOf(sidecar.list_items).filter((value) => value !== id) : null
+  const stale = expected !== null
+    && !(expected.length === current.length && expected.every((value, index) => value === current[index]))
+  const stalePosition = stale
+    ? {
+      source: 'stale-sidecar',
+      index: found >= 0 ? found : list.items.length,
+      list_length: list.items.length,
+      reason: `名单在 --apply 之后变过：旁证 ${JSON.stringify(expected)}，现在 ${JSON.stringify(current)}`,
+    }
+    : null
   if (mode === 'apply' && found < 0) return { text: generatorText, changed: false, position: null, list }
-  if (mode === 'restore' && found >= 0) return { text: generatorText, changed: false, position: null, list }
+  if (mode === 'restore' && found >= 0) {
+    // 已经在名单里：不插第二次。旁证过期时仍要把"过期"说出来（否则读者以为它按旁证插过）。
+    return { text: generatorText, changed: false, position: stalePosition, list }
+  }
   let items
   let position
   if (mode === 'apply') {
     items = list.items.filter((_, index) => index !== found)
     position = { source: 'recorded', index: found, list_length: list.items.length }
-  } else if (at === null) {
-    // 没有可用旁证 ⇒ 退回表尾（与旧行为同形），但把"退回了"写在输出里。
+  } else if (stalePosition !== null) {
+    // 旁证过期 ⇒ 退回表尾（当前名单不动，只把它加在最后）。
     items = [...list.items, `'${id}'`]
-    position = { source: 'tail', index: list.items.length, list_length: list.items.length }
-  } else {
-    const index = Math.min(at, list.items.length)
+    position = { ...stalePosition, index: list.items.length }
+  } else if (sidecar?.ok === true) {
+    const index = Math.min(sidecar.index, list.items.length)
     items = [...list.items.slice(0, index), `'${id}'`, ...list.items.slice(index)]
     position = { source: 'sidecar', index, list_length: list.items.length }
+  } else {
+    // 没有可用旁证（不在 / 读不出来 / 没记名单）⇒ 退回表尾（与旧行为同形），但把"退回了"写在输出里。
+    items = [...list.items, `'${id}'`]
+    position = { source: 'tail', index: list.items.length, list_length: list.items.length, reason: sidecar?.reason ?? '没有位置旁证' }
   }
   const text = `${String(generatorText).slice(0, list.index)}${list.prefix}${items.join(', ')}]`
     + String(generatorText).slice(list.index + list.length)
@@ -810,7 +851,7 @@ function main() {
   let listEdit
   try {
     compositionEdit = editComposition({ carrier, id, mode: args.mode })
-    listEdit = editList(base.generatorText, id, args.mode, sidecarAt?.ok === true ? sidecarAt.index : null)
+    listEdit = editList(base.generatorText, id, args.mode, sidecarAt)
   } catch (err) {
     // 上面那两个编辑函数只改字符串、不碰盘 ⇒ 到这一刻盘上还是跑之前的样子：没有可回滚的东西。
     // `rolled_back` 只认"回滚跑过、且三份逐字节回到跑之前"，所以这一支是 `false`（报 `true` 是谎）；
@@ -825,10 +866,18 @@ function main() {
     }, EXIT.FAILED, `E_UNMOUNT_STEP_FAILED 还没写盘就失败了（载体文本改不动）：${head(err?.message ?? err)}`
       + '—— 一个字节都没写，没有可回滚的东西（`rolled_back: false`）。')
   }
-  // 🔴 **退回表尾必须出声**：旁证没给可用下标时 `editList()` 的 `position.source` 是 `tail`。
-  if (args.mode === 'restore' && listEdit.position !== null && listEdit.position.source === 'tail') {
-    process.stderr.write(`没有可用的位置旁证：${sidecarAt?.reason ?? 'restore 不需要旁证'} ⇒ `
-      + '退回表尾追加（原下标不知道；名单里不止一条时，恢复后的顺序可能与 --apply 之前不同）\n')
+  // 🔴 **退回表尾 / 旁证过期必须出声**：
+  //    · `tail` = 没有可用旁证（不在 / 读不出来 / 没记名单）；
+  //    · `stale-sidecar` = 旁证在、但名单在 `--apply` 之后变过 ⇒ 下标过期，退回表尾（或"它已在名单里"）。
+  if (args.mode === 'restore' && listEdit.position !== null
+    && (listEdit.position.source === 'tail' || listEdit.position.source === 'stale-sidecar')) {
+    const why = listEdit.position.source === 'stale-sidecar'
+      ? `位置旁证过期（${listEdit.position.reason}）`
+      : `没有可用的位置旁证：${listEdit.position.reason ?? 'restore 不需要旁证'}`
+    const where = listEdit.changed
+      ? '退回表尾追加（原下标不知道；名单里不止一条时，恢复后的顺序可能与 --apply 之前不同）'
+      : '它已经在名单里，不再插一次'
+    process.stderr.write(`${why} ⇒ ${where}\n`)
   }
 
   // 回滚账：两份载体文件 + 补丁（补丁是派生物，失败时一起回，别留下与载体对不上的字节）。
@@ -972,9 +1021,12 @@ function main() {
 
   // 成功这一路也现量（不是数"改了几处载体"）：`changed` 只有一个口径 —— 跑完之后仍与跑前不同的文件数。
   const changed = driftFromSnapshot().length
-  const tailNote = listEdit.position !== null && listEdit.position.source === 'tail'
-    ? `；**没有可用位置旁证，退回表尾追加**（${sidecarAt?.reason ?? '无旁证'}）`
-    : ''
+  const tailNote = listEdit.position === null ? ''
+    : listEdit.position.source === 'tail'
+      ? `；**没有可用位置旁证，退回表尾追加**（${listEdit.position.reason ?? '无旁证'}）`
+      : listEdit.position.source === 'stale-sidecar'
+        ? `；**位置旁证过期（${listEdit.position.reason}）—— ${listEdit.changed ? '退回表尾追加' : '它已经在名单里，没插第二次'}**`
+        : ''
   return emit({
     ...out,
     code: args.mode === 'apply' ? 'UMH-APPLIED' : 'UMH-RESTORED',
