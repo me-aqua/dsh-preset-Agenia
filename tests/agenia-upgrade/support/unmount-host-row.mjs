@@ -1104,7 +1104,7 @@ export function rollbackProblems(r, { step, label }) {
     out.push(problem(CODE.rollbackStep, `${label}：failed_step=${JSON.stringify(r.json?.failed_step)}，期望 ${JSON.stringify(step)} —— 工具必须说清是哪一步失败`))
   }
   if (r.json?.rolled_back !== true) out.push(problem(CODE.rollbackFlag, `${label}：rolled_back=${JSON.stringify(r.json?.rolled_back)}，期望 true`))
-  if (r.json?.changed !== 0) out.push(problem(CODE.rollbackFlag, `${label}：回滚之后 changed=${JSON.stringify(r.json?.changed)}，期望 0（净改动）`))
+  if (r.json?.changed !== 0) out.push(problem(CODE.rollbackFlag, `${label}：回滚之后 changed=${JSON.stringify(r.json?.changed)}，期望 0（口径：结束时仍与跑前快照不同的文件数 —— 回滚做到逐字节时它必须是 0）`))
   if (!String(r.stderr ?? '').trim()) out.push(problem(CODE.rollbackSilent, `${label}：stderr 是空的 —— 失败原因在 stdout 的 JSON 里有，人话这一路上也得留一句`))
   if (!r.files_equal) {
     out.push(problem(CODE.rollbackBytes, `${label}：回滚之后**两份载体文件没有逐字节回到跑之前**：`
