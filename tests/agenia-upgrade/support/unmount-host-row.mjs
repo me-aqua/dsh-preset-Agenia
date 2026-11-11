@@ -1157,6 +1157,12 @@ export const CODE = {
   position: 'UMH-RESTORE-POSITION',
   positionSilent: 'UMH-RESTORE-POSITION-SILENT',
   stateStep: 'UMH-STATE-STEP-UNNAMED',
+  /**
+   * `bug-20261111-05` ④：`state` 那一步失败的**归因要钉到 errno**（`ENOTDIR`）。
+   * 只判 `failed_step: "state"` 的话，".team/state 是文件"和"磁盘满了 / 没权限"看起来一样 ——
+   * 前者是夹具设计的现场，后者是环境坏了，读的人下一步该做的事完全不同。
+   */
+  stateStepErrno: 'UMH-STATE-STEP-ERRNO',
   residueUnswept: 'UMH-RESIDUE-NOT-SWEPT',
   rollbackDrift: 'UMH-ROLLBACK-DRIFT',
   changedNotZero: 'UMH-CHANGED-NOT-ZERO',
@@ -1578,6 +1584,40 @@ export function staleSidecarProblems(r, { label, orderAfter }) {
 }
 
 /**
+ * ⑨⁗′ **旧格式旁证**（`bug-20261111-05` ①）：旁证在、`index` 也对，但**没有 `list_items`**
+ * （那一格是后来才加的，老版本只记下标）⇒ 那个下标**没有凭据** ⇒ 退回表尾，而且**说清是这一种**。
+ *
+ * 为什么这一支必须自己有一条腿：它的后果与"没有旁证"一样（tail），但**原因**不一样 ——
+ * 前者要说"旁证没记名单"（去查是谁写的旁证 / 老版本），后者是"没人记过"。
+ * 两条腿混成一条时，`readSidecar` 里那一段（`list_items` 缺 ⇒ `ok:false`）没有任何判据在看着，
+ * 删掉它只会让读数从"没记名单"悄悄退化成"没有位置旁证"，而两句话在台账上长得一样。
+ *
+ * 钉四样：① `source = "tail"`（**不是** `stale-sidecar`：它不是"名单变过"，是没有凭据）；
+ * ② 结果退回表尾（名单顺序 = 当前名单 + id 在最后）· `restore_position.index` = 当前长度；
+ * ③ `restore_position.reason` **与** stderr 都点名 `list_items` / "没记名单"；
+ * ④ 这一跑仍是成功（exit 0 / `UMH-RESTORED` —— 退回表尾不是失败）。
+ */
+export function legacySidecarProblems(r, { label, orderAfter }) {
+  const out = [...restorePositionProblems(r, { label, want: { source: 'tail', index: orderAfter.length - 1 }, orderAfter })]
+  const why = String(r.json?.restore_position?.reason ?? '')
+  const said = String(r.stderr ?? '')
+  const namesTheGap = (text) => /list_items|没记名单|没记录/.test(text)
+  if (!namesTheGap(why)) {
+    out.push(problem(CODE.positionSilent, `${label}：\`restore_position.reason\` 没点名"旁证没记名单"（\`list_items\` 缺），`
+      + `实得 ${JSON.stringify(why)} —— "没有旁证"与"旁证是旧格式"是两件事，退到表尾的原因要说得出是哪一种`))
+  }
+  if (!namesTheGap(said)) {
+    out.push(problem(CODE.positionSilent, `${label}：stderr 没说出"旁证没记名单"（实得 ${JSON.stringify(said.slice(0, 300))}）`
+      + ' —— 静默退回会让"老格式旁证"与"根本没有旁证"在读数里长得一样'))
+  }
+  if (r.exit !== 0 || r.json?.code !== 'UMH-RESTORED') {
+    out.push(problem(CODE.exit, `${label}：旧格式旁证的那次 \`--restore\` 仍是**成功**（退回表尾不是失败），`
+      + `实得 exit ${r.exit} / code=${JSON.stringify(r.json?.code)}`))
+  }
+  return out
+}
+
+/**
  * ⑨⁘ **"id 已经自己回到名单里"那一支**（契约 §1.5 / §8.10）：入口态闸要先拒，**不许**插第二次。
  *
  * 造法：U 态载体（标记不在 / 行关着）+ **名单里已经有 id** ⇒ 这是 §二 的第 7 行
@@ -1642,6 +1682,11 @@ export function staleSidecarBlindTool(realText) {
  * `UMH-04` 的 `state-step` 腿就这么造现场（顺手把 `.team/state` 那一份当夹具输入），
  * 刀 K17 把 `failed_step: "state"` 报成 `"patch"` ⇒ 那条腿翻 `UMH-STATE-STEP-UNNAMED`。
  * 判据钉形状：`state` + `changed: 0` + `nothing_written: true` + `rolled_back: false`。
+ *
+ * 🔴 **还要钉 errno**（`bug-20261111-05` ④）：上面那个 `ENOTDIR` 以前只活在这段注释里，判据一个字都不看
+ * ⇒ 换个失败原因（磁盘满 / 没权限 / 路径被占）**长得一样**。所以这一格连 `stderr` 一起判：
+ * 必须点名 `ENOTDIR`（实测值，2026-11-11：`目标目录建不出来：ENOTDIR …`）**且**点名旁证那份路径 ——
+ * "那一步失败了"不是归因，"那一步因为 ENOTDIR 失败了"才是。
  */
 export function stateStepProblems(r, { label }) {
   const out = []
@@ -1654,6 +1699,17 @@ export function stateStepProblems(r, { label }) {
       + `\`rollback.nothing_written: true\` · \`rolled_back: false\`），实得 ${JSON.stringify({
         changed: r.json?.changed, rollback: r.json?.rollback, rolled_back: r.json?.rolled_back,
       })}`))
+  }
+  // errno 那一格（`bug-20261111-05` ④）：失败原因必须点名 `ENOTDIR`，且是**旁证那一份**写不下去。
+  const said = String(r.stderr ?? '')
+  if (!/\bENOTDIR\b/.test(said)) {
+    out.push(problem(CODE.stateStepErrno, `${label}：这一跑要造的是"旁证的父路径是一个文件"⇒ 失败必须归到 \`ENOTDIR\`，`
+      + `实得 stderr = ${JSON.stringify(said.slice(0, 300))} —— 不钉 errno 的话，"目录被占成文件"与"磁盘满 / 没权限"`
+      + '在读数里长得一样，而这两种情况的下一步完全不同（换夹具 vs 查环境）'))
+  }
+  if (!/unmount/.test(said)) {
+    out.push(problem(CODE.stateStepErrno, `${label}：失败的 stderr 没点名旁证那一份（路径里应有 \`unmount\`）：`
+      + `${JSON.stringify(said.slice(0, 300))} —— "有个东西写不下去"与"位置旁证写不下去"是两件事`))
   }
   return out
 }

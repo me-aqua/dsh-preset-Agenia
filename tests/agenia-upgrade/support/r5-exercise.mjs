@@ -11,6 +11,12 @@
  *                  —— 一条存在的就用它；`readings.checked` 按顺序写出查过哪几条。
  *   · `none`    —— 两处都没有：**这一次练习没做**（⇒ 调用方记 HOLD，报文必须点名 `none`）。
  *
+ * 回执的形状（判词在 `boot-readings.mjs::rollbackExerciseVerdict()`，那一处是唯一出处）：
+ * `at` · `marker_removed` · `regenerated` · `row_landing {insert, preset_bodies}` · **`row_disabled`** ·
+ * `restart_at` · `new_session {created_at, agentPreset}`。`row_disabled` 是 `bug-20261110-17` 加的那一格：
+ * 它量"回到预设体里的那一行是**关着**的"，缺了就是没量（HOLD，不绿也不红）。本文件只负责**找到并读回**回执，
+ * 判词与那一格的口径都不在这里（`bug-20261110-17` 的判据面在 `EXR-01` 的 ⑨/⑩ 两条腿）。
+ *
  * 🔴 为什么要有默认落点：老板花两次重启做完的那一次练习，回执就在盘上；只要没人记得设那个 env，
  *    这条腿就退回 HOLD —— 而"做过但没读到"与"根本没做"长得一模一样（`bug-20261110-06/07` 那一族）。
  *    现在 env 仍然**优先**（测试 / 副本要能指到别处），没 env 才走默认落点。

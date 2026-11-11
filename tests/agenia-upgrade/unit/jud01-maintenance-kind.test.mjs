@@ -436,14 +436,20 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
       }
 
       /**
-       * ── E · `judge-pending` 的 `pending_kinds` / `kind_missing`（`bug-20261110-03` 的判据面）────────
+       * ── E · `judge-pending` 的 `pending_kinds` / `kind_missing`（`bug-20261110-03` / `-13` 的判据面）────
        * `judge-commit` 按池行 `kind` 分类；只给 id 会让下游去猜（猜错那一轮整轮被 `E_ARG_SCHEMA` 拒）。
-       * 这一面判**读数本身**，四件事各自承重：
-       *   ① `pending_kinds` 的键集合与**次序** = `pending_ids`（键顺序是输出的合同，不是巧合）；
+       * 这一面判**读数本身**，五件事各自承重：
+       *   ① `pending_kinds` 的**键集合** = `pending_ids` 的**集合**（`bug-20261110-13` 的裁定：
+       *      **集合比，不比次序**）。为什么：`pending_kinds` 是**普通对象**，而 JS 对象对整数形键按**数值**
+       *      升序 —— 手改池子留下 `"9"` / `"10"` 这种 id 时，"键序 = `pending_ids`"在语言层就不可满足，
+       *      那条断言只能假红。合同是"每个 pending id 都给得出 kind"，不是"键按某种顺序排"。
        *   ② `kind` 说的是池行那一个，**id 前缀说什么都不算**（`proposal-` 形 id 也可以是 maintenance）；
        *   ③ `kind` 缺失 / 第三个值 ⇒ **缺省 `proposal`** 且进 `kind_missing` 计数（"它本来就是提案"
        *      与"它没写 kind"必须在读数上分得开 —— 静默缺省就是上一轮错 kind 的老路）；
-       *   ④ 判过一条之后 `pending_ids` 少一条、`pending_kinds` 跟着少那个键（**按差集现算**，不是常量）。
+       *   ④ 判过一条之后 `pending_ids` 少一条、`pending_kinds` 跟着少那个键（**按差集现算**，不是常量）；
+       *   ⑤ **次序只钉一个**（`JUD-PENDING-ORDER`）：`pending_ids` 按池行 `seq` 数值升序（稳定：同 `seq`
+       *      保持文件行序），"那一条"取 **seq 最小那一行**；手改池子（seq 序 ≠ 文件行序 + 同 id 两行）上
+       *      两个读数会分叉，所以**只写这一条**，见下面 `e-order-and-unit` 那一段。
        * 两把刀（`T2` 丢缺省值 / `T3` 丢计数）各切一份副本：`T2` ⇒ ③ 的缺省值那一半红；`T3` ⇒ 计数那一半红。
        */
       {
@@ -501,9 +507,15 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
           if (JSON.stringify(b.ids) !== JSON.stringify(wantIds)) {
             push('JUD-JUDGE-PENDING-KINDS', `E：pending_ids 应为 ${JSON.stringify(wantIds)}（按 seq），实得 ${JSON.stringify(b.ids)}`)
           }
-          if (JSON.stringify(b.kindKeys) !== JSON.stringify(b.ids)) {
-            push('JUD-JUDGE-PENDING-KINDS', `E：\`pending_kinds\` 的**键集合与次序**必须等于 \`pending_ids\`，实得 ${JSON.stringify(b.kindKeys)} vs ${JSON.stringify(b.ids)}`
-              + ' —— 键顺序是输出的合同（下游按它对齐 id 与 kind）')
+          // 🔴 集合比，不比次序（`bug-20261110-13` 的裁定）：两边**排过序**再逐项比。
+          //    `pending_kinds` 是普通对象 ⇒ 整数形 id 会被引擎按数值重排，"次序相同"不是产品能承诺的事。
+          const sortedKeys = Array.isArray(b.kindKeys) ? [...b.kindKeys].sort() : null
+          const sortedIds = Array.isArray(b.ids) ? [...b.ids].sort() : null
+          if (JSON.stringify(sortedKeys) !== JSON.stringify(sortedIds)) {
+            push('JUD-JUDGE-PENDING-KINDS', `E：\`pending_kinds\` 的**键集合**必须等于 \`pending_ids\` 的集合（两边排序后逐项比），`
+              + `实得 ${JSON.stringify(sortedKeys)} vs ${JSON.stringify(sortedIds)}`
+              + ' —— 合同是"每个 pending id 都给得出 kind"，不是"键按某种顺序排"（键序由 JS 对象的整数键规则决定，'
+              + '手改池子留下整数形 id 时它不可能等于 `pending_ids`；`bug-20261110-13`）')
           }
           if (b.kinds?.[ID_MAINT] !== 'maintenance') {
             push('JUD-JUDGE-PENDING-KINDS', `E：\`pending_kinds[${JSON.stringify(ID_MAINT)}]\` 应为 'maintenance'（池行说的），实得 ${JSON.stringify(b.kinds?.[ID_MAINT])} —— 按 id 前缀猜会猜成 proposal`)
@@ -520,6 +532,9 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
             push('JUD-JUDGE-PENDING-KINDS', `E：\`kind_missing\` 应为 2（缺 kind 1 条 + 第三个值 1 条），实得 ${JSON.stringify(b.kindMissing)}`
               + ' —— 静默缺省 = "它本来就是提案"与"它没写 kind"在读数上同形（上一轮错 kind 的老路）')
           }
+          // ⚠️ `kind_missing` 的**单位是 pending id，不是池行**（`bug-20261110-13`）：
+          //    每个 id 只看它"seq 最小那一行"的 kind；重复 id 的后一行缺 kind 不计数。
+          //    这条口径由下面 `e-order-and-unit` 那一段单独钉（那里同一 id 出现两次）。
           if (b.count !== 4) push('JUD-JUDGE-PENDING-KINDS', `E：\`count\` 应为 4，实得 ${JSON.stringify(b.count)}`)
         }
 
@@ -531,8 +546,9 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
         if (JSON.stringify(after.ids) !== JSON.stringify(wantAfter)) {
           push('JUD-JUDGE-PENDING-KINDS', `E：判过 ${ID_PROP} 之后 \`pending_ids\` 应为 ${JSON.stringify(wantAfter)}，实得 ${JSON.stringify(after.ids)}`)
         }
-        if (JSON.stringify(after.kindKeys) !== JSON.stringify(after.ids)) {
-          push('JUD-JUDGE-PENDING-KINDS', `E：判过一条之后 \`pending_kinds\` 的键仍须与 \`pending_ids\` 逐位相同，实得 ${JSON.stringify(after.kindKeys)} vs ${JSON.stringify(after.ids)}`
+        if (JSON.stringify([...(after.kindKeys ?? [])].sort()) !== JSON.stringify([...(after.ids ?? [])].sort())) {
+          push('JUD-JUDGE-PENDING-KINDS', `E：判过一条之后 \`pending_kinds\` 的**键集合**仍须等于 \`pending_ids\`（集合比），`
+            + `实得 ${JSON.stringify([...(after.kindKeys ?? [])].sort())} vs ${JSON.stringify([...(after.ids ?? [])].sort())}`
             + ' —— 多留一个键说明它印的是"池子里的全部"而不是"还没判的"')
         }
         if (after.kindMissing !== 2) {
@@ -580,6 +596,144 @@ describe('unit · judge classification by pool kind (JUD) · bug-20261109-01', (
           }
           if (k3.kinds?.[ID_MISSING] !== 'proposal') {
             push('JUD01-KNIFE-NOT-BITING', `[T3 对照] 丢计数**不该**改变缺省值：\`pending_kinds[${JSON.stringify(ID_MISSING)}]\` 仍应是 'proposal'，实得 ${JSON.stringify(k3.kinds?.[ID_MISSING])}`)
+          }
+        }
+      }
+
+      /**
+       * ── E′ · 单位与次序（`bug-20261110-13` 的三件：`kind_missing` 数 id 不数行 · 两条读数的序 · 一处口径）
+       *
+       * ① `kind_missing` 的**单位是 pending id**：每个 id 只看"seq 最小那一行"的 `kind`。
+       *    ⇒ 造一份池子：`Z-UNIT-DUP` 两行（第二行缺 kind）、`Z-UNIT-BOTH` 两行（第一行缺 kind，第二行有）。
+       *    **缺 kind 的行数是 2，缺 kind 的 id 数是 1** ⇒ 读数必须是 1。数成 2 = 在数行（名字与单位不符）。
+       * ② 次序**只钉一个**：`pending_ids` 按 `seq` 数值升序（同 `seq` 保持文件行序、缺 `seq` 排最后），
+       *    "那一条"（供 kind 用）取 **seq 最小那一行**。造一份手改池子：seq 序 ≠ 文件行序、且同 id 两行
+       *    （文件第一行 `proposal`、seq 最小那一行 `maintenance`）⇒ 两条读数一起只在这一条断言里钉。
+       * ③ 🔴 **已知分叉，本批不修**：`judgedRowSpecsOf` 取**文件行序的第一行**，`judge-pending` 取 **seq 序的
+       *    第一行** ⇒ 在②那种池子上"同一个 id 是哪一行"两边可以不同（评审报告 `bug-20261110-13` 第 3 条）。
+       *    本批判据**只钉 judge-pending 这一侧**（那一条真会翻面：期望值由夹具的 `seq` 现算，不读产品的输出）；
+       *    把"两处一致"写成断言会是一条**永远绿**的假判据 —— 产品侧那半仍在票上，等下一次实现批次。
+       */
+      {
+        const pendingOfAt = (root, cliPath = null) => runCli('agenia-brain.mjs', {
+          op: 'judge-pending', dataRoot: root, inFile: writeFixture('JUD-01', 'judge-pending', {}), testMode: true,
+        }, cliPath === null ? {} : { cliPath })
+        /** 这一段的读数形状（与 E 面同一个：id / kind 对象 / 键集 / 计数 / 条数）。 */
+        const decode = (res) => ({
+          exit: res.exit_code,
+          code: res.json?.error?.code ?? null,
+          ids: Array.isArray(res.json?.pending_ids) ? res.json.pending_ids : null,
+          kinds: res.json?.pending_kinds ?? null,
+          kindKeys: res.json?.pending_kinds !== null && typeof res.json?.pending_kinds === 'object' ? Object.keys(res.json.pending_kinds) : null,
+          kindMissing: res.json?.kind_missing ?? null,
+          count: res.json?.count ?? null,
+        })
+
+        // ① 单位：id 数 ≠ 行数
+        const unitRoot = caseBrainRoot('e-kind-missing-unit')
+        const dupSecondNoKind = poolRowOf('proposal', 'Z-UNIT-DUP', 2)
+        delete dupSecondNoKind.kind
+        const bothFirstNoKind = poolRowOf('proposal', 'Z-UNIT-BOTH', 3)
+        delete bothFirstNoKind.kind
+        const unitRows = [
+          poolRowOf('proposal', 'Z-UNIT-DUP', 1), // seq 最小那一行有 kind ⇒ 这个 id 不算缺
+          dupSecondNoKind, // 后一行缺 kind ⇒ 不计数（行数视角会 +1）
+          bothFirstNoKind, // seq 最小那一行缺 kind ⇒ 这个 id 算缺（+1）
+          poolRowOf('maintenance', 'Z-UNIT-BOTH', 4), // 后一行有 kind ⇒ 也不改"那一条"的 kind
+        ]
+        const unitPoolText = writePool(unitRoot, unitRows)
+        const unitRead = decode(pendingOfAt(unitRoot.root))
+        cells.E_unit = { pool_text: unitPoolText, reading: unitRead }
+        rec.readings.kind_missing_unit = {
+          pool_rows: unitRows.length,
+          rows_without_kind: 2,
+          pending_ids: unitRead.ids,
+          kind_missing: unitRead.kindMissing,
+        }
+        if (unitRead.exit !== 0) {
+          push('JUD-KIND-MISSING-UNIT', `E′① judge-pending 必须 exit 0，实得 exit=${unitRead.exit} / ${unitRead.code ?? '(无码)'}`)
+        } else {
+          if (unitRead.kindMissing !== 1) {
+            push('JUD-KIND-MISSING-UNIT', `E′① 池子里有 **2 行**缺 kind（\`Z-UNIT-DUP\` 的第二行、\`Z-UNIT-BOTH\` 的第一行），`
+              + `但缺 kind 的 pending **id** 只有 1 个（\`Z-UNIT-BOTH\`：每个 id 只看 seq 最小那一行）⇒ \`kind_missing\` 必须是 1，`
+              + `实得 ${JSON.stringify(unitRead.kindMissing)} —— 读成 2 就是在数**行**，而这个字段的单位是 **id**（下游按 id 取 kind；`
+              + '名字与登记文字不许把单位说成"条"）')
+          }
+          if (unitRead.kinds?.['Z-UNIT-DUP'] !== 'proposal') {
+            push('JUD-KIND-MISSING-UNIT', `E′① \`pending_kinds['Z-UNIT-DUP']\` 应为 'proposal'（seq 最小那一行的 kind），实得 ${JSON.stringify(unitRead.kinds?.['Z-UNIT-DUP'])}`
+              + ' —— 后一行缺 kind 不该改变"那一条"的取值')
+          }
+          if (unitRead.kinds?.['Z-UNIT-BOTH'] !== 'proposal') {
+            push('JUD-KIND-MISSING-UNIT', `E′① \`pending_kinds['Z-UNIT-BOTH']\` 应为 'proposal'（seq 最小那一行缺 kind ⇒ 缺省），`
+              + `实得 ${JSON.stringify(unitRead.kinds?.['Z-UNIT-BOTH'])} —— 后一行写着 maintenance，但"那一条"是前一行`)
+          }
+        }
+
+        // ② 次序（**一条**）：seq 序 ≠ 文件行序 + 同 id 两行
+        const orderRoot = caseBrainRoot('e-order-and-unit')
+        // 文件行序：A(seq 3) · B(seq 1, proposal) · B(seq 0, maintenance) · C(无 seq)
+        const orderRows = [
+          poolRowOf('proposal', 'Z-ORDER-A', 3),
+          poolRowOf('proposal', 'Z-ORDER-B', 1),
+          poolRowOf('maintenance', 'Z-ORDER-B', 0),
+          poolRowOf('proposal', 'Z-ORDER-C', undefined),
+        ]
+        delete orderRows[3].seq
+        const orderPoolText = writePool(orderRoot, orderRows)
+        const orderRead = decode(pendingOfAt(orderRoot.root))
+        // 期望值从**夹具自己**算（不读产品的输出）：seq 数值升序、同 seq 保持文件行序、缺 seq 排最后、id 去重。
+        const wantOrder = orderRows
+          .map((row, index) => ({ id: row.imported_id, seq: typeof row.seq === 'number' ? row.seq : Number.POSITIVE_INFINITY, index }))
+          .sort((a, b) => (a.seq === b.seq ? a.index - b.index : a.seq < b.seq ? -1 : 1))
+          .map((x) => x.id)
+          .filter((id, index, all) => all.indexOf(id) === index)
+        cells.E_order = { pool_text: orderPoolText, reading: orderRead }
+        rec.readings.pending_order = {
+          file_order: orderRows.map((row) => row.imported_id),
+          seq_of: orderRows.map((row, index) => ({ id: row.imported_id, seq: row.seq ?? null, row: index })),
+          want_order: wantOrder,
+          got_ids: orderRead.ids,
+          got_kind_of_duplicate: orderRead.kinds?.['Z-ORDER-B'] ?? null,
+        }
+        if (orderRead.exit !== 0) {
+          push('JUD-PENDING-ORDER', `E′② judge-pending 必须 exit 0，实得 exit=${orderRead.exit} / ${orderRead.code ?? '(无码)'}`)
+        } else {
+          if (JSON.stringify(orderRead.ids) !== JSON.stringify(wantOrder)) {
+            push('JUD-PENDING-ORDER', `E′② 手改池子（seq 序 ≠ 文件行序）上 \`pending_ids\` 必须按 **seq 数值升序**（缺 seq 排最后、同 id 只出一次）：`
+              + `期望 ${JSON.stringify(wantOrder)}（夹具的 seq 现算），实得 ${JSON.stringify(orderRead.ids)}`
+              + ' —— 这是**这一个**次序口径（不是"文件行序"）：判据要能翻面，期望值就不能从同一份文件的行序推')
+          }
+          if (orderRead.kinds?.['Z-ORDER-B'] !== 'maintenance') {
+            push('JUD-PENDING-ORDER', `E′② \`pending_kinds['Z-ORDER-B']\` 必须取 **seq 最小那一行**的 kind（'maintenance'），`
+              + `实得 ${JSON.stringify(orderRead.kinds?.['Z-ORDER-B'])} —— 取文件第一行会说成 'proposal'；`
+              + '同一个 id 两行时"那一条"与"它的位置"必须是同一行')
+          }
+        }
+
+        // ②′ 刀 T4：把排序换成**文件行序**（= "拿文件行序顶替"的那一版）⇒ 上面那条断言必须翻。
+        //     为什么要这一把：次序契约若只由"产品自己吐出来的顺序"当期望值，它永远红不了（自证）。
+        //     这一刀把产品换成另一种**看起来也合理**的排法，判据必须当场说"不是这个次序"。
+        const orderSrc = readFileSync(path.join(PATHS.stagedPreset, 'bin', 'agenia-brain.mjs'), 'utf8')
+        const t4 = knifeReplace({
+          source: orderSrc,
+          find: '    .sort((a, b) => (a.key === b.key ? a.index - b.index : a.key < b.key ? -1 : 1))',
+          replace: '    .sort((a, b) => a.index - b.index) // 刀：改成文件行序',
+        })
+        rec.readings.knives_pending = {
+          ...(rec.readings.knives_pending ?? {}),
+          T4: { label: '次序换成文件行序', ok: t4.ok, code: t4.code, why: t4.why },
+        }
+        if (!t4.ok) {
+          push('JUD01-KNIFE-ANCHOR', `T4 在 staged 源码上没有落点：${t4.code} ${t4.why} —— 尺子坏了，不许当成"刀咬了"`)
+        } else {
+          const cp = copyBrainInto(path.join(caseDir('JUD-01'), 'pending-knife', 'T4-order'), t4.source)
+          const k4 = decode(pendingOfAt(orderRoot.root, cp))
+          cells.E_order.knife_T4 = k4
+          if (k4.exit !== 0) {
+            push('JUD01-KNIFE-NOT-BITING', `[T4 文件行序] 副本必须能跑（exit 0），实得 exit=${k4.exit} / ${k4.code ?? '(无码)'}`)
+          } else if (JSON.stringify(k4.ids) === JSON.stringify(wantOrder)) {
+            push('JUD01-KNIFE-NOT-BITING', `[T4 文件行序] 副本把次序换成文件行序之后读出来仍是 ${JSON.stringify(k4.ids)} —— `
+              + '与 seq 序相同 ⇒ 这一刀没切开"次序"那一面（判据只在两份次序碰巧相同时才绿，那就等于没判）')
           }
         }
       }

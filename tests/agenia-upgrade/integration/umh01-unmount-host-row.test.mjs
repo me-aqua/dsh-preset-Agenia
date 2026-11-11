@@ -30,6 +30,10 @@
  *      腿 `stale-sidecar`（第二轮 · 评审 `M2`）：旁证记着 apply 当时那份名单；apply 之后**把剩下那两条换位**
  *      ⇒ 那个下标**已经过期**，必须报 **`stale-sidecar`**（不是 `sidecar`）+ 退回表尾 + `reason`/stderr
  *      点名"名单在 --apply 之后变过"（静默按旧下标插 = 顺序错而读数说"我按旁证插的"）。
+ *      腿 `position-tail-old-sidecar`（`bug-20261111-05` ①）：apply 之后把旁证里的 `list_items` **删掉**
+ *      （= 老版本写出来的形状，只记下标）⇒ 那个下标**没有凭据** ⇒ `source: "tail"` + 退回表尾 +
+ *      `reason`/stderr 点名"旁证没记名单"，仍 exit 0 / `UMH-RESTORED`。
+ *      （这一支以前只有代码与组长的一次手工验收，**没有任何判据腿造过它**。）
  *      腿 `duplicate-listed`：U 载体 + **名单里已经有 id** ⇒ 入口态闸先拒（exit 2 `E_UNMOUNT_MARKER_MISSING`、
  *      一个字节不写、禁止插第二次）；这一支**走不到** `stale-sidecar`（契约 §8.10 —— `[a,c,b]` 那个现场
  *      到不了那里，别再拿它当 stale 的样本）。
@@ -60,6 +64,8 @@
  *         stderr **点名机制**；这一格判的是"失败归到了对的机制上"；
  *      腿 `state-step` —— 副本里 `.team/state` 做成一个**文件** ⇒ 旁证的原子写 `ENOTDIR` ⇒
  *         `failed_step: "state"`（第四种失败步）· 一个产品字节都没写（旁证是"回原位"的前提）；
+ *         stderr 还必须**点名 `ENOTDIR` 与旁证那份路径**（`bug-20261111-05` ④：不钉 errno，
+ *         "目录被占成文件"与"磁盘满 / 没权限"在读数里长得一样）；
  *      腿 `residue-sweep` —— 工具自己上一次被杀留下的 `<补丁>.tmp-<死 pid>-<hex>` ⇒ 它收掉那份残渣、
  *         产品字节不动、仍是 `UMH-NOOP`（契约 §4.4 的例外）。
  *      🔴 失败腿都断言**失败形状**（契约 §4.1）：`failed_step: "patch"` · `rolled_back: false` ·
@@ -151,6 +157,7 @@ import {
   stateStepLiarTool,
   restorePositionProblems,
   tailFallbackProblems,
+  legacySidecarProblems,
   threeItemListTexts,
   listOrderInCopy,
   rewriteHostLevelList,
@@ -375,6 +382,68 @@ test('UMH-01 撤挂载/恢复两条腿：--apply ⇒ 补丁里 {insert:0,preset_
         order_after: listOrderInCopy(tailRestore.copy),
         stderr_head: String(tailRestore.stderr ?? '').split(/\r?\n/).slice(0, 4).join('\n').slice(0, 600),
       }
+      return undefined
+    })
+
+    // ── ②″′ 腿 position-tail-old-sidecar：**旧格式旁证**（没有 `list_items`）⇒ 退回表尾 + 说清原因 ──────
+    //   `bug-20261111-05` ①：这一支以前**只有代码和组长的一次手工验收**，没有任何判据腿造过它。
+    //   造法：三条名单跑完 `--apply`（旁证里有 `index` 与 `list_items`），把旁证里的 `list_items` 删掉
+    //   （= 老版本写出来的形状）再 `--restore`。期望：`source: "tail"`（**不是** `sidecar`，也不是
+    //   `stale-sidecar`）、退回表尾、`reason` 与 stderr 都点名"旁证没记名单"、仍 exit 0 / `UMH-RESTORED`。
+    const legacyApply = runScenario({
+      name: 'umh-01-position-tail-old-sidecar', pre: 'M', generator: 'real', tool: 'real', action: 'apply', rederivePatch: true,
+      extraCopyFiles: { [REL.composition]: three.M.compositionText, [REL.generator]: three.M.generatorText },
+    })
+    const legacySidecarFile = path.join(legacyApply.copy, '.team', 'state', 'unmount', `${encodeURIComponent(ROW_ID)}.json`)
+    const legacySidecar = (() => {
+      if (!existsSync(legacySidecarFile)) return { ok: false, why: `旁证没写出来（${legacySidecarFile} 不在）`, before: null }
+      const before = JSON.parse(readFileSync(legacySidecarFile, 'utf8'))
+      const legacy = { ...before }
+      delete legacy.list_items // 老版本的形状：只记下标，没记当时那份名单
+      writeFileSync(legacySidecarFile, `${JSON.stringify(legacy, null, 2)}\n`, 'utf8')
+      return { ok: true, why: null, before, after: legacy }
+    })()
+    const legacyRestore = legacySidecar.ok && legacyApply.exit === 0 ? runAgain(legacyApply, { action: 'restore' }) : null
+    scenarios.position_tail_old_sidecar = {
+      apply: slim(legacyApply), sidecar_rewritten: legacySidecar.ok ? legacySidecar.after : null,
+      restore: legacyRestore === null ? null : slim(legacyRestore),
+    }
+    book.run('position-tail-old-sidecar', () => {
+      if (!legacyApply.tool_present) {
+        pushToolAbsent(problems, legacyApply, '三条名单 · 旧格式旁证 --restore')
+        return CODE.toolAbsent
+      }
+      if (!legacySidecar.ok) {
+        push(CODE.fixture, `旧格式旁证夹具造不出来：${legacySidecar.why} —— 这一格判不了`)
+        return undefined
+      }
+      // 夹具自检：那一跑之前旁证里**必须有** `list_items`（否则这条腿测的是"本来就没有"）；
+      // 改完**必须没有**（否则它没造出旧格式）。
+      if (!Array.isArray(legacySidecar.before.list_items)) {
+        push(CODE.fixture, `旧格式旁证夹具坏了：改之前旁证里就没有 \`list_items\`（${JSON.stringify(Object.keys(legacySidecar.before))}）`
+          + ' —— 那样这一腿会与"没有旁证"那条混成一条')
+        return undefined
+      }
+      if (Object.prototype.hasOwnProperty.call(legacySidecar.after, 'list_items')) {
+        push(CODE.fixture, '旧格式旁证夹具坏了：删完仍有 `list_items`')
+        return undefined
+      }
+      if (legacyApply.exit !== 0 || legacyRestore === null || legacyRestore.exit !== 0) {
+        push(CODE.exit, `旧格式旁证那一圈没跑成（apply exit ${legacyApply.exit} / restore exit ${legacyRestore?.exit ?? '(没跑)'}）：`
+          + `restore stderr ${JSON.stringify(String(legacyRestore?.stderr ?? '').slice(0, 300))} —— 这一格判不了`)
+        return undefined
+      }
+      rec.readings.position_tail_old_sidecar = {
+        sidecar_before: legacySidecar.before,
+        sidecar_after_rewrite: legacySidecar.after,
+        restore_position: legacyRestore.json?.restore_position ?? null,
+        order_after: listOrderInCopy(legacyRestore.copy),
+        stderr_head: String(legacyRestore.stderr ?? '').slice(0, 600),
+      }
+      for (const p of legacySidecarProblems(legacyRestore, {
+        label: '三条名单 · 旧格式旁证 --restore',
+        orderAfter: [three.order[0], three.order[2], ROW_ID],
+      })) problems.push(p)
       return undefined
     })
 
@@ -608,7 +677,7 @@ test('UMH-01 撤挂载/恢复两条腿：--apply ⇒ 补丁里 {insert:0,preset_
       return undefined
     })
 
-    book.require(['ruler-control', 'copy-runnable-set', 'apply', 'restore', 'position-sidecar', 'position-tail', 'stale-sidecar', 'duplicate-listed', 'unknown-id', 'knife-K1', 'knife-K2', 'knife-K3', 'knife-K8', 'knife-K16', 'knife-K18', 'control'])
+    book.require(['ruler-control', 'copy-runnable-set', 'apply', 'restore', 'position-sidecar', 'position-tail', 'position-tail-old-sidecar', 'stale-sidecar', 'duplicate-listed', 'unknown-id', 'knife-K1', 'knife-K2', 'knife-K3', 'knife-K8', 'knife-K16', 'knife-K18', 'control'])
     rec.readings.legs = book.legs
     rec.readings.scenarios = scenarios
     caseFail(problems)

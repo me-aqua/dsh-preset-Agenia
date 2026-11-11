@@ -131,6 +131,15 @@ export const BOOT_CODES = {
   rollbackIdentityCost: 'BOOT-R5-IDENTITY-COST',
   /** R5 的尺子（回执判定器）不自证：合成的"该绿 / 该红"两份回执给不出两个不同判词。 */
   rollbackRulerDead: 'BOOT-R5-RULER-DEAD',
+  /**
+   * 回执**没量**"那一行是关着的"（`row_disabled` 缺 / `null`）⇒ **HOLD**，不绿也不红（`bug-20261110-17`）。
+   *
+   * 为什么不是 RED：这一格证明不了"撤挂载把行关上了"，但也**没有**任何证据说它没关 —— 缺的是一个读数，
+   * 不是一个失败。为什么不是绿：`row_landing {insert:0, preset_bodies:2}` 只证明"行不在宿主层、在两份预设体里"，
+   * 证明不了它**关着**（`disabled: true` 是生成器对"预设体里的客户端 UI 行"的硬要求）。
+   * 补救动作是**重交一份回执**（补量 `row_disabled`），所以报文必须点名这个字段。
+   */
+  rollbackRowDisabledUnmeasured: 'BOOT-R5-ROW-DISABLED-UNMEASURED',
   /** 两件产物（组合 / bundle 补丁）有一份读不到 —— 前置失败，红（不是"这一档不适用"）。 */
   rollbackArtifactsMissing: 'BOOT-R5-ARTIFACTS-MISSING',
   /**
@@ -1024,10 +1033,18 @@ export function rollbackRouteReading({ compositionText, patchText }) {
  *   "marker_removed": true,                 // 组合里的 # @host-level 删掉了
  *   "regenerated": true,                    // 重跑了 .tools/make-bundle-patch.mjs
  *   "row_landing": {"insert": 0, "preset_bodies": 2},   // 产物读数：那一行回到两份预设体
+ *   "row_disabled": true,                   // 产物读数：那份预设体里这一行是**关着**的（`disabled: true`）
  *   "restart_at": "2026-11-05T12:05:00.000Z",           // 之后那次客户端重启
  *   "new_session": {"created_at": "2026-11-05T12:06:11.000Z", "agentPreset": "agenia"}
  * }
  * ```
+ * 🔴 `row_disabled` 是**必量**的一格（`bug-20261110-17`）：`row_landing` 只证明"行不在宿主层、在两份预设体里"，
+ *    证明不了它**关着** —— 而"预设体里的客户端 UI 行必须 `disabled: true`"是生成器的硬要求
+ *    （`.tools/make-bundle-patch.mjs`）。取值只许 `true` / `false`：
+ *      · `true`  ⇒ 这一半成立；
+ *      · `false` ⇒ **RED `BOOT-R5-ROLLBACK-CONTRACT-BROKEN`**（那一行在预设体里开着 = 撤挂载没撤干净）；
+ *      · 缺 / `null` ⇒ **HOLD `BOOT-R5-ROW-DISABLED-UNMEASURED`**（没量，不绿也不红；补救 = 重交回执）。
+ *    老格式回执（2026-11-10 那份练习回执没有这一格）就走 `HOLD` 那一条：见契约 §3.7.2。
  * 回执从哪来**有三种来源**（`bug-20261110-18`；解析在 `support/r5-exercise.mjs`，唯一出处）：
  *   · `env`     —— `AGENIA_R5_REMOVAL_EXERCISE=<json 路径>`（**优先**；测试 / 副本用）；
  *   · `default` —— 默认落点：`<workspace>/.team/leader/_r5/receipt.json`，其次
@@ -1066,6 +1083,11 @@ export function rollbackExerciseVerdict(receipt, {
   const iso = (v) => (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null)
   const land = receipt.row_landing !== null && typeof receipt.row_landing === 'object' ? receipt.row_landing : null
   const session = receipt.new_session !== null && typeof receipt.new_session === 'object' ? receipt.new_session : null
+  /**
+   * 那一行**关没关**（`bug-20261110-17`）：只认布尔。缺 / `null` / 别的值 ⇒ `null` = **没量**（不是 false，
+   * 也不是 true）—— 三者必须是三个读数，否则"没量"会借 `false` 或 `true` 的路走进判词。
+   */
+  const rowDisabled = receipt.row_disabled === true || receipt.row_disabled === false ? receipt.row_disabled : null
   if (iso(receipt.at) === null) contract.push('回执缺 `at`（练习开始的 ISO 时刻）或它不是合法时间')
   if (receipt.marker_removed !== true) contract.push('回执说组合里的 `# @host-level` **没有**删掉（`marker_removed` 不是 true）')
   if (receipt.regenerated !== true) contract.push('回执说生成器**没有**重跑（`regenerated` 不是 true）')
@@ -1075,6 +1097,10 @@ export function rollbackExerciseVerdict(receipt, {
     if (!(typeof land.preset_bodies === 'number' && land.preset_bodies >= 2)) {
       contract.push(`回执说预设体里只有 ${JSON.stringify(land.preset_bodies)} 次（两份预设各一次，应 ≥ 2）`)
     }
+  }
+  if (rowDisabled === false) {
+    contract.push('回执说那一行**没有关**（`row_disabled: false`）—— 撤挂载之后它是两份预设体里的一行，'
+      + '而"预设体里的客户端 UI 行必须 `disabled: true`"是生成器的硬要求；`row_landing {0, 2}` 只证明它落在哪，不证明它关着')
   }
   if (iso(receipt.restart_at) === null) contract.push('回执缺 `restart_at`（之后那次客户端重启的 ISO 时刻）或它不是合法时间')
   if (session === null) contract.push('回执缺 `new_session`（重启之后新建的那个会话）')
@@ -1101,6 +1127,8 @@ export function rollbackExerciseVerdict(receipt, {
     restart_at: receipt.restart_at ?? null,
     new_session: session === null ? null : { created_at: session.created_at ?? null, agentPreset: session.agentPreset ?? null },
     row_landing: land,
+    /** 那一行关没关：`true` / `false` / `null`（没量）。三个值分开记，不许塌成两个。 */
+    row_disabled: rowDisabled,
     contract_problems: contract,
   }
   if (contract.length > 0) {
@@ -1109,11 +1137,25 @@ export function rollbackExerciseVerdict(receipt, {
   if (identity.length > 0) {
     return { verdict: 'RED', code: BOOT_CODES.rollbackIdentityCost, why: identity.join('；'), readings }
   }
+  if (rowDisabled === null) {
+    // 🔴 没量 ⇒ HOLD（不是绿、也不是红）：`row_landing` 只证明位置，证明不了"关着"。
+    //    排在这里（契约问题与身份之后）：任何**可量**的破绽都比"少一格读数"更硬，不许被 HOLD 遮住。
+    return {
+      verdict: 'HOLD',
+      code: BOOT_CODES.rollbackRowDisabledUnmeasured,
+      why: '回执没有量"那一行是关着的"：缺 `row_disabled`（或它不是布尔 —— 实得 '
+        + `${JSON.stringify(receipt.row_disabled ?? null)}）。\`row_landing\` 只证明那一行不在宿主层、在两份预设体里，`
+        + '证明不了它**关着**（`disabled: true` 是生成器对预设体里客户端 UI 行的硬要求）⇒ 这一半今天**没有读数**，'
+        + '记 HOLD（**不是**绿）：补量之后重交回执（`row_disabled: true|false`）'
+        + `，契约 §3.7.2；老格式回执要走的就是这一条`,
+      readings,
+    }
+  }
   return {
     verdict: 'GREEN',
     code: null,
     why: `撤挂载之后重启、新建的会话头 = ${JSON.stringify(session.agentPreset)}（${session.created_at}），`
-      + '且产物那一侧那一行回到了两份预设体里 —— 撤挂载没有折掉身份',
+      + '且产物那一侧：那一行回到了两份预设体里、而且**是关着的**（`row_disabled: true`）—— 撤挂载没有折掉身份',
     readings,
   }
 }
@@ -1137,7 +1179,8 @@ export function readRollbackExercise(options = {}) {
  *   ① 有回执来源却读不出来（坏 JSON / 不是对象）⇒ **RED `BOOT-R5-ROLLBACK-CONTRACT-BROKEN`**
  *      —— **哪一种来源都一样**（`bug-20261110-18`：默认落点读到的坏回执照样红，不许退回 HOLD）；
  *   ② 没有来源（`none`）⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`（报文点名 `none` + 查过哪几条）；
- *   ③ 有回执 ⇒ `rollbackExerciseVerdict()`（形状 / 时序 / 落点 / 身份）。
+ *   ③ 有回执 ⇒ `rollbackExerciseVerdict()`（形状 / 时序 / 落点 / **`row_disabled`** / 身份）——
+ *      其中"`row_disabled` 没量"那一支是 **HOLD `BOOT-R5-ROW-DISABLED-UNMEASURED`**（`bug-20261110-17`）。
  *
  * @param {ReturnType<typeof readRollbackExercise>} exercise
  * @param {{expectedPreset?:string}} [options]

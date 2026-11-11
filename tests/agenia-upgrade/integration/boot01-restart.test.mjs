@@ -47,6 +47,8 @@
  *        `<workspace>/.team/leader/_r5/receipt.json`（其次日期抽屉里那份）/ 没有）；
  *        两处都没有 ⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`（报文点名来源 `none`）；
  *        回执说身份掉了 ⇒ `RED BOOT-R5-IDENTITY-COST`；有回执但读不出来 ⇒ 红（**不论**来自哪一处）。
+ *        回执还须量 `row_disabled`（**那一行是关着的**，`bug-20261110-17`）：`false` ⇒ 红；缺 / `null`
+ *        ⇒ `HOLD BOOT-R5-ROW-DISABLED-UNMEASURED`（没量，不绿；补量后重交回执，契约 §3.7.2）。
  *      🔴 旧的两条腿（`oneStepRemoval()` 的"从文件里删一行"、`profilePatchReading()` 的 profile
  *      条件式）**退役**：那个动作在 bundle 路线上不存在，profile 层已是备用路线。
  *      码 `BOOT-ROLLBACK-NO-MOUNT-ROW` 等五个同批退役（墓碑在 `BOOT_CODES` 里）——
@@ -546,6 +548,7 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
         marker_removed: true,
         regenerated: true,
         row_landing: { insert: 0, preset_bodies: 2 },
+        row_disabled: true,
         restart_at: '2026-11-05T12:05:00.000Z',
         new_session: { created_at: '2026-11-05T12:06:11.000Z', agentPreset: EXPECTED_PRESET },
       },
@@ -554,6 +557,7 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
         marker_removed: true,
         regenerated: true,
         row_landing: { insert: 0, preset_bodies: 2 },
+        row_disabled: true,
         restart_at: '2026-11-05T12:05:00.000Z',
         new_session: { created_at: '2026-11-05T12:06:11.000Z', agentPreset: 'standard' },
       },
@@ -562,6 +566,7 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
         marker_removed: false,
         regenerated: true,
         row_landing: { insert: 1, preset_bodies: 0 },
+        row_disabled: true,
         restart_at: '2026-11-05T12:05:00.000Z',
         new_session: { created_at: '2026-11-05T12:06:11.000Z', agentPreset: EXPECTED_PRESET },
       },
@@ -584,6 +589,8 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
     }
 
     // 身份那一半：今天有没有"练习回执"（**三种来源**：env / 默认落点 / 没有）。
+    // 🔴 `bug-20261110-17`：回执还要证明"那一行是**关着**的"（`row_disabled: true`）。老格式回执缺这一格
+    // ⇒ 判词是 HOLD `BOOT-R5-ROW-DISABLED-UNMEASURED`（缺一个读数，不是失败；补量后重交回执，契约 §3.7.2）。
     const exercise = readRollbackExercise()
     const exerciseVerdict = rollbackExerciseCaseVerdict(exercise)
     const r2 = pick.newest === null ? 'HOLD' : v.verdict
@@ -593,6 +600,7 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
       source: exercise.source,
       checked: exercise.checked ?? [],
       read_error: exercise.error,
+      row_disabled: exercise.receipt?.row_disabled ?? 'ABSENT',
       identity_today: r2,
       ...exerciseVerdict,
     }

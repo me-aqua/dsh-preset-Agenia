@@ -18,7 +18,7 @@
  *   · `none`    —— 两处都没有 ⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`，报文点名 `none` 与查过哪几条。
  *   🔴 **有回执但读不出来（哪一种来源都一样）⇒ RED `BOOT-R5-ROLLBACK-CONTRACT-BROKEN`，不是 HOLD**。
  *
- * ## 腿（六条判据 + 一把刀 + 一次真读数）
+ * ## 腿（八条判据 + 一把刀 + 一次真读数）
  *   · `default-canonical`：只有规范落点 ⇒ `source:'default'`、读到并判 **GREEN**；
  *   · `default-dated`：只有日期抽屉里的那份（**两份：新的绿 / 旧的坏**）⇒ 读**新**的那份、GREEN；
  *   · `default-malformed`：规范落点是一段坏 JSON ⇒ `source:'default'` + **RED**（不是 HOLD）；
@@ -30,6 +30,13 @@
  *     同一个工作区的读数从 `default` 翻成 `none`、判词从 GREEN 翻成 HOLD —— 精确翻面，只动来源；
  *   · **真读数**：`PATHS.repo` 上 env 不给 ⇒ 默认落点必须读到老板那份回执并判 GREEN
  *     （读不到 ⇒ `HOLD EXR-REAL-RECEIPT-ABSENT`：那是"这台机器上没有那份回执"，不许记绿）。
+ *
+ * ## `bug-20261110-17`：回执必须量"那一行是关着的"
+ * `row_landing {insert:0, preset_bodies:2}` 只证明那一行**落在哪**，证明不了它**关着**；而"预设体里的
+ * 客户端 UI 行必须 `disabled: true`"是生成器的硬要求。回执因此多一格 `row_disabled: true|false|null`：
+ *   · ⑨ `row-disabled-false`：`{0,2}` 但 `row_disabled:false` ⇒ **RED `CONTRACT-BROKEN`**（翻面样本）；
+ *   · ⑩ `row-disabled-unmeasured`：**老格式回执**（这一格还不存在）⇒ **HOLD `ROW-DISABLED-UNMEASURED`**，
+ *     不绿也不红 —— 缺的是一个读数，不是一个失败；补救是重交一份补量过的回执（契约 §3.7.2）。
  */
 import { test } from 'node:test'
 import path from 'node:path'
@@ -52,6 +59,7 @@ const GREEN_RECEIPT = {
   marker_removed: true,
   regenerated: true,
   row_landing: { insert: 0, preset_bodies: 2 },
+  row_disabled: true,
   restart_at: '2026-11-11T11:18:17.000+08:00',
   new_session: { created_at: '2026-11-11T12:12:58.984+08:00', agentPreset: 'agenia' },
 }
@@ -59,6 +67,26 @@ const GREEN_RECEIPT = {
 const IDENTITY_LOST_RECEIPT = {
   ...GREEN_RECEIPT,
   new_session: { ...GREEN_RECEIPT.new_session, agentPreset: 'standard' },
+}
+/**
+ * 一份**落点对、但那一行开着**的回执（`{insert:0, preset_bodies:2}` + `row_disabled:false`）——
+ * `bug-20261110-17` 的翻面样本：这一份必须 RED 在 `CONTRACT-BROKEN`，不是绿，也不是 `IDENTITY-COST`。
+ */
+const ROW_DISABLED_FALSE_RECEIPT = {
+  ...GREEN_RECEIPT,
+  row_disabled: false,
+}
+/**
+ * **老格式回执**：`row_disabled` 那一格还不存在（= 老板 2026-11-10 那次练习交的形状）。
+ * 两份预设体落点都在、身份也对 ⇒ 唯一缺的是"它关没关" ⇒ 必须 HOLD `ROW-DISABLED-UNMEASURED`（不绿）。
+ */
+const LEGACY_RECEIPT = {
+  at: GREEN_RECEIPT.at,
+  marker_removed: true,
+  regenerated: true,
+  row_landing: { insert: 0, preset_bodies: 2 },
+  restart_at: GREEN_RECEIPT.restart_at,
+  new_session: { ...GREEN_RECEIPT.new_session },
 }
 
 /** 这一格自己的工作区（带 marker；每根一格，互不污染）。 */
@@ -160,7 +188,7 @@ test('EXR-01 R5 练习回执：默认落点也要读得到 · 三种来源（env
       why: shapeVerdict.why,
     }
     if (shapeVerdict.verdict !== 'RED' || shapeVerdict.code !== 'BOOT-R5-ROLLBACK-CONTRACT-BROKEN') {
-      push('EXR-SHAPE-NOT-RED', `[④] 落点上是一份合法 JSON 但不是回执（缺 \`at\` / \`marker_removed\` / \`regenerated\` / \`row_landing\` / \`restart_at\` / \`new_session\`）`
+      push('EXR-SHAPE-NOT-RED', `[④] 落点上是一份合法 JSON 但不是回执（缺 \`at\` / \`marker_removed\` / \`regenerated\` / \`row_landing\` / \`row_disabled\` / \`restart_at\` / \`new_session\`）`
         + `⇒ 必须红在 \`BOOT-R5-ROLLBACK-CONTRACT-BROKEN\`，实得 ${shapeVerdict.verdict} / ${shapeVerdict.code}`)
     }
 
@@ -215,6 +243,56 @@ test('EXR-01 R5 练习回执：默认落点也要读得到 · 三种来源（env
         + `实得 ${withEnvVerdict.verdict} / ${withEnvVerdict.code} —— 读到默认落点那份"好看的"就等于把红换成了绿`)
     }
 
+    // ── ⑨ row-disabled-false：落点 `{0,2}`、身份对，但那行**开着** ⇒ RED（`bug-20261110-17`）────────
+    const wsOpen = workspaceOf('row-disabled-false')
+    writeReceipt(wsOpen, R5_EXERCISE_DEFAULT_REL, ROW_DISABLED_FALSE_RECEIPT)
+    const openRead = readRollbackExercise({ env: noEnv, workspace: wsOpen })
+    const openVerdict = rollbackExerciseCaseVerdict(openRead)
+    rec.readings.row_disabled_false = {
+      source: openRead.source,
+      row_landing: openRead.receipt?.row_landing ?? null,
+      row_disabled: openRead.receipt?.row_disabled ?? null,
+      verdict: openVerdict.verdict,
+      code: openVerdict.code,
+      why: openVerdict.why,
+      readings_row_disabled: openVerdict.readings?.row_disabled ?? null,
+    }
+    if (openVerdict.verdict !== 'RED' || openVerdict.code !== 'BOOT-R5-ROLLBACK-CONTRACT-BROKEN') {
+      push('EXR-ROW-DISABLED-FALSE', `[⑨] 回执的落点是 \`{insert:0, preset_bodies:2}\`、身份也对，但 \`row_disabled: false\`（那一行开着）`
+        + `⇒ 必须 \`RED BOOT-R5-ROLLBACK-CONTRACT-BROKEN\`，实得 ${openVerdict.verdict} / ${openVerdict.code} —— `
+        + '`row_landing` 只证明"落在哪"，证明不了"关着"；把开着当成撤挂载成功，等于用一个位置读数冒充功能状态')
+    }
+
+    // ── ⑩ row-disabled-unmeasured：**老格式回执**（没这一格）⇒ HOLD，不绿也不红（`bug-20261110-17`）────
+    const wsLegacy = workspaceOf('row-disabled-unmeasured')
+    writeReceipt(wsLegacy, R5_EXERCISE_DEFAULT_REL, LEGACY_RECEIPT)
+    const legacyRead = readRollbackExercise({ env: noEnv, workspace: wsLegacy })
+    const legacyVerdict = rollbackExerciseCaseVerdict(legacyRead)
+    rec.readings.row_disabled_unmeasured = {
+      source: legacyRead.source,
+      receipt_keys: Object.keys(legacyRead.receipt ?? {}),
+      verdict: legacyVerdict.verdict,
+      code: legacyVerdict.code,
+      why: legacyVerdict.why,
+      readings_row_disabled: legacyVerdict.readings?.row_disabled ?? 'ABSENT',
+    }
+    if (legacyVerdict.verdict === 'GREEN') {
+      push('EXR-ROW-DISABLED-UNMEASURED', `[⑩] 老格式回执（没有 \`row_disabled\`）被判成 **GREEN** —— `
+        + '没量过的格子被当成了量过；`null` 不许通过绿（`bug-20261110-17`）')
+    } else if (legacyVerdict.verdict !== 'HOLD' || legacyVerdict.code !== 'BOOT-R5-ROW-DISABLED-UNMEASURED') {
+      push('EXR-ROW-DISABLED-UNMEASURED', `[⑩] 老格式回执必须 \`HOLD BOOT-R5-ROW-DISABLED-UNMEASURED\`（缺一个读数，不是一个失败），`
+        + `实得 ${legacyVerdict.verdict} / ${legacyVerdict.code} —— 记成 RED 会把"没量"说成"撤挂载坏了"；`
+        + '记成 GREEN 就是静默放行（`bug-20261110-17`）')
+    }
+    if (!String(legacyVerdict.why ?? '').includes('row_disabled')) {
+      push('EXR-ROW-DISABLED-UNMEASURED', `[⑩] 这条 HOLD 的报文必须**点名缺的那个字段**（\`row_disabled\`），实得 ${JSON.stringify(String(legacyVerdict.why ?? '').slice(0, 240))}`
+        + ' —— 不点名，读的人不知道该补哪一格')
+    }
+    if (legacyVerdict.readings?.row_disabled !== null) {
+      push('EXR-ROW-DISABLED-UNMEASURED', `[⑩] 没量 ⇒ 读数里 \`row_disabled\` 必须是 \`null\`（不是 \`false\`，也不是缺键），`
+        + `实得 ${JSON.stringify(legacyVerdict.readings?.row_disabled ?? 'ABSENT')} —— 三个值必须是三个读数`)
+    }
+
     // ── ⑦ 刀 `env-only`：把默认落点的候选清单清空（= `bug-20261110-18` 之前的形状）────────
     //     同一个工作区（有规范落点）在旧逻辑下必须是 `none` + HOLD ⇒ 证明"默认落点"是承重的。
     const knifeDir = path.join(runRoot(), 'knives', 'exr-01')
@@ -262,6 +340,8 @@ test('EXR-01 R5 练习回执：默认落点也要读得到 · 三种来源（env
       path: real.path,
       exists: real.path === null ? false : existsSync(real.path),
       checked: real.checked,
+      row_landing: real.receipt?.row_landing ?? null,
+      row_disabled: real.receipt?.row_disabled ?? 'ABSENT',
       verdict: realVerdict.verdict,
       code: realVerdict.code,
       why: realVerdict.why,
@@ -274,8 +354,23 @@ test('EXR-01 R5 练习回执：默认落点也要读得到 · 三种来源（env
       if (real.source !== 'default') {
         push('EXR-REAL-SOURCE', `[⑧] env 不给时真工作区必须走 \`default\`，实得 ${JSON.stringify(real.source)}`)
       }
-      if (realVerdict.verdict !== 'GREEN') {
+      if (realVerdict.verdict === 'HOLD') {
+        // 🔴 盘上那份回执**没有** `row_disabled`（`bug-20261110-17` 之前交的那一份）⇒ 这一腿**报缺的那一格**，
+        //    不记绿、也不记红：缺的是一个读数，不是一个失败。补救动作 = 重交一份补量过的回执（组长）。
+        if (realVerdict.code !== 'BOOT-R5-ROW-DISABLED-UNMEASURED') {
+          push('EXR-REAL-VERDICT', `[⑧] 盘上那份回执判 HOLD，但码是 ${JSON.stringify(realVerdict.code)}（期望 \`BOOT-R5-ROW-DISABLED-UNMEASURED\`）`
+            + `：${realVerdict.why} —— 别的 HOLD 不许借这一条混过去`)
+        }
+        caseHold(rec, realVerdict.code,
+          `[⑧] 盘上那份练习回执缺 \`row_disabled\`（字段列表 = ${JSON.stringify(Object.keys(real.receipt ?? {}))}）⇒ `
+          + '它证明"那一行在两份预设体里",证明不了"那一行是关着的" —— 这一腿**不记绿**。'
+          + '补救：按契约 §3.7.2 重交一份补量 `row_disabled: true|false` 的回执（组长），下一跑这一腿才可能绿')
+      } else if (realVerdict.verdict !== 'GREEN') {
         push('EXR-REAL-VERDICT', `[⑧] 盘上那份回执按判据自己的验证器应当 GREEN，判成 ${realVerdict.verdict} / ${realVerdict.code}：${realVerdict.why}`)
+      }
+      if (realVerdict.verdict === 'GREEN' && realVerdict.readings?.row_disabled !== true) {
+        push('EXR-REAL-VERDICT', `[⑧] 盘上那份回执判了 GREEN，但读数里 \`row_disabled\` = ${JSON.stringify(realVerdict.readings?.row_disabled ?? 'ABSENT')}`
+          + ' —— 判绿的前提是 `row_disabled === true`，读数与判词必须是同一件事')
       }
     }
 

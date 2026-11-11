@@ -45,16 +45,26 @@
  *       ③ 欠账读数 `owed_by = test`（**测试岗**）/ `remaining` = 卡上印的"超期 N 条"
  *       （`slaDebtProblems()`，契约 §3.7.1-A：卡面必须说得出**谁欠的**与**这一批还剩几条**）。
  *       ⚠️ 这一格判的是**数 + 归属**（`SLA_DEBT` 一处），归属那一半在下面 `I` 段；
- *       四份合成卡（proper / hidden-green / count-drift / red-without-debt）
- *       证明每一条码单独能翻面。
+ *       七份合成卡证明**哪几条码能单独翻面**：`proper`（0 条）· `hidden-only` ⇒ 只翻 HIDDEN ·
+ *       `count-drift` ⇒ 只翻 COUNT · `red-without-debt` ⇒ 只翻 EMPTY · `owner-unnamed` ⇒ 只翻 OWNER-UNNAMED ·
+ *       `owner-drift` ⇒ OWNER-DRIFT **两次**（label 与 machine 各一条，同一个码）· `hidden-green` ⇒
+ *       HIDDEN + COUNT + REASON 一起翻。
+ *       🔴 **边界（写下来，别读大）**：`C2-SLA-DEBT-REASON` **没有单独样本** —— 它只在 `hidden-green`
+ *       里与另外两条一起出现，所以"每条码都能单独翻面"这句话对 REASON 不成立
+ *       （`bug-20261111-05` ③ 点名的正是这种"注释比证据宽"）。
  *   `I` 🔴 **归属从表里读**（2026-11-11 第二轮 · `bug-20261111-05` · 契约 §3.7.1-B）：
  *       卡面 `sla` 格必须印 `（<owed_by_label> 欠 · owed_by=<owed_by>）`，两个值都来自 `SLA_DEBT`：
  *       ① **没印归属** ⇒ `C2-SLA-DEBT-OWNER-UNNAMED`；② 印了但**与表不符** ⇒ `C2-SLA-DEBT-OWNER-DRIFT`；
  *       ③ **工作区里放一份合成表**（`测试组` / `qa-group`）⇒ 卡面必须跟着换词（`C2-SLA-DEBT-OWNER-TABLE`）
  *          —— 这一条就是**翻面**：卡面若还抄着 `测试岗`，它当场红（表变 ⇒ 卡变，从此刻起看得见）；
  *       ④ 合成表里**删掉 `owed_by`** ⇒ 卡面印 `owed_by=unknown`，**不许**退回旧词（`C2-SLA-DEBT-OWNER-UNKNOWN`）。
- *       ⚠️ 这一格**没有源码刀**：判的是"卡面 vs 判据喂进去的那张表"，合成表那条腿本身就是翻面；
- *       再切一刀只能切"删掉读表"，那会同时打红两条码、分不开（契约 §3.7.1-B 末段）。
+ *       ⚠️ 这一格**没有源码刀**：判的是"卡面印的字 vs 判据喂进去的那张表"，而合成表那条腿本身
+ *       就走了一遍"表变 ⇒ 卡变"（表里只改 `owed_by_label`，卡面就换词），**并且**它比源码刀更有力 ——
+ *       合成表腿同时钉住"跟着表改"与"表缺字段就印 unknown"两件事。真要拿源码动刀，能切的是
+ *       `sla_owner_fields()` 里那行 `return ('test', '测试岗')`（= 把"读表"退回"写死那个词"）：
+ *       它会一次打红 `OWNER-DRIFT` ×2（label 与 machine 两条，卡面写 `测试岗`/`test` 而判据喂的是
+ *       合成表 `测试组`/`qa-group`）**加** `OWNER-TABLE`（卡面没跟着表改）—— 三条码一起翻，
+ *       分不出"这一面在判"还是"别处先红"（契约 §3.7.1-B 末段：翻面由合成表 + 两份负样本承重）。
  *
  * ── 未接线那两条判据怎么证明自己翻得动面 ───────────────────────────────
  * 主夹具里十二格全接线 ⇒ "`wired:false ⇒ red`" 这条判据在主夹具上**没有样本**。
@@ -630,7 +640,7 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
         // ③ 卡上"还剩几条"必须与欠账同值（谁欠的 = 测试岗，写在 SLA_DEBT 一处）。
         slaDebtProblems({ cell, reasons: cells['card.reasons'], debt, where: 'E2d/真卡', push })
       }
-      // ④ 判据自己的阳性对照 + 六把合成刀（每一码单独承重）：没有这一组，"欠账说不清"就只是字面承诺。
+      // ④ 判据自己的阳性对照 + 七份合成样本（**哪几条码能单独翻面**见文件头 `H` 段的边界说明）：没有这一组，"欠账说不清"就只是字面承诺。
       //    ⚠️ `proper` / `count-drift` 的 reading 必须带**归属**那一段（`（测试岗 欠 · owed_by=test）`）——
       //    卡面从 M1 起印它；不带就等于"没印归属"，那是另一条码（`OWNER-UNNAMED`），会把这把刀的期望弄脏。
       const ownerText = `（${SLA_DEBT.owed_by_label} 欠 · owed_by=${SLA_DEBT.owed_by}）`
@@ -648,6 +658,15 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
           reasons: [],
           debt,
           want: ['C2-SLA-DEBT-HIDDEN', 'C2-SLA-DEBT-COUNT', 'C2-SLA-DEBT-REASON'],
+        },
+        {
+          // `bug-20261111-05` ③：`hidden-green` 一次翻 **3** 条（HIDDEN / COUNT / REASON），
+          // "每一码单独承重"这句话在它身上不成立。这一份只翻 HIDDEN：数对、理由在、就是**绿**着说没欠。
+          key: 'hidden-only',
+          cell: { key: 'sla', state: 'green', reading: `超期 1 条${ownerText} · 最老 1 天 · 周期 ${DAY}` },
+          reasons: [{ code: 'SLA_OVER_CYCLE', detail: `1 条 bug 超一个开工周期仍未评估：${SLA_DISPOSITION_ID}` }],
+          debt,
+          want: ['C2-SLA-DEBT-HIDDEN'],
         },
         {
           key: 'count-drift',
