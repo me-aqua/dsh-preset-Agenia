@@ -38,6 +38,15 @@
  *   `G` 🔴 **两个 producer 自己的写面**（`gate4-C2` F-09）：A = `inject.js::recordIdentityAlarm()`
  *       （落点 / 04:00 天号 / 去重 / 不是工作区就不写）；B = `lib/bug-ledger.mjs::slaVerdict()`
  *       （`unknown` 照样超期 / 当天开的不算 / observation 不算 / `cycle` 缺 ⇒ 判不了）。
+ *   `H` 🔴 **处置不是收口**（`bug-20261110-09` 的决定：**选 B** · 契约 §3.7.1-A）：
+ *       一条 `opened_at` 在上一个开工周期、**组长已处置（`adopted`）**、`assessment` 仍是 null 的 bug ⇒
+ *       ① `bug-read.sla.over` 仍含它（`C2-SLA-DISPOSITION-IS-CLOSURE`：处置回答"修不修"，
+ *       评估回答"是不是真的"，两个问题不许互相顶账）；② 卡上 `sla` 格 `red` 且 `SLA_OVER_CYCLE` 点名它；
+ *       ③ 欠账读数 `owed_by = test`（**测试岗**）/ `remaining` = 卡上印的"超期 N 条"
+ *       （`slaDebtProblems()`，契约 §3.7.1-A：卡面必须说得出**谁欠的**与**这一批还剩几条**）。
+ *       ⚠️ 这一格判的是**数 + 归属表**（`SLA_DEBT` 一处），不判措辞：卡面还没印"测试岗"四个字，
+ *       印上那天**不加第二条判据**。四份合成卡（proper / hidden-green / count-drift / red-without-debt）
+ *       证明每一条码单独能翻面。
  *
  * ── 未接线那两条判据怎么证明自己翻得动面 ───────────────────────────────
  * 主夹具里十二格全接线 ⇒ "`wired:false ⇒ red`" 这条判据在主夹具上**没有样本**。
@@ -64,9 +73,9 @@ import { livePath, loadLiveModule } from '../support/sut.mjs'
 import { PATHS } from '../support/env.mjs'
 import {
   CARD_SHEET, DAY, DAY_PREV, NOW, NOW_PREV, PROBE_DEGRADED_KEYS, PROBE_IDS, RED_CODES, STATUS_CELLS,
-  STATUS_STATES, assertReasonCodes, bugEntry, bugLedger, cardFile, hasRed, keysMissing, localState,
+  STATUS_STATES, SLA_DEBT, assertReasonCodes, bugEntry, bugLedger, cardFile, hasRed, keysMissing, localState,
   makeCardRoots, opUnavailable, pythonMirror, readBugOp, readCard, redCodes, redDetails, routeLedger,
-  routeTask, runCards, scene, setClock, sheetMissing, statOf, writeBug, writeDataRoot, writeIdentity,
+  routeTask, runCards, scene, setClock, sheetMissing, slaDebtProblems, slaDebtReading, statOf, writeBug, writeDataRoot, writeIdentity,
   writeLegacyStore, writeLocal, writeMemorySource, writeReviewReports, writeRoute,
 } from '../support/card-surface.mjs'
 
@@ -541,6 +550,120 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
         // 🔴 F-03：跨读者（同一个注入时钟）
         slaCrossReader('E2c/sla-cross-reader', unknown, cell, cells)
       }
+    }
+
+    // ── E2d · 🔴 **处置不是收口**（`bug-20261110-09` 的决定：选 B · 契约 §3.7.1-A）──────────
+    /**
+     * 一条 `opened_at` 在上一个开工周期、**组长已经处置（`adopted`）**、`assessment` 仍是 `null` 的 bug。
+     * 按 B：`disposition` 不算收口 ⇒ ① 它还在 `bug-read.sla.over` 里；② 卡上那格 `red` 且点名它；
+     * ③ 欠账读数是"测试岗欠 1 条"，卡上那格必须印同一个数。
+     * 按 A 写的话 ① 会是空数组、② 会绿 —— 这一条样本就是两个形状的分界线（契约 §3.7.1-A 末段）。
+     */
+    const SLA_DISPOSITION_ID = 'bug-20261101-09'
+    {
+      const entries = [bugEntry(SLA_DISPOSITION_ID, {
+        opened_at: `${DAY_PREV}T09:00:00+08:00`,
+        registered_at: `${DAY_PREV}T09:00:00+08:00`,
+        assessment: null,
+        disposition: { value: 'adopted', by: 'leader', at: NOW_PREV, reason: '夹具：组长已处置，测试岗还没评估' },
+      })]
+      const debt = slaDebtReading({ entries, cycle: DAY })
+      readings.sla_debt = { ...debt, contract: { owed_by: SLA_DEBT.owed_by, closes_on: SLA_DEBT.closes_on, disposition_is_closure: SLA_DEBT.disposition_is_closure } }
+      if (debt.owed_by !== SLA_DEBT.owed_by || debt.remaining !== 1 || !debt.disposition_only.includes(SLA_DISPOSITION_ID)) {
+        push('C2-SLA-DEBT-READING',
+          `欠账读数不对：期望 \`{owed_by:'${SLA_DEBT.owed_by}', remaining:1, disposition_only:['${SLA_DISPOSITION_ID}']}\`，`
+          + `实得 ${JSON.stringify(debt)} —— 这一格判的是"谁欠的 + 还剩几条"，两个数都得对得上`)
+      }
+      const disposed = scene('CARD-05', 'sla-disposition-not-closure', {
+        route: routeLedger({ tickets: [] }),
+        bug: bugLedger({ entries }),
+        local: localState({ day: DAY, technical: 'done', conversation: 'done' }),
+        identity: {},
+        reviews: {},
+        legacy: { remaining: 0 },
+      })
+      if (disposed.run.exit_code !== 0) {
+        push('C2-GENERATOR-FAILED', `sla 处置现场：生成器 exit=${disposed.run.exit_code}`)
+      } else if (disposed.card.sheet !== null) {
+        const cells = disposed.card.cells
+        const cell = cellOf(cells['statusbar'], 'sla')
+        const env = setClock(disposed.roots, disposed.nowIso)
+        const res = readBugOp(disposed.roots.ws, 'c2-card05-sla-debt', { env })
+        const over = res?.json?.sla?.over ?? null
+        readings.sla_disposition_not_closure = {
+          cell,
+          reasons: cells['card.reasons'],
+          debt,
+          bug_read: { exit_code: res?.exit_code ?? null, code: res?.json?.error?.code ?? null, over },
+        }
+        // ① B 的定义：组长处置**不是**收口 ⇒ 它仍然在 `over` 里。
+        if (!Array.isArray(over) || !over.includes(SLA_DISPOSITION_ID)) {
+          push('C2-SLA-DISPOSITION-IS-CLOSURE',
+            `一只 bug 的 \`opened_at\` 是 ${DAY_PREV}、\`assessment\` 是 null、**组长处置 = adopted** ⇒ `
+            + `\`bug-read.sla.over\` 必须仍然含它（实得 ${JSON.stringify(over)}）—— 契约 §3.7.1-A 选了 B：`
+            + 'SLA 只由 `assessment` 收口；处置回答"修不修"，评估回答"是不是真的"，两个问题不许互相顶账')
+        }
+        // ② 卡上那格红 + 点名它。
+        if (cell === null || cell.state !== 'red') {
+          push('C2-SLA-DISPOSITION-GREEN',
+            `处置过但没评估的那只 bug ⇒ 格 \`sla\` 必须 \`red\`，实得 ${JSON.stringify(cell)} —— 把"组长处置了"读成"评估过了"，`
+            + '真超期的评估欠账会静默变绿（契约 §3.7.1-A）')
+        }
+        if (!hasRed(cells, 'SLA_OVER_CYCLE')) {
+          push('C2-SLA-REASON', `处置过但没评估的那只 bug 在 \`card.reasons\` 里没有 \`SLA_OVER_CYCLE\`（实得 ${JSON.stringify(cells['card.reasons'])}）`)
+        } else {
+          const named = redDetails(cells, 'SLA_OVER_CYCLE').join(' ')
+          if (!named.includes(SLA_DISPOSITION_ID)) {
+            push('C2-SLA-REASON-UNNAMED',
+              `\`SLA_OVER_CYCLE\` 的 detail 没点名那只 bug（\`${SLA_DISPOSITION_ID}\`；detail 实得 ${JSON.stringify(named)}）`)
+          }
+        }
+        // ③ 卡上"还剩几条"必须与欠账同值（谁欠的 = 测试岗，写在 SLA_DEBT 一处）。
+        slaDebtProblems({ cell, reasons: cells['card.reasons'], debt, where: 'E2d/真卡', push })
+      }
+      // ④ 判据自己的阳性对照 + 三把合成刀（每一码单独承重）：没有这一组，"欠账说不清"就只是字面承诺。
+      const synthetics = [
+        {
+          key: 'proper',
+          cell: { key: 'sla', state: 'red', reading: `超期 1 条 · 最老 1 天 · 周期 ${DAY}` },
+          reasons: [{ code: 'SLA_OVER_CYCLE', detail: `1 条 bug 超一个开工周期仍未评估：${SLA_DISPOSITION_ID}` }],
+          debt,
+          want: [],
+        },
+        {
+          key: 'hidden-green',
+          cell: { key: 'sla', state: 'green', reading: `超期 0 条 · 最老 0 天 · 周期 ${DAY}` },
+          reasons: [],
+          debt,
+          want: ['C2-SLA-DEBT-HIDDEN', 'C2-SLA-DEBT-COUNT', 'C2-SLA-DEBT-REASON'],
+        },
+        {
+          key: 'count-drift',
+          cell: { key: 'sla', state: 'red', reading: `超期 2 条 · 最老 1 天 · 周期 ${DAY}` },
+          reasons: [{ code: 'SLA_OVER_CYCLE', detail: '（合成：数说 2 条）' }],
+          debt,
+          want: ['C2-SLA-DEBT-COUNT'],
+        },
+        {
+          key: 'red-without-debt',
+          cell: { key: 'sla', state: 'red', reading: `超期 0 条 · 最老 0 天 · 周期 ${DAY}` },
+          reasons: [],
+          debt: slaDebtReading({ entries: [], cycle: DAY }),
+          want: ['C2-SLA-DEBT-EMPTY'],
+        },
+      ]
+      const syntheticReadings = []
+      for (const s of synthetics) {
+        const got = []
+        slaDebtProblems({ cell: s.cell, reasons: s.reasons, debt: s.debt, where: `synthetic:${s.key}`, push: (code) => got.push(code) })
+        syntheticReadings.push({ key: s.key, want: s.want, got })
+        if (JSON.stringify(got) !== JSON.stringify(s.want)) {
+          push('C2-SLA-DEBT-KNIFE',
+            `合成卡 ${s.key} 判成 ${JSON.stringify(got)}，期望 ${JSON.stringify(s.want)} —— `
+            + '欠账判据必须"该绿时 0 条、每一把刀只翻它自己那一条码"（翻不了面的判据是装饰）')
+        }
+      }
+      readings.sla_debt_synthetic = syntheticReadings
     }
 
     // ── E3 · carrier_missing：评审报告不在 ⇒ 红 ─────────────────────────

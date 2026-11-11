@@ -43,8 +43,10 @@
  *        `RED BOOT-R5-ROLLBACK-CONTRACT-BROKEN`（**不是**"挂载行不在"）。
  *      · **身份**（`rollbackExerciseVerdict()`）：撤掉挂载、重启之后**新建**的会话头仍须是
  *        `agentPreset: agenia` —— 撤挂载不许折掉身份。要求真的做过一次练习
- *        （`AGENIA_R5_REMOVAL_EXERCISE` 回执）；没做 ⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`；
- *        回执说身份掉了 ⇒ `RED BOOT-R5-IDENTITY-COST`。
+ *        （练习回执；三种来源：`AGENIA_R5_REMOVAL_EXERCISE` / 默认落点
+ *        `<workspace>/.team/leader/_r5/receipt.json`（其次日期抽屉里那份）/ 没有）；
+ *        两处都没有 ⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`（报文点名来源 `none`）；
+ *        回执说身份掉了 ⇒ `RED BOOT-R5-IDENTITY-COST`；有回执但读不出来 ⇒ 红（**不论**来自哪一处）。
  *      🔴 旧的两条腿（`oneStepRemoval()` 的"从文件里删一行"、`profilePatchReading()` 的 profile
  *      条件式）**退役**：那个动作在 bundle 路线上不存在，profile 层已是备用路线。
  *      码 `BOOT-ROLLBACK-NO-MOUNT-ROW` 等五个同批退役（墓碑在 `BOOT_CODES` 里）——
@@ -108,6 +110,7 @@ import {
   presetVerdict,
   profilePatchCoverage,
   readRollbackExercise,
+  rollbackExerciseCaseVerdict,
   rollbackExerciseVerdict,
   rollbackRouteReading,
   readSessionHeader,
@@ -580,20 +583,15 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
         + ' —— 那"回滚这一格现在是 HOLD"就不是"练习没做"，是判定器坏了'))
     }
 
-    // 身份那一半：今天有没有"练习回执"。
+    // 身份那一半：今天有没有"练习回执"（**三种来源**：env / 默认落点 / 没有）。
     const exercise = readRollbackExercise()
-    const exerciseVerdict = exercise.supplied && exercise.receipt === null
-      ? {
-        verdict: 'RED',
-        code: BOOT_CODES.rollbackContractBroken,
-        why: `给了 \`AGENIA_R5_REMOVAL_EXERCISE\` 却读不出回执（${exercise.path}）：${exercise.error} —— 回执坏了，不是"练习没做"`,
-        readings: { supplied: true, path: exercise.path },
-      }
-      : rollbackExerciseVerdict(exercise.receipt)
+    const exerciseVerdict = rollbackExerciseCaseVerdict(exercise)
     const r2 = pick.newest === null ? 'HOLD' : v.verdict
     rec.readings.rollback_exercise = {
       path: exercise.path,
       supplied: exercise.supplied,
+      source: exercise.source,
+      checked: exercise.checked ?? [],
       read_error: exercise.error,
       identity_today: r2,
       ...exerciseVerdict,

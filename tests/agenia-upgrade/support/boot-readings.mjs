@@ -96,6 +96,10 @@ import {
 } from './composition.mjs'
 import { describePlacement, withHostRowInPresetBodies } from './client-ui-placement.mjs'
 import { PATHS } from './env.mjs'
+import {
+  R5_EXERCISE_ENV,
+  readRollbackExercise as readRollbackExerciseImpl,
+} from './r5-exercise.mjs'
 
 // ── 码（稳定、可 grep）──────────────────────────────────────────────────────
 export const BOOT_CODES = {
@@ -1024,26 +1028,37 @@ export function rollbackRouteReading({ compositionText, patchText }) {
  *   "new_session": {"created_at": "2026-11-05T12:06:11.000Z", "agentPreset": "agenia"}
  * }
  * ```
- * 路径由 `AGENIA_R5_REMOVAL_EXERCISE` 指过来（与 `AGENIA_BOOT_AT` 同一族的可选 env，不进冻结表）。
- * 没给 ⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`（**不是**绿，也**不是**"挂载行不在"）；
- * 给了但形状 / 时序 / 落点不对 ⇒ `RED BOOT-R5-ROLLBACK-CONTRACT-BROKEN`；
- * 身份值不对 ⇒ `RED BOOT-R5-IDENTITY-COST`（撤挂载折掉了身份 —— 这正是这一格要抓的那件事）。
+ * 回执从哪来**有三种来源**（`bug-20261110-18`；解析在 `support/r5-exercise.mjs`，唯一出处）：
+ *   · `env`     —— `AGENIA_R5_REMOVAL_EXERCISE=<json 路径>`（**优先**；测试 / 副本用）；
+ *   · `default` —— 默认落点：`<workspace>/.team/leader/_r5/receipt.json`，其次
+ *                  `<workspace>/.team/leader/<YYYY-MM-DD>/_r5/receipt.json`（新的先看）；
+ *   · `none`    —— 两处都没有 ⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`（**不是**绿，
+ *                  也**不是**"挂载行不在"）；报文点名来源是 `none` 与查过哪几条路径。
+ * 有回执但形状 / 时序 / 落点不对 ⇒ `RED BOOT-R5-ROLLBACK-CONTRACT-BROKEN`（**哪一种来源都一样**：
+ *   回执坏了不是"练习没做"）；身份值不对 ⇒ `RED BOOT-R5-IDENTITY-COST`。
  *
  * 🔴 纯函数（不读盘）：回执由调用方读进来。这样"该绿 / 该红"两份合成回执能当**尺子自证**喂它。
  *
  * @param {object|null} receipt
- * @param {{expectedPreset?: string}} [options]
+ * @param {{expectedPreset?: string, source?: string, path?: string|null, checked?: string[]}} [options]
  * @returns {{verdict: 'GREEN'|'RED'|'HOLD', code: string|null, why: string, readings: object}}
  */
-export function rollbackExerciseVerdict(receipt, { expectedPreset = EXPECTED_PRESET } = {}) {
+export function rollbackExerciseVerdict(receipt, {
+  expectedPreset = EXPECTED_PRESET,
+  source = 'none',
+  path: receiptPath = null,
+  checked = [],
+} = {}) {
   if (receipt === null || receipt === undefined) {
     return {
       verdict: 'HOLD',
       code: BOOT_CODES.rollbackExerciseMissing,
       why: '还没有人做过"删标记 → 重跑生成器 → 重启 → 新建会话"这一次练习'
-        + '（`AGENIA_R5_REMOVAL_EXERCISE` 没给）—— 撤挂载之后身份会不会掉，今天**没有读数**；'
+        + `（回执来源 = \`${source}\`${source === 'none' ? `：env \`${R5_EXERCISE_ENV}\` 没给，默认落点也没有回执`
+          + `（查过 ${checked.length} 条：${checked.slice(0, 3).join(' · ')}）` : `：${receiptPath}`}）`
+        + ' —— 撤挂载之后身份会不会掉，今天**没有读数**；'
         + '记 HOLD（**不是**"挂载行不在"，也不是绿）',
-      readings: { supplied: false },
+      readings: { supplied: false, source, path: receiptPath, checked },
     }
   }
   const contract = []
@@ -1080,6 +1095,8 @@ export function rollbackExerciseVerdict(receipt, { expectedPreset = EXPECTED_PRE
   }
   const readings = {
     supplied: true,
+    source,
+    path: receiptPath,
     at: receipt.at ?? null,
     restart_at: receipt.restart_at ?? null,
     new_session: session === null ? null : { created_at: session.created_at ?? null, agentPreset: session.agentPreset ?? null },
@@ -1102,23 +1119,45 @@ export function rollbackExerciseVerdict(receipt, { expectedPreset = EXPECTED_PRE
 }
 
 /**
- * 读 `AGENIA_R5_REMOVAL_EXERCISE` 指的那份回执（**只读**）。
- *   · env 没给 ⇒ `{receipt: null, supplied: false}`（调用方记 HOLD）；
- *   · env 给了但文件不在 / 不是 JSON ⇒ `{receipt: null, supplied: true, error}`（调用方记红：
- *     给了路径却读不出来，是回执坏了，不是"练习没做"）。
+ * 读练习回执（**只读**）—— **唯一实现**在 `support/r5-exercise.mjs`（三种来源：env / default / none）。
+ *   · `env` 给了但文件不在 / 不是 JSON ⇒ `{receipt: null, supplied: true, source:'env', error}`（调用方记红：
+ *     给了路径却读不出来，是回执坏了，不是"练习没做"）；
+ *   · env 没给 ⇒ 走**默认落点**（`<workspace>/.team/leader/_r5/receipt.json`，其次日期抽屉里那份）；
+ *   · 两处都没有 ⇒ `source: 'none'`（调用方记 HOLD，报文点名来源）。
  *
- * @param {object} [env]
+ * @param {{env?:object, workspace?:string}} [options]
+ * @returns {ReturnType<typeof readRollbackExerciseImpl>}
  */
-export function readRollbackExercise({ env = process.env } = {}) {
-  const raw = typeof env.AGENIA_R5_REMOVAL_EXERCISE === 'string' ? env.AGENIA_R5_REMOVAL_EXERCISE.trim() : ''
-  if (raw === '') return { supplied: false, path: null, receipt: null, error: null }
-  const file = path.resolve(raw)
-  if (!existsSync(file)) return { supplied: true, path: file, receipt: null, error: `回执文件不在：${file}` }
-  try {
-    return { supplied: true, path: file, receipt: JSON.parse(readFileSync(file, 'utf8')), error: null }
-  } catch (err) {
-    return { supplied: true, path: file, receipt: null, error: `回执不是合法 JSON：${String(err?.message ?? err)}` }
+export function readRollbackExercise(options = {}) {
+  return readRollbackExerciseImpl({ workspace: PATHS.repo, ...options })
+}
+
+/**
+ * **这一格的判词**（`BOOT-01` 与 `EXR-01` 共用**这一处**，不许各写一份）：
+ *   ① 有回执来源却读不出来（坏 JSON / 不是对象）⇒ **RED `BOOT-R5-ROLLBACK-CONTRACT-BROKEN`**
+ *      —— **哪一种来源都一样**（`bug-20261110-18`：默认落点读到的坏回执照样红，不许退回 HOLD）；
+ *   ② 没有来源（`none`）⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING`（报文点名 `none` + 查过哪几条）；
+ *   ③ 有回执 ⇒ `rollbackExerciseVerdict()`（形状 / 时序 / 落点 / 身份）。
+ *
+ * @param {ReturnType<typeof readRollbackExercise>} exercise
+ * @param {{expectedPreset?:string}} [options]
+ */
+export function rollbackExerciseCaseVerdict(exercise, options = {}) {
+  if (exercise.supplied === true && exercise.receipt === null) {
+    return {
+      verdict: 'RED',
+      code: BOOT_CODES.rollbackContractBroken,
+      why: `回执来源 = \`${exercise.source}\`（${exercise.path}）却读不出来：${exercise.error} —— 回执坏了，不是"练习没做"`
+        + '（`bug-20261110-18`：默认落点读到的坏回执照样记红，不许退回 HOLD）',
+      readings: { supplied: true, source: exercise.source, path: exercise.path, checked: exercise.checked ?? [] },
+    }
   }
+  return rollbackExerciseVerdict(exercise.receipt, {
+    ...options,
+    source: exercise.source,
+    path: exercise.path,
+    checked: exercise.checked ?? [],
+  })
 }
 
 /**
