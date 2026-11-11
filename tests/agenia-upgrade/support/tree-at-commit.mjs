@@ -974,3 +974,50 @@ export function dispatchShapes({ repo } = {}) {
 
   return { problems, readings }
 }
+
+// ── 两份基线的"什么时候量的"（`bug-20261111-04`）─────────────────────────────
+/**
+ * **`generated_at` 的判据**（`fingerprint.mjs --save` 写出来的基线 · `tree-at-commit.mjs` 的导出与
+ * 活树基线 · 导出那行 JSON 的 `generated_at`）。
+ *
+ * 为什么要它：两份基线对不上时，读的人先要分得清"旧基线"与"量具口径变了"。没有这个时刻，
+ * 一份三天前的基线与一份刚写的基线长得一模一样 —— 这正是 `bug-20261111-04` 登记的那件事。
+ *
+ * 判三样（任何一样不成立就红）：
+ *   ① 字段在（`generated_at`）；
+ *   ② 是**ISO8601 UTC** 形状（`toISOString` 那一款：`YYYY-MM-DDTHH:MM:SS.sssZ`），且 `Date.parse` 得出来；
+ *   ③ 落在**写窗**里：与那份文件自己的 mtime 相差 ≤ `windowMs`（默认 3 s —— 一份基线是它被写出来的
+ *      那一刻量的；差得远 ⇒ 这个时刻不是"量的时候"，是抄来的 / 定死的）。
+ *
+ * ⚠️ 判据**不**钉"两次读同一个数"：`generated_at` 本来每次都不一样（它描述一次写，不是被写的树）。
+ *    所以这一格没有刀 —— 它的翻面由**三份合成输入**（缺键 / 形状坏 / 窗外）证明，
+ *    见 `REV-04` 的 `baseline-time` 腿（"absent ⇒ red" 就是这一格的刀）。
+ *
+ * @param {{json:object|null, mtimeMs:number|null, label:string, windowMs?:number}} input
+ * @returns {Array<{code:string, message:string}>} 有问题就返回；空 = 这一份基线说得清自己什么时候量的
+ */
+export function generatedAtProblems({ json, mtimeMs = null, label, windowMs = 3000 }) {
+  const problems = []
+  const push = (code, message) => problems.push({ code, message })
+  if (json === null || typeof json !== 'object' || Array.isArray(json)) {
+    push('GENERATED-AT-MISSING', `${label}：读不出一份基线对象（实得 ${JSON.stringify(json)}）—— 这一格判不了`)
+    return problems
+  }
+  const value = json.generated_at
+  if (value === undefined || value === null) {
+    push('GENERATED-AT-MISSING', `${label}：**没有** \`generated_at\` —— 两份基线对不上时分不清"旧基线"与"口径变了"`)
+    return problems
+  }
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(value) || !Number.isFinite(Date.parse(value))) {
+    push('GENERATED-AT-SHAPE', `${label}：\`generated_at\` = ${JSON.stringify(value)} 不是 ISO8601 UTC（\`toISOString\` 那一款）`)
+    return problems
+  }
+  if (mtimeMs !== null && Number.isFinite(mtimeMs)) {
+    const delta = Math.abs(Date.parse(value) - mtimeMs)
+    if (delta > windowMs) {
+      push('GENERATED-AT-WINDOW', `${label}：\`generated_at\` 与这份文件的 mtime 差 ${Math.round(delta)} ms（上限 ${windowMs} ms）`
+        + `（generated_at=${value} · mtime=${new Date(mtimeMs).toISOString()}）—— 这个时刻不是"写它的时候"`)
+    }
+  }
+  return problems
+}

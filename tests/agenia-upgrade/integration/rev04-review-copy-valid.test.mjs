@@ -28,14 +28,14 @@
  *    `A` / `B` / `D` 的读数今天是**绿的** —— 那正是"现场是真的、旧口径确实会作废好评审"的证据。
  */
 import { before, describe, test } from 'node:test'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
 import { caseFail, caseHold, commitCopyReading, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import {
   EXPORT_FIELDS, VERIFY_FIELDS, buildFixtureRepo, codeDigestOfCommit, codeDigestOfDir, codeListDiff,
   dispatchShapes, excludedFromCode, exportCommitReference, exporterPath, fingerprintCompare, fingerprintTool,
-  git, lsTreeBlobs, missingFields, runExport, runVerify, saveCodeBaseline, verifyCopyIsCommit,
+  generatedAtProblems, git, lsTreeBlobs, missingFields, runExport, runVerify, saveCodeBaseline, verifyCopyIsCommit,
 } from '../support/tree-at-commit.mjs'
 
 before(() => {
@@ -63,6 +63,8 @@ describe('integration · review (REV) · F-160 评审对象是提交', () => {
 
       // ══ A DEVICE + B SCENE：现场本身（不需要被测工具）════════════════════════
       const fx = buildFixtureRepo(root, 'rev04-scene')
+      /** B 段那份活树基线的落点（aseline-time 那一段也要读它，所以在外层声明）。 */
+      const sceneBaseline = path.join(fx.dir, 'live-before.json')
       rec.readings.fixture = { repo: fx.repo, pinned_commit: fx.commitA, second_commit: fx.commitB, files_A: fx.filesA, files_B: fx.filesB }
       const commitA = codeDigestOfCommit(fx.repo, fx.commitA)
       const commitB = codeDigestOfCommit(fx.repo, fx.commitB)
@@ -101,7 +103,7 @@ describe('integration · review (REV) · F-160 评审对象是提交', () => {
         if (commitA.ok && refDir.sha256 !== commitA.sha256) push('COPY-CODE-DIGEST-MISMATCH', `参照副本的 CODE 指纹 ${refDir.sha256.slice(0, 12)}… ≠ 提交从 git 对象算出来的 ${commitA.sha256.slice(0, 12)}…`)
 
         // ── B SCENE：窗口里动**活树**两处；副本一个字节不动 ────────────────
-        const sceneBaseline = path.join(fx.dir, 'live-before.json')
+        // （sceneBaseline 在外层声明 —— 下面 aseline-time 那一段也要读它。）
         const saved = saveCodeBaseline(fx.repo, sceneBaseline)
         rec.readings.scene = { baseline: saved.ok ? saved.sha256 : null, problems: saved.problems }
         if (!saved.ok) {
@@ -198,6 +200,65 @@ describe('integration · review (REV) · F-160 评审对象是提交', () => {
               rec.readings.export.live_baseline.at_dispatch = { ok: atDispatch.ok, equal: atDispatch.equal, changed: atDispatch.changed.length, problems: atDispatch.problems }
               if (!atDispatch.ok) push('LIVE-BASELINE-SHAPE', `活树基线不是 \`fingerprint.mjs --save\` 的形状（逐份 \`changed[]\` 算不出来）：${atDispatch.problems.join('；')}`)
               else if (atDispatch.equal !== true) push('LIVE-BASELINE-SHAPE', `刚写完的活树基线立刻与活树不等（${atDispatch.changed.length} 处）—— 这份基线不是那一刻的活树`)
+
+              // ── 🔴 两份基线 + 导出那行 JSON 都要说得出"**什么时候量的**"（`bug-20261111-04`）──────
+              /**
+               * 三份载体，各判一次：
+               *   ① `save-baseline` —— `fingerprint.mjs --save` 写的那份（B 段那份活树基线）；
+               *   ② `export-baseline` —— 导出器用 `--live-baseline` 现写的那份（`j.live_baseline` 指的路径）；
+               *   ③ `export-json` —— 导出那行 JSON 落盘的那一份（照文档里的 `--json > export.json`）。
+               * 每一份都要：有 `generated_at` · 是 ISO8601 UTC · **落在写窗里**（与它自己的 mtime 差 ≤ 3 s）。
+               * 没有这个时刻，一份三天前的基线和一个刚写的基线长得一模一样 —— "旧基线"与"口径变了"分不开。
+               */
+              const readJsonOrNull = (f) => {
+                try {
+                  return JSON.parse(readFileSync(f, 'utf8'))
+                } catch {
+                  return null
+                }
+              }
+              const exportJsonFile = path.join(fxTool.dir, 'export.json')
+              writeFileSync(exportJsonFile, `${JSON.stringify(j, null, 2)}\n`, 'utf8')
+              const timeCarriers = [
+                { key: 'save-baseline', file: sceneBaseline },
+                { key: 'export-baseline', file: lb },
+                { key: 'export-json', file: exportJsonFile },
+              ]
+              rec.readings.baseline_time = timeCarriers.map((c) => ({
+                key: c.key,
+                file: c.file,
+                exists: existsSync(c.file),
+                generated_at: (existsSync(c.file) ? readJsonOrNull(c.file) : null)?.generated_at ?? null,
+                mtime_ms: existsSync(c.file) ? statSync(c.file).mtimeMs : null,
+              }))
+              for (const c of timeCarriers) {
+                if (!existsSync(c.file)) {
+                  push('GENERATED-AT-MISSING', `\`${c.key}\`：那份文件不在（${c.file}）—— 这一格判不了`)
+                  continue
+                }
+                for (const p of generatedAtProblems({ json: readJsonOrNull(c.file), mtimeMs: statSync(c.file).mtimeMs, label: c.key })) {
+                  push(p.code, p.message)
+                }
+              }
+              // 判据自己的翻面（**"absent ⇒ red" 就是这一格的刀**，所以不另造源码刀）：
+              // 四份合成输入，每一份只该翻它自己那一条码（最后一份是阳性对照）。
+              const timeSynthetic = [
+                { key: 'no-field', json: { ok: true }, mtimeMs: null, want: ['GENERATED-AT-MISSING'] },
+                { key: 'bad-shape', json: { generated_at: '2026-11-11 13:49:51' }, mtimeMs: null, want: ['GENERATED-AT-SHAPE'] },
+                { key: 'off-window', json: { generated_at: '2026-11-11T00:00:00.000Z' }, mtimeMs: Date.parse('2026-11-11T13:49:51.000Z'), want: ['GENERATED-AT-WINDOW'] },
+                { key: 'proper', json: { generated_at: '2026-11-11T13:49:51.000Z' }, mtimeMs: Date.parse('2026-11-11T13:49:52.400Z'), want: [] },
+              ]
+              const timeSyntheticGot = []
+              for (const s of timeSynthetic) {
+                const got = generatedAtProblems({ json: s.json, mtimeMs: s.mtimeMs, label: `synthetic:${s.key}` }).map((p) => p.code)
+                timeSyntheticGot.push({ key: s.key, want: s.want, got })
+                if (JSON.stringify(got) !== JSON.stringify(s.want)) {
+                  push('GENERATED-AT-KNIFE', `合成基线 ${s.key} 判成 ${JSON.stringify(got)}，期望 ${JSON.stringify(s.want)} —— `
+                    + '`generated_at` 那三条判据必须"该绿时 0 条、每一份刀只翻它自己那一条码"')
+                }
+              }
+              rec.readings.baseline_time_synthetic = timeSyntheticGot
+
 
               // 窗口：动活树两处（改一份 + 加一份，都进 CODE 名单）
               writeFileSync(path.join(fxTool.repo, LIVE_MODIFIED), "export const ALPHA = 'a2-changed-by-another-role'\n", 'utf8')

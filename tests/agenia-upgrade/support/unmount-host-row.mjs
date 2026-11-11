@@ -27,7 +27,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describePlacement } from './client-ui-placement.mjs'
 import { PATHS } from './env.mjs'
@@ -47,6 +47,25 @@ export const STALE_CODE = 'E_UNMOUNT_PATCH_STALE'
  * 与 `STALE_CODE` 是**两件事**：落点是从文本里数出来的两个数，半截的补丁照样数得出 `{0,2}`。
  */
 export const NOT_DERIVED_CODE = 'E_UNMOUNT_PATCH_NOT_DERIVED'
+
+/**
+ * 工具对「补丁**读不出来**」的那个码（第二道签字的**第三个出口**，`bug-20261111-02`）。
+ *
+ * 三个出口必须各自有名字（契约 §4.1-A）：读得出来 + 相同 ⇒ `UMH-NOOP`；
+ * 读得出来 + 不相同 ⇒ `NOT_DERIVED`；**读不出来** ⇒ 这个码。
+ * 为什么它不能折进 `NOT_DERIVED`：生成器自己的 `--check` 把读失败折成 `current = ''`
+ * （`make-bundle-patch.mjs:1150-1156` 的 `catch`），照它报就等于对着一个 `EACCES` 说"你的补丁是伪造的"
+ * —— 一次失败归到了错的机制上（值班的人会去重跑生成器，而该做的是看权限 / 占用 / 那个路径还是不是文件）。
+ */
+export const UNREADABLE_CODE = 'E_UNMOUNT_PATCH_UNREADABLE'
+
+/**
+ * `--apply` 记原位置那一小步失败时的 `failed_step`（`bug-20261110-16` 的旁证写不下来）：
+ * **第四个** `failed_step` 值（前三个是 `marker` / `list` / `disabled`…）—— 它发生在**任何产品字节之前**，
+ * 所以形状是"一个字节都没写"：`rolled_back: false` + `rollback.nothing_written: true` + `changed: 0`。
+ * 不留旁证就没有"原位"可回 ⇒ 这一跑**不做**（宁可失败，不许写一个回不去的撤挂载）。
+ */
+export const STATE_STEP = 'state'
 
 /** 工具的**运行集** + 被写的那一份补丁，相对 `<repo>` 的路径。 */
 export const REL = Object.freeze({
@@ -333,6 +352,71 @@ export function preState(state, { compositionText, generatorText }) {
   }
 }
 
+// ── 名单里三条的现场：`--restore` 凭什么插回原位（`bug-20261110-16`）──────────
+/**
+ * 名单里**三条**的夹具（`HOST_LEVEL_IDS = ['persona', '<id>', 'agent-instructions']`，我们的 id 在**中间**）。
+ *
+ * 为什么要三条：名单里只有一条时"插回原位"与"追加在表尾"是**同一个结果**——
+ * 判据在那种现场上无论实现怎么写都是绿的（这是 `bug-20261110-16` 能活下来的原因）。
+ * 造法：给组合里两条**原本就是预设级**的行（`persona` / `agent-instructions`）各补一行
+ * `  # @host-level`（生成器只认"`- id:` 的下一行、两格缩进"），再把它们连同我们的 id 一起写进名单
+ * —— 于是这个 id 的原下标是 **1**，`--apply` 撤掉它之后名单是 `['persona', 'agent-instructions']`，
+ * 插回 1 与追加到表尾（2）**结果不同**。
+ *
+ * @param {{compositionText:string, generatorText:string}} base  真实三份的入口（`readFixtureBase`）
+ * @returns {{M:{compositionText:string, generatorText:string}, U:{compositionText:string, generatorText:string},
+ *            order:string[]}}
+ */
+export function threeItemListTexts({ compositionText, generatorText }, id = ROW_ID) {
+  const list = /HOST_LEVEL_IDS\s*=\s*[^[]*\[([\s\S]*?)\]/.exec(String(generatorText))
+  if (list === null) throw new Error('三件套夹具造不出来：生成器里读不出 `HOST_LEVEL_IDS` 字面量')
+  const order = [EXTRA_HOST_IDS[0], id, EXTRA_HOST_IDS[1]]
+  // 字面量长这样：`const HOST_LEVEL_IDS = Object.freeze(['agenia-dashboard'])` ——
+  // 正则吃到 `]` 为止，剩下的 `)` 要跟着**一起**替换掉（否则新写的 `Object.freeze([...])` 会多一个右括号）。
+  const rest = String(generatorText).slice(list.index + list[0].length)
+  const tailOfCall = rest.startsWith(')') ? rest.slice(1) : rest
+  const generatorM = String(generatorText).slice(0, list.index)
+    + `HOST_LEVEL_IDS = Object.freeze([${order.map((x) => `'${x}'`).join(', ')}])`
+    + tailOfCall
+  // 给两条被点名的行各补一行标记（`- id:` 的**下一行**、两格缩进 —— 生成器只认这个位置）。
+  let compositionM = String(compositionText)
+  for (const extra of EXTRA_HOST_IDS) {
+    const block = rowBlock(compositionM, extra)
+    if (block === null) throw new Error(`三件套夹具造不出来：组合里没有 \`- id: ${extra}\``)
+    const lines = compositionM.replace(/\r\n/g, '\n').split('\n')
+    if (lines[block.start + 1] !== undefined && MARK_LINE.test(lines[block.start + 1])) continue
+    lines.splice(block.start + 1, 0, '  # @host-level')
+    compositionM = lines.join(compositionText.includes('\r\n') ? '\r\n' : '\n')
+  }
+  const base = { compositionText: compositionM, generatorText: generatorM }
+  return {
+    M: base,
+    U: preState('U', base),
+    order,
+  }
+}
+
+/**
+ * 三条名单里那两条**陪跑**的宿主级行。必须满足两件事：
+ *   ① 组合里本来就有这么一行（`- id: <名字>`）；
+ *   ② 生成器**不是**靠这一行干活（`persona` / `persona-injector` 被 `presetBlocks` 里现找，
+ *      把它们挪去宿主级会让生成器自己抛 —— 夹具的第一版就是踩在这上面）。
+ * `tool-fs` / `tool-jobs` 都只是普通的工具行：挪到宿主级只影响补丁的顶层 insert，不影响派生本身。
+ */
+export const EXTRA_HOST_IDS = Object.freeze(['tool-fs', 'tool-jobs'])
+
+/** 从生成器文本里读名单的**顺序**（判据自己读，不信工具打印的 `index`）。 */
+export function hostLevelListOrder(generatorText) {
+  const hit = /HOST_LEVEL_IDS\s*=\s*[^[]*\[([\s\S]*?)\]/.exec(String(generatorText))
+  if (hit === null) return null
+  return hit[1].split(',').map((s) => s.trim().replace(/^['"`]|['"`]$/g, '')).filter((s) => s !== '')
+}
+
+/** 副本里现在那份名单的顺序（**跑完之后现读**；副本路径就是 `r.copy`）。 */
+export function listOrderInCopy(copy) {
+  return hostLevelListOrder(readTextOrNull(path.join(copy, REL.generator)))
+}
+
 // ── 生成器：真 / 见证 / 探子 / 失败 stub ───────────────────────────────────
 /**
  * **见证 / 探子**共用的一段抬头（包着真生成器的正文）。
@@ -593,6 +677,87 @@ export function deadResidueName({ target = REL.patch } = {}) {
 
 // ── 刀：把真工具的**失败形状**改坏（不是另写一个假工具）──────────────────────────
 /**
+ * **刀 K15**：摘掉「补丁读不出来」那道判（`bug-20261111-02` 的第三个出口）。
+ *
+ * 改法：把那两行换成**旧行为的等价物** —— 读失败就当读到空串（正是生成器 `--check` 里
+ * `catch { current = '' }` 的那一手），再把那个 `if` 变成 `if (false)`。
+ * 效果：补丁被换成目录时，落点从空文本读作 `{0,0}` ⇒ 工具报 **`E_UNMOUNT_PATCH_STALE`**，
+ * 也就是把"读不出来"折成了"载体翻过了、补丁没跟着翻"—— 一次失败归到了错的机制上。
+ * ⇒ `UMH-04` 的 `unreadable-patch` 腿必须红（`UMH-UNREADABLE-UNNAMED`：码不是那一个）。
+ *
+ * @returns {{text:string, applied:string[], missing:string[], ok:boolean, why:string|null}}
+ */
+export function unreadableBlindTool(realText) {
+  let text = String(realText)
+  const applied = []
+  const missing = []
+  const anchors = [
+    ['const readable = readPatchFile(abs.patch)',
+      'const readable = (() => { try { return { readable: true, text: readFileSync(abs.patch, \'utf8\') } } catch { return { readable: true, text: \'\' } } })() // 刀：读不出来 → 当成读到空串'],
+    ['if (!readable.readable) {', 'if (false) { // 刀：读不出来那一道被摘掉'],
+    ['const after = readPatchFile(abs.patch)', 'const after = { readable: true, text: readable.text } // 刀：第二次探测也摘掉'],
+  ]
+  for (const [anchor, to] of anchors) {
+    const hits = text.split(anchor).length - 1
+    if (hits !== 1) {
+      missing.push(`\`${anchor}\` 出现 ${hits} 次（要 1 次）`)
+      continue
+    }
+    text = text.replace(anchor, to)
+    applied.push(anchor)
+  }
+  return { text, applied, missing, ok: missing.length === 0, why: missing.length === 0 ? null : `锚点不见了：${missing.join(' · ')}` }
+}
+
+/**
+ * **刀 K16**：让 `--apply` **不记位置旁证**（`bug-20261110-16` 的病）。
+ *
+ * 改法：把写旁证那个 `if` 的条件换成 `false` —— 工具其余一字不动，`--restore` 找不到旁证就退回表尾。
+ * 效果：名单三条、我们的 id 在中间那个现场上，`--restore` 之后名单变成 `[persona, agent-instructions, id]`
+ * （顺序变了）、三份产品文件不再逐字节回到 `--apply` 之前 ⇒ `umh-01` 的 `position-sidecar` 腿必须红。
+ *
+ * @returns {{text:string, applied:string[], missing:string[], ok:boolean, why:string|null}}
+ */
+export function sidecarBlindTool(realText) {
+  const anchor = 'if (args.mode === \'apply\' && Number.isInteger(carrier.list_index) && carrier.list_index >= 0) {'
+  const hits = String(realText).split(anchor).length - 1
+  if (hits !== 1) {
+    return { text: String(realText), applied: [], missing: [`\`${anchor}\` 出现 ${hits} 次（要 1 次）`], ok: false, why: `锚点不见了：${anchor}` }
+  }
+  return {
+    text: String(realText).replace(anchor, 'if (false) { // 刀：`--apply` 不记位置旁证'),
+    applied: [anchor],
+    missing: [],
+    ok: true,
+    why: null,
+  }
+}
+
+/**
+ * **刀 K17**：把"记不下旁证"那一步**报成另一步**（`failed_step: 'state'` → `'patch'`）。
+ *
+ * 为什么：§4.2 的 ①‴ 是**第四种**失败步（产品字节之前的一步）。把它报成 `patch`，读的人会去查补丁 /
+ * 生成器，而该做的是看 `.team/state` 这条路径能不能写。这一刀证明那一格**真在判** `failed_step` 的值，
+ * 不是只要"有个失败"就算过。
+ *
+ * @returns {{text:string, applied:string[], missing:string[], ok:boolean, why:string|null}}
+ */
+export function stateStepLiarTool(realText) {
+  const anchor = "failed_step: 'state',"
+  const hits = String(realText).split(anchor).length - 1
+  if (hits !== 1) {
+    return { text: String(realText), applied: [], missing: [`\`${anchor}\` 出现 ${hits} 次（要 1 次）`], ok: false, why: `锚点不见了：${anchor}` }
+  }
+  return {
+    text: String(realText).replace(anchor, "failed_step: 'patch', // 刀：记不下旁证报成了补丁那一步"),
+    applied: [anchor],
+    missing: [],
+    ok: true,
+    why: null,
+  }
+}
+
+/**
  * **刀 K13**：让两道签字失败时的 JSON 退回**旧形状** —— `failed_step: 'verify'` · `rolled_back: true` ·
  * `row_landing: null`，其余一字不动。
  *
@@ -682,16 +847,31 @@ export function truncatePatch(patchText, { id = ROW_ID, want = { insert: 0, pres
 }
 
 // ── 一次跑：搭夹具 → 跑 → 读回 ────────────────────────────────────────────
+/**
+ * 安全读一份文本：**不在 / 不是文件 / 读不出来 ⇒ `null`**。
+ * 判据的夹具会把补丁路径换成**目录**（`E_UNMOUNT_PATCH_UNREADABLE` 那一腿）——
+ * 量具自己撞上 `EISDIR` 崩掉，会把"产品读不出来"测成"量具坏了"。
+ */
+function readTextOrNull(abs) {
+  try {
+    if (!existsSync(abs)) return null
+    return statSync(abs).isFile() ? readFileSync(abs, 'utf8') : null
+  } catch {
+    return null
+  }
+}
+
 /** 量一次副本 + 活树（`runScenario` / `runAgain` 共用；**只读**）。 */
 function measure(copy) {
   const texts = readFixtureBase(copy)
-  const patchAbs = path.join(copy, REL.patch)
-  const patchText = existsSync(patchAbs) ? readFileSync(patchAbs, 'utf8') : ''
+  const patchText = readTextOrNull(path.join(copy, REL.patch))
   return {
     tree: snapshotTree(copy),
     live: liveSentinel(),
     carriers: carrierFacts(texts),
-    landing: patchText === '' ? null : rowLanding(patchText),
+    landing: patchText === null || patchText === '' ? null : rowLanding(patchText),
+    /** 名单的**顺序**（`--restore` 插回原位那一格靠它：这是**这一跑之后**的盘上事实）。 */
+    list_order: listOrderInCopy(copy),
   }
 }
 
@@ -738,12 +918,12 @@ function summarize({ name, pre, generator, tool, action, id, copy, dir, tool_pre
     stdout: run.stdout, stderr: run.stderr, json: run.json, json_error: run.json_error,
     json_lines: run.json_lines, stdout_lines: run.stdout_lines, args: run.args ?? [],
     before: {
-      carriers: before.carriers, landing: before.landing, tree_files: before.tree.length,
+      carriers: before.carriers, landing: before.landing, list_order: before.list_order, tree_files: before.tree.length,
       files: { composition: bytesOf(before.tree, REL.composition), generator: bytesOf(before.tree, REL.generator), patch: bytesOf(before.tree, REL.patch) },
       files_map: Object.fromEntries(before.tree.map((x) => [x.rel, x.sha256])),
     },
     after: {
-      carriers: after.carriers, landing: after.landing, tree_files: after.tree.length,
+      carriers: after.carriers, landing: after.landing, list_order: after.list_order, tree_files: after.tree.length,
       files: { composition: bytesOf(after.tree, REL.composition), generator: bytesOf(after.tree, REL.generator), patch: bytesOf(after.tree, REL.patch) },
       files_map: Object.fromEntries(after.tree.map((x) => [x.rel, x.sha256])),
     },
@@ -784,7 +964,8 @@ export function runScenario(spec) {
   const {
     name, pre = 'M', generator = 'real', tool = 'real', fakeArgs = [],
     toolText = null, action = 'apply', id = ROW_ID, check = false, extraArgs = [],
-    extraCopyFiles = {}, witnessOutFile = null, sourceRepo = PATHS.repo, sabotage = null,
+    extraCopyFiles = {}, extraCopyDirs = [], witnessOutFile = null, sourceRepo = PATHS.repo, sabotage = null,
+    rederivePatch = false,
   } = spec
   const dir = scratchDir(name)
   const copy = path.join(dir, 'copy')
@@ -822,6 +1003,23 @@ export function runScenario(spec) {
     const abs = path.join(copy, rel)
     mkdirSync(path.dirname(abs), { recursive: true })
     writeFileSync(abs, text, 'utf8')
+  }
+
+  // ②″ **把某一份路径换成目录**（`E_UNMOUNT_PATCH_UNREADABLE` 那一腿）：先删文件、再建同名目录。
+  //     为什么必须用真目录：`readFileSync` 在 Windows 上对目录抛的 `EISDIR` 与"读不到"是同一族，
+  //     而这是本机**不需要造权限问题**就能稳定复现的那一种（`EACCES` / `EBUSY` 归同一个出口）。
+  for (const rel of extraCopyDirs) {
+    const abs = path.join(copy, rel)
+    if (existsSync(abs) && statSync(abs).isFile()) unlinkSync(abs)
+    mkdirSync(abs, { recursive: true })
+  }
+
+  // ②‴ 夹具改了载体（例如名单做成三条）之后，盘上那份补丁就不再是它的派生物了 ——
+  //     `rederivePatch: true` 让副本先自己派生一次，跑之前那棵树才是**一致**的 M/U 态。
+  //     不重派生的现场只能证明"工具把补丁改成了什么"，证明不了"来回一圈回到原字节"。
+  if (rederivePatch && generator === 'real') {
+    const g = spawnNode(path.join(copy, REL.generator), [], { cwd: copy })
+    if (g.status !== 0) throw new Error(`夹具重派生失败（生成器 exit ${g.status}）：${String(g.stderr ?? '').slice(0, 600)}`)
   }
 
   // ③ 工具：真的一份（不在盘上 ⇒ 记 tool_present:false）· 一把假刀 · 或"真工具改坏一行"的变体（`toolText`）
@@ -875,8 +1073,7 @@ export function runAgain(readings, { action = 'apply', id = ROW_ID, check = fals
  * 一份**一致的 U 态**组合 + 生成器文本（`K7` 用它把树直接摆到"三处都写好了"那一刻）。
  * 纯文本，不碰盘；判据不拿它当"期望的产物"（契约 §5.0）。
  */
-export function unmountedTexts() {
-  const state = preState('U', {
+export function unmountedTexts() {  const state = preState('U', {
     compositionText: readFileSync(SOURCE.composition, 'utf8'),
     generatorText: readFileSync(SOURCE.generator, 'utf8'),
   })
@@ -940,6 +1137,14 @@ export const CODE = {
   noopUnderived: 'UMH-NOOP-UNDERIVED',
   underivedUnnamed: 'UMH-UNDERIVED-UNNAMED',
   patchFailureShape: 'UMH-PATCH-FAILURE-SHAPE',
+  /** `bug-20261111-02`：第二道签字的第三个出口（读不出来）。 */
+  unreadableNoop: 'UMH-UNREADABLE-NOOP',
+  unreadableUnnamed: 'UMH-UNREADABLE-UNNAMED',
+  unreadableMechanism: 'UMH-UNREADABLE-MECHANISM',
+  /** `bug-20261110-16`：插回原位 / 无旁证退回表尾要出声 / `failed_step: state`。 */
+  position: 'UMH-RESTORE-POSITION',
+  positionSilent: 'UMH-RESTORE-POSITION-SILENT',
+  stateStep: 'UMH-STATE-STEP-UNNAMED',
   residueUnswept: 'UMH-RESIDUE-NOT-SWEPT',
   rollbackDrift: 'UMH-ROLLBACK-DRIFT',
   changedNotZero: 'UMH-CHANGED-NOT-ZERO',
@@ -975,7 +1180,7 @@ export function slim(r) {
     stderr_head: String(r.stderr ?? '').split(/\r?\n/).slice(0, 6).join('\n').slice(0, 1200),
     stdout_head: String(r.stdout ?? '').split(/\r?\n/).slice(0, 6).join('\n').slice(0, 1200),
     before: r.before,
-    after: { carriers: r.after.carriers, landing: r.after.landing, tree_files: r.after.tree_files, files: r.after.files },
+    after: { carriers: r.after.carriers, landing: r.after.landing, list_order: r.after.list_order, tree_files: r.after.tree_files, files: r.after.files },
     files_equal: r.files_equal, tree_equal: r.tree_equal, changed_files: r.changed_files,
     live_touched: r.live_touched, generator_called: r.generator_called, witness: r.witness,
     generator_calls: r.generator_calls, generator_writes: r.generator_writes, generator_checks: r.generator_checks,
@@ -1139,7 +1344,7 @@ export function noopProblems(r, { insert, presetBodies, label }) {
  *
  * @returns {object[]} 有问题就返回；空 = 这一格过
  */
-function noopGateProblems(r, { label, wantCode, wantWhat, noopCode, unnamedCode, signature }) {
+function noopGateProblems(r, { label, wantCode, wantWhat, noopCode, unnamedCode, signature, landing = 'measured' }) {
   const out = []
   const code = r.json?.code ?? null
   const target = r.action === 'restore' ? '--restore' : '--apply'
@@ -1171,7 +1376,12 @@ function noopGateProblems(r, { label, wantCode, wantWhat, noopCode, unnamedCode,
     }
     const printed = r.json?.row_landing ?? null
     const measured = r.before?.landing ?? null
-    if (printed === null || measured === null
+    if (landing === 'null') {
+      // 补丁**读不出来**那一支：没有落点可报。编一个数（哪怕是 `{0,0}`）就是把"判不了"说成"判过了"。
+      if (printed !== null) {
+        shape.push(`row_landing=${JSON.stringify(printed)}（期望 null —— 补丁读不出来时没有落点可报，不许编一个数）`)
+      }
+    } else if (printed === null || measured === null
       || printed.insert !== measured.insert || printed.preset_bodies !== measured.preset_bodies) {
       shape.push(`row_landing=${JSON.stringify(printed)}（期望 ${measured === null
         ? '盘上那份补丁的落点 —— 夹具读不出来'
@@ -1215,6 +1425,130 @@ export function underivedPatchProblems(r, { label }) {
     unnamedCode: CODE.underivedUnnamed,
     signature: '落点对 ≠ 补丁对',
   })
+}
+
+/**
+ * ⑧‴ **补丁读不出来**（第二道签字的第三个出口，`bug-20261111-02`）。
+ *
+ * 夹具：补丁那一条路径被换成**同名目录**（`extraCopyDirs`）—— 这是本机上不需要造权限问题就能稳定
+ * 复现的"读不出来"（`EACCES` / `EBUSY` 归同一个出口）。
+ * 钉五件：① 不许记成 no-op；② 码是 `E_UNMOUNT_PATCH_UNREADABLE`（**不是** `NOT_DERIVED`，也**不是**
+ * `STALE` —— 这两件事各自有名字）；③ exit 1 · `changed: 0` · `failed_step: "patch"` ·
+ * `rolled_back: false` · `row_landing: null`（读不出来就没有落点可报）；④ 字节与文件集合不动、
+ * 不调写那一支的生成器；⑤ stderr **点名机制**（目录 / 权限 / 占用那一族词，不是只说"失败了"）。
+ *
+ * @returns {object[]} 有问题就返回；空 = 这一格过
+ */
+export function unreadablePatchProblems(r, { label }) {
+  const out = [...noopGateProblems(r, {
+    label,
+    wantCode: UNREADABLE_CODE,
+    wantWhat: '盘上那份补丁**读不出来**（被换成目录 / 没有权限 / 被占用）—— 判不了它是不是派生物',
+    noopCode: CODE.unreadableNoop,
+    unnamedCode: CODE.unreadableUnnamed,
+    signature: '读不出来 ≠ 不是派生物：这是读/占用/路径的问题，不是"补丁被伪造"',
+    landing: 'null',
+  })]
+  // ⑤ 报文要点名**机制**：只说"失败了"，读的人会去重跑生成器，而该做的是看权限 / 占用 / 那条路径。
+  if (r.json?.code === UNREADABLE_CODE) {
+    const said = String(r.stderr ?? '')
+    if (!/(目录|EISDIR|EACCES|EBUSY|权限|占用|读不出来)/.test(said)) {
+      out.push(problem(CODE.unreadableMechanism, `${label}：报文没有点名**机制**（实得 ${JSON.stringify(said.slice(0, 300))}）`
+        + '—— 契约 §4.1-A：读不出来要说出是哪一种（目录 / 权限 / 占用），否则读的人会把它当成"补丁被伪造"去重跑生成器'))
+    }
+  }
+  return out
+}
+
+/**
+ * ⑨′ **`restore_position`**：`--restore` 把 id 插回**原下标**（`bug-20261110-16`）。
+ *
+ * 判据**自己读副本里那一份名单**（`listOrderInCopy`）—— 工具打印的 `index` 只是第二个读数：
+ *   · `restore_position` 的形状：`{source ∈ recorded|sidecar|tail, index: 非负整数, list_length: 整数}`；
+ *   · `source` / `index` 必须是这一腿该有的那个（apply ⇒ `recorded`，有旁证的 restore ⇒ `sidecar`）；
+ *   · **名单的顺序**必须是这一腿该有的那个（这一条才是"回原位"的实质：JSON 说 index=1、名单却是尾插
+ *     ⇒ 读数与盘上对不上，工具在自述）；
+ *   · `bytes_identical`：给了 `filesBefore`（apply 之前的 `files_map`）时，三份产品文件必须**逐字节**
+ *     回到跑之前 —— "精确的逆"在名单有三条时才第一次真的成立。
+ */
+export function restorePositionProblems(r, { label, want, orderAfter, filesBefore = null }) {
+  const out = []
+  const pos = r.json?.restore_position ?? null
+  const measuredOrder = r.after?.list_order ?? null
+  if (pos === null || typeof pos !== 'object' || Array.isArray(pos)) {
+    out.push(problem(CODE.position, `${label}：工具没给 \`restore_position\`（实得 ${JSON.stringify(pos)}）—— `
+      + '契约 §4.1：跑成的 apply / restore 必须说得出"这一条插在第几位、凭什么"'))
+  } else {
+    if (!['recorded', 'sidecar', 'tail'].includes(pos.source)) {
+      out.push(problem(CODE.position, `${label}：\`restore_position.source\` = ${JSON.stringify(pos.source)}，不在 {recorded, sidecar, tail} 里`))
+    }
+    if (pos.source !== want.source) {
+      out.push(problem(CODE.position, `${label}：\`restore_position.source\` = ${JSON.stringify(pos.source)}，期望 ${JSON.stringify(want.source)}`
+        + '（`recorded` = apply 记下的原下标 · `sidecar` = restore 按旁证插回 · `tail` = 没有可用旁证、退回表尾）'))
+    }
+    if (pos.index !== want.index) {
+      out.push(problem(CODE.position, `${label}：\`restore_position.index\` = ${JSON.stringify(pos.index)}，期望 ${JSON.stringify(want.index)}`
+        + '（原始下标是**中间那一位**；追加在表尾会是 2 —— 这两个数分不开，就等于这一格没判）'))
+    }
+    if (!Number.isInteger(pos.list_length)) {
+      out.push(problem(CODE.position, `${label}：\`restore_position.list_length\` = ${JSON.stringify(pos.list_length)}，期望整数`))
+    }
+  }
+  if (measuredOrder === null) {
+    out.push(problem(CODE.position, `${label}：跑完之后从副本里读不出名单顺序 —— 这一格判不了`))
+  } else if (JSON.stringify(measuredOrder) !== JSON.stringify(orderAfter)) {
+    out.push(problem(CODE.position, `${label}：跑完之后名单顺序是 ${JSON.stringify(measuredOrder)}，期望 ${JSON.stringify(orderAfter)}`
+      + ' —— 判据读的是**盘上那份生成器文本**，不是工具打印的 `index`（两者不一致 = 工具在自述）'))
+  }
+  if (filesBefore !== null) {
+    const after = r.after?.files_map ?? {}
+    const drifted = [REL.composition, REL.generator, REL.patch]
+      .filter((rel) => (filesBefore[rel] ?? null) !== (after[rel] ?? null))
+    if (drifted.length > 0) {
+      out.push(problem(CODE.notInverse, `${label}：\`--restore\` 之后这三份没有回到 \`--apply\` 之前（${JSON.stringify(drifted)}）`
+        + ' —— 名单里不止一条时，"插回原位"与"追加在表尾"是**不同**的结果；这一条就是那个差'))
+    }
+  }
+  return out
+}
+
+/**
+ * ⑨″ **退回表尾必须出声**（没有旁证那一支）：`source: 'tail'` + stderr 说出"退回表尾"，
+ * 而且盘上名单真的换了顺序 —— 三件事一起才算"变了并说了"。
+ * 静默退回会让"精确的逆"在名单长到两条以上时悄悄不成立，而所有断言都还绿着。
+ */
+export function tailFallbackProblems(r, { label, orderAfter }) {
+  const out = [...restorePositionProblems(r, { label, want: { source: 'tail', index: 2 }, orderAfter })]
+  const said = String(r.stderr ?? '')
+  if (!/(表尾|旁证)/.test(said)) {
+    out.push(problem(CODE.positionSilent, `${label}：退回表尾**没有出声**（stderr = ${JSON.stringify(said.slice(0, 300))}）`
+      + '—— 契约 §1.5：没有可用旁证时必须说"退回表尾"，否则"顺序变了"与"没变"在读数里长得一样'))
+  }
+  if (r.json?.code !== 'UMH-RESTORED' || r.exit !== 0) {
+    out.push(problem(CODE.exit, `${label}：没有旁证的那次 \`--restore\` 仍是**成功**（退回表尾不是失败），`
+      + `实得 exit ${r.exit} / code=${JSON.stringify(r.json?.code)}`))
+  }
+  return out
+}
+
+/**
+ * ⑨‴ **`--apply` 记不下旁证 ⇒ 一个产品字节都不写**（`failed_step: "state"`，契约 §4.2 ①‴）。
+ * 这一支从入口走不到（旁证目录写不进去要先造出那种环境），所以判据**不**造现场，只钉形状：
+ * 一旦有人把它做成可达，读数里必须是 `state` + `changed: 0` + `nothing_written: true` + `rolled_back: false`。
+ */
+export function stateStepProblems(r, { label }) {
+  const out = []
+  if (r.json?.failed_step !== STATE_STEP) {
+    out.push(problem(CODE.stateStep, `${label}：记不下旁证那一支的 \`failed_step\` 必须是 ${JSON.stringify(STATE_STEP)}，`
+      + `实得 ${JSON.stringify(r.json?.failed_step)} —— 它发生在**任何产品字节之前**，与 patch / generator / verify 不是同一步`))
+  }
+  if (r.json?.changed !== 0 || r.json?.rollback?.nothing_written !== true || r.json?.rolled_back !== false) {
+    out.push(problem(CODE.stateStep, `${label}：记不下旁证那一支必须是一个字节都没写的形状（\`changed: 0\` · `
+      + `\`rollback.nothing_written: true\` · \`rolled_back: false\`），实得 ${JSON.stringify({
+        changed: r.json?.changed, rollback: r.json?.rollback, rolled_back: r.json?.rolled_back,
+      })}`))
+  }
+  return out
 }
 
 /** ⑨ 未知 id：exit 3，一个字节不写。 */

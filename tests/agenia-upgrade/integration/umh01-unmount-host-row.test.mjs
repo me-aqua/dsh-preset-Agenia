@@ -23,26 +23,39 @@
  *   `UMH-01` 两条腿：`--apply` ⇒ `{0,2}`；`--restore` ⇒ `{1,0}`；来回一圈回原字节；未知 id ⇒ exit 3。
  *      夹具腿 `copy-runnable-set`：副本必须带着工具的**运行集**（含 `presets/agenia/lib/atomic.mjs`，
  *      工具 import 那份 `writeFileAtomic`）—— 少了它，副本里的工具加载即失败，五格会红在与产品无关的事上。
+ *      腿 `position-sidecar` / `position-tail`（`bug-20261110-16`）：名单做成**三条**、我们的 id 在**中间**
+ *      ⇒ `--apply` 记原下标 1、`--restore` 按旁证插回 1（`restore_position.source: sidecar`），三份产品
+ *      文件逐字节回到 `--apply` 之前；**没有旁证**那一支 ⇒ `source: "tail"`、名单顺序真的变了
+ *      （`[a, b, id]`）**而且 stderr 说出来**（变了并说了，不是静默）。
  *      刀 K1 `printf-liar`（只说 `{0,2}`、一个字节不写）⇒ `UMH-LANDING-MISMATCH`；
  *      刀 K2 `forge-patch`（换掉补丁文件伪造派生物）⇒ `UMH-PATCH-NOT-DERIVED`；
  *      刀 K3 `silent-proceed`（未知 id 也 exit 0）⇒ `UMH-USAGE-SILENT-GREEN`；
- *      刀 K8 `trim-runnable-set`（把副本里那一份原子写剪掉）⇒ `UMH-FIXTURE-BROKEN`。
+ *      刀 K8 `trim-runnable-set`（把副本里那一份原子写剪掉）⇒ `UMH-FIXTURE-BROKEN`；
+ *      刀 K16 `no-sidecar`（真工具不记旁证 = 改之前的形状）⇒ `position-sidecar` 腿翻
+ *         `UMH-RESTORE-POSITION`（`source: "tail"`、名单顺序变了）+ 次生 `UMH-RESTORE-NOT-INVERSE`。
  *   `UMH-02` 负控①：B 态（只撤了标记）⇒ 拒绝、点名 `marker`、**生成器一次都没被调用**、字节不变。
  *      刀 K3 ⇒ `UMH-REFUSAL-EXIT`；刀 K4（报另一个载体的码/载体）⇒ `UMH-CARRIER-NAMED-WRONG`；
  *      刀 K4b（**码对、载体报成 `list`**）⇒ 只翻 `UMH-CARRIER-NAMED-WRONG`：`carrier` 不是 `code` 的复述。
  *   `UMH-03` 负控②：C 态（只撤了名单）⇒ 同样的形状，码是 `E_UNMOUNT_LIST_MISSING`。
  *      两格的码**逐字比**：工具把两个码写反 ⇒ 两格都红（各自钉死自己那一个）。
- *   `UMH-04` 幂等 + **no-op 的两道签字**：U 态 `--apply` ⇒ `UMH-NOOP` / `changed: 0` / 字节不动；
- *      `--apply` 两次、`--restore` 两次同形。no-op 那一支要盘上补丁签**两次**字，每条腿判一次：
+ *   `UMH-04` 幂等 + **no-op 的三道签字**：U 态 `--apply` ⇒ `UMH-NOOP` / `changed: 0` / 字节不动；
+ *      `--apply` 两次、`--restore` 两次同形。no-op 那一支要盘上补丁签字，而签字有**三个出口**
+ *      （`bug-20261111-02`；契约 §4.1-A）：读得出来+相同 ⇒ no-op / 读得出来+不同 ⇒ `NOT_DERIVED` /
+ *      **读不出来 ⇒ `E_UNMOUNT_PATCH_UNREADABLE`**。每条腿各判一次：
  *      腿 `stale-patch` —— U 载体 + 故意过期的补丁（还是 `{1,0}`）⇒ 不许 exit 0 / `UMH-NOOP`，
  *         必须 `E_UNMOUNT_PATCH_STALE`（exit 1）· `changed: 0` · 字节与文件集合不动 · **不调写那一支的生成器**；
  *      腿 `restore-stale` —— `--restore` 的同一形状（M 载体 + 已翻成 `{0,2}` 的补丁）⇒ 同样的码；
  *      腿 `truncated-patch` —— 落点**读得对**、但补丁是半截（尾巴没了、两行 `- id` 都在）⇒ 不许 no-op，
- *         必须 `E_UNMOUNT_PATCH_NOT_DERIVED`；同一棵树上**未截断**的那份 ⇒ 仍 `UMH-NOOP`（阳性那一半）。
+ *         必须 `E_UNMOUNT_PATCH_NOT_DERIVED`；同一棵树上**未截断**的那份 ⇒ 仍 `UMH-NOOP`（阳性那一半）；
+ *      腿 `unreadable-patch` —— 补丁那一条路径被换成**同名目录**（读不出来）⇒ 必须
+ *         `E_UNMOUNT_PATCH_UNREADABLE`（**不许**折进 `NOT_DERIVED`）· `row_landing: null` ·
+ *         stderr **点名机制**；这一格判的是"失败归到了对的机制上"；
+ *      腿 `state-step` —— 副本里 `.team/state` 做成一个**文件** ⇒ 旁证的原子写 `ENOTDIR` ⇒
+ *         `failed_step: "state"`（第四种失败步）· 一个产品字节都没写（旁证是"回原位"的前提）；
  *      腿 `residue-sweep` —— 工具自己上一次被杀留下的 `<补丁>.tmp-<死 pid>-<hex>` ⇒ 它收掉那份残渣、
  *         产品字节不动、仍是 `UMH-NOOP`（契约 §4.4 的例外）。
- *      🔴 三条失败腿都断言**失败形状**（契约 §4.1）：`failed_step: "patch"` · `rolled_back: false` ·
- *         `row_landing` = 盘上那份补丁读出来的落点 —— 只判"码对不对"的话，工具把这三格乱填也照样绿。
+ *      🔴 失败腿都断言**失败形状**（契约 §4.1）：`failed_step: "patch"` · `rolled_back: false` ·
+ *         `row_landing` = 盘上那份补丁读出来的落点（读不出来那一支是 `null` —— 没有落点可报）。
  *      刀 K5（恒报 `changed: 1`）⇒ `UMH-CHANGED-NOT-ZERO`；刀 K6（报 no-op 却写了一个换行）⇒ `UMH-NOOP-TOUCHED-BYTES`；
  *      刀 K9（只摘**落点**闸）⇒ stale 腿翻 `UMH-STALE-PATCH-UNNAMED`，**而且必须落在"第二道闸拒"那一面**
  *         （换出来的码是 `NOT_DERIVED` · exit 1 · `--check` 真跑过 —— 只证明"别处也拒了"不算咬住）；
@@ -50,7 +63,10 @@
  *      刀 K10（只摘 `--check` 那一行）⇒ 半截补丁腿翻 `UMH-NOOP-UNDERIVED`；
  *      刀 K11（落点闸，`--restore` 方向）⇒ restore-stale 腿翻 `UMH-STALE-PATCH-UNNAMED`（落点同 K9）；
  *      刀 K12（只摘**扫残渣**那一行）⇒ residue-sweep 腿翻 `UMH-RESIDUE-NOT-SWEPT`；
- *      刀 K13（把失败形状改回旧的 `verify` / `true` / `null`）⇒ 翻 `UMH-PATCH-FAILURE-SHAPE`。
+ *      刀 K13（把失败形状改回旧的 `verify` / `true` / `null`）⇒ 翻 `UMH-PATCH-FAILURE-SHAPE`；
+ *      刀 K15（**摘掉"读不出来"那道判**，读失败当读到空串）⇒ unreadable-patch 腿翻
+ *         `UMH-UNREADABLE-UNNAMED`（刀跑出来的码是 `STALE`：空文本落点 `{0,0}`）；
+ *      刀 K17（把"记不下旁证"报成 `patch`）⇒ state-step 腿翻 `UMH-STATE-STEP-UNNAMED`。
  *   `UMH-05` 回滚：生成器步注入"见证 + 抛"⇒ 三处**已经写过**（见证为证）、之后字节逐字节回到跑之前；
  *      自证步注入"成功但产物不翻面"⇒ `failed_step: verify` 也要回滚。
  *      腿 `rollback-broken`（回滚**没做到**那一支）：见证 + 抛 **并且**把组合改成只读 ⇒ 回滚的原子换写不动它
@@ -78,7 +94,7 @@
  * 证据：`<_evidence>/<RUN_ID>/UMH-0x/result.json`（`readings.legs` / `readings.scenarios` 逐格带读数）。
  */
 import { before, test } from 'node:test'
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
 import { withHostRowInPresetBodies } from '../support/client-ui-placement.mjs'
@@ -86,6 +102,7 @@ import {
   CODE,
   NOT_DERIVED_CODE,
   STALE_CODE,
+  UNREADABLE_CODE,
   carrierFacts,
   carrierProblems,
   copyFixture,
@@ -119,6 +136,15 @@ import {
   underivedPatchProblems,
   unmountedTexts,
   usageProblems,
+  unreadableBlindTool,
+  unreadablePatchProblems,
+  sidecarBlindTool,
+  stateStepProblems,
+  stateStepLiarTool,
+  restorePositionProblems,
+  tailFallbackProblems,
+  threeItemListTexts,
+  listOrderInCopy,
   REL,
   ROW_ID,
   SOURCE,
@@ -165,7 +191,7 @@ function controlFails(problems, label, got) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-test('UMH-01 撤挂载/恢复两条腿：--apply ⇒ 补丁里 {insert:0,preset_bodies:2} · --restore ⇒ {1,0} · 来回一圈回原字节', async () => {
+test('UMH-01 撤挂载/恢复两条腿：--apply ⇒ 补丁里 {insert:0,preset_bodies:2} · --restore ⇒ {1,0} · 来回一圈回原字节（名单三条时也回原位）', async () => {
   await runCase('UMH-01', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -258,6 +284,122 @@ test('UMH-01 撤挂载/恢复两条腿：--apply ⇒ 补丁里 {insert:0,preset_
       return undefined
     })
 
+    // ── ②′ 腿 position-sidecar：名单里**三条**、我们的 id 在中间 ⇒ `--restore` 必须按旁证插回原位
+    //    （`bug-20261110-16`）。名单只有一条时"插回原位"与"追加在表尾"是同一个结果 —— 那一格无论
+    //    实现怎么写都绿，所以这一腿把名单做成三条：原下标 = 1，尾插 = 2，两个数分得开。
+    const three = threeItemListTexts({ compositionText: readFileSync(SOURCE.composition, 'utf8'), generatorText: readFileSync(SOURCE.generator, 'utf8') }, ROW_ID)
+    rec.readings.three_item_fixture = { order: three.order, id_index: three.order.indexOf(ROW_ID), u_order: three.U.want_carriers }
+    const positioned = runScenario({
+      name: 'umh-01-position-sidecar', pre: 'M', generator: 'real', tool: 'real', action: 'apply', rederivePatch: true,
+      extraCopyFiles: { [REL.composition]: three.M.compositionText, [REL.generator]: three.M.generatorText },
+    })
+    const repositioned = positioned.tool_present ? runAgain(positioned, { action: 'restore' }) : null
+    scenarios.position_sidecar = { apply: slim(positioned), restore: repositioned === null ? null : slim(repositioned) }
+    book.run('position-sidecar', () => {
+      if (!positioned.tool_present) {
+        pushToolAbsent(problems, positioned, '三条名单 · --apply + --restore')
+        return CODE.toolAbsent
+      }
+      if (positioned.exit !== 0 || repositioned === null || repositioned.exit !== 0) {
+        push(CODE.exit, `三条名单那一圈没跑成（apply exit ${positioned.exit} / restore exit ${repositioned?.exit ?? '(没跑)'}）：`
+          + `apply stderr ${JSON.stringify(String(positioned.stderr ?? '').slice(0, 300))}`
+          + ` · restore stderr ${JSON.stringify(String(repositioned?.stderr ?? '').slice(0, 300))} —— 这一格判不了`)
+        return undefined
+      }
+      // apply 记的是**原下标**（1），restore 按旁证插回（sidecar），两个方向各判一次。
+      for (const p of restorePositionProblems(positioned, {
+        label: '三条名单 · --apply',
+        want: { source: 'recorded', index: three.order.indexOf(ROW_ID) },
+        orderAfter: [three.order[0], three.order[2]],
+      })) problems.push(p)
+      for (const p of restorePositionProblems(repositioned, {
+        label: '三条名单 · --restore',
+        want: { source: 'sidecar', index: three.order.indexOf(ROW_ID) },
+        orderAfter: three.order,
+        filesBefore: positioned.before.files_map,
+      })) problems.push(p)
+      // "精确的逆"在这一腿才第一次真的成立：三份产品文件逐字节回到 apply 之前（`restorePositionProblems` 判了），
+      // 再单独判一次**旁证自己消失**（工具自己的账本必须自己删掉）。
+      const sidecarFile = path.join(positioned.copy, '.team', 'state', 'unmount', `${encodeURIComponent(ROW_ID)}.json`)
+      rec.readings.position_sidecar = {
+        sidecar_file: sidecarFile,
+        sidecar_after_restore: existsSync(sidecarFile),
+        order_after_restore: repositioned === null ? null : listOrderInCopy(repositioned.copy),
+        files_before_apply: positioned.before.files,
+        files_after_restore: repositioned?.after.files ?? null,
+      }
+      if (existsSync(sidecarFile)) {
+        push(CODE.position, `三条名单 · --restore：位置旁证没被删掉（${sidecarFile} 还在）—— `
+          + '契约 §4.4：工具自己的账本必须自己删掉（下次 apply 读到别人的位置 = 插错地方）')
+      }
+      return undefined
+    })
+
+    // ── ②″ 腿 position-tail：**没有旁证** ⇒ 退回表尾，而且**说出来**（顺序变了要说，不许静默）──
+    //   入口 = 三条名单的 U 态（名单里本来就没有我们的 id、没有旁证）⇒ `--restore` 只能尾插。
+    const tailRestore = runScenario({
+      name: 'umh-01-position-tail', pre: 'U', generator: 'real', tool: 'real', action: 'restore', rederivePatch: true,
+      extraCopyFiles: { [REL.composition]: three.U.compositionText, [REL.generator]: three.U.generatorText },
+    })
+    scenarios.position_tail = slim(tailRestore)
+    book.run('position-tail', () => {
+      if (!tailRestore.tool_present) {
+        pushToolAbsent(problems, tailRestore, '三条名单 · 无旁证 --restore')
+        return CODE.toolAbsent
+      }
+      // 夹具自检：入口必须是"名单里没有它"（否则这一腿测的是别的东西）。
+      if (tailRestore.before.carriers.listed !== false) {
+        push(CODE.fixture, `退回表尾夹具坏了：U 态入口里名单仍含 ${ROW_ID}（listed=${JSON.stringify(tailRestore.before.carriers.listed)}）—— 这一格判不了`)
+        return undefined
+      }
+      for (const p of tailFallbackProblems(tailRestore, {
+        label: '三条名单 · 无旁证 --restore',
+        orderAfter: [three.order[0], three.order[2], ROW_ID],
+      })) problems.push(p)
+      rec.readings.position_tail = {
+        exit: tailRestore.exit,
+        code: tailRestore.json?.code ?? null,
+        restore_position: tailRestore.json?.restore_position ?? null,
+        order_after: listOrderInCopy(tailRestore.copy),
+        stderr_head: String(tailRestore.stderr ?? '').split(/\r?\n/).slice(0, 4).join('\n').slice(0, 600),
+      }
+      return undefined
+    })
+
+    // ── ②‴ 刀 K16：`--apply` **不记旁证**（= `bug-20261110-16` 的病）⇒ position-sidecar 腿必须红 ──
+    const k16Tool = sidecarBlindTool(readFileSync(SOURCE.tool, 'utf8'))
+    scenarios.knife_sidecar_blind = { ok: k16Tool.ok, applied: k16Tool.applied, why: k16Tool.why }
+    const k16Apply = k16Tool.ok
+      ? runScenario({
+        name: 'umh-01-k16-no-sidecar', pre: 'M', generator: 'real', tool: 'real', action: 'apply', toolText: k16Tool.text, rederivePatch: true,
+        extraCopyFiles: { [REL.composition]: three.M.compositionText, [REL.generator]: three.M.generatorText },
+      })
+      : null
+    const k16Restore = k16Apply !== null && k16Apply.exit === 0 ? runAgain(k16Apply, { action: 'restore' }) : null
+    scenarios.knife_k16_restore = k16Restore === null ? null : slim(k16Restore)
+    book.run('knife-K16', () => {
+      if (!k16Tool.ok) {
+        push(CODE.knifeNotBiting, `K16 的锚点不见了（${k16Tool.why}）—— 刀不咬，这一格的红不是判据给的`)
+        return undefined
+      }
+      if (k16Restore === null) {
+        push(CODE.fixture, `K16 那一圈没跑成（apply exit ${k16Apply?.exit ?? '(没跑)'}）—— 刀不咬`)
+        return undefined
+      }
+      knife(problems, {
+        label: 'K16·no-sidecar',
+        got: restorePositionProblems(k16Restore, {
+          label: 'K16·no-sidecar',
+          want: { source: 'sidecar', index: three.order.indexOf(ROW_ID) },
+          orderAfter: three.order,
+          filesBefore: k16Apply.before.files_map,
+        }),
+        want: CODE.position,
+        allow: [CODE.notInverse],
+      })
+      return undefined
+    })
+
     // ── ③ 腿 unknown-id：组合里没有那一行 ⇒ exit 3，一个字节不写 ─────────────────
     const unknown = runScenario({ name: 'umh-01-unknown-id', pre: 'M', generator: 'real', tool: 'real', action: 'apply', id: 'agenia-dashboard-typo' })
     scenarios.unknown_id = slim(unknown)
@@ -339,7 +481,7 @@ test('UMH-01 撤挂载/恢复两条腿：--apply ⇒ 补丁里 {insert:0,preset_
       return undefined
     })
 
-    book.require(['ruler-control', 'copy-runnable-set', 'apply', 'restore', 'unknown-id', 'knife-K1', 'knife-K2', 'knife-K3', 'knife-K8', 'control'])
+    book.require(['ruler-control', 'copy-runnable-set', 'apply', 'restore', 'position-sidecar', 'position-tail', 'unknown-id', 'knife-K1', 'knife-K2', 'knife-K3', 'knife-K8', 'knife-K16', 'control'])
     rec.readings.legs = book.legs
     rec.readings.scenarios = scenarios
     caseFail(problems)
@@ -525,7 +667,7 @@ test('UMH-03 错配负控②只撤了名单：工具拒绝并点名 list（与 U
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-test('UMH-04 幂等：目标态再跑 ⇒ UMH-NOOP / changed:0 / 字节不动（两个方向）· 补丁没签字（落点过期 / 不是派生物）⇒ 具名拒绝', async () => {
+test('UMH-04 幂等：目标态再跑 ⇒ UMH-NOOP / changed:0 / 字节不动（两个方向）· 补丁没签字（落点过期 / 不是派生物 / 读不出来）⇒ 三个码各自具名', async () => {
   await runCase('UMH-04', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -665,6 +807,117 @@ test('UMH-04 幂等：目标态再跑 ⇒ UMH-NOOP / changed:0 / 字节不动（
       for (const p of underivedPatchProblems(underived, { label: 'U 态 + 半截补丁 --apply' })) problems.push(p)
       // 阳性那一半：同一棵树上**未截断**的那份 ⇒ 仍是 no-op（判据不是"见谁都拒"）。
       for (const p of noopProblems(underivedOk, { insert: 0, presetBodies: 2, label: 'U 态 + 完整派生物 --apply（阳性对照）' })) problems.push(p)
+      return undefined
+    })
+
+    // ── ①⁗ 腿 unreadable-patch：**第二道签字的第三个出口**（`bug-20261111-02`）─────────────
+    //   形状：入口是 U 态（目标态）、补丁那一条路径被换成**同名目录** —— 读不出来，也就判不了
+    //   "它是不是派生物"。三个出口必须各自有名字：读得出来+相同 ⇒ no-op（①），读得出来+不同 ⇒
+    //   `NOT_DERIVED`（①‴），**读不出来 ⇒ `E_UNMOUNT_PATCH_UNREADABLE`**。
+    //   🔴 这一格判的是"失败归到了对的机制上"：折进 `NOT_DERIVED` 会让值班的人去重跑生成器，
+    //      而该做的是看权限 / 占用 / 那条路径还是不是文件。
+    const unreadable = runScenario({
+      name: 'umh-04-unreadable-patch', pre: 'U', generator: 'spy', tool: 'real', action: 'apply',
+      extraCopyDirs: [REL.patch],
+    })
+    scenarios.unreadable_patch = slim(unreadable)
+    book.run('unreadable-patch', () => {
+      if (!unreadable.tool_present) {
+        pushToolAbsent(problems, unreadable, 'U 态 + 补丁被换成目录 --apply')
+        return CODE.toolAbsent
+      }
+      // 夹具自检：补丁那一条路径跑之前必须是**目录**（否则这一腿测的是别的形状）。
+      if (unreadable.before.landing !== null) {
+        push(CODE.fixture, `读不出来夹具坏了：补丁路径应当读不出落点，实得 ${JSON.stringify(unreadable.before.landing)}`)
+        return undefined
+      }
+      rec.readings.unreadable_patch = {
+        exit: unreadable.exit, code: unreadable.json?.code ?? null, changed: unreadable.json?.changed ?? null,
+        failed_step: unreadable.json?.failed_step ?? null, rolled_back: unreadable.json?.rolled_back ?? null,
+        row_landing: unreadable.json?.row_landing ?? null,
+        generator_writes: unreadable.generator_writes, generator_checks: unreadable.generator_checks,
+        stderr_head: String(unreadable.stderr ?? '').slice(0, 600),
+      }
+      for (const p of unreadablePatchProblems(unreadable, { label: 'U 态 + 补丁被换成目录 --apply' })) problems.push(p)
+      return undefined
+    })
+
+    // ── ①⁘ 刀 K15：摘掉「读不出来」那道判（读失败当读到空串 = 生成器 `--check` 的那一手）⇒ 上面那条腿必须红 ──
+    const k15Tool = unreadableBlindTool(readFileSync(SOURCE.tool, 'utf8'))
+    scenarios.knife_unreadable_blind = { ok: k15Tool.ok, applied: k15Tool.applied, why: k15Tool.why }
+    const k15 = k15Tool.ok
+      ? runScenario({
+        name: 'umh-04-k15-unreadable-blind', pre: 'U', generator: 'spy', tool: 'real', action: 'apply', toolText: k15Tool.text,
+        extraCopyDirs: [REL.patch],
+      })
+      : null
+    scenarios.knife_k15 = k15 === null ? null : slim(k15)
+    book.run('knife-K15', () => {
+      if (!k15Tool.ok) {
+        push(CODE.knifeNotBiting, `K15 的锚点不见了（${k15Tool.why}）—— 刀不咬，这一格的红不是判据给的`)
+        return undefined
+      }
+      knife(problems, {
+        label: 'K15·unreadable-blind',
+        got: unreadablePatchProblems(k15, { label: 'K15·unreadable-blind' }),
+        want: CODE.unreadableUnnamed,
+      })
+      // 刀的效果要说清：它把"读不出来"折成了 `E_UNMOUNT_PATCH_STALE`（读空文本 ⇒ 落点 {0,0}）。
+      if (!k15Tool.ok) return undefined
+      if (k15.json?.code === 'E_UNMOUNT_PATCH_UNREADABLE') {
+        push(CODE.knifeNotBiting, 'K15：摘掉那道判之后工具仍然报 `E_UNMOUNT_PATCH_UNREADABLE` —— 刀没切到东西')
+      }
+      return undefined
+    })
+
+    // ── ①⁙ 腿 state-step：**记不下位置旁证 ⇒ 一个产品字节都不写**（契约 §4.2 ①‴ 的第四种失败步）──
+    //   造法：把副本里的 `.team/state` 做成**一个文件**（不是目录）⇒ 旁证的原子写建父目录时
+    //   `ENOTDIR` ⇒ 工具必须在写任何产品字节**之前**停下。这一格钉的是"失败的归因"：
+    //   `failed_step: "state"`（不是 patch / generator / verify）+ 一个字节都没写。
+    const stateStep = runScenario({
+      name: 'umh-04-state-step', pre: 'M', generator: 'real', tool: 'real', action: 'apply',
+      extraCopyFiles: { '.team/state': 'not a directory\n' },
+    })
+    scenarios.state_step = slim(stateStep)
+    book.run('state-step', () => {
+      if (!stateStep.tool_present) {
+        pushToolAbsent(problems, stateStep, 'M 态 --apply（旁证写不下来）')
+        return CODE.toolAbsent
+      }
+      rec.readings.state_step = {
+        exit: stateStep.exit, code: stateStep.json?.code ?? null, failed_step: stateStep.json?.failed_step ?? null,
+        changed: stateStep.json?.changed ?? null, rollback: stateStep.json?.rollback ?? null,
+        rolled_back: stateStep.json?.rolled_back ?? null, changed_files: stateStep.changed_files,
+        stderr_head: String(stateStep.stderr ?? '').slice(0, 600),
+      }
+      for (const p of stateStepProblems(stateStep, { label: 'M 态 --apply（旁证写不下来）' })) problems.push(p)
+      if (!stateStep.files_equal) {
+        push(CODE.refusalWrote, `旁证写不下来的那一跑写了产品字节（${JSON.stringify(stateStep.changed_files)}）—— `
+          + '契约 §4.2 ①‴：这一步在**任何产品字节之前**，写不下去就不做（否则 `--restore` 没有原位可回）')
+      }
+      return undefined
+    })
+
+    // ── ①⁚ 刀 K17：把"记不下旁证"报成补丁那一步 ⇒ state-step 腿必须红 ───────────────────
+    const k17Tool = stateStepLiarTool(readFileSync(SOURCE.tool, 'utf8'))
+    scenarios.knife_state_step_liar = { ok: k17Tool.ok, applied: k17Tool.applied, why: k17Tool.why }
+    const k17 = k17Tool.ok
+      ? runScenario({
+        name: 'umh-04-k17-state-step-liar', pre: 'M', generator: 'real', tool: 'real', action: 'apply', toolText: k17Tool.text,
+        extraCopyFiles: { '.team/state': 'not a directory\n' },
+      })
+      : null
+    scenarios.knife_k17 = k17 === null ? null : slim(k17)
+    book.run('knife-K17', () => {
+      if (!k17Tool.ok) {
+        push(CODE.knifeNotBiting, `K17 的锚点不见了（${k17Tool.why}）—— 刀不咬`)
+        return undefined
+      }
+      knife(problems, {
+        label: 'K17·state-step-liar',
+        got: stateStepProblems(k17, { label: 'K17·state-step-liar' }),
+        want: CODE.stateStep,
+      })
       return undefined
     })
 
@@ -939,12 +1192,27 @@ test('UMH-04 幂等：目标态再跑 ⇒ UMH-NOOP / changed:0 / 字节不动（
         generator_calls: [],
       })
       controlFails(problems, '阳性对照·半截补丁', underivedPatchProblems(underivedControl, { label: 'control' }))
+      // 阳性对照·补丁读不出来（第三个出口）：一份合规读数必须判成 0 条 ——
+      // 否则"这一格红"分不出是工具没做对还是判据写坏了。
+      const unreadableControl = controlReading({
+        exit: 1,
+        json: { code: UNREADABLE_CODE, changed: 0, row_landing: null, failed_step: 'patch', rolled_back: false },
+        stderr: `E_UNMOUNT_PATCH_UNREADABLE 盘上补丁读不出来：这个路径现在是目录（补丁被换掉了）`,
+        before: { carriers: { marker: false, disabled: true, listed: false }, landing: null, files: { composition: 'c-before', generator: 'g-before', patch: 'p-before' } },
+        files_equal: true,
+        tree_equal: true,
+        changed_files: [],
+        generator_called: false,
+        generator_writes: 0,
+        generator_calls: [],
+      })
+      controlFails(problems, '阳性对照·补丁读不出来', unreadablePatchProblems(unreadableControl, { label: 'control' }))
       return undefined
     })
 
     book.require([
-      'apply-noop', 'stale-patch', 'restore-stale', 'truncated-patch', 'residue-sweep', 'apply-twice', 'restore-twice',
-      'knife-K5', 'knife-K6', 'knife-K9', 'knife-K9b', 'knife-K10', 'knife-K11', 'knife-K12', 'knife-K13', 'control',
+      'apply-noop', 'stale-patch', 'restore-stale', 'truncated-patch', 'unreadable-patch', 'state-step', 'residue-sweep', 'apply-twice', 'restore-twice',
+      'knife-K5', 'knife-K6', 'knife-K9', 'knife-K9b', 'knife-K10', 'knife-K11', 'knife-K12', 'knife-K13', 'knife-K15', 'knife-K17', 'control',
     ])
     rec.readings.legs = book.legs
     rec.readings.scenarios = scenarios
