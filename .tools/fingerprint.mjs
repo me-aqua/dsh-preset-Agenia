@@ -46,14 +46,16 @@
  *     （归一会把"换行符被改过"这件事藏起来，而那正是要抓的）。
  *     读数里的 `lines_lf` 是**行数**，口径是：剥掉开头的 BOM 之后，数 `\n` 的个数；
  *     CRLF 只算一个换行。**行数不参与哈希**，它只是给人看的口径（AGENTS.local 一①）。
- *  ⑧ **复跑稳定**：同一棵树、同一套 ⇒ 同一个数；不读时间、不读环境变量、不看进程。
+ *  ⑧ **复跑稳定**：同一棵树、同一套 ⇒ 同一个数；**指纹本身**不读时间、不读环境变量、不看进程。
+ *     唯一带时刻的是 `--save` 写出来的基线文件里的 `generated_at`（"这份基线是什么时候量的"）：
+ *     它在哈希之外，逐字节比较基线时会差这一格 —— 比的是 `sets` 那一层，不是整份文件。
  *
  * ── 用法 ────────────────────────────────────────────────────────────────────
  *   <node> .tools/fingerprint.mjs                       # 人话：两套 + 文件数
  *   <node> .tools/fingerprint.mjs --json                # 一行 JSON（可机读）
  *   <node> .tools/fingerprint.mjs --set code --json     # 只要 CODE
- *   <node> .tools/fingerprint.mjs --save before.json    # 存基线（喂给 --compare）
- *   <node> .tools/fingerprint.mjs --compare before.json # 比一次：equal / changed[]
+ *   <node> .tools/fingerprint.mjs --save before.json    # 存基线（喂给 --compare；文件带 generated_at）
+ *   <node> .tools/fingerprint.mjs --compare before.json # 比一次：equal / changed[]（不读 generated_at）
  *   退出码：0 成功（`--compare` 时 = 相等）· 1 `--compare` 不相等 · 2 用法错
  *   ⚠️ 默认 `--set both`：一次给两个数 —— 只报一个数最容易把两套读混。
  */
@@ -336,9 +338,19 @@ function main(argv) {
 
   if (args.save !== null) {
     const saveFile = path.resolve(args.save)
-    writeFileSync(saveFile, `${JSON.stringify({ ok: true, tool: 'fingerprint.mjs', root, caliber: report.caliber, sets }, null, 2)}\n`, 'utf8')
+    // `generated_at` 是**这份基线什么时候量的**（`bug-20261111-04`）：两份基线对不上时，
+    // 先分得清"旧基线"还是"量具口径变了"。它不进指纹、`--compare` 也不读它。
+    const saved = {
+      ok: true,
+      tool: 'fingerprint.mjs',
+      root,
+      caliber: report.caliber,
+      sets,
+      generated_at: new Date().toISOString(),
+    }
+    writeFileSync(saveFile, `${JSON.stringify(saved, null, 2)}\n`, 'utf8')
     report.saved = saveFile
-    process.stderr.write(`fingerprint.mjs: 基线已写 ${saveFile}\n`)
+    process.stderr.write(`fingerprint.mjs: 基线已写 ${saveFile}（generated_at ${saved.generated_at}）\n`)
   }
 
   if (args.json) {

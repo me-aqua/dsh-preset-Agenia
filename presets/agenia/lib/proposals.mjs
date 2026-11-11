@@ -784,19 +784,39 @@ function writePoolRowLocked(root, spec = {}) {
 }
 
 /**
- * **异步口**：有界等待抢锁 → `writePoolRowLocked` → 放锁（两个工具那条路）。
+ * **一条骨架**：拿锁 → `writePoolRowLocked` → 放锁（`bug-20261111-03` F7）。
+ *
+ * 两个口只差"怎么拿锁"：异步口是有界等待（`await acquirePoolLock`），同步口抢一次
+ * （`acquireLock`）。所以拿锁那一行由 `lock` 参数交进来，锁之后那五行**只有这一份**。
+ * `lock()` 返回 promise ⇒ 异步；返回结果对象 ⇒ 同步（两条路的结果形状相同）。
+ *
+ * @param {string} root 脑根
+ * @param {object} spec 见 `writePoolRowLocked`
+ * @param {() => object|Promise<object>} lock 拿锁的动作（`{ok, code, message, info?}` / 它的 promise）
+ * @returns {object|Promise<object>} 成功 = `writePoolRowLocked` 的返回；锁失败 = `stage:'lock'` 的那一种
+ */
+function withLockedPoolRow(root, spec, lock) {
+  /** 锁拿到之后的那一段（两个口逐字相同）。 */
+  const locked = (lockResult) => {
+    if (!lockResult.ok) {
+      return { ok: false, stage: 'lock', code: lockResult.code, message: `候选池锁拿不到：${lockResult.message}`, info: lockResult.info ?? null }
+    }
+    try {
+      return writePoolRowLocked(root, spec)
+    } finally {
+      releaseLock(poolLockPath(root))
+    }
+  }
+  const pending = lock()
+  return pending !== null && typeof pending?.then === 'function' ? pending.then(locked) : locked(pending)
+}
+
+/**
+ * **异步口**：有界等待抢锁 → 同一条骨架 → 放锁（两个工具那条路）。
  * 锁失败也**返回码**（不抛）：调用方要把"锁拿不到"与"写不进去"分开报。
  */
-async function withPoolRow(root, spec, options) {
-  const lock = await acquirePoolLock(root, options)
-  if (!lock.ok) {
-    return { ok: false, stage: 'lock', code: lock.code, message: `候选池锁拿不到：${lock.message}`, info: lock.info ?? null }
-  }
-  try {
-    return writePoolRowLocked(root, spec)
-  } finally {
-    releaseLock(poolLockPath(root))
-  }
+function withPoolRow(root, spec, options) {
+  return withLockedPoolRow(root, spec, () => acquirePoolLock(root, options))
 }
 
 /**
@@ -804,13 +824,7 @@ async function withPoolRow(root, spec, options) {
  * 同一条骨架 → 放锁。为什么不用 `withPoolRow`：那个等锁是 `await` 出来的，同步口等不了。
  */
 function withPoolRowSync(root, spec) {
-  const lock = acquireLock(poolLockPath(root), { purpose: 'proposal-pool' })
-  if (!lock.ok) return { ok: false, stage: 'lock', code: lock.code, message: `候选池锁拿不到：${lock.message}` }
-  try {
-    return writePoolRowLocked(root, spec)
-  } finally {
-    releaseLock(poolLockPath(root))
-  }
+  return withLockedPoolRow(root, spec, () => acquireLock(poolLockPath(root), { purpose: 'proposal-pool' }))
 }
 
 /**

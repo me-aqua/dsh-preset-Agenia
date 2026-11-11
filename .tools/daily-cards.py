@@ -646,6 +646,12 @@ def cap_of(entries, now):
 # `unknown` 是"判不了"，**不是**"已评估" —— 它让条目保留 open，SLA 照样算超期。
 ASSESSED_VERDICTS = ("true", "false", "duplicate")
 
+# SLA 欠账**归谁**（卡面只印给人看的那个词）。归属表本身不在这一份里 —— 唯一出处是
+# `tests/agenia-upgrade/support/card-surface.mjs::SLA_DEBT`（`owed_by: 'test'` /
+# `owed_by_label: '测试岗'`，契约 §3.7.1-A）。判据判"数 + 归属表"，不判措辞；
+# 这里印的只是把那张表里的**人话**搬到卡上（`bug-20261110-09` 的尾款）。
+SLA_OWED_BY_LABEL = "测试岗"
+
 
 def is_assessed(entry):
     """一条条目**是否已经被评估过**（SLA 的豁免之一；与 `bug-ledger.mjs::isAssessed` 同一条判据）。
@@ -1180,7 +1186,8 @@ def main():
              "报告 %s=%s · 快照 %s=%s" % (report_rel, "在" if os.path.isfile(os.path.join(DR, "reports", "memory-update", day + ".json")) else "不在",
                                         snap_name, "可读" if snap_ok else "读不出来"))
     add_cell("sla", "red" if sla["over"] else "green",
-             "超期 %d 条 · 最老 %d 天 · 周期 %s" % (len(sla["over"]), sla["oldest_age"], sla["cycle"]))
+             "超期 %d 条（%s 欠）· 最老 %d 天 · 周期 %s"
+             % (len(sla["over"]), SLA_OWED_BY_LABEL, sla["oldest_age"], sla["cycle"]))
     add_cell("carrier_missing", "red" if (receipt_required and not (carriers["technical"] and carriers["conversation"])) else "green",
              "需要回执=%s · 技术评审.md=%s · 会话评审.md=%s"
              % ("是" if receipt_required else "否（未建账期无活动）",

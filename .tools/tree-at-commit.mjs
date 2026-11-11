@@ -33,8 +33,11 @@
  *        跳过的那几条写进 `staging.skipped` —— 没收要看得见），
  *        目录联接 / 符号链接也**跳过**（它们会逃出副本 —— `CPY-STAGING-ESCAPES-COPY` 那条判据的同一个理由）。
  *      · stdout 最后一行 = JSON：
- *        `{ ok, commit, tree_root, code: { sha256, files, bytes }, live_baseline }`
- *        （给了 `--with-staging` 才多一段 `staging` —— 不给就没有这一段，输出与从前逐字节相同）：
+ *        `{ ok, commit, tree_root, code: { sha256, files, bytes }, live_baseline, generated_at }`
+ *        `generated_at` 是**这次导出的时刻**（ISO8601，写这一行时现量；`bug-20261111-04`）——
+ *        两份基线对不上时，先分得清"旧基线"还是"量具口径变了"。
+ *        （给了 `--with-staging` 才多一段 `staging` —— 不给就没有这一段，输出与从前逐字节相同
+ *        除了多出来的 `generated_at`）：
  *        `staging: { root, files, bytes, readback_ok, skipped, sha256 }`，其中
  *        `sha256 = { algorithm, prefix, files, bytes, digest, list: [{rel, sha256, bytes}] }`
  *        是**内容冻结**的那一半：这 52 份的 path + sha256 + 字节数（`rel` 仓根相对），
@@ -830,13 +833,16 @@ function doExport(args) {
   const code = codeFingerprintOf(out)
   if (!code.ok) return fail('E_FINGERPRINT', code.problems.join('；'), { commit: resolved.sha, tree_root: out, live_baseline: baselineFile })
 
-  // `staging` 那一段**只有给了 `--with-staging` 才出现** —— 不给时输出与从前逐字节相同。
+  // `staging` 那一段**只有给了 `--with-staging` 才出现** —— 不给时不出现（除了 `generated_at`）。
+  // `generated_at` 是**写这一行时**现量的导出时刻（`bug-20261111-04`）：没有它，两份基线对不上时
+  // 读的人分不出是"旧基线"还是"量具口径变了"。它只描述**这一次导出**，不是被导出的树的属性。
   emit({
     ok: true,
     commit: resolved.sha,
     tree_root: out,
     code: { sha256: code.sha256, files: code.files, bytes: code.bytes },
     live_baseline: baselineFile,
+    generated_at: new Date().toISOString(),
     files: written,
     bytes,
     ...(staging === null ? {} : { staging }),
