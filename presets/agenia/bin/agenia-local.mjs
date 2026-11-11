@@ -378,6 +378,42 @@ function opLocalMark(ctx) {
   }
 }
 
+/**
+ * 回执路径的**唯一落盘拼法**：`.team/<…>` 与 `.team` 相对两种写法（正/反斜杠）都收，
+ * 返回 `.team` 相对那一种（`leader/<day>/技术评审回执.json`）。
+ *
+ * 只做形状归一，**不判**"在不在盘上"（那是调用方自己要说的事）；越界（`..` / 绝对路径）
+ * 由调用方的 `resolveUnder` 判。空串 / 只给 `.team` ⇒ `''`（调用方报 `E_ARG_SCHEMA`）。
+ */
+function teamRelativePathOf(raw) {
+  let rel = String(raw ?? '').trim().replace(/\\/g, '/')
+  while (rel.startsWith('./')) rel = rel.slice(2)
+  if (rel.startsWith(`${TEAM_DIR_NAME}/`)) rel = rel.slice(TEAM_DIR_NAME.length + 1)
+  return rel === '.' || rel === TEAM_DIR_NAME ? '' : rel
+}
+
+/**
+ * `local-receipt-set` —— **登记**一份已经写在盘上的回执（它自己不写回执文件）。
+ *
+ * 口径（`bug-20261110-08` 收口；锚点形状的出处是 `lib/local-state.mjs` 的「回执锚点的形状」那一节）：
+ *   · **回执文件由人写**（组长写完、量完摘要，再拿这条 op 登记）：`receipt_sha256` 是**盘上字节**的
+ *     摘要，文件已经在盘上正是登记的前提 —— 它不是"有人要覆盖"。所以 `target_exists` **不喂**给
+ *     `R.receiptWriteVerdict()`：那个分支是给"自己写字节"的写回方的，喂给登记方会让
+ *     "先写字才量得出摘要"与"文件在盘上就拒"互相锁死（本票的病根：六种载荷全撞 `E_RECEIPT_OVERWRITE`）。
+ *   · 守卫只拒两件：① 这一版**已经登记过**（台账 `receipt_versions`，不是"盘上有哪个文件名"）；
+ *     ② 调用方带了 `expected_version` 且与当前 head 不符（旧读数）。升一版 ⇒ 收，旧版留在台账里 ——
+ *     版本化就是"覆盖"的合法路径（C-6 的语义一个字没改，改的是"谁算写回方"）。
+ *   · 路径按**位置收**、按**一种形状存**：`.team/<…>` 与 `.team` 相对都收，节点里只存 `.team` 相对
+ *     那一种 —— 两扇读者（`lib/health.mjs` 的 `path.join(teamDir, …)`、`receipt-check` 的
+ *     `resolveUnder(teamDir, …)`）都按 `.team` 根拼，存成带 `.team/` 的那种会去读
+ *     `<ws>/.team/.team/…`、当场判成"回执不在"（`CONTRACT.md` §12.2.2 的两基准表）。
+ *   · 文件真在盘上 ⇒ 摘要必须与它逐字节相同（`E_ARG_HASH`：自报的摘要不算锚），而且它自己必须声明
+ *     整数 `version` 且等于 `receipt_version`（读不出 ⇒ `E_DATA_CORRUPT`、不相等 ⇒ `E_ARG_SCHEMA` ——
+ *     与 `local-mark` 同一条规矩，理由也同一个：没被核过的数会经台账把那一版"占掉"）；文件还不在盘上 ⇒
+ *     照样登记（信封 `receipt_on_disk:false` + stderr 一行），但它不是锚 —— 读者会判它不在。
+ *   · 登记**不置 `state`**：节点变 `done` 是 `local-mark` 的事（`state === 'done'` 且 `report_path`
+ *     非空才算"这一场交活了"，契约 §3.7）。所以节点还不是 `done` 时这里只提示，不改它。
+ */
 function opLocalReceiptSet(ctx) {
   const { payload, teamDir, at } = ctx
   const day = dayOfPayload(payload)
@@ -394,42 +430,76 @@ function opLocalReceiptSet(ctx) {
   if (payload?.ticket_ids !== undefined && !Array.isArray(payload.ticket_ids)) {
     throw cliError('E_ARG_SCHEMA', `ticket_ids 必须是数组，实得 ${JSON.stringify(payload?.ticket_ids)}`)
   }
-  const receiptAbs = resolveUnder(teamDir, payload.receipt_path, { label: 'receipt_path' })
-
-  const result = L.localTransaction(teamDir, { day, field: null, at, sessionId: ctx.sessionId, forceRecover: ctx.args.forceRecover, waitMs: ctx.waitMs }, (current) => {
-    const snapshot = typeof payload.snapshot === 'string' && payload.snapshot.trim() !== '' ? payload.snapshot.trim() : (current?.snapshot ?? 'v0')
-    const state = current ?? L.emptyLocalState({ project, day, snapshot, at })
-    // 🔴 `bug-20261108-13`：节点按入参分派，**不许写死 technical**（写死会把会话回执静默写进技术那一段，
-  //    还占掉它的版本号）。认不出的名字 ⇒ 点名报错，不猜。
+  // 🔴 `bug-20261108-13`：节点按入参分派，**不许写死 technical**（写死会把会话回执静默写进技术那一段，
+  //    还占掉它的版本号）。认不出的名字 ⇒ 点名报错，不猜。节点名清单只有 `L.LOCAL_FIELDS` 一份。
   const fieldName = String(payload?.field ?? payload?.node ?? 'technical').trim()
-  const NODE_FIELDS = ['technical', 'conversation', 'memory_review']
-  if (!NODE_FIELDS.includes(fieldName)) {
+  if (!L.LOCAL_FIELDS.includes(fieldName)) {
     throw cliError('E_ARG_SCHEMA',
-      `local-receipt-set 的节点只认 ${NODE_FIELDS.join(' / ')}，实得 ${JSON.stringify(payload?.field ?? payload?.node)}`
+      `local-receipt-set 的节点只认 ${L.LOCAL_FIELDS.join(' / ')}，实得 ${JSON.stringify(payload?.field ?? payload?.node)}`
       + ' —— 不传就是 technical；传了认不出的名字这里**不猜**（写死节点会把回执记到别人那段、还占掉它的版本号）。')
   }
-  const node = state[fieldName]
-    // 已存在的版本 = 台账（登记过的） ∪ 盘上真有的那几份 —— C-6 明写"目标版本文件已存在"也算。
-    const existing = [...new Set([...L.receiptVersionsOf(node), ...L.receiptVersionsOnDisk(teamDir, day)])].sort((a, b) => a - b)
+  const receiptRel = teamRelativePathOf(payload.receipt_path)
+  if (receiptRel === '') {
+    throw cliError('E_ARG_SCHEMA', `receipt_path 必须是 .team 里面的一个文件路径，实得 ${JSON.stringify(payload.receipt_path)}`)
+  }
+  const receiptAbs = resolveUnder(teamDir, receiptRel, { label: 'receipt_path' })
+  const declaredSha = payload.receipt_sha256.trim().toLowerCase()
+  const receiptOnDisk = existsSync(receiptAbs)
+  if (receiptOnDisk) {
+    const actualSha = createHash('sha256').update(readFileSync(receiptAbs)).digest('hex')
+    if (actualSha !== declaredSha) {
+      throw cliError('E_ARG_HASH',
+        `receipt_sha256 与回执盘上字节对不上（登记 ${declaredSha.slice(0, 12)}…，盘上 ${actualSha.slice(0, 12)}…）`
+        + ' —— 文件由人写，登记的是盘上那一份；自报的摘要不算锚', { path: receiptAbs })
+    }
+    // 版本：回执自己必须声明整数 `version`，且与登记的那一版相同 —— 与 `local-mark` 同一条规矩
+    // （CONTRACT §12.2.4）：没被核过的数会经台账把那一版"占掉"，下一版就从错的地方往回数。
+    const declaredVersion = L.receiptVersionInFile(receiptAbs)
+    if (declaredVersion === null) {
+      throw cliError('E_DATA_CORRUPT', `回执里没有整数的 version（读不出来或形状不对）：${receiptAbs}`, { path: receiptAbs })
+    }
+    if (declaredVersion !== payload.receipt_version) {
+      throw cliError('E_ARG_SCHEMA',
+        `receipt_version=${JSON.stringify(payload.receipt_version)} 与回执里声明的 version=${declaredVersion} 对不上：${receiptAbs}`,
+        { path: receiptAbs })
+    }
+  } else {
+    process.stderr.write(`[${CLI_NAME}] WARN 回执还没在盘上：${receiptAbs} —— 只登记了路径与摘要，卡与健康卡会判它"不在"\n`)
+  }
+
+  const result = L.localTransaction(teamDir, { day, field: null, at, sessionId: ctx.sessionId, forceRecover: ctx.args.forceRecover, waitMs: ctx.waitMs }, (current) => {
+    const snapshot = typeof payload?.snapshot === 'string' && payload.snapshot.trim() !== '' ? payload.snapshot.trim() : (current?.snapshot ?? 'v0')
+    const state = current ?? L.emptyLocalState({ project, day, snapshot, at })
+    const node = state[fieldName]
+    // 已登记 = **台账**（这一版登记过没有）。盘上有哪些版本文件只是读数（信封的
+    // `receipt_versions_on_disk`）—— 把它当守卫就是把"文件在盘上"读成"有人要覆盖"（本票的病根）。
     const verdict = R.receiptWriteVerdict({
-      existing,
+      existing: L.receiptVersionsOf(node),
       version: payload.receipt_version,
       expected_version: payload.expected_version ?? null,
-      target_exists: existsSync(receiptAbs),
     })
     if (!verdict.ok) return { ok: false, code: verdict.code, message: verdict.message }
     const next = { ...state, updated_at: at }
-    next[fieldName] = L.applyReceiptRegistration(node, { ...payload, receipt_path: payload.receipt_path.trim() }, at)
+    next[fieldName] = L.applyReceiptRegistration(node, { ...payload, receipt_path: receiptRel }, at)
     return { ok: true, state: next }
   })
   if (!result.ok) throw cliError(result.code, result.message, { path: result.path })
+  const node = result.state[fieldName]
+  if (node.state !== 'done') {
+    process.stderr.write(`[${CLI_NAME}] 提示 ${fieldName} 节点 state=${node.state}：回执已登记，但卡上回执格按 \`state === 'done'\` + \`report_path\` 判 —— 落地用 local-mark\n`)
+  }
   return {
     state: result.state,
     state_path: result.path,
-    receipt_path: result.state.technical.receipt_path,
+    field: fieldName,
+    node_state: node.state,
+    receipt_path: node.receipt_path,
     receipt_abs: receiptAbs,
-    receipt_version: result.state.technical.receipt_version,
-    versions: L.receiptVersionsOf(result.state.technical),
+    receipt_on_disk: receiptOnDisk,
+    receipt_sha256: node.receipt_sha256,
+    receipt_version: node.receipt_version,
+    versions: L.receiptVersionsOf(node),
+    receipt_versions_on_disk: L.receiptVersionsOnDisk(teamDir, day),
   }
 }
 

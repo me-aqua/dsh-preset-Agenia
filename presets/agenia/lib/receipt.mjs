@@ -610,16 +610,26 @@ export function nextReceiptVersion(existing) {
  * 🔴 **回执写入判定 —— C-6 的唯一产生面。**
  *
  * 拒两种情形（都返回 `E_RECEIPT_OVERWRITE`，**绝不静默覆盖**）：
- *   ① 目标版本已经存在（盘上有那一版文件，或登记册里已经有这一版）；
+ *   ① 目标版本已经存在（台账里已经有这一版，或——**只有写回方**才该看的那一格——盘上有那一版文件）；
  *   ② 调用方带了 `expected_version`，而它与当前 head 不符（并发/过期调用方）。
  *
  * 调用方**必须**先用 `nextReceiptVersion(existing)` 取新版本再写。
+ *
+ * 🔴 **"谁在写"决定传哪几格**（`bug-20261110-08`）：
+ *   · **写回方**（自己把字节写进 `receipt_path`）：`existing` + `target_exists` 都给 —— 目标文件
+ *     在盘上就是"要覆盖别人那一份"，拒。
+ *   · **登记方**（`local-receipt-set`：回执文件**由人写**，op 只把路径 / 摘要 / 版本记进节点）：
+ *     **不许**传 `target_exists`。文件已经在盘上正是登记的前提（摘要得从盘上那份量），
+ *     传了会把"前提"读成"覆盖" —— "先写字才量得出摘要"与"文件在盘上就拒"互相锁死，六种载荷全撞
+ *     这个码。登记方只看台账：已登记过这一版 ⇒ 拒；升一版 ⇒ 收（旧版留在台账里，版本化就是
+ *     supersede 的合法路径）。
  *
  * @param {object} spec
  * @param {*} spec.existing 已存在的版本（形状同 `nextReceiptVersion` 的入参；另接受 `{head_version}`）
  * @param {number} spec.version 本次要写的版本
  * @param {number|null} [spec.expected_version] 调用方以为的 head（可省）
- * @param {boolean} [spec.target_exists] 目标**文件**是否已经在盘上（由调用方探）
+ * @param {boolean} [spec.target_exists] 目标**文件**是否已经在盘上（只给**自己写字节的写回方**；
+ *        登记方**不许**传 —— 见上面那条 🔴）
  * @returns {{ok:true, code:null, version:number, head:number, message:string}
  *          |{ok:false, code:string, version:number|null, head:number, message:string}}
  */

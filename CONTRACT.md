@@ -1556,7 +1556,7 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 | --- | --- | --- |
 | `report_path` / `findings_path` / `artifact_paths[]`（`local-mark`） | 落点 = **工作区下的 `.team/`**；节点里存**工作区相对、带 `.team/`** 的规范拼法 | `.team/retro/2026-10-24/技术评审.md` |
 | `receipt_path`（`local-mark` 的回执三件套） | 落点判定 = 同一条**按位置收**的规则（`anchorResolution`）；节点里存 **`.team` 相对、不带 `.team/`** 那一种 | `leader/2026-10-24/技术复盘回执.json` |
-| `receipt_path`（`local-receipt-set` / `receipt-check`） | 只走 `resolveUnder(teamDir, …)`：判"有没有逃出 `.team`"（越界 `E_PATH_ESCAPE` · exit 3），**不归一** —— `local-receipt-set` 收下的是调用方写的那一串（只 `trim`），写进节点也是那一串 | `leader/2026-10-24/技术复盘回执.json`（这一种才拼得上 `.team` 根） |
+| `receipt_path`（`local-receipt-set` / `receipt-check`） | 只走 `resolveUnder(teamDir, …)`：判"有没有逃出 `.team`"（越界 `E_PATH_ESCAPE` · exit 3）；`local-receipt-set` **两种写法都收、只存一种**（`.team/<…>` 与 `.team` 相对 → 存 `.team` 相对），`receipt-check` 只认 `.team` 相对 | `leader/2026-10-24/技术评审回执.json`（存下来的就是这一种） |
 
   ⇒ 三个入口的边界都在 §12.5。`local-mark` 那一支**不走** `resolveUnder`（它走 `anchorResolution`，§12.2.2 正文）；
   `local-receipt-set`（`bin/agenia-local.mjs:397`）与 `receipt-check`（`:205`）走 `resolveUnder`。
@@ -1564,8 +1564,9 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
   `.team/leader/…` / `leader/…` / 反斜杠 / 绝对路径都收（闸按位置解析），但**落盘只写 `.team` 相对那一种** ——
   两扇读者（`lib/health.mjs:215` 的 `path.join(teamDir, …)`、`opReceiptCheck` 的 `resolveUnder(teamDir, …)`）
   只认它；存成带 `.team/` 的那一种，卡会去读 `<ws>/.team/.team/…`、当场判成"回执不在"。理由与代价写在 §12.2.4。
-  ⚠️ `local-receipt-set` 那一支今天**照调用方原样存**：喂 `.team/leader/…` 就存成带前缀的那一串，而两扇读者
-  只按 `.team` 根拼 ⇒ 同一个病、隔一个 op（不在本票范围，`bin/agenia-local.mjs:397`）。
+  ⚠️ `local-receipt-set` 那一支以前**照调用方原样存**（喂 `.team/leader/…` 就存成带前缀的那一串，而两扇读者
+  只按 `.team` 根拼 ⇒ 同一个病、隔一个 op）；`bug-20261110-08` 收口时改成与 `local-mark` 同一套"按位置收、
+  按一种形状存"（见 §12.2.5）。
 - **先核再落盘，核不上零写入**：整段判定跑在事务**之前**（`bin/agenia-local.mjs:328` → `:346`）——
   被拒的 `local-mark` 连一个字节都不写，状态文件保持 claim 写完的那一份，节点停在 `running`。
 - **落地动作不许抹掉 claim 痕迹**：`done` / `failed` 之后节点仍要指得出是哪一次派工（`claim` / `job_id` 保留）。
@@ -1649,6 +1650,36 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
 - **锚点落地之后卡上才看得见**：`local-read` 的三格有值 ⇒ `lib/health.mjs:150-153` 的三个锚点齐了，
   `E_RECEIPT_ANCHOR` 那条 reason 不再产生（这一族**只**读状态里的三格，不读回执自报）。
 - ⚠️ **不改** `receipt-check` 的对账规则、**不新增 op**、**不动健康卡的判据**（本票的范围只到"三格落盘"）。
+
+#### §12.2.5 `local-receipt-set` = **登记**，不是写回（`bug-20261110-08` 收口）
+
+**病根一句话**：那条 op 把"目标文件已经在盘上"读成了"有人要覆盖"，可它同时又要求 `receipt_sha256` 等于
+**盘上字节**的摘要 —— "先写字才量得出摘要"与"文件在盘上就拒"互相锁死，于是任何载荷都撞
+`E_RECEIPT_OVERWRITE`（2026-11-10 组长实测六种：xlsx 当锚 / 同版 / 升版 / 换文件名 / 先删再登记 / 不建文件）。
+
+**选了口径 A**（组长写文件、op 只登记）。理由：回执是**人**写的产物（处置、开票、落点都在人手里）；
+让 op 自己写就得再收一份 `content` 并另立一套"谁算摘要"的规矩（口径 B，没选）。
+
+| 谁 | 做什么 | 判在哪 |
+| --- | --- | --- |
+| 组长（人） | 写回执 JSON（**整数 `version` 在文件里**）+ 量 SHA256 | 文件在盘上时两个都由 `local-receipt-set` 核（下表第 5 条）；`local-mark` 那一路同样核（§12.2.4） |
+| `local-receipt-set` | **登记**：路径 / 摘要 / 版本 / 票号进节点，这一版进台账 | 下面六条 |
+| `local-mark` | **落地**：节点 `done` + 三个锚点 | §12.2.1 / §12.2.4 |
+
+- **`target_exists` 不喂给 `receiptWriteVerdict()`**：那个分支是给"自己写字节的写回方"的（C-6 原文说的是
+  **写入**）；登记方只看台账 —— 文件已经在盘上恰恰是登记的前提，不是冲突。
+- **同一版登记第二次 ⇒ 拒**（`E_RECEIPT_OVERWRITE` · exit 5 · **零写入**）：台账里有这一版；报文点名下一版（空洞不填）。
+- **升一版 ⇒ 收**：台账变 `[1,2]`、节点指向新版，旧版留在 `receipt_versions` 里 —— 版本化就是 supersede 的合法路径。
+- **`expected_version` 仍然算数**：给了且与当前 head 不符 ⇒ 拒（旧读数不许覆盖）。
+- **摘要与版本对着盘上那份核**：文件在盘上时 `receipt_sha256` 必须逐字节对上（`E_ARG_HASH` · exit 2 · 零写入），
+  回执自己声明的整数 `version` 必须等于 `receipt_version`（读不出 ⇒ `E_DATA_CORRUPT` · exit 7、不相等 ⇒
+  `E_ARG_SCHEMA` · exit 2 —— 两条与 `local-mark` 同一套）；文件**还不在**盘上 ⇒
+  照样登记，但信封 `receipt_on_disk:false` + stderr 一行 —— 它不是锚，卡与健康卡会判它"不在"。
+- **路径按位置收、按一种形状存**：`.team/<…>` 与 `.team` 相对都收，节点里只存 `.team` 相对那一种
+  （与 `local-mark` 的回执三件套同一个形状；两扇读者按 `.team` 根拼）。
+- 🔴 **登记不置 `state`**：卡上回执格是 `state === 'done'` **且** `report_path` 非空（§3.7 / `CONTRACT-C2.md`）
+  ⇒ 只登记不落地那一格仍算"没交"；节点不是 `done` 时 op 在 stderr 点名这件事（`_mark_tech.py` 第 2 行
+  写的就是这个分工：`receipt-set` 只登记回执，`local-mark` 才把节点标 `done`）。
 
 
 ### §12.3 「派了没落地」⇒ 留在 `running`（过期即 `stale`），**不许静默**
@@ -1743,10 +1774,11 @@ node tests/agenia-upgrade/run-all.mjs --run-root=E:\Harness\.team\test\2026-10-2
   （`lib/local-state.mjs:766-773`），所以 `done → claim → fail` 会把旧 `report_path` 带进 `failed`；
   本节不判这条。⚠️ `L2:A` 里那一格 `report_path === null` 是"**从没 mark 过**的空形状读数"，
   不是"失败必清锚点"的判据 —— 别把它的绿读成后者。
-- **`receipt_path` 有两套用法，别混**：`local-receipt-set` / `receipt-check` 只认 **`.team` 相对**（走
-  `resolveUnder(teamDir, …)`、越界码 `E_PATH_ESCAPE`，§12.2.2 那张两基准表）；`local-mark` 的回执三件套
+- **`receipt_path` 有两套用法，别混**：`local-receipt-set` / `receipt-check` 只认 **`.team` 相对**那一种
+  （走 `resolveUnder(teamDir, …)`、越界码 `E_PATH_ESCAPE`，§12.2.2 那张两基准表；`local-receipt-set`
+  两种写法都**收**，落盘只写 `.team` 相对 —— §12.2.5）；`local-mark` 的回执三件套
   **按位置收**（任何落在 `<WS>/.team/` 里的拼法），但节点里存的仍是 `.team` 相对那一种（§12.2.4）——
-  读的时候只有一种形状，写的时候两种入口各自的规矩不变。
+  读的时候只有一种形状，写的时候两种入口各自收的形状不同、**存的形状同一个**。
 - **回执三件套的"必交"只有一个降档口**（§12.2.4 那条，写在这里是因为它是**边界**）：`technical` 在
   **这一场有 `claim.job_id`** 时必交（无条件 —— 回执在不在盘上都一样），**没有 claim** 时可选。
   代价照直说：**没 claim 直接 mark 的形状**（`RCP-03` / `VRF-02` 那种夹具、以及任何绕过 §12.2 第一步的调用）

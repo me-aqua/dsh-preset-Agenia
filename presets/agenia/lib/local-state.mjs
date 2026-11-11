@@ -46,9 +46,18 @@ export const NODE_STATES = Object.freeze(['unclaimed', 'running', 'done', 'faile
 /**
  * 🔴 **回执锚点的形状**（`bug-20261108-14`：这里以前没写清，组长为它猜了六次）：
  *
- * · `receipt_path` 指向的是**回执 JSON**（`.team` 相对，例 `leader/<day>/技术复盘回执.json`），
- *   它必须**带一个整数 `version`** —— `local-mark` 会拿它和 `receipt_version` 对账（读不出整数 ⇒ `E_DATA_CORRUPT`）。
+ * · `receipt_path` 指向的是**回执 JSON**（`.team` 相对，例 `leader/<day>/技术评审回执.json`），
+ *   **哪一种拼法都收、节点里只有一种**：`.team/<…>` 与 `.team` 相对都行，落盘只写 `.team` 相对那一种
+ *   （两扇读者 `lib/health.mjs` / `receipt-check` 都按 `.team` 根拼；带 `.team/` 前缀存进去，
+ *   它们会去读 `<ws>/.team/.team/…` 并当场判成"回执不在"）。
+ * · 它必须**带一个整数 `version`** —— `local-mark` 会拿它和 `receipt_version` 对账（读不出整数 ⇒ `E_DATA_CORRUPT`）。
  * · `receipt_sha256` 必须等于**盘上那一份的字节**（`E_ARG_HASH`：自报的摘要不算锚）。
+ * · 🔴 **文件由人写，op 只登记**（`bug-20261110-08`）：组长写完回执、量完摘要，再拿
+ *   `local-receipt-set` 登记。所以"目标文件已经在盘上"是**前提**，不是覆盖 —— 登记守卫只看台账
+ *   （这一版登记过没有），C-6 那句"目标版本文件已存在"是给**自己写字节的写回方**的。
+ *   同一版本登记第二次 ⇒ 拒（`E_RECEIPT_OVERWRITE`）；升一版 ⇒ 收，旧版留在 `receipt_versions` 台账里。
+ * · 登记**不置 `state`**：节点 `done` 是 `local-mark` 的事（"这一场交活了" = `state === 'done'` 且
+ *   `report_path` 非空，契约 §3.7）—— 只登记回执、不落地，卡上那一格仍算"没交"。
  * · ⚠️ **不许拿 xlsx 卡片当锚点**（`记忆更新报告-*.xlsx` / `技术评审回执-*.xlsx`）：`daily-cards.py`
  *   **每跑一次都会重写**同名文件 ⇒ 任何绑在它字节上的登记都会在下一次出卡时"过期"。
  *   卡片是**给人看的报告**，不是锚。
@@ -196,7 +205,11 @@ export function receiptVersionsOf(node) {
 
 /**
  * 盘上真实存在的回执版本 —— 按 `<team>\leader\<day>\技术复盘回执[.<n>].json` 数。
- * C-6 逐字点了"**目标版本文件已存在**"这一条，所以"文件在不在"必须真去盘上看。
+ *
+ * ⚠️ 这是**读数**，不是登记守卫（`bug-20261110-08`）：回执文件由人写，"文件在盘上"恰恰是登记的
+ * 前提；把它并进 `receiptWriteVerdict` 的 `existing`，等于拿"文件在盘上"当"这一版登记过"，
+ * 于是每一份新回执都撞 `E_RECEIPT_OVERWRITE`。登记与否只由台账（`receiptVersionsOf`）说；
+ * 本函数只喂返回信封的 `receipt_versions_on_disk`（人读"盘上有哪几版、台账上是哪几版"）。
  */
 export function receiptVersionsOnDisk(teamDir, day) {
   const dir = path.join(teamDir, 'leader', day)
@@ -491,7 +504,7 @@ function findingsCountInFile(file) {
 }
 
 /** 回执文件里声明的 `version`（整数 ≥1 才认；读不出来 / 没有这个字段 ⇒ `null`，调用方判 `E_DATA_CORRUPT`）。 */
-function receiptVersionInFile(file) {
+export function receiptVersionInFile(file) {
   let doc = null
   try {
     doc = JSON.parse(readFileSync(file, 'utf8'))
