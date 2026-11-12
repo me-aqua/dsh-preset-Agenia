@@ -1009,7 +1009,23 @@ export const BATCH_AS = ['UMH-01', 'UMH-02', 'UMH-03', 'UMH-04', 'UMH-05']
 export const BATCH_AT = ['EXR-01']
 
 /**
- * 已落笔的二十五批。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
+ * 批次 AU（2026-11-12 · Gate 2）—— **构案 0001「决议账本三册制」的判据面**（八格）。
+ *
+ * 契约：`.team/test/2026-11-12/CONTRACT-构案.md`（唯一出处：头块语法 / 概念表形状 / census 计数口径 /
+ * INDEX 行形状 / 检查器码表 / 第 2 关拒接闸 / 第 5 关反悔条件核）。落点三份文件：
+ *   · `integration/dec01-decision-files.test.mjs` —— `DEC-01` 头块七键 · `DEC-02` 同主题两条生效与
+ *     supersede 的边界 · `DEC-03` 指针（悬空/不对称/自称）· `DEC-08` 反悔条件逐格；
+ *   · `integration/dec04-index-census.test.mjs` —— `DEC-04` INDEX 与派生叶对账（含"改了实现不重生成 ⇒ 红"）·
+ *     `DEC-05` census 的 2/1/0 计数口径；
+ *   · `integration/dec06-gate-manuals.test.mjs` —— `DEC-06` 第 2 关拒接闸（命令级）· `DEC-07` 三份说明书各一行
+ *     + `team/design.md` 不动（方案岗搁置）。
+ * 🔴 **这八格今天全红，红得对**：`.tools/census.mjs` / `.tools/决议-check.mjs` / `决议/` 与三行 clause 都还不存在；
+ *   Gate 3 之后必须全绿（契约 §10）。⚠️ 不进 `FROZEN_IDS`（后加批次各自以显式清单存在）。
+ */
+export const BATCH_AU = ['DEC-01', 'DEC-02', 'DEC-03', 'DEC-04', 'DEC-05', 'DEC-06', 'DEC-07', 'DEC-08']
+
+/**
+ * 已落笔的批次（A–AU）。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
  * 批次 L 是 `F-148` 思考链过滤（同日 · 紧急票），批次 M 是 `F-152` 板子三态（同日），
@@ -1032,7 +1048,7 @@ export const BATCH_AT = ['EXR-01']
  * 批次 AB 是**提案不许当 bug 报告**（`MJUDGE-01`，2026-11-03 21:2x 老板插票 · 21:24 更正"只加判决岗"）——
  * 判两份判决岗说明书里那一节（主语 + 替换法 + 两个边界）+ 复核岗不许带那条标记句；打的也是**现役**。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP, AQ: BATCH_AQ, AR: BATCH_AR, AS: BATCH_AS, AT: BATCH_AT }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP, AQ: BATCH_AQ, AR: BATCH_AR, AS: BATCH_AS, AT: BATCH_AT, AU: BATCH_AU }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -1071,7 +1087,7 @@ const BATCH_OF = (id) =>
                                                                       : BATCH_AJ.includes(id) ? 'AJ'
                                                                         : BATCH_AK.includes(id) ? 'AK'
                                                                           : BATCH_AL.includes(id) ? 'AL'
-                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP' : BATCH_AQ.includes(id) ? 'AQ' : BATCH_AR.includes(id) ? 'AR' : BATCH_AS.includes(id) ? 'AS' : BATCH_AT.includes(id) ? 'AT'
+                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP' : BATCH_AQ.includes(id) ? 'AQ' : BATCH_AR.includes(id) ? 'AR' : BATCH_AS.includes(id) ? 'AS' : BATCH_AT.includes(id) ? 'AT' : BATCH_AU.includes(id) ? 'AU'
                                                                   : null
 
 const F = {
@@ -1283,6 +1299,13 @@ const F = {
   umh: 'integration/umh01-unmount-host-row.test.mjs',
   /** 批次 AT（2026-11-11 · Gate 2）：**R5 练习回执的落点与来源**（`bug-20261110-18`）。 */
   exr: 'unit/exr01-r5-receipt-landing.test.mjs',
+  /** 批次 AU（2026-11-12 · Gate 2）：**构案 0001 的判据面**（契约 `.team/test/2026-11-12/CONTRACT-构案.md`）。
+   *  按判据轴分三份文件：决议文件本身（头块/指针/反悔条件）· 现状层页与 census · 第 2 关闸与说明书三行。
+   *  同一轴上的格子共用一棵 `good` 夹具与同一套刀（`support/decision-ledger.mjs`）——
+   *  跨文件复用会让"这一格靠的是谁的夹具"说不清。 */
+  dec01: 'integration/dec01-decision-files.test.mjs',
+  dec04: 'integration/dec04-index-census.test.mjs',
+  dec06: 'integration/dec06-gate-manuals.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1635,6 +1658,18 @@ const ROWS = [
   // 契约 `.team/test/CONTRACT-C2.md` §3.7.2（三种来源的名字与默认落点只写在那里）；判据本体
   // `unit/exr01-r5-receipt-landing.test.mjs` + `support/r5-exercise.mjs`。
   ['EXR-01', 'boot-readings', F.exr, '`bug-20261110-18` **回执的默认落点**：身份那一半（撤挂载 + 重启后新建会话仍是 `agentPreset: agenia`）要"真的做过一次"，但旧判法只认 `AGENIA_R5_REMOVAL_EXERCISE` ⇒ 没人记得设变量就退回 HOLD，而盘上那份回执明明在（老板为此花了两次重启）。三种来源**各有名字**：`env`（优先，测试 / 副本用）/ `default`（`<ws>/.team/leader/_r5/receipt.json`，其次 `<ws>/.team/leader/<YYYY-MM-DD>/_r5/receipt.json` **新的先看**）/ `none`（两处都没有 ⇒ `HOLD BOOT-R5-REMOVAL-EXERCISE-MISSING` 且报文点名 `none` 与查过哪几条）。**有来源但读不出来 ⇒ `RED BOOT-R5-ROLLBACK-CONTRACT-BROKEN`（哪一种来源都一样）**。腿：① 只有规范落点 ⇒ `default` + GREEN；② 日期抽屉两份（新的绿 / 旧的坏）⇒ 读**新**的 + GREEN；③ 规范落点坏 JSON ⇒ `default` + **RED**（不是 HOLD）；④ 合法 JSON 但不是回执 ⇒ 同一个红码；⑤ 空工作区 ⇒ `none` + HOLD 且报文带 `none` 与规范落点路径；⑥ env 指向"身份掉了"那份 + 默认落点是好 ⇒ `env` 说了算（`RED BOOT-R5-IDENTITY-COST`）；⑦ **刀** `env-only`（把默认落点候选清单清空 = 改之前那条路）⇒ 同一个工作区翻成 `none` + HOLD（锚点须恰好 1 处）；⑧ 真读数：`PATHS.repo` 上 env 不给 ⇒ 默认落点读到老板那份回执并 GREEN（读不到 ⇒ `HOLD EXR-REAL-RECEIPT-ABSENT`，不记绿）。**`bug-20261110-17` 的两条腿**（2026-11-11 第三批 · 契约 §3.7.2-A）：⑨ 落点 `{0,2}` 但 `row_disabled:false` ⇒ **RED `BOOT-R5-ROLLBACK-CONTRACT-BROKEN`**（翻面样本）；⑩ 老格式回执（没有 `row_disabled`）⇒ **HOLD `BOOT-R5-ROW-DISABLED-UNMEASURED`**（不绿也不红、报文点名那个字段、读数里 `row_disabled === null`）；⑧ 那条真读数在盘上那份回执**还没有**这一格时也走这条 HOLD（**不记绿**：补救 = 重交一份补量过的回执）。判词只有一处：`support/boot-readings.mjs::rollbackExerciseCaseVerdict()`（`BOOT-01` 与这一格共用）', '批次 AT'],
+
+  // ── 批次 AU（2026-11-12 · Gate 2）：构案 0001「决议账本三册制」的八格 ─────────────────────
+  // 契约 `.team/test/2026-11-12/CONTRACT-构案.md` 是**唯一出处**（头块语法 / 概念表 / census / INDEX /
+  // 检查器码表 / 拒接闸 / 反悔条件核 / 样本与精确码集）。这里只登记落点与"每一格自己的刀"。
+  ['DEC-01', 'decision-ledger', F.dec01, '**决议文件 = 正文 + 固定七键头**（契约 §2 · 定形 §三.4）：真树 `决议/构案/0001-*.md` 的七键都能被检查器解析、`状态: 生效`、正文七节在；且它在 git 里（没有 `.git` 的副本 ⇒ HOLD `DEC-GIT-COPY`，不记红）。夹具九把刀（同一棵 `good` 棵树只改一处）：`missing-key`（删 `原话`）⇒ `DEC-MISSING-KEY` 且报文点名 `原话` · `dup-key` · `unknown-key` · `bad-status` · `bad-quote`（原话不带引号）· `bad-date`（2026-13-01）· `header-missing` · `title-mismatch`（H1 写 0009）· `reordered`（七键倒着写 ⇒ **必须绿**：次序不判）。每一刀都断言**码集精确相等**（多报/少报都红）', '批次 AU'],
+  ['DEC-02', 'decision-ledger', F.dec01, '**同一 主题 两条 生效 ⇒ 红；supersede 的边界是"旧文真的翻了"**（契约 §5.1-③⑤ · §8.1）：`dup`（`0002` 同主题生效、无指针）⇒ 恰好 `DUPLICATE-LIVE-TOPIC` 且点名 0001/0002；`half`（只给 `0002` 加 `supersedes: 0001`、旧文仍生效）⇒ **不许绿**，恰好 `DUPLICATE-LIVE-TOPIC` + `SUPERSEDED-BUT-LIVE` + `POINTER-ASYMMETRIC` 且点名 0001；`done`（旧文 `已废` + `superseded_by: 0002`、INDEX 指向 0002）⇒ 绿，且从 JSON 读回 0001 的 `status`/`superseded_by`/`body_sections`（**七节还在**：supersede 只许动头块两个字段，契约 §0.3-`D3`）。⚠️ Gate 3 **不建** supersede 的写者（§0.3-`D4`）—— 这一格判的是检查器的接受/拒绝边界', '批次 AU'],
+  ['DEC-03', 'decision-ledger', F.dec01, '**指针必须解析得到、双向对称、不许自称**（契约 §5.1-②）：`dangling`（`supersedes: 0009`）与 `dangling-by`（已废而 `superseded_by: 0009`）各恰好 `POINTER-DANGLING` 且点名 0009；`self`（`supersedes: 0001`）恰好 `POINTER-SELF`（**不再叠加**对称性，契约 §5.1 去重规则）；`asymmetric`（`0002` 说 supersedes `0001`，而 `0001.superseded_by` 只记 `0003`）恰好 `POINTER-ASYMMETRIC` 且点名 0001 与 0002', '批次 AU'],
+  ['DEC-04', 'decision-ledger', F.dec04, '**INDEX 是派生页，不是账本**（契约 §4 · §5.1-④）：真树上 `check` 绿、`census` 绿、页上每一格都能在重算里找到同值（行集/归属/census/构案 四列各自独立对），且跑完 `决议/` 树哈希不变（`CHECK-NOT-READONLY`）。夹具：`stale-count`（页上一个数改 3）⇒ `INDEX-ROW-MISMATCH` 点名概念与 `census` 列 · `impl-added`（加 `src/a3.mjs`、页不动）⇒ 同一个码且报文含"派生 3 / 页上 2" · `regenerated`（`census --write-index` 之后）⇒ 绿且页上真的变成 3、第一行带生成标记 · `not-generated`（删标记行）· `missing-row` / `extra-row` / `order` / `second-copy`（`.team/INDEX.md` 第二份）各恰好一条自己的码', '批次 AU'],
+  ['DEC-05', 'decision-ledger', F.dec04, '**census 的计数口径**（契约 §3.2）：一个概念两处实现 ⇒ `count === 2`（探针字面量同时出现在概念表自己那一行 —— 若把 `决议/` 也扫进来会变成 3，这条就是自吞的证人）；一处 ⇒ 1；零处 ⇒ **0**（不是缺行、不是 `—`）；同一个文件里出现两次 ⇒ 仍 1（按文件不按出现次数）；含探针但不在 `扫描` glob 里 ⇒ 0。每一面都断言 `implementations` 逐字（相对 posix、升序）与 `count === implementations.length`、`total_concepts === 1`。真树那一腿：`census --root=<repo>` 读得出、无 problems、每个概念的实现数 > 0（0 在真树上多半是探针写错）', '批次 AU'],
+  ['DEC-06', 'decision-ledger', F.dec06, '**第 2 关硬门：新机制票无构案编号 ⇒ 拒**（契约 §6 · §0.3-`D5`：这是**命令级闸**，不是散文）：`决议-check.mjs --op=gate2-card` 七张卡各只差 `票类`/`构案` 两行 —— `no-number`（`构案: —`）· `no-number-line`（整行缺）⇒ `GATE2-NO-DECISION` · `retired-number`（指向已废 0001）⇒ `GATE2-DECISION-NOT-LIVE` · `dangling-number`（0009）⇒ `GATE2-DANGLING-DECISION` · `kind-missing`（没有 `票类`）⇒ `GATE2-TICKET-KIND-MISSING`（fail-closed）；`with-number`（生效 0001）· `data-ticket`（`票类: 数据`）⇒ exit 0、`verdict: "pass"`、`problems: []`。拒的一侧还断言 `problems` **恰好一条**且 `code` 与它同值 —— 闸若"永远拒"或"永远过"，两个方向都有样本咬住', '批次 AU'],
+  ['DEC-07', 'decision-ledger', F.dec06, '**三份岗位说明书各一行 + 方案岗不动**（任务书 §5 · 契约 §8）：`presets/agenia/team/{test,dev,review}.md` 各含一行逐字 clause（测试「无构案编号的新机制票不接活」· 实现「卡首无编号退回；做不到回来 supersede，不许静默换路」· 评审「三段核 + 跑 census」）；纯函数 `clauseProblems` 判"在不在"，三份**各一条**独立红因，且**三份都读到**（少读一份 ⇒ `CLAUSE-ROSTER`）。刀：三份都给那一行 ⇒ 绿；把 test 那一行**断成两行** ⇒ 仍红（"一行"是判据的一部分）；只缺 dev ⇒ 恰好红 dev。另判 `team/design.md` 里本族字面量 0 处（`DESIGN-TOUCHED`）+ 刀（塞一个 ⇒ 必红）—— 方案岗 2026-11-12 11:39 搁置', '批次 AU'],
+  ['DEC-08', 'decision-ledger', F.dec01, '**⑦ 反悔条件逐格（第 5 关反悔条件核的机器侧）**（契约 §2.4 · §7）：`good` ⇒ 绿且 `reversal_rows` 恰好 2 行、每行 `id/condition/action/status` 四格都读得出、状态都是 `未触发`；`triggered-live`（RC-2 已触发、决议仍生效）⇒ 恰好 `REVERSAL-TRIGGERED-NOT-SUPERSEDED` 且点名 `RC-2`；`triggered-superseded`（RC-2 已触发 + 旧文已废 + 指向 0002）⇒ 绿；`row-missing-field`（RC-3 的状态空）⇒ `REVERSAL-ROW-SHAPE` 且点名 `RC-3` + `状态`；`table-missing`（⑦ 节没有表）⇒ `REVERSAL-TABLE-MISSING`；`section-missing`（删 `## ⑤ 新增什么`）⇒ `BODY-SECTION-MISSING` 且点名那一节。⚠️ 机器只判**一致性**；"这条到底触发没有"归第 5 关的人核（契约 §7 的四格）', '批次 AU'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1838,6 +1873,10 @@ export const GROUP_COUNTS = {
    *  这一组判的是**维护案**那条路（判重键 = 内容哈希、池行 `kind: maintenance`、`MR-` 号、落草稿 + 入池一步做完）；
    *  红的时候一眼看得出是哪条通道坏了（"候选提不了" vs "维护案提不了但候选没事"是两件事）。 */
   'maintenance-file': 6,
+  /** 批次 AU（2026-11-12 · Gate 2）—— **构案 0001 的八格**（`DEC-01`…`DEC-08`）。单开一组而不是并进
+   *  `static-doc` / `review`：它判的是**决议账本本身**（头块七键 / supersede 边界 / 指针 / 派生页与 census /
+   *  第 2 关拒接闸 / 反悔条件核）；红的时候一眼看得出是"哪一层没建"（工具不在 / 树不在 / 页不一致 / 闸没响）。 */
+  'decision-ledger': 8,
 }
 
 /**
@@ -1857,9 +1896,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U / V / W / X / Y / Z 都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO/AP/AQ/AR/AS/AT 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO/AP/AQ/AR/AS/AT/AU 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -1886,7 +1925,7 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
 
