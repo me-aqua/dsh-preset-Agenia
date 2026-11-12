@@ -53,8 +53,8 @@
  *
  * ── 另一支 op：`--op publish-staged` ───────────────────────────────────────
  *   把本项目三支仓库脚本**逐字节**拷进 `<stagedPreset>/bin/`（`install.mjs` / `rollback.mjs` /
- *   `release-scan.mjs`）。存在的理由：staged 里那三份是**交付物**，`.tools/` 这三份是**来源** ——
- *   没有这一步，两边就会各改各的（`release-scan.mjs` 有一条 `SCAN-TOOL-DRIFT` 专门盯它）。
+ *   `release-scan.mjs`）。存在的理由：staged 里那三份是**交付物**，`presets/agenia/bin/` 这三份是**来源** ——
+ *   没有这一步，两边就会各改各的。
  */
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -200,7 +200,7 @@ function resolveWithin(base, rel) {
  *      而且不许把**活体根**包进去（`--backup` 指到靶子的上层目录时，删一次连靶子一起没）。
  *      一个允许根都装不下它 ⇒ `E_ROOT_OUTSIDE`（报文里列出允许根）。
  *
- * ⚠️ 本文件自足（`.tools/` 与 `bin/` 那两份必须逐字节同源），所以**不 import** `lib/paths.mjs` ——
+ * ⚠️ 本文件自足（脚本不 import 共享 lib），所以**不 import** `lib/paths.mjs` ——
  *    判据与它同源，靠的是同一套原语（`canonical` / `isUnder` / `pathVerdict`）。
  */
 const BACKUP_MANIFEST_NAME = 'hash-manifest.json'
@@ -735,14 +735,14 @@ function opPublishStaged(args) {
   const repoV = pathVerdict(args.repo, '--repo')
   if (!repoV.ok) throw cliError(repoV.code, repoV.message)
   const map = [
-    ['agenia-install.mjs', 'install.mjs'],
-    ['agenia-rollback.mjs', 'rollback.mjs'],
-    ['agenia-release-scan.mjs', 'release-scan.mjs'],
+    ['install.mjs', 'install.mjs'],
+    ['rollback.mjs', 'rollback.mjs'],
+    ['release-scan.mjs', 'release-scan.mjs'],
   ]
   const published = []
   const drift = []
   for (const [srcName, dstName] of map) {
-    const from = path.join(repoV.path, '.tools', srcName)
+    const from = path.join(repoV.path, 'presets', 'agenia', 'bin', srcName)
     const to = path.join(presetRoot, 'bin', dstName)
     if (!existsSync(from)) throw cliError('E_DATA_MISSING', `来源脚本不在：${from}`)
     if (normKey(from) === normKey(to)) throw cliError('E_ROOT_OUTSIDE', `来源与落点是同一个文件：${from}`)
@@ -758,7 +758,7 @@ function opPublishStaged(args) {
     if (sha !== sha256File(from)) throw cliError('E_MANIFEST_MISMATCH', `publish 之后逐字节对不上：${to}`)
     published.push({ name: dstName, from, to, bytes: statSync(to).size, sha256: sha, was: drift.some((d) => d.name === dstName) ? 'identical' : 'synced' })
   }
-  return { staged: presetRoot, published, note: '逐字节拷贝 —— staged/bin 那三支与 .tools 这三支必须始终同源（release-scan 的 SCAN-TOOL-DRIFT 盯着）' }
+  return { staged: presetRoot, published, note: '逐字节拷贝 —— staged/bin 那三支与仓库 presets/agenia/bin 这三支必须始终同源' }
 }
 
 // ── 入口 ───────────────────────────────────────────────────────────────────
