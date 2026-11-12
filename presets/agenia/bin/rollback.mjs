@@ -2,12 +2,17 @@
 /**
  * `rollback.mjs` —— 从**备份**把活体代码退回装之前那一刻。**只回代码，不回数据。**
  *
- * 🔴 **单文件自足、零静态引用**（拍板 Q6）。理由：回滚的适用场合正是"刚装上去的那一版是坏的" ——
- *    这时候它**不能依赖任何新装上去的东西**（新 `lib/`、新 `bin/`、新模块）。所以：
- *      · 文件头没有 `import` 语句、没有 `require` 调用（`node:` 内建也走 `await import()`，
- *        它是**运行时**取的，不构成"依赖新代码"）；
- *      · 路径判据、哈希、原子替换**就地重复一份**（三支脚本各自自足，绝不共享 `lib/`）。
- *    `tests/…/integration/install-rollback.test.mjs` 的 INS-02 有一条静态断言逐行扫这个形状。
+ * 🔴 **出厂件是单文件、零静态引用**（拍板 Q6）。理由：回滚的适用场合正是"刚装上去的那一版是坏的" ——
+ *    这时候它**不能依赖任何新装上去的东西**（新 `lib/`、新 `bin/`、新模块）。
+ *    ⚠️ **本文件是 repo 那一份，不是出厂件**：两支 CLI 与共享件去重是构案 0006 的目的，所以本文件
+ *    `import` 了 `../lib/atomic.mjs`（原子写并集正文 + 删除三闸，两者在同一份共享件里）。
+ *    **出厂件由 `install.mjs --op publish-staged` 在发布时造出来**：它把 `lib/atomic.mjs` 的
+ *    原子写并集正文（删除三闸 + 原子写）**逐字内联**进来、去掉那条静态 import ⇒ 用户拿到的那一份
+ *    仍然是单文件、零静态 import，且 `node:` 内建仍走 `await import()`（运行时取，不构成"依赖新代码"）。
+ *    两棵树的这处差是**受控差异**，由 `<staging>/target-lag.json` 声明（点名本文件那一个路径）。
+ *    判据：`INS-02 ①` / `ENV-02 ROLLBACK-IMPORT` 扫**出厂件**；`ATM-01` 扫**本文件**（一份定义 + 调用点）。
+ *  · 路径判据（`canonical` / `isUnder` / `pathVerdict`）与哈希仍就地一份 —— 它们是本脚本自己的策略，
+ *    不跨脚本共用。
  *
  * ── 它做什么（四步，顺序固定）──────────────────────────────────────────────
  *   ① **靶子先过关**：`--target` 必须显式给、绝对、非 UNC、非 C 盘、非空、**盘上真实存在**
@@ -47,6 +52,8 @@
  *   `--target <dir>`（别名 `--live`）· `--backup <dir>` · `--require-backup` · `--dry-run` · `--op rollback`
  *   退出码：0 成功（含 NO-BACKUP）· 2 用法 · 3 路径 · 4 IO · 5 校验 · 7 数据/清单缺失 · 8 内部
  */
+import { deletableVerdict, writeFileAtomic } from '../lib/atomic.mjs'
+
 const fs = await import('node:fs')
 const path = await import('node:path')
 const crypto = await import('node:crypto')
@@ -166,154 +173,13 @@ function resolveWithin(base, rel) {
 
 // ── 删除三闸（契约 §2.5）────────────────────────────────────────────────────
 /**
- * **每个**删除/递归删除点删之前都要过这三关（缺一即拒删，抛稳定码，绝不"先删了再说"）：
- *   ① **解析绝对路径** —— `path.resolve` 吃掉 `.`/`..`，盘上存在再 `realpath`（连 junction 一起）；
- *      相对 / UNC / C 盘 / 数据目录（`.runtime`）一律拒
- *      （`E_ROOT_RELATIVE` / `E_ROOT_UNC` / `E_ROOT_C_DRIVE` / `E_PATH_ESCAPE`）。
- *   ② **身份 marker** —— 目标自己，或它所属的那个允许根，必须自证身份：
- *      · `.agenia-test-root`：运行根（自己那一层，或往上 4 层 —— 与 `insideTestScene` 同口径）
- *      · `hash-manifest.json`：备份根（只认**目标自己**那一层，且里面的 `live_root` 必须就是本次靶子）
- *      · `agent.cordis.yml`：预设根（只认**目标自己**那一层 —— 与 `install.mjs` 认预设根同一条判据）
- *      三者都没有 ⇒ `E_ROOT_NO_MARKER`。
- *   ③ **落点在允许删的根之下** —— 必须**严格**在它之下（那个根本身不许被删），
- *      而且不许把**靶子根**包进去。一个允许根都装不下它 ⇒ `E_ROOT_OUTSIDE`（报文里列出允许根）。
+ * **每个**删除/递归删除点删之前都要过这三关（① 解析绝对路径 ② 身份 marker ③ 落点在允许删的根之下；
+ * 缺一即拒删，稳定码 + 出声，绝不"先删了再说"）。
  *
- * ⚠️ 本文件自足（拍板 Q6：**零静态 import**，脚本不 import 共享 lib），
- *    所以**不 import** `lib/paths.mjs` —— 判据与它同源，靠的是同一套原语（`canonical` / `isUnder` / `pathVerdict`）。
- *    （`BACKUP_MANIFEST_NAME` 用的是本文件上面那一份，不另立第二个名字。）
+ * 判定本身**只有一份**：`../lib/atomic.mjs::deletableVerdict()`（与原子写收残渣读的是同一个判定）。
+ * 本文件只留两个适配层 —— `refuseDelete()`（把判定包成 CLI 错误）与 `assertDeletableTarget()`（过 ⇒ 给落点）。
+ * 出厂件（用户跑的那一份）里这段判定是**发布时逐字内联**进去的（单文件零静态 import —— 拍板 Q6）。
  */
-const PRESET_ROOT_MARKER = 'agent.cordis.yml'
-
-/** 一个目录里有没有这个文件 —— 判据是"在不在"，读不动就当没有。 */
-function hasFileIn(dir, name) {
-  try {
-    return fs.statSync(path.join(dir, name)).isFile()
-  } catch {
-    return false
-  }
-}
-
-/**
- * 身份 marker（第 ② 闸的判据）。目标是文件时判**它所在的目录**（"这个落点属于哪个根"）。
- * @returns {{kind:string, at:string}|null}
- */
-function markerOf(target, { liveRoot } = {}) {
-  let isDir = false
-  try {
-    isDir = fs.statSync(target).isDirectory()
-  } catch {
-    isDir = false
-  }
-  let at = canonical(isDir ? target : path.dirname(target))
-  for (let i = 0; i < 5; i += 1) {
-    if (hasFileIn(at, TEST_ROOT_MARKER)) return { kind: 'run-root', at }
-    if (i === 0 && hasFileIn(at, BACKUP_MANIFEST_NAME) && isOurBackupRoot(at, liveRoot)) return { kind: 'backup-root', at }
-    if (i === 0 && hasFileIn(at, PRESET_ROOT_MARKER)) return { kind: 'preset-root', at }
-    const up = path.dirname(at)
-    if (up === at) break
-    at = up
-  }
-  return null
-}
-
-/** 备份根自证：带 `hash-manifest.json`、kind 对、**而且点名了本次靶子**。 */
-function isOurBackupRoot(dir, liveRoot) {
-  if (liveRoot === undefined || liveRoot === null) return false
-  let doc = null
-  try {
-    doc = JSON.parse(fs.readFileSync(path.join(dir, BACKUP_MANIFEST_NAME), 'utf8'))
-  } catch {
-    return false
-  }
-  if (doc === null || typeof doc !== 'object' || !Array.isArray(doc.files)) return false
-  if (doc.kind !== undefined && doc.kind !== 'agenia-install-backup') return false
-  // `live_root` 缺失（早期版本的备份）⇒ 不当成"我们的"：宁可拒删，也不删错。
-  return typeof doc.live_root === 'string' && normKey(doc.live_root) === normKey(liveRoot)
-}
-
-/**
- * 闸的决定 → 报文里那个**加性字段**（裁定 v1.20 ②）：五个键，一个不多、一个不少。
- *   · `allowed_roots` —— 这一次判定的"应删的根"（解析成绝对路径；没给的那一档不占位）；
- *   · `marker_kind`   —— 第 ② 闸认出的身份（`run-root` / `backup-root` / `preset-root`）；
- *     **没走到第 ② 闸**（①就拒了 · 落点把靶子根包住了）⇒ `null` —— 不编造"它带了 marker"；
- *   · `resolved`      —— 第 ① 闸解析后的落点；解析不出来（相对 / UNC / 缺失）⇒ `null`；
- *   · `verdict`       —— `"allow"` / `"deny"`；`code` —— 拒的那个稳定码（放行时 `null`）。
- * ⚠️ 它只是一份**投影**：判定本身仍是 `deletableVerdict()` 那一份，报文不许反过来改判定。
- */
-function gateReport({ allowedRoots, marker, resolved, verdict, code }) {
-  return {
-    allowed_roots: (allowedRoots ?? [])
-      .filter((r) => r?.root !== undefined && r.root !== null && String(r.root).trim() !== '')
-      .map((r) => canonical(r.root)),
-    marker_kind: marker ?? null,
-    resolved: resolved ?? null,
-    verdict,
-    code: code ?? null,
-  }
-}
-
-/**
- * 删除前判定（三闸，**不抛**）：过 ⇒ `{ok:true, path:<解析后的落点>, root, marker…, delete_gate}`；
- * 不过 ⇒ `{ok:false, code, message, delete_gate}`（稳定码 + 一句能读的报文 + 报文里那一项）。
- *
- * @param {string} rawTarget 要删的落点（**原样**传进来，别预先 canonical —— 第 ① 闸要自己解析）
- * @param {{label:string, liveRoot:string, allowedRoots:Array<{root:string|null, why:string}>}} options
- *        `allowedRoots` = 契约里那句"**应删的根**"：目标必须严格落在其中之一
- */
-function deletableVerdict(rawTarget, { label, liveRoot, allowedRoots }) {
-  /** 拒的那一支：稳定码 + 那一项 `delete_gate`（裁定 v1.20 ②：拒删不许只有 stderr 一行）。 */
-  const deny = (code, message, { marker = null, resolved = null } = {}) => ({
-    ok: false,
-    code,
-    message,
-    delete_gate: gateReport({ allowedRoots, marker, resolved, verdict: 'deny', code }),
-  })
-
-  // ① 解析绝对路径（相对 / UNC / C 盘 / 数据目录在这条路上就拒）
-  const v = pathVerdict(rawTarget, label)
-  if (!v.ok) return deny(v.code, `拒绝删除：${v.message}`, { resolved: v.path ?? null })
-  const target = v.path
-
-  // 删的落点不许把靶子根包进去（否则"收空目录"会把整棵靶子一起收掉）
-  if (liveRoot !== undefined && liveRoot !== null && normKey(target) !== normKey(liveRoot) && isUnder(liveRoot, target)) {
-    return deny('E_ROOT_OUTSIDE', `拒绝删除：${label} 把靶子根包在里面：${target} ⊇ ${canonical(liveRoot)}`, { resolved: target })
-  }
-
-  // ③ 落点：挑最贴身（最长）的那个允许根 —— 也用于第 ② 闸判"它所属的根"
-  let matched = null
-  for (const r of allowedRoots ?? []) {
-    if (r?.root === undefined || r.root === null || String(r.root).trim() === '') continue
-    const root = canonical(r.root)
-    if (normKey(target) === normKey(root)) continue // 严格：允许根本身不许被删
-    if (!isUnder(target, root)) continue
-    if (matched === null || normKey(root).length > normKey(matched.root).length) matched = { root, why: r.why }
-  }
-
-  // ② 身份 marker：目标自己，或它所属的那个允许根
-  const onTarget = markerOf(target, { liveRoot })
-  const onRoot = matched === null ? null : markerOf(matched.root, { liveRoot })
-  if (onTarget === null && onRoot === null) {
-    return deny('E_ROOT_NO_MARKER', `拒绝删除：${label} 自己不带 ${BACKUP_MANIFEST_NAME} / ${PRESET_ROOT_MARKER}，所属根也不带 ${TEST_ROOT_MARKER}：${target}${matched === null ? '' : `（所属根 ${matched.root}）`}`, { resolved: target })
-  }
-
-  // ③ 报：一个允许根都装不下
-  if (matched === null) {
-    const where = (allowedRoots ?? []).filter((r) => r?.root).map((r) => `${r.root}（${r.why}）`).join(' · ') || '（没给允许根）'
-    return deny('E_ROOT_OUTSIDE', `拒绝删除：${label} 不在任何允许删的根之下：${target} —— 允许根：${where}`, { marker: (onTarget ?? onRoot)?.kind ?? null, resolved: target })
-  }
-  const marker = onTarget ?? onRoot
-  return {
-    ok: true,
-    code: null,
-    message: '',
-    path: target,
-    root: matched.root,
-    root_why: matched.why,
-    marker,
-    marker_on: onTarget !== null ? 'target' : 'root',
-    delete_gate: gateReport({ allowedRoots, marker: marker?.kind ?? null, resolved: target, verdict: 'allow', code: null }),
-  }
-}
 
 /**
  * **拒删的错误形状**（裁定 v1.20 ②：拒删不许只有 stderr 一行）：稳定码 + 一份 `delete_gate`，
@@ -381,50 +247,6 @@ function defaultBackupRoot(liveRoot) {
   const scene = insideTestScene(liveRoot)
   if (scene !== null) return path.join(scene, '.agenia-install-backup', slug)
   return path.join(REPO, '.tools', '_backup', 'agenia-install', slug)
-}
-
-/**
- * 原子替换（与 install.mjs 同一份实现，就地重复 —— 零依赖比共享重要）。
- * `allowedRoot` = 这一次写进去的那个根：收残留临时件也是**删除**，同样要过三闸；
- * 闸不过就**出声留着**（绝不静默 —— 静默的"清不掉"和"清干净了"长得一模一样）。
- * 被拒的那一次判定记进返回值 `cleanup_refused.delete_gate`（裁定 v1.20 ②），调用方据此把它挂到错误上。
- */
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
-}
-function writeFileAtomic(dest, buf, { allowedRoot } = {}) {
-  const dir = path.dirname(dest)
-  fs.mkdirSync(dir, { recursive: true }) // 目标目录可能还不存在（`create` 那一档就是）
-  const tmp = path.join(dir, `.${path.basename(dest)}.agenia-tmp-${process.pid}`)
-  let last = null
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    try {
-      fs.writeFileSync(tmp, buf)
-      fs.renameSync(tmp, dest)
-      return { ok: true }
-    } catch (err) {
-      last = err
-      if (!['EPERM', 'EBUSY', 'EACCES'].includes(err?.code)) break
-      sleepSync(25 * (attempt + 1))
-    }
-  }
-  const cleanup = deletableVerdict(tmp, {
-    label: '原子写的残留临时件',
-    liveRoot: allowedRoot,
-    allowedRoots: [{ root: allowedRoot ?? null, why: '本次写入的根' }],
-  })
-  let cleanupRefused = null
-  if (!cleanup.ok) {
-    cleanupRefused = { code: cleanup.code, message: cleanup.message, delete_gate: cleanup.delete_gate }
-    process.stderr.write(`[${CLI_NAME}] ${cleanup.code} ${cleanup.message} —— 临时件留着，不静默\n`)
-  } else {
-    try {
-      fs.unlinkSync(cleanup.path)
-    } catch {
-      /* 清不掉就留着 —— 但绝不静默当成功 */
-    }
-  }
-  return { ok: false, code: 'E_TXN_IO', message: `原子替换失败（${last?.code ?? '未知'}）：${dest} —— ${String(last?.message ?? '')}`, cleanup_refused: cleanupRefused }
 }
 
 /** 读备份清单：缺 / 坏 / 形状不合 ⇒ 抛（**绝不回落成"没有备份"**）。 */

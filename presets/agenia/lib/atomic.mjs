@@ -7,8 +7,12 @@
  * 四条口径：
  *   ① **临时件与目标同目录**：`<file>.tmp-<pid>-<rand>` ⇒ 同卷 `rename` 才原子。
  *      不跨卷写临时件（`_runs` 与 `_evidence` 同盘，但实现里不许假设）。
- *   ② **`fsync` 之后才 rename**；Windows 上 `rename` 会被占用文件的句柄顶成 `EPERM/EBUSY`
+ *   ② **`fsync` 之后才 rename**；Windows 上 `rename` 会被占用文件的句柄顶成 `EPERM/EBUSY/EACCES`
  *      ⇒ 指数退避重试 ≤5 次，仍失败给 `E_TXN_IO`（**不静默留下半截文件**）。
+ *      临时件用 `openSync(…, 'wx')` **独占建**：旧残留 / 符号链接不会被静默覆盖写。
+ *      收残渣（删临时件）也是**删除** ⇒ 给了 `options.allowedRoot` 就走本模块的
+ *      `deletableVerdict()` 三闸；闸不过就**出声留着**并把判定回给调用方
+ *      （`cleanup_refused`）。不给 `allowedRoot` ⇒ 与加这一层之前一字不差（尽力清掉）。
  *   ③ **锁 = `open(path,'wx')` 独占建**，内容 `{pid, session_id, at, ttl_ms}`。
  *      已存在 ⇒ 读出来判"持有者还活着吗 / 过期了吗"。**死锁不静默抢写** ⇒ `E_LOCK_STALE`，
  *      要显式 `--force-recover`（RT-01 的判据）。
@@ -17,9 +21,12 @@
  *      等一会儿再抢就可能成 ⇒ `E_LOCK_HELD` 并带 `retryable: true`，不许判成僵锁。
  *   ④ **读-改-写全程持锁**；CAS（`expected_version`）由上层比对，本模块不管语义 —— 它只保证"写是原子的、锁是真的"。
  *
+ * 本模块还带**删除三闸**（`deletableVerdict` / `gateReport`）：写失败之后收残渣也是"删除"，
+ * 判定与两支 CLI 的删除点（旧备份 / 墓碑 / 空目录回收）是**同一份**（构案 0006：一份实现）。
+ *
  * 判决风格与本目录其它纯函数一致：**返回 `{ok, code}`，不抛**（CLI 直接把它塞进错误信封）。
  */
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 
@@ -44,6 +51,226 @@ const LOCK_UNREADABLE_GRACE_MS = 5_000
 const LOCK_RETRY_ATTEMPTS = 4
 const LOCK_RETRY_MS = 5
 
+/**
+ * 🔴 **这一段之间是"原子写并集正文"**：`bin/install.mjs --op publish-staged` 发布时把它**逐字**
+ * 内联进出厂件 `bin/rollback.mjs`（出厂件必须单文件零静态 import —— 拍板 Q6；裁决见构案 0006 改定段）。
+ * 里面有两半，出厂件两半都要：
+ *   · **删除三闸**（`deletableVerdict` · `gateReport` · `dg*` 原语）—— 出厂件的墓碑/空目录回收与
+ *     本模块的残渣清理读**同一个判定**；
+ *   · **原子写**（`RETRYABLE_RENAME` · `sleepSync` · `ioError` · `cleanupTemp` · `writeFileAtomic`）。
+ * ⇒ **写在这一段里的东西必须自足**：只许用 `node:fs` / `node:crypto` / `node:path` 的那几个名字
+ *   （内联侧用一句 `const { … } = fs` 把它们绑起来）、以及本段自己声明的名字。
+ *   新增一个外部依赖 ⇒ 发布出来那一份会当场跑不动；标记不在 ⇒ `publish-staged` 直接失败（不静默发半份）。
+ *
+ * 为什么 `dg` 前缀：出厂件里本来就有自己那一套 `canonical` / `isUnder` / `pathVerdict`（它的路径策略），
+ * 同名的两份函数在同一个模块作用域里会互相顶掉 —— 前缀让"判定"与"那一份文件自己的策略"分得开。
+ */
+// @inline-begin 原子写并集正文（删除三闸 + 原子写；发布时内联进出厂件，边界由这一对标记定）
+// ── 删除三闸（契约 §2.5）────────────────────────────────────────────────────
+/**
+ * **每个**删除/递归删除点删之前都要过这三关（缺一即拒删，绝不"先删了再说"）：
+ *   ① **解析绝对路径** —— `path.resolve` 吃掉 `.`/`..`，盘上存在再 `realpath`（连 junction 一起）；
+ *      相对 / UNC / C 盘 / 数据目录（`.runtime`）一律拒
+ *      （`E_ROOT_RELATIVE` / `E_ROOT_UNC` / `E_ROOT_C_DRIVE` / `E_PATH_ESCAPE`）。
+ *   ② **身份 marker** —— 目标自己，或它所属的那个允许根，必须自证身份：
+ *      · `.agenia-test-root`：运行根（自己那一层，或往上 4 层 —— 与 `insideTestScene` 同口径）
+ *      · `hash-manifest.json`：备份根（只认**目标自己**那一层，且里面的 `live_root` 必须就是本次靶子
+ *        —— 别人的备份不当自己的删）
+ *      · `agent.cordis.yml`：预设根（只认**目标自己**那一层 —— 与 `--op publish-staged` 认预设根同一条判据）
+ *      三者都没有 ⇒ `E_ROOT_NO_MARKER`。
+ *   ③ **落点在允许删的根之下** —— 必须**严格**在它之下（那个根本身不许被删），
+ *      而且不许把**活体根**包进去（`--backup` 指到靶子的上层目录时，删一次连靶子一起没）。
+ *      一个允许根都装不下它 ⇒ `E_ROOT_OUTSIDE`（报文里列出允许根）。
+ */
+const DG_TEST_ROOT_MARKER = '.agenia-test-root'
+const DG_BACKUP_MANIFEST_NAME = 'hash-manifest.json'
+const DG_PRESET_ROOT_MARKER = 'agent.cordis.yml'
+/** 靶子根、备份根都不许落在数据目录里（与 `lib/paths.mjs` / 两支 CLI 的黑名单同一份）。 */
+const DG_PROTECTED_TARGET_SEGMENTS = ['.runtime']
+
+function dgCanonical(p) {
+  const abs = path.resolve(String(p))
+  try {
+    return realpathSync.native(abs) // 盘上存在 ⇒ 连 junction/symlink 一起吃掉
+  } catch {
+    return abs
+  }
+}
+
+function dgNormKey(p) {
+  let s = dgCanonical(p).replace(/\\/g, '/')
+  while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1)
+  return s.toLowerCase()
+}
+
+function dgIsUnder(child, parent) {
+  const c = dgNormKey(child)
+  const p = dgNormKey(parent)
+  return c === p || c.startsWith(`${p}/`)
+}
+
+function dgDriveOf(p) {
+  const m = /^([A-Za-z]):/.exec(String(p ?? ''))
+  return m ? m[1].toUpperCase() : null
+}
+
+/**
+ * 路径判定（删除目标那一侧）。与 `bin/install.mjs::pathVerdict` 同源同值，
+ * 只是不带 `allowProtected` 那一档 —— 删除目标**永远**不许落在 `.runtime` 里。
+ */
+function dgPathVerdict(raw, label) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return { ok: false, code: 'E_ROOT_MISSING', message: `${label} 缺失（省略 / 空串都算缺失）` }
+  }
+  const s = String(raw)
+  if (/^\\\\/.test(s) || /^\/\//.test(s)) return { ok: false, code: 'E_ROOT_UNC', message: `${label} 不许是 UNC：${s}` }
+  if (!/^[A-Za-z]:[\\/]/.test(s)) return { ok: false, code: 'E_ROOT_RELATIVE', message: `${label} 必须是绝对路径：${s}` }
+  const abs = dgCanonical(s)
+  // 拒的时候把**解析出来的绝对路径**一起带回去（`path`）：报文里的 `delete_gate.resolved` 要它。
+  // 解析不出来的那几档（相对 / UNC / 缺失）没有 `path` —— 那一档不许拿 cwd 现编一个。
+  if (dgDriveOf(abs) === 'C') return { ok: false, code: 'E_ROOT_C_DRIVE', message: `${label} 不许在 C 盘：${abs}`, path: abs }
+  const segs = abs.replace(/\\/g, '/').split('/').map((x) => x.toLowerCase())
+  for (const bad of DG_PROTECTED_TARGET_SEGMENTS) {
+    if (segs.includes(bad)) return { ok: false, code: 'E_PATH_ESCAPE', message: `${label} 落在数据目录里（${bad}）：${abs}`, path: abs }
+  }
+  return { ok: true, code: null, path: abs }
+}
+
+/** 一个目录里有没有这个文件 —— 判据是"在不在"，读不动就当没有。 */
+function dgHasFileIn(dir, name) {
+  try {
+    return statSync(path.join(dir, name)).isFile()
+  } catch {
+    return false
+  }
+}
+
+/** 备份根自证：带 `hash-manifest.json`、kind 对、**而且点名了本次靶子**。 */
+function dgIsOurBackupRoot(dir, liveRoot) {
+  if (liveRoot === undefined || liveRoot === null) return false
+  let doc = null
+  try {
+    doc = JSON.parse(readFileSync(path.join(dir, DG_BACKUP_MANIFEST_NAME), 'utf8'))
+  } catch {
+    return false
+  }
+  if (doc === null || typeof doc !== 'object' || !Array.isArray(doc.files)) return false
+  if (doc.kind !== undefined && doc.kind !== 'agenia-install-backup') return false
+  // `live_root` 缺失（早期版本的备份）⇒ 不当成"我们的"：宁可拒删，也不删错。
+  return typeof doc.live_root === 'string' && dgNormKey(doc.live_root) === dgNormKey(liveRoot)
+}
+
+/**
+ * 身份 marker（第 ② 闸的判据）。目标是文件时判**它所在的目录**（"这个落点属于哪个根"）。
+ * @returns {{kind:string, at:string}|null}
+ */
+function dgMarkerOf(target, { liveRoot } = {}) {
+  let isDir = false
+  try {
+    isDir = statSync(target).isDirectory()
+  } catch {
+    isDir = false
+  }
+  let at = dgCanonical(isDir ? target : path.dirname(target))
+  for (let i = 0; i < 5; i += 1) {
+    if (dgHasFileIn(at, DG_TEST_ROOT_MARKER)) return { kind: 'run-root', at }
+    if (i === 0 && dgHasFileIn(at, DG_BACKUP_MANIFEST_NAME) && dgIsOurBackupRoot(at, liveRoot)) return { kind: 'backup-root', at }
+    if (i === 0 && dgHasFileIn(at, DG_PRESET_ROOT_MARKER)) return { kind: 'preset-root', at }
+    const up = path.dirname(at)
+    if (up === at) break
+    at = up
+  }
+  return null
+}
+
+/**
+ * 闸的决定 → 报文里那个**加性字段**（裁定 v1.20 ②）：五个键，一个不多、一个不少。
+ *   · `allowed_roots` —— 这一次判定的"应删的根"（解析成绝对路径；没给的那一档不占位）；
+ *   · `marker_kind`   —— 第 ② 闸认出的身份（`run-root` / `backup-root` / `preset-root`）；
+ *     **没走到第 ② 闸**（①就拒了 · 落点把活体根包住了）⇒ `null` —— 不编造"它带了 marker"；
+ *   · `resolved`      —— 第 ① 闸解析后的落点；解析不出来（相对 / UNC / 缺失）⇒ `null`；
+ *   · `verdict`       —— `"allow"` / `"deny"`；`code` —— 拒的那个稳定码（放行时 `null`）。
+ * ⚠️ 它只是一份**投影**：判定本身是 `deletableVerdict()` 那一份，报文不许反过来改判定。
+ */
+export function gateReport({ allowedRoots, marker, resolved, verdict, code }) {
+  return {
+    allowed_roots: (allowedRoots ?? [])
+      .filter((r) => r?.root !== undefined && r.root !== null && String(r.root).trim() !== '')
+      .map((r) => dgCanonical(r.root)),
+    marker_kind: marker ?? null,
+    resolved: resolved ?? null,
+    verdict,
+    code: code ?? null,
+  }
+}
+
+/**
+ * 删除前判定（三闸，**不抛**）：过 ⇒ `{ok:true, path:<解析后的落点>, root, marker…, delete_gate}`；
+ * 不过 ⇒ `{ok:false, code, message, delete_gate}`（稳定码 + 一句能读的报文 + 报文里那一项）。
+ *
+ * 谁读它：`bin/install.mjs`（旧备份）· `bin/rollback.mjs`（墓碑 / 空目录回收）·
+ * 本模块的 `cleanupTemp()`（原子写失败后的残渣）。出厂件里这一份是发布时内联进去的**同一段正文**。
+ *
+ * @param {string} rawTarget 要删的落点（**原样**传进来，别预先 canonical —— 第 ① 闸要自己解析）
+ * @param {{label:string, liveRoot:string, allowedRoots:Array<{root:string|null, why:string}>}} options
+ *        `allowedRoots` = 契约里那句"**应删的根**"：目标必须严格落在其中之一
+ */
+export function deletableVerdict(rawTarget, { label, liveRoot, allowedRoots }) {
+  /** 拒的那一支：稳定码 + 那一项 `delete_gate`（裁定 v1.20 ②：拒删不许只有 stderr 一行）。 */
+  const deny = (code, message, { marker = null, resolved = null } = {}) => ({
+    ok: false,
+    code,
+    message,
+    delete_gate: gateReport({ allowedRoots, marker, resolved, verdict: 'deny', code }),
+  })
+
+  // ① 解析绝对路径（相对 / UNC / C 盘 / 数据目录在这条路上就拒）
+  const v = dgPathVerdict(rawTarget, label)
+  if (!v.ok) return deny(v.code, `拒绝删除：${v.message}`, { resolved: v.path ?? null })
+  const target = v.path
+
+  // 删的落点不许把活体根包进去（否则"清旧备份"会把靶子本身一起清掉）
+  if (liveRoot !== undefined && liveRoot !== null && dgNormKey(target) !== dgNormKey(liveRoot) && dgIsUnder(liveRoot, target)) {
+    return deny('E_ROOT_OUTSIDE', `拒绝删除：${label} 把活体根包在里面（删一次连靶子一起没）：${target} ⊇ ${dgCanonical(liveRoot)}`, { resolved: target })
+  }
+
+  // ③ 落点：挑最贴身（最长）的那个允许根 —— 也用于第 ② 闸判"它所属的根"
+  let matched = null
+  for (const r of allowedRoots ?? []) {
+    if (r?.root === undefined || r.root === null || String(r.root).trim() === '') continue
+    const root = dgCanonical(r.root)
+    if (dgNormKey(target) === dgNormKey(root)) continue // 严格：允许根本身不许被删
+    if (!dgIsUnder(target, root)) continue
+    if (matched === null || dgNormKey(root).length > dgNormKey(matched.root).length) matched = { root, why: r.why }
+  }
+
+  // ② 身份 marker：目标自己，或它所属的那个允许根
+  const onTarget = dgMarkerOf(target, { liveRoot })
+  const onRoot = matched === null ? null : dgMarkerOf(matched.root, { liveRoot })
+  if (onTarget === null && onRoot === null) {
+    return deny('E_ROOT_NO_MARKER', `拒绝删除：${label} 自己不带 ${DG_BACKUP_MANIFEST_NAME} / ${DG_PRESET_ROOT_MARKER}，所属根也不带 ${DG_TEST_ROOT_MARKER}：${target}${matched === null ? '' : `（所属根 ${matched.root}）`}`, { resolved: target })
+  }
+
+  // ③ 报：一个允许根都装不下
+  if (matched === null) {
+    const where = (allowedRoots ?? []).filter((r) => r?.root).map((r) => `${r.root}（${r.why}）`).join(' · ') || '（没给允许根）'
+    return deny('E_ROOT_OUTSIDE', `拒绝删除：${label} 不在任何允许删的根之下：${target} —— 允许根：${where}`, { marker: (onTarget ?? onRoot)?.kind ?? null, resolved: target })
+  }
+  const marker = onTarget ?? onRoot
+  return {
+    ok: true,
+    code: null,
+    message: '',
+    path: target,
+    root: matched.root,
+    root_why: matched.why,
+    marker,
+    marker_on: onTarget !== null ? 'target' : 'root',
+    delete_gate: gateReport({ allowedRoots, marker: marker?.kind ?? null, resolved: target, verdict: 'allow', code: null }),
+  }
+}
+
+// ── 原子写 ─────────────────────────────────────────────────────────────────
 /** 这些 rename 失败是可重试的（Windows 上被占用的句柄）：①被占用 ②设备忙 ③权限瞬时拒绝。 */
 const RETRYABLE_RENAME = new Set(['EPERM', 'EBUSY', 'EACCES'])
 
@@ -59,18 +286,58 @@ function ioError(message, extra = {}) {
 }
 
 /**
- * 原子写一个文件（同目录临时件 → fsync → rename）。
+ * 收残留临时件 —— **一次判定，两条失败路径共用**（临时件写不出来 / rename 重试用尽）。
+ *
+ * · `allowedRoot` 没给 ⇒ 与加闸之前一字不差：尽力 `unlink`，不问（这个模块的老调用方全都走这一档）；
+ * · 给了 ⇒ 走 `deletableVerdict()` 的三闸（残留临时件也是**删除**）；
+ *   闸不过 ⇒ **出声留着**（静默的"清不掉"和"清干净了"长得一模一样），并把那一份判定回给调用方
+ *   —— 调用方据此把它挂到错误信封上（`cleanup_refused.delete_gate`）。
+ *
+ * @returns {null|{code:string, message:string, delete_gate:object}} 拒删时那一份判定；其余 `null`
+ */
+function cleanupTemp(tmp, allowedRoot) {
+  if (allowedRoot === undefined || allowedRoot === null) {
+    try { unlinkSync(tmp) } catch { /* 临时件可能压根没建起来 */ }
+    return null
+  }
+  const cleanup = deletableVerdict(tmp, {
+    label: '原子写的残留临时件',
+    liveRoot: allowedRoot,
+    allowedRoots: [{ root: allowedRoot ?? null, why: '本次写入的根' }],
+  })
+  if (!cleanup.ok) {
+    process.stderr.write(`[atomic] ${cleanup.code} ${cleanup.message} —— 临时件留着，不静默\n`)
+    return { code: cleanup.code, message: cleanup.message, delete_gate: cleanup.delete_gate }
+  }
+  try {
+    unlinkSync(cleanup.path)
+  } catch {
+    /* 清不掉就留着 —— 但绝不静默当成功 */
+  }
+  return null
+}
+
+/**
+ * 原子写一个文件（同目录临时件 → `writeSync` → `fsync` → `rename`）。
+ *
+ * 这个函数是**唯一一份**原子写实现：`bin/install.mjs` / `bin/rollback.mjs` 从这里 import，
+ * 出厂件那一份由 `install.mjs --op publish-staged` 在发布时把同一段正文内联进去
+ * （出厂件保持单文件零静态 import —— 拍板 Q6）。
  *
  * @param {string} file 目标文件（父目录会自动建）
  * @param {string|Buffer|Uint8Array} data 内容
- * @param {object} [options] `{ fsync?:boolean, maxAttempts?:number, retryBaseMs?:number, pid?, rand?, sleep? }`
- * @returns {{ok:true,code:null,path:string,bytes:number,attempts:number}|{ok:false,code:string,message:string,path?:string,attempts?:number}}
+ * @param {object} [options] `{ fsync?:boolean, maxAttempts?:number, retryBaseMs?:number, allowedRoot?:string|null, pid?, rand?, sleep? }`
+ *        `allowedRoot` = 这一次写进去的那个根：**不给就不判**残渣该不该删（老行为）；
+ *        给了 ⇒ 删之前过三闸，拒删就出声留着（见 `cleanupTemp`）。
+ * @returns {{ok:true,code:null,message:string,path:string,bytes:number,attempts:number}
+ *          |{ok:false,code:string,message:string,path?:string,attempts?:number,cleanup_refused?:object|null}}
  */
 export function writeFileAtomic(file, data, options = {}) {
   const {
     fsync = true,
     maxAttempts = 5,
     retryBaseMs = 15,
+    allowedRoot = null,
     pid = process.pid,
     rand = randomBytes(6).toString('hex'),
     sleep = sleepSync,
@@ -98,25 +365,26 @@ export function writeFileAtomic(file, data, options = {}) {
     if (handle !== null) {
       try { closeSync(handle) } catch { /* 已经在失败路径上，关不掉就算了 */ }
     }
-    try { unlinkSync(tmp) } catch { /* 临时件可能压根没建起来 */ }
-    return ioError(`写临时件失败（${err?.code ?? 'UNKNOWN'}）：${err?.message}`, { path: target })
+    const cleanupRefused = cleanupTemp(tmp, allowedRoot)
+    return ioError(`写临时件失败（${err?.code ?? 'UNKNOWN'}）：${err?.message}`, { path: target, attempts: 1, cleanup_refused: cleanupRefused })
   }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       renameSync(tmp, target)
-      return { ok: true, code: null, path: target, bytes: buf.length, attempts: attempt }
+      return { ok: true, code: null, message: '', path: target, bytes: buf.length, attempts: attempt }
     } catch (err) {
       const retryable = RETRYABLE_RENAME.has(err?.code)
       if (!retryable || attempt === maxAttempts) {
-        try { unlinkSync(tmp) } catch { /* 尽力清掉临时件，别留残渣 */ }
-        return ioError(`rename 失败（${err?.code ?? 'UNKNOWN'}，第 ${attempt} 次）：${err?.message}`, { path: target, attempts: attempt })
+        const cleanupRefused = cleanupTemp(tmp, allowedRoot)
+        return ioError(`rename 失败（${err?.code ?? 'UNKNOWN'}，第 ${attempt} 次）：${err?.message}`, { path: target, attempts: attempt, cleanup_refused: cleanupRefused })
       }
       sleep(retryBaseMs * 2 ** (attempt - 1))
     }
   }
   return ioError('rename 重试耗尽', { path: target, attempts: maxAttempts })
 }
+// @inline-end 原子写并集正文（这一行与上面那条 begin 标记成对；缺一条 ⇒ 发布拒跑）
 
 /** 原子写一份 JSON（缩进 2 + 结尾换行：与本目录其它产物同一形状）。 */
 export function writeJsonAtomic(file, obj, options = {}) {
