@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `agenia-install.mjs` —— 把 **staged** 的预设装进 **活体**（`presets/agenia`）。
+ * `install.mjs` —— 把 **staged** 的预设装进 **活体**（`presets/agenia`）。
  *
  * ── 它到底做什么（六步，顺序固定）────────────────────────────────────────────
  *   ① 量**两棵树**：staged 树哈希 + 活体树哈希（口径见下）—— 装之前先知道原来长什么样；
@@ -12,11 +12,14 @@
  *      **只按清单动代码**：不清目录、不删多余文件、不递归覆盖；
  *   ⑥ **装后复量**：活体树哈希 + **被保留集合**的子树哈希（装前 == 装后 ⇒ "只动了清单里那几个"）。
  *
- * ── CLI 形状（两种调用都能用，同一支脚本）──────────────────────────────────
+ * ── CLI 形状（三种调用都能用，同一支脚本）──────────────────────────────────
  *   仓库工具：`--staged <dir> --live <dir> [--dry-run] [--manifest <file>] [--backup <dir>]`
  *   测试/被装侧：`--op install --release <dir> --target <dir> [--manifest <file>]`
+ *   发布：`--op publish-staged --staged <stagedPreset> [--repo <仓库根>]`
  *   ⚠️ `--release` 是 `--staged` 的别名、`--target` 是 `--live` 的别名 —— **同一支脚本两个名字**，
  *      不是两套实现。`--staged` / `--live` **逐次显式**：没有任何 env 兜底、没有默认值。
+ *   `--repo` 只在 `publish-staged` 用：**仓库根**，缺省按本文件位置推导
+ *   （`presets/agenia/bin/install.mjs` 往上三级），不是预设根。
  *
  * ── 硬口径 ──────────────────────────────────────────────────────────────────
  *   · **拒绝**：C 盘 / UNC / 相对路径 / 空串 / `..` 穿越 / 目标落在 `.runtime` 或 `.team` 里 /
@@ -54,7 +57,8 @@
  * ── 另一支 op：`--op publish-staged` ───────────────────────────────────────
  *   把本项目三支仓库脚本**逐字节**拷进 `<stagedPreset>/bin/`（`install.mjs` / `rollback.mjs` /
  *   `release-scan.mjs`）。存在的理由：staged 里那三份是**交付物**，`presets/agenia/bin/` 这三份是**来源** ——
- *   没有这一步，两边就会各改各的。
+ *   没有这一步，两边就会各改各的。源按 `--repo` 解析：`<repo>/presets/agenia/bin/<name>`；
+ *   `--repo` 缺省 = 按本文件位置推导的仓库根（不是预设根）。
  */
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -62,7 +66,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SELF = fileURLToPath(import.meta.url)
-const REPO = path.resolve(path.dirname(SELF), '..')
+const REPO = path.resolve(path.dirname(SELF), '..', '..', '..')
 const CLI_NAME = 'install.mjs'
 
 /** 退出码表：键与值都与 staged `lib/error-codes.mjs` 一致（本文件自足，故就地留一份）。 */

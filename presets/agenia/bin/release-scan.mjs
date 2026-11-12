@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `agenia-release-scan.mjs` —— **装后 / 发布前**的五类扫描。
+ * `release-scan.mjs` —— **装后 / 发布前**的五类扫描。
  *
  * ── 五类（逐条对应派工单；每一类都给**稳定码**，正例负例都能各自点名）────────
  *   ① **活体树与 staged 清单逐项相符**
@@ -54,7 +54,7 @@
  *   `--staged <dir>`   源侧（默认 = 发布物根；都没给 ⇒ `<repo>/.tools/_staging/agenia-upgrade/preset`）
  *   `--live <dir>`     活体（默认 = `<repo>/presets/agenia`）
  *   `--backup <dir>`   备份落点（只**看**它合不合规，绝不写它）
- *   `--repo <dir>`     仓库根（默认 = 本脚本的上一级）
+ *   `--repo <dir>`     仓库根（默认 = 按本脚本位置推导；是仓库根，不是预设根）
  *   `--strict`         findings 非空 ⇒ 退出 5
  *   `--op scan|frozen-lines|help`
  */
@@ -64,7 +64,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SELF = fileURLToPath(import.meta.url)
-const REPO = path.resolve(path.dirname(SELF), '..')
+const REPO = path.resolve(path.dirname(SELF), '..', '..', '..')
 const CLI_NAME = 'release-scan.mjs'
 const OP_NAMES = ['scan', 'frozen-lines', 'help']
 const PROTECTED_SEGMENTS = ['.runtime', '.team']
@@ -95,7 +95,7 @@ const LEADER_TEXTS = ['leader.md', 'work-guidelines.md', 'persona.md', 'me-aqua.
 /**
  * 冻结行数表（口径：剥 BOM 后数 `\n`；CRLF 算一个换行）。
  * 量于 2026-10-15，对象 = `.tools/_staging/agenia-upgrade/preset/`（staged 侧）。
- * 改了注入文本 ⇒ `<node> .tools/agenia-release-scan.mjs --op frozen-lines` 打新表贴回来。
+ * 改了注入文本 ⇒ `<node> <repo>/presets/agenia/bin/release-scan.mjs --op frozen-lines` 打新表贴回来。
  */
 const FROZEN_LINES = Object.freeze({
   'leader.md': 107,

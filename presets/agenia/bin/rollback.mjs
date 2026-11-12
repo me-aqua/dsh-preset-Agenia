@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `agenia-rollback.mjs` —— 从**备份**把活体代码退回装之前那一刻。**只回代码，不回数据。**
+ * `rollback.mjs` —— 从**备份**把活体代码退回装之前那一刻。**只回代码，不回数据。**
  *
  * 🔴 **单文件自足、零静态引用**（拍板 Q6）。理由：回滚的适用场合正是"刚装上去的那一版是坏的" ——
  *    这时候它**不能依赖任何新装上去的东西**（新 `lib/`、新 `bin/`、新模块）。所以：
@@ -53,7 +53,7 @@ const crypto = await import('node:crypto')
 const url = await import('node:url')
 
 const SELF = url.fileURLToPath(import.meta.url)
-const REPO = path.resolve(path.dirname(SELF), '..')
+const REPO = path.resolve(path.dirname(SELF), '..', '..', '..')
 const CLI_NAME = 'rollback.mjs'
 const TEST_ROOT_MARKER = '.agenia-test-root'
 /**
@@ -178,7 +178,7 @@ function resolveWithin(base, rel) {
  *   ③ **落点在允许删的根之下** —— 必须**严格**在它之下（那个根本身不许被删），
  *      而且不许把**靶子根**包进去。一个允许根都装不下它 ⇒ `E_ROOT_OUTSIDE`（报文里列出允许根）。
  *
- * ⚠️ 本文件自足（拍板 Q6：**零静态 import**，`.tools/` 与 `bin/` 那两份必须逐字节同源），
+ * ⚠️ 本文件自足（拍板 Q6：**零静态 import**，脚本不 import 共享 lib），
  *    所以**不 import** `lib/paths.mjs` —— 判据与它同源，靠的是同一套原语（`canonical` / `isUnder` / `pathVerdict`）。
  *    （`BACKUP_MANIFEST_NAME` 用的是本文件上面那一份，不另立第二个名字。）
  */
