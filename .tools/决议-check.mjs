@@ -30,7 +30,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
-  DASH, GEN_MARKER_NEEDLES, INDEX_COLUMNS, INDEX_REL, REPO_ROOT,
+  DASH, GEN_MARKER_NEEDLES, INDEX_COLUMNS, INDEX_REL, REPO_ROOT, SERIES, TABLE_REL,
   linesOf, parseRefList, problem, readText, resolveRef, scanLedger, splitTableRow,
 } from './census.mjs'
 
@@ -184,15 +184,54 @@ function secondCopies(root) {
 }
 
 // ── op: check ──────────────────────────────────────────────────────────────
+/** `决议/` 下有没有可判的东西（决议文件 / 概念表 / INDEX）。三样都没有 ⇒ 空集，不是错（契约 §5.3 末条）。 */
+function ledgerIsEmpty(root) {
+  const dir = path.join(root, '决议')
+  if (!existsSync(dir)) return true
+  if (existsSync(path.join(root, INDEX_REL)) || existsSync(path.join(root, TABLE_REL))) return false
+  for (const series of SERIES) {
+    const sub = path.join(dir, series)
+    if (!existsSync(sub)) continue
+    try {
+      if (readdirSync(sub).some((n) => n.endsWith('.md'))) return false
+    } catch {
+      return false
+    }
+  }
+  return true
+}
+
 export function runCheck({ root }) {
+  // 空集不是错：本工具判一致性，不判项目进度（契约 §5.3 末条）——
+  // 这一条必须在 `scanLedger` 之前，否则"一棵还没有账本的树"会被报成 `CONCEPT-TABLE-MISSING`。
+  if (ledgerIsEmpty(root)) {
+    return {
+      ok: true,
+      root: path.resolve(root),
+      op: 'check',
+      decisions: [],
+      concepts: [],
+      index: { file: INDEX_REL, present: false, generated_marker: false, rows: [], judged: false },
+      problems: [],
+    }
+  }
   const scan = scanLedger(root)
   const problems = [...scan.problems]
-  // 决议树整个不在 ⇒ 空集不是错（契约 §5.3 末条：本工具判一致性，不判项目进度）
-  const ledgerDir = path.join(root, '决议')
-  const emptyLedger = !existsSync(ledgerDir) && !scan.table.present && scan.decisions.length === 0
-
-  const index = emptyLedger
-    ? { file: INDEX_REL, present: false, generated_marker: false, rows: [] }
+  /**
+   * 概念表不在 ⇒ **不判** ④/⑥（契约 §5.1 的级联：上游缺只报上游那一条）。
+   * ④ 的派生叶是从概念表长出来的：没有表就没有"应有的行集"，此时判 `INDEX` 的行只会判出
+   * 一页假红（"概念表里没有这一行"其实说的是"概念表不在"）。
+   */
+  const tableMissing = !scan.table.present
+  const index = tableMissing
+    ? {
+      file: INDEX_REL,
+      present: existsSync(path.join(root, INDEX_REL)),
+      generated_marker: false,
+      rows: [],
+      judged: false,
+      skipped: 'CONCEPT-TABLE-MISSING',
+    }
     : judgeIndex(root, scan.concepts, problems)
   /**
    * 读数里的 `census` 是**数**（契约 §5.3 的形状：`census: 2`），不是页上那串字。
@@ -205,12 +244,10 @@ export function runCheck({ root }) {
     })
   }
 
-  if (!emptyLedger) {
-    for (const file of secondCopies(root)) {
-      const rel = path.relative(root, file).replace(/\\/g, '/')
-      problems.push(problem('INDEX-SECOND-COPY', `${rel} 是第二份 \`INDEX.md\` —— 构案录只许有一份，`
-        + `住 \`${INDEX_REL}\`（定形 §五 / 契约 §1.1）`, { file: rel }))
-    }
+  for (const file of secondCopies(root)) {
+    const rel = path.relative(root, file).replace(/\\/g, '/')
+    problems.push(problem('INDEX-SECOND-COPY', `${rel} 是第二份 \`INDEX.md\` —— 构案录只许有一份，`
+      + `住 \`${INDEX_REL}\`（定形 §五 / 契约 §1.1）`, { file: rel }))
   }
 
   const decisions = scan.decisions.map((d) => ({
