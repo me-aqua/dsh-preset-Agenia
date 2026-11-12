@@ -3,7 +3,8 @@
  *
  * 病（史山清查 A1，2026-11-12 现量）：`.tools/agenia-install.mjs` · `.tools/agenia-rollback.mjs` 是
  * `presets/agenia/bin/install.mjs` / `rollback.mjs` 的**逐字节副本**；`.tools/agenia-release-scan.mjs`
- * 是 `bin/release-scan.mjs` 的**陈旧副本**（已分叉：36,104 B vs 38,749 B）。活引用 0 —— 三份都是死拷贝。
+ * 是 `bin/release-scan.mjs` 的**陈旧副本**（已分叉：36,104 B vs 38,749 B）。活引用 0 —— 三份都是死拷贝
+ * （Gate 3 已删；这一格守的是"**删完之后不许再长出第二份**"，不是"删"本身）。
  *
  * ## 判什么（口径，只有这一份）
  *   ① **扫描面** = 两个目录的**顶层** `*.mjs`：
@@ -11,11 +12,10 @@
  *      子目录（`.tools/lib` / `.tools/_staging` / `.tools/_backup`）**不在**扫描面：
  *      它们是库 / 测试靶子 / 安装备份，`bin/` 里的同名件在那里是**合法**的，扫进去只会造出假红。
  *      非 `.mjs` 文件（`.tools/daily-cards.py`）也不在扫描面 —— 这不是"所有文件都不许重名"。
- *   ② **工具键** = 文件名，**`.tools` 那一侧再按旧名前缀 `agenia-` 归一一次**：
- *      `.tools/agenia-install.mjs` 与 `presets/agenia/bin/install.mjs` 是**同一个工具**的旧名 / 新名。
- *      来历不是这条判据自创的：产品自己的发布表就写着这三对
- *      （`presets/agenia/bin/install.mjs:737-741` 的 `map`：`agenia-install.mjs → install.mjs`、
- *      `agenia-rollback.mjs → rollback.mjs`、`agenia-release-scan.mjs → release-scan.mjs`）。
+ *   ② **工具键** = 文件名，**`.tools` 那一侧再按历史前缀 `agenia-` 归一一次**（通用规则，没有第二份
+ *      手写名字表）：`.tools/agenia-install.mjs` 与 `presets/agenia/bin/install.mjs` 是**同一个工具**的
+ *      旧名 / 新名。这条口径的唯一出处是契约 §0.3；三对旧名作为"Gate 2 那三份"的来历见定形 §一 与
+ *      Gate 2 的机器读数（`dup01-gate2-full4` 的 `readings.real_tree`）。
  *      ⇒ 这一条判的是**工具身份**，不是"字面同名"：`.tools/agenia-X.mjs` 与 `bin/X.mjs` 撞上就是第二份拷贝。
  *   ③ **一对就是红**，两种形状都红：**逐字节相同**（第二份拷贝）与**同名但已分叉**（陈旧副本）。
  *      分叉那种更要红：跑老那份就少一截行为，而它看上去还是"那个工具"。
@@ -25,9 +25,11 @@
  * ## 不判什么（边界）
  *   · 不判内容对不对、不判该不该有 `.tools` 这一层、不判 `bin/` 里两个工具彼此像不像；
  *   · 不判 `.tools` 之外（仓库根、`tests/`、`.team/` 历史档案里的旧路径是**记录**，不是引用）；
- *   · 不判"发布表还在不在"—— 那张表是**来历**（why 旧名 = 新名），不是这一格的结果。
+ *   · 不判 `publish-staged` 跑起来对不对（那是发布路径的活）：腿 E 只钉"**op 体内不许再出现 `.tools` 段**、
+ *     它列的源名字都在 live `bin/` 里"。跑这个 op 本身归发布侧的探针。
  *
- * 判词只有一处：`toolCopyVerdict()`（用例与将来的读者都读它，不许各写一份）。
+ * 判词只有一处：`toolCopyVerdict()`（用例与将来的读者都读它，不许各写一份）。腿 E 的判词同理只在
+ * `publishStagedSourceVerdict()` 一处。
  */
 
 import { createHash } from 'node:crypto'
@@ -169,8 +171,9 @@ export function scanToolCopies({ root } = {}) {
       legacy_prefix: LEGACY_PREFIX,
       top_level_only: true,
       dirs: TOOL_COPY_SCAN.map((spec) => spec.rel),
-      /** 旧名 → 新名这条归一的来历（读数，不是这一格在判它）。 */
-      provenance: 'presets/agenia/bin/install.mjs:737-741（publish-staged 的 map）',
+      /** 工具键的读法（**没有第二份名字表**；唯一出处 = 契约 §0.3）。 */
+      tool_key: 'basename；.tools 侧再剥一次历史前缀 `agenia-`（bin 侧不剥）',
+      provenance: '口径唯一出处：契约 §0.3（旧名三对的来历见定形 §一 与 Gate 2 读数 dup01-gate2-full4）',
     },
     dirs,
     copies,
@@ -238,6 +241,155 @@ export function toolCopyVerdict(reading) {
       message: `同名工具的第二个拷贝：${c.tools.path}（${c.tools.size} B）与 ${c.bin.path}（${c.bin.size} B）—— ${shape}`,
       detail: c,
     })
+  }
+  return {
+    verdict: problems.length > 0 ? 'RED' : 'GREEN',
+    problems,
+    line: typeof reading?.line === 'string' ? reading.line : null,
+  }
+}
+
+// ── 腿 E · `publish-staged` 的源名单只许指向 live `bin/` ─────────────────────────
+//
+// 命名的裁定（工具键 = `.tools` 侧剥历史前缀）不需要第二份名字表；但**发布路径**有一份源名单：
+// `install.mjs` 的 `opPublishStaged` 把三支脚本逐字节拷进 staged 的 `bin/`。Gate 3 之前它从
+// `<repo>/.tools/agenia-*.mjs` 取源；本票（d91ba39）把它重指到 `<repo>/presets/agenia/bin/<name>`。
+// 这条腿钉住那个不变量：**op 体内不许再出现 `.tools` 段**，且它列出的源名字都能在 live `bin/` 里找到。
+// 判据只读源码文本，不跑这个 op（跑它要写 staged，归发布侧的探针）。
+
+/** 那个唯一的发布 op（名字写在这里，别处不许再拼一遍）。 */
+export const PUBLISH_OP_NAME = 'opPublishStaged'
+/** `.tools` 作为**引号里的路径段**出现（`'.tools'` / `'.tools/'` / 反引号 / 双引号都算）。 */
+export const TOOLS_SEGMENT_RE = /(['"`])\.tools(?:\/|\1)/g
+
+/** 从源码里切一个顶层函数体：`function <name>(` 到第一个列 0 的 `}`（本仓库的缩进风格保证内层 `}` 都缩进）。 */
+export function extractFunctionBody(text, name) {
+  const start = text.indexOf(`function ${name}(`)
+  if (start < 0) return null
+  const close = text.indexOf('\n}', start)
+  if (close < 0) return null
+  return { start, end: close + 2, body: text.slice(start, close + 2) }
+}
+
+/**
+ * 读一份 `install.mjs`（可以是 scratch 副本），量 `opPublishStaged` 的源名单。
+ *
+ * @param {{file: string, liveBinDir: string}} input
+ * @returns {{
+ *   file: string, live_bin_dir: string, read_error: string|null,
+ *   function_found: boolean, body_lines: number,
+ *   tools_segments: Array<{at:number, text:string}>,
+ *   source_names: string[], live_bin_names: string[], missing_live: string[],
+ *   has_bin_segment: boolean, line: string,
+ * }}
+ */
+export function publishStagedSourceReading({ file, liveBinDir } = {}) {
+  if (typeof file !== 'string' || file.trim() === '') throw new Error('DUP-PUBLISH-READ: 必须给 file（要读的 install.mjs）')
+  if (typeof liveBinDir !== 'string' || liveBinDir.trim() === '') throw new Error('DUP-PUBLISH-READ: 必须给 liveBinDir（活体 bin 目录）')
+  const fileAbs = path.resolve(file)
+  const binAbs = path.resolve(liveBinDir)
+  let text = null
+  let readError = null
+  try {
+    text = readFileSync(fileAbs, 'utf8')
+  } catch (err) {
+    readError = String(err?.message ?? err)
+  }
+  let liveBinNames = []
+  try {
+    liveBinNames = readdirSync(binAbs, { withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.endsWith(TOOL_FILE_SUFFIX))
+      .map((e) => e.name)
+      .sort()
+  } catch {
+    liveBinNames = []
+  }
+  const out = {
+    file: posix(fileAbs),
+    live_bin_dir: posix(binAbs),
+    read_error: readError,
+    function_found: false,
+    body_lines: 0,
+    tools_segments: [],
+    source_names: [],
+    live_bin_names: liveBinNames,
+    missing_live: [],
+    has_bin_segment: false,
+    line: '',
+  }
+  if (text === null) {
+    out.line = `读不出 ${out.file}（${readError}）`
+    return out
+  }
+  const fn = extractFunctionBody(text, PUBLISH_OP_NAME)
+  if (fn === null) {
+    out.line = `${out.file} 里找不到 function ${PUBLISH_OP_NAME}( —— 源名单读不出来`
+    return out
+  }
+  out.function_found = true
+  out.body_lines = fn.body.split(/\r?\n/).length
+  const segments = []
+  TOOLS_SEGMENT_RE.lastIndex = 0
+  let m
+  while ((m = TOOLS_SEGMENT_RE.exec(fn.body)) !== null) segments.push({ at: m.index, text: m[0] })
+  out.tools_segments = segments
+  // 源名字 = op 体内所有 `'…'` 的 `.mjs` 字面量（映射表 / names 数组 / 内联列表都认；去重排序）。
+  out.source_names = [...new Set([...fn.body.matchAll(/'([A-Za-z0-9._-]+\.mjs)'/g)].map((x) => x[1]))].sort()
+  out.missing_live = out.source_names.filter((name) => !liveBinNames.includes(name))
+  out.has_bin_segment = fn.body.includes("'bin'")
+  out.line = renderPublishLine(out)
+  return out
+}
+
+function renderPublishLine(r) {
+  const names = r.source_names.length === 0 ? '（空）' : r.source_names.join(' · ')
+  const segs = r.tools_segments.length === 0 ? '0 处' : `${r.tools_segments.length} 处（${r.tools_segments.map((s) => s.text).join(' · ')}）`
+  const live = r.missing_live.length === 0 ? `名字都在 ${r.live_bin_dir}` : `缺：${r.missing_live.join(' · ')}（${r.live_bin_dir}）`
+  return `${r.file} 的 ${PUBLISH_OP_NAME}：源名单 [${names}] · .tools 段 ${segs} · ${live}`
+}
+
+/**
+ * 腿 E 的判词（唯一一处）：读不出 / 找不到 op / 出现 `.tools` 段 / 源名单读不出 / 名字不在 live bin ⇒ 红。
+ *
+ * @param {object} reading  `publishStagedSourceReading()` 的返回
+ * @returns {{verdict:'GREEN'|'RED', problems: Array<{code:string, message:string, detail?:object}>, line:string|null}}
+ */
+export function publishStagedSourceVerdict(reading) {
+  const problems = []
+  const file = reading?.file ?? '(file?)'
+  if (reading?.read_error !== null && reading?.read_error !== undefined) {
+    problems.push({
+      code: 'DUP-PUBLISH-READ',
+      message: `读不出 ${file}：${reading.read_error}`,
+      detail: { file, read_error: reading.read_error },
+    })
+  } else if (!reading?.function_found) {
+    problems.push({
+      code: 'DUP-PUBLISH-OP',
+      message: `${file} 里找不到 \`function ${PUBLISH_OP_NAME}(\` —— 发布 op 没了 / 改名了，这一腿判不了，不许绿`,
+      detail: { file },
+    })
+  } else {
+    for (const seg of reading.tools_segments) {
+      problems.push({
+        code: 'DUP-PUBLISH-TOOLS',
+        message: `${file} 的 ${PUBLISH_OP_NAME} 体内还有 \`.tools\` 段（${seg.text}，body 偏移 ${seg.at}）—— 源必须只从 live \`presets/agenia/bin/\` 取（Gate 3 的 repoint 被改回去了）`,
+        detail: { file, at: seg.at, text: seg.text },
+      })
+    }
+    if (reading.source_names.length === 0) {
+      problems.push({
+        code: 'DUP-PUBLISH-MAP',
+        message: `${file} 的 ${PUBLISH_OP_NAME} 体内读不出任何 \`*.mjs\` 源名字 —— 发布名单读不出来，"没有 .tools 段"就没有意义`,
+        detail: { file },
+      })
+    } else if (reading.missing_live.length > 0) {
+      problems.push({
+        code: 'DUP-PUBLISH-NAME',
+        message: `${file} 的 ${PUBLISH_OP_NAME} 列的源名字不都在 live bin 里：${reading.missing_live.join(' · ')}（${reading.live_bin_dir}）`,
+        detail: { file, missing: reading.missing_live, live_bin_dir: reading.live_bin_dir },
+      })
+    }
   }
   return {
     verdict: problems.length > 0 ? 'RED' : 'GREEN',

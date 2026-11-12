@@ -1,17 +1,19 @@
 /**
  * `DUP-01` —— **同一个工具的第二个拷贝**（史山清查 A1 · Gate 2）。
  *
- * 契约：`.team/test/2026-11-12/CONTRACT-史山清查-A1.md`（唯一出处：口径 / 四条腿 / 四把刀 / 四个控制 / 分母）。
+ * 契约：`.team/test/2026-11-12/CONTRACT-史山清查-A1.md`（唯一出处：口径 / 五条腿 / 刀 / 控制 / 分母）。
  * 定形：`.team/leader/2026-11-12/定形-A1-三份死拷贝.md`。
  * 量具：`support/duplicate-tools.mjs`（扫描面 / 工具键 / 判词只有那一份）。
  *
- * ## 病（2026-11-12 现量）
+ * ## 病（2026-11-12 21:3x 现量；Gate 3 已删）
  * `.tools/agenia-install.mjs` 与 `presets/agenia/bin/install.mjs` 逐字节相同（44,986 B）·
  * `.tools/agenia-rollback.mjs` 与 `bin/rollback.mjs` 逐字节相同（39,778 B）·
  * `.tools/agenia-release-scan.mjs` 是 `bin/release-scan.mjs` 的**陈旧副本**（36,104 vs 38,749 B）。
- * 活引用 0（代码 / 文档 / 判据 / 今天的抽屉都没人指它们）——三份都是死拷贝，Gate 3 删。
+ * 活引用 0（代码 / 文档 / 判据 / 当时的抽屉都没人指它们）——三份都是死拷贝，Gate 3 删。
+ * 三对旧名的来历见定形 §一 与 Gate 2 读数（`dup01-gate2-full4`）；**不是**从 `install.mjs` 那张表读出来的
+ * （Gate 3 之后那张表是恒等映射，见契约 §0.3）。
  *
- * ## 四条腿（一条用例 = 一格；腿不是格，分母只 +1）
+ * ## 五条腿（一条用例 = 一格；腿不是格，分母只 +1）
  *   · **A 真树绿**：`<repo>/.tools` 与 `<repo>/presets/agenia/bin` 两个扫描面，**0 对**同名工具；
  *     读数印出**两个目录 + 各几份 `*.mjs`**（缺目录 / 空目录 ⇒ 红 `DUP-SCAN-DIR` / `DUP-SCAN-EMPTY`，
  *     否则"0 对"是真空真）。
@@ -31,11 +33,15 @@
  *     `bin/alpha.py`）⇒ 仍绿（扫描面是 `*.mjs`，不是"什么重名都算"）；
  *     **刀**：加一份 `bin/alpha.mjs`（与 `.tools/agenia-alpha.mjs` 归一后同名）⇒ **红**，恰好 1 对
  *     —— 证明这一格判的是**工具键**（旧名 `agenia-` 归一），不是"两边有文件就绿"。
+ *   · **E 发布源只许指 live `bin/`**：读 `<repo>/presets/agenia/bin/install.mjs` 的 `opPublishStaged` 体
+ *     ⇒ **0 处 `.tools` 段**、列出的源名字都在 live `bin/` 里（Gate 3 的 repoint 不许被改回去）。
+ *     **控制**：真树那一份必须找到 op、源名单非空；**刀**：把 op 里的源路径改回 `'.tools'` 的 scratch 副本
+ *     ⇒ **红**（`DUP-PUBLISH-TOOLS` 恰好 1 条），而名字仍然都在 live bin（红只来自那一段）。
  *
  * ## 期望读数
- *   · **Gate 3 删之前**：`DUP-01` 红在 `DUP-TOOL-COPY` × 3（真树三对）⇒ 套件
+ *   · **Gate 2（三份死拷贝还在）**：`DUP-01` 红在 `DUP-TOOL-COPY` × 3（真树三对）⇒ 套件
  *     `217 · RED 1 / GREEN 215 / HOLD 1`（`BOOT-02` 仍是老板搁置的那一格）。
- *   · **Gate 3 删之后**：`DUP-01` 绿（真树 0 对，两个扫描面 13 / 7 份）⇒ 套件
+ *   · **Gate 3 之后（今天）**：`DUP-01` 绿（真树 0 对，两个扫描面 13 / 7 份；腿 E 0 处 `.tools`）⇒ 套件
  *     `217 · RED 0 / GREEN 216 / HOLD 1`。
  */
 import { test } from 'node:test'
@@ -45,9 +51,9 @@ import { caseFail, problem, runCase, runId, runRoot } from '../support/evidence.
 import { PATHS } from '../support/env.mjs'
 import { ensureMarkedDir } from '../support/root-guard.mjs'
 import { TOTAL } from '../support/registry.mjs'
-import { scanToolCopies, toolCopyVerdict, TOOL_COPY_SCAN } from '../support/duplicate-tools.mjs'
+import { scanToolCopies, toolCopyVerdict, TOOL_COPY_SCAN, publishStagedSourceReading, publishStagedSourceVerdict } from '../support/duplicate-tools.mjs'
 
-/** 今天这三对旧名（来历：`bin/install.mjs:737-741` 的 `publish-staged` 表）。 */
+/** Gate 2 那三对旧名 —— 来历：定形 §一（2026-11-12 的现量）与 Gate 2 读数（`dup01-gate2-full4`）；口径见契约 §0.3。 */
 const LEGACY_PAIRS = [
   { tools: 'agenia-install.mjs', bin: 'install.mjs' },
   { tools: 'agenia-rollback.mjs', bin: 'rollback.mjs' },
@@ -276,8 +282,8 @@ test('DUP-01 同名工具的第二个拷贝：真树 0 对（印两个扫描面�
     const copyAfterVerdict = toolCopyVerdict(copyAfter)
     rec.readings.copy_after_knife = { ...summarize(copyAfter), verdict: copyAfterVerdict.verdict }
     expectGreen(copyAfterVerdict, '腿B 刀（删掉副本）', copyAfter)
-    if (copyAfterVerdict.verdict === copyVerdict.verdict && copyAfter.copies.length === copyRead.copies.length) {
-      push('DUP01-COPY-KNIFE-DEAD', `[腿B 刀] 删掉副本前后读数相同（verdict=${copyAfterVerdict.verdict} · copies=${copyAfter.copies.length}）—— 这一格判的不是"副本在不在"`)
+    if (copyAfter.copies.length !== 0) {
+      push('DUP01-COPY-KNIFE-DEAD', `[腿B 刀] 删掉副本之后仍读到 ${copyAfter.copies.length} 对 —— 刀没咬，这一格判的不是"副本在不在"`)
     }
 
     // ══ 腿 C · 分叉红：同名但字节不同 ⇒ 仍红，且读数印出两个不同的大小 ═══════════════════════
@@ -360,10 +366,57 @@ test('DUP-01 同名工具的第二个拷贝：真树 0 对（印两个扫描面�
       push('DUP01-NEGATIVE-KNIFE', `[腿D 刀] 键应当是 alpha.mjs（旧名归一），实得 ${JSON.stringify({ key: negativeKnife.copies[0].key, match: negativeKnife.copies[0].match })}`)
     }
 
+    // ══ 腿 E · publish-staged 的源名单只许指向 live bin（不许再有 .tools 段）══════════════════
+    //    Gate 3（1195352/d91ba39）把 opPublishStaged 的源从 `<repo>/.tools/agenia-*.mjs` 重指到
+    //    `<repo>/presets/agenia/bin/*.mjs`。这一腿钉住它：op 体内 0 处 `.tools` 段 + 源名字都在 live bin。
+    const publishBin = path.join(PATHS.repo, 'presets', 'agenia', 'bin')
+    const publishInstall = path.join(publishBin, 'install.mjs')
+    const publishReal = publishStagedSourceReading({ file: publishInstall, liveBinDir: publishBin })
+    const publishRealVerdict = publishStagedSourceVerdict(publishReal)
+    rec.readings.publish_staged_real = {
+      ...publishReal,
+      verdict: publishRealVerdict.verdict,
+      problem_codes: publishRealVerdict.problems.map((p) => p.code),
+    }
+    forward(publishRealVerdict, '腿E publish-staged')
+    //    控制：真树那一步的读数必须自证"找到了 op、源名单非空、没有 .tools 段" —— 前两条由上面转发的判词管，
+    //    这里只留一条**不转发**的读数断言：`'bin'` 段在（源不是从别处取的）。它只作读数，不作红因：
+    //    实现若把 `'bin'` 收进常量，这一条不该假红。
+    //    （真树是绿的 ⇒ `forward` 已经保证 op 找到 / 名单非空 / .tools 段 0 处。）
+    //    刀：把真源码逐字节复制到运行根，在 op 体内把源路径改回 `.tools` ⇒ 必须红；名字仍然都在 live bin
+    //    （证明红只来自那一段，不是"名字丢了"带出来的）。
+    const publishRoot = fixtureRoot('publish-staged')
+    const publishSourceText = readFileSync(publishInstall, 'utf8')
+    const PUBLISH_ANCHOR = "path.join(repoV.path, 'presets', 'agenia', 'bin', srcName)"
+    const publishAnchorCount = publishSourceText.split(PUBLISH_ANCHOR).length - 1
+    rec.readings.publish_staged_knife = { anchor: PUBLISH_ANCHOR, anchor_count: publishAnchorCount }
+    if (publishAnchorCount !== 1) {
+      push('DUP01-PUBLISH-ANCHOR', `[腿E 刀] 刀的锚点在 \`${publishInstall}\` 里必须**恰好 1 处**，实得 ${publishAnchorCount} 处 —— 锚点不在，刀不咬`)
+    } else {
+      const knifeInstall = put(publishRoot, 'install.mjs.with-dot-tools.mjs',
+        publishSourceText.replace(PUBLISH_ANCHOR, "path.join(repoV.path, '.tools', srcName)"))
+      const publishKnife = publishStagedSourceReading({ file: knifeInstall, liveBinDir: publishBin })
+      const publishKnifeVerdict = publishStagedSourceVerdict(publishKnife)
+      rec.readings.publish_staged_knife.reading = {
+        ...publishKnife,
+        verdict: publishKnifeVerdict.verdict,
+        problem_codes: publishKnifeVerdict.problems.map((p) => p.code),
+      }
+      if (publishKnifeVerdict.verdict !== 'RED') {
+        push('DUP01-PUBLISH-KNIFE-DEAD', `[腿E 刀] 把源路径改回 \`.tools\` 之后必须红，实得 ${publishKnifeVerdict.verdict} —— 刀不咬，这一腿守不住 repoint`)
+      }
+      if (publishKnife.tools_segments.length !== 1) {
+        push('DUP01-PUBLISH-KNIFE', `[腿E 刀] 刀应当恰好留 1 处 .tools 段，实得 ${publishKnife.tools_segments.length} 处`)
+      }
+      if (publishKnife.missing_live.length !== 0 || publishKnife.source_names.length !== publishReal.source_names.length) {
+        push('DUP01-PUBLISH-KNIFE-NOISE', `[腿E 刀] 刀只许翻 .tools 那一面：源名字必须仍与真树同一份（真树 ${publishReal.source_names.join(' · ')} / 刀 ${publishKnife.source_names.join(' · ')}）`)
+      }
+    }
+
     rec.readings.expected = {
       denominator: TOTAL,
-      before_gate3: 'RED · DUP-TOOL-COPY × 3（真树三对：install / rollback 逐字节相同 · release-scan 已分叉）—— 红前读数落在今天的 log.md',
-      after_gate3: 'GREEN · 真树 0 对（.tools 13 份 / bin 7 份）',
+      gate2_red: 'RED · DUP-TOOL-COPY × 3（真树三对：install / rollback 逐字节相同 · release-scan 已分叉）—— 红前读数见 log.md §10',
+      gate3_green: 'GREEN · 真树 0 对（.tools 13 份 / bin 7 份）+ 腿 E 0 处 .tools 段',
       note: '套件那一行以入口的 F57-SETTLE 为准（契约 §3）；这里只记这一格的期望，不重复结算',
     }
     caseFail(problems)

@@ -1027,17 +1027,21 @@ export const BATCH_AU = ['DEC-01', 'DEC-02', 'DEC-03', 'DEC-04', 'DEC-05', 'DEC-
 /**
  * 批次 AV（2026-11-12 · Gate 2 · 史山清查 A1）—— **同一个工具的第二个拷贝**（`DUP-01`）。
  *
- * 契约：`.team/test/2026-11-12/CONTRACT-史山清查-A1.md`（口径 / 四条腿 / 两把刀 / 分母的唯一出处）。
+ * 契约：`.team/test/2026-11-12/CONTRACT-史山清查-A1.md`（口径 / 五条腿 / 刀 / 分母的唯一出处）。
  * 定形：`.team/leader/2026-11-12/定形-A1-三份死拷贝.md`。量具：`support/duplicate-tools.mjs`。
  *
  * 一句话：`.tools/*.mjs` 与 `presets/agenia/bin/*.mjs` 不许出现**同一个工具的第二个拷贝** ——
- * `.tools` 侧按旧名前缀 `agenia-` 归一（来历：`bin/install.mjs:737-741` 的 publish 表），
+ * `.tools` 侧按历史前缀 `agenia-` 归一（**通用规则，没有第二份手写名字表**；口径唯一出处 = 契约 §0.3；
+ * 旧名三对的来历见定形 §一 与 Gate 2 读数），
  * 逐字节相同与"同名但已分叉"**两种都红**，且读数必须印出两个扫描目录各几份 `*.mjs`
  * （缺目录 / 空目录 ⇒ 红，不是"0 对"的绿）。
  * 单开一组 `tool-copies` 而不是并进 `install` / `static-doc`：那一族判**安装与回滚的行为**、
  * 这一格判**树里有没有第二份工具**（红的时候一眼看得出是"功能坏了"还是"死拷贝又长出来了"）。
- * 🔴 **这一格今天红得对**：真树上还有三对（`.tools/agenia-{install,rollback,release-scan}.mjs`）；
- * Gate 3 删掉之后必须绿。⚠️ 不进 `FROZEN_IDS`（后加批次各自以显式清单存在）。
+ * 🔴 **Gate 2 时它红得对**：真树上还有三对（`.tools/agenia-{install,rollback,release-scan}.mjs`）；
+ * Gate 3 删掉之后是绿的（`dev-a1-gate3-final1` 217 · RED 0 / GREEN 216 / HOLD 1）。
+ * 腿 E（Gate 4 修 MF-3 时补）：`install.mjs` 的 `opPublishStaged` 体内**不许再有 `.tools` 段**，
+ * 且它列的源名字都在 live `bin/` 里 —— 钉住 Gate 3 的 repoint。
+ * ⚠️ 不进 `FROZEN_IDS`（后加批次各自以显式清单存在）。
  */
 export const BATCH_AV = ['DUP-01']
 
@@ -1700,9 +1704,9 @@ const ROWS = [
   ['DEC-09', 'decision-ledger', F.dec09, '**supersede 的写手**（契约 §5.6 · §0.3-D4；组长 2026-11-12 T1）：决议-check --op supersede <旧> --by <新> 是**唯一会写盘**的 op，只翻旧文头块两个字段（状态 → 已废、superseded_by → 新编号），**正文一个字节不动**。腿：① 正面那一对（0001 → 0002）⇒ exit 0 / written: true，夹具自己量：行数不变、**只有两行不同**、状态 与 superseded_by 翻对、superseded_by 之后的正文 **sha256 相同**（**不信工具的 ody_sha256 自报**，只把它摆在同一行读数里对照）；翻完再跑 check ⇒ []（写手收尾不留坏账）；--dry-run ⇒ exit 0 / verdict dry-run / written: false / 零字节。② 五条拒做各一份样本（already-retired / same-file / old-missing / new-missing / no-reciprocal）⇒ 各自的码 + problems 恰好一条 + **旧文一个字节都不变**。③ 两把副本刀：K1 把"翻状态"那一行改回去 ⇒ 这一格必须看见 status 没翻（否则 DEC09-KNIFE-DEAD）；K2 摘掉正文闸、写的时候少一个换行 ⇒ 工具自报"没变"而夹具量到**变了**（证明正文 sha 必须夹具量）。刀锚点出现次数必须恰好 1（否则 DEC09-KNIFE-ANCHOR）', '批次 AU'],
 
   // ── 批次 AV（2026-11-12 · Gate 2 · 史山清查 A1）：同名工具的第二个拷贝（1）───────────────
-  // 契约 `.team/test/2026-11-12/CONTRACT-史山清查-A1.md`（口径 / 四条腿 / 刀 / 分母的唯一出处）。
+  // 契约 `.team/test/2026-11-12/CONTRACT-史山清查-A1.md`（口径 / 五条腿 / 刀 / 分母的唯一出处）。
   // 定形 `.team/leader/2026-11-12/定形-A1-三份死拷贝.md`。量具 `support/duplicate-tools.mjs`。
-  ['DUP-01', 'tool-copies', F.dup, '**同一个工具的第二个拷贝**：`.tools/*.mjs` 与 `presets/agenia/bin/*.mjs` 撞上同一个工具键 ⇒ 红（`.tools` 侧按旧名前缀 `agenia-` 归一，来历 = `bin/install.mjs:737-741` 的 publish 表）；**逐字节相同与同名已分叉两种都红**，报文点名两边路径与大小。四条腿：**A 真树**两个扫描面 0 对，读数印出 `.tools` / `presets/agenia/bin` 各几份 `*.mjs`（缺目录 / 空目录 ⇒ `DUP-SCAN-DIR` / `DUP-SCAN-EMPTY` 红，不许真空真）；A 的控制 = 真树两目录的干净镜像（绿、份数 > 0），A 的刀 = 镜像里放回三份旧名（两份逐字节相同 + 一份截短）⇒ 恰好 3 对、恰好 1 对已分叉。**B 副本红**：scratch 树里把 `bin/install.mjs` 逐字节复制成 `.tools/agenia-install.mjs` ⇒ 恰好 1 对、两边大小相同、报文/读数点名两边路径与大小；删掉副本 ⇒ 绿（刀），加副本之前 ⇒ 绿（控制）。**C 分叉红**：同一份副本改长 ⇒ **仍然红**、`bytes_equal:false`、读数里两个大小不同（陈旧副本的形状）；删掉 ⇒ 绿（刀）。**D 阴性对照**：`.tools/agenia-alpha.mjs` + `bin/beta.mjs` ⇒ 绿（两个扫描面各 1 份）；同名 `.py`（两边都有 `alpha.py`）⇒ 仍绿（扫描面只认 `*.mjs`）；**刀**：加一份 `bin/alpha.mjs`（与旧名归一后同名）⇒ 恰好 1 对 —— 证明判的是工具键，不是"两边有文件"。⚠️ 扫描面 = 两个目录的**顶层** `*.mjs`；`.tools/lib` / `_staging` / `_backup` 不在面上（库 / 测试靶子 / 备份里的同名件是合法的）。🔴 **今天红得对**（真树三对：install / rollback 逐字节相同 · release-scan 已分叉 36,104 vs 38,749 B）；Gate 3 删除之后必须绿', '批次 AV'],
+  ['DUP-01', 'tool-copies', F.dup, '**同一个工具的第二个拷贝**：`.tools/*.mjs` 与 `presets/agenia/bin/*.mjs` 撞上同一个工具键 ⇒ 红（`.tools` 侧按历史前缀 `agenia-` 归一，**通用规则、没有第二份名字表**；口径唯一出处 = 契约 §0.3，旧名三对的来历见定形 §一 与 Gate 2 读数）；**逐字节相同与同名已分叉两种都红**，报文点名两边路径与大小。五条腿：**A 真树**两个扫描面 0 对，读数印出 `.tools` / `presets/agenia/bin` 各几份 `*.mjs`（缺目录 / 空目录 ⇒ `DUP-SCAN-DIR` / `DUP-SCAN-EMPTY` 红，不许真空真）；A 的控制 = 真树两目录的干净镜像（绿、份数 > 0），A 的刀 = 镜像里放回三份旧名（两份逐字节相同 + 一份截短）⇒ 恰好 3 对、恰好 1 对已分叉。**B 副本红**：scratch 树里把 `bin/install.mjs` 逐字节复制成 `.tools/agenia-install.mjs` ⇒ 恰好 1 对、两边大小相同、报文/读数点名两边路径与大小；删掉副本 ⇒ 绿（刀），加副本之前 ⇒ 绿（控制）。**C 分叉红**：同一份副本改长 ⇒ **仍然红**、`bytes_equal:false`、读数里两个大小不同（陈旧副本的形状）；删掉 ⇒ 绿（刀）。**D 阴性对照**：`.tools/agenia-alpha.mjs` + `bin/beta.mjs` ⇒ 绿（两个扫描面各 1 份）；同名 `.py`（两边都有 `alpha.py`）⇒ 仍绿（扫描面只认 `*.mjs`）；**刀**：加一份 `bin/alpha.mjs`（与旧名归一后同名）⇒ 恰好 1 对 —— 证明判的是工具键，不是"两边有文件"。**E 发布源只许指 live `bin/`**（Gate 4 修 MF-3 补）：`install.mjs` 的 `opPublishStaged` 体内 **0 处 `.tools` 段**、它列的源名字都在 live `bin/`（读数带 body 行数与名单）；**刀** = scratch 副本里把源路径改回 `\'.tools\'` ⇒ 恰好 1 条 `DUP-PUBLISH-TOOLS`，名字仍都在 live bin（红只来自那一段）。⚠️ 扫描面 = 两个目录的**顶层** `*.mjs`；`.tools/lib` / `_staging` / `_backup` 不在面上（库 / 测试靶子 / 备份里的同名件是合法的）。🔴 **Gate 2 时红得对**（真树三对：install / rollback 逐字节相同 · release-scan 已分叉 36,104 vs 38,749 B）；Gate 3 删除之后是绿的（`dev-a1-gate3-final1`：217 · RED 0 / GREEN 216 / HOLD 1）。', '批次 AV'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
