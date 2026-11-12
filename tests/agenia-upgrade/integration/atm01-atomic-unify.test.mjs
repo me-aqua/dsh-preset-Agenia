@@ -56,6 +56,14 @@
  *     (iii) **没有** repo 自述「本文件是 repo 那一份」· (iv) 并集指纹在。
  *     **刀**：把 repo 那份当出厂件喂进去（scratch 落一份再读回）⇒ `SHIP-HEADER-PARAGRAPH-MISSING`
  *     且点名缺的段落。
+ *   · **腿 10 · 注入器与共享件同源**（构案 0007 · 史山清查 B2，2026-11-13）：`inject.js` 的两处手搓写盘
+ *     改造之后，注入器必须**静态 import** 共享件、或者按同名标记（`@inline-begin` / `@inline-end`）
+ *     **内联同一段正文**（规范化之后逐字相同）；两种形态都要求 `writeFileAtomic(` 真调 ≥ 2 处、
+ *     正文指纹两边同值（`writeSync(handle` / `fsyncSync(handle)` / `openSync(tmp, 'wx')` …）。
+ *     **刀**：改内联副本 / 改共享件 / 两边都没有 / import 指到别处 —— 各咬自己的码。
+ *     这一腿是**纯文本**判据（不跑注入器、不依赖客户端重启），边界见契约 §2.3。
+ *   · **B2（2026-11-13）**：腿 10 在 Gate 2 是 **RED**（注入器还没有 import / 内联块）；Gate 3 转绿。
+ *     分母**不变**（0007 §七「218 不破」）：B2 不新增格，按形状的普查腿并进 `DEC-05`，本腿并进本格。
  *   · **腿 6 · 既有行为不破**（不是新腿：靠既有格）—— 见 `PRESERVATION`：
  *     `INS-01`（安装正例 / 数据与未知文件逐字节保留 / 重装幂等）· `INS-02`（回滚正例 / 数据不动 /
  *     失败保留现场）· `INS-03`（备份在 E 盘带哈希清单）· `ENV-02`（删除前 marker / 临时件 / C 盘）·
@@ -123,6 +131,7 @@ import {
   retryVerdict,
   scanWriteFileAtomicDefinitions,
 } from '../support/atomic-writers.mjs'
+import { BLOCK_BEGIN, BLOCK_END, SHARED_REL, blockOf, inlineSourceProblems, injectorInlineReading } from '../support/injector-inline.mjs'
 
 const LIVE = PATHS.repo
 const LIB_REL = 'presets/agenia/lib'
@@ -1024,6 +1033,79 @@ test('ATM-01 原子写归一：presets/** 只剩一份定义（fsync · wx · al
     rec.readings.ship_header = { ...headerRead, text_codes: codesOf(headerV.problems) }
     forward(headerV.problems, '腿9 出厂件文件头')
 
+    // ══ 腿 10 · 注入器与共享件同源（构案 0007 · 史山清查 B2）═══════════════════════════════
+    // 病：`inject.js` 是注入器（宿主加载、ESM 缓存），它可能没法静态 import `lib/atomic.mjs`；
+    // Gate 3 若把正文内联进去，就出现第二份正文 —— 两份各自被改，谁也看不见。
+    // 这一腿钉"同源"：① 静态 import（解析后 = `lib/atomic.mjs`）**或** ② 一对同名标记之间放
+    // **同一段正文**（规范化之后逐字相同）；两种形态都要求真调（≥2 处）与正文指纹两边同值。
+    const injectRead = injectorInlineReading({ repoRoot: LIVE })
+    const injectProblems = injectRead.problems.map((p) => problem(p.code, p.message))
+    recordLeg({ id: 'injector_inline', label: '腿10 注入器与共享件同源（静态 import 或内联同一段正文 + 指纹 + ≥2 个调用点）', want: 'GREEN', list: injectProblems })
+    rec.readings.injector_inline = injectRead
+    forward(injectProblems, '腿10 注入器同源')
+    // 刀：合成的两段正文（不碰真树）—— 改内联副本 / 改共享件 / 两边都没有
+    const syntheticInjector = (block, { marker = true } = {}) => [
+      '/**',
+      ' * 注入器（刀夹具）：内联自 lib/atomic.mjs（v0.2.2-rc.1）—— 这一行是来源 / 版本注明。',
+      ' */',
+      marker ? `// ${BLOCK_BEGIN}` : '// （没有内联标记）',
+      block,
+      marker ? `// ${BLOCK_END}` : '// （没有内联标记）',
+      'writeFileAtomic(tmpA, textA)',
+      'writeFileAtomic(tmpB, textB)',
+      '',
+    ].join('\n')
+    const realShared = readFileSync(path.join(LIVE, ...SHARED_REL.split('/')), 'utf8')
+    const sharedBlock = blockOf(realShared)
+    const inlineKnives = []
+    const judgeInline = (id, want, input) => {
+      const v = inlineSourceProblems(input)
+      const codes = codesOf(v.problems)
+      const ok = codes.includes(want)
+      inlineKnives.push({ id, want, mode: v.mode, codes, status: ok ? 'bit' : 'dead', problems: v.problems.map((p) => `${p.code}: ${p.message}`).slice(0, 4) })
+      return { ok, codes }
+    }
+    if (!sharedBlock.found) {
+      push('ATM01-INJECT-SHARED-BLOCK-MISSING', '共享件里没有 `@inline-begin` / `@inline-end` 那一对标记 —— 腿 10 的锚点不在')
+    } else {
+      // 控制：真共享正文 + 同名标记 + 来源/版本注明 + 两个调用点 ⇒ 必须绿
+      const control = inlineSourceProblems({ sharedSource: realShared, injectorSource: syntheticInjector(sharedBlock.text) })
+      rec.readings.injector_inline_control = { mode: control.mode, codes: codesOf(control.problems), readings: control.readings }
+      if (control.problems.length > 0) push('ATM01-INJECT-KNIFE-CONTROL', `刀的控制面不成立：真共享正文放进内联块之后仍然红 ${JSON.stringify(codesOf(control.problems))} —— 刀分不清"同源"与"不同源"`)
+      // 刀 ①：内联副本改一处（`'wx'` → `'w'`）⇒ 两边正文不再相同
+      judgeInline('inline-drift-injector', 'ATM01-INJECT-INLINE-DRIFT', {
+        sharedSource: realShared,
+        injectorSource: syntheticInjector(sharedBlock.text.replace("openSync(tmp, 'wx')", "openSync(tmp, 'w')")),
+      })
+      // 刀 ②：共享件改一处（同一处）⇒ 也必须红（改哪边都咬）
+      judgeInline('inline-drift-shared', 'ATM01-INJECT-INLINE-DRIFT', {
+        sharedSource: realShared.replace("openSync(tmp, 'wx')", "openSync(tmp, 'w')"),
+        injectorSource: syntheticInjector(sharedBlock.text),
+      })
+      // 刀 ③：没有 import、没有内联块 ⇒ 注入器的写盘仍是自己那一份
+      judgeInline('no-shared-writer', 'ATM01-INJECT-NO-SHARED-WRITER', {
+        sharedSource: realShared,
+        injectorSource: syntheticInjector('', { marker: false }),
+      })
+    }
+    // 静态 import 那一支的控制：解析后 = 共享件 ⇒ 绿；指到别处 ⇒ NOT-LIB
+    //    （`inject.js` 在 `presets/agenia/` 下，所以正确写法是 `./lib/atomic.mjs`）
+    const importControl = "import { writeFileAtomic } from './lib/atomic.mjs'\nwriteFileAtomic(a, b)\nwriteFileAtomic(c, d)\n"
+    const importWrong = "import { writeFileAtomic } from './other.mjs'\nwriteFileAtomic(a, b)\nwriteFileAtomic(c, d)\n"
+    const importVerdict = inlineSourceProblems({ sharedSource: realShared, injectorSource: importControl })
+    const importWrongVerdict = inlineSourceProblems({ sharedSource: realShared, injectorSource: importWrong })
+    rec.readings.injector_import_control = { mode: importVerdict.mode, codes: codesOf(importVerdict.problems), wrong_codes: codesOf(importWrongVerdict.problems) }
+    if (importVerdict.mode !== 'static-import' || importVerdict.problems.length > 0) {
+      push('ATM01-INJECT-KNIFE-CONTROL', `静态 import 的控制面不成立（mode=${importVerdict.mode} · ${JSON.stringify(codesOf(importVerdict.problems))}）`)
+    }
+    if (!codesOf(importWrongVerdict.problems).includes('ATM01-INJECT-STATIC-IMPORT-NOT-LIB')) {
+      push('ATM01-INJECT-KNIFE-DEAD', '把 import 指到别处之后必须报 `ATM01-INJECT-STATIC-IMPORT-NOT-LIB`')
+    }
+    rec.readings.injector_inline_knives = inlineKnives
+    for (const k of inlineKnives) {
+      if (k.status !== 'bit') push('ATM01-INJECT-KNIFE-DEAD', `[刀 ${k.id}] 必须报 ${k.want}，实得 ${JSON.stringify(k.codes)}`)
+    }
+
     // ══ 刀架（L-1 / L-2）：每条子断言各自"单独会红"——纯文本构造，不碰真树 ═══════════════════
     const l1l2 = []
     const mutation = (text, find, replace, id) => {
@@ -1349,13 +1431,14 @@ test('ATM-01 原子写归一：presets/** 只剩一份定义（fsync · wx · al
     // ══ 读数：口径 / 分母 / 冲突（Q6 ⟂ 定义腿）══════════════════════════════════════════════
     rec.readings.expected = {
       denominator_today: TOTAL,
-      denominator_after: 'TOTAL（盘上发现）—— 本票只 +1（217 → 218），腿不是格；裁决之后新增的**出厂件腿**住在同一格里（见 expected.denominator_note）',
+      denominator_after: 'TOTAL（盘上发现）—— B1 只 +1（217 → 218）；B2 **不新增格**（0007 §七：218 不破），腿 10 并进本格、普查腿并进 `DEC-05`',
       denominator_note: '为什么出厂件那几条不再开一格：它们与"归一"是**同一族判据**（repo 一份实现 → 发布时内联 → 用户拿到的那一份仍自足），'
-        + '拆成新格会让"归一这一票"跨两格，也会把组长冻住的分母 218 顶成 219；腿不是格（项目口径），所以并进 ATM-01。',
+        + '拆成新格会让"归一这一票"跨两格，也会把组长冻住的分母顶上去；腿不是格（项目口径），所以并进 ATM-01。'
+        + 'B2 的腿 10 同样并进本格（同一个定义的第二个载体）；B2 的**普查口径**（按形状数）并进 `DEC-05`（census 的计数口径那一格）—— 两者都不是新格。',
       gate2: 'RED：定义 3 处（ATM-DEF-COUNT）+ CLI 副本 ×2 + 调用点无 import ×2 + 闸缺失（ATM01-GATE-DELETED）+ 成功信封无 message'
-        + ' + 出厂件没内联（SHIP-ROLLBACK-NO-INLINE）+ 没有受控差异声明（SHIP-DECL-MISSING）',
+        + ' + 出厂件没内联（SHIP-ROLLBACK-NO-INLINE）+ 没有受控差异声明（SHIP-DECL-MISSING）+ 注入器没有共享件（ATM01-INJECT-NO-SHARED-WRITER）',
       gate3: 'GREEN：定义 1 处 · 两个调用点读共享件 · 并集四条全绿（并集 c 的基线到那一刻才转绿，刀也随之必须咬）'
-        + ' · 出厂件内联（零静态 import + 并集指纹在）· 受控差异声明准确（state=declared）',
+        + ' · 出厂件内联（零静态 import + 并集指纹在）· 受控差异声明准确（state=declared）· 注入器静态 import 或内联同一段正文（腿 10）',
       caveat: '并集 d 的"两套码取并集"在成员上是恒等操作（两套都是 EPERM/EBUSY/EACCES）⇒ 判的是覆盖与"只剩一份"，判不了"两套都留"',
       ruling: '裁决 0006 第三方案（2026-11-12 23:1x，decision commit 8af3094）：repo 两份都 import 共享件；publish-staged 在发布时内联；'
         + '同批写 target-lag.json；三张卡的判据对象 = 出厂件（staged）。见 readings.ruling_0006（resolved）',

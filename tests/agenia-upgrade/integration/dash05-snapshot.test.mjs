@@ -10,12 +10,19 @@
  *
  * 两格的分工（别混着读）：
  *   · `DASH-11` **机制**：真跑 `lib/index.js` 的 `apply()`（真子进程 + 假 ctx），判它
- *     **原子写**（`<file>.tmp` → rename；写到一半崩掉不许留下半份**活文件**）、
- *     **文档形状**（契约 §3 那八个键，一个不多一个不少）、**第二次跑会覆盖**；
+ *     **可观测的原子性**（写到一半崩掉 ⇒ 活文件逐字不变、还解析得了，而且失败被报出来）、
+ *     **文档形状**（契约 §3 那九个键，一个不多一个不少）、**第二次跑会覆盖**、
+ *     **写手无关性**（同一份快照由另一个写手产出也要过 —— 判据不许认写手的源码形状）；
  *     再判渲染层**只读这一份文件**（快照路径两半同源、不碰四份账本、不自己算），
  *     以及 **读盘失败不许把组件带走**（见下面那条 🔴）。
- *     🔴 **今天这一格在机制上是绿的**（原子写早就在 `writeDashboardSnapshot` 里）—— 它补的是
- *     **证据洞**，不是首跑红。它红的形态由下面两把刀给出：直接写活文件 / 快照路径两半漂了。
+ *     🔴 **这一格在机制上是绿的**（写盘本来就是"先写中间件再换名"）—— 它补的是**证据洞**，不是首跑红。
+ *     它的红形态由三把刀给出：**直接写活文件的写手 + 崩在写盘中间**（`DASH11-HALF-LIVE-FILE`）·
+ *     **坏快照**（缺键 / 类型错 / 截断 ⇒ `DASH11-SNAPSHOT-SHAPE`）· 快照路径两半漂了。
+ *     ⚠️ **2026-11-13（B2 · 构案 0007）**：这一格原来还有一条"源码机制"腿，断言源码里必须有
+ *     `const tmp = \`${outFile}.tmp\`` + `writeFileSync(tmp, …)` + `renameSync(tmp, outFile)`。
+ *     那条**锁的是实现**：把 `writeDashboardSnapshot` 接到共享件 `writeFileAtomic` 之后它当场红
+ *     （实测 `_runs/b2-gate2-probe/old-criterion-probe.json`），而行为一个字都没变。现在改成
+ *     **外来写手控制面**（用共享件产出同一份快照 ⇒ 同一套判据全绿）+ 两把行为刀，见 §④/§⑤。
  *   · `DASH-12` **日身份**：`view.day` = **今天这个周期日**（`lib/route.mjs::dayKeyOf` 的 04:00 切点，
  *     与全系统同一把尺子）；画面上要**看得到 day**；当天相位文件不在、只有旧的那一份时，
  *     徽标必须是 `null` / `未知`，**不许**把旧相位词当今天显示。
@@ -88,7 +95,7 @@
  *      不再自报份数，改为指向契约 §3 与这里的 `VIEW_KEYS`（一个数三份载体是这一批的通病）。
  */
 import { before, test } from 'node:test'
-import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
@@ -244,8 +251,7 @@ const MAIN_KEYS = ['gate', 'note', 'taskId', 'title']
 const DEBT_KEYS = ['key', 'label', 'state', 'text', 'value']
 const SHAPE_CODES = {
   shape: 'DASH11-SNAPSHOT-SHAPE',
-  tmp: 'DASH11-NO-TMP-RENAME',
-  nonatomic: 'DASH11-NONATOMIC-WRITE',
+  tmp: 'DASH11-TMP-REMNANT',
   path: 'DASH11-SNAPSHOT-PATH-DRIFT',
   half: 'DASH11-HALF-LIVE-FILE',
   harness: 'DASH11-CRASH-HARNESS',
@@ -467,79 +473,123 @@ function snapshotLocationLeg({ rec, rel, clientSource, problems }) {
   }
 }
 
-// ── 原子写机制（源码那一半；行为那一半在下面的 crash 现场）──────────────────
+// ── 原子写：**按行为判**（不读写手的源码形状）────────────────────────────────
 /**
- * `writeDashboardSnapshot` 的机制：**中间名 + rename**，且不许直接写活文件。
- * 这是"崩在中间"那一格的第二读者（第一读者是 crash 现场）：源码改了名字/换了写法，
- * 这条会点名；行为上真崩了，crash 现场会点名。
- */
-function atomicMechanismProblems(source) {
-  const code = stripCommentLines(source)
-  const problems = []
-  const decl = /const\s+([A-Za-z_$][\w$]*)\s*=\s*`\$\{outFile\}\.tmp`/.exec(code)
-  const tmpName = decl === null ? null : decl[1]
-  if (tmpName === null) {
-    problems.push(problem(SHAPE_CODES.tmp, '没有 `<outFile>.tmp` 这个中间名 —— 快照的写盘没有"先写旁边再换名"的形状'))
-  } else {
-    const writeTmp = new RegExp(`writeFileSync\\s*\\(\\s*${tmpName}\\s*,`).exec(code)
-    const rename = new RegExp(`renameSync\\s*\\(\\s*${tmpName}\\s*,\\s*outFile\\s*\\)`).exec(code)
-    if (writeTmp === null) problems.push(problem(SHAPE_CODES.tmp, `没有先写中间文件 ${tmpName}`))
-    if (rename === null) problems.push(problem(SHAPE_CODES.tmp, `没有 renameSync(${tmpName}, outFile) —— 中间文件写完没有换到活路径上`))
-    if (writeTmp !== null && rename !== null && writeTmp.index > rename.index) {
-      problems.push(problem(SHAPE_CODES.tmp, '先 rename 再写中间文件 —— 换名换的是上一份'))
-    }
-  }
-  if (/writeFileSync\s*\(\s*outFile\b/.test(code)) {
-    problems.push(problem(SHAPE_CODES.nonatomic, '直接 `writeFileSync(outFile, …)` 写活文件 —— 写到一半崩掉，读的人会看到半份 JSON'))
-  }
-  return problems
-}
-
-/** 把一份源码里的某个函数体换掉（刀用；只改**副本**）。 */
-function replaceFunctionBody(source, name, body) {
-  const at = source.indexOf(`export function ${name}(`)
-  if (at < 0) return null
-  const open = source.indexOf('{', at)
-  if (open < 0) return null
-  const close = matchBracket(source, open)
-  if (close < 0) return null
-  return `${source.slice(0, open)}{\n${body}\n}${source.slice(close + 1)}`
-}
-
-/**
- * "崩在写盘中间之后"的判据（纯函数）——**这一格的核心**。
+ * 快照落点旁边残留的中间件（`view.json.tmp` / `view.json.tmp-<pid>-<rand>` …）。
  *
- * 现场：上一次完整快照 `before` 在盘上；这一次写到一半进程没了。
- * 原子写 ⇒ 活文件**逐字不变**（中间名 `.tmp` 里躺着半份）；
- * 直接写活文件 ⇒ 活文件变成**半份**（解析不了）。
+ * 按**前缀**扫，不按某个固定名字：写手换成共享件之后临时名是 `<file>.tmp-<pid>-<rand>`；
+ * 钉死 `.tmp` 会让"中间件没清干净"这一腿变成**真空真**（扫一个永远不会出现的名字）。
+ */
+function tempRemnantsOf(snapFile) {
+  const dir = path.dirname(snapFile)
+  const base = path.basename(snapFile)
+  let names = []
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return []
+  }
+  return names.filter((n) => n.startsWith(`${base}.tmp`)).sort()
+}
+
+/**
+ * "崩在写盘中间"之后的判据（纯函数）—— **不认写手是谁、不认临时名**。
+ *
+ * 现场：上一次完整快照 `before` 在盘上；这一次写到一半进程没了（`crash` 是载具的读数：
+ * 崩在哪个写盘原语、写了多少字节）。公理只有一条：**活文件逐字不变**（旧的完整快照还在、
+ * 还解析得了）。中间件在不在都不判 —— 共享件失败会清残渣、手搓件会留半份，
+ * 两种都不影响"读的人看到什么"，而这一格判的正是读的人看到什么。
  *
  * @param {{before:{exists:boolean,text:string|null}, after:{exists:boolean,text:string|null,json:unknown},
- *          tmp:{exists:boolean,json:unknown}}} state
+ *          crash:{observed:boolean,primitive:string,bytes_written:number,bytes_total:number}|null}} state
  */
-function crashAftermathProblems({ before, after, tmp }) {
+function crashAftermathProblems({ before, after, crash }) {
   const problems = []
-  if (!tmp.exists) {
-    return [problem(SHAPE_CODES.harness, '现场里没有中间文件 —— 这个现场认不出实现写的是活文件还是中间文件')]
+  if (crash === null || typeof crash !== 'object' || crash.observed !== true) {
+    return [problem(SHAPE_CODES.harness, '崩溃读数缺失（载具没报"崩在哪个写盘原语上、写了多少字节"）—— 这一格判不了，别把它记成绿')]
   }
-  if (tmp.json !== null) {
-    return [problem(SHAPE_CODES.harness, '中间文件是**完整**的 JSON —— 崩溃点没落在写盘中间，这一格判不了')]
+  if (!(crash.bytes_written > 0) || !(crash.bytes_written < crash.bytes_total)) {
+    problems.push(problem(SHAPE_CODES.harness, `崩溃点没落在写盘中间（写了 ${crash.bytes_written}/${crash.bytes_total} B）—— 这一格判不了`))
   }
-  if (!after.exists) return [problem('DASH11-LIVE-GONE', '崩在写盘中间之后，活文件**不见了** —— 读的人从"旧读数"变成"没有读数"')]
-  if (after.text !== before.text) return [problem(SHAPE_CODES.half, '崩在写盘中间之后，活文件的内容变了（不再是崩之前那一份完整快照）—— 原子写没成立：读的人会读到半份 JSON')]
-  if (after.json === null) return [problem(SHAPE_CODES.half, '崩在写盘中间之后，活文件解析不了 —— 它是半份')]
+  if (!after.exists) return [...problems, problem('DASH11-LIVE-GONE', '崩在写盘中间之后，活文件**不见了** —— 读的人从"旧读数"变成"没有读数"')]
+  if (after.text !== before.text) problems.push(problem(SHAPE_CODES.half, '崩在写盘中间之后，活文件的内容变了（不再是崩之前那一份完整快照）—— 原子写没成立：读的人会读到半份 JSON'))
+  if (after.json === null) problems.push(problem(SHAPE_CODES.half, '崩在写盘中间之后，活文件解析不了 —— 它是半份'))
   return problems
 }
 
-/** 刀：把 `writeDashboardSnapshot` 换成"直接写活文件"（**只改内存里的字符串**，盘上什么都不动）。 */
-function nonAtomicSource(source) {
-  const mutated = replaceFunctionBody(source, 'writeDashboardSnapshot', [
+// ── 写手无关性：把写手**换掉**，同一套判据必须还认得出同一份快照 ──────────────
+/**
+ * 把 `lib/` 与 Node 半边拷进运行根，**只改副本里的写手**（产品树一个字节不动）。
+ *
+ * 两个用户：
+ *   · **外来写手**（`sharedWriterSource`）—— 同一份快照由**另一个**写手产出，内容/形状/原子性
+ *     三条腿必须照样绿（判据不许认识某个写手的源码形状）；
+ *   · **直接写活文件**（`directWriterSource`）—— 同一个崩溃现场下，活文件必须变成半份 ⇒ 判据红。
+ *
+ * 拷贝里的入口写成 `.mjs`：那块临时目录没有 `package.json`，`.js` 会被当成 CommonJS 而 import 不了
+ * （`engineStampingKnife` 同一课）。
+ *
+ * @returns {{root:string, pluginIndex:string, source:string, writerSource:string}|{error:string}}
+ */
+function writerFixture({ tag, rewrite }) {
+  const root = path.join(runRoot(), 'fixtures', tag)
+  try {
+    cpSync(path.join(PATHS.repo, 'presets', 'agenia', 'lib'), path.join(root, 'lib'), { recursive: true })
+    const dashFile = path.join(root, 'lib', 'dashboard.mjs')
+    const original = readFileSync(dashFile, 'utf8')
+    const patched = rewrite(original)
+    if (patched === null || patched === original) return { error: `刀没切动：${path.basename(dashFile)} 里的写手函数没找到（锚点不在）` }
+    writeFileSync(dashFile, patched, 'utf8')
+    const pluginIndex = path.join(root, 'client-ui-dashboard', 'lib', 'index.mjs')
+    mkdirSync(path.dirname(pluginIndex), { recursive: true })
+    writeFileSync(pluginIndex, readFileSync(pluginIndexOf(), 'utf8'), 'utf8')
+    return { root, pluginIndex, source: original, writerSource: patched }
+  } catch (err) {
+    return { error: `副本没造出来（${messageOf(err)}）` }
+  }
+}
+
+/** 把 `writeDashboardSnapshot` 的函数体换掉（只改**副本**里的字符串）。 */
+function rewriteWriterBody(source, bodyLines) {
+  const at = source.indexOf('export function writeDashboardSnapshot(')
+  if (at < 0) return null
+  const open = source.indexOf('{', source.indexOf(')', at))
+  const close = open < 0 ? -1 : matchBracket(source, open)
+  if (open < 0 || close < 0) return null
+  return `${source.slice(0, open)}{\n${bodyLines.join('\n')}\n}${source.slice(close + 1)}`
+}
+
+/**
+ * 外来写手 = **共享件** `writeFileAtomic`（`lib/atomic.mjs`）。
+ * 这是"判据不锁实现"的那把刀的控制面：写手换了、产物没换 ⇒ 判据必须绿。
+ */
+function sharedWriterSource(source) {
+  const withImport = source.replace(
+    /(import \{[^}]*\} from 'node:fs'\n)/,
+    "$1import { writeFileAtomic } from './atomic.mjs'\n",
+  )
+  if (withImport === source) return null
+  return rewriteWriterBody(withImport, [
+    '  const view = dashboardOf(input)',
+    '  const text = `${JSON.stringify(view)}\\n`',
+    '  const written = writeFileAtomic(outFile, text)',
+    '  if (written.ok !== true) throw new Error(`write-failed: ${written.code}: ${written.message}`)',
+    '  return { file: outFile, bytes: Buffer.byteLength(text, "utf8") }',
+  ])
+}
+
+/**
+ * 直接写活文件（**反面写手**）—— 旧判据的刀 A 是"改源码字符串让它自己报红"；
+ * 这一把改成**行为**：真跑一次、真崩在写盘中间，活文件必须留下半份。
+ */
+function directWriterSource(source) {
+  return rewriteWriterBody(source, [
     '  const view = dashboardOf(input)',
     '  const text = `${JSON.stringify(view)}\\n`',
     '  mkdirSync(path.dirname(outFile), { recursive: true })',
     '  writeFileSync(outFile, text, "utf8")',
     '  return { file: outFile, bytes: Buffer.byteLength(text, "utf8") }',
-  ].join('\n'))
-  return mutated
+  ])
 }
 
 // ── 视图守卫：十种「合法 JSON、形状不对」的现场（E3）──────────────────────────────
@@ -964,14 +1014,14 @@ test('DASH-11 Node 半边端到端：apply() 落 view.json（原子/形状/覆�
     rec.readings.run1 = first
     if (first.status !== 0) problems.push(problem('DASH11-RUN-FAILED', `子进程退出码 ${first.status}（stderr 尾：${first.stderr.slice(-400)}）`))
     const snap = snapshotOf(ws, rel)
-    const tmp = `${snap}.tmp`
     const firstFile = fileState(snap)
-    rec.readings.snapshot = { file: snap, exists: firstFile.exists, bytes: firstFile.bytes, tmp_exists: existsSync(tmp) }
+    const firstRemnants = tempRemnantsOf(snap)
+    rec.readings.snapshot = { file: snap, exists: firstFile.exists, bytes: firstFile.bytes, temp_remnants: firstRemnants }
     if (!firstFile.exists) {
       problems.push(problem('DASH11-SNAPSHOT-MISSING', `跑完一次之后 ${rel} 不在盘上 —— 渲染层读的就是这一份，它不在则面板只能画错误条`))
       caseFail(problems)
     }
-    if (existsSync(tmp)) problems.push(problem(SHAPE_CODES.tmp, `正常跑完之后还留着 ${path.basename(tmp)} —— 中间文件没有收掉`))
+    if (firstRemnants.length > 0) problems.push(problem(SHAPE_CODES.tmp, `正常跑完之后落点旁边还留着中间件 ${JSON.stringify(firstRemnants)} —— 中间文件没有收掉`))
     problems.push(...viewShapeProblems(firstFile.json, 'happy'))
     if (firstFile.json?.header?.text !== '演示目标 · 执行一 · 演示') problems.push(problem(SHAPE_CODES.shape, `happy：快照里的第一行是 ${JSON.stringify(firstFile.json?.header?.text)}，应当是账本 headline 原样`))
     if (firstFile.json?.day !== DAY) problems.push(problem('DASH-DAY-NOT-TODAY', `happy：快照的 day 是 ${JSON.stringify(firstFile.json?.day)}，应当是注入时钟那一天的周期日 ${DAY}`))
@@ -991,7 +1041,8 @@ test('DASH-11 Node 半边端到端：apply() 落 view.json（原子/形状/覆�
       if (secondFile.json?.header?.text !== '改过的目标 · 执行一 · 演示') {
         problems.push(problem('DASH11-NOT-OVERWRITTEN', `第二次跑之后第一行仍是 ${JSON.stringify(secondFile.json?.header?.text)} —— 快照没有覆盖（15 秒刷新会一直显示旧读数）`))
       }
-      if (existsSync(tmp)) problems.push(problem(SHAPE_CODES.tmp, '第二次跑之后还留着 .tmp'))
+      const secondRemnants = tempRemnantsOf(snap)
+      if (secondRemnants.length > 0) problems.push(problem(SHAPE_CODES.tmp, `第二次跑之后还留着中间件 ${JSON.stringify(secondRemnants)}`))
     }
 
     // ③ crash 现场：写盘写到一半"进程没了" —— 活文件一个字都不许变
@@ -1005,8 +1056,6 @@ test('DASH-11 Node 半边端到端：apply() 落 view.json（原子/形状/覆�
     const seedRun = runPlugin({ pluginIndex, ws: crashWs, clockFile: crashClock })
     const crashSnap = snapshotOf(crashWs, rel)
     const beforeCrash = fileState(crashSnap)
-    /** crash 那一刻 `.tmp` 里的半份文本（**在恢复跑之前**抓住 —— 恢复会把 `.tmp` 收掉）。 */
-    let crashHalfText = null
     if (!beforeCrash.exists) {
       problems.push(problem(SHAPE_CODES.harness, 'crash 现场的前置没成立：种下去的那一份快照没写出来 —— 这一格判不了"崩了之后旧文件还在不在"'))
     } else {
@@ -1018,66 +1067,191 @@ test('DASH-11 Node 半边端到端：apply() 落 view.json（原子/形状/覆�
       })
       const crash = runPlugin({ pluginIndex, ws: crashWs, mode: 'crash-mid-write', clockFile: crashClock })
       const after = fileState(crashSnap)
-      const tmpAfter = fileState(`${crashSnap}.tmp`)
-      crashHalfText = tmpAfter.text
+      /** 载具读数：**崩在哪个写盘原语、写了多少字节**（不认写手是谁）。 */
+      const sim = crash.payload?.crash ?? null
+      const reportText = `${crash.payload?.message ?? ''} ${(crash.payload?.warnings ?? []).join(' ')}`
+      const crashHappened = sim !== null && typeof sim === 'object'
+      const failureReported = crash.payload?.phase === 'apply-threw' || /SIMULATED-CRASH-MID-WRITE/.test(reportText)
       rec.readings.crash = {
         phase: crash.payload?.phase ?? null,
         message: crash.payload?.message ?? null,
         warnings: crash.payload?.warnings ?? null,
+        primitive: sim?.primitive ?? null,
+        bytes_written: sim?.bytes_written ?? null,
+        bytes_total: sim?.bytes_total ?? null,
+        crash_happened: crashHappened,
+        failure_reported: failureReported,
         live_exists: after.exists,
         live_bytes: after.bytes,
         live_parseable: after.json !== null,
-        tmp_exists: tmpAfter.exists,
-        tmp_parseable: tmpAfter.json !== null,
+        live_unchanged: after.text === beforeCrash.text,
+        temp_remnants: tempRemnantsOf(crashSnap),
       }
       // 量具自证：崩必须真的发生过（否则"活文件没变"可能只是"根本没写到那一步"）
-      const crashHappened = (crash.payload?.phase === 'apply-threw' && String(crash.payload?.message ?? '').includes('SIMULATED-CRASH-MID-WRITE'))
-        || (crash.payload?.warnings ?? []).some((w) => String(w).includes('SIMULATED-CRASH-MID-WRITE'))
       if (!crashHappened) {
-        problems.push(problem(SHAPE_CODES.harness, `模拟崩溃没有发生（phase=${JSON.stringify(crash.payload?.phase)} · message=${JSON.stringify(crash.payload?.message)}）—— 这一格判不了，别把它记成绿`))
+        problems.push(problem(SHAPE_CODES.harness, `模拟崩溃没有发生（载具没有报"崩在哪个写盘原语上"：${JSON.stringify(sim)}）—— 这一格判不了，别把它记成绿`))
       } else {
-        problems.push(...crashAftermathProblems({ before: beforeCrash, after, tmp: tmpAfter }))
+        problems.push(...crashAftermathProblems({ before: beforeCrash, after, crash: { observed: true, primitive: sim.primitive, bytes_written: sim.bytes_written, bytes_total: sim.bytes_total } }))
+      }
+      // 写盘失败**不许被吞掉**：活文件没变 + 没人知道这次写失败了 = 最坏的一种"静默失效"
+      if (crashHappened && !failureReported) {
+        problems.push(problem('DASH11-CRASH-SWALLOWED', `写盘崩了却没有任何一条警告 / 抛出（phase=${JSON.stringify(crash.payload?.phase)}）—— 下一拍会以为这一份已经写好了`))
       }
       // 恢复：下一拍能自己收干净
       const recovered = runPlugin({ pluginIndex, ws: crashWs, clockFile: crashClock })
       const recoveredFile = fileState(crashSnap)
-      rec.readings.recovery = { status: recovered.status, header: recoveredFile.json?.header?.text ?? null, tmp_exists: existsSync(`${crashSnap}.tmp`) }
+      const recoveredRemnants = tempRemnantsOf(crashSnap)
+      rec.readings.recovery = { status: recovered.status, header: recoveredFile.json?.header?.text ?? null, temp_remnants: recoveredRemnants }
       if (recovered.status !== 0 || recoveredFile.json === null) problems.push(problem('DASH11-RECOVERY', '崩过之后再跑一次仍然写不出可解析的快照 —— 这个文件坏了就再也回不来'))
       else if (recoveredFile.json?.header?.text !== '崩溃那一次的新内容 · 执行一 · 演示') problems.push(problem('DASH11-RECOVERY', '崩过之后再跑一次，快照内容不是新的那一份'))
-      if (existsSync(`${crashSnap}.tmp`)) problems.push(problem(SHAPE_CODES.tmp, '崩过之后再跑一次，中间文件还留着'))
+      if (recoveredRemnants.length > 0) problems.push(problem(SHAPE_CODES.tmp, `崩过之后再跑一次，中间件还留着 ${JSON.stringify(recoveredRemnants)}`))
     }
 
-    // ④ 源码机制（第二读者；crash 现场是行为那一半）
-    const dashboardSource = readFileSync(loaded.file, 'utf8')
-    const mechanism = atomicMechanismProblems(dashboardSource)
-    rec.readings.mechanism = mechanism
-    for (const p of mechanism) problems.push(p)
-
-    // ⑤ 两把刀（只改内存里的字符串，盘上一个字节都不动）
-    //   刀 A：原子写换成"直接写活文件" ⇒ 机制判据必须点名 NONATOMIC。
-    const knifeSource = nonAtomicSource(dashboardSource)
-    if (knifeSource === null) {
-      problems.push(problem(SHAPE_CODES.harness, '刀 A 没切动：`writeDashboardSnapshot` 的函数体没找到'))
+    // ④ **写手无关性**（本格的核心）：同一份快照换一个**外来写手**产出 ⇒ 同一套判据必须绿。
+    //    外来写手 = 共享件 `writeFileAtomic`（另一个临时名、另一套写盘原语：openSync/writeSync/fsyncSync）。
+    //    ⚠️ 判据**不读**写手的源码形状：旧版在这里断言"源码里有 `${outFile}.tmp` + writeFileSync +
+    //    renameSync(tmp, outFile)"，那一条把实现钉死 —— 换成共享件就会假红（Gate 2 的实测病，
+    //    读数 `.team/test/2026-11-13/_runs/b2-gate2-probe/old-criterion-probe.json`）。
+    const foreign = writerFixture({ tag: 'dash11-foreign-writer', rewrite: sharedWriterSource })
+    rec.readings.foreign_writer = { fixture: foreign.root ?? null, error: foreign.error ?? null }
+    if (foreign.error !== undefined) {
+      problems.push(problem(SHAPE_CODES.harness, `外来写手夹具没造出来（${foreign.error}）—— 这一条判不了，不许记绿`))
     } else {
-      const knifeMechanism = atomicMechanismProblems(knifeSource)
-      rec.readings.knife_mechanism = knifeMechanism
-      if (!knifeMechanism.some((p) => p.code === SHAPE_CODES.nonatomic)) {
-        problems.push(problem('DASH-KNIFE-VECTOR', `刀 A（直接写活文件）没有被机制判据抓到（实得 ${JSON.stringify(knifeMechanism.map((p) => p.code))}）`))
+      /** 控制面自证：这份夹具里的写手**不是**手搓写法（否则"换写手"是假的）。 */
+      const stillHandRolled = /const\s+\w+\s*=\s*`\$\{outFile\}\.tmp`/.test(foreign.writerSource)
+        && /writeFileSync\s*\(\s*\w+\s*,/.test(foreign.writerSource)
+      rec.readings.foreign_writer.hand_rolled_shape = stillHandRolled
+      if (stillHandRolled) problems.push(problem(SHAPE_CODES.harness, '外来写手夹具里还留着"自己拼临时名 + writeFileSync"的形状 —— 控制面不成立（换的不是写手）'))
+      const foreignWs = workspaceOf('DASH-11', 'foreign-writer')
+      seedWorkspace(foreignWs, {
+        route: routeFixture({ headline: '外来写手 · 执行一 · 演示' }),
+        localDays: { [DAY]: localFixture({ day: DAY, technical: { state: 'done' }, conversation: { state: 'done' } }) },
+        updateDays: { [DAY]: { schema: 1, day: DAY, generation: 1, phase: 'done', updated_at: `${DAY}T09:00:00+08:00` } },
+      })
+      const foreignClock = clockFileOf(foreignWs, CLOCK_NOON)
+      const fRun = runPlugin({ pluginIndex: foreign.pluginIndex, ws: foreignWs, clockFile: foreignClock })
+      const fSnap = snapshotOf(foreignWs, rel)
+      const fFile = fileState(fSnap)
+      const fRemnants = tempRemnantsOf(fSnap)
+      const fShape = fFile.json === null
+        ? [problem(SHAPE_CODES.shape, '外来写手：快照没写出来 / 解析不了')]
+        : viewShapeProblems(fFile.json, '外来写手')
+      rec.readings.foreign_writer.normal = {
+        status: fRun.status, exists: fFile.exists, bytes: fFile.bytes, header: fFile.json?.header?.text ?? null,
+        shape_codes: fShape.map((p) => p.code), temp_remnants: fRemnants,
+      }
+      if (fRun.status !== 0) problems.push(problem('DASH11-FOREIGN-WRITER', `外来写手那一跑退出码 ${fRun.status}（stderr 尾：${fRun.stderr.slice(-300)}）`))
+      for (const p of fShape) problems.push(problem(p.code, `[外来写手] ${p.message}`))
+      if (fFile.json?.header?.text !== '外来写手 · 执行一 · 演示') problems.push(problem('DASH11-FOREIGN-WRITER', `外来写手：快照第一行是 ${JSON.stringify(fFile.json?.header?.text)} —— 内容判据不认这一份产物`))
+      if (fRemnants.length > 0) problems.push(problem(SHAPE_CODES.tmp, `外来写手：落点旁边还留着中间件 ${JSON.stringify(fRemnants)}`))
+      // 同一个外来写手，崩在写盘中间 ⇒ 活文件逐字不变（观察到的原子性，与写手是谁无关）
+      const fCrashWs = workspaceOf('DASH-11', 'foreign-writer-crash')
+      seedWorkspace(fCrashWs, {
+        route: routeFixture({ headline: '外来写手崩溃之前 · 执行一 · 演示' }),
+        localDays: { [DAY]: localFixture({ day: DAY, technical: { state: 'done' }, conversation: { state: 'done' } }) },
+        updateDays: { [DAY]: { schema: 1, day: DAY, generation: 1, phase: 'done', updated_at: `${DAY}T09:00:00+08:00` } },
+      })
+      const fCrashClock = clockFileOf(fCrashWs, CLOCK_NOON)
+      runPlugin({ pluginIndex: foreign.pluginIndex, ws: fCrashWs, clockFile: fCrashClock })
+      const fCrashSnap = snapshotOf(fCrashWs, rel)
+      const fBefore = fileState(fCrashSnap)
+      if (!fBefore.exists) {
+        problems.push(problem(SHAPE_CODES.harness, '外来写手的 crash 现场前置没成立：种子快照没写出来'))
+      } else {
+        seedWorkspace(fCrashWs, {
+          route: routeFixture({ headline: '外来写手崩溃那一次 · 执行一 · 演示' }),
+          localDays: { [DAY]: localFixture({ day: DAY, technical: { state: 'done' }, conversation: { state: 'done' } }) },
+          updateDays: { [DAY]: { schema: 1, day: DAY, generation: 1, phase: 'done', updated_at: `${DAY}T09:00:00+08:00` } },
+        })
+        const fCrash = runPlugin({ pluginIndex: foreign.pluginIndex, ws: fCrashWs, mode: 'crash-mid-write', clockFile: fCrashClock })
+        const fAfter = fileState(fCrashSnap)
+        const fSim = fCrash.payload?.crash ?? null
+        const fCodes = fSim === null
+          ? []
+          : crashAftermathProblems({ before: fBefore, after: fAfter, crash: { observed: true, primitive: fSim.primitive, bytes_written: fSim.bytes_written, bytes_total: fSim.bytes_total } }).map((p) => p.code)
+        rec.readings.foreign_writer.crash = {
+          status: fCrash.status, phase: fCrash.payload?.phase ?? null, crash: fSim,
+          live_unchanged: fAfter.text === fBefore.text, live_parseable: fAfter.json !== null, codes: fCodes,
+        }
+        if (fSim === null) {
+          problems.push(problem(SHAPE_CODES.harness, '外来写手的崩溃没发生（载具没报写盘原语）—— 这一条判不了'))
+        } else if (fCodes.length > 0) {
+          problems.push(problem('DASH11-FOREIGN-WRITER', `外来写手崩在写盘中间之后，判据报了 ${JSON.stringify(fCodes)}（活文件 ${fAfter.bytes} B / 可解析=${fAfter.json !== null}）—— 那说明这条判据只认某一种写手`))
+        }
       }
     }
-    //   刀 B：把"崩在写盘中间"之后的**直接写**现场喂给 aftermath 判据 ⇒ 必须点名 HALF-LIVE-FILE。
-    //        （现场不是编的：用真跑出来的那半份 `.tmp` 文本，当作"直接写进活文件"的那一半。）
-    if (crashHalfText === null || crashHalfText === '') {
-      problems.push(problem(SHAPE_CODES.harness, '刀 B 的前提丢了：crash 现场没有留下那半份文本'))
+
+    // ⑤ 反面样本（**判据自己得翻面**）：坏快照 ⇒ 红；半份活文件 ⇒ 红
+    //    (a) 形状：缺一个必填键 / 类型不对 / 不是对象 —— 三种坏快照喂给同一条形状判据，各自必须点名
+    //    (b) 原子性：同一个 aftermath 判据喂"写到一半的活文件" ⇒ 必须点名 HALF-LIVE-FILE
+    const goodView = firstFile.json
+    if (goodView === null) {
+      problems.push(problem(SHAPE_CODES.harness, '真相遇（happy）的快照解析不了 —— 形状刀与原子刀的前提不成立，这一格判不了'))
     } else {
+      const goodCodes = viewShapeProblems(goodView, '刀·好快照').map((p) => p.code)
+      const badViews = [
+        ['缺一个必填键', (() => { const v = { ...goodView }; delete v.header; return v })()],
+        ['类型不对', { ...goodView, badge: 7 }],
+        ['不是对象', null],
+      ]
+      const shapeKnives = badViews.map(([label, view]) => ({ label, codes: viewShapeProblems(view, `刀·${label}`).map((p) => p.code) }))
+      rec.readings.shape_knives = { good: goodCodes, bad: shapeKnives }
+      if (goodCodes.length > 0) problems.push(problem('DASH-KNIFE-VECTOR', `好快照被形状判据报了 ${JSON.stringify(goodCodes)} —— 那是判据坏了，不是快照坏了`))
+      for (const k of shapeKnives) {
+        if (!k.codes.includes(SHAPE_CODES.shape)) problems.push(problem('DASH-KNIFE-VECTOR', `刀「${k.label}」没有被形状判据抓到（实得 ${JSON.stringify(k.codes)}）—— 坏快照能照样绿，那这一格护不住内容`))
+      }
+      //    截断的活文件 = 写到一半：真快照文本的前一半（现场不是编的：原子写失败时读的人看到的就是它）
+      const fullText = String(firstFile.text ?? '')
+      const halfText = fullText.slice(0, Math.max(1, Math.floor(fullText.length / 2)))
       const synthetic = crashAftermathProblems({
-        before: { exists: true, text: '<旧的完整快照>' },
-        after: { exists: true, text: crashHalfText, json: null },
-        tmp: { exists: true, json: null },
+        before: { exists: true, text: fullText },
+        after: { exists: true, text: halfText, json: null },
+        crash: { observed: true, primitive: 'knife', bytes_written: 1, bytes_total: 2 },
       })
       rec.readings.knife_aftermath = synthetic.map((p) => p.code)
       if (!synthetic.some((p) => p.code === SHAPE_CODES.half)) {
-        problems.push(problem('DASH-KNIFE-VECTOR', `刀 B（半份活文件）没有被 aftermath 判据抓到（实得 ${JSON.stringify(synthetic.map((p) => p.code))}）—— 这一格分不开"原子写"与"直接写"`))
+        problems.push(problem('DASH-KNIFE-VECTOR', `刀（半份活文件）没有被 aftermath 判据抓到（实得 ${JSON.stringify(synthetic.map((p) => p.code))}）—— 这一格分不开"原子写"与"直接写"`))
+      }
+    }
+    //    真跑的反面写手：直接写活文件的副本 + 同一个崩溃现场 ⇒ 活文件必须变成半份（判据必须红）
+    const direct = writerFixture({ tag: 'dash11-direct-writer', rewrite: directWriterSource })
+    rec.readings.direct_writer = { fixture: direct.root ?? null, error: direct.error ?? null }
+    if (direct.error !== undefined) {
+      problems.push(problem(SHAPE_CODES.harness, `反面写手夹具没造出来（${direct.error}）—— 这一条判不了`))
+    } else {
+      const dWs = workspaceOf('DASH-11', 'direct-writer')
+      seedWorkspace(dWs, {
+        route: routeFixture({ headline: '直接写 · 崩溃之前 · 演示' }),
+        localDays: { [DAY]: localFixture({ day: DAY, technical: { state: 'done' }, conversation: { state: 'done' } }) },
+        updateDays: { [DAY]: { schema: 1, day: DAY, generation: 1, phase: 'done', updated_at: `${DAY}T09:00:00+08:00` } },
+      })
+      const dClock = clockFileOf(dWs, CLOCK_NOON)
+      runPlugin({ pluginIndex: direct.pluginIndex, ws: dWs, clockFile: dClock })
+      const dSnap = snapshotOf(dWs, rel)
+      const dBefore = fileState(dSnap)
+      if (!dBefore.exists) {
+        problems.push(problem(SHAPE_CODES.harness, '反面写手的 crash 现场前置没成立：种子快照没写出来'))
+      } else {
+        seedWorkspace(dWs, {
+          route: routeFixture({ headline: '直接写 · 崩溃那一次 · 演示' }),
+          localDays: { [DAY]: localFixture({ day: DAY, technical: { state: 'done' }, conversation: { state: 'done' } }) },
+          updateDays: { [DAY]: { schema: 1, day: DAY, generation: 1, phase: 'done', updated_at: `${DAY}T09:00:00+08:00` } },
+        })
+        const dCrash = runPlugin({ pluginIndex: direct.pluginIndex, ws: dWs, mode: 'crash-mid-write', clockFile: dClock })
+        const dAfter = fileState(dSnap)
+        const dSim = dCrash.payload?.crash ?? null
+        const dCodes = dSim === null
+          ? []
+          : crashAftermathProblems({ before: dBefore, after: dAfter, crash: { observed: true, primitive: dSim.primitive, bytes_written: dSim.bytes_written, bytes_total: dSim.bytes_total } }).map((p) => p.code)
+        rec.readings.direct_writer_knife = {
+          status: dCrash.status, phase: dCrash.payload?.phase ?? null, crash: dSim,
+          live_unchanged: dAfter.text === dBefore.text, live_parseable: dAfter.json !== null, codes: dCodes,
+        }
+        if (dSim === null) {
+          problems.push(problem(SHAPE_CODES.harness, '反面写手的崩溃没发生（载具没报写盘原语）—— 这一条判不了'))
+        } else if (!dCodes.includes(SHAPE_CODES.half)) {
+          problems.push(problem('DASH-KNIFE-VECTOR', `刀（直接写活文件 + 崩在写盘中间）没有被 aftermath 判据抓到（实得 ${JSON.stringify(dCodes)}；活文件 ${dAfter.bytes} B / 可解析=${dAfter.json !== null}）—— 这一格分不开"原子写"与"直接写"`))
+        }
       }
     }
 

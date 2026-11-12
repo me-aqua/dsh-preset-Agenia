@@ -18,6 +18,18 @@ import {
   goodDecision0001, goodDecisionProduct0001, goodLedger, messagesOf, readText, runCensus, runCensusText,
   runCheck, runNode, sceneRoot, summarize, toolPresent, treeDigest,
 } from '../support/decision-ledger.mjs'
+import { COUNT_RULES } from '../../../.tools/lib/决议-ledger.mjs'
+import {
+  SHAPE_CONCEPT,
+  SHAPE_FIXTURES,
+  SHAPE_RULE,
+  SHAPE_SCAN_FLOOR,
+  SHAPE_SURFACE,
+  allowlistEntryProblems,
+  shapeReading,
+  shapeScene,
+  shapeSummary,
+} from '../support/atomic-shape.mjs'
 
 before(() => {
   preflight()
@@ -62,6 +74,19 @@ const LEGEND_TOKENS = Object.freeze([
   ['site-code', '处代码行'],
   ['零代码', '零代码决定'],
 ])
+/**
+ * 页首该印哪几对：**冻结的五对**（上表，手写期望）+ **按形状那一对**（只在口径落进 `COUNT_RULES` 之后出现）。
+ *
+ * 为什么按形状那一对从 `COUNT_RULES` 读标签、不手抄：M4 的口径是"单位只有一处来源"——
+ * 页首那句本来就是从 `COUNT_RULES` 现算的；判据在这一对上判的是"页与口径同值"，不是"标签长什么样"
+ * （标签本身另有约束：含「处」，见 `DEC-05` 腿 ⑧ 的 unit 那一格）。这样 Gate 3 加 token 时页与判据同批跟上，
+ * 不会因为"判据先红"把加 token 变成两处改。
+ */
+function expectedLegendTokens() {
+  const base = LEGEND_TOKENS.map(([t, u]) => [t, u])
+  if (Object.hasOwn(COUNT_RULES, SHAPE_RULE)) base.push([SHAPE_RULE, COUNT_RULES[SHAPE_RULE].label])
+  return base
+}
 function legendReading(text) {
   const line = String(text ?? '').split(/\r?\n/).find((l) => l.includes('计数口径是闭集')) ?? ''
   // 只从「闭集」那一句往后读：这一行开头还有一句 `census` = …（那是解释，不是闭集里的配对）。
@@ -70,20 +95,20 @@ function legendReading(text) {
   const countMatch = /闭集\s*(\d+)\s*个/.exec(line)
   return { line, pairs, declared_count: countMatch === null ? null : Number(countMatch[1]) }
 }
-function legendProblems(reading) {
+function legendProblems(reading, wantTokens = expectedLegendTokens()) {
   const out = []
   const push = (code, message) => out.push({ code, message })
   if (reading.line === '') {
     push('LEGEND-MISSING', 'INDEX 页首没有「计数口径是闭集 N 个…」那一句 —— 单位从哪来，读的人得自己猜')
     return out
   }
-  const want = LEGEND_TOKENS.map(([t, u]) => `${t}=${u}`)
+  const want = wantTokens.map(([t, u]) => `${t}=${u}`)
   const got = reading.pairs.map((p) => `${p.token}=${p.unit}`)
   if (JSON.stringify(got) !== JSON.stringify(want)) {
     push('LEGEND-TOKENS', `页首闭集必须恰好是 ${JSON.stringify(want)}，实得 ${JSON.stringify(got)}`)
   }
-  if (reading.declared_count !== LEGEND_TOKENS.length) {
-    push('LEGEND-COUNT', `页首必须写「闭集 ${LEGEND_TOKENS.length} 个」，实得 ${JSON.stringify(reading.declared_count)}`)
+  if (reading.declared_count !== wantTokens.length) {
+    push('LEGEND-COUNT', `页首必须写「闭集 ${wantTokens.length} 个」，实得 ${JSON.stringify(reading.declared_count)}`)
   }
   return out
 }
@@ -270,14 +295,16 @@ test('DEC-04 INDEX 与派生叶逐行对账：改页上一个数 ⇒ 红；改�
         const keys = run.json?.keys ?? []
         const knifeLegend = legendReading(run.json?.index ?? '')
         const knifeProblems = legendProblems(knifeLegend)
-        rec.readings.legend_knife = { exit: run.exit, keys, pairs: knifeLegend.pairs, declared_count: knifeLegend.declared_count, codes: knifeProblems.map((p) => p.code) }
+        /** 副本里应当是"当前闭集 − 零代码"（口径落几个 token，这一格就跟几个）。 */
+        const wantKeys = Object.keys(COUNT_RULES).filter((k) => k !== '零代码').sort()
+        rec.readings.legend_knife = { exit: run.exit, keys, want_keys: wantKeys, pairs: knifeLegend.pairs, declared_count: knifeLegend.declared_count, codes: knifeProblems.map((p) => p.code) }
         if (run.exit !== 0 || run.json === null) {
           push('LEGEND-KNIFE', `[刀] 副本探针没跑出 JSON（exit=${run.exit} · ${run.json_error ?? ''}）`)
-        } else if (keys.includes('零代码') || JSON.stringify(keys) !== JSON.stringify(['file', 'file-code', 'site', 'site-code'])) {
-          push('LEGEND-KNIFE', `[刀] 副本里 \`COUNT_RULES\` 的键必须是四项（删掉 \`零代码\` 之后），实得 ${JSON.stringify(keys)}`)
+        } else if (keys.includes('零代码') || JSON.stringify([...keys].sort()) !== JSON.stringify(wantKeys)) {
+          push('LEGEND-KNIFE', `[刀] 副本里 \`COUNT_RULES\` 的键必须是"当前闭集 − 零代码" ${JSON.stringify(wantKeys)}（删掉那一行之后），实得 ${JSON.stringify(keys)}`)
         } else if (!knifeProblems.some((p) => p.code === 'LEGEND-TOKENS')) {
           push('LEGEND-KNIFE', `[刀] 删掉 \`零代码\` 之后，同一条判据没有报 \`LEGEND-TOKENS\`（实得 ${JSON.stringify(knifeProblems.map((p) => p.code))}）`
-            + ' —— 那"页首闭集五条都从 COUNT_RULES 来"这句话没有被判到')
+            + ' —— 那"页首闭集逐条都从 COUNT_RULES 来"这句话没有被判到')
         }
       }
     }
@@ -475,26 +502,235 @@ test('DEC-05 census：一个概念两处实现 ⇒ 2；一处 ⇒ 1；零处 ⇒
       }
     }
 
-    // ⑦ 真树那一腿：census 读得出、单位都在；**0 只许出现在声明了 `零代码` 的行上**
+    // ⑦ 真树那一腿：census 读得出、单位都在；**0 只许出现在"声明了 `零代码`"或"按形状量过"的行上**
     {
       const run = runCensus(PATHS.repo)
       rec.readings.real = {
         exit: run.exit, ok: run.json?.ok ?? null, codes: codesOf(run.json),
-        concepts: (run.json?.concepts ?? []).map((c) => ({ concept: c.concept, count: c.count, unit: c.unit, rule: c.rule })),
+        concepts: (run.json?.concepts ?? []).map((c) => ({ concept: c.concept, count: c.count, unit: c.unit, rule: c.rule, scanned_files: c.scanned_files ?? null, scan_empty: c.scan_empty ?? null })),
       }
       if (run.json === null) {
         push('TREE-MISSING', `[真树] census 在仓库根上读不出 JSON（${run.json_error}）—— \`决议/概念表.md\` 今天不在（Gate 3 建）`)
       } else if (!expectCodes(problems, run, [], push, { label: 'DEC-05/real' })) {
         // 红因已在码集里
       } else {
-        const zero = rec.readings.real.concepts.filter((c) => c.count === 0 && c.rule !== '零代码')
+        /**
+         * 🔴 **"0 处"只有两种合法形状**：
+         *   · 这一行声明了 `零代码`（按设计没有实现）；
+         *   · 这一行是**按形状**量的（`atomic-write-by-shape`），而且**扫描面真的量到了**：
+         *     `scan_empty === false` 且 `scanned_files ≥ 地板`。否则那个 0 是**真空真**（探针写错 / 面没盖住）——
+         *     今天 `原子写剩余实现` 那一行就是这种：探针是字面量 `writeFileSync…renameSync`（带省略号），永远数不出东西。
+         */
+        const measuredShapeZero = (c) => c.rule === SHAPE_RULE
+          && c.scan_empty === false
+          && Number.isInteger(c.scanned_files)
+          && c.scanned_files >= SHAPE_SCAN_FLOOR
+        const zero = rec.readings.real.concepts.filter((c) => c.count === 0 && c.rule !== '零代码' && !measuredShapeZero(c))
         if (zero.length > 0) {
-          push('CENSUS-REAL-ZERO', `[真树] 这些概念数出 0 处实现、而口径不是 \`零代码\`：${JSON.stringify(zero)} —— `
-            + '探针要么写错、要么扫描范围没盖住。真树上 0 只有一种合法形状：这一行**声明**了 `零代码`（零代码决定）。')
+          push('CENSUS-REAL-ZERO', `[真树] 这些概念数出 0 处实现、而口径不是 \`零代码\` / 也不是"按形状且量过面"：${JSON.stringify(zero)} —— `
+            + '探针要么写错、要么扫描范围没盖住。真树上 0 只有两种合法形状：这一行**声明**了 `零代码`（零代码决定），'
+            + '或者这一行是**按形状**量的且 `scan_empty:false` + `scanned_files ≥ 地板`（量过面才敢说 0）。')
         }
         const missingUnit = rec.readings.real.concepts.filter((c) => typeof c.unit !== 'string' || c.unit.trim() === '')
         if (missingUnit.length > 0) {
           push('CENSUS-UNIT', `[真树] 这些概念没有单位：${JSON.stringify(missingUnit.map((c) => c.concept))} —— 数不带单位就只是一个数`)
+        }
+      }
+    }
+
+    // ══ ⑧ 按形状数手搓原子写（构案 0007 · B2）：真树 0 处 · 正负对照 · 允许清单 ═══════════════
+    // 病：`writeFileAtomic` 归一之后，"原子写"这个概念还有**手搓实现**（自己拼临时名 + writeFileSync + renameSync），
+    // 而按**名字**数的 census 数不到它们 ⇒ 概念表那一行要一条**按形状**的口径（`atomic-write-by-shape`）。
+    // 这一组腿住在 `DEC-05`（它本来就是"census 的计数口径"那一格）：**不新增用例**，分母不破（0007 §七）。
+    {
+      const ruleRegistered = Object.hasOwn(COUNT_RULES, SHAPE_RULE)
+      rec.readings.shape_rule = { token: SHAPE_RULE, registered: ruleRegistered, label: COUNT_RULES[SHAPE_RULE]?.label ?? null }
+      if (!ruleRegistered) {
+        // 口径没落 ≠ 夹具没接上：先跑一棵正对照 + 一棵负对照，证明夹具管线是活的
+        // （它们此刻的码集是 `CONCEPT-TABLE-SHAPE`：那一行声明的口径不认识 —— Gate 3 落 token 之后才会变成期望值）。
+        for (const [tag, files] of [['handrolled-tmp', [{ rel: 'presets/agenia/lib/handrolled.mjs', text: SHAPE_FIXTURES.handrolledTmp }]], ['read-only', [{ rel: 'presets/agenia/lib/read-only.mjs', text: SHAPE_FIXTURES.readOnly }]]]) {
+          const built = shapeScene({ caseId: 'DEC-05', tag: `dormant-${tag}`, files })
+          const reading = shapeReading(built.root)
+          rec.readings[`shape_dormant_${tag}`] = { root: built.root, exit: reading.exit, codes: reading.problem_codes, count: reading.concept?.count ?? null }
+        }
+        push('DEC05-SHAPE-RULE-MISSING',
+          `\`COUNT_RULES\` 里没有 \`${SHAPE_RULE}\` 这个计数口径（Gate 3：把它加进 \`.tools/lib/决议-ledger.mjs\` 的闭集，`
+          + `并把 \`决议/概念表.md\` 里「${SHAPE_CONCEPT}」那一行改成按形状量）。`
+          + `夹具管线已跑通（读数 shape_dormant_handrolled-tmp / shape_dormant_read-only：码集 ${JSON.stringify([rec.readings['shape_dormant_handrolled-tmp']?.codes, rec.readings['shape_dormant_read-only']?.codes])}）`)
+      } else {
+        // ── 真树 ────────────────────────────────────────────────────────────────────────
+        const real = shapeReading(PATHS.repo)
+        const concept = real.concept
+        rec.readings.shape_real = {
+          root: PATHS.repo, exit: real.exit, problem_codes: real.problem_codes, missing_fields: real.missing_fields,
+          concept, summary: shapeSummary(concept),
+        }
+        if (concept === null) {
+          push('DEC05-SHAPE-CONCEPT', `真树 \`${PATHS.repo}\` 的 census 里没有「${SHAPE_CONCEPT}」这个概念 —— 0007 登记时那一行要在（主题与构案 0007 同名）`)
+        } else if (real.missing_fields.length > 0) {
+          push('DEC05-SHAPE-FIELDS', `「${SHAPE_CONCEPT}」的读数缺字段 ${JSON.stringify(real.missing_fields)} —— 这一组腿要能拆开读（扫描面 / 扫了几份 / 每处形状 / 允许清单），缺一个就只剩一个数`)
+        } else {
+          if (real.exit !== 0 || real.problem_codes.length > 0) {
+            push('DEC05-SHAPE-CENSUS-PROBLEMS', `真树 census exit=${real.exit}，码集 ${JSON.stringify(real.problem_codes)} —— 概念表 / 允许清单本身有问题（报文 ${JSON.stringify(real.problems.map((p) => p.message).slice(0, 3))}）`)
+          }
+          if (concept.rule !== SHAPE_RULE) push('DEC05-SHAPE-RULE', `「${SHAPE_CONCEPT}」的计数口径必须是 \`${SHAPE_RULE}\`，实得 ${JSON.stringify(concept.rule)} —— 今天那一行是 \`site\` + 一个字面量探针（永远数不出东西，是真空真）`)
+          if (typeof concept.unit !== 'string' || !concept.unit.includes('处')) {
+            push('DEC05-SHAPE-UNIT', `「${SHAPE_CONCEPT}」的单位要说清是"处"（实得 ${JSON.stringify(concept.unit)}，rule=${JSON.stringify(concept.rule)}）—— 单位不写，读的人会把"处"当"份"`)
+          }
+          const scan = Array.isArray(concept.scan) ? concept.scan.map((s) => String(s).replace(/\\/g, '/')) : []
+          for (const glob of SHAPE_SURFACE) {
+            if (!scan.includes(glob)) push('DEC05-SHAPE-SCAN', `扫描面缺 ${JSON.stringify(glob)}（实得 ${JSON.stringify(scan)}）—— 面少了，0 处就可能是"没扫到"（inject.js 是 .js，只写 *.mjs 会漏掉它）`)
+          }
+          if (concept.scan_empty === true) push('DEC05-SHAPE-SCAN', '`scan_empty: true` —— 扫描面一份文件都没扫到，"0 处"是真空真，不是绿')
+          if (!Number.isInteger(concept.scanned_files) || concept.scanned_files < SHAPE_SCAN_FLOOR) {
+            push('DEC05-SHAPE-SCAN', `扫描面只读到 ${JSON.stringify(concept.scanned_files)} 份文件（下限 ${SHAPE_SCAN_FLOOR}；今天真树 43 份）—— 面塌了，"0 处"不作数`)
+          }
+          const sites = Array.isArray(concept.sites) ? concept.sites : []
+          const allow = Array.isArray(concept.allowlist) ? concept.allowlist : []
+          const aSites = sites.filter((s) => s?.shape === 'A')
+          const bSites = sites.filter((s) => s?.shape === 'B')
+          const aAllow = allow.filter((e) => e?.shape === 'A')
+          const bAllow = allow.filter((e) => e?.shape === 'B')
+          rec.readings.shape_real.breakdown = { sites: sites.length, a: aSites.length, b: bSites.length, allowlisted_a: aAllow.length, allowlisted_b: bAllow.length }
+          if (sites.length !== aSites.length + bSites.length) {
+            push('DEC05-SHAPE-SITES', `sites 里有 ${sites.length - aSites.length - bSites.length} 条既不是 A 也不是 B（实得 ${JSON.stringify(sites.filter((s) => !['A', 'B'].includes(s?.shape)))}）—— 形状闭集只有 A / B`)
+          }
+          if (concept.count !== aSites.length + bSites.length - bAllow.length) {
+            push('DEC05-SHAPE-COUNT', `count=${JSON.stringify(concept.count)} 对不上"${aSites.length} 处 A + ${bSites.length} 处 B − ${bAllow.length} 条放行的 B"（= ${aSites.length + bSites.length - bAllow.length}）—— 数不能拆，就不是读数`)
+          }
+          {
+            const allowedB = new Set(bAllow.map((e) => `${e.file}:${e.line}`))
+            const counted = [...aSites, ...bSites.filter((s) => !allowedB.has(`${s.file}:${s.line}`))].map((s) => `${s.file}:${s.line}`).sort()
+            const got = Array.isArray(concept.implementations) ? [...concept.implementations] : null
+            if (got === null || JSON.stringify(got) !== JSON.stringify(counted)) {
+              push('DEC05-SHAPE-IMPLEMENTATIONS', `implementations 必须逐字是"算数的那些处" ${JSON.stringify(counted)}，实得 ${JSON.stringify(got)} —— 明细与 count 各说各的，读的人没法回推`)
+            }
+          }
+          if (aAllow.length > 0) {
+            push('DEC05-SHAPE-ALLOWLIST-HIDES-A', `允许清单放行了 ${aAllow.length} 处 **A 族**（手搓文件原子写）：${JSON.stringify(aAllow.map((e) => `${e.file}:${e.line ?? '?'}`))} —— A 族是这一票要清的东西，不许被清单藏起来（RC-3 只允许放行合法非原子 rename）`)
+          }
+          if (concept.count !== 0) {
+            const where = sites.map((s) => `${s.file}:${s.line}（${s.shape}）`).join(' · ')
+            push('DEC05-SHAPE-COUNT-ZERO', `真树还有 ${concept.count} 处手搓原子写：${where || '（sites 为空但 count 非 0）'} —— Gate 3 要把这 3 处接到共享件；改完这一格才转绿`)
+          }
+          const realProblems = []
+          for (const entry of allow) for (const p of allowlistEntryProblems(entry, { root: PATHS.repo })) realProblems.push(p)
+          rec.readings.shape_real.allowlist_problems = realProblems
+          for (const p of realProblems) push(p.code, `[真树允许清单] ${p.message}`)
+        }
+
+        // ── 夹具：正对照（必须数得出来）· 负对照（必须 0）────────────────────────────────
+        const shapeCase = ({ tag, files, allowlist = null, concept: conceptRow = {}, wantCodes = [] }) => {
+          const built = shapeScene({ caseId: 'DEC-05', tag, files, allowlist, concept: conceptRow })
+          const reading = shapeReading(built.root)
+          const c = reading.concept
+          const entry = {
+            root: built.root, files: built.files, exit: reading.exit, codes: [...reading.problem_codes].sort(),
+            count: c?.count ?? null, scanned_files: c?.scanned_files ?? null, scan_empty: c?.scan_empty ?? null, unit: c?.unit ?? null,
+            sites: (c?.sites ?? []).map((s) => ({ file: s.file, line: s.line, shape: s.shape })),
+            allowlist: (c?.allowlist ?? []).map((e) => ({ file: e.file, line: e.line, kind: e.kind, shape: e.shape, why: e.why })),
+            problems: reading.problems.map((p) => `${p.code}: ${p.message}`).slice(0, 4),
+          }
+          rec.readings[`shape_${tag}`] = entry
+          const usable = expectCodes(problems, reading.run, wantCodes, push, { label: `DEC-05/shape-${tag}` })
+          return { built, reading, concept: c, entry, usable }
+        }
+        const F = (rel, text) => ({ rel: `presets/agenia/lib/${rel}`, text })
+        const countIs = (want) => (c) => (c?.count === want ? [] : [problem('DEC05-SHAPE-SCENE-COUNT', `count 必须是 ${want}，实得 ${JSON.stringify(c?.count)}`)])
+        const scannedIs = (want) => (c) => (c?.scanned_files === want ? [] : [problem('DEC05-SHAPE-SCENE-SURFACE', `scanned_files 必须是 ${want}，实得 ${JSON.stringify(c?.scanned_files)}`)])
+        const siteShape = (index, shape) => (c) => {
+          const s = (c?.sites ?? [])[index]
+          return s?.shape === shape ? [] : [problem('DEC05-SHAPE-SCENE-SHAPE', `sites[${index}].shape 必须是 ${shape}，实得 ${JSON.stringify(s?.shape)}（sites=${JSON.stringify(c?.sites)}）`)]
+        }
+        const check = (tag, result, extra = []) => {
+          if (!result.usable) return
+          for (const p of extra) push(p.code, `[夹具 ${tag}] ${p.message}`)
+        }
+        let r = shapeCase({ tag: 'handrolled-tmp', files: [F('handrolled.mjs', SHAPE_FIXTURES.handrolledTmp)] })
+        check('handrolled-tmp', r, [...countIs(1)(r.concept), ...scannedIs(1)(r.concept), ...siteShape(0, 'A')(r.concept), ...(r.entry.unit?.includes('处') ? [] : [problem('DEC05-SHAPE-SCENE-UNIT', `单位要含"处"，实得 ${JSON.stringify(r.entry.unit)}`)])])
+        r = shapeCase({ tag: 'handrolled-tmp-pid', files: [F('handrolled-pid.mjs', SHAPE_FIXTURES.handrolledPid)] })
+        check('handrolled-tmp-pid', r, [...countIs(1)(r.concept), ...siteShape(0, 'A')(r.concept)])
+        r = shapeCase({ tag: 'handrolled-writefile', files: [F('handrolled-writefile.mjs', SHAPE_FIXTURES.handrolledWriteFile)] })
+        check('handrolled-writefile', r, [...countIs(1)(r.concept), ...siteShape(0, 'A')(r.concept)])
+        r = shapeCase({ tag: 'two-sites-one-file', files: [F('two-sites.mjs', `${SHAPE_FIXTURES.handrolledTmp}\n${SHAPE_FIXTURES.handrolledPid}`)] })
+        check('two-sites-one-file', r, [...countIs(2)(r.concept), ...scannedIs(1)(r.concept)])
+        for (const [tag, text] of [['rename-only', SHAPE_FIXTURES.renameOnly], ['read-only', SHAPE_FIXTURES.readOnly], ['direct-write', SHAPE_FIXTURES.directWrite]]) {
+          r = shapeCase({ tag, files: [F(`${tag}.mjs`, text)] })
+          check(tag, r, [...countIs(0)(r.concept), ...scannedIs(1)(r.concept)])
+        }
+        // 真空真：glob 对不上任何文件 ⇒ `scan_empty:true`（"0 处"与"没扫到"必须分得开）
+        r = shapeCase({ tag: 'scan-empty', files: [F('outside.mjs', SHAPE_FIXTURES.handrolledTmp)], concept: { scan: 'nowhere/**/*.mjs' } })
+        check('scan-empty', r, [...countIs(0)(r.concept), ...(r.concept?.scan_empty === true ? [] : [problem('DEC05-SHAPE-SCENE-EMPTY', `扫描面对不上任何文件时必须 \`scan_empty:true\`，实得 ${JSON.stringify(r.concept?.scan_empty)}`)])])
+        // ── 允许清单：B 族可放行（控制面 = 不放行时数得出来）；A 族不许 ────────────────
+        const bLine = SHAPE_FIXTURES.tempRenameOnly.split(/\r?\n/).findIndex((l) => l.includes('renameSync(bodyTmp, finalDir)')) + 1
+        const aLine = SHAPE_FIXTURES.handrolledTmp.split(/\r?\n/).findIndex((l) => l.includes('writeFileSync(tmp')) + 1
+        r = shapeCase({ tag: 'temp-rename-only', files: [F('temp-rename.mjs', SHAPE_FIXTURES.tempRenameOnly)] })
+        check('temp-rename-only', r, [...countIs(1)(r.concept), ...siteShape(0, 'B')(r.concept)])
+        r = shapeCase({
+          tag: 'allowlisted-b',
+          files: [F('temp-rename.mjs', SHAPE_FIXTURES.tempRenameOnly)],
+          allowlist: [{ file: 'presets/agenia/lib/temp-rename.mjs', line: bLine, kind: 'non-atomic-rename', why: '整目录换名：文件先写进临时目录，最后整目录 rename，文件级不是原子写' }],
+        })
+        check('allowlisted-b', r, [
+          ...countIs(0)(r.concept),
+          ...(r.entry.allowlist.length === 1 && r.entry.allowlist[0].shape === 'B' ? [] : [problem('DEC05-SHAPE-SCENE-ALLOW', `放行的那一条必须以 B 族的身份被记下来（实得 ${JSON.stringify(r.entry.allowlist)}）`)]),
+          ...(r.entry.sites.length === 1 ? [] : [problem('DEC05-SHAPE-SCENE-ALLOW', `sites 仍要记着那一处（实得 ${JSON.stringify(r.entry.sites)}）—— 放行是"不算数"，不是"没看见"`)]),
+        ])
+        r = shapeCase({
+          tag: 'allowlist-hides-a',
+          files: [F('handrolled.mjs', SHAPE_FIXTURES.handrolledTmp)],
+          allowlist: [{ file: 'presets/agenia/lib/handrolled.mjs', line: aLine, kind: 'non-atomic-rename', why: '整目录换名：文件先写进临时目录，最后整目录 rename（这一条是借口，用来试清单能不能藏住 A 族）' }],
+          wantCodes: ['SHAPE-ALLOWLIST-HIDES-HANDROLLED'],
+        })
+        check('allowlist-hides-a', r, (r.concept?.count === 1 ? [] : [problem('DEC05-SHAPE-SCENE-COUNT', `被 A 族点名的条目不许改变计数：count 必须是 1，实得 ${JSON.stringify(r.concept?.count)}`)]))
+        r = shapeCase({
+          tag: 'allowlist-stale',
+          files: [F('clean.mjs', SHAPE_FIXTURES.renameOnly)],
+          allowlist: [{ file: 'presets/agenia/lib/clean.mjs', line: 2, kind: 'non-atomic-rename', why: '整目录换名（但这一份文件里没有临时名）' }],
+          wantCodes: ['SHAPE-ALLOWLIST-STALE'],
+        })
+        check('allowlist-stale', r, [])
+        r = shapeCase({
+          tag: 'allowlist-no-reason',
+          files: [F('temp-rename.mjs', SHAPE_FIXTURES.tempRenameOnly)],
+          allowlist: [{ file: 'presets/agenia/lib/temp-rename.mjs', line: bLine, kind: 'non-atomic-rename', why: '—' }],
+          wantCodes: ['SHAPE-ALLOWLIST-SHAPE'],
+        })
+        check('allowlist-no-reason', r, [])
+        // ── 允许清单的**证据面**（判据侧核；工具只记"这条盖住了哪一处"）──────────────────
+        const sharedLine = SHAPE_FIXTURES.sharedBody.split(/\r?\n/).findIndex((l) => l.includes('renameSync(tmp, file)')) + 1
+        r = shapeCase({
+          tag: 'shared-implementation',
+          files: [F('shared.mjs', SHAPE_FIXTURES.sharedBody)],
+          allowlist: [{ file: 'presets/agenia/lib/shared.mjs', line: sharedLine, kind: 'shared-implementation', why: '共享原子写实现本体：唯一一份 writeFileAtomic（B 族命中是它自己）' }],
+        })
+        check('shared-implementation', r, (r.concept?.count === 0 ? [] : [problem('DEC05-SHAPE-SCENE-COUNT', `shared-implementation 条目要把它放行掉（count 0），实得 ${JSON.stringify(r.concept?.count)}`)]))
+        if (r.usable) {
+          const entry = r.entry.allowlist[0]
+          const verdict = allowlistEntryProblems(entry, { root: r.built.root, relPaths: r.built.files })
+          rec.readings.shape_allowlist_evidence = { entry, codes: verdict.map((p) => p.code) }
+          if (verdict.length > 0) push('DEC05-SHAPE-ALLOWLIST-EVIDENCE', `[夹具 shared-implementation] 证据面把一条**真的**共享实现判红了：${JSON.stringify(verdict)} —— 判据坏了，不是条目坏了`)
+          const bad = { ...entry, kind: 'non-atomic-rename', why: '就是这么写的，别问了' }
+          const badVerdict = allowlistEntryProblems(bad, { root: r.built.root, relPaths: r.built.files })
+          rec.readings.shape_allowlist_reason_knife = { codes: badVerdict.map((p) => p.code) }
+          if (!badVerdict.some((p) => p.code === 'DEC05-SHAPE-ALLOWLIST-EVIDENCE')) {
+            push('DEC05-SHAPE-ALLOWLIST-KNIFE', `[刀 non-atomic-reason] 把一处共享实现标成"非原子 rename"且理由不提目录，必须报 \`DEC05-SHAPE-ALLOWLIST-EVIDENCE\`（实得 ${JSON.stringify(badVerdict.map((p) => p.code))}）`)
+          }
+        }
+        // 证据面必须翻面：`shared-implementation` 点在一份没有共享正文的文件上 ⇒ 必须红
+        {
+          const built = shapeScene({ caseId: 'DEC-05', tag: 'shared-no-evidence', files: [F('not-shared.mjs', SHAPE_FIXTURES.tempRenameOnly)] })
+          const entry = { file: 'presets/agenia/lib/not-shared.mjs', line: bLine, kind: 'shared-implementation', why: '共享原子写实现本体（其实是散的）' }
+          const verdict = allowlistEntryProblems(entry, { root: built.root, relPaths: built.files })
+          rec.readings.shape_allowlist_evidence_knife = { codes: verdict.map((p) => p.code) }
+          if (!verdict.some((p) => p.code === 'DEC05-SHAPE-ALLOWLIST-EVIDENCE')) {
+            push('DEC05-SHAPE-ALLOWLIST-KNIFE', `[刀 shared-no-evidence] 把一份没有共享正文的文件标成 \`shared-implementation\` 必须报 \`DEC05-SHAPE-ALLOWLIST-EVIDENCE\`（实得 ${JSON.stringify(verdict.map((p) => p.code))}）—— 类别成了自报`)
+          }
+        }
+        rec.readings.shape_expected = {
+          today: '真树实测 3 处（dashboard.mjs:179 · inject.js:1077 · inject.js:2795）—— 读数 _runs/b2-gate2-probe/shape-probe2.json',
+          gate3: 'count 0 · scanned_files 43 · allowlist 2 条（静态 import 那一支）/ 3 条（内联那一支）',
+          knife: 'A 族条目被允许清单点名 ⇒ SHAPE-ALLOWLIST-HIDES-HANDROLLED 且仍计数；B 族条目 ⇒ 放行但不消失',
         }
       }
     }
