@@ -22,7 +22,8 @@
  *      · `--live-baseline <file>` ⇒ 在**那一刻**用 `.tools/fingerprint.mjs --set code --save` 的形状
  *        存一份**活树**基线；不给 ⇒ 输出里 `live_baseline: null`（**不是**"没变"）。
  *      · `--with-staging` ⇒ 导完提交的 blob **之后**，再把**活的**
- *        `.tools/_staging/agenia-upgrade/{preset,oracle}` 逐字节附加进副本（`F2`：套件按
+ *        `.tools/_staging/agenia-upgrade/{preset,oracle}` ＋ 受控差异声明 `target-lag.json`
+ *        逐字节附加进副本（`F2`：套件按
  *        `<REPO>/.tools/_staging/…` 读靶子，而这一层被 `.gitignore` 挡着、提交里没有它 ⇒
  *        不带它，副本原地跑不动 `run-all.mjs`）。
  *        **默认不带**：不给这个开关时，副本里仍然只有提交里那些 blob，这个工具的读数
@@ -32,17 +33,34 @@
  *        （那是真实脑数据、不是代码；与 `.team/dev/…/live-vs-staged.mjs` 的同步口径同一句，
  *        跳过的那几条写进 `staging.skipped` —— 没收要看得见），
  *        目录联接 / 符号链接也**跳过**（它们会逃出副本 —— `CPY-STAGING-ESCAPES-COPY` 那条判据的同一个理由）。
+ *      · 🔴 **受控差异声明**（构案 0006 · 改定段第三方案；`--with-staging` 才谈）：出厂件
+ *        `bin/rollback.mjs` 在**发布时**由 `publish-staged` 内联（单文件零静态 import —— 拍板 Q6），
+ *        所以提交里的 `presets/agenia` 与本机 `staging/preset` 在**这一份上必然不同**。
+ *        "一个副本只能是一个时间点"这条闸因此收窄成：`<staging>/target-lag.json` 点名、且
+ *        **双向 sha256 + 字节差逐格全对**的那几份，可以离开 diff；其余照旧拒。三层口径：
+ *          · 声明**不在盘上** ⇒ 没有放宽：两棵树的差照旧 `E_STAGING_TIME_MISMATCH`（读数 `declaration: null`）；
+ *          · 声明**读不懂**（不是 JSON / 不是对象 / `schema` ≠ 1 / `entries` 形状不对 / 同一份两份）⇒
+ *            `E_TARGET_LAG_UNREADABLE` —— 坏声明**不许**退化成"没有声明"，更不许退化成"受控"；
+ *          · 点名了但**数字对不上**（`sha256` / `baseline_sha256` / `lag_bytes`）⇒
+ *            `E_TARGET_LAG_MISMATCH`，报文逐格点名 —— 声明不是免责条款，它的每个数都要能复现。
+ *        声明本身**随副本带走**（`stagingFilesOf` 把它算进附加清单）⇒ 副本里 `STAT-01` 读到的是
+ *        "受控差异"而不是"未声明"（不带它，副本原地跑就只剩一条未声明的差）。
  *      · stdout 最后一行 = JSON：
  *        `{ ok, commit, tree_root, code: { sha256, files, bytes }, live_baseline, generated_at }`
  *        `generated_at` 是**这次导出的时刻**（ISO8601，写这一行时现量；`bug-20261111-04`）——
  *        两份基线对不上时，先分得清"旧基线"还是"量具口径变了"。
  *        （给了 `--with-staging` 才多一段 `staging` —— 不给就没有这一段，输出与从前逐字节相同
  *        除了多出来的 `generated_at`）：
- *        `staging: { root, files, bytes, readback_ok, skipped, sha256 }`，其中
+ *        `staging: { root, files, bytes, readback_ok, skipped, declaration, sha256 }`，其中
  *        `sha256 = { algorithm, prefix, files, bytes, digest, list: [{rel, sha256, bytes}] }`
  *        是**内容冻结**的那一半：这 52 份的 path + sha256 + 字节数（`rel` 仓根相对），
  *        `digest = sha256(Σ `${rel}\0${sha256}\0${bytes}\n`)`。这份清单就是"一次导出的身份"，
  *        落盘（`--json > export.json`）之后可以交给任何第三方按同一公式复算。
+ *        `declaration` = **受控差异声明**那一段：`null`（**没有**声明 —— honest zero，不是"声明对了"）
+ *        或 `{ path, entries, controlled: [rel…], mismatched: [], stale_entries: [] }`：
+ *        `entries` = 声明点名几条 · `controlled` = 这一跑真的放行的那几份（"为什么 diff 是空的"）·
+ *        `stale_entries` = 点名了、可两棵树本来逐字节相同的那几份（声明过期/写多了：**只记读数**，
+ *        判词在副本里 —— `STAT-01` 的 `TARGET-LAG-STALE-DECLARATION`）。
  *
  *   ② 校验（交活时 / 任何第三方）
  *      <node> .tools/tree-at-commit.mjs --verify <副本> --repo <仓库根> --commit <40hex>
@@ -67,6 +85,8 @@
  *          · 参考清单从哪来：默认 = **活的** staging 树（"与现在的靶子是不是同一份"）；
  *            给了 `--staging-manifest <导出 JSON>` = **导出那一刻记下的**那份清单
  *            （"副本还是不是当时那 52 份" —— 活树后来合法换版不影响这一格）。
+ *          · `<staging>/target-lag.json`（受控差异声明）也在这一层里：它不属于 `preset/`/`oracle/`，
+ *            但与它们同一条口径 —— 副本要有、字节要对上（与导出的 `stagingFilesOf` 是同一份清单）。
  *        判定不过来（活树不在 / 清单读不出来）⇒ `staging.sha256: null` + 一条 problem，不许当绿。
  *        不给 `--with-staging` ⇒ 与从前相同：副本里任何"多一份"都算"不是那个提交"。
  *        `equal` **不受影响**：`.tools/_staging/` 在 CODE 排除表里（同一把尺子的名单），附加不改 CODE 指纹。
@@ -126,6 +146,9 @@ const USAGE = [
   '  --live-baseline 落进被测的 CODE 名单 ⇒ 拒（E_BASELINE_IN_CODE）—— 挪到 .team/ 或被测根之外',
   '  --with-staging ⇒ 副本另外带上 .tools/_staging/agenia-upgrade/{preset,oracle}（F2：副本原地要跑套件）；',
   '                    导出回报 `staging.sha256` 清单（52 份的 path + sha256 + bytes），校验按它**逐字节**复算；',
+  '                    `<staging>/target-lag.json`（受控差异声明）随副本带走；只放行声明里点名、且',
+  '                    双向 sha256 + 字节差全对的那几份（构案 0006 改定段）；坏声明 ⇒ E_TARGET_LAG_UNREADABLE，',
+  '                    数字对不上 ⇒ E_TARGET_LAG_MISMATCH；没有声明 ⇒ 差异照旧 E_STAGING_TIME_MISMATCH；',
   '                    不给 ⇒ 副本仍然只有提交里那些 blob（与从前逐字节相同）',
   '  --staging-manifest <导出 JSON> ⇒ 校验拿**导出那一刻**记下的清单当参考（默认参考 = 现在的活 staging 树）',
 ].join('\n')
@@ -240,6 +263,16 @@ function gitBlobSha1(buf) {
 const STAGING_REL = '.tools/_staging/agenia-upgrade'
 const STAGING_SUBTREES = ['preset', 'oracle']
 /**
+ * **受控差异声明**（构案 0006 · 改定段第三方案）：`<staging>/target-lag.json`。
+ *
+ * 出厂件 `bin/rollback.mjs` 在**发布时**由 `presets/agenia/bin/install.mjs --op publish-staged` 内联
+ * （单文件、零静态 import —— 拍板 Q6），而提交里的 `presets/agenia` 是**带 import 的来源那一份**。
+ * ⇒ 提交与本机 staging 在**这一份**上必然不同；声明点名它、给出**双向 sha256 + 字节差**。
+ * 本文件只让**数字全对**的那几份离开"两个时间点"的判决（见 `readTargetLagDeclaration` / `doExport`）。
+ */
+const TARGET_LAG_FILE = 'target-lag.json'
+const TARGET_LAG_REL = `${STAGING_REL}/${TARGET_LAG_FILE}`
+/**
  * 什么**不**附加进副本（**跳过，不判红**）：
  *   · `.runtime` —— 那是**真实脑数据**（记忆库 / 更新状态 / 报告）。口径与
  *     `.team/dev/2026-10-24/_tmp/live-vs-staged.mjs` 的同步口径同一句：数据不是代码，
@@ -251,7 +284,7 @@ const STAGING_SUBTREES = ['preset', 'oracle']
 const STAGING_SKIP_SEGMENTS = new Set(['.runtime'])
 
 /**
- * 活的 staging 树里那几份文件（`rel 相对 staging 根`，`/` 分隔）。
+ * 活的 staging 树里那几份文件（`rel 相对 staging 根`，`/` 分隔）＋ 根上的**受控差异声明**。
  * 这是附加与核对共用的**唯一一份清单**：导出按它写，校验按它点名"哪几份算声明的附加"。
  * 为什么不从提交里取：这一层被 `.gitignore` 挡着，提交里没有它 —— 那正是 `F2` 的红因。
  *
@@ -286,9 +319,109 @@ function stagingFilesOf(repo) {
     }
   }
   for (const sub of STAGING_SUBTREES) walk(sub)
+  // 受控差异声明也在这一份清单里（它不属于 `preset/` 也不属于 `oracle/`，但在 staging 根上）：
+  // 副本带上它，副本里那张"两棵树"对账（`STAT-01`）才读得到"这一处不同是被认领过的"；
+  // 不带它，副本里那一处差异就只能报"未声明"（那正是"副本原地跑不动"的另一种形状）。
+  // 只认**根上那一个名字**（不递归、不认同名副本）；符号链接按同一条规则跳过（它会逃出副本）。
+  let rootEntries = []
+  try {
+    rootEntries = readdirSync(root, { withFileTypes: true })
+  } catch (err) {
+    out.problems.push(`staging 根读不了：${root}（${String(err.message).slice(0, 160)}）`)
+    return out
+  }
+  for (const item of rootEntries) {
+    if (item.name !== TARGET_LAG_FILE) continue
+    if (item.isSymbolicLink() || !item.isFile()) {
+      out.skipped.push(TARGET_LAG_FILE)
+      continue
+    }
+    out.files.push({ rel: TARGET_LAG_FILE, abs: path.join(root, TARGET_LAG_FILE) })
+  }
   out.files.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
   return out
 }
+
+/**
+ * 读**受控差异声明**（`<staging>/target-lag.json`）—— "这一处不同是发布时内联造成的，不是分叉"。
+ *
+ * 三条口径（写在明处，别读成"它什么都认"）：
+ *   · **不在盘上** ⇒ `present:false` / `entries:[]`：这是"没有声明"（读数里 `declaration: null`），
+ *     **不是**"声明对了"。没有声明时两棵树的差照旧按 F3 拒 —— 没有声明不构成放宽。
+ *   · **在盘上但读不懂**（不是 JSON / 不是对象 / `schema` 不是 1 / `entries` 不是数组 /
+ *     某条没有非空 `file` / 同一个 `file` 出现两次）⇒ `E_TARGET_LAG_UNREADABLE`：
+ *     坏掉的声明**不许**退化成"没有声明"，更不许退化成"受控"。
+ *   · **点名了、数字却对不上** ⇒ 由 `doExport` 报 `E_TARGET_LAG_MISMATCH`（逐格点名）——
+ *     这一条必须在这里之外判，因为"对不上"要比对**两棵树**的字节，本函数只读声明本身。
+ *
+ * 只认三样数字（构案 0006 的声明形状）：`sha256` = staging 那一份的 sha256 ·
+ * `baseline_sha256` = 提交那一份的 sha256 · `lag_bytes` = 提交字节数 − staging 字节数。
+ * 声明里其它散文字段（`reason` / `approved_*` / `closes_when`）不由本文件判 —— 它们在副本里由
+ * `STAT-01` 那一族判（`targetVerdict` 的 `TARGET-DECLARATION-FIELD`）；本文件只用它们证明"这一处是被认领的"。
+ *
+ * @returns {{ok:boolean, present:boolean, file:string, entries:Array<object>, problems:string[], code:string|null}}
+ */
+function readTargetLagDeclaration(repo) {
+  const file = path.join(repo, ...TARGET_LAG_REL.split('/'))
+  const blank = { ok: true, present: false, file, entries: [], problems: [], code: null }
+  if (!existsSync(file)) return blank
+  const unreadable = (why) => ({
+    ok: false,
+    present: true,
+    file,
+    entries: [],
+    code: 'E_TARGET_LAG_UNREADABLE',
+    problems: [`受控差异声明读不懂：${file} —— ${why}。读不动的声明不许退化成"没有声明"（那会把未声明读成受控）`],
+  })
+  let doc = null
+  try {
+    doc = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (err) {
+    return unreadable(`不是可解析 JSON（${String(err.message).slice(0, 160)}）`)
+  }
+  if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) return unreadable('不是对象')
+  if (doc.schema !== 1) return unreadable(`schema 应为 1，实得 ${JSON.stringify(doc.schema)}`)
+  if (!Array.isArray(doc.entries)) return unreadable('缺 entries 数组')
+  const badShape = doc.entries
+    .map((e, i) => ({ e, i }))
+    .filter(({ e }) => e === null || typeof e !== 'object' || Array.isArray(e) || typeof e.file !== 'string' || e.file.trim() === '')
+  if (badShape.length > 0) return unreadable(`entries 里 ${badShape.length} 条没有非空 file（下标 ${badShape.map((x) => x.i).join(' / ')}）`)
+  const seen = new Set()
+  const dup = []
+  for (const e of doc.entries) {
+    if (seen.has(e.file)) dup.push(e.file)
+    seen.add(e.file)
+  }
+  if (dup.length > 0) return unreadable(`同一个文件被声明了两次：${[...new Set(dup)].join(' / ')}（两套数字时判据不知道该信哪一套）`)
+  return { ok: true, present: true, file, entries: doc.entries, problems: [], code: null }
+}
+
+/**
+ * 声明读数（成功导出与两族拒**带同一份**）—— 与 `staging` 那一段并列，回答"为什么 diff 是空的"。
+ *
+ *   · `null` ⇒ **没有**声明（honest zero：不是"声明对了"，也不是"不用声明"）；
+ *   · `{ path, entries, controlled, mismatched, stale_entries }`：
+ *     `entries` = 声明里点名几条 · `controlled` = 这一跑真的放行的那几份（离开 diff 的）·
+ *     `mismatched` = 点名了但数字对不上的（只在拒的那一份里非空）·
+ *     `stale_entries` = 点名了、可两棵树本来逐字节相同的那几份（声明过期/写多了：**只记读数**，
+ *     它不在这道闸的判词面上 —— 副本里那份声明由 `STAT-01` 判成 `TARGET-LAG-STALE-DECLARATION`）。
+ */
+function declarationReading(decl, { controlled = [], mismatched = [], diff = [] } = {}) {
+  if (decl === null || decl === undefined || decl.present !== true) return null
+  const named = decl.entries.map((e) => e.file)
+  const controlledSet = new Set(controlled)
+  const mismatchedSet = new Set(mismatched.map((m) => m.file))
+  const diffSet = new Set(diff)
+  return {
+    path: decl.file,
+    entries: decl.entries.length,
+    controlled: [...controlledSet].sort(),
+    mismatched: [...mismatchedSet].sort(),
+    stale_entries: named.filter((rel) => !controlledSet.has(rel) && !mismatchedSet.has(rel) && !diffSet.has(rel)).sort(),
+  }
+}
+
+const sha256Hex = (buf) => createHash('sha256').update(buf).digest('hex')
 
 /** 副本里那条附加路径（`<out>/.tools/_staging/agenia-upgrade/<rel>`）。 */
 const stagingCopyPath = (out, rel) => path.join(out, ...`${STAGING_REL}/${rel}`.split('/'))
@@ -689,6 +822,17 @@ function doExport(args) {
   //    （presets 取自提交、staging 取自导出时刻）⇒ 副本里 `STAT-01`（staged vs live）永远红，
   //    而那条差是导出器造的。⇒ **一个副本只能是一个时间点**；不一致就拒，而且**拒在任何写之前**
   //    （F-166 的同一条纪律：我第一版把这段放在写完之后，负对照里 206 份已经落盘了）。
+  //
+  // 🔴 2026-11-13 · 构案 0006 改定段（第三方案）：出厂件 `bin/rollback.mjs` 在**发布时**由
+  //    `publish-staged` 内联（单文件零静态 import —— 拍板 Q6），所以提交里的 `presets/agenia` 与
+  //    本机 `staging/preset` 在**这一份上必然不同**。⇒ "一个时间点"这条闸收窄成：
+  //    **只有** `<staging>/target-lag.json` 点名、且**双向 sha256 + 字节差逐格都对得上**的那几份可以
+  //    离开 diff；其余（没点名 / 数字不对 / 只在一边）照旧拒。声明与副本一起带走（`stagingFilesOf`），
+  //    副本里 `STAT-01` 因此读到的是"受控差异"而不是"未声明"。
+  let withStagingDeclaration = null
+  let withStagingControlled = []
+  /** 受控差异**下 diff 之前**的那一份（读数里 `stale_entries` 要靠它区分"点名了但不是差异"）。 */
+  let withStagingDiff = []
   if (args.withStaging) {
     // 🔴 `--full-tree` 必须给：不给时 `-- presets/agenia` 是**相对 cwd** 的 pathspec，
     //    cwd 不是 git 顶层时它一份都读不出来（CPY-01 实测：副本里 0 行 / 加 `--full-tree` 55 行）。
@@ -718,15 +862,59 @@ function doExport(args) {
         + '先确认 `git ls-tree` 在这个 cwd 上能读到 presets（`--full-tree`），或者别用 `--with-staging`。',
         { commit: resolved.sha, tree_root: null })
     }
+    // ── 受控差异：声明点名 + 三格数字全对 ⇒ 那一份离开 diff ────────────────────────
+    // 顺序固定：先读声明（读不动就当场拒，别让它退化成"没有声明"）→ 再逐份对数字 →
+    // 对不上的当场拒（`E_TARGET_LAG_MISMATCH`）→ 只有全对的才下 diff。
+    const decl = readTargetLagDeclaration(repo)
+    if (!decl.ok) {
+      return fail(decl.code, decl.problems.join('；'), { commit: resolved.sha, tree_root: null, declaration: null, declaration_path: decl.file })
+    }
+    withStagingDeclaration = decl
+    withStagingDiff = [...diff]
+    const mismatched = []
+    const controlled = []
+    if (decl.present) {
+      for (const rel of diff) {
+        const entry = decl.entries.find((e) => e.file === rel)
+        if (entry === undefined) continue // 没点名 ⇒ 留在 diff 里按 F3 拒
+        const stagingBuf = readFileSync(path.join(liveNow.root, 'preset', ...rel.split('/')))
+        const commitBuf = Buffer.from(commitPreset.get(rel))
+        const got = { sha256: sha256Hex(stagingBuf), baseline_sha256: sha256Hex(commitBuf), lag_bytes: commitBuf.length - stagingBuf.length }
+        const bad = []
+        if (entry.sha256 !== got.sha256) bad.push(`sha256（staging 那一份）应为 ${got.sha256}，实得 ${JSON.stringify(entry.sha256)}`)
+        if (entry.baseline_sha256 !== got.baseline_sha256) bad.push(`baseline_sha256（提交那一份）应为 ${got.baseline_sha256}，实得 ${JSON.stringify(entry.baseline_sha256)}`)
+        if (entry.lag_bytes !== got.lag_bytes) bad.push(`lag_bytes 应为 ${got.lag_bytes}（提交 ${commitBuf.length} B − staging ${stagingBuf.length} B），实得 ${JSON.stringify(entry.lag_bytes)}`)
+        if (bad.length > 0) mismatched.push({ file: rel, problems: bad })
+        else controlled.push(rel)
+      }
+      const declReading = declarationReading(decl, { controlled, mismatched, diff })
+      if (mismatched.length > 0) {
+        return fail('E_TARGET_LAG_MISMATCH',
+          `受控差异声明与实测对不上（${mismatched.length} 份 · ${decl.file}）：`
+          + mismatched.map((m) => `${m.file} ⇒ ${m.problems.join(' · ')}`).join('；')
+          + '。声明不是免责条款：它点名的每一个数都必须能复现 —— 对不上就是**未声明**，这一跑拒',
+          { commit: resolved.sha, tree_root: null, declaration: declReading })
+      }
+      for (const rel of controlled) {
+        const i = diff.indexOf(rel)
+        if (i >= 0) diff.splice(i, 1)
+      }
+      withStagingControlled = controlled
+    }
+    const declNow = declarationReading(decl, { controlled: withStagingControlled, mismatched: [], diff })
     if (onlyCommit.length > 0 || onlyStaging.length > 0 || diff.length > 0) {
       return fail('E_STAGING_TIME_MISMATCH',
         '`--with-staging` 会让副本带着**两个时间点**：提交里的 presets/agenia 与导出时刻的 staging/preset 不一致'
         + `（只在提交里 ${onlyCommit.length} 份 · 只在 staging 里 ${onlyStaging.length} 份 · 内容不同 ${diff.length} 份`
         + `${diff.length > 0 ? '：' + diff.slice(0, 3).join(' · ') : ''}）。`
+        + (decl.present
+          ? `受控差异声明 ${decl.file} 点了 ${decl.entries.length} 条，放行 ${withStagingControlled.length} 份`
+            + `${withStagingControlled.length > 0 ? `（${withStagingControlled.join(' · ')}）` : ''} —— 剩下的这些它没点名或不在数字上。`
+          : `（没有受控差异声明：${decl.file} 不在盘上 —— "没声明"不是"受控"。）`)
         + '副本必须是**一个**时间点，否则副本里 `STAT-01`（staged vs live）永远红，而那条差是导出器造的。'
         + '两条出路：**先把 presets 提交**再导出；或者这次**不要** `--with-staging`。'
         + '（这一拒发生在写第一个字节之前 —— 盘上什么都没多。）',
-        { commit: resolved.sha, tree_root: null })
+        { commit: resolved.sha, tree_root: null, declaration: declNow })
     }
   }
 
@@ -824,6 +1012,13 @@ function doExport(args) {
       bytes: manifest.bytes,
       readback_ok: true,
       skipped: live.skipped,
+      /**
+       * 受控差异声明那一层（构案 0006 改定段）：`null` = **没有**声明（honest zero：不是"声明对了"）。
+       * 否则 `{ path, entries, controlled, mismatched, stale_entries }` —— `controlled` 是这一跑真的
+       * 放行的那几份（它们离开了"两个时间点"的 diff），读这一行的人因此看得见"为什么 diff 是空的"。
+       * 声明本身也随副本带走（`stagingFilesOf` 把它算进 `live.files`，所以它也在 `sha256.list` 里）。
+       */
+      declaration: declarationReading(withStagingDeclaration, { controlled: withStagingControlled, diff: withStagingDiff }),
       // 🔴 **内容冻结**：这 52 份的 path + sha256 + bytes（第四关复审 F2-1）。
       //    `--verify --with-staging` 拿它对账；人也能拿这份 JSON 自己复算。
       sha256: manifest,
