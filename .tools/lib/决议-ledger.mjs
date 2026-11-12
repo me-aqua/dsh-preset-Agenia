@@ -4,7 +4,9 @@
  * 为什么有这一个文件（Gate 4 · M6）：构案 0001 §③ 立过一条「`INDEX` 与 census 的解析面只有一处实现，
  * 检查器 import 它，**不另写一份**」。上一版是"检查器 import census"，但检查器自己又抄了
  * 三份 md 解析（表 / 头块 / 去重）—— 文件名在说谎。现在：**两个 CLI 都只做参数与输出**，
- * 解析、判词、派生全在这里；`grep -c 'function firstTable' .tools/` 应当是 1。
+ * 解析、判词、派生全在这里 ⇒ 这段骨架（`firstTable` / `splitHeaderBlock` / `parseDecisionText` /
+ * `dedupeProblems` / `deriveIndexRows` / `countConcept` …）在本树里各只有**一处定义**，
+ * 两个入口各一行 import。拿 grep 数它们时记得排除 `.tools/_scratch/`（施工区里的探针脚本会引用这些名字）。
  *
  * 🔴 **「这个概念的生效构案是哪一条」只有一个判据**：`deriveIndexRows`。它**不猜**：
  *   · 该概念有 ≥2 条 `生效` ⇒ 跳过这一格（`DUPLICATE-LIVE-TOPIC` 已经说了这件事）；
