@@ -29,10 +29,11 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
-  DASH, GEN_MARKER_NEEDLES, INDEX_COLUMNS, INDEX_REL, REPO_ROOT, SERIES, TABLE_REL,
-  linesOf, parseRefList, problem, readText, resolveRef, scanLedger, splitTableRow,
-} from './census.mjs'
+  DASH, GEN_MARKER_NEEDLES, INDEX_COLUMNS, INDEX_REL, INDEX_UNIT_COLUMN, REPO_ROOT, SERIES, TABLE_REL,
+  dedupeProblems, firstTable, linesOf, parseRefList, problem, readText, resolveRef, scanLedger, splitHeaderBlock,
+} from './lib/决议-ledger.mjs'
 
 /** 一份文件的 sha256（小写 hex）。 */
 function sha256(buf) {
@@ -46,7 +47,7 @@ function sha256(buf) {
  * 级联（契约 §5.1）：行集不一致 ⇒ **只报行集**（不再报次序与逐格）；行集一致才比次序；
  * 次序一致才比逐格。这样读的人看到的是"一处病"，不是"八处病"。
  */
-function judgeIndex(root, concepts, problems) {
+function judgeIndex(root, concepts, problems, { declaresRule = false } = {}) {
   const file = path.join(root, INDEX_REL)
   const reading = { file: INDEX_REL, present: false, generated_marker: false, rows: [] }
   if (!existsSync(file)) {
@@ -65,29 +66,15 @@ function judgeIndex(root, concepts, problems) {
       + '手改会红；重跑 `node .tools/census.mjs --write-index`（契约 §4.1）', { file: INDEX_REL }))
     return reading
   }
-  // 第一张四列表
-  const table = (() => {
-    for (let i = 0; i < lines.length; i += 1) {
-      const head = splitTableRow(lines[i])
-      if (head === null) continue
-      const sep = splitTableRow(lines[i + 1] ?? '')
-      if (sep === null || sep.length !== head.length || !sep.every((c) => /^:?-{3,}:?$/.test(c))) continue
-      const rows = []
-      let j = i + 2
-      for (; j < lines.length; j += 1) {
-        const cells = splitTableRow(lines[j])
-        if (cells === null) break
-        rows.push(cells)
-      }
-      return { startLine: i + 1, columns: head, rows }
-    }
-    return null
-  })()
-  if (table === null || table.columns.length !== INDEX_COLUMNS.length || table.columns.some((c, i) => c !== INDEX_COLUMNS[i])) {
+  // 第一张表（**解析走共用那份 `firstTable`**，M6）
+  const table = firstTable(lines)
+  const wants = [...INDEX_COLUMNS, INDEX_UNIT_COLUMN]
+  const hasUnitColumn = table !== null && table.columns.length === wants.length && table.columns.every((c, i) => c === wants[i])
+  if (table === null || (!hasUnitColumn && (table.columns.length !== INDEX_COLUMNS.length || table.columns.some((c, i) => c !== INDEX_COLUMNS[i])))) {
     reading.rows = []
     for (const c of concepts) {
       problems.push(problem('INDEX-ROW-MISSING', `${INDEX_REL} 里读不出 \`${c.concept}\` 这一行 —— `
-        + `页上必须是一张四列表 ${JSON.stringify(INDEX_COLUMNS)}（契约 §4.2）`, { file: INDEX_REL, concept: c.concept }))
+        + `页上必须是一张四列表 ${JSON.stringify(INDEX_COLUMNS)}（或带「${INDEX_UNIT_COLUMN}」的第五列，M4）`, { file: INDEX_REL, concept: c.concept }))
     }
     return reading
   }
@@ -96,6 +83,7 @@ function judgeIndex(root, concepts, problems) {
     owner: cells[1] ?? '',
     census: cells[2] ?? '',
     decision: cells[3] ?? '',
+    unit: hasUnitColumn ? (cells[4] ?? '') : null,
   }))
   const pageNames = reading.rows.map((r) => r.concept)
   const derivedNames = concepts.map((c) => c.concept)
@@ -156,6 +144,19 @@ function judgeIndex(root, concepts, problems) {
           + ` / 生效构案派生 ${JSON.stringify(want)} —— 只认 \`生效\` 的构案（契约 §4.2）`,
         { file: INDEX_REL, concept: derived.concept, column: '构案' }))
       }
+    }
+    // 「单位」列（M4）：页上没有这一列、而概念表**声明了**计数口径 ⇒ 这一格是缺的（不许让单位悄悄消失）
+    const unit = derived.unit ?? DASH
+    if (page.unit === null) {
+      if (declaresRule) {
+        problems.push(problem('INDEX-ROW-MISMATCH', `${INDEX_REL} \`${derived.concept}\` 缺「${INDEX_UNIT_COLUMN}」这一列 —— `
+          + `概念表声明了「计数口径」⇒ 页上必须印出单位 ${JSON.stringify(unit)}（M4：数要带单位）`,
+        { file: INDEX_REL, concept: derived.concept, column: INDEX_UNIT_COLUMN }))
+      }
+    } else if (page.unit.trim() !== unit) {
+      problems.push(problem('INDEX-ROW-MISMATCH', `${INDEX_REL} \`${derived.concept}\` 的「${INDEX_UNIT_COLUMN}」：页上 ${JSON.stringify(page.unit)}`
+        + ` / 概念表派生 ${JSON.stringify(unit)} —— 单位变了就是口径变了，重跑 \`node .tools/census.mjs --write-index\``,
+      { file: INDEX_REL, concept: derived.concept, column: INDEX_UNIT_COLUMN }))
     }
   }
   return reading
@@ -232,7 +233,7 @@ export function runCheck({ root }) {
       judged: false,
       skipped: 'CONCEPT-TABLE-MISSING',
     }
-    : judgeIndex(root, scan.concepts, problems)
+    : judgeIndex(root, scan.concepts, problems, { declaresRule: scan.table.declares_rule === true })
   /**
    * 读数里的 `census` 是**数**（契约 §5.3 的形状：`census: 2`），不是页上那串字。
    * 页上写成 `02` / `2 ` / `两` 时，读到的是 `null` —— 那正是"这一格不是数"的证据，别替它猜。
@@ -269,21 +270,17 @@ export function runCheck({ root }) {
     concept: c.concept,
     owner: c.owner,
     count: c.census,
+    unit: c.unit,
+    rule: c.rule,
     implementations: c.implementations,
+    files: c.files,
     scan: c.scan,
     scan_empty: c.scan_empty,
     decision: c.decision,
     skip_decision: c.skip_decision,
     read_failures: c.read_failures,
   }))
-  const unique = []
-  const seen = new Set()
-  for (const p of problems) {
-    const key = [p.code, p.file ?? '', p.key ?? '', p.concept ?? '', p.ref ?? '', p.column ?? '', p.message].join('\u0000')
-    if (seen.has(key)) continue
-    seen.add(key)
-    unique.push(p)
-  }
+  const unique = dedupeProblems(problems)
   return {
     ok: unique.length === 0,
     root: path.resolve(root),
@@ -296,21 +293,42 @@ export function runCheck({ root }) {
 }
 
 // ── op: gate2-card（契约 §6）────────────────────────────────────────────────
-/** 派工卡头块（同 §2.1 的"H1 之后到空行为止"）。 */
+/** 卡头块里认得的两个键（逐字）。 */
+export const CARD_KEYS = Object.freeze(['票类', '构案'])
+
+/**
+ * 派工卡的头块 —— **判的是卡的「结构化字段」**（Gate 4 · M3）。
+ *
+ * 上一版把整段头块里出现的 `键: 值` 收进一个对象（后写的那一行赢），于是：
+ *   · 正文里随便一行 `票类: 数据` 就能把闸的票类改掉；
+ *   · 同一张卡写两次 `票类` 时，静默取最后一条 —— 谁也没看见。
+ * 现在：
+ *   ① 头块**只认**「H1 → 一行空行 → 到第一条空行」这一段（`splitHeaderBlock`，与决议文件同一份判法）；
+ *   ② 每个键**最多出现一次**（重复 ⇒ 交回调用方拒，点名那个键）；
+ *   ③ 头块**之外**（正文 / 代码块 / 引用）出现 `票类` 一律不算结构化字段 —— 报了名拒，不许它替闸做主。
+ *
+ * @returns {{ok, h1, fields, duplicates:string[], stray_kinds:number[], problems:Array}}
+ */
 export function parseCardText(text) {
-  const lines = linesOf(text)
-  let i = 0
-  while (i < lines.length && lines[i].trim() === '') i += 1
-  if (i >= lines.length || !/^#\s+/.test(lines[i])) return { h1: null, fields: {}, problems: [{ code: 'GATE2-CARD-MISSING', message: '卡里没有 H1' }] }
-  const h1 = lines[i].trim()
+  const split = splitHeaderBlock(text)
+  if (!split.ok) return { ok: false, h1: null, fields: {}, duplicates: [], stray_kinds: [], problems: [{ code: 'GATE2-CARD-MISSING', message: split.why }] }
   const fields = {}
-  let j = i + 2
-  for (; j < lines.length; j += 1) {
-    if (lines[j].trim() === '') break
-    const m = /^\s*([^:：\s]+)\s*[:：]\s*(.*)$/u.exec(lines[j])
-    if (m !== null) fields[m[1]] = m[2].trim()
+  const duplicates = []
+  for (const { text: lineText } of split.block) {
+    const m = /^\s*([^:：\s]+)\s*[:：]\s*(.*)$/u.exec(lineText)
+    if (m === null) continue // 头块里的非 `键: 值` 行不参与判定（卡可以有人读的标题行）
+    const key = m[1]
+    if (fields[key] !== undefined) duplicates.push(key)
+    else fields[key] = m[2].trim()
   }
-  return { h1, fields, problems: [] }
+  // 头块之外还有没有 `票类`（正文 / 例子 / 引用里的都不许替闸做主）
+  const strayKinds = []
+  split.lines.forEach((line, idx) => {
+    const lineNo = idx + 1
+    if (lineNo >= split.range.from && lineNo <= split.range.to) return
+    if (/^\s*票类\s*[:：]/u.test(line)) strayKinds.push(lineNo)
+  })
+  return { ok: true, h1: split.h1, fields, duplicates, stray_kinds: strayKinds, problems: [] }
 }
 
 const NEW_MECHANISM_KINDS = new Set(['新机制', '新机制票'])
@@ -319,8 +337,19 @@ const DATA_KINDS = new Set(['数据', '数据票'])
 /**
  * 第 2 关拒接闸（契约 §6.2 的六行表）。
  *
- * fail-closed 的三处：卡读不出来 ⇒ 拒；`票类` 缺/不认识 ⇒ 拒；`构案` 指向的不是"生效构案" ⇒ 拒。
- * 漏写一格不许绕过闸 —— 那是这一格存在的全部理由。
+ * fail-closed 的每一处（漏写一格不许绕过闸 —— 那是这一格存在的全部理由）：
+ *   · 卡读不出来 ⇒ 拒（`GATE2-CARD-MISSING`）；
+ *   · 头块不成立 / 缺 `票类` ⇒ 拒（`GATE2-CARD-MISSING` / `GATE2-TICKET-KIND-MISSING`）；
+ *   · `票类` 写了两行、或正文里另有一行 `票类` ⇒ 拒（`GATE2-TICKET-KIND-AMBIGUOUS` / `GATE2-TICKET-KIND-NOT-STRUCTURED`）
+ *     —— **票类只认卡的结构化头块，正文里的一句不算**；
+ *   · 新机制票没有编号 ⇒ 拒（`GATE2-NO-DECISION`）；
+ *   · **引用表里每一个编号都要解析得到、都要是生效构案**（M3：上一版只看"第一个能解析的"，
+ *     `构案: 0001, 9999` 会静默放过 9999）；任何一条不成立 ⇒ 拒，点名那一个编号。
+ *
+ * 「数据票」的豁免（`票类: 数据` + `构案: —`）**是有名字、且要写出来的**（M3）：
+ *   · `构案` 那一行**必须在**（缺了不是"零个编号"，是"没写" ⇒ 拒 `GATE2-EXEMPTION-NOT-EXPLICIT`）；
+ *   · 通过了也要在 `readings.exemption` 里留下它的名字与**它证明不了什么**
+ *     （票类是卡自己写的：这道闸没有第三方签名，只有"卡的结构化头块里怎么说"）。
  */
 export function runGate2Card({ root, card }) {
   const out = {
@@ -341,7 +370,15 @@ export function runGate2Card({ root, card }) {
   const text = readText(card)
   if (text === null) return refuse('GATE2-CARD-MISSING', `派工卡读不出来：${card}`)
   const parsed = parseCardText(text)
-  if (parsed.problems.length > 0) return refuse('GATE2-CARD-MISSING', `派工卡 ${card} 的头块不成立：${parsed.problems[0].message}`)
+  if (!parsed.ok) return refuse('GATE2-CARD-MISSING', `派工卡 ${card} 的头块不成立：${parsed.problems[0].message}`)
+  // ① 票类只认结构化头块里**恰好一次**的那一行
+  if (parsed.stray_kinds.length > 0) {
+    return refuse('GATE2-TICKET-KIND-NOT-STRUCTURED', `${card} 的第 ${parsed.stray_kinds.join(' / ')} 行不在头块里、却写着 \`票类:\` —— `
+      + '这道闸只认卡首的结构化头块（H1 → 空行 → 到第一个空行）；正文 / 例子 / 引用里的 `票类` 不算数（M3）')
+  }
+  if (parsed.duplicates.includes('票类')) {
+    return refuse('GATE2-TICKET-KIND-AMBIGUOUS', `${card} 的头块里 \`票类\` 写了两行 —— 票类必须恰好一格（M3）`)
+  }
   const kindRaw = parsed.fields['票类']
   out.ticket_kind = kindRaw ?? null
   if (kindRaw === undefined) {
@@ -352,46 +389,93 @@ export function runGate2Card({ root, card }) {
   if (!isNew && !isData) {
     return refuse('GATE2-TICKET-KIND-MISSING', `${card} 的 \`票类: ${kindRaw}\` 不认识 —— 只认 \`新机制\` / \`数据\`（fail-closed，契约 §6.1）`)
   }
-  const decisionRaw = parsed.fields['构案'] ?? DASH
-  out.decision = decisionRaw
+  // ② `构案` 那一格不许写两行（同一张卡两个编号 = 谁也不知道按哪一条走）
+  if (parsed.duplicates.includes('构案')) {
+    return refuse('GATE2-DECISION-AMBIGUOUS', `${card} 的头块里 \`构案\` 写了两行 —— 这一格必须恰好一个值（M3）`)
+  }
+  /**
+   * ③ 数据票的豁免要**能被卡上别的格子反驳**（M3：光靠 `票类:` 一行 = "被闸一方自己勾"）。
+   *    卡上写了 `改动面:`（逗号分隔的路径 / glob）时，数据票的改动面里不许落在机制代码面上：
+   *    声明了 `presets/**` / `.tools/**` / `决议/**` 却说自己是数据票 ⇒ 自相矛盾，拒。
+   *    ⚠️ **没写 `改动面:` 不构成拒**（卡上可以没有这一格），但读数里必须写明"这一层没核对"。
+   */
+  const codePaths = ['presets/', '.tools/', '决议/']
+  const surfaceRaw = parsed.fields['改动面']
+  const surface = typeof surfaceRaw === 'string'
+    ? surfaceRaw.split(/[,，]/).map((s) => s.trim()).filter((s) => s !== '' && s !== DASH)
+    : null
+  const surfaceViolations = surface === null
+    ? []
+    : surface.filter((p) => {
+      const norm = p.replace(/\\/g, '/')
+      return codePaths.some((c) => norm.startsWith(c) || norm.includes(`/${c}`))
+    })
+  if (isData && surfaceViolations.length > 0) {
+    return refuse('GATE2-EXEMPTION-CONTRADICTED', `${card} 的 \`票类: 数据\` 与 \`改动面\` 自相矛盾：`
+      + `${JSON.stringify(surfaceViolations)} 落在机制代码面上（${codePaths.join(' / ')}）—— `
+      + '数据票不竞标、不写构案，也不改机制代码；要改机制代码就是新机制票（M3）')
+  }
+  // ④ 构案那一格必须**写得出来**（缺行 ≠ 零个编号）
+  const decisionRaw = parsed.fields['构案']
+  out.decision = decisionRaw ?? null
+  if (decisionRaw === undefined) {
+    const code = isData ? 'GATE2-EXEMPTION-NOT-EXPLICIT' : 'GATE2-NO-DECISION'
+    return refuse(code, `${card} 的头块里没有 \`构案:\` —— ${isData ? '数据票的豁免要**写出来**' : '新机制票要一条生效构案'}：`
+      + `没有就写 \`构案: ${DASH}\`（漏写一格不算"零个编号"，M3 / 契约 §6.2）`)
+  }
   const ref = parseRefList(decisionRaw)
-  const hasDecision = decisionRaw.trim() !== DASH && decisionRaw.trim() !== ''
-  if (isData && !hasDecision) {
-    // 纯数据票不竞标、不写构案（定形 §一·五）—— 这是读数，不是 problem
-    out.readings = { not_required: 'GATE2-NOT-REQUIRED', why: '纯数据票不竞标、不写构案（定形 §一·五）' }
+  const hasDecision = decisionRaw !== DASH && decisionRaw !== ''
+  if (!ref.ok) {
+    return refuse('GATE2-DANGLING-DECISION', `${card} 的 \`构案: ${decisionRaw}\` 解析不了：${ref.why}（契约 §6.2）`)
+  }
+  if (!hasDecision) {
+    if (!isData) {
+      return refuse('GATE2-NO-DECISION', `${card} 是**新机制票**，而 \`构案:\` 是 \`${decisionRaw}\` —— `
+        + '新机制票必须先有一条生效构案（定形 §一·五；契约 §6.2）。改法：先在 `决议/构案/` 落一条编号，再把编号写到卡首')
+    }
+    // 豁免：**有名字、且写明它证明不了什么**（M3：这东西仍然只是卡自己说的）
+    out.readings = {
+      exemption: 'GATE2-EXEMPT-DATA-TICKET',
+      why: '纯数据票不竞标、不写构案（定形 §一·五）；豁免要求 `票类: 数据` + `构案: —` 两格**都写出来**',
+      basis: '票类=数据（卡自己的结构化头块）',
+      surface_check: surface === null
+        ? '未核对（卡上没写 `改动面:`）'
+        : `核对过：${surface.length} 条改动面，都不在 ${codePaths.join(' / ')} 上`,
+      unverified: '这道闸没有第三方签名 —— 它只能证明"卡上这么写"，不能证明"这真是数据票"。'
+        + '要第三方，得让票类从派卡方以外的记录里来（今天没有那张记录）。',
+    }
     out.verdict = 'pass'
     out.code = null
     out.ok = true
     return out
   }
-  if (!hasDecision) {
-    return refuse('GATE2-NO-DECISION', `${card} 是**新机制票**，而 \`构案:\` 是 \`${decisionRaw}\` —— `
-      + '新机制票必须先有一条生效构案（定形 §一·五；契约 §6.2）。改法：先在 `决议/构案/` 落一条编号，再把编号写到卡首')
-  }
-  if (!ref.ok) {
-    return refuse('GATE2-DANGLING-DECISION', `${card} 的 \`构案: ${decisionRaw}\` 解析不了：${ref.why}（契约 §6.2）`)
-  }
+  // ③ **每一个**编号都要解析得到（M3：不是"第一个能解析的就算过"）
   const scan = scanLedger(root)
-  const found = []
+  const resolved = []
+  const dangling = []
   for (const r of ref.refs) {
     const target = resolveRef(scan.decisions, '构案', r)
-    if (target !== null) found.push(target)
+    if (target === null) dangling.push(r.raw)
+    else resolved.push(target)
   }
-  if (found.length === 0) {
-    return refuse('GATE2-DANGLING-DECISION', `${card} 的 \`构案: ${decisionRaw}\` 在树上解析不到 —— `
-      + '卡上的编号必须指向一条真的构案（契约 §6.2）', { ref: decisionRaw })
+  if (dangling.length > 0) {
+    return refuse('GATE2-DANGLING-DECISION', `${card} 的 \`构案\` 里这几个编号在树上解析不到：${dangling.map((d) => `\`${d}\``).join(' / ')} —— `
+      + '卡上的每一个编号都必须指向一条真的构案；有一个悬空就整张卡拒（M3 / 契约 §6.2）', { ref: dangling.join(',') })
   }
-  const target = found[0]
-  if (target.series !== '构案') {
-    return refuse('GATE2-DECISION-NOT-LIVE', `${card} 的 \`构案: ${decisionRaw}\` 指向 ${target.series}/${target.id}，`
-      + '不是构案 —— 这道闸只认 \`生效\` 的构案（契约 §6.2）', { ref: `${target.series}/${target.id}` })
+  const notLive = resolved.filter((d) => d.series !== '构案' || d.status !== '生效')
+  if (notLive.length > 0) {
+    const bad = notLive[0]
+    return refuse('GATE2-DECISION-NOT-LIVE', `${card} 的 \`构案\` 里 ${notLive.map((d) => `${d.series}/${d.id}`).join(' / ')} `
+      + `不是**生效构案**（${bad.series === '构案' ? `状态是 \`${bad.status ?? '（读不出来）'}\`` : `它在 ${bad.series} 系列`}）`
+      + ' —— 新机制票要一条**生效**的构案（契约 §6.2）', { ref: `${bad.series}/${bad.id}` })
   }
-  if (target.status !== '生效') {
-    return refuse('GATE2-DECISION-NOT-LIVE', `${card} 的 \`构案: ${decisionRaw}\` 指向 ${target.series}/${target.id}，`
-      + `而它是 \`${target.status ?? '（状态读不出来）'}\` —— 新机制票要一条**生效**的构案（契约 §6.2）`,
-    { ref: `${target.series}/${target.id}` })
+  if (isData) {
+    out.readings = {
+      exemption: 'GATE2-NOT-REQUIRED',
+      why: '数据票；卡上给了编号，而且每一条都解析得到、都是生效构案',
+      basis: '票类=数据（卡自己的结构化头块）',
+    }
   }
-  if (isData) out.readings = { not_required: 'GATE2-NOT-REQUIRED', why: '数据票；卡上给了编号且解析得到' }
   out.verdict = 'pass'
   out.code = null
   out.ok = true
@@ -460,32 +544,18 @@ export function runSupersede({ root, oldRef, byRef, dryRun = false }) {
     return refuse('SUPERSEDE-NO-RECIPROCAL', `${out.by} 的 \`supersedes\` 里没有 ${out.old} —— 先把它写进新文，`
       + '否则翻转之后就是一条单向指针（`check` 会报 `POINTER-ASYMMETRIC`）')
   }
-  // 定位旧文头块里要改的那两行（行号来自同一个解析器）
+  // 定位旧文头块里要改的那两行 —— 头块切分走**共用那份** `splitHeaderBlock`（M6：这里不再自己走一遍行指针）
   const text = readText(path.join(root, oldD.file))
   if (text === null) return refuse('SUPERSEDE-OLD-MISSING', `${oldD.file} 读不出来`)
+  const split = splitHeaderBlock(text)
+  if (!split.ok) {
+    return refuse('SUPERSEDE-HEADER-UNLOCATABLE', `${oldD.file} 的头块定位不到（${split.why}）—— 不猜行号，先跑一次 \`check\``)
+  }
   const rawLines = text.split('\n')
-  /**
-   * 头块的行号区间 `{ from, to }`（**含**）：H1 之后那一行空行的下一行起，到第一条空行为止。
-   * 与 `census.parseDecisionText` 是同一条判法 —— 只是这里要行号，所以要再走一遍行指针。
-   */
-  const headerRange = () => {
-    let i = 0
-    while (i < rawLines.length && rawLines[i].trim() === '') i += 1
-    if (i >= rawLines.length || !/^#\s+/.test(rawLines[i])) return null
-    let j = i + 2
-    if (j - 1 >= rawLines.length || rawLines[j - 1].trim() !== '') return null
-    const from = j
-    while (j < rawLines.length && rawLines[j].trim() !== '') j += 1
-    return j > from ? { from, to: j - 1 } : null
-  }
-  const range = headerRange()
-  if (range === null) {
-    return refuse('SUPERSEDE-HEADER-UNLOCATABLE', `${oldD.file} 的头块定位不到（H1 → 空行 → 头块 → 空行）—— 不猜行号，先跑一次 \`check\``)
-  }
   const headerLineOf = (key) => {
-    for (let i = range.from; i <= range.to; i += 1) {
-      const m = /^\s*([^:：\s]+)\s*[:：]\s*(.*)$/u.exec(rawLines[i].replace(/\r$/, ''))
-      if (m !== null && m[1] === key) return i
+    for (let i = split.range.from; i <= split.range.to; i += 1) {
+      const m = /^\s*([^:：\s]+)\s*[:：]\s*(.*)$/u.exec(rawLines[i - 1].replace(/\r$/, ''))
+      if (m !== null && m[1] === key) return i - 1
     }
     return -1
   }
@@ -503,17 +573,19 @@ export function runSupersede({ root, oldRef, byRef, dryRun = false }) {
   const nextText = next.join('\n')
   // 正文（头块之后的全部字节）不许变 —— 用 sha256 自证，不靠"我小心地只改了两行"
   const bodyOf = (s) => {
-    const lines = s.split('\n')
-    let i = 0
-    while (i < lines.length && lines[i].trim() === '') i += 1 // H1
-    let j = i + 2
-    while (j < lines.length && lines[j].trim() !== '') j += 1
-    return lines.slice(j).join('\n')
+    const cut = splitHeaderBlock(s)
+    return cut.ok ? cut.bodyLines.join('\n') : null
   }
   const before = bodyOf(text)
   const after = bodyOf(nextText)
-  out.body_sha256 = { before: sha256(Buffer.from(before, 'utf8')), after: sha256(Buffer.from(after, 'utf8')) }
+  out.body_sha256 = {
+    before: before === null ? null : sha256(Buffer.from(before, 'utf8')),
+    after: after === null ? null : sha256(Buffer.from(after, 'utf8')),
+  }
   out.readings.byte_length = { before: Buffer.byteLength(text, 'utf8'), after: Buffer.byteLength(nextText, 'utf8') }
+  if (out.body_sha256.before === null || out.body_sha256.after === null) {
+    return refuse('SUPERSEDE-HEADER-UNLOCATABLE', `${oldD.file} 的正文切不出来（头块不成立）—— 不写`)
+  }
   if (out.body_sha256.before !== out.body_sha256.after) {
     return refuse('SUPERSEDE-BODY-CHANGED', `${oldD.file} 的正文 sha256 会变（${out.body_sha256.before.slice(0, 12)} → `
       + `${out.body_sha256.after.slice(0, 12)}）—— supersede 只许动头块两个字段（契约 §0.3 的 D3），不写`)
