@@ -871,18 +871,22 @@ export function deriveIndexRows(root, concepts, decisions, judge) {
  * 渲染 `INDEX.md`（契约 §4.1 生成标记 + §4.2 四列 + M4 的「单位」列 + 一句口径）。
  *
  * 口径那句话是**给读者**的（不是给机器的）：这一页的 `census` 数的是"按该行计数口径量出来的实现点"，
- * 单位在最后一列；闭集与每一行为什么选那个口径写在 `决议/概念表.md` 顶部。
+ * 单位在最后一列。**那句闭集从 `COUNT_RULES` 现算**（M7：上一版手写了四个单位，
+ * 而表里已经多出第五个 `零代码决定` —— 页上出现页首没列的单位，读者就不知道该信哪个）。
+ * 每行为什么选那个口径写在 `决议/概念表.md` 顶部（那是人维护的理由，不是派生物）。
  */
 export function renderIndex(rows) {
   const cell = (v) => (v === null || v === undefined || v === '' ? DASH : String(v))
   const columns = [...INDEX_COLUMNS, INDEX_UNIT_COLUMN]
+  const rules = Object.entries(COUNT_RULES).map(([token, rule]) => `\`${token}\` = ${rule.label}`)
   const out = [
     GEN_MARKER,
     '',
     '# 构案录（现状层）',
     '',
-    '> `census` = 落在该概念「扫描」面里、按该行「计数口径」量出来的实现点数；**单位见最后一列**'
-      + '（`份文件` / `份代码文件` / `处` / `处代码行` —— 闭集与每行的理由写在 `决议/概念表.md` 顶部）。'
+    `> \`census\` = 落在该概念「扫描」面里、按该行「计数口径」量出来的实现点数；**单位见最后一列**。`
+      + `计数口径是闭集 ${Object.keys(COUNT_RULES).length} 个，逐个列在这里（由 \`.tools/lib/决议-ledger.mjs\` 的 \`COUNT_RULES\` 现算）：`
+      + `${rules.join(' · ')}。每行为什么选那个口径写在 \`决议/概念表.md\` 顶部。`
       + '这一页是**生成物**：改实现之后重跑 `node .tools/census.mjs --write-index`。',
     '',
     `| ${columns.join(' | ')} |`,
