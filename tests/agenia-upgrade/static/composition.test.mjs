@@ -46,6 +46,7 @@ import {
 } from '../support/composition.mjs'
 import { withHostRowInPresetBodies } from '../support/client-ui-placement.mjs'
 import { caseFail, normalizeSha, oracleReadings, preflight, problem, runCase, sha256Equal, stagedVsLiveDrift, stagingReadings } from '../support/evidence.mjs'
+import { declaredDifference } from '../support/staged-artifact.mjs'
 import { importStaged, loadStagedModule, readStagedText, stagingExists, stagingPath, writeFixtureText } from '../support/sut.mjs'
 import { countFiles, fixtureDir, writeUnder } from '../support/verify-recompute.mjs'
 
@@ -76,8 +77,14 @@ function requireStaged(rel, problems) {
  *
  * 🔴 零样本那一格的红因必须**自己说出"零样本"**：只说"对不上"会把读的人引去同步两棵树，
  *    而真正缺的是样本（`same` 那边同样不含零样本 —— `evidence.mjs::stagedVsLiveDrift`）。
+ *
+ * 🔴 **2026-11-12 · 构案 0006 裁决（改定段 · 第三方案）**：`rollback.mjs` 在**发布时被内联**
+ *    （出厂件保持单文件零静态 import），所以 staged 与 repo 之间**必然**有一处受控差异
+ *    —— 判"差异已声明"而不是"分叉"。`judged` 就是那份判定（`target.mjs::targetReport`，
+ *    与入口 `F57-TARGET` 同一份口径）；`judged === null`（夹具那几格）保持原来的"不同就红"。
+ *    ⇒ 差异**未声明 / 声明不符 / 声明过期** 仍然红（`STAGED-LIVE-DRIFT` 的报文里点名 `TARGET-*` 码）。
  */
-function stagedLiveDriftProblems(drift) {
+function stagedLiveDriftProblems(drift, judged = null) {
   if (drift.staged === null) {
     return [problem('STAGED-LIVE-DRIFT', '`AGENIA_STAGING_PRESET` 没设 ⇒ 两棵树比不了（这一格判不了，不许当绿）')]
   }
@@ -104,11 +111,21 @@ function stagedLiveDriftProblems(drift) {
     if (drift.only_staged.length > 0) parts.push(`只在 staged：${drift.only_staged.join(', ')}`)
     if (drift.only_live.length > 0) parts.push(`只在活体：${drift.only_live.join(', ')}`)
     if (drift.different.length > 0) parts.push(`同名而内容不同：${drift.different.join(', ')}`)
+    const where = `${parts.length > 0 ? parts.join(' · ') : '（三张差集全空，可 `same` 仍说 false —— 这一支没有可指认的差异）'}`
+      + `（staged ${drift.staged_files} 文件 ${drift.staged} · 活体 ${drift.live_files} 文件 ${drift.live}）`
+    // 有 `judged` ⇒ 判"差异已声明"：声明准确覆盖了每一处差异 ⇒ 绿；否则把 `TARGET-*` 逐条点名。
+    if (judged !== null) {
+      if (judged.ok === true) return []
+      return [problem('STAGED-LIVE-DRIFT',
+        `**staged 与活体不是同一棵树，而且这处差异没有被声明**（裁决 0006 的"受控差异"只认准确声明）：${where}`
+        + `。声明文件 ${judged.declaration?.path ?? '（未给）'}（在盘上：${judged.declaration?.present === true ? '是' : '否'}）`
+        + ` ⇒ ${judged.problems.map((p) => `${p.code}: ${p.message}`).join(' · ') || '（没有红因）'}`
+        + '。修法：把差异写进声明（`target-lag.json`，逐文件 state / lag_bytes / 双向 sha256）——'
+        + '**不是**把 staged 改成与 repo 逐字节相同（内联是发布时的动作，两棵树本来就该不同）。')]
+    }
     return [problem('STAGED-LIVE-DRIFT',
       '**staged 与活体不是同一棵树**（测试的靶子 ≠ 生产）⇒ 这一跑的绿**不能**用来给活体背书：'
-      + `${parts.length > 0 ? parts.join(' · ') : '（三张差集全空，可 `same` 仍说 false —— 这一支没有可指认的差异）'}`
-      + `（staged ${drift.staged_files} 文件 ${drift.staged} · 活体 ${drift.live_files} 文件 ${drift.live}）`
-      + '。修法：把改过的文件同步进 staging（**各人同步自己改的**），别靠人记得。')]
+      + `${where}。修法：把改过的文件同步进 staging（**各人同步自己改的**），别靠人记得。`)]
   }
   return []
 }
@@ -223,10 +240,88 @@ describe('static · composition', () => {
       // 【怎么翻面】造一个"只改了一棵树"的现场（本票的做法：把 `AGENIA_STAGING_PRESET` 指到一棵**变异体副本**
       //   —— 判据是**对称**的，任何一边多一个字节都算漂移）⇒ 本条的 `STAGED-LIVE-DRIFT` 当场红。
       //   阳性对照读数：`.team/test/2026-10-14/_evidence/20261016-test-i18-m-drift/`。
+      // 🔴 **例外只有一种，而且必须写出来**（2026-11-12 构案 0006 裁决 · 第三方案）：`bin/rollback.mjs`
+      //   在**发布时**被 `publish-staged` 内联（出厂件保持单文件零静态 import），所以这一份两棵树
+      //   **必然不同**。判据因此多一个判据对象 —— **受控差异声明** `<staging>/target-lag.json`：
+      //   差异被声明**准确**覆盖 ⇒ 绿（读数 `state:'declared'`）；未声明 / 不符 / 过期 ⇒ 红。
+      //   "逐字节相同"这条老口径对**其余每一份文件**仍然成立（声明只认它点名的那一份）。
       {
         const drift = stagedVsLiveDrift()
+        const judged = declaredDifference({ stagedRoot: stagingPath('.'), baselineRoot: PATHS.finalPreset })
         rec.readings.staged_vs_live = drift
-        for (const p of stagedLiveDriftProblems(drift)) problems.push(p)
+        rec.readings.staged_vs_live_declared = {
+          state: judged.state,
+          ok: judged.ok,
+          equal: judged.equal,
+          declared: judged.declared,
+          line: judged.line,
+          declaration_path: judged.declaration?.path ?? null,
+          declaration_present: judged.declaration?.present === true,
+          actuals: judged.actuals.map((a) => ({
+            file: a.file, state: a.state, lag_bytes: a.lag_bytes, missing_markers: a.missing_markers,
+          })),
+          problem_codes: judged.problems.map((p) => p.code),
+          note: 'drift（三张差集）与 judged（逐文件 + 声明）是同一份口径的两个读者；本条的判词只从这两个来',
+        }
+        const driftProblems = stagedLiveDriftProblems(drift, judged)
+        for (const p of driftProblems) problems.push(p)
+        // 两个读者不许互相打脸："一个说逐字节相同、另一个说不同"是口径分叉（红），不是产品红。
+        if ((judged.state === 'equal') !== (drift.same === true)) {
+          push('STAGED-LIVE-READERS-DISAGREE', `同一对树：\`stagedVsLiveDrift().same\` = ${drift.same}，`
+            + `\`targetVerdict().state\` = ${JSON.stringify(judged.state)} —— 两个读者必须说同一句话`
+            + '（"相同"与"不同"各说各的，读的人不知道该信谁）')
+        }
+
+        // ── ③a′ 判据自控：**声明那一条支路**必须真的会翻面（合成读数直调纯函数，不碰盘）──────
+        // 为什么要有这一节：真树上"已声明"这条路 Gate 3 之后才会出现；不先真走一次，
+        // 那一条分支就是**没测过的实现**（`cand-20261110-0378`）。四个方向各走一次：
+        //   ① 差异 + 声明准确 ⇒ 绿（否则这一格永远红）；② 差异 + 未声明 ⇒ 红且点名 `TARGET-LAG-UNDECLARED`；
+        //   ③ 差异 + 不给 judged（夹具那几格）⇒ 仍走老口径；④ **零样本不许被声明顶掉**（顺序错了就是放行）。
+        {
+          const fakeDrift = {
+            staged: 'X:/fake-staged', live: 'X:/fake-live',
+            staged_files: 57, live_files: 57,
+            only_staged: [], only_live: [], different: ['bin/rollback.mjs'],
+            floor: null, same: false,
+          }
+          const fakeDeclared = {
+            ok: true, state: 'declared',
+            declaration: { path: 'X:/fake-staging/target-lag.json', present: true },
+            problems: [],
+          }
+          const fakeUndeclared = {
+            ok: false, state: 'stale',
+            declaration: { path: 'X:/fake-staging/target-lag.json', present: false },
+            problems: [{ code: 'TARGET-LAG-UNDECLARED', message: 'bin/rollback.mjs 与现役不同，而声明里没有这一份' }],
+          }
+          const fakeZero = {
+            ...fakeDrift, staged: 'X:/zero', live: 'X:/zero-live',
+            staged_files: 0, live_files: 0, different: [], same: false,
+          }
+          const cases = [
+            { id: 'declared', drift: fakeDrift, judged: fakeDeclared, want: [] },
+            { id: 'undeclared', drift: fakeDrift, judged: fakeUndeclared, want: ['STAGED-LIVE-DRIFT'], mustName: 'TARGET-LAG-UNDECLARED' },
+            { id: 'no-judged', drift: fakeDrift, judged: null, want: ['STAGED-LIVE-DRIFT'], mustName: '不是同一棵树' },
+            { id: 'zero-sample-not-hijacked', drift: fakeZero, judged: fakeDeclared, want: ['STAGED-LIVE-DRIFT'], mustName: '零样本' },
+          ]
+          const observed = []
+          for (const c of cases) {
+            const got = stagedLiveDriftProblems(c.drift, c.judged)
+            const codes = got.map((p) => p.code)
+            const text = got.map((p) => p.message).join('\n')
+            const ok = JSON.stringify(codes) === JSON.stringify(c.want) && (c.mustName === undefined || text.includes(c.mustName))
+            observed.push({ id: c.id, ok, codes, want: c.want, must_name: c.mustName ?? null })
+            if (!ok) {
+              push('STAGED-LIVE-DECLARED-SELFCHECK', `判据自控失败（${c.id}）：声明支路该给 ${JSON.stringify(c.want)}`
+                + `${c.mustName === undefined ? '' : `（报文要含「${c.mustName}」）`}，实得 ${JSON.stringify(codes)} —— `
+                + `${text.slice(0, 300)}`)
+            }
+          }
+          rec.readings.staged_live_declared_selfcheck = {
+            cases: observed,
+            note: '合成读数直调 `stagedLiveDriftProblems(drift, judged)`（纯函数）：声明支路两个方向 + 老口径 + 零样本顺序各走一次',
+          }
+        }
 
         // ── ③b 这把尺子自己的两件事（E7 单源 / E8 深度规则，2026-11-06 batch 7）──────
         // 【E7 单源】`SKIP` 从前是**手写的字面量** `new Set(['.runtime'])`：与

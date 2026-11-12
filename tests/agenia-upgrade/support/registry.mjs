@@ -1048,8 +1048,9 @@ export const BATCH_AV = ['DUP-01']
 /**
  * 批次 AW（2026-11-12 · Gate 2 · 史山清查 B1）—— **原子写归一**（`ATM-01`）。
  *
- * 契约：`.team/test/2026-11-12/CONTRACT-史山清查-B1.md`（口径 / 五条腿 / 刀 / 分母的唯一出处）。
- * 定形：`.team/leader/2026-11-12/定形-B1-原子写归一.md`。决定：`决议/构案/0006-原子写归一.md`。
+ * 契约：`.team/test/2026-11-12/CONTRACT-史山清查-B1.md`（口径 / 七类腿（含出厂件腿 7）/ 九把刀 + 刀架 / 分母的唯一出处）。
+ * 定形：`.team/leader/2026-11-12/定形-B1-原子写归一.md`。决定：`决议/构案/0006-原子写归一.md`
+ * （含 **2026-11-12 23:1x 改定段** 与 **RC-4** —— 裁决 commit `8af3094`）。
  *
  * 一句话：`writeFileAtomic` 在同一仓库里**只许有一份定义**（`lib/atomic.mjs`），
  * 而且那一份必须是两份旧实现的**并集** —— fsync · `wx` 独占建 · allowedRoot 删除闸 ·
@@ -1058,9 +1059,13 @@ export const BATCH_AV = ['DUP-01']
  * 单开一组 `atomic-write` 而不是并进 `install`：那一族判**装上 / 回得去的行为**，
  * 这一格判**同一功能的实现有几份、并集有没有缺一角**（红的时候一眼看得出是"装坏了"还是"又长出一份"）。
  * 腿 6 还**点名**它依赖的既有格（`INS-01`/`INS-02`/`INS-03`/`ENV-02`/`STAT-01`）—— 那几条由同一跑证明。
- * 🔴 **Gate 2 时它红得对**（3 份定义 · 两个调用点各自留着一份 · 共享件没有删除闸）；
- * Gate 3 之后应当是绿的 —— 但 `rollback` 那一半有**一条待裁决的硬冲突**（拍板 Q6 / `INS-02 ①` /
- * `ENV-02 ROLLBACK-IMPORT`），见契约 §0.2 与这一格读数里的 `collision_q6`。
+ * 腿 7（裁决之后加的，**同一格**）：**出厂件（staged）**必须零静态 import 且含并集正文的指纹
+ * （`fsyncSync` / `RETRYABLE_RENAME` / `wx`），`<staging>/target-lag.json` 必须点名 `bin/rollback.mjs`
+ * 并说清"这是发布时的内联"，两棵树的差异由 `targetReport` 判成 `declared`（与入口 / `STAT-01` 同一份口径）。
+ * 🔴 **Gate 2 时它红得对**（3 份定义 · 两个调用点各自留着一份 · 共享件没有删除闸 · 出厂件没内联 · 没有声明）；
+ * Gate 3 之后应当是绿的 —— 裁决（第三方案）已经写进决定：repo 两份都 import 共享件，`publish-staged`
+ * 发布时内联，同批写 `target-lag.json`；三张卡（`INS-02 ①` / `ENV-02 ROLLBACK-IMPORT` / `STAT-01`）
+ * 的判据对象 = **出厂件（staged）**。裁决与两个被否的替代见契约 §0.5 与读数 `ruling_0006`。
  * ⚠️ 不进 `FROZEN_IDS`（后加批次各自以显式清单存在）。
  */
 export const BATCH_AW = ['ATM-01']
@@ -1736,7 +1741,7 @@ const ROWS = [
   // 契约 `.team/test/2026-11-12/CONTRACT-史山清查-B1.md`（口径 / 七类腿 / 九把刀 / 分母的唯一出处）。
   // 定形 `.team/leader/2026-11-12/定形-B1-原子写归一.md`。决定 `决议/构案/0006-原子写归一.md`。
   // 量具 `support/atomic-writers.mjs`。
-  ['ATM-01', 'atomic-write', F.atm, '**原子写只剩一份实现，而且那一份是并集**：`presets/**` 里 `function writeFileAtomic` **恰好 1 处**（`presets/agenia/lib/atomic.mjs`），两份 CLI 副本（`bin/install.mjs` / `bin/rollback.mjs`）为 0；并集四条各一把刀 —— **a fsync**（桩住 `fsyncSync`：成功写必须出现，且次序 `writeSync` → `fsyncSync` → `renameSync`、fd 同一个；刀 = 删掉它 ⇒ 红）· **b `wx`**（临时件 flags 含 `wx`、不用 `writeFileSync` 建、与目标同目录；刀 = `wx`→`w` ⇒ 红）· **c allowedRoot 删除闸**（写失败后闸拒绝清临时件 ⇒ 临时件还在 · 目标没被写 · 出声或具名码 · `cleanup_refused.delete_gate` 在；反面控制 = 闸放行时必须真删；默认不给 allowedRoot 时清残渣的旧行为不变；两把刀 = 把闸放宽到临时件目录 / 把拒绝分支写成 `if (false)`）· **d 重试码**（`EPERM`/`EBUSY`/`EACCES` 各重试一次都要成、`ENOENT` 一次就放弃；结构面 = 重试码只剩 `RETRYABLE_RENAME` 一份，声明外没有内联数组；两把刀 = 把 `EACCES` 改名 / 追加一份内联码集）。**e 信封**：成功 `{ok:true, code:null, message, path, bytes, attempts}`、失败 `{ok:false, code, message, path}`，两个调用点必须 import 共享件 + 真调 + 不读 `.tmp`；刀 = 换成旧 CLI 形状的桩（`{ok,tmp}`）⇒ 红。**f 既有行为不破**：本格**点名**它依赖的既有格（`INS-01`/`INS-02`/`INS-03`/`ENV-02`/`STAT-01`）并核对它们还在，绿不绿由同一跑的入口结算证明。⚠️ 并集 d 的"两套码"在成员上是恒等操作（两套都是 `EPERM/EBUSY/EACCES`）⇒ 判覆盖与"只剩一份"，判不了"两套都留"。🔴 **Gate 2 时红得对**（3 处定义 · 两个调用点各自留着一份 · 共享件没有删除闸 · 成功信封没 `message`）；Gate 3 之后应为绿，但 `rollback` 那一半压着一条待裁决的硬冲突（拍板 Q6 / `INS-02 ①` / `ENV-02 ROLLBACK-IMPORT` ⟂ 定形"rollback 改为 import"）—— 见契约 §0.2 与读数 `collision_q6`。', '批次 AW'],
+  ['ATM-01', 'atomic-write', F.atm, '**原子写只剩一份实现，而且那一份是并集**：`presets/**` 里 `function writeFileAtomic` **恰好 1 处**（`presets/agenia/lib/atomic.mjs`），两份 CLI 副本（`bin/install.mjs` / `bin/rollback.mjs`）为 0；并集四条各一把刀 —— **a fsync**（桩住 `fsyncSync`：成功写必须出现，且次序 `writeSync` → `fsyncSync` → `renameSync`、fd 同一个；刀 = 删掉它 ⇒ 红）· **b `wx`**（临时件 flags 含 `wx`、不用 `writeFileSync` 建、与目标同目录；刀 = `wx`→`w` ⇒ 红）· **c allowedRoot 删除闸**（写失败后闸拒绝清临时件 ⇒ 临时件还在 · 目标没被写 · 出声或具名码 · `cleanup_refused.delete_gate` 在；反面控制 = 闸放行时必须真删；默认不给 allowedRoot 时清残渣的旧行为不变；两把刀 = 把闸放宽到临时件目录 / 把拒绝分支写成 `if (false)`）· **d 重试码**（`EPERM`/`EBUSY`/`EACCES` 各重试一次都要成、`ENOENT` 一次就放弃；结构面 = 重试码只剩 `RETRYABLE_RENAME` 一份，声明外没有内联数组；两把刀 = 把 `EACCES` 改名 / 追加一份内联码集）。**e 信封**：成功 `{ok:true, code:null, message, path, bytes, attempts}`、失败 `{ok:false, code, message, path}`，两个调用点必须 import 共享件 + 真调 + 不读 `.tmp`；刀 = 换成旧 CLI 形状的桩（`{ok,tmp}`）⇒ 红。**f 既有行为不破**：本格**点名**它依赖的既有格（`INS-01`/`INS-02`/`INS-03`/`ENV-02`/`STAT-01`）并核对它们还在，绿不绿由同一跑的入口结算证明。⚠️ 并集 d 的"两套码"在成员上是恒等操作（两套都是 `EPERM/EBUSY/EACCES`）⇒ 判覆盖与"只剩一份"，判不了"两套都留"。**g 出厂件（裁决之后加的）**：出厂件 `bin/rollback.mjs` 零静态 import 且含并集正文指纹（`fsyncSync`/`RETRYABLE_RENAME`/`wx`）；`<staging>/target-lag.json` 点名 `bin/rollback.mjs` 且理由说得出"发布时内联"；两棵树的差异由 `targetReport` 判成 `declared`（与入口 / `STAT-01` 同一份口径）。控制 = 内联形状夹具绿 + 准确声明 `state=declared`；刀 = 剥内联（`SHIP-ROLLBACK-NO-INLINE` + `TARGET-LAG-UNDECLARED`）· 内联在而声明不在（`SHIP-DECL-MISSING` + `TARGET-LAG-UNDECLARED`）· 静态 import 规则在"一行 import"上必须认出。🔴 **Gate 2 时红得对**（3 处定义 · 两个调用点各自留着一份 · 共享件没有删除闸 · 成功信封没 `message` · 出厂件没内联 · 没有声明）；Gate 3 之后应为绿 —— 裁决 0006 第三方案（decision commit `8af3094`）：repo 两份都 import 共享件、`publish-staged` 发布时内联、同批写 `target-lag.json`，三张卡（`INS-02 ①` / `ENV-02 ROLLBACK-IMPORT` / `STAT-01`）的判据对象 = 出厂件（staged）；裁决与两个被否的替代（保留拷贝 / `await import` 绕字面）见契约 §0.5 与读数 `ruling_0006`。', '批次 AW'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */

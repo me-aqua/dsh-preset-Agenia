@@ -47,18 +47,28 @@
  *   · **腿 6 · 既有行为不破**（不是新腿：靠既有格）—— 见 `PRESERVATION`：
  *     `INS-01`（安装正例 / 数据与未知文件逐字节保留 / 重装幂等）· `INS-02`（回滚正例 / 数据不动 /
  *     失败保留现场）· `INS-03`（备份在 E 盘带哈希清单）· `ENV-02`（删除前 marker / 临时件 / C 盘）·
- *     `STAT-01`（staged 与现役逐字节相同）。它们由**这一跑的全量入口**证明（`F57-SETTLE` 那一行 +
+ *     `STAT-01`（staged 与现役：差异已声明）。它们由**这一跑的全量入口**证明（`F57-SETTLE` 那一行 +
  *     各自 `_evidence/<RUN_ID>/<ID>/result.json`）。本格只记"依赖哪几条腿 + 在哪个文件"，并核对它们**还在**。
+ *   · **腿 7 · 出厂件（staged）**（裁决 0006 第三方案之后加的；**同一格**，不是新格）：
+ *     (a) 出厂件 `bin/rollback.mjs` **零静态 import** 且**含并集正文的指纹**（`fsyncSync` / `RETRYABLE_RENAME` / `wx`
+ *         —— 今天那份 CLI 副本一个都没有）；(b) `<staging>/target-lag.json` 在、点名 `bin/rollback.mjs`、
+ *         理由说得清"这是发布时的内联"；(c) 两棵树那处差异被判成 **declared**（`targetReport`，与入口同一份口径）。
+ *     **控制**：内联版形状夹具 ⇒ 绿、准确声明 ⇒ `state=declared` 绿；
+ *     **刀**：剥掉内联 ⇒ `SHIP-ROLLBACK-NO-INLINE` + `TARGET-LAG-UNDECLARED`；内联在而声明不在 ⇒
+ *     `SHIP-DECL-MISSING` + `TARGET-LAG-UNDECLARED`；静态 import 的规则本身在"一行 import"的文本上必须认出。
+ *     为什么不开新格：与归一同一族（repo 一份 → 发布时内联 → 用户那份仍自足），且分母已由组长冻在 218。
  *
  * ## 期望读数
  *   · **Gate 2（今天，3 份实现）**：`ATM-01` 红在 `ATM-DEF-COUNT`（3 处）+ `ATM-DEF-CLI-COPY` ×2 +
  *     `ATM-CALLSITE-NO-IMPORT` ×2 + `ATM01-GATE-DELETED`（共享件没有删除闸）+ `ATM01-ENVELOPE-SUCCESS`
- *     （共享件的成功信封没有 `message`）⇒ 套件 `218 · RED 1 / GREEN 216 / HOLD 1`。
- *   · **Gate 3 之后**：真树 1 处定义、两个调用点读共享件、并集四条全绿 ⇒ `218 · RED 0 / GREEN 217 / HOLD 1`。
- *     ⚠️ 这条期望**有一个前置裁决**（契约 §0.2）：`rollback.mjs` 今天受拍板 Q6 约束
- *     （单文件自足、零静态 import），照定形让它 import 共享件会让 `INS-02 ①` / `ENV-02 ROLLBACK-IMPORT`
- *     翻红；而 `STAT-01` 又要求 staged 与现役逐字节相同。裁决没下来之前 Gate 3 无论怎么走都会有余波 ——
- *     读数里如实记着（`collision_q6`），那不是本格的红因。
+ *     （共享件的成功信封没有 `message`）+ `SHIP-ROLLBACK-NO-INLINE`（出厂件还是旧 CLI 副本）
+ *     + `SHIP-DECL-MISSING`（声明还没有）⇒ 套件 `218 · RED 1 / GREEN 216 / HOLD 1`。
+ *   · **Gate 3 之后**：真树 1 处定义、两个调用点读共享件、并集四条全绿、出厂件内联 + 声明准确
+ *     ⇒ `218 · RED 0 / GREEN 217 / HOLD 1`。
+ *     ✅ **前置裁决已下**（2026-11-12 23:1x · 决议 0006 改定段 · decision commit `8af3094`）：
+ *     第三方案 —— repo 两份都 import；`publish-staged` 发布时内联；同批写 `target-lag.json`；
+ *     三张卡（`INS-02 ①` / `ENV-02 ROLLBACK-IMPORT` / `STAT-01`）的判据对象 = **出厂件（staged）**。
+ *     裁决与两个被否的替代（保留拷贝 / `await import` 绕字面）见 `readings.ruling_0006`（resolved）。
  */
 import { test } from 'node:test'
 import path from 'node:path'
@@ -67,7 +77,19 @@ import { pathToFileURL } from 'node:url'
 import { caseFail, problem, runCase, runId, runRoot } from '../support/evidence.mjs'
 import { PATHS } from '../support/env.mjs'
 import { ensureMarkedDir, isUnder } from '../support/root-guard.mjs'
+import { stagingRoot } from '../support/sut.mjs'
 import { TOTAL } from '../support/registry.mjs'
+import { actualOf, measureOne } from '../support/target.mjs'
+import {
+  INLINE_ANCHORS,
+  SHIPPED_ROLLBACK_FILE,
+  artifactReading,
+  artifactVerdict,
+  declarationReading,
+  declarationVerdict,
+  declaredDifference,
+  staticImportLines,
+} from '../support/staged-artifact.mjs'
 import {
   ATOMIC_FN,
   CANONICAL_ATOMIC,
@@ -194,6 +216,66 @@ function fixtureRoot(tag) {
   const made = ensureMarkedDir(dir, { runRoot: runRoot(), runId: runId(), kind: 'agenia-test-root' })
   if (!isUnder(made, base)) throw new Error(`ATM01-FIXTURE-ESCAPE: 夹具根跑到运行根之外：${made}（运行根 ${base}）`)
   return made
+}
+
+/**
+ * 共享件那一份**并集正文**（`RETRYABLE_RENAME` + `writeFileAtomic` 整段）—— 只作文本夹具用。
+ * 出厂件夹具的"内联版"就是拿它拼的：判词只 grep 指纹，从不执行这个夹具。
+ */
+function sharedInlineBlock() {
+  const shared = readFileSync(path.join(LIVE, ...CANONICAL_ATOMIC.split('/')), 'utf8')
+  const fn = extractFunctionText(shared, ATOMIC_FN)
+  const setLine = (shared.match(/const RETRYABLE_RENAME = new Set\([^\n]*\)/) ?? [null])[0]
+  if (fn === null || setLine === null) return null
+  return `${setLine}\n${fn.text}\n`
+}
+
+/**
+ * **出厂件形状夹具**：`<fixture>/staged-preset`（用户拿到的那一份）与 `<fixture>/live-preset`（repo 那一份）。
+ * `inlined:true` ⇒ staged 的 rollback = 今天那份出厂件 + 共享件的并集正文（模拟 `publish-staged` 的内联）；
+ * `inlined:false` ⇒ staged = 今天那份出厂件（**内联被剥掉**），而 live 是 repo 那一份 + 一行（模拟 Gate 3 之后的 repo）。
+ * 两边都放一份逐字节相同的 `inject.js`：差集才不会是"整棵树都不同"。
+ * ⚠️ 这是**判词的形状夹具**，不是第二份实现 —— 永不执行；真正的出厂件由腿 7 的读数判。
+ */
+function shippedPair(tag, { inlined, liveExtra = true }) {
+  const root = fixtureRoot(tag)
+  const staged = path.join(root, 'staged-preset')
+  const live = path.join(root, 'live-preset')
+  const shipped = readFileSync(path.join(stagingRoot(), 'bin', 'rollback.mjs'), 'utf8')
+  const repoText = readFileSync(path.join(LIVE, 'presets', 'agenia', 'bin', 'rollback.mjs'), 'utf8')
+  const block = sharedInlineBlock()
+  const stagedText = inlined ? `${shipped}\n// fixture: publish-staged 在发布时内联的并集正文\n${block ?? ''}` : shipped
+  const liveText = liveExtra ? `${repoText}\n// fixture: Gate 3 之后的 repo 那一份（import 共享件 + 一行差异）\n` : repoText
+  put(root, 'staged-preset/bin/rollback.mjs', stagedText)
+  put(root, 'live-preset/bin/rollback.mjs', liveText)
+  const same = '// fixture: 两边逐字节相同的一份（证明差集不是"整棵树都不同"）\n'
+  put(root, 'staged-preset/inject.js', same)
+  put(root, 'live-preset/inject.js', same)
+  return { root, staged, live, inlined_block_found: block !== null }
+}
+
+/** 造一份**准确**的受控差异声明（字段与数字都从同一个读者 `actualOf/measureOne` 来）。 */
+function declarationFor({ staged, live }) {
+  const a = actualOf({
+    file: SHIPPED_ROLLBACK_FILE,
+    staged: measureOne(staged, SHIPPED_ROLLBACK_FILE),
+    baseline: measureOne(live, SHIPPED_ROLLBACK_FILE),
+  })
+  return {
+    schema: 1,
+    entries: [{
+      file: SHIPPED_ROLLBACK_FILE,
+      state: a.state,
+      lag_bytes: a.lag_bytes,
+      sha256: a.staged.sha256,
+      baseline_sha256: a.baseline.sha256,
+      missing_markers: a.missing_markers,
+      reason: 'publish-staged 在发布时把 writeFileAtomic 内联进出厂件（内联），出厂件因此保持单文件零静态 import',
+      approved_by: 'atm01-fixture',
+      approved_on: '2026-11-12',
+      closes_when: 'ATM-01 腿 7 的夹具 —— 真声明由 publish-staged 写',
+    }],
+  }
 }
 
 /** 往 scratch 树里写一份文件（自动建父目录）。 */
@@ -689,6 +771,132 @@ test('ATM-01 原子写归一：presets/** 只剩一份定义（fsync · wx · al
     }))
     forward(callProblems, '腿5 调用点')
 
+    // ══ 腿 7 · 出厂件（staged）：内联 + 受控差异声明（裁决 0006 第三方案 · 2026-11-12 23:1x）══════
+    // 判据对象 = **用户拿到的那一份**：`<staging>/preset/bin/rollback.mjs`。repo 里那一份从 Gate 3 起
+    // 正常 import 共享件（腿 5 判它），出厂件则由 `publish-staged` 在发布时内联 —— 两件事**同时成立**。
+    const stagedPresetRoot = stagingRoot()
+    const livePresetRoot = path.join(LIVE, 'presets', 'agenia')
+    const repoRollbackAbs = path.join(LIVE, 'presets', 'agenia', 'bin', 'rollback.mjs')
+    const art = artifactReading({ presetRoot: stagedPresetRoot, repoRollback: repoRollbackAbs })
+    const artV = artifactVerdict(art)
+    recordLeg({ id: 'ship_artifact', label: '腿7 出厂件（零静态 import + 并集正文指纹在出厂件里）', want: 'GREEN', list: artV.problems })
+    rec.readings.ship_artifact = { ...art, verdict: artV.verdict, problem_codes: codesOf(artV.problems) }
+    forward(artV.problems, '腿7 出厂件')
+
+    const decl = declarationReading({})
+    const declV = declarationVerdict(decl)
+    recordLeg({ id: 'ship_declaration', label: '腿7 受控差异声明（在 · 点名 bin/rollback.mjs · 理由说得出内联）', want: 'GREEN', list: declV.problems })
+    rec.readings.ship_declaration = { ...decl, verdict: declV.verdict, problem_codes: codesOf(declV.problems) }
+    forward(declV.problems, '腿7 声明')
+
+    const judgedShip = declaredDifference({ stagedRoot: stagedPresetRoot, baselineRoot: livePresetRoot })
+    const judgedShipProblems = judgedShip.ok
+      ? []
+      : [problem('SHIP-DIFFERENCE-UNDECLARED',
+        `出厂件与 repo 的差异没有被声明**准确**覆盖（state=${JSON.stringify(judgedShip.state)}）：`
+        + `${judgedShip.problems.map((p) => `${p.code}: ${p.message}`).join(' · ')}`)]
+    recordLeg({ id: 'ship_declared_difference', label: '腿7 受控差异（STAT-01 的判据对象：差异已声明，不是分叉）', want: 'GREEN', list: judgedShipProblems })
+    rec.readings.ship_declared_difference = {
+      state: judgedShip.state,
+      ok: judgedShip.ok,
+      equal: judgedShip.equal,
+      declared: judgedShip.declared,
+      line: judgedShip.line,
+      declaration_path: judgedShip.declaration?.path ?? null,
+      declaration_present: judgedShip.declaration?.present === true,
+      actuals: judgedShip.actuals.map((a) => ({ file: a.file, state: a.state, lag_bytes: a.lag_bytes })),
+      target_codes: judgedShip.problems.map((p) => p.code),
+    }
+    forward(judgedShipProblems, '腿7 受控差异')
+
+    // 腿 7 的**判词控制 + 两把刀**（全部在 scratch 树上跑；不碰真出厂件）
+    const shipKnives = []
+    const shipNote = (id, want, got, ok, detail) => {
+      const entry = { id, want, got, status: ok ? 'bit' : 'dead', detail: detail ?? null }
+      shipKnives.push(entry)
+      return entry
+    }
+    const requireCode = (codes, code) => codes.includes(code)
+
+    // 控制 1 · 形状夹具（内联版）⇒ 出厂件判词必须**绿**（证明它认得出"内联了"，不是永红）
+    const inlinedPair = shippedPair('ship-inlined', { inlined: true })
+    const inlinedArt = artifactReading({ presetRoot: inlinedPair.staged })
+    const inlinedV = artifactVerdict(inlinedArt)
+    shipNote('control-inlined-artifact', 'GREEN', inlinedV.problem_codes ?? codesOf(inlinedV.problems), inlinedV.verdict === 'GREEN',
+      { line: inlinedArt.line, anchors: inlinedArt.inline_anchors, block: inlinedPair.inlined_block_found })
+    if (inlinedV.verdict !== 'GREEN') {
+      push('SHIP-KNIFE-CONTROL', `刀的控制面不成立：内联版形状夹具应当绿，实得 ${inlinedV.verdict}（${codesOf(inlinedV.problems).join(' / ')}）—— ${inlinedArt.line}`)
+    }
+    if (inlinedPair.inlined_block_found !== true) {
+      push('SHIP-KNIFE-ANCHOR', '夹具拼不出并集正文（共享件里抠不到 `writeAtomic` 整段或 `RETRYABLE_RENAME` 那一行）—— 刀不咬')
+    }
+
+    // 刀 1 · **剥掉内联** ⇒ 出厂件判词红（`SHIP-ROLLBACK-NO-INLINE`）**且**受控差异那边是"未声明"
+    const strippedPair = shippedPair('ship-stripped', { inlined: false })
+    const strippedArt = artifactReading({ presetRoot: strippedPair.staged })
+    const strippedV = artifactVerdict(strippedArt)
+    const strippedCodes = codesOf(strippedV.problems)
+    const strippedJudged = declaredDifference({
+      stagedRoot: strippedPair.staged,
+      baselineRoot: strippedPair.live,
+      declarationPath: path.join(strippedPair.root, 'target-lag.json'),
+    })
+    const strippedTargetCodes = strippedJudged.problems.map((p) => p.code)
+    const stripOk = requireCode(strippedCodes, 'SHIP-ROLLBACK-NO-INLINE') && requireCode(strippedTargetCodes, 'TARGET-LAG-UNDECLARED')
+    shipNote('knife-strip-inlining', 'SHIP-ROLLBACK-NO-INLINE + TARGET-LAG-UNDECLARED', { artifact: strippedCodes, target: strippedTargetCodes }, stripOk,
+      { line: strippedArt.line, judged_state: strippedJudged.state })
+    if (!requireCode(strippedCodes, 'SHIP-ROLLBACK-NO-INLINE')) {
+      push('SHIP-KNIFE-DEAD', `[刀 strip-inlining] 剥掉内联之后出厂件判词必须红 \`SHIP-ROLLBACK-NO-INLINE\`，实得 ${strippedCodes.join(' / ') || '（一条都没有）'} —— 刀不咬`)
+    }
+    if (!requireCode(strippedTargetCodes, 'TARGET-LAG-UNDECLARED')) {
+      push('SHIP-KNIFE-DEAD', `[刀 strip-inlining] 剥掉内联之后两棵树仍然不同、而声明不在 ⇒ 受控差异必须报 \`TARGET-LAG-UNDECLARED\`，实得 ${strippedTargetCodes.join(' / ') || '（一条都没有）'}（state=${strippedJudged.state}）`)
+    }
+
+    // 控制 2 · **准确的声明**存在 ⇒ 受控差异绿（state=declared）—— 证明"声明得对"这条路走得通
+    const declaredPair = shippedPair('ship-declared', { inlined: true })
+    const declPath = put(declaredPair.root, 'target-lag.json', `${JSON.stringify(declarationFor(declaredPair), null, 2)}\n`)
+    const withDecl = declaredDifference({ stagedRoot: declaredPair.staged, baselineRoot: declaredPair.live, declarationPath: declPath })
+    const declRead = declarationReading({ path: declPath })
+    const declReadV = declarationVerdict(declRead)
+    shipNote('control-declared', 'GREEN + state=declared', { state: withDecl.state, target: withDecl.problems.map((p) => p.code), decl: codesOf(declReadV.problems) },
+      withDecl.ok === true && withDecl.state === 'declared' && declReadV.verdict === 'GREEN',
+      { line: withDecl.line, decl_line: declRead.line })
+    if (!(withDecl.ok === true && withDecl.state === 'declared')) {
+      push('SHIP-KNIFE-CONTROL', `控制面不成立：一份**准确**的声明应当让受控差异绿且 state=declared，实得 ok=${withDecl.ok} / state=${JSON.stringify(withDecl.state)}（${withDecl.problems.map((p) => `${p.code}: ${p.message}`).join(' · ') || '无红因'}）`)
+    }
+    if (declReadV.verdict !== 'GREEN') {
+      push('SHIP-KNIFE-CONTROL', `控制面不成立：一份**合格**的声明应当让声明判词绿，实得 ${declReadV.verdict}（${codesOf(declReadV.problems).join(' / ')}）—— ${declRead.line}`)
+    }
+
+    // 刀 2 · **内联在、声明不在** ⇒ 声明判词红（`SHIP-DECL-MISSING`）**且**受控差异报"未声明"
+    const missingDeclPath = path.join(declaredPair.root, 'target-lag.absent.json')
+    const missingDeclV = declarationVerdict(declarationReading({ path: missingDeclPath }))
+    const withoutDecl = declaredDifference({ stagedRoot: declaredPair.staged, baselineRoot: declaredPair.live, declarationPath: missingDeclPath })
+    const withoutTargetCodes = withoutDecl.problems.map((p) => p.code)
+    const dropOk = requireCode(codesOf(missingDeclV.problems), 'SHIP-DECL-MISSING') && requireCode(withoutTargetCodes, 'TARGET-LAG-UNDECLARED')
+    shipNote('knife-drop-declaration', 'SHIP-DECL-MISSING + TARGET-LAG-UNDECLARED',
+      { declaration: codesOf(missingDeclV.problems), target: withoutTargetCodes }, dropOk,
+      { state: withoutDecl.state })
+    if (!requireCode(codesOf(missingDeclV.problems), 'SHIP-DECL-MISSING')) {
+      push('SHIP-KNIFE-DEAD', `[刀 drop-declaration] 声明不在时声明判词必须红 \`SHIP-DECL-MISSING\`，实得 ${codesOf(missingDeclV.problems).join(' / ') || '（一条都没有）'}`)
+    }
+    if (!requireCode(withoutTargetCodes, 'TARGET-LAG-UNDECLARED')) {
+      push('SHIP-KNIFE-DEAD', `[刀 drop-declaration] 内联在、声明不在 ⇒ 受控差异必须报 \`TARGET-LAG-UNDECLARED\`，实得 ${withoutTargetCodes.join(' / ') || '（一条都没有）'}（state=${withoutDecl.state}）`)
+    }
+
+    // 刀 3 · 静态 import 的**规则本身**：一份带 `import` 的文本必须被认出；出厂件那一份必须 0 行
+    {
+      const ruleProbe = staticImportLines("import { writeFileAtomic } from '../lib/atomic.mjs'\nconst x = 1\n")
+      const shippedImports = staticImportLines(readFileSync(path.join(stagedPresetRoot, 'bin', 'rollback.mjs'), 'utf8'))
+      const ruleOk = ruleProbe.length === 1 && ruleProbe[0].kind === 'import'
+      shipNote('knife-static-import-rule', '认出 1 行 import · 出厂件 0 行',
+        { probe: ruleProbe.length, shipped: shippedImports.length }, ruleOk && shippedImports.length === 0,
+        { probe_line: ruleProbe[0]?.text ?? null })
+      if (!ruleOk) push('SHIP-KNIFE-DEAD', `[刀 static-import] \`staticImportLines\` 认不出一行静态 import（实得 ${JSON.stringify(ruleProbe)}）—— INS-02 ① 的规则是哑的`)
+      if (shippedImports.length !== 0) push('SHIP-KNIFE-DEAD', `[刀 static-import] 今天那份出厂件本该 0 行静态 import，实得 ${shippedImports.length} 行`)
+    }
+    rec.readings.ship_knives = shipKnives
+
     // ══ 判词自控：每一份"红"都要有一个"它认得出绿"的对照（判据自己不许是永红的）══════════════
     // 这一节测的是**判词**，不是被测对象：喂一份形状合法、物理上也说得通的读数，判词必须**一条都不报**。
     // 它红的含义是"判据写成了永远不成立"，不是"产品坏了"。
@@ -936,10 +1144,16 @@ test('ATM-01 原子写归一：presets/** 只剩一份定义（fsync · wx · al
     // ══ 读数：口径 / 分母 / 冲突（Q6 ⟂ 定义腿）══════════════════════════════════════════════
     rec.readings.expected = {
       denominator_today: TOTAL,
-      denominator_after: 'TOTAL（盘上发现）—— 本票只 +1（217 → 218），腿不是格',
-      gate2: 'RED：定义 3 处（ATM-DEF-COUNT）+ CLI 副本 ×2 + 调用点无 import ×2 + 闸缺失（ATM01-GATE-DELETED）+ 成功信封无 message',
-      gate3: 'GREEN：定义 1 处 · 两个调用点读共享件 · 并集四条全绿（并集 c 的基线到那一刻才转绿，刀也随之必须咬）',
+      denominator_after: 'TOTAL（盘上发现）—— 本票只 +1（217 → 218），腿不是格；裁决之后新增的**出厂件腿**住在同一格里（见 expected.denominator_note）',
+      denominator_note: '为什么出厂件那几条不再开一格：它们与"归一"是**同一族判据**（repo 一份实现 → 发布时内联 → 用户拿到的那一份仍自足），'
+        + '拆成新格会让"归一这一票"跨两格，也会把组长冻住的分母 218 顶成 219；腿不是格（项目口径），所以并进 ATM-01。',
+      gate2: 'RED：定义 3 处（ATM-DEF-COUNT）+ CLI 副本 ×2 + 调用点无 import ×2 + 闸缺失（ATM01-GATE-DELETED）+ 成功信封无 message'
+        + ' + 出厂件没内联（SHIP-ROLLBACK-NO-INLINE）+ 没有受控差异声明（SHIP-DECL-MISSING）',
+      gate3: 'GREEN：定义 1 处 · 两个调用点读共享件 · 并集四条全绿（并集 c 的基线到那一刻才转绿，刀也随之必须咬）'
+        + ' · 出厂件内联（零静态 import + 并集指纹在）· 受控差异声明准确（state=declared）',
       caveat: '并集 d 的"两套码取并集"在成员上是恒等操作（两套都是 EPERM/EBUSY/EACCES）⇒ 判的是覆盖与"只剩一份"，判不了"两套都留"',
+      ruling: '裁决 0006 第三方案（2026-11-12 23:1x，decision commit 8af3094）：repo 两份都 import 共享件；publish-staged 在发布时内联；'
+        + '同批写 target-lag.json；三张卡的判据对象 = 出厂件（staged）。见 readings.ruling_0006（resolved）',
     }
     const rollbackAbs = path.join(LIVE, 'presets', 'agenia', 'bin', 'rollback.mjs')
     const rollbackLines = readFileSync(rollbackAbs, 'utf8').split(/\r?\n/)
@@ -962,16 +1176,27 @@ test('ATM-01 原子写归一：presets/** 只剩一份定义（fsync · wx · al
     } catch {
       stagedIdentical = null
     }
-    rec.readings.collision_q6 = {
-      rollback_static_import_lines: staticImports,
-      ins02_zero_import_rule: lookup('integration/install-rollback.test.mjs', 'INS02-ZERO-IMPORT'),
-      env02_rollback_import_rule: lookup('static/env-scan.test.mjs', "'ROLLBACK-IMPORT'"),
-      stat01_two_tree_rule: lookup('static/composition.test.mjs', 'STAGED-LIVE-DRIFT'),
-      staged_rollback_identical_to_live: stagedIdentical,
-      target_lag_declaration_present: existsSync(path.join(LIVE, '.tools', '_staging', 'agenia-upgrade', 'target-lag.json')),
-      note: '定形让 rollback.mjs import 共享件；拍板 Q6（回滚单文件自足、零静态 import）与两条既有判据'
-        + '（INS-02 ① / ENV-02 ROLLBACK-IMPORT）钉的是反面；STAT-01 又要求 staged 与现役逐字节相同。'
-        + '⇒ 三条硬约束相撞，Gate 3 之前要组长裁决（契约 §0.2 给了三个选项）。这是读数，不是本格的红因。',
+    rec.readings.ruling_0006 = {
+      status: 'resolved',
+      decision: '决议/构案/0006-原子写归一.md §决定（改定 · 2026-11-12 23:1x）+ RC-4',
+      decided_by: '组长（第 2 关发现相撞之后裁决）',
+      decision_commit: '8af3094',
+      adopted: '第三方案 —— repo 里 install/rollback 都 import 共享件；publish-staged 在发布时把 writeFileAtomic 内联进出厂件；'
+        + '同批落 target-lag.json 声明这处受控差异；三张卡（INS-02 ① / ENV-02 ROLLBACK-IMPORT / STAT-01）的判据对象 = 出厂件（staged）',
+      rejected: [
+        '否「rollback 保留自己那份拷贝」—— 那就是两套实现，本票目的就是删掉它',
+        '否「rollback 用 await import 绕过静态 import 检查」—— 拿冻结约束的字面当漏洞钻，Q6 的意图是"单文件可直接跑"',
+      ],
+      before_ruling_measurements: {
+        rollback_static_import_lines: staticImports,
+        staged_rollback_identical_to_live: stagedIdentical,
+        ins02_zero_import_rule: lookup('integration/install-rollback.test.mjs', 'INS02-ZERO-IMPORT'),
+        env02_rollback_import_rule: lookup('static/env-scan.test.mjs', "'ROLLBACK-IMPORT'"),
+        stat01_two_tree_rule: lookup('static/composition.test.mjs', 'STAGED-LIVE-DRIFT'),
+        target_lag_declaration_present: existsSync(path.join(LIVE, '.tools', '_staging', 'agenia-upgrade', 'target-lag.json')),
+      },
+      no_longer_a_collision_because: '三个约束各自只钉**一个对象**：Q6 钉出厂件（用户跑的那一份）、定义腿/信封腿钉 repo（一份实现）、'
+        + 'STAT-01 钉"两棵树的差异已声明"。上面的数值是同一天裁决之前的现场（那时 repo 与出厂件逐字节相同），留作"裁决从哪来"的凭据。',
     }
 
     caseFail(problems)

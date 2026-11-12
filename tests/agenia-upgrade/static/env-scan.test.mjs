@@ -14,11 +14,12 @@
  *    并报假阳性。别"顺手"把它们写成整串，那会把这条自控变成一条噪声。
  */
 import { before, describe, test } from 'node:test'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, stagingReadings } from '../support/evidence.mjs'
 import { stagingExists, stagingPath } from '../support/sut.mjs'
+import { staticImportLines } from '../support/staged-artifact.mjs'
 
 before(() => {
   preflight()
@@ -229,10 +230,26 @@ describe('static · env-scan (ENV-02)', () => {
           push('ENV-SCAN', `staged/${f.file}:${f.line} 命中 ${f.rule}（${RULES.find((r) => r.id === f.rule).why}）：${f.text}`)
         }
         if (stagedSources.length === 0) push('ENV-SCAN-COVERAGE', 'bin/ 与 lib/ 在盘上但一个脚本都没扫到')
-        // 回滚脚本必须单文件自足（拍板 Q6）：不许出现 import
+        // 回滚脚本必须单文件自足（拍板 Q6）：不许出现静态 import / require。
+        // 🔴 判据对象 = **出厂件（staged）**（2026-11-12 构案 0006 裁决 · 第三方案）：repo 里的
+        //    `presets/agenia/bin/rollback.mjs` 正常 import 共享件；`publish-staged` 在发布时把
+        //    `writeFileAtomic` 内联进出厂件 ⇒ 出厂件仍零静态 import。repo 那一份只作读数。
         const rollback = stagedSources.find((s) => s.rel.endsWith('rollback.mjs'))
-        if (rollback && /^\s*import\s/m.test(rollback.text)) {
-          push('ROLLBACK-IMPORT', `staged/${rollback.rel} 里有 import —— 拍板 Q6 冻结为"单文件自足、零 import"（宁可重复三个小工具，也不让回滚依赖新代码）`)
+        const repoRollbackFile = path.join(PATHS.repo, 'presets', 'agenia', 'bin', 'rollback.mjs')
+        const shippedImports = rollback === undefined ? [] : staticImportLines(rollback.text)
+        const repoImports = existsSync(repoRollbackFile) ? staticImportLines(readFileSync(repoRollbackFile, 'utf8')) : []
+        rec.readings.rollback_import_subject = {
+          judged: rollback === undefined ? null : stagingPath(rollback.rel),
+          judged_rel: rollback?.rel ?? null,
+          repo_file: repoRollbackFile,
+          shipped_static_imports: shippedImports.map((x) => `:${x.line} ${x.text}`),
+          repo_static_imports: repoImports.length,
+          note: 'Q6 判的是出厂件（用户拿到的那一份）；repo 的 import 数只作读数（裁决 0006 改定段）',
+        }
+        if (shippedImports.length > 0) {
+          push('ROLLBACK-IMPORT', `staged/${rollback.rel} 里有 ${shippedImports.length} 处静态 import/require —— 拍板 Q6 冻结为`
+            + `"单文件自足、零 import"（宁可重复三个小工具，也不让回滚依赖新代码）；判据对象 = 出厂件：`
+            + shippedImports.map((x) => `:${x.line} ${x.text}`).join(' · '))
         }
       }
 

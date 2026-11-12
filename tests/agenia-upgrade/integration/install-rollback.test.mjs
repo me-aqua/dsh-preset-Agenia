@@ -17,7 +17,8 @@ import path from 'node:path'
 import { ENV, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, stagingReadings, treeHash, writeJson } from '../support/evidence.mjs'
 import { canonical, ensureMarkedDir } from '../support/root-guard.mjs'
-import { loadStagedModule, readStagedText, runCli, stagingExists } from '../support/sut.mjs'
+import { loadStagedModule, readStagedText, runCli, stagingExists, stagingPath } from '../support/sut.mjs'
+import { staticImportLines } from '../support/staged-artifact.mjs'
 
 before(() => {
   preflight()
@@ -132,12 +133,35 @@ describe('integration · install-rollback (INS)', () => {
       if (!requireScript(problems, ROLLBACK, '回滚演练')) caseFail(problems)
 
       // ① Q6：回滚脚本**单文件自足、零 import**（静态）
+      //
+      // 🔴 **判据对象 = 出厂件（staged）**，不是 repo 文件（2026-11-12 构案 0006 裁决 · 第三方案）：
+      //    repo 里的 `presets/agenia/bin/rollback.mjs` 正常 import 共享件（去重是本票目的）；
+      //    `publish-staged` 在发布时把 `writeFileAtomic` **内联**进出厂件，让它仍是单文件零静态 import。
+      //    ⇒ Q6 的原始意图（用户跑的那一份能直接跑）保住了，而 repo 那一份有 import **不算红**。
+      //    这一条只读出厂件；repo 那一份的 import 数只作读数（`rec.readings.q6_subjects`），不参与判词。
+      const subject = stagingPath(path.join('bin', ROLLBACK))
+      const repoRollback = path.join(PATHS.repo, 'presets', 'agenia', 'bin', ROLLBACK)
       const src = readStagedText(path.join('bin', ROLLBACK))
+      const imports = staticImportLines(src)
+      const repoImports = staticImportLines(readFileSync(repoRollback, 'utf8'))
       rec.readings.rollback_bytes = src.length
-      const imports = src.split(/\r?\n/).map((l, i) => [i + 1, l]).filter(([, l]) => /^\s*import\s|require\s*\(/.test(l) && !/^\s*(\/\/|\*)/.test(l))
-      rec.readings.rollback_imports = imports.map(([n, l]) => `${n}: ${l.trim().slice(0, 100)}`)
+      rec.readings.rollback_imports = imports.map((x) => `${x.line}: ${x.text}`)
+      rec.readings.q6_subjects = {
+        judged: subject,
+        judged_kind: '出厂件（staged preset）—— 用户拿到的那一份',
+        repo_file: path.resolve(repoRollback),
+        repo_static_imports: repoImports.length,
+        shipped_static_imports: imports.length,
+        note: 'repo 那一份**有** import（去重之后）、出厂件**零**静态 import —— 两者同时成立才是裁决要的形状；'
+          + '本判据只看出厂件（repo 的 import 数只作读数）',
+      }
+      if (path.resolve(subject) === path.resolve(repoRollback)) {
+        push('INS02-SUBJECT-REPO', `判据对象指回了 repo 文件（${subject}）—— 裁决之后 Q6 判的是**出厂件**，不是 repo 文件`)
+      }
       if (imports.length > 0) {
-        push('INS02-ZERO-IMPORT', `回滚脚本里有 ${imports.length} 处 import/require —— 拍板 Q6：**单文件自足、零 import**（宁可重复三个小工具，也不让回滚依赖新代码）`)
+        push('INS02-ZERO-IMPORT', `出厂件（staged）的回滚脚本里有 ${imports.length} 处 import/require —— 拍板 Q6：`
+          + `**单文件自足、零 import**（宁可重复三个小工具，也不让回滚依赖新代码）；判据对象 = ${subject}：`
+          + imports.map((x) => `:${x.line} ${x.text}`).join(' · '))
       }
       // ② 回滚：代码回到旧版、数据不动
       const rb = runScript(ROLLBACK, { op: 'rollback', extra: ['--target', scene.code, '--backup', path.join(root, 'backup')] })
