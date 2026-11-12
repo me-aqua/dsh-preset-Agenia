@@ -44,6 +44,18 @@
  *     失败返回 `{ok:false, code, message, path}`（`attempts` 尽量有）。install / rollback 两个
  *     调用点都必须**从共享件 import**、**真调它**、且**不再读 `{ok,tmp}`**（`.tmp` 属性读 = 0 处）。
  *     **刀**：把共享件那个函数换成一个"旧 CLI 形状"的桩（返回 `{ok:true, tmp}`）⇒ 红。
+ *   · **腿 8 · 重试预算**（评审 M-1，round-1 补）：`CLI_WRITE_MAX_ATTEMPTS` **只剩一份**且 = **6**
+ *     （决定 §背景 那张表 + RC-2 那句"6 次"）· `install.mjs` / `rollback.mjs` 的**重写盘**调用点
+ *     （第一个实参是 `*.dst_abs` 的那一处）都传这个常量、**不许**手抄数字 · 共享件默认仍是 **5**
+ *     （只给其余调用者）· **出厂件**那一份也读 6 且它的调用点用常量。行为面另跑一次"每次都 EPERM"：
+ *     不给 `maxAttempts` ⇒ 只试 5 次；给 6 ⇒ 试 6 次（不是只读文本）。
+ *     **刀**：常量改 5 · 出厂件那份改 5 · 第二处定义 · 重写盘不传 · 别处手抄 6 · 重写盘手抄 6（"2 处"）。
+ *   · **腿 9 · 出厂件文件头**（评审 M-2，round-1 补）：出厂件 `bin/rollback.mjs` 的**头**里
+ *     (i) `import` 这个词 **0 次**（正文里的 `await import('node:…')` 与注释不算 —— 只判头）·
+ *     (ii) 发布器那段**逐字**在（判据侧冻结 11 行，不从发布器读 —— 那会变成自证）·
+ *     (iii) **没有** repo 自述「本文件是 repo 那一份」· (iv) 并集指纹在。
+ *     **刀**：把 repo 那份当出厂件喂进去（scratch 落一份再读回）⇒ `SHIP-HEADER-PARAGRAPH-MISSING`
+ *     且点名缺的段落。
  *   · **腿 6 · 既有行为不破**（不是新腿：靠既有格）—— 见 `PRESERVATION`：
  *     `INS-01`（安装正例 / 数据与未知文件逐字节保留 / 重装幂等）· `INS-02`（回滚正例 / 数据不动 /
  *     失败保留现场）· `INS-03`（备份在 E 盘带哈希清单）· `ENV-02`（删除前 marker / 临时件 / C 盘）·
@@ -91,6 +103,10 @@ import {
   declarationReading,
   declarationVerdict,
   declaredDifference,
+  retryBudgetReading,
+  retryBudgetVerdict,
+  shippedHeaderReading,
+  shippedHeaderVerdict,
   staticImportLines,
 } from '../support/staged-artifact.mjs'
 import {
@@ -110,6 +126,7 @@ import {
 
 const LIVE = PATHS.repo
 const LIB_REL = 'presets/agenia/lib'
+const STAGING_ADDITION_PREFIX = '.tools/_staging/agenia-upgrade'
 const SPY_FILE = 'spy-fs.mjs'
 const PAYLOAD = 'ATM01-PAYLOAD'
 const RETRY_CODES = ['EPERM', 'EBUSY', 'EACCES']
@@ -424,7 +441,7 @@ async function runSuccess(root, tag) {
 }
 
 /** 写一次（失败场景）：`plan.rename_codes` 决定第几次 rename 抛什么码。 */
-async function runFailure(root, tag, { plan = {}, allowedRoot = null, name = 'fail', targetDir = null } = {}) {
+async function runFailure(root, tag, { plan = {}, allowedRoot = null, name = 'fail', targetDir = null, extra = {} } = {}) {
   const { spy, mod } = await loadImpl(root, tag)
   spy.__reset(plan)
   const target = targetDir === null
@@ -432,7 +449,7 @@ async function runFailure(root, tag, { plan = {}, allowedRoot = null, name = 'fa
     //    埋太深会让"身份闸"先拒（`E_ROOT_NO_MARKER`），量到的就不是"落点不在 allowedRoot 之下"那一条了。
     ? path.join(root, name, 'target.txt')
     : path.join(targetDir, 'target.txt')
-  const options = allowedRoot === null ? {} : { allowedRoot }
+  const options = { ...(allowedRoot === null ? {} : { allowedRoot }), ...extra }
   const cap = captureStderr(() => mod.writeFileAtomic(target, PAYLOAD, options))
   const calls = spy.__calls.map((c) => ({ ...c }))
   const tmp = tempPathOf(calls, target)
@@ -953,6 +970,137 @@ test('ATM-01 原子写归一：presets/** 只剩一份定义（fsync · wx · al
       if (shippedImports.length !== 0) push('SHIP-KNIFE-DEAD', `[刀 static-import] 今天那份出厂件本该 0 行静态 import，实得 ${shippedImports.length} 行`)
     }
     rec.readings.ship_knives = shipKnives
+
+    // ══ 腿 8 · 重试预算（评审 M-1）═════════════════════════════════════════════════════════
+    // 病：决定 §背景 那张表写 CLI 甲"按 EPERM/EBUSY/EACCES 重试 **6** 次"、RC-2 写"6 次不够"；
+    // 合并体把 `maxAttempts` 的默认取成 5，两处调用点都没传 ⇒ 实际生效 5，**磁盘上没有任何读数写这个数**。
+    // 这一腿钉四件：常量只剩一份且 = 6 · 两处**重写盘**调用点传它 · 共享件默认仍是 5 · 出厂件也读 6。
+    const libSourceForBudget = readFileSync(path.join(LIVE, ...CANONICAL_ATOMIC.split('/')), 'utf8')
+    const installSourceForBudget = readFileSync(path.join(LIVE, 'presets', 'agenia', 'bin', 'install.mjs'), 'utf8')
+    const rollbackSourceForBudget = readFileSync(path.join(LIVE, 'presets', 'agenia', 'bin', 'rollback.mjs'), 'utf8')
+    const artifactSourceForBudget = readFileSync(path.join(stagedPresetRoot, 'bin', 'rollback.mjs'), 'utf8')
+    const budgetFiles = ({ lib = libSourceForBudget, install = installSourceForBudget, rollback = rollbackSourceForBudget, artifact = artifactSourceForBudget } = {}) => [
+      { rel: CANONICAL_ATOMIC, text: lib },
+      { rel: 'presets/agenia/bin/install.mjs', text: install },
+      { rel: 'presets/agenia/bin/rollback.mjs', text: rollback },
+      { rel: `${STAGING_ADDITION_PREFIX}/preset/bin/rollback.mjs`, text: artifact, is_artifact: true },
+    ]
+    const budget = retryBudgetReading({ files: budgetFiles() })
+    const budgetV = retryBudgetVerdict(budget)
+    recordLeg({ id: 'retry_budget', label: '腿8 重试预算（M-1）：常量只剩一份且=6 · 两处重写盘调用点传常量 · 共享件默认 5 · 出厂件也读 6', want: 'GREEN', list: budgetV.problems })
+    forward(budgetV.problems, '腿8 重试预算（文本面）')
+    // 行为面：不给 `maxAttempts` ⇒ 只试 5 次；给了 6 ⇒ 试 6 次（桩把每一次 rename 都打回 EPERM）
+    const exhaustDefault = await runFailure(base.root, 'base', { plan: { rename_codes: Array(12).fill('EPERM') }, name: 'exhaust-default' })
+    const exhaustSix = await runFailure(base.root, 'base', { plan: { rename_codes: Array(12).fill('EPERM') }, name: 'exhaust-six', extra: { maxAttempts: 6 } })
+    const renamesOf = (r) => r.calls.filter((c) => c.op === 'renameSync').length
+    const budgetBehaviourProblems = []
+    if (renamesOf(exhaustDefault) !== 5 || exhaustDefault.result?.attempts !== 5) {
+      budgetBehaviourProblems.push(problem('ATM-RETRY-BUDGET-DEFAULT',
+        `不给 \`maxAttempts\` 时共享件必须只试 **5** 次（其它老调用者的默认），实得 renameSync ${renamesOf(exhaustDefault)} 次 / attempts=${JSON.stringify(exhaustDefault.result?.attempts)}`))
+    }
+    if (renamesOf(exhaustSix) !== 6 || exhaustSix.result?.attempts !== 6) {
+      budgetBehaviourProblems.push(problem('ATM-RETRY-BUDGET-SIX',
+        `给 \`maxAttempts: 6\` 时必须真试 **6** 次，实得 renameSync ${renamesOf(exhaustSix)} 次 / attempts=${JSON.stringify(exhaustSix.result?.attempts)}`))
+    }
+    recordLeg({ id: 'retry_budget_behaviour', label: '腿8b 重试预算（行为面）：默认 5 · 传 6 则 6（桩让每次 rename 都 EPERM）', want: 'GREEN', list: budgetBehaviourProblems })
+    rec.readings.retry_budget = {
+      ...budget,
+      behaviour: {
+        default: { renames: renamesOf(exhaustDefault), attempts: exhaustDefault.result?.attempts ?? null, code: exhaustDefault.result?.code ?? null },
+        six: { renames: renamesOf(exhaustSix), attempts: exhaustSix.result?.attempts ?? null, code: exhaustSix.result?.code ?? null },
+      },
+      text_codes: codesOf(budgetV.problems),
+      behaviour_codes: codesOf(budgetBehaviourProblems),
+    }
+    forward(budgetBehaviourProblems, '腿8b 重试预算（行为面）')
+
+    // ══ 腿 9 · 出厂件文件头（评审 M-2）═════════════════════════════════════════════════════
+    // 病：出厂件里还留着 repo 那一份的自述（"本文件是 repo 那一份，引用了 ../lib/atomic.mjs"），
+    // 而它正是出厂件、静态 import 数 = 0 —— 同一份文件里两句话互相打脸。
+    // 这一腿不读发布器（那会变成自证）：判据侧**冻结**那段逐字要求，让真出厂件去对。
+    const headerRead = shippedHeaderReading({ artifactSource: artifactSourceForBudget, repoSource: rollbackSourceForBudget })
+    const headerV = shippedHeaderVerdict(headerRead)
+    recordLeg({ id: 'ship_header', label: '腿9 出厂件文件头（M-2）：头里 0 个 import 词 · 发布器段落逐字在 · 无 repo 自述 · 指纹在', want: 'GREEN', list: headerV.problems })
+    rec.readings.ship_header = { ...headerRead, text_codes: codesOf(headerV.problems) }
+    forward(headerV.problems, '腿9 出厂件文件头')
+
+    // ══ 刀架（L-1 / L-2）：每条子断言各自"单独会红"——纯文本构造，不碰真树 ═══════════════════
+    const l1l2 = []
+    const mutation = (text, find, replace, id) => {
+      const count = text.split(find).length - 1
+      return { id, ok: count === 1, count, text: count === 1 ? text.replace(find, replace) : text }
+    }
+    const budgetKnife = (id, want, mutated, mustName = null) => {
+      const v = retryBudgetVerdict(retryBudgetReading({ files: budgetFiles(mutated) }))
+      const codes = codesOf(v.problems)
+      const text = v.problems.map((p) => `${p.code}: ${p.message}`).join(' | ')
+      const ok = codes.includes(want) && (mustName === null || text.includes(mustName))
+      l1l2.push({ id, want, codes, named: mustName === null ? null : text.includes(mustName), status: ok ? 'bit' : 'dead',
+        problems: v.problems.map((p) => `${p.code}: ${p.message}`).slice(0, 4) })
+      return { ok, codes }
+    }
+    // (b) 值改成 5 ⇒ `ATM-RETRY-BUDGET-CONST`（单独一条）
+    {
+      const m = mutation(libSourceForBudget, 'const CLI_WRITE_MAX_ATTEMPTS = 6', 'const CLI_WRITE_MAX_ATTEMPTS = 5', 'const-value-5')
+      if (!m.ok) push('ATM-KNIFE-ANCHOR', `[刀 const-value-5] 锚点命中 ${m.count} 次（要 1）—— 刀不咬`)
+      const r = budgetKnife('const-value-5', 'ATM-RETRY-BUDGET-CONST', { lib: m.text })
+      if (!r.ok) push('ATM-KNIFE-DEAD', `[刀 const-value-5] 常量改成 5 之后必须红 \`ATM-RETRY-BUDGET-CONST\`，实得 ${r.codes.join(' / ') || '（一条都没有）'}`)
+    }
+    // (b′) 出厂件那一份改成 5 ⇒ `SHIP-RETRY-BUDGET-VALUE`
+    {
+      const m = mutation(artifactSourceForBudget, 'const CLI_WRITE_MAX_ATTEMPTS = 6', 'const CLI_WRITE_MAX_ATTEMPTS = 5', 'artifact-value-5')
+      if (!m.ok) push('ATM-KNIFE-ANCHOR', `[刀 artifact-value-5] 锚点命中 ${m.count} 次（要 1）—— 刀不咬`)
+      const r = budgetKnife('artifact-value-5', 'SHIP-RETRY-BUDGET-VALUE', { artifact: m.text })
+      if (!r.ok) push('ATM-KNIFE-DEAD', `[刀 artifact-value-5] 出厂件那份常量改成 5 之后必须红 \`SHIP-RETRY-BUDGET-VALUE\`，实得 ${r.codes.join(' / ') || '（一条都没有）'}`)
+    }
+    // (b″) 第二处定义 ⇒ `ATM-RETRY-BUDGET-CONST`（"只剩一份"）
+    {
+      const dup = `${installSourceForBudget}\nconst CLI_WRITE_MAX_ATTEMPTS = 6\n`
+      const r = budgetKnife('duplicate-definition', 'ATM-RETRY-BUDGET-CONST', { install: dup })
+      if (!r.ok) push('ATM-KNIFE-DEAD', `[刀 duplicate-definition] 在 install.mjs 里再写一份常量之后必须红 \`ATM-RETRY-BUDGET-CONST\`，实得 ${r.codes.join(' / ') || '（一条都没有）'}`)
+    }
+    // (a) 重写盘那一处**不传** ⇒ `ATM-RETRY-BUDGET-CALLSITE` 且点名那个文件
+    {
+      const m = mutation(installSourceForBudget, ', maxAttempts: CLI_WRITE_MAX_ATTEMPTS', '', 'drop-option-install')
+      if (!m.ok) push('ATM-KNIFE-ANCHOR', `[刀 drop-option-install] 锚点命中 ${m.count} 次（要 1）—— 刀不咬（重写盘那一处的选项写法变了？）`)
+      const r = budgetKnife('drop-option-install', 'ATM-RETRY-BUDGET-CALLSITE', { install: m.text }, 'install.mjs')
+      if (!r.ok) push('ATM-KNIFE-DEAD', `[刀 drop-option-install] 去掉 install 重写盘调用点的 \`maxAttempts\` 之后必须红 \`ATM-RETRY-BUDGET-CALLSITE\` 且点名 install.mjs，实得 ${r.codes.join(' / ') || '（一条都没有）'}`)
+    }
+    // (a′) 别处手抄一个 6 ⇒ 只有 `ATM-RETRY-BUDGET-LITERAL`（"同一个数两处"）
+    {
+      const target = 'const r = writeFileAtomic(to, bytes, { allowedRoot: presetRoot })'
+      const m = mutation(installSourceForBudget, target, 'const r = writeFileAtomic(to, bytes, { allowedRoot: presetRoot, maxAttempts: 6 })', 'literal-elsewhere')
+      if (!m.ok) push('ATM-KNIFE-ANCHOR', `[刀 literal-elsewhere] 锚点命中 ${m.count} 次（要 1）—— 发布那处调用点的写法变了？刀不咬`)
+      const r = budgetKnife('literal-elsewhere', 'ATM-RETRY-BUDGET-LITERAL', { install: m.text })
+      if (!r.ok) push('ATM-KNIFE-DEAD', `[刀 literal-elsewhere] 在另一处调用点手抄 \`maxAttempts: 6\` 之后必须红 \`ATM-RETRY-BUDGET-LITERAL\`，实得 ${r.codes.join(' / ') || '（一条都没有）'}`)
+    }
+    // (a″) 重写盘那一处手抄 6（而不是传常量）⇒ 字面 + 调用点两条一起红（"两处"）
+    {
+      const m = mutation(rollbackSourceForBudget, 'maxAttempts: CLI_WRITE_MAX_ATTEMPTS', 'maxAttempts: 6', 'handcopy-rollback')
+      if (!m.ok) push('ATM-KNIFE-ANCHOR', `[刀 handcopy-rollback] 锚点命中 ${m.count} 次（要 1）—— 刀不咬`)
+      const r = budgetKnife('handcopy-rollback', 'ATM-RETRY-BUDGET-LITERAL', { rollback: m.text }, '2 处')
+      if (!r.ok) push('ATM-KNIFE-DEAD', `[刀 handcopy-rollback] 把 rollback 那一处手抄成 6 之后必须红 \`ATM-RETRY-BUDGET-LITERAL\` 且报文说"同一个数出现在 2 处"，实得 ${r.codes.join(' / ') || '（一条都没有）'}`)
+    }
+    // (L-2) 拿 repo 那份当出厂件（scratch 落一份再读回来）⇒ `SHIP-HEADER-PARAGRAPH-MISSING` 且点名缺的那段
+    {
+      const scratchRoot = fixtureRoot('l2-header-knife')
+      const scratchFile = put(scratchRoot, 'bin/rollback.mjs', rollbackSourceForBudget)
+      const asShipped = readFileSync(scratchFile, 'utf8')
+      if (asShipped !== rollbackSourceForBudget) push('ATM-KNIFE-ANCHOR', '[刀 repo-as-shipped] scratch 副本读回来与 repo 那份不一致 —— 刀不咬')
+      const h = shippedHeaderReading({ artifactSource: asShipped, repoSource: rollbackSourceForBudget })
+      const hv = shippedHeaderVerdict(h)
+      const codes = codesOf(hv.problems)
+      const text = hv.problems.map((p) => `${p.code}: ${p.message}`).join(' | ')
+      const namesParagraph = text.includes('缺 11 行') || text.includes('单文件自足、零静态引用')
+      const ok = codes.includes('SHIP-HEADER-PARAGRAPH-MISSING') && namesParagraph
+      l1l2.push({ id: 'repo-as-shipped', want: 'SHIP-HEADER-PARAGRAPH-MISSING（点名缺的那段）', codes, named: namesParagraph, status: ok ? 'bit' : 'dead',
+        problems: hv.problems.map((p) => `${p.code}: ${p.message}`).slice(0, 4) })
+      if (!ok) push('ATM-KNIFE-DEAD', `[刀 repo-as-shipped] 把 repo 那份当出厂件喂进去之后必须红 \`SHIP-HEADER-PARAGRAPH-MISSING\` 且点名缺的那段，实得 ${codes.join(' / ') || '（一条都没有）'}`)
+    }
+    rec.readings.l1l2_knives = {
+      knives: l1l2,
+      note: 'L-1 六把（值 5 · 出厂件值 5 · 第二处定义 · 重写盘不传 · 别处手抄 · 重写盘手抄）+ L-2 一把（repo 当出厂件）；全是纯文本/scratch 构造，不碰真树',
+    }
 
     // ══ 判词自控：每一份"红"都要有一个"它认得出绿"的对照（判据自己不许是永红的）══════════════
     // 这一节测的是**判词**，不是被测对象：喂一份形状合法、物理上也说得通的读数，判词必须**一条都不报**。
