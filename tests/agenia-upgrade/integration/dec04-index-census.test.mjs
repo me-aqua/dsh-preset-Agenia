@@ -8,7 +8,7 @@
  * 下的实现文件 ③ 决议头块 重算一遍（`census --json` + `check --json` 两份读数各自独立），
  * 再把两边对上。所以"改了实现、不重新生成"必须红 —— 那就是"页被信了"的反面证人。
  */
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { before, test } from 'node:test'
 import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
@@ -16,12 +16,77 @@ import { PATHS } from '../support/env.mjs'
 import {
   CENSUS, CHECK, GOOD_CONCEPTS, GOOD_IMPLS, GOOD_INDEX, REAL_LEDGER, buildScene, codesOf, expectCodes,
   goodDecision0001, goodDecisionProduct0001, goodLedger, messagesOf, readText, runCensus, runCensusText,
-  runCheck, toolPresent, treeDigest,
+  runCheck, runNode, sceneRoot, summarize, toolPresent, treeDigest,
 } from '../support/decision-ledger.mjs'
 
 before(() => {
   preflight()
 })
+
+/**
+ * `键序集合比` 那一行的判据（Y-M7a）：这一行的读数必须落在**判据侧**（`tests/`），
+ * 因为构案 0004 ⑤ 写的是"判据侧的集合比 · 没有新增产品代码"。页上的数只能由那一行派生。
+ * `concept` = census `--json` 里那个概念的条目；`indexRow` = `check --json` 里页上那一行（可缺）。
+ */
+function keyOrderRowProblems({ concept, indexRow }) {
+  const out = []
+  const push = (code, message) => out.push({ code, message })
+  if (concept === undefined || concept === null) {
+    push('KEYORDER-ROW-MISSING', 'census 的 concepts[] 里没有 `键序集合比` 这一行 —— 概念表里它必须在（构案 0004 的主题）')
+    return out
+  }
+  if (concept.count !== 1) push('KEYORDER-COUNT', `\`键序集合比\` 的实现数必须是 1，实得 ${JSON.stringify(concept.count)}`)
+  if (concept.unit !== '份代码文件') push('KEYORDER-UNIT', `\`键序集合比\` 的单位必须是 \`份代码文件\`，实得 ${JSON.stringify(concept.unit)}`)
+  if (concept.rule !== 'file-code') push('KEYORDER-RULE', `\`键序集合比\` 的口径必须是 \`file-code\`，实得 ${JSON.stringify(concept.rule)}`)
+  const impls = (concept.implementations ?? []).map((p) => String(p).replace(/\\/g, '/'))
+  const outside = impls.filter((p) => !p.startsWith('tests/'))
+  if (outside.length > 0) {
+    push('KEYORDER-WRONG-SIDE', `\`键序集合比\` 的实现必须落在 \`tests/\`（判据侧），实得 ${JSON.stringify(outside)}`
+      + ' —— 这一行数的是"判据里那把集合比的刀"，不是产品侧的键序规范化（构案 0004 ⑤：没有新增产品代码）')
+  }
+  const scan = (concept.scan ?? []).map((s) => String(s).replace(/\\/g, '/'))
+  if (!scan.some((s) => s.startsWith('tests/'))) push('KEYORDER-SCAN', `\`键序集合比\` 的「扫描」必须盖住 \`tests/\`，实得 ${JSON.stringify(scan)}`)
+  if (scan.some((s) => s.startsWith('presets/'))) push('KEYORDER-WRONG-SIDE', `\`键序集合比\` 的「扫描」里不许有 \`presets/\`（那会把它数回产品侧），实得 ${JSON.stringify(scan)}`)
+  if (indexRow !== undefined && indexRow !== null) {
+    if (indexRow.census !== 1) push('KEYORDER-INDEX', `INDEX 上 \`键序集合比\` 的 census 必须是 1，实得 ${JSON.stringify(indexRow.census)}`)
+    if (indexRow.unit !== '份代码文件') push('KEYORDER-INDEX', `INDEX 上 \`键序集合比\` 的单位必须是 \`份代码文件\`，实得 ${JSON.stringify(indexRow.unit)}`)
+  }
+  return out
+}
+
+/** 页首那句「计数口径是闭集 N 个」的读数（Y-M7b）：token 与单位都由 `COUNT_RULES` 现算。 */
+const LEGEND_TOKENS = Object.freeze([
+  ['file', '份文件（含注释）'],
+  ['file-code', '份代码文件'],
+  ['site', '处（出现点）'],
+  ['site-code', '处代码行'],
+  ['零代码', '零代码决定'],
+])
+function legendReading(text) {
+  const line = String(text ?? '').split(/\r?\n/).find((l) => l.includes('计数口径是闭集')) ?? ''
+  // 只从「闭集」那一句往后读：这一行开头还有一句 `census` = …（那是解释，不是闭集里的配对）。
+  const tail = line.includes('闭集') ? line.slice(line.indexOf('闭集')) : ''
+  const pairs = [...tail.matchAll(/`([^`]+)`\s*=\s*([^·。]+)/g)].map((m) => ({ token: m[1].trim(), unit: m[2].trim() }))
+  const countMatch = /闭集\s*(\d+)\s*个/.exec(line)
+  return { line, pairs, declared_count: countMatch === null ? null : Number(countMatch[1]) }
+}
+function legendProblems(reading) {
+  const out = []
+  const push = (code, message) => out.push({ code, message })
+  if (reading.line === '') {
+    push('LEGEND-MISSING', 'INDEX 页首没有「计数口径是闭集 N 个…」那一句 —— 单位从哪来，读的人得自己猜')
+    return out
+  }
+  const want = LEGEND_TOKENS.map(([t, u]) => `${t}=${u}`)
+  const got = reading.pairs.map((p) => `${p.token}=${p.unit}`)
+  if (JSON.stringify(got) !== JSON.stringify(want)) {
+    push('LEGEND-TOKENS', `页首闭集必须恰好是 ${JSON.stringify(want)}，实得 ${JSON.stringify(got)}`)
+  }
+  if (reading.declared_count !== LEGEND_TOKENS.length) {
+    push('LEGEND-COUNT', `页首必须写「闭集 ${LEGEND_TOKENS.length} 个」，实得 ${JSON.stringify(reading.declared_count)}`)
+  }
+  return out
+}
 
 /** 跑一份夹具并把读数收进 `rec.readings`。 */
 function runSample(problems, rec, { caseId, tag, spec, extra = [], tool = 'check' }) {
@@ -104,11 +169,116 @@ test('DEC-04 INDEX 与派生叶逐行对账：改页上一个数 ⇒ 红；改�
               push('INDEX-UNIT-MISMATCH', `[真树] \`${row.concept}\` 的单位：页上 ${JSON.stringify(row.unit)}，概念表派生 ${JSON.stringify(wantUnit)}`)
             }
           }
+          // ── Y-M7a：`键序集合比` 那一行必须指回**判据侧**（构案 0004 ⑤：没有新增产品代码）────────
+          {
+            const concept = byConcept.get('键序集合比')
+            const indexRow = rows.find((r) => r.concept === '键序集合比')
+            rec.readings.real_key_order = { concept: concept ?? null, index_row: indexRow ?? null }
+            for (const p of keyOrderRowProblems({ concept, indexRow })) push(p.code, `[真树] ${p.message}`)
+          }
+          // ── Y-M7b：页首那句闭集由 `COUNT_RULES` 现算（五个 token，含 `零代码`）──────────────────
+          {
+            const legend = legendReading(indexText)
+            rec.readings.real_legend = { declared_count: legend.declared_count, pairs: legend.pairs, line_head: legend.line.slice(0, 120) }
+            for (const p of legendProblems(legend)) push(p.code, `[真树] ${p.message}`)
+          }
         }
       }
       if (before.digest !== after.digest) {
         push('CHECK-NOT-READONLY', `[真树] 跑完 census+check，决议/ 那棵树变了：${before.digest.slice(0, 16)} → ${after.digest.slice(0, 16)}`
           + `（契约 §5.4：检查器不许顺手修）`)
+      }
+    }
+
+    // ── Y-M8：**解析面在哪** 这句话只许指向 `.tools/lib/决议-ledger.mjs`（三个载体同一句话）──────
+    //    这是**指针**判据，不是行为判据：旧句（"全在 census.mjs 与 决议-check.mjs 里"）一回来就红。
+    //    它不动工具、不碰 `决议/`；读的是测试岗自己那一份夹具头。
+    {
+      const harness = readText(path.join(PATHS.testRoot, 'support', 'decision-ledger.mjs')) ?? ''
+      const OLD_POINTER = '全在 `.tools/census.mjs` 与 `.tools/决议-check.mjs` 里'
+      const namesLib = harness.includes('.tools/lib/决议-ledger.mjs')
+      const keepsOld = harness.includes(OLD_POINTER)
+      rec.readings.parse_pointer = { names_lib: namesLib, keeps_old: keepsOld }
+      if (!namesLib) {
+        push('PARSE-POINTER', '`tests/.../support/decision-ledger.mjs` 的头没点名 `.tools/lib/决议-ledger.mjs` —— '
+          + '解析面只有一份，三个载体（census / 决议-check / 测试夹具）都要说同一句话（Y-M8）')
+      }
+      if (keepsOld) {
+        push('PARSE-POINTER', `\`tests/.../support/decision-ledger.mjs\` 里还留着旧指针 ${JSON.stringify(OLD_POINTER)} —— `
+          + '那句话把解析面指到了 census/check 两个入口，而它们各只有一行 import（Y-M8）')
+      }
+    }
+
+    // ── Y-M7a 的刀：把概念表那一行**指回产品侧**（旧探针 `canonicalJson` @ presets/）⇒ 同一条判据必须红 ──
+    if (hasCensus) {
+      const oldRow = buildScene({
+        caseId: 'DEC-04', tag: 'keyorder-knife',
+        concepts: [{ concept: '键序集合比', probe: 'canonicalJson', scan: 'presets/agenia/lib/*.mjs', owner: '实现岗', rule: 'file-code' }],
+        impls: [{ rel: 'presets/agenia/lib/receipt.mjs', needle: 'canonicalJson' }],
+        index: null,
+      })
+      const oldRun = runCensus(oldRow.root)
+      const oldConcept = (oldRun.json?.concepts ?? []).find((c) => c.concept === '键序集合比') ?? null
+      const oldProblems = keyOrderRowProblems({ concept: oldConcept })
+      rec.readings.keyorder_knife = { exit: oldRun.exit, concept: oldConcept, codes: oldProblems.map((p) => p.code) }
+      if (oldRun.exit !== 0 || oldConcept === null) {
+        push('KEYORDER-KNIFE', `[刀] 旧行那一份夹具没造出来（exit=${oldRun.exit}）—— 刀没咬住`)
+      } else if (!oldProblems.some((p) => p.code === 'KEYORDER-WRONG-SIDE')) {
+        push('KEYORDER-KNIFE', `[刀] 把 \`键序集合比\` 指回产品侧（canonicalJson @ presets/）时，同一条判据没有报 \`KEYORDER-WRONG-SIDE\``
+          + `（实得 ${JSON.stringify(oldProblems.map((p) => p.code))}）—— 那这条腿判不出"落在哪一侧"`)
+      }
+      // 阳性对照：同一把判据喂"按判据侧写"的那一份 ⇒ 不许有红。
+      // ⚠️ 探针字面量**在源码里拼出来**：`键序集合比` 的扫描面是 `tests/**/*.mjs`，
+      //    在测试源码里直接写那六个字母会把这个测试文件也算成"第二处实现"（census 按字面量数，
+      //    注释不算、代码行算）。拼出来 = 这一格不改变它自己量的那个数。
+      const SORTED_KEYS = ['sorted', 'Keys'].join('')
+      const newRow = buildScene({
+        caseId: 'DEC-04', tag: 'keyorder-control',
+        concepts: [{ concept: '键序集合比', probe: SORTED_KEYS, scan: 'tests/**/*.mjs', owner: '实现岗', rule: 'file-code' }],
+        impls: [{ rel: 'tests/unit/knife-control.test.mjs', needle: SORTED_KEYS }],
+        index: null,
+      })
+      const newRun = runCensus(newRow.root)
+      const newConcept = (newRun.json?.concepts ?? []).find((c) => c.concept === '键序集合比') ?? null
+      const newProblems = keyOrderRowProblems({ concept: newConcept })
+      rec.readings.keyorder_control = { exit: newRun.exit, concept: newConcept, codes: newProblems.map((p) => p.code) }
+      if (newRun.exit !== 0 || newConcept === null || newProblems.length > 0) {
+        push('KEYORDER-KNIFE', `[对照] 按判据侧写的那一份不许有红（实得 ${JSON.stringify(newProblems.map((p) => p.code))}）—— `
+          + '否则这条腿只会红、翻不了面')
+      }
+    }
+
+    // ── Y-M7b 的刀：副本里从 `COUNT_RULES` 删掉 `零代码` ⇒ 页首闭集少一项 ⇒ 同一条判据必须红 ──────────
+    {
+      const dir = sceneRoot('DEC-04', 'legend-knife')
+      mkdirSync(path.join(dir, 'lib'), { recursive: true })
+      const libSrc = readText(path.join(PATHS.repo, '.tools', 'lib', '决议-ledger.mjs')) ?? ''
+      const ZERO_LINE = "  '零代码': { label: '零代码决定', kind: 'zero', comments: 'any' },"
+      const hits = libSrc.split(ZERO_LINE).length - 1
+      if (hits !== 1) {
+        push('LEGEND-KNIFE-ANCHOR', `[刀] \`COUNT_RULES\` 里 \`零代码\` 那一行在源文件里出现 ${hits} 次（要恰好 1 次）—— 刀锚点不在`)
+      } else {
+        writeFileSync(path.join(dir, 'lib', '决议-ledger.mjs'), libSrc.replace(`${ZERO_LINE}\n`, ''), 'utf8')
+        const probe = path.join(dir, 'probe.mjs')
+        writeFileSync(probe, [
+          "import { renderIndex, COUNT_RULES } from './lib/决议-ledger.mjs'",
+          "const rows = [{ concept: 'x', owner: 'y', census: 0, decision: '0001', unit: '零代码决定' }]",
+          'console.log(JSON.stringify({ keys: Object.keys(COUNT_RULES), index: renderIndex(rows) }))',
+          '',
+        ].join('\n'), 'utf8')
+        const run = summarize(runNode([probe]), 'DEC-04/legend-knife')
+        const keys = run.json?.keys ?? []
+        const knifeLegend = legendReading(run.json?.index ?? '')
+        const knifeProblems = legendProblems(knifeLegend)
+        rec.readings.legend_knife = { exit: run.exit, keys, pairs: knifeLegend.pairs, declared_count: knifeLegend.declared_count, codes: knifeProblems.map((p) => p.code) }
+        if (run.exit !== 0 || run.json === null) {
+          push('LEGEND-KNIFE', `[刀] 副本探针没跑出 JSON（exit=${run.exit} · ${run.json_error ?? ''}）`)
+        } else if (keys.includes('零代码') || JSON.stringify(keys) !== JSON.stringify(['file', 'file-code', 'site', 'site-code'])) {
+          push('LEGEND-KNIFE', `[刀] 副本里 \`COUNT_RULES\` 的键必须是四项（删掉 \`零代码\` 之后），实得 ${JSON.stringify(keys)}`)
+        } else if (!knifeProblems.some((p) => p.code === 'LEGEND-TOKENS')) {
+          push('LEGEND-KNIFE', `[刀] 删掉 \`零代码\` 之后，同一条判据没有报 \`LEGEND-TOKENS\`（实得 ${JSON.stringify(knifeProblems.map((p) => p.code))}）`
+            + ' —— 那"页首闭集五条都从 COUNT_RULES 来"这句话没有被判到')
+        }
       }
     }
 
