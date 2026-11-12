@@ -1,7 +1,7 @@
 /**
  * `ATM-01` —— **原子写归一**（构案 0006 · 史山清查 B1 · Gate 2）。
  *
- * 契约：`.team/test/2026-11-12/CONTRACT-史山清查-B1.md`（口径 / 七类腿 / 九把刀 / 分母的唯一出处）。
+ * 契约：`.team/test/2026-11-12/CONTRACT-史山清查-B1.md`（口径 / 七类腿 / 刀架（每腿各一把 + 腿 7 两条构造）/ 分母的唯一出处）。
  * 定形：`.team/leader/2026-11-12/定形-B1-原子写归一.md`。决定：`决议/构案/0006-原子写归一.md`。
  * 量具：`support/atomic-writers.mjs`（计数 / 落点 / 重试码 / 调用点 / 刀，全部只有那一份）。
  *
@@ -54,7 +54,10 @@
  *         —— 今天那份 CLI 副本一个都没有）；(b) `<staging>/target-lag.json` 在、点名 `bin/rollback.mjs`、
  *         理由说得清"这是发布时的内联"；(c) 两棵树那处差异被判成 **declared**（`targetReport`，与入口同一份口径）。
  *     **控制**：内联版形状夹具 ⇒ 绿、准确声明 ⇒ `state=declared` 绿；
- *     **刀**：剥掉内联 ⇒ `SHIP-ROLLBACK-NO-INLINE` + `TARGET-LAG-UNDECLARED`；内联在而声明不在 ⇒
+ *     **刀**（`bug-20261112-16` 的修法）：**两条独立构造** —— ①按发布器的成对标记
+ *     （`// ── 出厂件内联` ←→ `// ── 内联结束 ──`）**真切片**，②`repo` 那份**逐字复制**
+ *     （= 发布器没内联的世界）；两条都必须咬到 `SHIP-ROLLBACK-NO-INLINE` + `TARGET-LAG-UNDECLARED`。
+ *     ⚠️ 不许再拿"出厂件原文"冒充"剥掉内联"（那样它必含三个指纹，与 `ship_artifact` 的"必须有"互斥）；内联在而声明不在 ⇒
  *     `SHIP-DECL-MISSING` + `TARGET-LAG-UNDECLARED`；静态 import 的规则本身在"一行 import"的文本上必须认出。
  *     为什么不开新格：与归一同一族（repo 一份 → 发布时内联 → 用户那份仍自足），且分母已由组长冻在 218。
  *
@@ -218,40 +221,76 @@ function fixtureRoot(tag) {
   return made
 }
 
+/** 出厂件里那段内联正文的**成对标记**（发布器写进去的；这里只当切片的锚点，不当判据）。 */
+const INLINE_BEGIN_MARKER = '// ── 出厂件内联'
+const INLINE_END_MARKER = '// ── 内联结束 ──'
+
 /**
- * 共享件那一份**并集正文**（`RETRYABLE_RENAME` + `writeFileAtomic` 整段）—— 只作文本夹具用。
- * 出厂件夹具的"内联版"就是拿它拼的：判词只 grep 指纹，从不执行这个夹具。
+ * 从一份出厂件正文里**真把内联那一段切掉**（`bug-20261112-16` 的修法）。
+ *
+ * 为什么不能拿"出厂件原文"当"剥掉内联"的夹具：出厂件一旦真内联，原文里就有那三个指纹，
+ * 于是"缺指纹"这条判词永远不成立 —— 同一份字节被要求既含指纹又缺指纹（两向互斥）。
+ * 切片必须**按标记**（语义锚点，不是字节偏移），并且把"切了几行 / 剩下多少字节"记进读数。
+ *
+ * @returns {{ok:true, text:string, removed_lines:number, bytes_before:number, bytes_after:number}|{ok:false, reason:string}}
  */
-function sharedInlineBlock() {
-  const shared = readFileSync(path.join(LIVE, ...CANONICAL_ATOMIC.split('/')), 'utf8')
-  const fn = extractFunctionText(shared, ATOMIC_FN)
-  const setLine = (shared.match(/const RETRYABLE_RENAME = new Set\([^\n]*\)/) ?? [null])[0]
-  if (fn === null || setLine === null) return null
-  return `${setLine}\n${fn.text}\n`
+function stripInlinedBlock(text) {
+  const lines = String(text).split(/\r?\n/)
+  const begin = lines.findIndex((l) => l.includes(INLINE_BEGIN_MARKER))
+  if (begin < 0) return { ok: false, reason: `找不到内联起点（含「${INLINE_BEGIN_MARKER}」的行）` }
+  let end = -1
+  for (let i = begin + 1; i < lines.length; i += 1) {
+    if (lines[i].includes(INLINE_END_MARKER)) { end = i; break }
+  }
+  if (end < 0) return { ok: false, reason: `找不到内联终点（含「${INLINE_END_MARKER}」的行）` }
+  const kept = [...lines.slice(0, begin), ...lines.slice(end + 1)]
+  return {
+    ok: true,
+    text: kept.join('\n'),
+    removed_lines: end - begin + 1,
+    bytes_before: Buffer.byteLength(text, 'utf8'),
+    bytes_after: Buffer.byteLength(kept.join('\n'), 'utf8'),
+  }
 }
 
 /**
  * **出厂件形状夹具**：`<fixture>/staged-preset`（用户拿到的那一份）与 `<fixture>/live-preset`（repo 那一份）。
- * `inlined:true` ⇒ staged 的 rollback = 今天那份出厂件 + 共享件的并集正文（模拟 `publish-staged` 的内联）；
- * `inlined:false` ⇒ staged = 今天那份出厂件（**内联被剥掉**），而 live 是 repo 那一份 + 一行（模拟 Gate 3 之后的 repo）。
+ *
+ * `mode` 三种（三种都是"出厂件**该长什么样 / 不该长什么样**"的文本，永不执行）：
+ *   · `'artifact'`  —— staged = **真出厂件原文**（内联在）。控制面：判词必须认得出"内联了"。
+ *   · `'sliced'`    —— staged = 真出厂件**按标记切掉内联那一段**（零静态 import 仍在，但并集指纹没了）。
+ *   · `'repo-copy'` —— staged = **repo 那份**逐字复制（= 发布器没做内联的世界：有静态 import、没有并集正文）。
+ * live 侧一律是 repo 那一份 + 一行（模拟"提交那一份 + 它自己的差异"，让两棵树必然不同）。
  * 两边都放一份逐字节相同的 `inject.js`：差集才不会是"整棵树都不同"。
- * ⚠️ 这是**判词的形状夹具**，不是第二份实现 —— 永不执行；真正的出厂件由腿 7 的读数判。
+ *
+ * ⚠️ 这是**判词的形状夹具**，不是第二份实现 —— 真正的出厂件由腿 7 的读数判；这里只回答
+ * "判词在**该红**的字节上会不会红、在**该绿**的字节上会不会绿"。
  */
-function shippedPair(tag, { inlined, liveExtra = true }) {
+function shippedPair(tag, { mode, liveExtra = true }) {
   const root = fixtureRoot(tag)
   const staged = path.join(root, 'staged-preset')
   const live = path.join(root, 'live-preset')
   const shipped = readFileSync(path.join(stagingRoot(), 'bin', 'rollback.mjs'), 'utf8')
   const repoText = readFileSync(path.join(LIVE, 'presets', 'agenia', 'bin', 'rollback.mjs'), 'utf8')
-  const block = sharedInlineBlock()
-  const stagedText = inlined ? `${shipped}\n// fixture: publish-staged 在发布时内联的并集正文\n${block ?? ''}` : shipped
-  const liveText = liveExtra ? `${repoText}\n// fixture: Gate 3 之后的 repo 那一份（import 共享件 + 一行差异）\n` : repoText
+  const stripped = mode === 'sliced' ? stripInlinedBlock(shipped) : null
+  const stagedText = mode === 'artifact'
+    ? shipped
+    : mode === 'sliced'
+      ? (stripped.ok ? stripped.text : shipped)
+      : repoText
+  const liveText = liveExtra ? `${repoText}\n// fixture: 提交那一份（这一行只为让两棵树必然不同）\n` : repoText
   put(root, 'staged-preset/bin/rollback.mjs', stagedText)
   put(root, 'live-preset/bin/rollback.mjs', liveText)
   const same = '// fixture: 两边逐字节相同的一份（证明差集不是"整棵树都不同"）\n'
   put(root, 'staged-preset/inject.js', same)
   put(root, 'live-preset/inject.js', same)
-  return { root, staged, live, inlined_block_found: block !== null }
+  return {
+    root,
+    staged,
+    live,
+    mode,
+    strip: stripped === null ? null : { ok: stripped.ok, reason: stripped.reason ?? null, removed_lines: stripped.removed_lines ?? null, bytes_before: stripped.bytes_before ?? null, bytes_after: stripped.bytes_after ?? null },
+  }
 }
 
 /** 造一份**准确**的受控差异声明（字段与数字都从同一个读者 `actualOf/measureOne` 来）。 */
@@ -818,42 +857,60 @@ test('ATM-01 原子写归一：presets/** 只剩一份定义（fsync · wx · al
     }
     const requireCode = (codes, code) => codes.includes(code)
 
-    // 控制 1 · 形状夹具（内联版）⇒ 出厂件判词必须**绿**（证明它认得出"内联了"，不是永红）
-    const inlinedPair = shippedPair('ship-inlined', { inlined: true })
+    // 控制 1 · 形状夹具（**真出厂件原文**）⇒ 出厂件判词必须**绿**（证明它认得出"内联了"，不是永红）
+    const inlinedPair = shippedPair('ship-inlined', { mode: 'artifact' })
     const inlinedArt = artifactReading({ presetRoot: inlinedPair.staged })
     const inlinedV = artifactVerdict(inlinedArt)
-    shipNote('control-inlined-artifact', 'GREEN', inlinedV.problem_codes ?? codesOf(inlinedV.problems), inlinedV.verdict === 'GREEN',
-      { line: inlinedArt.line, anchors: inlinedArt.inline_anchors, block: inlinedPair.inlined_block_found })
+    shipNote('control-inlined-artifact', 'GREEN', codesOf(inlinedV.problems), inlinedV.verdict === 'GREEN',
+      { line: inlinedArt.line, anchors: inlinedArt.inline_anchors, mode: inlinedPair.mode })
     if (inlinedV.verdict !== 'GREEN') {
-      push('SHIP-KNIFE-CONTROL', `刀的控制面不成立：内联版形状夹具应当绿，实得 ${inlinedV.verdict}（${codesOf(inlinedV.problems).join(' / ')}）—— ${inlinedArt.line}`)
-    }
-    if (inlinedPair.inlined_block_found !== true) {
-      push('SHIP-KNIFE-ANCHOR', '夹具拼不出并集正文（共享件里抠不到 `writeAtomic` 整段或 `RETRYABLE_RENAME` 那一行）—— 刀不咬')
+      push('SHIP-KNIFE-CONTROL', `刀的控制面不成立：真出厂件原文应当绿（它就是"内联过"的那一份），实得 ${inlinedV.verdict}（${codesOf(inlinedV.problems).join(' / ')}）—— ${inlinedArt.line}`)
     }
 
-    // 刀 1 · **剥掉内联** ⇒ 出厂件判词红（`SHIP-ROLLBACK-NO-INLINE`）**且**受控差异那边是"未声明"
-    const strippedPair = shippedPair('ship-stripped', { inlined: false })
-    const strippedArt = artifactReading({ presetRoot: strippedPair.staged })
-    const strippedV = artifactVerdict(strippedArt)
-    const strippedCodes = codesOf(strippedV.problems)
-    const strippedJudged = declaredDifference({
-      stagedRoot: strippedPair.staged,
-      baselineRoot: strippedPair.live,
-      declarationPath: path.join(strippedPair.root, 'target-lag.json'),
-    })
-    const strippedTargetCodes = strippedJudged.problems.map((p) => p.code)
-    const stripOk = requireCode(strippedCodes, 'SHIP-ROLLBACK-NO-INLINE') && requireCode(strippedTargetCodes, 'TARGET-LAG-UNDECLARED')
-    shipNote('knife-strip-inlining', 'SHIP-ROLLBACK-NO-INLINE + TARGET-LAG-UNDECLARED', { artifact: strippedCodes, target: strippedTargetCodes }, stripOk,
-      { line: strippedArt.line, judged_state: strippedJudged.state })
-    if (!requireCode(strippedCodes, 'SHIP-ROLLBACK-NO-INLINE')) {
-      push('SHIP-KNIFE-DEAD', `[刀 strip-inlining] 剥掉内联之后出厂件判词必须红 \`SHIP-ROLLBACK-NO-INLINE\`，实得 ${strippedCodes.join(' / ') || '（一条都没有）'} —— 刀不咬`)
+    // 刀 1 · **按标记真剥掉内联** ⇒ 出厂件判词红（`SHIP-ROLLBACK-NO-INLINE`）**且**受控差异那边是"未声明"
+    //   修 `bug-20261112-16`：夹具**不能**再拿出厂件原文冒充"剥掉内联"的那一份（那样它必含三个指纹，
+    //   与 `ship_artifact` 的"必须有"互斥）。这里按 `// ── 出厂件内联` ←→ `// ── 内联结束 ──` 切片，
+    //   并另加一份"**repo 那份逐字复制**"（= 发布器没做内联的世界）当第二把刀 —— 两条独立构造，任一条咬住即算。
+    const slicedPair = shippedPair('ship-stripped', { mode: 'sliced' })
+    const stripInfo = slicedPair.strip
+    if (stripInfo === null || stripInfo.ok !== true) {
+      push('SHIP-KNIFE-ANCHOR', `[刀 strip-inlining] 出厂件里切不出内联那一段（${stripInfo?.reason ?? '夹具不是 sliced 模式'}）—— 没有标记就没有切片，刀不咬`)
     }
-    if (!requireCode(strippedTargetCodes, 'TARGET-LAG-UNDECLARED')) {
-      push('SHIP-KNIFE-DEAD', `[刀 strip-inlining] 剥掉内联之后两棵树仍然不同、而声明不在 ⇒ 受控差异必须报 \`TARGET-LAG-UNDECLARED\`，实得 ${strippedTargetCodes.join(' / ') || '（一条都没有）'}（state=${strippedJudged.state}）`)
+    const repoCopyPair = shippedPair('ship-repo-copy', { mode: 'repo-copy' })
+    const stripVariants = [
+      { id: 'sliced', pair: slicedPair, label: '按标记切掉内联段' },
+      { id: 'repo-copy', pair: repoCopyPair, label: 'repo 那份逐字复制（发布器没内联）' },
+    ]
+    const stripResults = []
+    for (const variant of stripVariants) {
+      const art = artifactReading({ presetRoot: variant.pair.staged })
+      const v = artifactVerdict(art)
+      const codes = codesOf(v.problems)
+      const judged = declaredDifference({
+        stagedRoot: variant.pair.staged,
+        baselineRoot: variant.pair.live,
+        declarationPath: path.join(variant.pair.root, 'target-lag.json'),
+      })
+      const targetCodes = judged.problems.map((p) => p.code)
+      const ok = requireCode(codes, 'SHIP-ROLLBACK-NO-INLINE') && requireCode(targetCodes, 'TARGET-LAG-UNDECLARED')
+      stripResults.push({ variant: variant.id, codes, target_codes: targetCodes, judged_state: judged.state, line: art.line, ok })
+      shipNote(`knife-strip-inlining:${variant.id}`, 'SHIP-ROLLBACK-NO-INLINE + TARGET-LAG-UNDECLARED', { artifact: codes, target: targetCodes }, ok,
+        { variant: variant.label, line: art.line, judged_state: judged.state, strip: variant.pair.strip })
+      if (!requireCode(codes, 'SHIP-ROLLBACK-NO-INLINE')) {
+        push('SHIP-KNIFE-DEAD', `[刀 strip-inlining:${variant.id}] ${variant.label}之後出厂件判词必须红 \`SHIP-ROLLBACK-NO-INLINE\`，实得 ${codes.join(' / ') || '（一条都没有）'} —— 刀不咬（${art.line}）`)
+      }
+      if (!requireCode(targetCodes, 'TARGET-LAG-UNDECLARED')) {
+        push('SHIP-KNIFE-DEAD', `[刀 strip-inlining:${variant.id}] ${variant.label}之後两棵树仍然不同、而声明不在 ⇒ 受控差异必须报 \`TARGET-LAG-UNDECLARED\`，实得 ${targetCodes.join(' / ') || '（一条都没有）'}（state=${judged.state}）`)
+      }
+    }
+    rec.readings.ship_strip = {
+      slice: stripInfo,
+      variants: stripResults,
+      note: '两条独立构造：①按发布器的成对标记切片（零静态 import 仍在，只少并集正文）②repo 那份逐字复制（发布器没内联的世界）',
     }
 
     // 控制 2 · **准确的声明**存在 ⇒ 受控差异绿（state=declared）—— 证明"声明得对"这条路走得通
-    const declaredPair = shippedPair('ship-declared', { inlined: true })
+    const declaredPair = shippedPair('ship-declared', { mode: 'artifact' })
     const declPath = put(declaredPair.root, 'target-lag.json', `${JSON.stringify(declarationFor(declaredPair), null, 2)}\n`)
     const withDecl = declaredDifference({ stagedRoot: declaredPair.staged, baselineRoot: declaredPair.live, declarationPath: declPath })
     const declRead = declarationReading({ path: declPath })

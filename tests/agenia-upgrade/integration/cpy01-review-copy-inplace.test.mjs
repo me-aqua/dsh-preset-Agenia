@@ -21,8 +21,9 @@
  * 这份清单是"副本自足"的可判形状；三条齐了，第 ② 条才有资格单独去判（那一票的格）。
  *
  * ── 这一格怎么判"副本就是那个提交"（2026-11-02 `F2` 的决定）────────────────────
- * 导出器带 `--with-staging` 时，副本 = **提交里的全部 blob** **+** `.tools/_staging/agenia-upgrade/{preset,oracle}`
- * 那一层（活树那一层，`.gitignore` 挡着、**不在提交里**）。判定两向钉死：
+ * 导出器带 `--with-staging` 时，副本 = **提交里的全部 blob** **+** `.tools/_staging/agenia-upgrade/` 那一层
+ * （活树那一层，`.gitignore` 挡着、**不在提交里**）：`{preset,oracle}` 两棵子树 + **根上的 `target-lag.json`**
+ * （裁决 0006 §0.5 的**受控差异声明**；2026-11-13 起 `STAGING_ADDITION.files` 把它算进追加）。判定两向钉死：
  *   · 提交里的每一份：少一份 / 字节不同 ⇒ 红（**子集核对**；不要求"副本里只有这些"）；
  *   · 多出来的：只准是那一层里的路径，且每一条与活树逐字节相同；多出任何一条别的 ⇒ 红。
  * 为什么不是"副本必须与提交逐字相同"：那样 `--with-staging` 一开就必然红（副本"多"了那一层），
@@ -51,7 +52,7 @@
  *   · **份数对账**：副本 / 提交 / 活树那一层 / 导出器记录 / 派工那份清单，任一对不上 ⇒
  *     `CPY-FILE-COUNT-DRIFT`（**跑在早退之前**：多带/少带一份正是会让 `isThatCommit.ok === false` 的事）；
  *   · 副本里缺一条必需输入 ⇒ `CPY-STAGING-NOT-IN-COPY`（点名绝对路径 + 声明的追加命中几条）；
- *   · 副本里的与活树不是同一份 ⇒ `CPY-STAGING-DIFFERS-LIVE`（副本里睡着一份过期输入）；
+ *   · 副本里的与活树不是同一份 ⇒ `CPY-STAGING-DIFFERS-LIVE`（副本里睡着一份过期输入）；\n *   · 副本里那一处"发布时内联"的差异**不是受控的**（没声明 / 声明对不上 / 两棵树竟然逐字节相同）\n *     ⇒ `CPY-DECLARED-DIFFERENCE`（阴性对照 `CPY-DECLARED-CONTROL`：把声明指到不存在的路径必须报"未声明"）；
  *   · 副本解析后不在副本之下（链接 / junction）⇒ `CPY-STAGING-ESCAPES-COPY`；
  *     声明之外的"多一份"、以及任何链接，由 `verifyCopyIsCommit()` 报 `CPY-EXPORT-FIXTURE`。
  * 判据不关心导出器内部怎么拷贝（`REQUIRED` 里没有"怎么来的"，只有"在不在、在不在副本里、是不是同一份"）。
@@ -75,6 +76,7 @@ import {
   fileCountDrift, fingerprintTool, git, lsTreeBlobs, exporterPath, missingFields, runExport, runVerify, treeDigest, verifyCopyIsCommit,
 } from '../support/tree-at-commit.mjs'
 import { ENV, PATHS, optionalEnv } from '../support/env.mjs'
+import { declaredDifference } from '../support/staged-artifact.mjs'
 
 before(() => {
   preflight()
@@ -299,9 +301,17 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
      */
     const isThatCommit = verifyCopyIsCommit({ repo: PATHS.repo, commit, copyRoot, declared: [STAGING_ADDITION] })
     const copyPaths = Array.isArray(isThatCommit.actual) ? isThatCommit.actual : []
-    /** 副本里落在"声明的追加"那两棵子树下的路径（前缀与 `declaredAdditionPaths()` 同一份 `STAGING_ADDITION`）。 */
-    const STAGING_PATH_RE = new RegExp(`^\\.tools/_staging/agenia-upgrade/(${STAGING_ADDITION.dirs.join('|')})/`)
-    const copyStagingPaths = copyPaths.filter((rel) => STAGING_PATH_RE.test(rel))
+    /**
+     * 副本里落在"声明的追加"里的路径 —— **两棵子树**（`dirs`）+ **根上那几份文件**（`files`）：
+     * 根上那份是 `target-lag.json`（裁决 0006 §0.5 的受控差异声明）。只数两棵子树的话，
+     * 声明会被算成"提交那一部分"，`copy_vs_commit_plus_declared` 当场差 1 份。
+     * 规则与 `declaredAdditionPaths()` 同一份（前缀 + `dirs` + `files`），不另写一套。
+     */
+    const STAGING_PREFIX = `${STAGING_ADDITION.prefix}/`
+    const stagingRootFiles = (STAGING_ADDITION.files ?? []).map((f) => `${STAGING_PREFIX}${f}`)
+    const isStagingAdditionPath = (rel) => stagingRootFiles.includes(rel)
+      || STAGING_ADDITION.dirs.some((d) => rel.startsWith(`${STAGING_PREFIX}${d}/`))
+    const copyStagingPaths = copyPaths.filter((rel) => isStagingAdditionPath(rel))
     readings.copy_is_commit = {
       ok: isThatCommit.ok,
       files: copyPaths.length,
@@ -315,6 +325,61 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
     }
 
     /**
+     * ── ⑤b **副本里那一处差异是不是"受控差异"**（裁决 0006 §0.5；与 `ATM-01` 腿 7 同一份判词）────
+     *
+     * 为什么要有这一节：出厂件 `bin/rollback.mjs` 在**发布时**被内联，所以副本里
+     * `presets/agenia/bin/rollback.mjs`（提交那一份，带 import）与 `<copy>/staging/preset/bin/rollback.mjs`
+     * （发布那一刻那一份，单文件）**必然不同**。这一格要的是**受控**（声明点名 + 双向 sha256 + 字节差
+     * 都对得上），**不是"零差异"** —— "零差异"只会在内联没发生的时候出现。
+     * 声明必须**随副本带来**（`STAGING_ADDITION.files`）；不带它，副本里这一处差异只能报"未声明"，
+     * 而"未声明"与"分叉"在读数上长得一模一样 —— 那正是这一条要挡住的东西。
+     */
+    const copyStagingRoot = path.join(copyRoot, ...STAGING_ADDITION.prefix.split('/'))
+    const copyDeclaration = path.join(copyStagingRoot, ...(STAGING_ADDITION.files ?? ['target-lag.json']))
+    const declaredInCopy = declaredDifference({
+      stagedRoot: path.join(copyStagingRoot, 'preset'),
+      baselineRoot: path.join(copyRoot, 'presets', 'agenia'),
+      declarationPath: copyDeclaration,
+    })
+    /** 阴性对照（纯读数、不落盘）：把声明指到一份不存在的路径 ⇒ 必须报"未声明"。 */
+    const declaredControl = declaredDifference({
+      stagedRoot: path.join(copyStagingRoot, 'preset'),
+      baselineRoot: path.join(copyRoot, 'presets', 'agenia'),
+      declarationPath: path.join(copyStagingRoot, 'target-lag.absent.json'),
+    })
+    readings.copy_declared_difference = {
+      state: declaredInCopy.state,
+      ok: declaredInCopy.ok,
+      equal: declaredInCopy.equal,
+      declared: declaredInCopy.declared,
+      line: declaredInCopy.line,
+      declaration_path: copyDeclaration,
+      declaration_present: declaredInCopy.declaration?.present === true,
+      actuals: declaredInCopy.actuals.map((a) => ({ file: a.file, state: a.state, lag_bytes: a.lag_bytes })),
+      target_codes: declaredInCopy.problems.map((p) => p.code),
+      control_undeclared: {
+        state: declaredControl.state,
+        ok: declaredControl.ok,
+        target_codes: declaredControl.problems.map((p) => p.code),
+      },
+      note: '"受控差异"= state:declared（声明点名 + 数字全对）；"零差异"不是这一格要的形状 —— 它只说明内联没发生',
+    }
+    if (!existsSync(copyDeclaration)) {
+      push('CPY-DECLARED-DIFFERENCE', `副本里没有 \`${STAGING_ADDITION.files?.join(' / ') ?? 'target-lag.json'}\`（${copyDeclaration}）`
+        + ' —— 副本不带上受控差异声明，副本里那一处"发布时内联"的差异就只能报"未声明"：'
+        + '`STAGING_ADDITION.files` 与导出器的 `stagingFilesOf()` 必须同时算上它')
+    } else if (!(declaredInCopy.ok === true && declaredInCopy.state === 'declared')) {
+      push('CPY-DECLARED-DIFFERENCE', `副本里那一处差异不是**受控**的（state=${JSON.stringify(declaredInCopy.state)} · ok=${declaredInCopy.ok}）：`
+        + `${declaredInCopy.problems.map((p) => `${p.code}: ${p.message}`).join(' · ') || '（没有红因，但也不是 declared）'}`
+        + `${declaredInCopy.equal ? ' —— 副本里两棵树逐字节相同：内联没发生（或副本不是发布后的那一份）' : ''}`)
+    }
+    if (!(declaredControl.ok === false && declaredControl.problems.map((p) => p.code).includes('TARGET-LAG-UNDECLARED'))) {
+      push('CPY-DECLARED-CONTROL', `阴性对照不成立：把声明指到不存在的路径之后，两棵树那一处差异必须报 \`TARGET-LAG-UNDECLARED\`，`
+        + `实得 state=${JSON.stringify(declaredControl.state)} / ${declaredControl.problems.map((p) => p.code).join(' / ') || '（一条都没有）'}`
+        + ' —— 对照不成立时，上面那条"declared 绿"就证明不了它是**读到了声明**')
+    }
+
+    /**
      * ── ⑤a **份数对账：几条各自独立的读数两两对账**（技术评审 2026-11-03 第四轮 `F2`）────────────
      *
      * 病历（第三轮 `R3-2` 的修法在第四轮被打回）：那一版判 `副本 = 提交 + 声明`，但三个数**全部从这一跑
@@ -324,7 +389,7 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
      *   · `commit`             —— `git ls-tree -r --full-tree <commit>`（测试侧读 **git 对象**，不看工作树）；
      *   · `declared_live`      —— `declaredAdditionPaths()` / `declaredAdditionManifest()`（测试侧现走活树那一层）；
      *   · `export_record`      —— 导出器**自己写下的** `exp.json.files` + `exp.json.staging.sha256`（另一个进程、另一条代码路）；
-     *   · `copy_staging`       —— 副本里那两棵追加子树自己的枚举（与 `copy` 分开，单独对账）；
+     *   · `copy_staging`       —— 副本里**追加层**（两棵子树 + 根上声明）自己的枚举（与 `copy` 分开，单独对账）；
      *   · `pinned_declared`    —— **派工那一刻**记下的清单（`AGENIA_STAGING_MANIFEST`；见 `support/env.mjs`）。
      * `副本 = 提交 + 声明` 只是**其中一条**关系（它现在有独立的两侧可对）；其余每一对都能在"没有恒等式保护"
      * 的情况下分叉：副本被谁写过 · 导出之后 HEAD 前进 · 活树那一层在导出之后被同步过 · 导出记录与它写下的
@@ -363,7 +428,7 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
       declared_live: { value: liveManifest.files, source: '`declaredAdditionPaths()`（活树那一层逐份走，测试侧现算）' },
       export_record_commit: { value: exportCommitFiles, source: '导出器记录 `exp.json.files`（它写了几份提交 blob）' },
       export_record_staging: { value: exportStagingFiles, source: '导出器记录 `exp.json.staging.sha256.list` 的条数（它写了几份追加；`files` 是自报值，只进 `same_files`）' },
-      copy_staging: { value: copyStagingPaths.length, source: '副本里 `.tools/_staging/agenia-upgrade/{preset,oracle}` 的逐份枚举' },
+      copy_staging: { value: copyStagingPaths.length, source: '副本里 `.tools/_staging/agenia-upgrade/` 追加层（两棵子树 + 根上声明）的逐份枚举' },
       pinned_declared: pinned.given === false
         ? { value: null, source: '没给 `AGENIA_STAGING_MANIFEST`（这一格没配）' }
         : (pinnedUsable
@@ -415,11 +480,11 @@ test('CPY-01 提交导出的只读副本要能原地跑套件：套件吃的四�
       },
       copy_staging_vs_declared_live: {
         got: 'copy_staging', want: 'declared_live',
-        why: '副本里那两棵追加子树的份数 ≠ 活树那一层的份数 —— 副本里的追加与现在这一份不是同一批路径',
+        why: '副本里追加层的份数 ≠ 活树那一层的份数 —— 副本里的追加与现在这一份不是同一批路径',
       },
       copy_staging_vs_export_record: {
         got: 'copy_staging', want: 'export_record_staging',
-        why: '副本里那两棵追加子树的份数 ≠ 导出器记下的份数 —— 副本里的追加与导出记录不是同一批',
+        why: '副本里追加层的份数 ≠ 导出器记下的份数 —— 副本里的追加与导出记录不是同一批',
       },
       declared_live_vs_pinned: {
         got: 'declared_live', want: 'pinned_declared',

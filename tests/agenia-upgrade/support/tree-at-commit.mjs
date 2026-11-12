@@ -441,6 +441,19 @@ export const STAGING_ADDITION = Object.freeze({
   prefix: '.tools/_staging/agenia-upgrade',
   /** 允许被追加的子树（相对 `prefix`）。 */
   dirs: Object.freeze(['preset', 'oracle']),
+  /**
+   * 🔴 **`prefix` 根上的那几份文件**（2026-11-13 · 裁决 0006 §0.5 的第四个读者）：
+   * `<staging>/target-lag.json` 是**受控差异声明** —— 出厂件 `bin/rollback.mjs` 在发布时被内联，
+   * 它因此与提交里那一份必然不同；声明点名这一处、给出双向 sha256 + 字节差。
+   *
+   * 副本**必须带上它**，两条理由（缺一条副本就不自足）：
+   *   · `STAT-01` 在副本里跑「两棵树」时，读的就是这一份声明 —— 不带它，那一处差异只能报"未声明"；
+   *   · `CPY-01` 这一格自己也要问"副本里那一处差异是不是受控的"（`CPY-DECLARED-DIFFERENCE`）。
+   * 导出器 `.tools/tree-at-commit.mjs` 的 `stagingFilesOf()` 已把同一份文件算进追加（它先落地）；
+   * 测试侧不写第二份规则：这里列名字、`declaredAdditionPaths()` 走同一份清单，两边靠 `CPY-STAGING-MANIFEST` 对账。
+   * ⚠️ 只认**根上这几个名字**（不递归、不认同名副本）；文件不在 ⇒ 这一条**不成立**（不是红：Gate 3 之前没有它）。
+   */
+  files: Object.freeze(['target-lag.json']),
 })
 
 /**
@@ -483,6 +496,19 @@ export function declaredAdditionPaths(repo, addition = STAGING_ADDITION) {
       }
     }
     walk(base)
+  }
+  // `prefix` 根上的那几份（受控差异声明）：不在 `dirs` 里，但同一层追加 —— 名字写死在
+  // `addition.files`（只认根上、不递归、不认同名副本），解析规则与导出器 `stagingFilesOf()` 同一句。
+  for (const name of addition.files ?? []) {
+    const abs = path.join(repo, ...addition.prefix.split('/'), name)
+    if (!existsSync(abs)) continue // 没有这一份 ⇒ 它不是"声明的追加"（Gate 3 之前的世界）
+    let st = null
+    try { st = lstatSync(abs) } catch { continue }
+    if (st.isSymbolicLink() || !st.isFile()) {
+      skipped.push({ rel: path.relative(repo, abs).replace(/\\/g, '/'), reason: 'symbolic-link-or-not-file' })
+      continue
+    }
+    out.push({ rel: path.relative(repo, abs).replace(/\\/g, '/'), abs })
   }
   out.sort((a, b) => Buffer.compare(Buffer.from(a.rel, 'utf8'), Buffer.from(b.rel, 'utf8')))
   out.skipped = skipped.sort((a, b) => Buffer.compare(Buffer.from(a.rel, 'utf8'), Buffer.from(b.rel, 'utf8')))
@@ -601,7 +627,8 @@ export function fileCountDrift(input) {
  * `git worktree add` 会留一个 `.git` 文件，那个文件本身就是一条指向真实仓库的活链）。
  *
  * `declared`（可选，默认 `[]` = 过去的行为**逐字不变**）：一组"允许追加"的层，
- * 每项形如 `{ prefix, dirs }`（见 `STAGING_ADDITION`）。给了它之后：
+ * 每项形如 `{ prefix, dirs, files }`（见 `STAGING_ADDITION`：`dirs` = 两棵子树 · `files` = 前缀根上那几份
+ * 文件，`target-lag.json` 就是靠 `files` 才进副本的）。给了它之后：
  *   · 提交里的文件：少一份 / 字节不同 ⇒ 红（**子集核对**，与从前一样）；
  *   · 多出来的文件：落在声明的层里 ⇒ 逐字节比活树（不同 / 缺一份 ⇒ 红），
  *     落在层外 ⇒ 红（`副本多一份…也不在声明的追加里`）。
