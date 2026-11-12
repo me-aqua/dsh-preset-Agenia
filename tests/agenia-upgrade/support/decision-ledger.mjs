@@ -32,11 +32,13 @@ export const INDEX_MARKER_NEEDLES = Object.freeze(['生成物', 'census.mjs'])
 export const CENSUS = path.join(PATHS.repo, '.tools', 'census.mjs')
 export const CHECK = path.join(PATHS.repo, '.tools', '决议-check.mjs')
 
-/** 三份岗位说明书要加的**那一行**（任务书 §5 的原话，逐字；`design.md` 不在此列 —— 方案岗搁置）。 */
+/** 三份岗位说明书要加的**那一行**（任务书 §5 的原话，逐字；`design.md` 不在此列 —— 方案岗搁置）。
+ *  🔴 评审那一行是 2026-11-12 T2 重定的：评审岗**没有命令行**，所以它不"跑 census"，
+ *  而是**向组长要 census 读数（带单位）并据它核**（`presets/agenia/team/review.md:11` 与它同一句话）。 */
 export const ROLE_CLAUSES = Object.freeze([
   { role: 'test', file: 'presets/agenia/team/test.md', clause: '无构案编号的新机制票不接活' },
   { role: 'dev', file: 'presets/agenia/team/dev.md', clause: '卡首无编号退回；做不到回来 supersede，不许静默换路' },
-  { role: 'review', file: 'presets/agenia/team/review.md', clause: '三段核 + 跑 census' },
+  { role: 'review', file: 'presets/agenia/team/review.md', clause: '三段核 + 向组长要 census 读数（带单位）并据它核' },
 ])
 /** 方案岗：`design.md` 里**一个本族字面量都不许出现**（老板 2026-11-12 11:39：方案岗搁置）。 */
 export const DESIGN_FILE = 'presets/agenia/team/design.md'
@@ -86,15 +88,25 @@ export function defaultBody(reversal) {
   return out.join('\n')
 }
 
-/** 概念表（一张表；契约 §3.1）。`rows = [{concept, probe, scan, owner}]`。 */
+/** 概念表（一张表；契约 §3.1）。`rows = [{concept, probe, scan, owner, rule?}]`。
+ *  任意一行带 `rule` ⇒ 表是**五列**（第五列 `计数口径`，M4）；否则四列（缺省口径 `file`）。 */
 export function conceptTableText(rows) {
+  const withRule = rows.some((r) => r.rule !== undefined)
+  const header = withRule
+    ? '| 概念 | 实现探针 | 扫描 | 归属 | 计数口径 |'
+    : '| 概念 | 实现探针 | 扫描 | 归属 |'
+  const separator = withRule
+    ? '| --- | --- | --- | --- | --- |'
+    : '| --- | --- | --- | --- |'
   return [
     '<!-- 概念表：census 的唯一概念源；改这一行 = 改 census 的口径 -->',
     '# 概念表',
     '',
-    '| 概念 | 实现探针 | 扫描 | 归属 |',
-    '| --- | --- | --- | --- |',
-    ...rows.map((r) => `| ${r.concept} | ${r.probe} | ${r.scan} | ${r.owner} |`),
+    header,
+    separator,
+    ...rows.map((r) => (withRule
+      ? `| ${r.concept} | ${r.probe} | ${r.scan} | ${r.owner} | ${r.rule ?? 'file'} |`
+      : `| ${r.concept} | ${r.probe} | ${r.scan} | ${r.owner} |`)),
     '',
   ].join('\n')
 }
@@ -113,11 +125,19 @@ export function indexText(rows, { marker = true } = {}) {
   ].join('\n')
 }
 
-/** 派工卡（契约 §6.1）。`ticket_kind === null` ⇒ 不写 `票类` 那一行。 */
-export function cardText({ ticket_kind, decision }) {
+/**
+ * 派工卡（契约 §6.1）。`ticket_kind === null` ⇒ 不写 `票类` 那一行；
+ * `headerLines` 直接给整段头块（造重复键 / 缺行 / 歧义）；`body` 给正文（造"票类只写在正文里"）。
+ */
+export function cardText({ ticket_kind, decision, headerLines = null, extraHeaderLines = [], body = null }) {
   const lines = ['# 派工卡 · 测试岗', '']
-  if (ticket_kind !== null) lines.push(`票类: ${ticket_kind}`)
-  if (decision !== undefined) lines.push(`构案: ${decision}`)
+  if (headerLines !== null) lines.push(...headerLines)
+  else {
+    if (ticket_kind !== null) lines.push(`票类: ${ticket_kind}`)
+    if (decision !== undefined) lines.push(`构案: ${decision}`)
+    lines.push(...extraHeaderLines)
+  }
+  if (body !== null) lines.push('', body)
   return `${lines.join('\n')}\n`
 }
 
@@ -253,6 +273,49 @@ export function runCensusText(root, extra = []) {
 /** 跑 `决议-check`（缺省 `--op check`；`extra` 可给 `--op=gate2-card --card=…`）。 */
 export function runCheck(root, extra = []) {
   return summarize(runNode([CHECK, `--root=${root}`, '--json', ...extra]), `check ${extra.join(' ')}`.trim())
+}
+
+/** 跑 `决议-check --op supersede <旧编号> --by <新编号>`（写手；契约 §5.6）。 */
+export function runSupersede(root, { old, by, extra = [] }) {
+  return summarize(
+    runNode([CHECK, `--root=${root}`, '--json', '--op=supersede', String(old), `--by=${by}`, ...extra]),
+    `supersede ${old} → ${by}`,
+  )
+}
+
+/**
+ * **supersede 之后那两份字节的读数 —— 由夹具自己量，不信工具的 `body_sha256` 自报**（契约 §5.6）。
+ *
+ * 判据（契约 §0.3-`D4` / §5.6）：旧文件的头块两个字段翻面（`状态: 已废`、`superseded_by: 新编号`），
+ * **其余每一行逐字不动**（正文因此逐字节不动）。`body_sha256` 从 `superseded_by` 那一行之后切 ——
+ * 夹具的头块顺序是固定的（`DECISION_KEYS` 次序），切点因此可复现。
+ */
+export function supersedeFlipReading(textBefore, textAfter, newId) {
+  const before = String(textBefore).split('\n')
+  const after = String(textAfter).split('\n')
+  const byBefore = before.findIndex((l) => /^superseded_by\s*[:：]/u.test(l))
+  const byAfter = after.findIndex((l) => /^superseded_by\s*[:：]/u.test(l))
+  const bodySha = (lines, at) => (at < 0
+    ? null
+    : createHash('sha256').update(lines.slice(at + 1).join('\n'), 'utf8').digest('hex'))
+  const diffs = []
+  if (before.length === after.length) {
+    for (let i = 0; i < before.length; i += 1) if (before[i] !== after[i]) diffs.push(i + 1)
+  }
+  const statusLine = after.find((l) => /^状态\s*[:：]/u.test(l)) ?? null
+  const byLine = byAfter >= 0 ? after[byAfter] : null
+  return {
+    same_length: before.length === after.length,
+    length_before: before.length,
+    length_after: after.length,
+    diff_lines: diffs,
+    diff_count: diffs.length,
+    status_line: statusLine,
+    superseded_by_line: byLine,
+    superseded_by_value: byLine === null ? null : byLine.replace(/^[^:：]*[:：]\s*/u, '').trim(),
+    new_id: String(newId),
+    body_sha256: { before: bodySha(before, byBefore), after: bodySha(after, byAfter) },
+  }
 }
 
 /** 子进程读数归一：退出码 / 原始尾部 / 解析出来的 JSON（解析不了 ⇒ `json: null` + `json_error`）。 */
@@ -430,14 +493,63 @@ export function realDecisionFiles() {
   return readdirSync(dir).filter((n) => n.endsWith('.md')).sort().map((n) => `构案/${n}`)
 }
 
+/**
+ * `git ls-files`（只列给定路径）。
+ *
+ * 🔴 `quotePath: true` = `-c core.quotepath=false` —— **非 ASCII 路径才不会被转义成 `"\345\206..."`**。
+ *    与 `.tools/tree-at-commit.mjs:162` 同一口径；bare `git ls-files` 的转义与否取决于**机器上的
+ *    `core.quotepath` 配置** ⇒ 拿它做判据会变成"这台机器绿、那台机器红"（`bug-20261112-08`）。
+ */
+export function gitLsFiles({ cwd, paths = [], quotePath = false }) {
+  const args = quotePath
+    ? ['-c', 'core.quotepath=false', 'ls-files', '--', ...paths]
+    : ['ls-files', '--', ...paths]
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8' })
+  const stdout = String(r.stdout ?? '')
+  return {
+    args,
+    exit: r.status,
+    stdout,
+    files: stdout.split(/\r?\n/).filter((l) => l.trim() !== ''),
+    stderr: String(r.stderr ?? '').trim().slice(0, 200),
+  }
+}
+
+/** 跑一条 git 命令（只给夹具仓用；返回 exit/stdout/stderr）。 */
+export function gitRun(cwd, args) {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8' })
+  return { exit: r.status, stdout: String(r.stdout ?? ''), stderr: String(r.stderr ?? '').trim().slice(0, 300) }
+}
+
+/**
+ * 一个**只用来量 `core.quotepath`** 的夹具仓：一个中文路径、已提交、本地配置 `core.quotepath=true`。
+ * 它证明"这条 git 腿钉的是 `-c core.quotepath=false`，不是这台机器的配置"（契约 §8.1 / `bug-20261112-08`）。
+ */
+export function quotepathRepo(caseId) {
+  const root = path.join(runRoot(), 'git-quotepath', String(caseId).toLowerCase())
+  mkdirSync(path.join(root, '决议'), { recursive: true })
+  writeFileSync(path.join(root, '决议', 'INDEX.md'), '# 构案录（夹具）\n', 'utf8')
+  const id = ['-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid']
+  if (!existsSync(path.join(root, '.git'))) {
+    gitRun(root, ['init', '-q'])
+    gitRun(root, [...id, 'add', '-A'])
+    gitRun(root, [...id, 'commit', '-q', '-m', 'fixture'])
+  }
+  gitRun(root, ['config', 'core.quotepath', 'true'])
+  return root
+}
+
 /** 真树的 `git ls-files -- 决议`（没有 `.git` 的副本 ⇒ `{git: false}`）。 */
 export function realTrackedFiles() {
   if (!existsSync(path.join(PATHS.repo, '.git'))) return { git: false, files: [], exit: null, stderr: '' }
-  const r = spawnSync('git', ['ls-files', '--', '决议'], { cwd: PATHS.repo, encoding: 'utf8' })
+  const literal = gitLsFiles({ cwd: PATHS.repo, paths: ['决议'], quotePath: true })
+  const bare = gitLsFiles({ cwd: PATHS.repo, paths: ['决议'], quotePath: false })
   return {
     git: true,
-    exit: r.status,
-    files: String(r.stdout ?? '').split(/\r?\n/).filter((l) => l.trim() !== ''),
-    stderr: String(r.stderr ?? '').trim().slice(0, 200),
+    exit: literal.exit,
+    files: literal.files,
+    /** 对照读数：不打 `-c core.quotepath=false` 时同一棵树列出来的形状（机器配置一变就不同）。 */
+    bare: { exit: bare.exit, files: bare.files, stdout_head: bare.stdout.slice(0, 400) },
+    stderr: literal.stderr,
   }
 }

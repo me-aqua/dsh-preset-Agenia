@@ -79,6 +79,9 @@ export const COUNT_RULES = Object.freeze({
   'file-code': { label: '份代码文件', kind: 'file', comments: 'code' },
   site: { label: '处（出现点）', kind: 'site', comments: 'any' },
   'site-code': { label: '处代码行', kind: 'site', comments: 'code' },
+  /** 零代码决定（契约 §3.2）：这一条**按设计就没有实现**，实现数恒为 0。
+   *  探针照旧扫，命中的文件进读数 `files`（witness）—— 它是"库里唯一留下的痕迹"，不是实现。 */
+  '零代码': { label: '零代码决定', kind: 'zero', comments: 'any' },
 })
 /** 概念表不写第五列时的口径（= 契约 §3.2 的老口径）。 */
 export const DEFAULT_COUNT_RULE = 'file'
@@ -340,6 +343,8 @@ export function isCommentLine(line) {
  * `row.rule` ∈ `COUNT_RULES`（缺省 `file`）：
  *   · `file` / `file-code` ⇒ `implementations` 是**相对 root 的 posix 路径**（升序）；
  *   · `site` / `site-code` ⇒ 元素是 `路径:行号`（一个实现点一行），所以 `count === implementations.length` 永远成立。
+ *   · `零代码` ⇒ 实现数**恒为 0**（这一条按设计没有实现）；探针命中的文件只进 `files` 当见证，
+ *     `implementations` 为空 —— 页上印 `0 | 零代码决定`（契约 §3.2）。
  * `-code` 的那两种只认**代码行**（`isCommentLine` 的保守判法）。
  *
  * @returns {{count:number, implementations:string[], scan_empty:boolean, read_failures:Array<object>,
@@ -381,14 +386,15 @@ export function countConcept(root, row) {
     else implementations.push(rel)
   }
   implementations.sort()
+  const zeroCode = rule.kind === 'zero'
   return {
-    count: implementations.length,
-    implementations,
+    count: zeroCode ? 0 : implementations.length,
+    implementations: zeroCode ? [] : implementations,
     scan_empty: abs.size === 0,
     read_failures: failures.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
     rule: ruleName,
     unit: rule.label,
-    sites: implementations.length,
+    sites: zeroCode ? 0 : implementations.length,
     files: files.sort(),
   }
 }

@@ -87,6 +87,37 @@ test('DEC-06 新机制票无构案编号 ⇒ 拒（exit 1 + GATE2-NO-DECISION）
     refusal('dangling-number', { decisions: live, card: { ticket_kind: '新机制', decision: '0009' } }, 'GATE2-DANGLING-DECISION', '0009')
     // 拒：票类缺（fail-closed）
     refusal('kind-missing', { decisions: live, card: { ticket_kind: null, decision: '0001' } }, 'GATE2-TICKET-KIND-MISSING')
+    // ── M3 的五种"豁免不许自封"形状（每个一份卡、一个码；契约 §6.2 的五码）────────────────
+    // 拒：票类只写在正文里（头块里没有）—— 正文里的一句不许替闸做主
+    refusal('kind-not-structured', {
+      decisions: live,
+      card: { headerLines: ['构案: 0001'], body: '票类: 新机制' },
+    }, 'GATE2-TICKET-KIND-NOT-STRUCTURED')
+    // 拒：头块里两行 `票类` —— 谁也不知道按哪一条走
+    refusal('kind-ambiguous', {
+      decisions: live,
+      card: { headerLines: ['票类: 新机制', '票类: 数据', '构案: 0001'] },
+    }, 'GATE2-TICKET-KIND-AMBIGUOUS')
+    // 拒：头块里两行 `构案` —— 一张卡两个编号
+    refusal('decision-ambiguous', {
+      decisions: live,
+      card: { headerLines: ['票类: 新机制', '构案: 0001', '构案: 0001'] },
+    }, 'GATE2-DECISION-AMBIGUOUS')
+    // 拒：数据票缺 `构案` 那一行（缺行 ≠ 零个编号：豁免要写出来）
+    refusal('exemption-not-explicit', {
+      decisions: live,
+      card: { headerLines: ['票类: 数据'] },
+    }, 'GATE2-EXEMPTION-NOT-EXPLICIT')
+    // 拒：数据票却声明要改机制代码面（自相矛盾）
+    refusal('exemption-contradicted', {
+      decisions: live,
+      card: { headerLines: ['票类: 数据', '构案: —', '改动面: presets/agenia/lib/memory.mjs'] },
+    }, 'GATE2-EXEMPTION-CONTRADICTED')
+    // 过：数据票 + 改动面全在数据面上（豁免成立，且读数带名字）—— 证明上一条不是"数据票一律拒"
+    pass('exemption-data-surface', {
+      decisions: live,
+      card: { headerLines: ['票类: 数据', '构案: —', '改动面: .team/数据/x.json'] },
+    })
 
     caseFail(problems)
   })
@@ -116,6 +147,15 @@ test('DEC-07 三份说明书各一行（测试 / 实现 / 评审），且 team/d
     const green = clauseProblems(synthetic)
     rec.readings.knife_with_clause = green
     if (green.length !== 0) push('CLAUSE-KNIFE', `[刀] 三份都给那一行时不许有红，实得 ${JSON.stringify(green)}`)
+    // 旧措辞（评审岗"跑 census"）**不再算数**：新判据钉的是"向组长要读数（带单位）"。这一条证明没放宽。
+    const oldReview = clauseProblems({
+      ...synthetic,
+      review: '# 伊莫金 · 独立评审\n\n**三段核 + 跑 census** —— 构案 ③ 点的那条路在代码里真的在跑吗（给 file:line）。\n',
+    })
+    if (oldReview.length !== 1 || oldReview[0].role !== 'review' || oldReview[0].code !== 'CLAUSE-MISSING') {
+      push('CLAUSE-KNIFE', `[刀] 只写旧措辞（\`三段核 + 跑 census\`）时必须红 review 一条，实得 ${JSON.stringify(oldReview)}`
+        + ' —— 否则"没有命令行却被要求跑 census"这句话被放过了（T2）')
+    }
     const broken = { ...synthetic }
     const testSpec = ROLE_CLAUSES.find((s) => s.role === 'test')
     broken.test = `# 岗位\n\n${testSpec.clause.slice(0, 3)}\n${testSpec.clause.slice(3)}\n`

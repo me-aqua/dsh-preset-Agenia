@@ -75,6 +75,14 @@ test('DEC-04 INDEX 与派生叶逐行对账：改页上一个数 ⇒ 红；改�
           const live = new Map((check.json.decisions ?? [])
             .filter((d) => d.series === '构案' && d.status === '生效')
             .map((d) => [d.topic, d.id]))
+          // 「单位」列（M4 / T4）：页上必须带着单位，而且与 census 里那个概念的 unit 同值。
+          const indexText = readText(path.join(PATHS.repo, '决议', 'INDEX.md')) ?? ''
+          const headerLine = indexText.split(/\r?\n/).find((l) => /^\|\s*概念\s*\|/.test(l.trim())) ?? ''
+          rec.readings.real_index_header = headerLine
+          if (!headerLine.includes('单位')) {
+            push('INDEX-UNIT-MISSING', `[真树] INDEX 的表头里没有「单位」列（实得 ${JSON.stringify(headerLine)}）—— `
+              + '概念表声明了计数口径，页上就必须印出单位（契约 §4.2 / M4）')
+          }
           for (const row of rows) {
             const c = byConcept.get(row.concept)
             if (c === undefined) {
@@ -86,6 +94,14 @@ test('DEC-04 INDEX 与派生叶逐行对账：改页上一个数 ⇒ 红；改�
             const derivedDecision = live.get(row.concept) ?? '—'
             if (row.decision !== derivedDecision) {
               push('INDEX-ROW-MISMATCH', `[真树] \`${row.concept}\` 的「构案」：页上 ${JSON.stringify(row.decision)}，生效构案派生 ${JSON.stringify(derivedDecision)}`)
+            }
+            const wantUnit = typeof c.unit === 'string' ? c.unit.trim() : ''
+            if (wantUnit === '') {
+              push('INDEX-UNIT-MISSING', `[真树] census 的 \`${row.concept}\` 没有单位（rule=${JSON.stringify(c.rule)}）—— 数不带单位就只是一个数`)
+            } else if (typeof row.unit !== 'string' || row.unit.trim() === '') {
+              push('INDEX-UNIT-MISSING', `[真树] INDEX 的 \`${row.concept}\` 这一行没有读出「单位」（页上 ${JSON.stringify(row.unit)}）`)
+            } else if (row.unit.trim() !== wantUnit) {
+              push('INDEX-UNIT-MISMATCH', `[真树] \`${row.concept}\` 的单位：页上 ${JSON.stringify(row.unit)}，概念表派生 ${JSON.stringify(wantUnit)}`)
             }
           }
         }
@@ -190,7 +206,7 @@ test('DEC-05 census：一个概念两处实现 ⇒ 2；一处 ⇒ 1；零处 ⇒
     }
 
     /** 一个概念、一份夹具：`count` / `implementations` / `total` 都是手写期望。 */
-    const scene = ({ tag, concepts, impls, want, wantFiles, note }) => {
+    const scene = ({ tag, concepts, impls, want, wantFiles, note, wantUnit = '份文件（含注释）' }) => {
       const built = buildScene({ caseId: 'DEC-05', tag, concepts, impls, index: null })
       const run = runCensus(built.root)
       const c = (run.json?.concepts ?? []).find((x) => x.concept === concepts[0].concept) ?? null
@@ -209,6 +225,9 @@ test('DEC-05 census：一个概念两处实现 ⇒ 2；一处 ⇒ 1；零处 ⇒
       }
       if (c.count !== (c.implementations ?? []).length) {
         push('CENSUS-COUNT', `[DEC-05/${tag}] count (${c.count}) 必须等于 implementations.length (${(c.implementations ?? []).length})`)
+      }
+      if (c.unit !== wantUnit) {
+        push('CENSUS-UNIT', `[DEC-05/${tag}] \`${concepts[0].concept}\` 的单位必须是 ${JSON.stringify(wantUnit)}，实得 ${JSON.stringify(c.unit)}（rule=${JSON.stringify(c.rule)}）`)
       }
       if (run.json.total_concepts !== 1) push('CENSUS-TOTAL', `[DEC-05/${tag}] total_concepts 必须是 1，实得 ${JSON.stringify(run.json.total_concepts)}`)
       // 🔴 **人读那一页**：老板读的就是这一页（契约 §3.3）—— 它必须印得出那个数，而不只是 JSON 里有。
@@ -255,19 +274,57 @@ test('DEC-05 census：一个概念两处实现 ⇒ 2；一处 ⇒ 1；零处 ⇒
       tag: 'outside-glob', concepts: [A], impls: [{ rel: 'docs/not-scanned.mjs', needle: 'LEDGER_PROBE_A' }],
       want: 0, wantFiles: [], note: '文件在盘上、含探针，但不在 `扫描` 那一列里 ⇒ 0（否则"扫描"是装饰）',
     })
+    // ⑥ 零代码决定（T5 / 契约 §3.2）：声明 `计数口径 = 零代码` ⇒ 实现数恒为 0，单位是 `零代码决定`；
+    //    探针照旧命中（那两份文件是**见证**，不是实现）。刀：同一条探针换成 `file` ⇒ 数出 2 ——
+    //    证明这个 0 来自**那一列声明的口径**，不是探针没扫到。
+    {
+      const P = { concept: '面板搁置', probe: 'PANEL_OFF_MARK', scan: 'src/**/*.mjs', owner: '组长' }
+      scene({
+        tag: 'zero-code',
+        concepts: [{ ...P, rule: '零代码' }],
+        impls: [{ rel: 'src/p1.mjs', needle: 'PANEL_OFF_MARK' }, { rel: 'src/p2.mjs', needle: 'PANEL_OFF_MARK' }],
+        want: 0,
+        wantFiles: [],
+        wantUnit: '零代码决定',
+        note: '声明的零代码决定：探针命中两份见证文件，但实现数恒为 0',
+      })
+      // 刀：同一个探针，口径换回 `file` ⇒ 2（"0"是口径说的，不是探针没命中）
+      scene({
+        tag: 'zero-code-knife',
+        concepts: [{ ...P, rule: 'file' }],
+        impls: [{ rel: 'src/p1.mjs', needle: 'PANEL_OFF_MARK' }, { rel: 'src/p2.mjs', needle: 'PANEL_OFF_MARK' }],
+        want: 2,
+        wantFiles: ['src/p1.mjs', 'src/p2.mjs'],
+        note: '同一份探针、口径 file ⇒ 2 —— 零代码那一行的 0 是"声明的口径"给的',
+      })
+      // 见证读数：零代码那一跑里 `files` 必须看得见那两份（探针没被丢掉，只是不算实现）
+      const witness = rec.readings['zero-code']?.concept?.files ?? []
+      if (!(Array.isArray(witness) && witness.length === 2)) {
+        push('CENSUS-ZERO-WITNESS', `[DEC-05/zero-code] 零代码那一行的 \`files\`（见证）必须是两份，实得 ${JSON.stringify(witness)} —— `
+          + '探针仍要扫：它是"库里唯一留下的痕迹"，丢掉它这一行就变成了"什么都没量"')
+      }
+    }
 
-    // ⑥ 真树那一腿：census 读得出、且每个概念都在盘上有实现（今天红在"概念表不在"）
+    // ⑦ 真树那一腿：census 读得出、单位都在；**0 只许出现在声明了 `零代码` 的行上**
     {
       const run = runCensus(PATHS.repo)
-      rec.readings.real = { exit: run.exit, ok: run.json?.ok ?? null, codes: codesOf(run.json), concepts: (run.json?.concepts ?? []).map((c) => ({ concept: c.concept, count: c.count })) }
+      rec.readings.real = {
+        exit: run.exit, ok: run.json?.ok ?? null, codes: codesOf(run.json),
+        concepts: (run.json?.concepts ?? []).map((c) => ({ concept: c.concept, count: c.count, unit: c.unit, rule: c.rule })),
+      }
       if (run.json === null) {
         push('TREE-MISSING', `[真树] census 在仓库根上读不出 JSON（${run.json_error}）—— \`决议/概念表.md\` 今天不在（Gate 3 建）`)
       } else if (!expectCodes(problems, run, [], push, { label: 'DEC-05/real' })) {
         // 红因已在码集里
       } else {
-        const zero = rec.readings.real.concepts.filter((c) => c.count === 0)
+        const zero = rec.readings.real.concepts.filter((c) => c.count === 0 && c.rule !== '零代码')
         if (zero.length > 0) {
-          push('CENSUS-REAL-ZERO', `[真树] 这些概念数出 0 处实现：${JSON.stringify(zero)} —— 概念表里的探针要么写错、要么扫描范围没盖住（0 是合法值，但**在真树上**多半是探针错了）`)
+          push('CENSUS-REAL-ZERO', `[真树] 这些概念数出 0 处实现、而口径不是 \`零代码\`：${JSON.stringify(zero)} —— `
+            + '探针要么写错、要么扫描范围没盖住。真树上 0 只有一种合法形状：这一行**声明**了 `零代码`（零代码决定）。')
+        }
+        const missingUnit = rec.readings.real.concepts.filter((c) => typeof c.unit !== 'string' || c.unit.trim() === '')
+        if (missingUnit.length > 0) {
+          push('CENSUS-UNIT', `[真树] 这些概念没有单位：${JSON.stringify(missingUnit.map((c) => c.concept))} —— 数不带单位就只是一个数`)
         }
       }
     }

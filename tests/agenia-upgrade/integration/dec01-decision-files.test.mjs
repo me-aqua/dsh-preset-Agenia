@@ -14,8 +14,8 @@ import path from 'node:path'
 import { before, test } from 'node:test'
 import { caseFail, caseHold, preflight, problem, runCase } from '../support/evidence.mjs'
 import {
-  CHECK, REAL_LEDGER, codesOf, expectCodes, goodDecision0001, goodDecisionProduct0001, goodLedger,
-  messagesOf, realDecisionFiles, realTrackedFiles, runCheck, toolPresent,
+  CHECK, REAL_LEDGER, codesOf, expectCodes, gitLsFiles, goodDecision0001, goodDecisionProduct0001, goodLedger,
+  messagesOf, quotepathRepo, realDecisionFiles, realTrackedFiles, runCheck, toolPresent,
 } from '../support/decision-ledger.mjs'
 
 before(() => {
@@ -88,6 +88,26 @@ test('DEC-01 决议文件的固定七键头：缺一个键 ⇒ 红且点名那�
       if (missing.length > 0) {
         push('TREE-NOT-IN-GIT', `[真树] \`git ls-files -- 决议\` 少了 ${JSON.stringify(missing)}（实得 ${tracked.files.length} 条）`
           + ' —— 决定是项目资产，必须进 git（定形 §三.1）')
+      }
+      // 🔴 **刀**（`bug-20261112-08`）：这条腿必须钉 `-c core.quotepath=false`，不许钉这台机器的配置。
+      //    夹具仓**本地把 core.quotepath 设成 true**：同一个路径，bare 那一次会被转义；加了 `-c` 才是字面量。
+      //    刀不咬住（bare 也列出字面量）⇒ 这条腿只是"恰好绿"，记 `GIT-QUOTEPATH-KNIFE`。
+      const knifeRepo = quotepathRepo('DEC-01')
+      const literal = gitLsFiles({ cwd: knifeRepo, paths: ['决议'], quotePath: true })
+      const bare = gitLsFiles({ cwd: knifeRepo, paths: ['决议'], quotePath: false })
+      const probe = '决议/INDEX.md'
+      rec.readings.git_quotepath_knife = {
+        repo: knifeRepo,
+        literal: { exit: literal.exit, files: literal.files },
+        bare: { exit: bare.exit, files: bare.files, stdout_head: bare.stdout.slice(0, 240) },
+      }
+      if (!literal.files.includes(probe)) {
+        push('GIT-QUOTEPATH-KNIFE', `[刀] 夹具仓里加了 \`-c core.quotepath=false\` 仍列不出 ${JSON.stringify(probe)}（实得 ${JSON.stringify(literal.files)}）`
+          + ' —— 那这条 git 腿量的不是路径，是别的什么')
+      }
+      if (bare.files.includes(probe)) {
+        push('GIT-QUOTEPATH-KNIFE', `[刀] 夹具仓把 \`core.quotepath\` 设成 true 之后，bare \`git ls-files\` 仍列出字面路径 ${JSON.stringify(probe)}`
+          + `（stdout=${JSON.stringify(bare.stdout.slice(0, 160))}）—— 这把刀没咬住，这条腿就只是"恰好绿"（\`bug-20261112-08\`）`)
       }
     }
 
