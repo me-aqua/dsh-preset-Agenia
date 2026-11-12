@@ -274,6 +274,16 @@ export function deletableVerdict(rawTarget, { label, liveRoot, allowedRoots }) {
 /** 这些 rename 失败是可重试的（Windows 上被占用的句柄）：①被占用 ②设备忙 ③权限瞬时拒绝。 */
 const RETRYABLE_RENAME = new Set(['EPERM', 'EBUSY', 'EACCES'])
 
+/**
+ * `install` / `rollback` 这两条写盘路径的 rename 重试上限 = **6**（其余调用者仍是本函数的默认 5）。
+ *
+ * 为什么不是 5：并集之前 CLI 那两份各自重试 **6** 次（构案 0006 §背景 那张表），RC-2 的前提也写的是
+ * "6 次不够" —— 取并集时如果只留共享件的默认 5，两条**最重的写盘路径**就各少一次重试
+ * （最坏情形少约 240 ms 退避预算），而且没有任何判据盖住这个数。⇒ 那两处调用点显式传本常量。
+ * 出厂件（`bin/rollback.mjs`）里这个常量随内联正文一起过去 —— 它的第 2 处写盘路径读的是同一个 6。
+ */
+const CLI_WRITE_MAX_ATTEMPTS = 6
+
 /** 同步睡（无第三方依赖）：主线程上用 `Atomics.wait` 阻塞，不引入定时器与事件循环。 */
 function sleepSync(ms) {
   if (!(ms > 0)) return
@@ -385,6 +395,7 @@ export function writeFileAtomic(file, data, options = {}) {
   return ioError('rename 重试耗尽', { path: target, attempts: maxAttempts })
 }
 // @inline-end 原子写并集正文（这一行与上面那条 begin 标记成对；缺一条 ⇒ 发布拒跑）
+export { CLI_WRITE_MAX_ATTEMPTS }
 
 /** 原子写一份 JSON（缩进 2 + 结尾换行：与本目录其它产物同一形状）。 */
 export function writeJsonAtomic(file, obj, options = {}) {

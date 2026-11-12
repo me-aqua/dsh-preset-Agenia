@@ -2,17 +2,21 @@
 /**
  * `rollback.mjs` —— 从**备份**把活体代码退回装之前那一刻。**只回代码，不回数据。**
  *
+ * @ship-header-begin 这一段是**本文件（repo 那一份）**的自述；`publish-staged` 发布时把标记之间整段
+ *   换成**出厂件口径**的同一段（`install.mjs::shippedHeaderLines()`）。出厂件里不许出现"本文件引用了
+ *   共享件"这类自述 —— 那一份的正文里根本没有共享件。
  * 🔴 **出厂件是单文件、零静态引用**（拍板 Q6）。理由：回滚的适用场合正是"刚装上去的那一版是坏的" ——
  *    这时候它**不能依赖任何新装上去的东西**（新 `lib/`、新 `bin/`、新模块）。
  *    ⚠️ **本文件是 repo 那一份，不是出厂件**：两支 CLI 与共享件去重是构案 0006 的目的，所以本文件
- *    `import` 了 `../lib/atomic.mjs`（原子写并集正文 + 删除三闸，两者在同一份共享件里）。
+ *    引用了 `../lib/atomic.mjs`（原子写并集正文 + 删除三闸，两者在同一份共享件里）。
  *    **出厂件由 `install.mjs --op publish-staged` 在发布时造出来**：它把 `lib/atomic.mjs` 的
- *    原子写并集正文（删除三闸 + 原子写）**逐字内联**进来、去掉那条静态 import ⇒ 用户拿到的那一份
- *    仍然是单文件、零静态 import，且 `node:` 内建仍走 `await import()`（运行时取，不构成"依赖新代码"）。
+ *    原子写并集正文（删除三闸 + 原子写）**逐字内联**进来、去掉那条静态引用 ⇒ 用户拿到的那一份
+ *    仍然是单文件、零静态引用，且 `node:` 内建仍走运行时取（不构成"依赖新代码"）。
  *    两棵树的这处差是**受控差异**，由 `<staging>/target-lag.json` 声明（点名本文件那一个路径）。
  *    判据：`INS-02 ①` / `ENV-02 ROLLBACK-IMPORT` 扫**出厂件**；`ATM-01` 扫**本文件**（一份定义 + 调用点）。
  *  · 路径判据（`canonical` / `isUnder` / `pathVerdict`）与哈希仍就地一份 —— 它们是本脚本自己的策略，
  *    不跨脚本共用。
+ * @ship-header-end
  *
  * ── 它做什么（四步，顺序固定）──────────────────────────────────────────────
  *   ① **靶子先过关**：`--target` 必须显式给、绝对、非 UNC、非 C 盘、非空、**盘上真实存在**
@@ -52,7 +56,7 @@
  *   `--target <dir>`（别名 `--live`）· `--backup <dir>` · `--require-backup` · `--dry-run` · `--op rollback`
  *   退出码：0 成功（含 NO-BACKUP）· 2 用法 · 3 路径 · 4 IO · 5 校验 · 7 数据/清单缺失 · 8 内部
  */
-import { deletableVerdict, writeFileAtomic } from '../lib/atomic.mjs'
+import { CLI_WRITE_MAX_ATTEMPTS, deletableVerdict, writeFileAtomic } from '../lib/atomic.mjs'
 
 const fs = await import('node:fs')
 const path = await import('node:path')
@@ -176,7 +180,7 @@ function resolveWithin(base, rel) {
  * **每个**删除/递归删除点删之前都要过这三关（① 解析绝对路径 ② 身份 marker ③ 落点在允许删的根之下；
  * 缺一即拒删，稳定码 + 出声，绝不"先删了再说"）。
  *
- * 判定本身**只有一份**：`../lib/atomic.mjs::deletableVerdict()`（与原子写收残渣读的是同一个判定）。
+ * 判定本身**只有一份**：`lib/atomic.mjs` 的 `deletableVerdict()`（出厂件里那一段是发布时逐字内联进来的同一段正文）。
  * 本文件只留两个适配层 —— `refuseDelete()`（把判定包成 CLI 错误）与 `assertDeletableTarget()`（过 ⇒ 给落点）。
  * 出厂件（用户跑的那一份）里这段判定是**发布时逐字内联**进去的（单文件零静态 import —— 拍板 Q6）。
  */
@@ -405,7 +409,9 @@ function opRollback(args) {
       rows.push({ path: v.rel, action: v.live_sha256_before === null ? 'create' : 'restore', wrote: false, before_sha256: v.live_sha256_before, after_sha256: null, expected_sha256: v.sha256 })
       continue
     }
-    const r = writeFileAtomic(v.dst_abs, fs.readFileSync(v.src_abs), { allowedRoot: targetRoot })
+    // 这两条写盘路径的重试上限是 **6**（并集之前 CLI 就是 6；RC-2 的前提也是"6 次不够"）——
+    // 共享件的默认 5 只留给其余调用者。见 `lib/atomic.mjs::CLI_WRITE_MAX_ATTEMPTS`。
+    const r = writeFileAtomic(v.dst_abs, fs.readFileSync(v.src_abs), { allowedRoot: targetRoot, maxAttempts: CLI_WRITE_MAX_ATTEMPTS })
     if (!r.ok) {
       const err = cliError(r.code, r.message, { path: v.rel })
       // 收残留临时件被拒 ⇒ 那一次删除的判定也进报文（主码仍是 E_TXN_IO —— 两个码各表各的）。

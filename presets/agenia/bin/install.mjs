@@ -60,8 +60,11 @@
  *   存在的理由：staged 里那三份是**交付物**，`presets/agenia/bin/` 这三份是**来源** ——
  *   没有这一步，两边就会各改各的。源按 `--repo` 解析：`<repo>/presets/agenia/bin/<name>`；
  *   `--repo` 缺省 = 按本文件位置推导的仓库根（不是预设根）。
- *   🔴 **回滚那一份不是逐字节拷贝**：出厂件必须**单文件、零静态 import**（拍板 Q6），
- *   所以发布时把 `lib/atomic.mjs` 的原子写并集正文**逐字内联**进去、去掉那条静态 import。
+ *   🔴 **回滚那一份不是逐字节拷贝**：出厂件必须**单文件、零静态引用**（拍板 Q6），所以发布时
+ *   ① 把 `lib/atomic.mjs` 的原子写并集正文**逐字内联**进去、去掉那条指向共享件的静态语句；
+ *   ② 把 repo 那一份里"本文件是 repo 那一份、引用了共享件"那段自述**换成出厂件口径**（见
+ *   `rollback.mjs` 的 `@ship-header-begin` / `@ship-header-end`）。发布只对拼出来的字节下断言：
+ *   零静态 import / 头是生成的那一段 / 头里没有 `import` 这个词 / 头里自报"出厂件" / 三个并集指纹在。
  *   这处"两棵树必然不同"由 `<stagedPreset>/../target-lag.json` 声明成**受控差异**
  *   （点名 `bin/rollback.mjs` + 双向 sha256 + 字节差 + 理由/批准/收口条件）。
  */
@@ -69,7 +72,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { deletableVerdict, gateReport, writeFileAtomic } from '../lib/atomic.mjs'
+import { CLI_WRITE_MAX_ATTEMPTS, deletableVerdict, gateReport, writeFileAtomic } from '../lib/atomic.mjs'
 
 const SELF = fileURLToPath(import.meta.url)
 const REPO = path.resolve(path.dirname(SELF), '..', '..', '..')
@@ -482,7 +485,9 @@ function opInstall(args) {
         appliedByPath.set(f.path, { wrote: false, live_sha256_after: f.live_sha256_before })
         continue
       }
-      const r = writeFileAtomic(f.dst_abs, readFileSync(f.src_abs), { allowedRoot: liveRoot })
+      // 这两条写盘路径的重试上限是 **6**（并集之前 CLI 就是 6；RC-2 的前提也是"6 次不够"）——
+      // 共享件的默认 5 只留给其余调用者。见 `lib/atomic.mjs::CLI_WRITE_MAX_ATTEMPTS`。
+      const r = writeFileAtomic(f.dst_abs, readFileSync(f.src_abs), { allowedRoot: liveRoot, maxAttempts: CLI_WRITE_MAX_ATTEMPTS })
       if (!r.ok) {
         const err = cliError(r.code, r.message, { path: f.path })
         // 收残留临时件被拒 ⇒ 那一次删除的判定也进报文（主码仍是 E_TXN_IO —— 两个码各表各的）。
@@ -558,16 +563,24 @@ function opInstall(args) {
 
 // ── 出厂件的内联（`--op publish-staged` 用）──────────────────────────────────
 /**
- * 出厂件 = 用户跑的那一份 `bin/rollback.mjs`，必须**单文件、零静态 import**（拍板 Q6：
+ * 出厂件 = 用户跑的那一份 `bin/rollback.mjs`，必须**单文件、零静态引用**（拍板 Q6：
  * 回滚的适用场合正是"刚装上去的那一版是坏的"，它不能依赖新装上去的 `lib/`）。
  *
- * 而 repo 里的那一份（去重之后）是**正常 import 共享件**的。两者的差由发布这一步抹平：
- * 发布时把 `lib/atomic.mjs` 的**原子写并集正文**（删除三闸 + `RETRYABLE_RENAME` + `sleepSync` +
- * `ioError` + `cleanupTemp` + `writeFileAtomic`）**逐字**内联进去，并去掉指向共享件的那条静态 import。
- * 边界由 `lib/atomic.mjs` 里的 `@inline-begin` / `@inline-end` 标记定：标记缺一条 ⇒ 发布当场失败
- * （宁可拒发，也不发一份跑不动的回滚脚本）。
+ * 而 repo 里的那一份（去重之后）是**正常引用共享件**的。两者的差由发布这一步抹平，共两处：
+ *   ① **内联**：把 `lib/atomic.mjs` 的**原子写并集正文**（删除三闸 + `RETRYABLE_RENAME` +
+ *      `CLI_WRITE_MAX_ATTEMPTS` + `sleepSync` + `ioError` + `cleanupTemp` + `writeFileAtomic`）**逐字**
+ *      拼进去，并去掉指向共享件的那条静态语句。边界由 `lib/atomic.mjs` 里的
+ *      `@inline-begin` / `@inline-end` 标记定：标记缺一条 ⇒ 发布当场失败。
+ *   ② **换头**：repo 那一份文件头里那段自述说的是"本文件是 repo 那一份、引用了共享件"——
+ *      它在**出厂件里是假话**（那一份正文里根本没有共享件）。`rollback.mjs` 里那段自述被
+ *      `@ship-header-begin` / `@ship-header-end` 夹住，发布时整段换成 `shippedHeaderLines()`
+ *      生成的**出厂件口径**的同一段。
  *
- * ⚠️ 这是**切片**，不是第二份实现：源只有 `lib/atomic.mjs` 那一份，这里不重写正文。
+ * 发布这一步**只对拼出来的字节下断言**（不看输入、不看意图）：零静态 import · 头必须是生成的那一段
+ * （逐字）· 头里不许出现 `import` 这个词 · 头里必须有"出厂件" · 头里不许出现"本文件是 repo 那一份"
+ * · 三个并集指纹都在。任何一条不成立 ⇒ `E_INTERNAL` 拒发（宁可拒发，也不发一份自述造假的回滚脚本）。
+ *
+ * ⚠️ 这是**切片 + 换段**，不是第二份实现：源只有 `lib/atomic.mjs` 与 `rollback.mjs` 各一份。
  */
 /** 发布时从 repo 那一份里去掉的静态 import（指到共享件的那一条；出厂件直连内建）。 */
 const SHIPPED_DROPPED_IMPORTS = ['../lib/atomic.mjs']
@@ -575,11 +588,9 @@ const SHIPPED_DROPPED_IMPORTS = ['../lib/atomic.mjs']
 const SHIPPED_INLINE_SOURCE_FILE = 'atomic.mjs'
 /** 发布名单里**唯一**发成出厂件形状的那一支（其余逐字节拷贝）。 */
 const SHIPPED_ROLLBACK_NAME = 'rollback.mjs'
-/** 内联侧把 `node:fs` / `node:crypto` 的那几个名字绑起来（出厂件用 `await import()` 取内建命名空间）。 */
-const SHIPPED_BINDINGS = [
-  'const { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } = fs',
-  'const { randomBytes } = crypto',
-]
+/** repo 那一份 rollback 里"这段自述发布时要换掉"的标记（夹在同一段块注释里）。 */
+const SHIPPED_HEADER_BEGIN = '@ship-header-begin'
+const SHIPPED_HEADER_END = '@ship-header-end'
 /** 出厂件必须带着的并集指纹（与 `tests/…/support/staged-artifact.mjs::INLINE_ANCHORS` 同一份语义）。 */
 const SHIPPED_FINGERPRINTS = ['fsyncSync', 'RETRYABLE_RENAME', 'wx']
 
@@ -595,32 +606,117 @@ function inlineSection(source, label) {
 }
 
 /**
- * 造出厂件 `bin/rollback.mjs` 的正文：repo 那一份（去掉共享件 import）+ 内联块。
+ * **出厂件口径**的文件头（块注释里的那几行，各自以 ` * ` 开头）。
+ *
+ * 🔴 这一段里**不许出现 `import` 这个词**（发布会对拼出来的头断言一次）：出厂件不引用任何东西，
+ *    写"零静态 import"已经是在陈述一个它不参与的概念。要说到共享件，就说"源/内联/受控差异"。
+ */
+function shippedHeaderLines() {
+  return [
+    ' * 🔴 **单文件自足、零静态引用**（拍板 Q6）：回滚的适用场合正是"刚装上去的那一版是坏的" ——',
+    ' *    所以本文件**不依赖任何新装上去的东西**（新 `lib/`、新 `bin/`、新模块）。',
+    ' *    ⚠️ **本文件是出厂件（用户跑的那一份）**：文件名与 repo 里的 `presets/agenia/bin/rollback.mjs`',
+    ' *    相同，但正文不同 —— 原子写并集正文（fsync · `wx` 独占临时件 · 重试码 · `allowedRoot` 删除闸 ·',
+    ' *    统一信封）与删除三闸都是**发布时逐字内联**进来的（发布者：`presets/agenia/bin/install.mjs` 的',
+    ' *    `--op publish-staged`；源：`presets/agenia/lib/atomic.mjs` 里 `@inline-begin`…`@inline-end`',
+    ' *    之间那段正文）。内建模块在内联块之后**运行时**取得 —— 那不是对已装代码的依赖。',
+    ' *    重试上限 **6 次**（`CLI_WRITE_MAX_ATTEMPTS`，随内联正文一起进来）—— 与 repo 那一份同一个数。',
+    ' *    两棵树的这处差是**受控差异**，由 `<staging>/target-lag.json` 声明（点名 `bin/rollback.mjs`）。',
+    ' *    ⇒ 要改回滚脚本：改 repo 那一份，再 `--op publish-staged` 重发；**别直接改本文件**。',
+    ' *  · 路径判据（`canonical` / `isUnder` / `pathVerdict`）与哈希仍就地一份 —— 它们是本脚本自己的策略。',
+  ]
+}
+
+/** 把 repo 那一份头里 `@ship-header-begin`…`@ship-header-end` 之间整段换成出厂件口径（标记行一起去掉）。 */
+function swapShippedHeader(lines) {
+  const begin = lines.findIndex((l) => l.includes(SHIPPED_HEADER_BEGIN))
+  const end = lines.findIndex((l) => l.includes(SHIPPED_HEADER_END))
+  if (begin < 0 || end < 0 || end <= begin) {
+    throw cliError('E_INTERNAL',
+      `repo 那一份 rollback 里没有成对的 ${SHIPPED_HEADER_BEGIN} / ${SHIPPED_HEADER_END} 标记（begin=${begin} / end=${end}）—— `
+        + '换不掉"本文件是 repo 那一份"那段自述，拒绝发布')
+  }
+  return [...lines.slice(0, begin), ...shippedHeaderLines(), ...lines.slice(end + 1)]
+}
+
+/** 一份正文里**头一个块注释**（`/**` 到配对的 `*​/`）—— 断言只看这一段。 */
+function leadingBlockComment(text) {
+  const start = text.indexOf('/**')
+  if (start < 0) return null
+  const end = text.indexOf('*/', start + 3)
+  if (end < 0) return null
+  return text.slice(start, end + 2)
+}
+
+/** 内联侧把 `node:fs` / `node:crypto` 的那几个名字绑起来 —— 名字**从共享件的 import 行现读**，不手抄。 */
+function shippedBindingLines(source) {
+  const namesFrom = (spec) => {
+    const m = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*'${spec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`).exec(source)
+    return m === null ? [] : m[1].split(',').map((s) => s.trim()).filter((s) => s !== '')
+  }
+  const fsNames = namesFrom('node:fs')
+  const cryptoNames = namesFrom('node:crypto')
+  if (fsNames.length === 0 || cryptoNames.length === 0) {
+    throw cliError('E_INTERNAL',
+      `共享件的 import 行读不出内建名字（node:fs ${fsNames.length} 个 / node:crypto ${cryptoNames.length} 个）—— `
+        + '出厂件会缺绑定、在用户回滚那一刻才炸，拒绝发布')
+  }
+  return [`const { ${fsNames.join(', ')} } = fs`, `const { ${cryptoNames.join(', ')} } = crypto`]
+}
+
+/**
+ * 造出厂件 `bin/rollback.mjs` 的正文：repo 那一份（换头 + 去掉共享件 import）+ 内联块。
  *
  * 内联块插在"运行时取内建"那四行之后：函数声明会提升，但 `RETRYABLE_RENAME` / 内联绑定这种
  * `const` 不会 —— 插在那儿保证它先求值、再有人调 `writeFileAtomic`。
  */
 function shippedRollbackSource(repoRoot, source) {
   const libFile = path.join(repoRoot, 'presets', 'agenia', 'lib', 'atomic.mjs')
-  const body = inlineSection(readFileSync(libFile, 'utf8'), 'presets/agenia/lib/atomic.mjs')
+  const libSource = readFileSync(libFile, 'utf8')
+  const body = inlineSection(libSource, 'presets/agenia/lib/atomic.mjs')
+  const headerParagraph = shippedHeaderLines().join('\n')
   const inline = [
     '// ── 出厂件内联：原子写并集正文（删除三闸 + fsync/wx/重试/信封）（发布时由 `presets/agenia/bin/install.mjs` 逐字拼进来）──',
     '// 来源：`presets/agenia/lib/atomic.mjs` 那一对 `@inline-begin` / `@inline-end` 之间的正文。',
-    '// 出厂件因此**零静态 import**（拍板 Q6）：下面只是把本文件已经取到的内建命名空间里的名字绑到局部。',
-    ...SHIPPED_BINDINGS,
+    '// 出厂件因此**零静态引用**（拍板 Q6）：下面只是把本文件已经取到的内建命名空间里的名字绑到局部。',
+    ...shippedBindingLines(libSource),
     '',
     body,
     '// ── 内联结束 ──',
   ].join('\n')
-  const kept = String(source).split('\n').filter((line) => !SHIPPED_DROPPED_IMPORTS.some((spec) => line.includes(`'${spec}'`) && /^\s*import\s/.test(line)))
+  const kept = swapShippedHeader(String(source).split('\n'))
+    .filter((line) => !SHIPPED_DROPPED_IMPORTS.some((spec) => line.includes(`'${spec}'`) && /^\s*import\s/.test(line)))
   const anchor = kept.findIndex((line) => line.includes("await import('node:url')"))
   if (anchor < 0) throw cliError('E_INTERNAL', 'repo 那一份 rollback 里找不到取 node:url 的那一行 —— 内联块没有可插的锚点，拒绝发布')
   const out = [...kept.slice(0, anchor + 1), '', inline, '', ...kept.slice(anchor + 1)].join('\n')
-  // 自检（发布这一步自己判一次；不合格就别发）：零静态 import + 并集指纹在
+  // ── 断言（只对拼出来的字节；任何一条不成立就拒发）────────────────────────────
+  // ① 零静态 import（整份）
   const staticLines = out.split('\n').filter((l) => /^\s*import\s/.test(l))
   if (staticLines.length > 0) {
-    throw cliError('E_INTERNAL', `出厂件里还有 ${staticLines.length} 行静态 import —— 内联之后它就"不能直接跑"了，拒绝发布`)
+    throw cliError('E_INTERNAL',
+      `出厂件里还有 ${staticLines.length} 行静态 import —— 内联之后它就"不能直接跑"了，拒绝发布：`
+        + staticLines.slice(0, 3).map((l) => JSON.stringify(l.trim().slice(0, 120))).join(' · '))
   }
+  // ② 头里必须是**出厂件口径**那一段（逐字）：换头被跳过 / 被改过，都会在这里露出来
+  const header = leadingBlockComment(out)
+  if (header === null) throw cliError('E_INTERNAL', '出厂件读不出文件头（块注释）—— 换头这一步没有落点，拒绝发布')
+  if (!header.includes(headerParagraph)) {
+    throw cliError('E_INTERNAL',
+      '出厂件文件头里没有发布器生成的那一段（换头被跳过 / 被改过）—— 出厂件不许留着"本文件是 repo 那一份"这类自述：'
+        + `头一行 ${JSON.stringify(header.split('\n')[0].slice(0, 120))}。拒绝发布`)
+  }
+  // ③ 头里不许出现 `import` 这个词（一句话都不许）：出厂件不引用任何东西
+  if (/\bimport\b/.test(header)) {
+    throw cliError('E_INTERNAL', '出厂件文件头里出现 `import` 这个词 —— 出厂件零静态引用，头里那句话会让人以为它引用共享件。拒绝发布')
+  }
+  // ④ 头必须自报"出厂件"，且不许留着 repo 那一份的自述
+  if (!header.includes('出厂件')) {
+    throw cliError('E_INTERNAL', '出厂件文件头没有说明"这一份是出厂件" —— 读的人会把它当成 repo 那一份。拒绝发布')
+  }
+  if (header.includes('本文件是 repo 那一份')) {
+    throw cliError('E_INTERNAL', '出厂件文件头还留着"本文件是 repo 那一份"的自述 —— 那是换头前的文字。拒绝发布')
+  }
+  // ⑤ 三个并集指纹都在（内联真的发生了）
   const missing = SHIPPED_FINGERPRINTS.filter((f) => !out.includes(f))
   if (missing.length > 0) throw cliError('E_INTERNAL', `出厂件缺并集指纹 ${missing.join(' / ')} —— 内联没发生，拒绝发布`)
   return out
