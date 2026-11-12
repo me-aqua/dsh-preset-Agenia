@@ -1046,6 +1046,26 @@ export const BATCH_AU = ['DEC-01', 'DEC-02', 'DEC-03', 'DEC-04', 'DEC-05', 'DEC-
 export const BATCH_AV = ['DUP-01']
 
 /**
+ * 批次 AW（2026-11-12 · Gate 2 · 史山清查 B1）—— **原子写归一**（`ATM-01`）。
+ *
+ * 契约：`.team/test/2026-11-12/CONTRACT-史山清查-B1.md`（口径 / 五条腿 / 刀 / 分母的唯一出处）。
+ * 定形：`.team/leader/2026-11-12/定形-B1-原子写归一.md`。决定：`决议/构案/0006-原子写归一.md`。
+ *
+ * 一句话：`writeFileAtomic` 在同一仓库里**只许有一份定义**（`lib/atomic.mjs`），
+ * 而且那一份必须是两份旧实现的**并集** —— fsync · `wx` 独占建 · allowedRoot 删除闸 ·
+ * 两套重试码（`EPERM`/`EBUSY`/`EACCES`）· 统一信封 `{ok, code, message, path, bytes, attempts}`；
+ * install / rollback 两个调用点改成读它（不再读 `{ok,tmp}`）。
+ * 单开一组 `atomic-write` 而不是并进 `install`：那一族判**装上 / 回得去的行为**，
+ * 这一格判**同一功能的实现有几份、并集有没有缺一角**（红的时候一眼看得出是"装坏了"还是"又长出一份"）。
+ * 腿 6 还**点名**它依赖的既有格（`INS-01`/`INS-02`/`INS-03`/`ENV-02`/`STAT-01`）—— 那几条由同一跑证明。
+ * 🔴 **Gate 2 时它红得对**（3 份定义 · 两个调用点各自留着一份 · 共享件没有删除闸）；
+ * Gate 3 之后应当是绿的 —— 但 `rollback` 那一半有**一条待裁决的硬冲突**（拍板 Q6 / `INS-02 ①` /
+ * `ENV-02 ROLLBACK-IMPORT`），见契约 §0.2 与这一格读数里的 `collision_q6`。
+ * ⚠️ 不进 `FROZEN_IDS`（后加批次各自以显式清单存在）。
+ */
+export const BATCH_AW = ['ATM-01']
+
+/**
  * 已落笔的批次（A–AV）。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -1071,7 +1091,7 @@ export const BATCH_AV = ['DUP-01']
  * 批次 AV 是**史山清查 A1**（`DUP-01`，2026-11-12 第 2 关）：`.tools/*.mjs` 不许有 `bin/*.mjs` 的第二份拷贝
  * （旧名 `agenia-` 归一；逐字节相同与已分叉两种都红）。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP, AQ: BATCH_AQ, AR: BATCH_AR, AS: BATCH_AS, AT: BATCH_AT, AU: BATCH_AU, AV: BATCH_AV }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP, AQ: BATCH_AQ, AR: BATCH_AR, AS: BATCH_AS, AT: BATCH_AT, AU: BATCH_AU, AV: BATCH_AV, AW: BATCH_AW }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -1110,7 +1130,7 @@ const BATCH_OF = (id) =>
                                                                       : BATCH_AJ.includes(id) ? 'AJ'
                                                                         : BATCH_AK.includes(id) ? 'AK'
                                                                           : BATCH_AL.includes(id) ? 'AL'
-                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP' : BATCH_AQ.includes(id) ? 'AQ' : BATCH_AR.includes(id) ? 'AR' : BATCH_AS.includes(id) ? 'AS' : BATCH_AT.includes(id) ? 'AT' : BATCH_AU.includes(id) ? 'AU' : BATCH_AV.includes(id) ? 'AV'
+                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP' : BATCH_AQ.includes(id) ? 'AQ' : BATCH_AR.includes(id) ? 'AR' : BATCH_AS.includes(id) ? 'AS' : BATCH_AT.includes(id) ? 'AT' : BATCH_AU.includes(id) ? 'AU' : BATCH_AV.includes(id) ? 'AV' : BATCH_AW.includes(id) ? 'AW'
                                                                   : null
 
 const F = {
@@ -1337,6 +1357,11 @@ const F = {
    *  这一格判"树里有没有第二份工具"（真树两个扫描面 + 三份 scratch 夹具）。
    *  量具 `support/duplicate-tools.mjs`（扫描面 / 工具键 / 判词只有那一份）。 */
   dup: 'integration/dup01-tool-copies.test.mjs',
+  /** 批次 AW（2026-11-12 · Gate 2 · 史山清查 B1）：**原子写归一**（`ATM-01`）。
+   *  单开一个文件而不是并进 `install-rollback`：那一族判"装得对不对 / 回得去吗"，
+   *  这一格判"同一功能的实现有几份、并集有没有缺一角"（真树 + 一份 scratch 副本 + 九把刀）。
+   *  量具 `support/atomic-writers.mjs`（计数 / 落点 / 重试码 / 调用点 / 刀只有那一份）。 */
+  atm: 'integration/atm01-atomic-unify.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1707,6 +1732,11 @@ const ROWS = [
   // 契约 `.team/test/2026-11-12/CONTRACT-史山清查-A1.md`（口径 / 五条腿 / 刀 / 分母的唯一出处）。
   // 定形 `.team/leader/2026-11-12/定形-A1-三份死拷贝.md`。量具 `support/duplicate-tools.mjs`。
   ['DUP-01', 'tool-copies', F.dup, '**同一个工具的第二个拷贝**：`.tools/*.mjs` 与 `presets/agenia/bin/*.mjs` 撞上同一个工具键 ⇒ 红（`.tools` 侧按历史前缀 `agenia-` 归一，**通用规则、没有第二份名字表**；口径唯一出处 = 契约 §0.3，旧名三对的来历见定形 §一 与 Gate 2 读数）；**逐字节相同与同名已分叉两种都红**，报文点名两边路径与大小。五条腿：**A 真树**两个扫描面 0 对，读数印出 `.tools` / `presets/agenia/bin` 各几份 `*.mjs`（缺目录 / 空目录 ⇒ `DUP-SCAN-DIR` / `DUP-SCAN-EMPTY` 红，不许真空真）；A 的控制 = 真树两目录的干净镜像（绿、份数 > 0），A 的刀 = 镜像里放回三份旧名（两份逐字节相同 + 一份截短）⇒ 恰好 3 对、恰好 1 对已分叉。**B 副本红**：scratch 树里把 `bin/install.mjs` 逐字节复制成 `.tools/agenia-install.mjs` ⇒ 恰好 1 对、两边大小相同、报文/读数点名两边路径与大小；删掉副本 ⇒ 绿（刀），加副本之前 ⇒ 绿（控制）。**C 分叉红**：同一份副本改长 ⇒ **仍然红**、`bytes_equal:false`、读数里两个大小不同（陈旧副本的形状）；删掉 ⇒ 绿（刀）。**D 阴性对照**：`.tools/agenia-alpha.mjs` + `bin/beta.mjs` ⇒ 绿（两个扫描面各 1 份）；同名 `.py`（两边都有 `alpha.py`）⇒ 仍绿（扫描面只认 `*.mjs`）；**刀**：加一份 `bin/alpha.mjs`（与旧名归一后同名）⇒ 恰好 1 对 —— 证明判的是工具键，不是"两边有文件"。**E 发布源只许指 live `bin/`**（Gate 4 修 MF-3 补）：`install.mjs` 的 `opPublishStaged` 体内 **0 处 `.tools` 段**、它列的源名字都在 live `bin/`（读数带 body 行数与名单）；**刀** = scratch 副本里把源路径改回 `\'.tools\'` ⇒ 恰好 1 条 `DUP-PUBLISH-TOOLS`，名字仍都在 live bin（红只来自那一段）。⚠️ 扫描面 = 两个目录的**顶层** `*.mjs`；`.tools/lib` / `_staging` / `_backup` 不在面上（库 / 测试靶子 / 备份里的同名件是合法的）。🔴 **Gate 2 时红得对**（真树三对：install / rollback 逐字节相同 · release-scan 已分叉 36,104 vs 38,749 B）；Gate 3 删除之后是绿的（`dev-a1-gate3-final1`：217 · RED 0 / GREEN 216 / HOLD 1）。', '批次 AV'],
+  // ── 批次 AW（2026-11-12 · Gate 2 · 史山清查 B1）：原子写归一（1）─────────────────────────
+  // 契约 `.team/test/2026-11-12/CONTRACT-史山清查-B1.md`（口径 / 七类腿 / 九把刀 / 分母的唯一出处）。
+  // 定形 `.team/leader/2026-11-12/定形-B1-原子写归一.md`。决定 `决议/构案/0006-原子写归一.md`。
+  // 量具 `support/atomic-writers.mjs`。
+  ['ATM-01', 'atomic-write', F.atm, '**原子写只剩一份实现，而且那一份是并集**：`presets/**` 里 `function writeFileAtomic` **恰好 1 处**（`presets/agenia/lib/atomic.mjs`），两份 CLI 副本（`bin/install.mjs` / `bin/rollback.mjs`）为 0；并集四条各一把刀 —— **a fsync**（桩住 `fsyncSync`：成功写必须出现，且次序 `writeSync` → `fsyncSync` → `renameSync`、fd 同一个；刀 = 删掉它 ⇒ 红）· **b `wx`**（临时件 flags 含 `wx`、不用 `writeFileSync` 建、与目标同目录；刀 = `wx`→`w` ⇒ 红）· **c allowedRoot 删除闸**（写失败后闸拒绝清临时件 ⇒ 临时件还在 · 目标没被写 · 出声或具名码 · `cleanup_refused.delete_gate` 在；反面控制 = 闸放行时必须真删；默认不给 allowedRoot 时清残渣的旧行为不变；两把刀 = 把闸放宽到临时件目录 / 把拒绝分支写成 `if (false)`）· **d 重试码**（`EPERM`/`EBUSY`/`EACCES` 各重试一次都要成、`ENOENT` 一次就放弃；结构面 = 重试码只剩 `RETRYABLE_RENAME` 一份，声明外没有内联数组；两把刀 = 把 `EACCES` 改名 / 追加一份内联码集）。**e 信封**：成功 `{ok:true, code:null, message, path, bytes, attempts}`、失败 `{ok:false, code, message, path}`，两个调用点必须 import 共享件 + 真调 + 不读 `.tmp`；刀 = 换成旧 CLI 形状的桩（`{ok,tmp}`）⇒ 红。**f 既有行为不破**：本格**点名**它依赖的既有格（`INS-01`/`INS-02`/`INS-03`/`ENV-02`/`STAT-01`）并核对它们还在，绿不绿由同一跑的入口结算证明。⚠️ 并集 d 的"两套码"在成员上是恒等操作（两套都是 `EPERM/EBUSY/EACCES`）⇒ 判覆盖与"只剩一份"，判不了"两套都留"。🔴 **Gate 2 时红得对**（3 处定义 · 两个调用点各自留着一份 · 共享件没有删除闸 · 成功信封没 `message`）；Gate 3 之后应为绿，但 `rollback` 那一半压着一条待裁决的硬冲突（拍板 Q6 / `INS-02 ①` / `ENV-02 ROLLBACK-IMPORT` ⟂ 定形"rollback 改为 import"）—— 见契约 §0.2 与读数 `collision_q6`。', '批次 AW'],
 ]
 
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
@@ -1919,6 +1949,10 @@ export const GROUP_COUNTS = {
    *  （`.tools/*.mjs` 与 `presets/agenia/bin/*.mjs` 撞上同一个工具键）；红的时候一眼看得出是"功能坏了"还是
    *  "死拷贝又长出来了"—— 后者删掉就完事，前者要改实现。 */
   'tool-copies': 1,
+  /** 批次 AW（2026-11-12 · Gate 2 · 史山清查 B1）—— **原子写归一**（`ATM-01`）。单开一组而不是并进
+   *  `install`：那一族判**装上 / 回得去的行为**，这一组判**同一功能的实现有几份、并集有没有缺一角**
+   *  （fsync / wx / 删除闸 / 重试码 / 信封）。红的时候一眼看得出是"装坏了"还是"又长出一份实现"。 */
+  'atomic-write': 1,
 }
 
 /**
@@ -1938,7 +1972,7 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U 起的每一个后加批次（U…AV）都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV, ...BATCH_AW]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
   if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO/AP/AQ/AR/AS/AT/AU/AV 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
@@ -1967,7 +2001,7 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV, ...BATCH_AW]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
 
