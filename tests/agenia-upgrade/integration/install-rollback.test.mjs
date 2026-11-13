@@ -21,9 +21,16 @@
  *   · **腿 ④ · staged 那一对：装 → 回 一轮**（行为面；RC-1 的绊线）：同一份现场先 `install` 再 `rollback`，
  *     两个 exit 0 · 代码回旧版 · **数据逐字节不动** · 未知文件在 · 目标树无 `.tmp-*` / `*.partial` 残渣。
  *     载具就是本文件既有的 `makeScene()` + `runScript()`（跑 staged 的 `bin/`）—— 不另造一套。
+ *     拒绝控制按契约 §3 C4 咬**三格**：exit 7 · `E_MANIFEST_MISSING` · **零写入**（拒绝前后现场树哈希相同），
+ *     外加三把刀（写一次 / 换码 / 改退出码）各翻一格。
+ *   · **腿 ⑥ · 宿主侧适配器三处副本**（0008 §⑧ 显式例外 · 第 4 关 r1 `MF-4`）：`canonical` / `insideTestScene`
+ *     在模块 + 两支 CLI 三处**归一之后逐字相同**；`refuseDelete` 三处**同码 / 同 `delete_gate` / `err.name` 逐处钉死**。
+ *     量具 = `support/host-adapters.mjs`（模块那份算三处里的第三处，不是第四份）。
+ *   · **单位**（第 4 关 r1 `MF-3`）：读数里凡是 `*_bytes` 都是**字节**（`Buffer.byteLength`，与 `statSync().size` 同值），
+ *     不是 `String.length` 的 UTF-16 code unit；要字符数读 `*_chars`。
  */
 import { before, describe, test } from 'node:test'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { ENV, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, runId, runRoot, stagingReadings, treeHash, writeJson } from '../support/evidence.mjs'
@@ -32,6 +39,7 @@ import { loadStagedModule, readStagedText, runCli, stagingExists, stagingPath } 
 import { staticImportLines } from '../support/staged-artifact.mjs'
 import { extractFunctionText } from '../support/atomic-writers.mjs'
 import { SHARED_HELPERS, helperDefinitionVerdict, scanHelperDefinitions } from '../support/cli-guards-shared.mjs'
+import { HOST_ADAPTERS, hostAdapterVerdict, scanHostAdapters } from '../support/host-adapters.mjs'
 import { INLINE_BLOCKS, beginOf, blockOf } from '../support/injector-inline.mjs'
 import { LEFTOVER_SHAPE } from '../support/temp-scan.mjs'
 
@@ -159,7 +167,36 @@ describe('integration · install-rollback (INS)', () => {
       const src = readStagedText(path.join('bin', ROLLBACK))
       const imports = staticImportLines(src)
       const repoImports = staticImportLines(readFileSync(repoRollback, 'utf8'))
-      rec.readings.rollback_bytes = src.length
+      // 🔴 **MF-3（第 4 关 r1）· 这一格是字节，不是 UTF-16 字符数**。
+      //    `String.length` 数的是 code unit；这份文件里有大量中文注释 ⇒ 拿它当"出厂件字节数"会与
+      //    `target-lag.json` 的 `statSync` 值打架（`mig-rules-18`：数字必须带单位、能复现）。
+      //    尺子用两条证明：① 盘上 `statSync().size` 与这一格同值（这一格按构造就是字节）；
+      //    ② 非 ASCII 样本（2 个 UTF-16 unit = 6 字节）证明本运行时两个口径**不相等**，不是"碰巧一样"。
+      const shippedBytes = Buffer.byteLength(src, 'utf8')
+      const shippedChars = src.length
+      const shippedStatBytes = statSync(subject).size
+      const rulerSample = '回滚'
+      const rulerSampleBytes = Buffer.byteLength(rulerSample, 'utf8')
+      rec.readings.rollback_bytes = shippedBytes
+      rec.readings.rollback_chars = shippedChars
+      rec.readings.rollback_byte_ruler = {
+        unit: 'bytes（UTF-8）',
+        field: 'rollback_bytes = Buffer.byteLength(src, "utf8")',
+        stat_size_bytes: shippedStatBytes,
+        chars_utf16_units: shippedChars,
+        bytes_equal_stat: shippedBytes === shippedStatBytes,
+        body_is_non_ascii: shippedBytes !== shippedChars,
+        api_sample: { text: rulerSample, utf8_bytes: rulerSampleBytes, utf16_units: rulerSample.length, differ: rulerSampleBytes !== rulerSample.length },
+        note: '这一格只许当"字节"引用；要字符数读 rollback_chars。卡上的 50,458 B 来自声明/statSync，不许引这里。',
+      }
+      if (shippedBytes !== shippedStatBytes) {
+        push('INS02-BYTES-RULER', `rollback_bytes（${shippedBytes}）≠ 盘上 statSync().size（${shippedStatBytes}）—— `
+          + '这一格必须是**字节**：读的是 `Buffer.byteLength(src, "utf8")`，不是 `src.length`（UTF-16 code unit）')
+      }
+      if (rulerSampleBytes === rulerSample.length) {
+        push('INS02-BYTES-RULER', `尺子自证失败：非 ASCII 样本 ${JSON.stringify(rulerSample)} 的 UTF-8 字节数（${rulerSampleBytes}）`
+          + `竟然等于它的字符数（${rulerSample.length}）—— 这个运行时/量具不是按 UTF-8 字节算的，"字节"这个词就不成立`)
+      }
       rec.readings.rollback_imports = imports.map((x) => `${x.line}: ${x.text}`)
       rec.readings.q6_subjects = {
         judged: subject,
@@ -410,6 +447,98 @@ describe('integration · install-rollback (INS)', () => {
       }
       rec.readings.helper_definitions_knives = censusKnives
 
+      // ══ 腿 ⑥ · 宿主侧适配器：**三处副本**（构案 0008 §⑧ 显式例外 · 第 4 关 r1 `MF-4`）════════
+      // 病：`lib/cli-guards.mjs` 里那三个宿主侧适配器（`canonical` / `insideTestScene` / `refuseDelete`）
+      //     是内联块要的**词法绑定**，不能合并；但共享件里那**第三份**原来没有任何判据钉住
+      //     （`CG-FORK-COUNT` 只数两支 CLI）—— 改共享件里的 `canonical`，出厂件内联块读的还是 rollback
+      //     那份，**全绿**。这一腿把三处钉住：
+      //       · 正文族（`canonical` / `insideTestScene`）：三处**归一之后逐字相同**（尺子见 support/host-adapters.mjs）；
+      //       · 字段族（`refuseDelete`）：真跑一次比 `code` / `delete_gate`（**同一个对象**）/ `err.name`（逐处钉死）。
+      // 份数口径 = **3**（模块 + 两支 CLI 各 1）；模块那一份是第三处，不是第四份。
+      const adapterReading = scanHostAdapters({ root: PATHS.repo })
+      const adapterVerdict = hostAdapterVerdict(adapterReading)
+      rec.readings.host_adapter_copies = {
+        line: adapterReading.line,
+        pins: adapterReading.pins,
+        files: adapterReading.files,
+        normalize_ruler: adapterReading.normalize.ruler,
+        aliases: adapterReading.normalize.aliases,
+        per_name: Object.fromEntries(HOST_ADAPTERS.map((name) => {
+          const row = adapterReading.per_name[name]
+          return [name, {
+            role: row.role,
+            copy_count: row.copy_count,
+            copies: row.copies.map((c) => `${c.file}:${c.line ?? '（没有）'}（${c.definitions} 处定义${c.digest === null ? '' : ` · 归一摘要 ${String(c.digest).slice(0, 12)}…`}）`),
+            text_equal: row.text_equal ?? null,
+            majority_files: row.majority_files ?? null,
+            differing_files: row.differing_files ?? null,
+            first_difference: row.first_difference ?? null,
+            field_equal: row.field_equal ?? null,
+            names: row.names ?? null,
+            pinned_names: row.pinned_names ?? null,
+            names_literal_equal: row.names_literal_equal ?? null,
+            names_match_pins: row.names_match_pins ?? null,
+          }]
+        })),
+        outside_pins: adapterReading.outside_pins,
+        verdict: adapterVerdict.verdict,
+        note: '模块那一份是**三处里的第三处**（不是第四份）：份数口径 = 模块 + 两支 CLI 各 1 = 3。'
+          + '钉子外的同名物（`release-scan.mjs` 的 `canonical`）归 `CG-FORK-COUNT` 那一族，这里只记读数。',
+      }
+      for (const p of adapterVerdict.problems) push(p.code, `[腿⑥ 适配器] ${p.message}`, p.detail)
+
+      // 控制 + 五把刀：三份钉子文件逐字复制进 scratch 树，只改**一处**；真树一个字节都不碰。
+      const adapterKnives = []
+      const adapterNote = (id, want, got, ok, detail) => {
+        const entry = { id, want, got, status: ok ? 'bit' : 'dead', detail: detail ?? null }
+        adapterKnives.push(entry)
+        return entry
+      }
+      const [MODULE_REL, INSTALL_REL, ROLLBACK_REL] = adapterReading.pins
+      {
+        const copyCounts = HOST_ADAPTERS.map((n) => `${n}=${adapterReading.per_name[n].copy_count}`).join(' / ')
+        const ok = adapterVerdict.verdict === 'GREEN' && HOST_ADAPTERS.every((n) => adapterReading.per_name[n].copy_count === 3)
+        adapterNote('control-three-copies', 'GREEN + 每个名字 3 处（模块算一处）', adapterVerdict.problems.map((p) => p.code), ok, { copy_counts: copyCounts })
+        if (!ok) {
+          push('CG-ADAPTER-CONTROL', `[腿⑥ 控制] 真树必须绿、且三个名字各**恰好 3 处**（模块 + 两支 CLI）；`
+            + `实得 verdict=${adapterVerdict.verdict} · ${copyCounts}`)
+        }
+      }
+      const adapterKnife = ({ id, file, find, replace, wantCode }) => {
+        const sources = Object.fromEntries(adapterReading.pins.map((rel) => [rel, readFileSync(path.join(PATHS.repo, ...rel.split('/')), 'utf8')]))
+        const before = sources[file]
+        const after = before.replace(find, replace)
+        if (after === before) {
+          adapterNote(id, wantCode, ['（锚点没命中）'], false, { file, anchor: find.slice(0, 80) })
+          push('CG-ADAPTER-KNIFE-ANCHOR', `[刀 ${id}] 在 ${file} 里找不到要改的那一段（${JSON.stringify(find.slice(0, 80))}）`
+            + ' —— 这一刀建不起来；刀锚在函数正文上：谁改那一段，谁同批改这把刀')
+          return
+        }
+        const root = ensureMarkedDir(path.join(runRoot(), 'fixtures', 'ins02', `adapters-${id}`), { runRoot: runRoot(), runId: runId(), kind: 'agenia-test-root' })
+        for (const [rel, text] of Object.entries(sources)) {
+          const abs = path.join(root, ...rel.split('/'))
+          mkdirSync(path.dirname(abs), { recursive: true })
+          writeFileSync(abs, rel === file ? after : text, 'utf8')
+        }
+        const read = scanHostAdapters({ root })
+        const verdict = hostAdapterVerdict(read)
+        const codes = verdict.problems.map((p) => p.code)
+        const namedFile = verdict.problems.some((p) => p.message.includes(file))
+        const ok = codes.includes(wantCode) && namedFile
+        adapterNote(id, wantCode, codes, ok, { file, named_file: namedFile, messages: verdict.problems.map((p) => p.message).slice(0, 2) })
+        if (!codes.includes(wantCode)) {
+          push('CG-ADAPTER-KNIFE-DEAD', `[刀 ${id}] 把 ${file} 里的那一处改过之后必须红 \`${wantCode}\`，实得 ${codes.join(' / ') || '（一条都没有）'}`)
+        } else if (!namedFile) {
+          push('CG-ADAPTER-KNIFE-NAMES', `[刀 ${id}] 红报文没有点名 ${file}：${verdict.problems.map((p) => p.message).join(' | ').slice(0, 400)}`)
+        }
+      }
+      adapterKnife({ id: 'adapter-canonical-text', file: MODULE_REL, find: 'return fs.realpathSync.native(abs)', replace: 'return path.resolve(abs)', wantCode: 'CG-ADAPTER-TEXT' })
+      adapterKnife({ id: 'adapter-insideTestScene-text', file: INSTALL_REL, find: 'for (let i = 0; i < 4; i += 1)', replace: 'for (let i = 0; i < 3; i += 1)', wantCode: 'CG-ADAPTER-TEXT' })
+      adapterKnife({ id: 'adapter-refuseDelete-code', file: ROLLBACK_REL, find: 'const err = cliError(code, message)', replace: "const err = cliError('E_INTERNAL', message)", wantCode: 'CG-ADAPTER-CODE' })
+      adapterKnife({ id: 'adapter-refuseDelete-gate', file: ROLLBACK_REL, find: 'err.delete_gate = gate', replace: 'err.delete_gate = null', wantCode: 'CG-ADAPTER-GATE' })
+      adapterKnife({ id: 'adapter-refuseDelete-name', file: MODULE_REL, find: "err.name = 'CliGuardError'", replace: "err.name = 'CliGuardError2'", wantCode: 'CG-ADAPTER-NAME' })
+      rec.readings.host_adapter_knives = adapterKnives
+
       // ══ 腿 ④ · staged 那**一对**：装 → 回 一轮（行为面；构案 0008 RC-1 的绊线）══════════════
       // 为什么在 INS-02：这一格的判据对象就是"两支 CLI"，而 B3 之后**出厂件里那 8 个 helper 来自内联块** ——
       // 内联块坏了 / 发布时少带了模块，第一现场会出现在"装完再回"这条路上（RC-1：「行为与今天不等」）。
@@ -451,16 +580,140 @@ describe('integration · install-rollback (INS)', () => {
         if (!seqReading.unknown_kept) seqPush('INS02-PAIR-UNKNOWN', '装→回一轮动了未知文件 —— 现场必须保留')
         if (remnants.length > 0) seqPush('INS02-PAIR-TEMP', `装→回一轮之后目标树里有临时件残渣（${remnants.join(' / ')}）—— 原子写的临时件必须清干净（按前缀扫，不钉死 \`.tmp\`）`)
       }
-      // 控制 · 同一套载具**能报非 0**：`--require-backup` 指到一个不存在的备份 ⇒ 必须拒（exit != 0）
-      const refusal = runScript(ROLLBACK, { op: 'rollback', extra: ['--target', seq.code, '--backup', path.join(seqRoot, 'no-such-backup'), '--require-backup'] })
-      seqReading.refusal_control = { exit_code: refusal.exit_code, code: refusal.json?.error?.code ?? null }
-      if (refusal.exit_code === 0) {
-        seqPush('INS02-PAIR-CONTROL', '`--require-backup` 指到一个不存在的备份时竟然报成功 —— 这条腿的两个"exit 0"就是没有牙齿的')
+      // ══ 控制 · 拒绝路径必须咬住契约的**那一个**非 0 + 零写入（契约 §3 C4 · 第 4 关 r1 `MF-2`）══
+      // 契约（`CONTRACT-史山清查-B3.md:174`）：`--require-backup` 指到不存在的备份 ⇒ **exit 7
+      // （`E_MANIFEST_MISSING`）且现场零写入**。
+      // 🔴 原来这里只记读数、只断言"非 0 / 没变成新版" ⇒ 任何非 0（路径错 exit 3、内部错 exit 8）
+      //    都能让这条控制变绿，"零写入"也没量过。现在三格各一条断言，零写入按**拒绝前后整棵现场树的
+      //    哈希**量（不是"看一眼 inject.js"）。
+      /** 拒绝控制的三格；同一条判据下面也拿去量三把刀 ⇒ 每格都能**单独翻面**。 */
+      const refusalCriterion = ({ exit_code: exitCode, code, tree_changed: treeChanged, backup_dir_created: backupCreated }) => {
+        const cells = {
+          exit: exitCode === 7,
+          code: code === 'E_MANIFEST_MISSING',
+          zero_write: treeChanged === false && backupCreated === false,
+        }
+        return { cells, holds: cells.exit && cells.code && cells.zero_write }
       }
-      seqReading.injector_after_refusal = existsSync(path.join(seq.code, 'inject.js')) ? readFileSync(path.join(seq.code, 'inject.js'), 'utf8').trim().slice(0, 80) : null
-      if (seqReading.injector_after_refusal !== null && seqReading.injector_after_refusal.includes('新版')) {
-        seqPush('INS02-PAIR-CONTROL', '被拒的那一次回滚把代码改回了新版（现场被动过）—— 拒必须零写入')
+      /** 两棵现场树之间的差异（`+新增 / ~内容变了 / -消失`）—— 红的时候能直接指到哪一份被写了。 */
+      const relDiff = (before, after) => {
+        const b = new Map((before.files ?? []).map((f) => [f.rel, f.sha256]))
+        const a = new Map((after.files ?? []).map((f) => [f.rel, f.sha256]))
+        const out = []
+        for (const [rel, sha] of a) {
+          if (!b.has(rel)) out.push(`+${rel}`)
+          else if (b.get(rel) !== sha) out.push(`~${rel}`)
+        }
+        for (const rel of b.keys()) if (!a.has(rel)) out.push(`-${rel}`)
+        return out.sort()
       }
+      const refusalBackup = path.join(seqRoot, 'no-such-backup')
+      const refusalBefore = treeHash(seq.code)
+      const refusal = runScript(ROLLBACK, { op: 'rollback', extra: ['--target', seq.code, '--backup', refusalBackup, '--require-backup'] })
+      const refusalAfter = treeHash(seq.code)
+      const refusalRun = {
+        exit_code: refusal.exit_code,
+        code: refusal.json?.error?.code ?? null,
+        tree_changed: refusalBefore.sha256 !== refusalAfter.sha256 || refusalBefore.count !== refusalAfter.count,
+        changed_rels: relDiff(refusalBefore, refusalAfter),
+        backup_dir_created: existsSync(refusalBackup),
+      }
+      const refusalVerdict = refusalCriterion(refusalRun)
+      seqReading.refusal_control = {
+        ...refusalRun,
+        tree_before: { sha256: refusalBefore.sha256, count: refusalBefore.count },
+        tree_after: { sha256: refusalAfter.sha256, count: refusalAfter.count },
+        backup_dir: refusalBackup,
+        cells: refusalVerdict.cells,
+        holds: refusalVerdict.holds,
+        contract: 'CONTRACT-史山清查-B3.md:174（C4）：exit 7 · E_MANIFEST_MISSING · 零写入',
+      }
+      if (!refusalVerdict.cells.exit) {
+        seqPush('INS02-PAIR-CONTROL', `拒绝控制的退出码必须是 **7**（契约 §3 C4 的 \`E_MANIFEST_MISSING\` 那一档），实得 ${refusal.exit_code}`)
+      }
+      if (!refusalVerdict.cells.code) {
+        seqPush('INS02-PAIR-CONTROL', `拒绝控制的错误码必须是 **E_MANIFEST_MISSING**，实得 ${JSON.stringify(refusalRun.code)} `
+          + '—— 任何非 0（路径错 exit 3 / 内部错 exit 8）都不算咬住契约')
+      }
+      if (!refusalVerdict.cells.zero_write) {
+        seqPush('INS02-PAIR-CONTROL', `拒绝必须**零写入**，实得目标树 ${refusalBefore.sha256} → ${refusalAfter.sha256}`
+          + `（${refusalBefore.count} → ${refusalAfter.count} 份；变化 ${refusalRun.changed_rels.join(' / ') || '（无）'}）`
+          + ` · 备份目录 ${refusalRun.backup_dir_created ? '**被创建了**' : '没被创建'}`)
+      }
+      const injectedAfterRefusal = existsSync(path.join(seq.code, 'inject.js')) ? readFileSync(path.join(seq.code, 'inject.js'), 'utf8').trim() : null
+      seqReading.injector_after_refusal = injectedAfterRefusal === null ? null : injectedAfterRefusal.slice(0, 80)
+
+      /**
+       * **三把刀**（`MF-2` 的"让它写一次 ⇒ 必须红"）：把**出厂件本身**逐字复制进 scratch，只改拒绝那一条
+       * 分支（或退出码表），再跑**同一条判据** —— 每一格各一把，证明三格不是绑在一起红的：
+       *   · `write-anyway`：照旧 exit 7 / E_MANIFEST_MISSING，但**先往靶子里写一份文件** ⇒ `zero_write` 翻红；
+       *   · `wrong-code`：换成另一个同样映射到 exit 7 的码（`E_DATA_MISSING`）⇒ 只有 `code` 翻红；
+       *   · `exit-code`：把 `E_MANIFEST_MISSING` 的退出码从 7 改成 3 ⇒ 只有 `exit` 翻红。
+       * 刀锚在出厂件正文上：出厂件重新发布 / 那段正文改写，这几把刀会以 `INS02-KNIFE-ANCHOR` 大声失败。
+       */
+      const shippedRefusalSrc = readStagedText(path.join('bin', ROLLBACK))
+      const refusalKnifeRoot = ensureMarkedDir(path.join(runRoot(), 'fixtures', 'ins02', 'refusal-knives'), { runRoot: runRoot(), runId: runId(), kind: 'agenia-test-root' })
+      const refusalKnives = []
+      const refusalKnife = ({ id, find, replace, wantCell }) => {
+        const patched = shippedRefusalSrc.replace(find, replace)
+        if (patched === shippedRefusalSrc) {
+          refusalKnives.push({ id, want_cell: wantCell, status: 'dead', why: 'anchor-missing', anchor: find.slice(0, 100) })
+          seqPush('INS02-KNIFE-ANCHOR', `[刀 ${id}] 出厂件正文里找不到要改的那一段（${JSON.stringify(find.slice(0, 100))}）`
+            + ' —— 这把刀建不起来；刀锚在拒绝分支的正文上：谁改那一段，谁同批改这把刀')
+          return
+        }
+        const dir = path.join(refusalKnifeRoot, id)
+        mkdirSync(dir, { recursive: true })
+        const cliPath = path.join(dir, 'rollback.mjs')
+        writeFileSync(cliPath, patched, 'utf8')
+        const knifeSceneRoot = caseDir('INS-02', `refusal-knife-${id}`)
+        const scene = makeScene(knifeSceneRoot)
+        const knifeBackup = path.join(knifeSceneRoot, 'no-such-backup')
+        const before = treeHash(scene.code)
+        let run
+        try {
+          run = runCli(ROLLBACK, { op: 'rollback', extra: ['--target', scene.code, '--backup', knifeBackup, '--require-backup'] }, { env: process.env, cliPath })
+        } catch (err) {
+          run = { exit_code: null, json: { error: { code: err?.code ?? 'THREW' } }, stdout: '', stderr: String(err.message) }
+        }
+        const after = treeHash(scene.code)
+        const reading = {
+          exit_code: run.exit_code,
+          code: run.json?.error?.code ?? null,
+          tree_changed: before.sha256 !== after.sha256 || before.count !== after.count,
+          changed_rels: relDiff(before, after),
+          backup_dir_created: existsSync(knifeBackup),
+        }
+        const judged = refusalCriterion(reading)
+        const failedCells = Object.entries(judged.cells).filter(([, ok]) => ok === false).map(([cell]) => cell)
+        const ok = judged.holds === false && failedCells.includes(wantCell)
+        refusalKnives.push({ id, want_cell: wantCell, reading, failed_cells: failedCells, status: ok ? 'bit' : 'dead' })
+        if (!ok) {
+          seqPush('INS02-KNIFE-DEAD', `[刀 ${id}] 把 \`${wantCell}\` 那一格改坏之后，判据必须红且红因里要有它；`
+            + `实得 holds=${judged.holds} · 失败的格=${failedCells.join(' / ') || '（一格都没失败）'}`
+            + ` · exit=${reading.exit_code} / code=${JSON.stringify(reading.code)} / tree_changed=${reading.tree_changed}`)
+        }
+      }
+      refusalKnife({
+        id: 'write-anyway',
+        find: '      throw cliError(\'E_MANIFEST_MISSING\', `--require-backup：备份目录不在（${backupRoot}）—— 明确拒绝，一个字节都不碰`)',
+        replace: '      fs.writeFileSync(path.join(targetRoot, \'KNIFE-REFUSAL-WROTE.txt\'), \'knife\')\n'
+          + '      throw cliError(\'E_MANIFEST_MISSING\', `--require-backup：备份目录不在（${backupRoot}）—— 明确拒绝，一个字节都不碰`)',
+        wantCell: 'zero_write',
+      })
+      refusalKnife({
+        id: 'wrong-code',
+        find: 'throw cliError(\'E_MANIFEST_MISSING\', `--require-backup',
+        replace: 'throw cliError(\'E_DATA_MISSING\', `--require-backup',
+        wantCell: 'code',
+      })
+      refusalKnife({
+        id: 'exit-code',
+        find: '  E_DATA_MISSING: 7, E_MANIFEST_MISSING: 7,',
+        replace: '  E_DATA_MISSING: 7, E_MANIFEST_MISSING: 3,',
+        wantCell: 'exit',
+      })
+      seqReading.refusal_knives = refusalKnives
       rec.readings.staged_pair_roundtrip = { ...seqReading, problem_codes: seqProblems.map((p) => p.code) }
       for (const p of seqProblems) push(p.code, `[腿④ 装→回一轮] ${p.message}`, p.detail)
 

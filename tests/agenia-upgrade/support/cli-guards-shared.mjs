@@ -98,8 +98,11 @@ export const NAMESAKE_ALLOWLIST = Object.freeze({
   slugOf: Object.freeze([]),
 })
 
-/** 定义形状表（与 `atomic-writers.mjs::DEFINITION_FORMS` 同一条形状口径）。 */
-const definitionForms = (name) => [
+/**
+ * 定义形状表（与 `atomic-writers.mjs::DEFINITION_FORMS` 同一条形状口径）。
+ * 导出是给 `support/host-adapters.mjs` 复用同一张形状表（腿 ⑥ 的份数口径）—— 别在那边再抄一份。
+ */
+export const definitionForms = (name) => [
   { kind: 'function', re: new RegExp(`\\b(?:export\\s+)?(?:async\\s+)?function\\s+${name}\\s*\\(`, 'g') },
   { kind: 'function-assigned', re: new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*=\\s*(?:async\\s+)?function\\b`, 'g') },
   { kind: 'arrow', re: new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*=\\s*(?:async\\s+)?(?:\\([^)\\n]*\\)|[A-Za-z_$][\\w$]*)\\s*=>`, 'g') },
