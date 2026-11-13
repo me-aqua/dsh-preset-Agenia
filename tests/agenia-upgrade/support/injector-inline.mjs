@@ -3,6 +3,12 @@
  *
  * 契约：`.team/test/2026-11-13/CONTRACT-史山清查-B2.md` §2。
  *
+ * 🔴 **2026-11-13 起，这一份还是"内联块"字面量的唯一出处**（构案 0008 · 史山清查 B3）：
+ * `INLINE_BLOCKS` 里有**两块**（`atomic` / `guards`），`@inline-begin/@inline-end` 的标签、
+ * 出厂件那一侧的成对包装标记前缀、每块的正文指纹，全部从这张表派生。
+ * 腿 10（注入器同源）只读 `atomic` 那一块；`support/staged-artifact.mjs` 的腿 7b（出厂件两块）
+ * 与 `support/cli-guards-shared.mjs` 的普查腿各读自己那一块 —— **不许**在别处再写一遍这些字面量。
+ *
  * 病：`inject.js` 是**注入器**（宿主加载、ESM 缓存），它不一定能静态 import `lib/atomic.mjs`；
  * 若 Gate 3 把共享正文**内联**进去，就会出现第二份正文 —— 两份各自被改，谁也看不见。
  * 这条腿钉的是"同源"，**锚内容不锚行号**：
@@ -24,20 +30,83 @@ import { createHash } from 'node:crypto'
 /** 两个对象的相对仓库根路径（posix）。 */
 export const SHARED_REL = 'presets/agenia/lib/atomic.mjs'
 export const INJECTOR_REL = 'presets/agenia/inject.js'
-/** 正文标记（与 `lib/atomic.mjs` 里那一对逐字相同；内联副本必须用同名标记）。 */
-export const BLOCK_BEGIN = '@inline-begin 原子写并集正文'
-export const BLOCK_END = '@inline-end 原子写并集正文'
-/** 正文指纹（内容锚；每一项都要**两边同值**）。 */
-export const INLINE_FINGERPRINTS = Object.freeze([
-  'writeSync(handle',
-  'fsyncSync(handle)',
-  "openSync(tmp, 'wx')",
-  'const tmp = `${target}.tmp-${pid}-${rand}`',
-  'RETRYABLE_RENAME',
-  'maxAttempts = 5',
-  'CLI_WRITE_MAX_ATTEMPTS = 6',
-  'cleanup_refused',
-])
+
+/**
+ * 🔴 **内联块的字面量只有这一处**（构案 0008 · 史山清查 B3）：`@inline-begin <标签>` / `@inline-end <标签>`
+ * 与出厂件那一侧的成对包装标记，全部从这张表派生。两条腿（腿 10 注入器同源 / 腿 7b 出厂件两块）
+ * 与普查腿（`support/cli-guards-shared.mjs`）都读它 —— **不许**在别处再写一遍这些字面量
+ * （`cand-20261104-0020`：一个数 / 一条口径有几份载体，改一处 = 没改）。
+ *
+ * 两块的分工：
+ *   · `atomic` —— `lib/atomic.mjs` 的原子写并集正文（B1 起就在内联；标记与指纹 **逐字不变**）；
+ *   · `guards` —— `lib/cli-guards.mjs` 的公共 helper 正文（B3 新增：install/rollback 共用的 8 个 helper）。
+ *
+ * `shipped_*` 两格是**出厂件那一侧**的包装标记（发布器写进出厂件的）：
+ *   · 起点行：`// ── 出厂件内联：<标签>（…）──`（**标签必须在这一行里** —— 切块 / 剥块都靠它认人）；
+ *   · 终点行：逐字 `// ── 内联结束 ──`（块**不嵌套**，所以终点不必带标签；起点带标签就够分清了）；
+ *   · 包装之间**只能放逐字正文**（内建绑定那几行放在起点标记**之前**）—— 这样"两边同源"是一条
+ *     字节级判据（`normalizeBlock` 之后逐字相等），不是"看着差不多"。
+ */
+export const INLINE_BLOCKS = Object.freeze({
+  atomic: Object.freeze({
+    id: 'atomic',
+    label: '原子写并集正文',
+    sourceRel: SHARED_REL,
+    /** 正文指纹（内容锚；每一项都要**两边同值**且 > 0）。 */
+    fingerprints: Object.freeze([
+      'writeSync(handle',
+      'fsyncSync(handle)',
+      "openSync(tmp, 'wx')",
+      'const tmp = `${target}.tmp-${pid}-${rand}`',
+      'RETRYABLE_RENAME',
+      'maxAttempts = 5',
+      'CLI_WRITE_MAX_ATTEMPTS = 6',
+      'cleanup_refused',
+    ]),
+    /**
+     * 出厂件里这份正文**必须**定义的东西（定义计数：`function <名>(`）。
+     * 今天那份 CLI 副本里也有它们（那是同一份正文被抄过去的时代）⇒ 这条**不是**判别器，
+     * 它是"发布时没有把旧副本和内联块一起留下两份定义"这一格（`SHIP-INLINE-DUP`）。
+     */
+    definitions: Object.freeze(['writeFileAtomic']),
+  }),
+  guards: Object.freeze({
+    id: 'guards',
+    label: '公共 helper 正文',
+    sourceRel: 'presets/agenia/lib/cli-guards.mjs',
+    /** 8 个 helper 的**定义形状**（`normalizeBlock` 去掉了 `export ` 前缀，两边都该长这样）。 */
+    fingerprints: Object.freeze([
+      'function assertDeletableTarget(',
+      'function defaultBackupRoot(',
+      'function driveOf(',
+      'function emit(',
+      'function isUnder(',
+      'function normKey(',
+      'function pathVerdict(',
+      'function slugOf(',
+    ]),
+    definitions: Object.freeze(['assertDeletableTarget', 'defaultBackupRoot', 'driveOf', 'emit', 'isUnder', 'normKey', 'pathVerdict', 'slugOf']),
+  }),
+})
+
+/** 正文标记（与各共享件里那一对逐字相同；内联副本必须用同名标记）。 */
+export const BLOCK_BEGIN = `@inline-begin ${INLINE_BLOCKS.atomic.label}`
+export const BLOCK_END = `@inline-end ${INLINE_BLOCKS.atomic.label}`
+/** 出厂件那一侧的包装标记（起点带标签 —— 见 `INLINE_BLOCKS` 的注释）。 */
+export const SHIPPED_BEGIN_PREFIX = '// ── 出厂件内联：'
+export const SHIPPED_END_MARKER = '// ── 内联结束 ──'
+/** 原子写那一份的指纹（B2 起的读者：`fingerprintCounts()` 与腿 10）。 */
+export const INLINE_FINGERPRINTS = INLINE_BLOCKS.atomic.fingerprints
+
+/** 一对标记的裸字面量（`<标签>` ⇒ 两行标记；所有腿 / 普查腿共用这一份）。 */
+export const beginOf = (block) => `@inline-begin ${block.label}`
+export const endOf = (block) => `@inline-end ${block.label}`
+
+/** 一行 `@inline-begin …` 里的标签（到 `（` 或行尾为止；共享件那边允许在标签后面写括注）。 */
+export function labelOf(beginText) {
+  const m = /@inline-begin\s+([^（\r\n]*)/.exec(String(beginText))
+  return m === null ? null : m[1].trim()
+}
 
 const stripComment = (text) => String(text).split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
 const countOf = (text, needle) => String(text).split(needle).length - 1
@@ -47,22 +116,39 @@ const countOf = (text, needle) => String(text).split(needle).length - 1
  *
  * 为什么要有"全部"这一份：腿 10 只认**第一段**（注入器那一份正文），而腿 0 的
  * "派生副本不算第二份实现"要按**第一段**判（别处的标记块 / 第二段都不豁免）。
- * 标记字面量只有这一处（`BLOCK_BEGIN` / `BLOCK_END`）—— 两条腿都从这里读，不各写一份。
+ * 标记字面量只有这一处（`INLINE_BLOCKS` ⇒ `beginOf` / `endOf`）—— 所有腿都从这里读，不各写一份。
+ *
+ * `beginNeedle` 给了 ⇒ 只收**起点行里含它**的那几段（两块同处一份文件时靠标签认人）；
+ * 每段都带回 `begin_text` / `end_text` / `label`（读数要能说清"跳过了哪一段"）。
+ * ⚠️ 共享件那边的起点行允许在标签后面写括注（`…正文（删除三闸 + 原子写…）`）⇒ 用**子串**认，
+ *    不用整行相等。
  *
  * @param {string} source
- * @returns {Array<{begin_line:number, end_line:number, text:string}>}
+ * @param {string|null} [beginNeedle]  `null` = 所有标签
+ * @returns {Array<{begin_line:number, end_line:number, text:string, label:string|null, begin_text:string, end_text:string}>}
  */
-export function markedSpans(source) {
+/** 标记行的形状：`@inline-begin` / `@inline-end` **后面必须跟一个标签**（`\s+\S`）。 */
+const MARKER_BEGIN_RE = /(?:^|\s)@inline-begin\s+\S/
+const MARKER_END_RE = /(?:^|\s)@inline-end\s+\S/
+
+export function markedSpans(source, beginNeedle = null) {
   const lines = String(source).split(/\r?\n/)
   const spans = []
   let begin = -1
   for (let i = 0; i < lines.length; i += 1) {
     if (begin < 0) {
-      if (lines[i].includes(BLOCK_BEGIN)) begin = i
+      if (MARKER_BEGIN_RE.test(lines[i]) && (beginNeedle === null || lines[i].includes(beginNeedle))) begin = i
       continue
     }
-    if (lines[i].includes(BLOCK_END)) {
-      spans.push({ begin_line: begin + 1, end_line: i + 1, text: lines.slice(begin + 1, i).join('\n') })
+    if (MARKER_END_RE.test(lines[i])) {
+      spans.push({
+        begin_line: begin + 1,
+        end_line: i + 1,
+        text: lines.slice(begin + 1, i).join('\n'),
+        label: labelOf(lines[begin]),
+        begin_text: lines[begin].trim(),
+        end_text: lines[i].trim(),
+      })
       begin = -1
     }
   }
@@ -70,13 +156,59 @@ export function markedSpans(source) {
 }
 
 /**
- * 从一份源码里切出**第一段**标记之间的正文（**含**标记行也算读数，调用方自己决定用不用）。
+ * 从一份源码里切出标记之间的正文。`beginNeedle` 给了 ⇒ 只认那一段（找不到就是找不到）。
+ * 不给 ⇒ **第一段**（B2 的调用方：注入器只有一段）。
+ *
  * @returns {{found:boolean, begin_line:number|null, end_line:number|null, text:string, marker_lines:number[]}}
  */
-export function blockOf(source) {
-  const first = markedSpans(source)[0]
+export function blockOf(source, beginNeedle = null) {
+  const first = markedSpans(source, beginNeedle)[0]
   if (first === undefined) return { found: false, begin_line: null, end_line: null, text: '', marker_lines: [] }
   return { found: true, begin_line: first.begin_line, end_line: first.end_line, text: first.text, marker_lines: [first.begin_line, first.end_line] }
+}
+
+/**
+ * 从**出厂件**正文里切出某一块的**包装标记之间**的正文（发布器写进去的那一对）。
+ *
+ * 起点标记带着标签（见 `INLINE_BLOCKS` 的注释）；终点是逐字的 `// ── 内联结束 ──`。
+ * 两块同处一份文件时，只有起点那一行能分清"这一段是谁的"，所以切块、剥块（刀）都走这一处。
+ *
+ * @param {string} text 出厂件正文
+ * @param {{label:string}} block `INLINE_BLOCKS` 里的一项
+ * @returns {{found:boolean, begin_line:number|null, end_line:number|null, text:string, reason?:string}}
+ */
+export function shippedBlockOf(text, block) {
+  const lines = String(text).split(/\r?\n/)
+  const beginNeedle = `${SHIPPED_BEGIN_PREFIX}${block.label}`
+  const begin = lines.findIndex((l) => l.includes(beginNeedle))
+  if (begin < 0) return { found: false, begin_line: null, end_line: null, text: '', reason: `找不到起点行（含 ${JSON.stringify(beginNeedle)}）` }
+  let end = -1
+  for (let i = begin + 1; i < lines.length; i += 1) {
+    if (lines[i].includes(SHIPPED_END_MARKER)) { end = i; break }
+  }
+  if (end < 0) return { found: false, begin_line: begin + 1, end_line: null, text: '', reason: `起点在第 ${begin + 1} 行，但找不到终点行（逐字 ${JSON.stringify(SHIPPED_END_MARKER)}）` }
+  return { found: true, begin_line: begin + 1, end_line: end + 1, text: lines.slice(begin + 1, end).join('\n'), reason: null }
+}
+
+/**
+ * 把出厂件里某一块的**包装段整段剥掉**（刀的构造：`bug-20261112-16` 的同一课 —— 按标记切片，
+ * 不拿"出厂件原文"冒充"剥过的那一份"）。剥不掉 ⇒ 如实回报（`ok:false`），**不许**静默返回原文。
+ *
+ * @returns {{ok:true, text:string, removed_lines:number, bytes_before:number, bytes_after:number}|{ok:false, reason:string}}
+ */
+export function stripShippedBlock(text, block) {
+  const span = shippedBlockOf(text, block)
+  if (!span.found) return { ok: false, reason: span.reason ?? '切不出那一段' }
+  const lines = String(text).split(/\r?\n/)
+  const kept = [...lines.slice(0, span.begin_line - 1), ...lines.slice(span.end_line)]
+  const out = kept.join('\n')
+  return {
+    ok: true,
+    text: out,
+    removed_lines: span.end_line - span.begin_line + 1,
+    bytes_before: Buffer.byteLength(String(text), 'utf8'),
+    bytes_after: Buffer.byteLength(out, 'utf8'),
+  }
 }
 
 /**
@@ -87,7 +219,7 @@ export function blockOf(source) {
  *   ④ 去行尾空白；保留空行（空行也是正文的一部分）。
  */
 export function normalizeBlock(text) {
-  const lines = String(text).split(/\r?\n/).filter((l) => !l.includes(BLOCK_BEGIN) && !l.includes(BLOCK_END))
+  const lines = String(text).split(/\r?\n/).filter((l) => !MARKER_BEGIN_RE.test(l) && !MARKER_END_RE.test(l))
   const stripped = lines.map((l) => l.replace(/^(\s*)export\s+/, '$1').replace(/\s+$/, ''))
   const indents = stripped.filter((l) => l.trim() !== '').map((l) => (/^\s*/.exec(l) ?? [''])[0].length)
   const common = indents.length === 0 ? 0 : Math.min(...indents)
@@ -103,6 +235,21 @@ export function blockDigest(text) {
 export function fingerprintCounts(sharedText, injectorText) {
   const out = {}
   for (const needle of INLINE_FINGERPRINTS) out[needle] = { shared: countOf(sharedText, needle), injector: countOf(injectorText, needle) }
+  return out
+}
+
+/**
+ * 某一块的指纹在**两边正文**里各出现几次（键名按对象的两侧取名，腿 7b 用）。
+ * 计数发生在**规范化之后的块正文**上 —— 块外那些同名物不算（那是另一条腿的事）。
+ *
+ * @param {{fingerprints: readonly string[]}} block
+ * @param {string} leftNorm  共享件那一块的正文
+ * @param {string} rightNorm 出厂件那一块的正文
+ * @param {[string,string]} [keys] 两个键名（缺省 `['shared','shipped']`）
+ */
+export function fingerprintCountsOf(block, leftNorm, rightNorm, keys = ['shared', 'shipped']) {
+  const out = {}
+  for (const needle of block.fingerprints) out[needle] = { [keys[0]]: countOf(leftNorm, needle), [keys[1]]: countOf(rightNorm, needle) }
   return out
 }
 

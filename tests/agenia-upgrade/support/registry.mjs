@@ -1448,6 +1448,12 @@ const ROWS = [
   ['DR-03', 'data-root', F.dataRoot, '脑根与路线工作区分舱：票进工作区、脑命令不产路线产物、错根被拒', '批次 C'],
 
   // ── 安装 / 回滚 / 发布扫描（3）──────────────────────────────────────────
+  // 🔴 构案 0008（史山清查 B3，2026-11-13）**不新增格**：8 个 install/rollback 共用的 helper 抽进
+  //    `presets/agenia/lib/cli-guards.mjs` 之后，判据并进两张已经存在的卡 ——
+  //    `INS-02` 的**腿 ③**（8 个各只剩一份 + 10 个已分叉的没被顺手合并）与**腿 ④**
+  //    （staged 那一对：装 → 回 一轮，exit 0 / 数据不动 / 无临时件残渣）；
+  //    `ATM-01` 的**腿 7b / 7c**（出厂件两块内联同源 · 声明算术）与腿 9 的冻结头段换代。
+  //    ⇒ 分母仍 **218**（腿不是格；新开格会顶高组长冻住的分母，也会把这一票拆到两格去）。
   ['INS-01', 'install', F.install, '只按清单覆盖代码；非空数据逐字节保留；未知文件保留；重装幂等', '下一批'],
   ['INS-02', 'install', F.install, '回滚只回代码不回数据；脚本零 import 自足；失败保留现场', '下一批'],
   ['INS-03', 'install', F.install, '发布物无 .runtime/私有数据；备份在 E 盘带哈希清单；脚本无 C 默认临时', '下一批'],
@@ -1741,6 +1747,10 @@ const ROWS = [
   // 契约 `.team/test/2026-11-12/CONTRACT-史山清查-B1.md`（口径 / 七类腿 / 刀架 / 分母的唯一出处）。
   // 定形 `.team/leader/2026-11-12/定形-B1-原子写归一.md`。决定 `决议/构案/0006-原子写归一.md`。
   // 量具 `support/atomic-writers.mjs`。
+  // 🔴 构案 0008（B3，2026-11-13）**并进本格、不新开格**：腿 7b = 出厂件**两块**内联（`原子写并集正文` +
+  //    `公共 helper 正文`，按标签认人、两块都与 `lib/` 逐字同源、指纹同值、不留第二份定义）；
+  //    腿 7c = **声明算术**（`target-lag.json` 只此一条 + 数字复现交 `targetVerdict` + 理由说得出 `cli-guards`）；
+  //    腿 9 的冻结头段换代（两段内联 / 两个源）。契约 `.team/test/2026-11-13/CONTRACT-史山清查-B3.md`。
   ['ATM-01', 'atomic-write', F.atm, '**原子写只剩一份实现，而且那一份是并集**：`presets/**` 里 `function writeFileAtomic` **恰好 1 处**（`presets/agenia/lib/atomic.mjs`），两份 CLI 副本（`bin/install.mjs` / `bin/rollback.mjs`）为 0；并集四条各一把刀 —— **a fsync**（桩住 `fsyncSync`：成功写必须出现，且次序 `writeSync` → `fsyncSync` → `renameSync`、fd 同一个；刀 = 删掉它 ⇒ 红）· **b `wx`**（临时件 flags 含 `wx`、不用 `writeFileSync` 建、与目标同目录；刀 = `wx`→`w` ⇒ 红）· **c allowedRoot 删除闸**（写失败后闸拒绝清临时件 ⇒ 临时件还在 · 目标没被写 · 出声或具名码 · `cleanup_refused.delete_gate` 在；反面控制 = 闸放行时必须真删；默认不给 allowedRoot 时清残渣的旧行为不变；两把刀 = 把闸放宽到临时件目录 / 把拒绝分支写成 `if (false)`）· **d 重试码**（`EPERM`/`EBUSY`/`EACCES` 各重试一次都要成、`ENOENT` 一次就放弃；结构面 = 重试码只剩 `RETRYABLE_RENAME` 一份，声明外没有内联数组；两把刀 = 把 `EACCES` 改名 / 追加一份内联码集）。**e 信封**：成功 `{ok:true, code:null, message, path, bytes, attempts}`、失败 `{ok:false, code, message, path}`，两个调用点必须 import 共享件 + 真调 + 不读 `.tmp`；刀 = 换成旧 CLI 形状的桩（`{ok,tmp}`）⇒ 红。**f 既有行为不破**：本格**点名**它依赖的既有格（`INS-01`/`INS-02`/`INS-03`/`ENV-02`/`STAT-01`）并核对它们还在，绿不绿由同一跑的入口结算证明。⚠️ 并集 d 的"两套码"在成员上是恒等操作（两套都是 `EPERM/EBUSY/EACCES`）⇒ 判覆盖与"只剩一份"，判不了"两套都留"。**g 出厂件（裁决之后加的）**：出厂件 `bin/rollback.mjs` 零静态 import 且含并集正文指纹（`fsyncSync`/`RETRYABLE_RENAME`/`wx`）；`<staging>/target-lag.json` 点名 `bin/rollback.mjs` 且理由说得出"发布时内联"；两棵树的差异由 `targetReport` 判成 `declared`（与入口 / `STAT-01` 同一份口径）。控制 = 内联形状夹具绿 + 准确声明 `state=declared`；刀 = 剥内联（`SHIP-ROLLBACK-NO-INLINE` + `TARGET-LAG-UNDECLARED`）· 内联在而声明不在（`SHIP-DECL-MISSING` + `TARGET-LAG-UNDECLARED`）· 静态 import 规则在"一行 import"上必须认出。🔴 **Gate 2 时红得对**（3 处定义 · 两个调用点各自留着一份 · 共享件没有删除闸 · 成功信封没 `message` · 出厂件没内联 · 没有声明）；Gate 3 之后应为绿 —— 裁决 0006 第三方案（decision commit `8af3094`）：repo 两份都 import 共享件、`publish-staged` 发布时内联、同批写 `target-lag.json`，三张卡（`INS-02 ①` / `ENV-02 ROLLBACK-IMPORT` / `STAT-01`）的判据对象 = 出厂件（staged）；裁决与两个被否的替代（保留拷贝 / `await import` 绕字面）见契约 §0.5 与读数 `ruling_0006`。**round-1 补（评审 M-1 / M-2）**：腿 8 = **重试预算**（`CLI_WRITE_MAX_ATTEMPTS` 只剩一份且 = 6 · 两处**重写盘**调用点传常量、不许手抄 · 共享件默认 5 · 出厂件也读 6；行为面：默认 5 次 / 传 6 则 6 次）；腿 9 = **出厂件文件头**（头里 0 个 `import` 词 · 发布器段落 11 行逐字在 · 无 repo 自述 · 并集指纹在）。刀架：六把文本刀 + 一把"repo 当出厂件"刀，各自单独会红。', '批次 AW'],
 ]
 

@@ -1,8 +1,10 @@
 /**
- * 量具：**出厂件（staged preset）那一侧**的两件事 —— 内联产物 + 受控差异声明。
+ * 量具：**出厂件（staged preset）那一侧**的三件事 —— 内联产物 · 受控差异声明 · 声明算术。
  *
- * 契约：`.team/test/2026-11-12/CONTRACT-史山清查-B1.md` §0.5（裁决 0006 改定段）。
- * 决定：`决议/构案/0006-原子写归一.md` §决定（改定 23:1x · 第三方案）· RC-4。
+ * 契约：`.team/test/2026-11-12/CONTRACT-史山清查-B1.md` §0.5（裁决 0006 改定段）·
+ * `.team/test/2026-11-13/CONTRACT-史山清查-B3.md` §2（两块内联 + 单条声明复现）。
+ * 决定：`决议/构案/0006-原子写归一.md` §决定（改定 23:1x · 第三方案）· RC-4 ·
+ * `决议/构案/0008-install-rollback-公共-helper.md` §决定 ②（两块内联）。
  *
  * 裁决把 `rollback.mjs` 拆成两个对象，本文件只判**出厂件那一个**：
  *   · **repo 里的** `presets/agenia/bin/rollback.mjs` —— 正常 `import` 共享件（去重；
@@ -12,20 +14,34 @@
  *     两棵树因此**必然不同** ⇒ 由 `<staging>/target-lag.json` 声明成**受控差异**，
  *     `STAT-01` 判「差异已声明」而不是「分叉」。
  *
+ * 🔴 **2026-11-13（构案 0008 · B3）起，内联**两块**：`原子写并集正文`（B1）+
+ *     `公共 helper 正文`（8 个 install/rollback 共用 helper）。两块的字面量与指纹都在
+ *     `injector-inline.mjs::INLINE_BLOCKS` 里（**一份**来源），本文件只判"出厂件里那两段
+ *     与 `lib/` 里那两段是同一段正文"。
+ *
  * 三条口径（写在明处）：
- *   ① **"内联了没有"看的是并集正文的指纹**，不是字节偏移、也不是"文件变大"：
- *      `fsyncSync`（共享件独有）· `RETRYABLE_RENAME`（共享件的码集名字）· `wx`（独占建临时件）。
- *      今天那份 CLI 副本**一个都没有** ⇒ 内联前这一格红得对。
+ *   ① **"内联了没有"看的是正文同源**（`normalizeBlock` 之后逐字相等），不是字节偏移、
+ *      也不是"文件变大"：出厂件的包装段里**只许放逐字正文**（内建绑定那几行放在起点标记之前），
+ *      这样"同一段正文"才是一条能翻面的判据。指纹另作一条辅助读数（每条两边同值且 > 0）。
  *   ② **声明不在这里重新发明一套校验**：形状 / 字段 / 数字复现 / marker 漏报全部交给
- *      `target.mjs::targetVerdict`（入口 `F57-TARGET` 用的是同一份）。这里只补两条
- *      **原子写这一族特有**的语义：声明点名的是 `bin/rollback.mjs`、理由说的是"内联"。
+ *      `target.mjs::targetVerdict`（入口 `F57-TARGET` 用的是同一份）。这里只补三条
+ *      **这一族特有**的语义：声明点名的是 `bin/rollback.mjs`、理由说的是"内联"、**只此一条**。
  *   ③ `staticImportLines` 与 `INS-02 ①` 逐字同口径（`^\s*import\s` 或 `require(`；注释行不算）——
  *      它是**一份**规则，`INS-02` / `ENV-02` / 本文件 / 刀都读它。
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { PATHS } from './env.mjs'
-import { actualOf, measureOne, targetReport } from './target.mjs'
+import { actualOf, measureOne, targetReport, targetVerdict } from './target.mjs'
+import {
+  INLINE_BLOCKS,
+  beginOf,
+  blockDigest,
+  fingerprintCountsOf,
+  markedSpans,
+  normalizeBlock,
+  shippedBlockOf,
+} from './injector-inline.mjs'
 
 /** 出厂件里那份回滚脚本（相对 staged preset 根）。 */
 export const SHIPPED_ROLLBACK_REL = 'bin/rollback.mjs'
@@ -254,25 +270,29 @@ export function declaredDifference({ stagedRoot, baselineRoot, declarationPath =
 
 // ── 出厂件的**文件头**（评审 M-2）与**重试预算**（评审 M-1）────────────────────────────
 /**
- * 出厂件文件头里那段**逐字要求**（评审 M-2 · 契约 §1 腿 8）。
+ * 出厂件文件头里那段**逐字要求**（评审 M-2 · 契约 §1 腿 8；构案 0008 起是**两块**内联）。
  *
  * 🔴 这是判据侧的**冻结期望**，不是从发布器 `install.mjs::shippedHeaderLines()` 读出来的副本 ——
  *    刻意写成第二处：发布器改了这段话，这里就红，**由人**决定"改判据还是改发布器"。
  *    （若从发布器读，两边一起改就永远绿 —— 那正是"自证"的病。）
  * 判据只认**块注释里逐行相等**（` * ` 前缀原样），不认行号：行号会漂。
+ *
+ * ⚠️ 这段里**不许出现 `import` 这个词**（`shippedHeaderVerdict` 那一条）：出厂件零静态引用，
+ *    头里说"引用了什么"就是假话。要说共享件，就说"源 / 内联 / 受控差异"。
  */
 export const SHIPPED_HEADER_PARAGRAPH = Object.freeze([
   ' * 🔴 **单文件自足、零静态引用**（拍板 Q6）：回滚的适用场合正是"刚装上去的那一版是坏的" ——',
   ' *    所以本文件**不依赖任何新装上去的东西**（新 `lib/`、新 `bin/`、新模块）。',
   ' *    ⚠️ **本文件是出厂件（用户跑的那一份）**：文件名与 repo 里的 `presets/agenia/bin/rollback.mjs`',
-  ' *    相同，但正文不同 —— 原子写并集正文（fsync · `wx` 独占临时件 · 重试码 · `allowedRoot` 删除闸 ·',
-  ' *    统一信封）与删除三闸都是**发布时逐字内联**进来的（发布者：`presets/agenia/bin/install.mjs` 的',
-  ' *    `--op publish-staged`；源：`presets/agenia/lib/atomic.mjs` 里 `@inline-begin`…`@inline-end`',
-  ' *    之间那段正文）。内建模块在内联块之后**运行时**取得 —— 那不是对已装代码的依赖。',
-  ' *    重试上限 **6 次**（`CLI_WRITE_MAX_ATTEMPTS`，随内联正文一起进来）—— 与 repo 那一份同一个数。',
+  ' *    相同，但正文不同 —— **两段**正文都是发布时**逐字内联**进来的（发布者：`presets/agenia/bin/install.mjs`',
+  ' *    的 `--op publish-staged`）：① 原子写并集正文（fsync · `wx` 独占临时件 · 重试码 · `allowedRoot` 删除闸 ·',
+  ' *    统一信封），源 `presets/agenia/lib/atomic.mjs` 里 `@inline-begin 原子写并集正文` 那一段；',
+  ' *    ② 公共 helper 正文（路径判据 · 删除三闸 · 安装现场 · 备份根 · 输出信封 —— 与 `install.mjs` 共用的',
+  ' *    那 8 个），源 `presets/agenia/lib/cli-guards.mjs` 里 `@inline-begin 公共 helper 正文` 那一段。',
+  ' *    内建模块**运行时**取得 —— 那不是对已装代码的依赖。',
+  ' *    重试上限 **6 次**（`CLI_WRITE_MAX_ATTEMPTS`，随原子写正文一起进来）—— 与 repo 那一份同一个数。',
   ' *    两棵树的这处差是**受控差异**，由 `<staging>/target-lag.json` 声明（点名 `bin/rollback.mjs`）。',
   ' *    ⇒ 要改回滚脚本：改 repo 那一份，再 `--op publish-staged` 重发；**别直接改本文件**。',
-  ' *  · 路径判据（`canonical` / `isUnder` / `pathVerdict`）与哈希仍就地一份 —— 它们是本脚本自己的策略。',
 ])
 
 /** repo 那一份的自述（评审 M-2）：出厂件里**不许**出现这一句 —— 它是假话（出厂件零静态引用）。 */
@@ -510,6 +530,227 @@ export function retryBudgetVerdict(reading) {
     if (reading.artifact.call_sites_using_constant < 1) {
       push('SHIP-RETRY-BUDGET-VALUE', `出厂件的重写盘调用点没有传 \`${CLI_RETRY_BUDGET_NAME}\`（实得 ${JSON.stringify(reading.artifact.literal_max_attempts)}）—— 那个 6 在出厂件里没被用到`)
     }
+  }
+  return { verdict: problems.length === 0 ? 'GREEN' : 'RED', problems }
+}
+
+// ── 腿 7b · 出厂件里的**两块**内联（构案 0008 · 史山清查 B3）────────────────────────
+/**
+ * 读出**两块**内联的读数：每块一行，说清"共享件那一块在第几行 / 出厂件那一块在第几行 /
+ * 规范化之后是不是同一段 / 每条指纹两边各出现几次"。
+ *
+ * 判据对象只有**出厂件**（`<staging>/preset/bin/rollback.mjs`）与**共享件**（`lib/` 那两份）；
+ * repo 那一份 `bin/rollback.mjs` 不在这里判（它现在 import 共享件，由 `INS-02 ③` 的普查腿判）。
+ *
+ * @param {{presetRoot?: string, repoRoot?: string}} [input]
+ */
+export function inlineBlocksReading({ presetRoot = PATHS.stagedPreset, repoRoot = PATHS.repo } = {}) {
+  const file = path.join(presetRoot, ...SHIPPED_ROLLBACK_REL.split('/'))
+  const art = readArtifact(file)
+  const reading = {
+    preset_root: path.resolve(presetRoot),
+    repo_root: path.resolve(repoRoot),
+    file,
+    exists: art.exists,
+    bytes: art.bytes,
+    sha256: art.sha256,
+    read_error: art.read_error,
+    static_import_lines: art.exists && art.read_error === null ? staticImportLines(art.text).length : null,
+    blocks: [],
+    line: '',
+  }
+  for (const block of Object.values(INLINE_BLOCKS)) {
+    const sourceFile = path.join(repoRoot, ...block.sourceRel.split('/'))
+    const src = readArtifact(sourceFile)
+    const srcSpan = src.exists && src.read_error === null
+      ? markedSpans(src.text, beginOf(block)).find((s) => s.label === block.label) ?? null
+      : null
+    const shippedSpan = art.exists && art.read_error === null
+      ? shippedBlockOf(art.text, block)
+      : { found: false, begin_line: null, end_line: null, text: '', reason: `出厂件不在或读不动：${JSON.stringify(art.read_error)}` }
+    const row = {
+      id: block.id,
+      label: block.label,
+      source_rel: block.sourceRel,
+      source: {
+        file: path.resolve(sourceFile),
+        exists: src.exists,
+        read_error: src.read_error,
+        block: srcSpan === null
+          ? { found: false, begin_line: null, end_line: null, lines: 0, digest: null, reason: `共享件里没有 \`${beginOf(block)}\` 那一段` }
+          : { found: true, begin_line: srcSpan.begin_line, end_line: srcSpan.end_line, lines: srcSpan.text === '' ? 0 : srcSpan.text.split('\n').length, digest: blockDigest(srcSpan.text) },
+      },
+      shipped: shippedSpan.found
+        ? { found: true, begin_line: shippedSpan.begin_line, end_line: shippedSpan.end_line, lines: shippedSpan.text === '' ? 0 : shippedSpan.text.split('\n').length, digest: blockDigest(shippedSpan.text), reason: null }
+        : { found: false, begin_line: shippedSpan.begin_line ?? null, end_line: shippedSpan.end_line ?? null, lines: 0, digest: null, reason: shippedSpan.reason ?? null },
+      same: null,
+      fingerprints: {},
+      definitions_in_artifact: {},
+      verdict: 'RED',
+    }
+    if (row.source.block.found && row.shipped.found) {
+      row.same = row.source.block.digest === row.shipped.digest
+      const srcNorm = normalizeBlock(srcSpan.text)
+      const shippedNorm = normalizeBlock(shippedSpan.text)
+      row.fingerprints = fingerprintCountsOf(block, srcNorm, shippedNorm)
+    } else {
+      row.fingerprints = fingerprintCountsOf(block, '', '')
+    }
+    for (const name of block.definitions) {
+      row.definitions_in_artifact[name] = (art.text.match(new RegExp(`\\bfunction\\s+${name}\\s*\\(`, 'g')) ?? []).length
+    }
+    reading.blocks.push(row)
+  }
+  reading.line = `出厂件 ${SHIPPED_ROLLBACK_REL}：${art.exists ? `${art.bytes} B · 静态 import/require ${reading.static_import_lines} 行` : '不在'}`
+    + ` · ` + reading.blocks.map((b) => {
+      const where = (x) => (x.found ? `${x.begin_line}…${x.end_line}（${x.lines} 行 · ${String(x.digest).slice(0, 12)}…）` : `**没有**（${x.reason}）`)
+      return `[${b.label}] 共享件 ${where(b.source.block)} 对 出厂件 ${where(b.shipped)}${b.same === null ? '' : b.same ? ' ⇒ 同源' : ' ⇒ **不同源**'}`
+    }).join(' · ')
+  return reading
+}
+
+/**
+ * 腿 7b 的判词：**两块都在** · **两块都与共享件同源** · 每块指纹两边同值 · 不许留下第二份定义。
+ *
+ * 码的分工（红的时候读得出"是哪一块、缺还是漂"）：
+ *   · `SHIP-INLINE-SOURCE-MISSING` —— 共享件那一块都不在（发布器的源没了，判不了同源）；
+ *   · `SHIP-INLINE-MISSING` —— 出厂件里没有那一块的包装段（**哪一块**在报文里点名）；
+ *   · `SHIP-INLINE-DRIFT` —— 包装段里那段正文与共享件那一块**不是同一段**；
+ *   · `SHIP-INLINE-FINGERPRINT` —— 某条指纹两边次数不同（或为 0）；
+ *   · `SHIP-INLINE-DUP` —— 出厂件里同一个 helper 有多份定义（发布时旧副本没删干净）。
+ */
+export function inlineBlocksVerdict(reading) {
+  const problems = []
+  const push = (code, message, detail) => problems.push({ code, message, detail: detail ?? null })
+  if (!reading.exists) {
+    push('SHIP-ROLLBACK-MISSING', `出厂件里没有 ${SHIPPED_ROLLBACK_REL}：${reading.file} —— 两块内联无从判起`)
+    return { verdict: 'RED', problems }
+  }
+  if (reading.read_error !== null) {
+    push('SHIP-ROLLBACK-READ', `出厂件 ${SHIPPED_ROLLBACK_REL} 读不动（${reading.read_error.code}）：${reading.file}`)
+    return { verdict: 'RED', problems }
+  }
+  for (const row of reading.blocks) {
+    if (row.source.block.found !== true) {
+      push('SHIP-INLINE-SOURCE-MISSING',
+        `共享件 ${row.source_rel} 里没有 \`${beginOf({ label: row.label })}\` … \`@inline-end ${row.label}\` 这一段`
+        + `（${row.source.block.reason ?? '找不到'}）—— 出厂件里那块正文没有来源，同源与否判不了`)
+    }
+    if (row.shipped.found !== true) {
+      push('SHIP-INLINE-MISSING',
+        `出厂件的 \`${row.label}\` 那一段包装不在（${JSON.stringify(row.shipped.reason)}）—— 发布器要内联**两块**：`
+        + `单文件自足 + 零静态引用（Q6）靠的就是"用户那一份里什么都有"；缺 @${row.label} 这一块，`
+        + `出厂件里的 helper 只能来自旧副本（那是这一票要清掉的第二份实现）`)
+    } else if (row.source.block.found === true && row.same !== true) {
+      push('SHIP-INLINE-DRIFT',
+        `出厂件的 \`${row.label}\` 那段正文与共享件**不是同一段**（共享 ${row.source_rel}:${row.source.block.begin_line}…${row.source.block.end_line}`
+        + ` 摘要 ${String(row.source.block.digest).slice(0, 12)}… / 出厂件 :${row.shipped.begin_line}…${row.shipped.end_line}`
+        + ` 摘要 ${String(row.shipped.digest).slice(0, 12)}…）—— 改了一边没改另一边，或者包装段里夹了别的东西`
+        + `（内建绑定那几行要放在起点标记**之前**）`)
+    }
+    if (row.source.block.found === true && row.shipped.found === true) {
+      for (const [needle, counts] of Object.entries(row.fingerprints)) {
+        const a = counts.shared
+        const b = counts.shipped
+        if (a !== b || a === 0) {
+          push('SHIP-INLINE-FINGERPRINT',
+            `\`${row.label}\` 的正文指纹 \`${needle}\` 两边不同值（共享 ${a} 次 / 出厂件 ${b} 次）—— 内联的不是同一段正文`)
+        }
+      }
+    }
+    for (const [name, count] of Object.entries(row.definitions_in_artifact)) {
+      if (count > 1) {
+        push('SHIP-INLINE-DUP',
+          `出厂件里 \`function ${name}(\` 出现了 ${count} 次（要 1）—— 内联块与旧副本同时在，等于同一份实现有两处`
+          + `（发布时要先把 repo 那一份里的定义删掉，再内联）`)
+      }
+    }
+  }
+  return { verdict: problems.length === 0 ? 'GREEN' : 'RED', problems }
+}
+
+// ── 腿 7c · 声明算术（单条 · 数字复现 · 说得出第二块）──────────────────────────────
+/**
+ * 声明算术的读数。**数字复现交给 `targetVerdict`**（与入口 `F57-TARGET` 同一份判定体），
+ * 这里只补这一族特有的两条：**只此一条**（`entries.length === 1`）与**理由说得出第二块**。
+ *
+ * 为什么把数字复现交出去：那套口径（state / lag_bytes / 双 sha256 逐项对、过期声明也要红）
+ * 在 `target.mjs` 里已经有一份，还有 `self-check` 的 `T-06`（`lag_bytes` 差 1 ⇒ 红）守着 ——
+ * 再写第二份就是"一个数两个载体"（`cand-20261104-0020`）。
+ *
+ * @param {{declarationPath?: string, file?: string, stagedRoot?: string, baselineRoot?: string}} [input]
+ */
+export function declarationArithmeticReading({
+  declarationPath = PATHS.targetLagDeclaration,
+  file = SHIPPED_ROLLBACK_FILE,
+  stagedRoot = PATHS.stagedPreset,
+  baselineRoot = PATHS.finalPreset,
+} = {}) {
+  const decl = declarationReading({ path: declarationPath, file })
+  const staged = measureOne(stagedRoot, file)
+  const baseline = measureOne(baselineRoot, file)
+  const measured = { files: [{ file, staged, baseline }] }
+  const entryCount = decl.entries === null ? null : decl.entries.length
+  const entriesFiles = decl.entries === null ? null : decl.entries.map((e) => (e !== null && typeof e === 'object' ? e.file ?? '?' : '?'))
+  const reading = {
+    path: decl.path,
+    file,
+    present: decl.present,
+    parse_error: decl.parse_error,
+    entry_count: entryCount,
+    entries_files: entriesFiles,
+    entry: decl.entry,
+    text_fields: decl.text_fields,
+    reason_mentions_helper: null,
+    measured: {
+      staged: { exists: staged.exists, bytes: staged.bytes, sha256: staged.sha256 },
+      baseline: { exists: baseline.exists, bytes: baseline.bytes, sha256: baseline.sha256 },
+      state: actualOf({ file, staged, baseline }).state,
+      lag_bytes: actualOf({ file, staged, baseline }).lag_bytes,
+    },
+    /** 🔴 数字复现的判词 = `targetVerdict` 对**这一条**的结论（原码照转，不另起炉灶）。 */
+    reproduce: null,
+    line: '',
+  }
+  if (decl.entry !== null) {
+    const reason = typeof decl.entry.reason === 'string' ? decl.entry.reason : ''
+    reading.reason_mentions_helper = /cli-guards/.test(reason) && /(内联|inline|embed|捆绑|并进)/i.test(reason)
+    reading.reproduce = targetVerdict({
+      measured,
+      declaration: { path: decl.path, present: true, error: null, value: { schema: decl.schema, entries: [decl.entry] } },
+    })
+  }
+  reading.line = `声明算术 ${decl.path}：${entryCount === null ? '缺 entries' : `${entryCount} 条`}`
+    + `（${entriesFiles === null ? '?' : entriesFiles.join(' / ')}）· 点名 ${file}：${decl.entry === null ? '**没有**' : '有'}`
+    + ` · 实测 ${reading.measured.state} / lag_bytes ${JSON.stringify(reading.measured.lag_bytes)}`
+    + (decl.entry === null ? '' : ` / 声明 ${JSON.stringify(decl.entry.state)} / ${JSON.stringify(decl.entry.lag_bytes)}`)
+    + ` · 理由提第二块：${reading.reason_mentions_helper === true ? '是' : '**不是**'}`
+    + (reading.reproduce === null ? '' : ` · 数字复现 ${reading.reproduce.ok ? '对上' : `**对不上**（${reading.reproduce.problems.map((p) => p.code).join(' / ')}）`}`)
+  return reading
+}
+
+/** 腿 7c 的判词。 */
+export function declarationArithmeticVerdict(reading) {
+  const problems = []
+  const push = (code, message, detail) => problems.push({ code, message, detail: detail ?? null })
+  if (!reading.present || reading.parse_error !== null || reading.entry === null) {
+    push('SHIP-DECL-ARITH-UNJUDGED',
+      `声明算术判不了：${reading.present ? (reading.parse_error ?? `没有点名 ${reading.file} 的那一条（现有 ${JSON.stringify(reading.entries_files)}）`) : '声明不在'}`
+      + ` —— 这一格判不了，不许当绿（形状那几条由声明判词报）`)
+    return { verdict: 'RED', problems }
+  }
+  if (reading.entry_count !== 1) {
+    push('SHIP-DECL-ENTRY-COUNT',
+      `受控差异声明必须**只此一条**（点 ${reading.file}），实得 ${reading.entry_count} 条：${JSON.stringify(reading.entries_files)}`
+      + ' —— 多出来的每一条都是"多一棵树在漂"，而漂的那棵树没有票')
+  }
+  for (const p of reading.reproduce?.problems ?? []) {
+    push(p.code, `[数字复现] ${p.message}`)
+  }
+  if (reading.reason_mentions_helper !== true) {
+    push('SHIP-DECL-HELPER',
+      `声明的理由没说清**第二块**内联：要同时提到 \`cli-guards\`（源）与"内联"（实得 ${JSON.stringify(reading.text_fields.reason)}）`
+      + ' —— 声明不是免责条款，它得让下一个人知道这处受控差异是"发布时内联了两段正文"，不是分叉')
   }
   return { verdict: problems.length === 0 ? 'GREEN' : 'RED', problems }
 }
