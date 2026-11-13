@@ -24,7 +24,7 @@
  *   · ⇒ **只有"首轮在 T 之后"的会话才是"这一次启动之后的读数"**；首轮在 T 之前的叫 **resumed**
  *     （它进 `readings.resumed_touched_after_T`，**不当证据**）；流里读不到首轮的进
  *     `readings.anchor_unavailable`（**判不了**，不是绿）。
- *     没有"首轮在 T 之后"的会话 ⇒ `HOLD BOOT-NO-SESSION-AFTER-RESTART`（**永远不是绿**）。
+ *     没有"首轮在 T 之后"的会话 ⇒ **不是"永远 HOLD"**：见下一段（`bug-20261113-18`）。
  *   · ⚠️ 续跑（resume）回来的老会话仍然带着**它出生时**的 `agentPreset`（实测：`session-cc5c68d1`
  *     头写于 2026-10-19T03:03:54.661Z，`standard`；2026-11-05 16:07 续跑起来守卫读的还是 `standard`
  *     ⇒ 窄权限）。它现在是"resumed"，判法没变。
@@ -33,6 +33,39 @@
  * `origin: "subagent"` / `parentSession` —— 委派出去的组员会话头是 `agenia-member` + `depth: 1`，
  * 拿它去判"预设注册没注册"会把一条**永远红**的假红焊进判据（本模块自带这一格的反向读数：
  * 同一个 T 下"不过滤"会选中组员会话，过滤后是 HOLD —— 过滤器是承重的，不是装饰）。
+ *
+ * ── ①' 没有样本时读**年龄**，不再读"请你去开个新会话"（`bug-20261113-18`）───────────
+ * 病（老板 2026-11-13 原话：「不要再搞这种需要我开新会话的判据了，偶尔一次还行，如果每天都需要
+ * 我开新会话那就是这个条目本身有问题」）：**判据的输入不许挂在需求方的一个日常动作上**。
+ * 顶层会话只有客户端「新建会话」能建出来（机器侧没有这条入口 —— 2026-11-13 现量：
+ * `~/.dsh/sessions` 里 111 份顶层会话 `origin` **全是 null**，1856 份组员会话才带
+ * `origin: subagent` + `parentSession`），所以"没有样本"是**常态**，不是缺口。
+ * ⇒ 没有样本时这一格不进"永远 HOLD"，而是读**距上次重启多久了**（`postRestartSampleVerdict()`）：
+ *   · `restart_age_days < POST_RESTART_SAMPLE.threshold_days`（3）⇒ **HOLD**
+ *     `BOOT-NO-SESSION-AFTER-RESTART`，读数里带 `restart_age_days` + 具名 owner + 到期时刻；
+ *   · `>= 3` ⇒ **RED** `BOOT-NO-SESSION-AFTER-RESTART-EXPIRED`，报文点名年龄与到期时刻。
+ * 阈值只作用于**没有样本**这一支：有样本时年龄只当上下文，判词照旧由 `presetVerdict()` 给
+ * （否则"重启 30 天后才出现的那份样本"会被年龄判词吞掉 —— 那是另一条假红）。
+ * 🔴 这不是"改成恒绿"：HOLD 只买 3 天，第 3 天起这一格自己变红；被删掉的是**每日催他**，不是断言。
+ *
+ * ── ①'' 放宽样本面（不是放宽断言）─────────────────────────────────────────────
+ * `selectPostRestartSample()` 在**主锚点之外**再认一种"T 之后的顶层会话"：头里的 `createdAt >= T`。
+ * 它单列的理由与边界（写在这里，省得下一个人去猜）：
+ *   · **只加不减**：主锚点（`firstTurnAt`）选得中就用它，`createdAt` 这一支**只在主锚点空着时**顶上
+ *     ⇒ 它不可能顶掉一条本来该绿的样本，也不可能把 `bug-20261110-07` 那个错锚点请回来；
+ *   · **它为什么补得到东西**：`createdAt` 会被"沿用空会话对象"这个习气弄脏（新建的顶层会话可能带着
+ *     旧 `createdAt`）⇒ 它**漏**，但它不会**多**：`createdAt >= T` 的顶层会话，其头一定是 T 之后写的。
+ *     所以它是一把"只往 T 之后加样本"的尺子，选不中负控①（那把刀还在 `BOOT-01` 的 ⓪' 腿上）。
+ *   · **读数点名出处**：每一份候选都带 `{哪条流（文件 / 目录 / mtime / 首帧 sha256）, 头里声明了什么
+ *     （origin / parentSession / delegationDepth / createdAt）, 据此能确定到哪一步（creator_kind）}`。
+ *     `creator_kind` 今天只有三种取值，**不许猜**：`undeclared-top-level`（顶层 + `origin: null` ——
+ *     盘上 111/111 都是这一种，读数里明写"谁建的读不出来"，不编一个人出来）、
+ *     `machine-delegated`（`origin: subagent` / 带 `parentSession` / `depth > 0`）、
+ *     `<头里原样的 origin 值>`（哪天平台写出 `origin: "job"` 之类，读数直接照抄）。
+ *   · **组员会话只记不判**：`machine_created_after_T` 照样落读数（它证明"重启之后这台机器还在动"），
+ *     但它是**不等价证据** —— 组员会话的 `agentPreset` 是从父会话那条路来的，父会话是重启**之前**
+ *     建的；拿它判"重启之后预设注册得上吗"会把一条真缺陷读成绿。所以它**不进 GREEN 的依据**，
+ *     读数里逐条写着这句话。
  *
  * ── ② 包可达（R3）：只认真能从宿主读到的两样东西 ──────────────────────────────
  * 平台侧的事实（从 `app.asar` 里 `@deepseek-ai/dsh-client-modules/lib/index.js` 读出来的，
@@ -115,7 +148,17 @@ export const BOOT_CODES = {
   selectorDead: 'BOOT-R2-SELECTOR-DEAD',
   restartTimeUnknown: 'BOOT-R2-RESTART-TIME-UNKNOWN',
   // 身份
+  /**
+   * 重启之后还没有"首轮在 T 之后的顶层会话"，**且距重启仍在阈值内**（`POST_RESTART_SAMPLE.threshold_days`）
+   * ⇒ HOLD（`bug-20261113-18`）。读数里必须带 `restart_age_days` + owner + 到期时刻。
+   */
   noSessionAfterRestart: 'BOOT-NO-SESSION-AFTER-RESTART',
+  /**
+   * 同一件事**超过阈值**（≥ 3 天）⇒ RED。与上面那个 HOLD 是**同一格的两端**，两个码分开是为了让读的人
+   * 一眼看出"这是缺样本超期"还是"样本在那儿而预设没注册"（`BOOT-PRESET-NOT-REGISTERED`）——
+   * 两条红混成一个码，等于把"该催人"和"该修产品"读成同一句话。
+   */
+  noSessionAfterRestartExpired: 'BOOT-NO-SESSION-AFTER-RESTART-EXPIRED',
   presetNotRegistered: 'BOOT-PRESET-NOT-REGISTERED',
   presetUnexpected: 'BOOT-PRESET-UNEXPECTED',
   // 回滚（R5）—— 2026-11-05 深夜重新定义：撤挂载 = 删 `# @host-level` 标记 + 重跑生成器。
@@ -223,6 +266,41 @@ export const IDENTITY_ANCHOR = Object.freeze({
     'session_projcache · sessionListMetadata.lastPromptAt —— 另一份 store；名字写着 last（最后一次说话），多轮会话里不是首轮',
   ]),
 })
+
+/**
+ * 🔴 **没有样本时这一格怎么读**（`bug-20261113-18`）—— 常量只此一份，报文里印的就是它。
+ *
+ * 三个数各有各的意思，别混：
+ *   · `threshold_days` = **3**：距上次重启满 3 天还没有样本 ⇒ 这一格从 HOLD 升成 RED。
+ *     为什么是 3：一次客户端重启到"下一天开工第一句话"之间通常只隔几小时（本机 2026-11-13 现量：
+ *     T = 09:58，第一次跑套件 10:51，`restart_age_days` = 0.03–0.42）。3 天留足了"周末没开机 /
+ *     今天全程在旧会话里干活"的余地，又短到不至于让一条真缺陷躺过一整周。
+ *   · `owner` = 谁能让这一格变绿。**只有他** —— 见 `why_only_the_boss`。
+ *   · `clear_condition` = 动作本身。就一句话：客户端里新建一个会话并说一句话。
+ *
+ * 🔴 **这不是每日功课**：阈值内报文不许催他（`ask: 'none'`）。真要他动手时，报文必须同句写清
+ * 「就这一次」与「为什么只有他能做」（卡上写死的口径）—— 那两句也在这里，只此一份。
+ */
+export const POST_RESTART_SAMPLE = Object.freeze({
+  threshold_days: 3,
+  ms_per_day: 86400000,
+  /** `restart_age_days` 印到小数点后几位（口径写死，否则同一个数会有两种写法）。 */
+  precision_days: 3,
+  owner: '老板（只有他能新建顶层会话）',
+  owner_key: 'boss',
+  clear_condition: '在客户端里新建一个会话并说一句话（一条 `turn/start` 就够了）',
+  why_only_the_boss:
+    '顶层会话只有客户端「新建会话」这一条入口能建出来：2026-11-13 现量 `~/.dsh/sessions` 下 111 份顶层会话的 '
+    + '`origin` **全是 null**，机器侧建出来的 1856 份都带 `origin: subagent` + `parentSession`（`delegationDepth > 0`）'
+    + '⇒ 组员会话不是"顶层会话"，拿它替这一格会把真缺陷读成绿（见 `selectPostRestartSample()` 的边界）',
+  one_time_note: '就这一次（不是每天）：阈值内这一格自己挂着，不要你动手；超过 3 天它会自己变红',
+})
+
+/** `restart_age_days` 的算法**只此一处**（毫秒 → 天 → 按 `precision_days` 取整）。 */
+export function restartAgeDays(ms, precisionDays = POST_RESTART_SAMPLE.precision_days) {
+  const p = 10 ** precisionDays
+  return Math.round((ms / POST_RESTART_SAMPLE.ms_per_day) * p) / p
+}
 
 /** 看板包的目录（在现役预设树里）。 */
 export const DASHBOARD_PKG_DIR = () => path.join(PATHS.finalPreset, 'client-ui-dashboard')
@@ -603,6 +681,234 @@ export function presetVerdict(identity, expected = EXPECTED_PRESET) {
     why: `会话 ${identity.id}（首轮 ${identity.firstTurnAt_iso ?? '?'} · 头里的 createdAt ${identity.createdAt_iso ?? '?'}）`
       + `头里的 \`agentPreset\` 是 ${JSON.stringify(identity.agentPreset)}，`
       + `期望 ${JSON.stringify(expected)} ⇒ ${identity.agentPreset === 'standard' ? '预设没注册上（标准档 = 无角色 ⇒ 窄权限）' : '注册成了别的预设'}`,
+  }
+}
+
+// ── ①'' 放宽样本面（`bug-20261113-18` 的 ②）：**只加不减**的第二个入口 ────────────
+/**
+ * 一份会话头**能被确定到哪一步**（读数里点名出处，**不猜谁建的**）。
+ *
+ * 只有三个分支，来源都是头里已有的字段（不新增证据源）：
+ *   · 不是顶层（`origin: subagent` / 带 `parentSession` / `depth > 0`）⇒ `machine-delegated`；
+ *   · 顶层**且**头里明写了一个别的 `origin` ⇒ 照抄那个值（`origin:<值>`，哪天平台写出来就读得到）；
+ *   · 顶层**且** `origin` 是 null / 缺 ⇒ `undeclared-top-level`。
+ *     🔴 这一支**今天就是全部**（2026-11-13 现量 111/111），所以报文必须写"谁建的读不出来"，
+ *     不许把它说成"老板亲手开的"—— 那是替一个没量过的字段编一个值。
+ */
+export function creatorKindOf(identity) {
+  if (identity === null || identity === undefined) return null
+  const drafted = identity.is_top_level !== true
+    || (typeof identity.delegationDepth === 'number' && identity.delegationDepth > 0)
+    || identity.parentSession !== null
+    || identity.origin === 'subagent'
+  if (drafted) return 'machine-delegated'
+  if (typeof identity.origin === 'string' && identity.origin !== '') return `origin:${identity.origin}`
+  return 'undeclared-top-level'
+}
+
+/** 一份会话的**出处读数**：哪条流 + 头里声明了什么 + 据此能确定到哪一步。 */
+export function provenanceOf(identity) {
+  if (identity === null || identity === undefined) return null
+  return {
+    id: identity.id,
+    stream: {
+      file: identity.file,
+      dir: identity.dir,
+      mtime: identity.mtime ?? null,
+      first_frame_sha256: identity.first_frame_sha256 ?? null,
+      file_sha256: identity.file_sha256 ?? null,
+      file_bytes: identity.file_bytes ?? null,
+    },
+    header_declares: {
+      origin: identity.origin ?? null,
+      parentSession: identity.parentSession ?? null,
+      delegationDepth: identity.delegationDepth ?? null,
+      createdAt_iso: identity.createdAt_iso ?? null,
+      firstTurnAt_iso: identity.firstTurnAt_iso ?? null,
+      agentPreset: identity.agentPreset ?? null,
+    },
+    creator_kind: creatorKindOf(identity),
+    creator_note: creatorKindOf(identity) === 'undeclared-top-level'
+      ? '顶层会话且头里 `origin` 是 null ⇒ **谁建的读不出来**（这一支在盘上是常态，不是异常）；能确定的只有"它是顶层会话"'
+      : (creatorKindOf(identity) === 'machine-delegated'
+        ? '委派会话（`origin: subagent` / `parentSession` / `delegationDepth > 0`）⇒ 机器建的，但它的 `agentPreset` 从父会话那条路来，**不是**这一格要的那份证据'
+        : `头里明写了 \`origin: ${identity.origin}\``),
+  }
+}
+
+/**
+ * **T 之后的一份顶层会话**（`bug-20261113-18` 的 ②）。两条入口，**主锚点优先、只加不减**：
+ *   ① `firstTurnAt >= T`（`IDENTITY_ANCHOR`，`selectNewestAfter()`）—— 今天唯一的一条；
+ *   ② `createdAt >= T`（头里的时刻）—— **只在 ① 空着时**顶上。
+ *
+ * 为什么 ② 允许存在（而 `IDENTITY_ANCHOR.rejected` 里明明否掉了 `createdAt`）：
+ *   · 被否掉的是"**拿 `createdAt` 当锚点**"——它会被"沿用空会话对象"弄脏 ⇒ **漏**掉真样本
+ *     （`bug-20261110-07` 就是它把"今天才说话"读成"没样本"）；
+ *   · 这里用的是它的另一面：`createdAt >= T` **不会多** —— 头里写着 T 之后的时刻，那份头就是 T 之后写的。
+ *     ⇒ 它是一把只会**往 T 之后加**的尺子，选不中负控①（那把刀留在 `BOOT-01` 的 ⓪' 腿上）。
+ *   · 判词仍然只有一处：`presetVerdict(head.agentPreset)`，两条入口喂的是同一把尺子。
+ *
+ * 另记一份 `machine_created_after_T`：T 之后建出来的**组员会话**（它证明"重启之后这台机器还在动"）。
+ * 🔴 它**不进判词**：组员会话的 `agentPreset` 来自父会话（父会话建于重启之前），拿它判"重启之后预设
+ * 注册得上吗"会把真缺陷读成绿。读数里逐条写着这句话，别把它读成第二份证据。
+ */
+export function selectPostRestartSample(identities, { T } = {}) {
+  const list = Array.isArray(identities) ? identities : []
+  const primary = selectNewestAfter(list, { T, mode: 'top-level' })
+  const byCreated = list
+    .filter((x) => x.is_top_level === true && typeof x.createdAt === 'number' && x.createdAt >= T)
+    .sort((a, b) => b.createdAt - a.createdAt)
+  const fromPrimary = primary.newest
+  const fromCreated = byCreated[0] ?? null
+  const newest = fromPrimary ?? fromCreated
+  const machineCreated = list
+    .filter((x) => x.is_top_level !== true && typeof x.createdAt === 'number' && x.createdAt >= T)
+    .sort((a, b) => b.createdAt - a.createdAt)
+  return {
+    T,
+    T_iso: Number.isFinite(T) ? new Date(T).toISOString() : null,
+    /** ① 主锚点（`IDENTITY_ANCHOR`）—— 判词认的那一条。 */
+    primary: {
+      by: IDENTITY_ANCHOR.field,
+      anchor: primary.anchor,
+      anchor_source: primary.anchor_source,
+      eligible: primary.eligible,
+      newest_id: fromPrimary === null ? null : fromPrimary.id,
+      candidates: primary.candidates,
+    },
+    /**
+     * ② 放宽入口（`createdAt`）—— **只在 ① 空着时**顶上；`role` 写清它不替换主锚点。
+     */
+    widened: {
+      by: 'createdAt',
+      role: 'widening-only（OR）：只在主锚点空着时顶上，永不替换 `firstTurnAt`',
+      why_safe: '`createdAt >= T` 不会把 T 之前建的会话算进来（只会漏、不会多）⇒ 它只往 T 之后加样本；`IDENTITY_ANCHOR.rejected` 否掉的是"拿它当锚点"，不是"看它一眼"',
+      candidates: byCreated.slice(0, 5).map((x) => provenanceOf(x)),
+      count: byCreated.length,
+      used: fromPrimary === null && fromCreated !== null,
+    },
+    /** 判词用哪一份、哪条入口给的 —— 读的人不必回推。 */
+    newest,
+    picked_by: fromPrimary !== null ? 'firstTurnAt' : (fromCreated !== null ? 'createdAt' : null),
+    /** 样本出处（谁建的 / 哪条流 / 头里声明了什么）。 */
+    provenance: provenanceOf(newest),
+    /**
+     * T 之后建出来的**组员会话**（不等价证据，只当"机器还在动"的旁证）。
+     * 🔴 `counts_as_sample: false` 是这一格的名字，不是注释。
+     */
+    machine_created_after_T: {
+      counts_as_sample: false,
+      why_not: '组员会话的 `agentPreset` 从父会话（建于 T 之前）那条路来 ⇒ 它绿不能证明"重启之后预设注册得上"',
+      count: machineCreated.length,
+      sample: machineCreated.slice(0, 5).map((x) => provenanceOf(x)),
+    },
+  }
+}
+
+// ── ①' 没有样本时读**年龄**（`bug-20261113-18` 的 ①）：这一格会翻面的地方 ──────────
+/**
+ * **没有样本时这一格的判词**（纯函数，会翻面 —— 卡上的两把刀都打在这里）。
+ *
+ * 四支，互不重叠：
+ *   · `T` 读不出来（不是有限数）⇒ `HOLD BOOT-R2-RESTART-TIME-UNKNOWN`（没有"之后"就没有年龄）；
+ *   · 有样本 ⇒ `presetVerdict(sample)`：`GREEN` / `RED BOOT-PRESET-*`。**年龄只当上下文** ——
+ *     阈值不许吞掉一份真样本（否则"重启 30 天后补上的那份样本"会被读成超期）；
+ *   · 无样本且 `restart_age_days < thresholdDays` ⇒ `HOLD BOOT-NO-SESSION-AFTER-RESTART`；
+ *   · 无样本且 `>= thresholdDays` ⇒ `RED BOOT-NO-SESSION-AFTER-RESTART-EXPIRED`。
+ *
+ * 读数里**永远**带 `restart_age_days`（四支都带）：这一格最容易出的错不是判错，是"读数里没有年龄"
+ * 而人还得自己去减两个时刻。
+ *
+ * @param {{sample?:object|null, T:number, now?:number, expected?:string, thresholdDays?:number}} p
+ * @returns `verdict` / `code` / `why` / `restart_age_ms` / `restart_age_days` / `threshold_days` /
+ *          `expires_at` / `expires_at_iso` / `owner` / `sample_state` / `clock_skew_ms` / `ask`
+ */
+export function postRestartSampleVerdict({
+  sample = null,
+  T,
+  now = Date.now(),
+  expected = EXPECTED_PRESET,
+  thresholdDays = POST_RESTART_SAMPLE.threshold_days,
+} = {}) {
+  const thresholdMs = thresholdDays * POST_RESTART_SAMPLE.ms_per_day
+  const base = {
+    sample_state: sample === null || sample === undefined ? 'absent' : 'present',
+    threshold_days: thresholdDays,
+    owner: POST_RESTART_SAMPLE.owner,
+    owner_key: POST_RESTART_SAMPLE.owner_key,
+    measured_at: new Date(now).toISOString(),
+  }
+  if (!Number.isFinite(T)) {
+    return {
+      ...base,
+      verdict: 'HOLD',
+      code: BOOT_CODES.restartTimeUnknown,
+      why: '量不到这一次客户端启动的时刻（T 不是有限数）⇒ 没有"之后"、也没有年龄 —— 不许绿',
+      T: null,
+      T_iso: null,
+      now,
+      now_iso: new Date(now).toISOString(),
+      restart_age_ms: null,
+      restart_age_days: null,
+      threshold_days: thresholdDays,
+      expires_at: null,
+      expires_at_iso: null,
+      clock_skew_ms: null,
+      ask: 'none',
+    }
+  }
+  const rawAgeMs = now - T
+  const clockSkew = rawAgeMs < 0
+  const ageMs = clockSkew ? 0 : rawAgeMs
+  const expiresAt = T + thresholdMs
+  const aged = {
+    ...base,
+    T,
+    T_iso: new Date(T).toISOString(),
+    now,
+    now_iso: new Date(now).toISOString(),
+    restart_age_ms: ageMs,
+    restart_age_days: restartAgeDays(ageMs),
+    expires_at: expiresAt,
+    expires_at_iso: new Date(expiresAt).toISOString(),
+    /** `now < T` 时如数记下差多少 —— 钳到 0 是显示口径，不是"没这回事"。 */
+    clock_skew_ms: clockSkew ? rawAgeMs : 0,
+  }
+  if (sample !== null && sample !== undefined) {
+    const v = presetVerdict(sample, expected)
+    return {
+      ...aged,
+      verdict: v.verdict,
+      code: v.code ?? null,
+      why: v.why,
+      /** 判词是**哪条路子**给的：样本的 preset，还是缺样本超期。两条红不许混成一个码。 */
+      decided_by: 'sample.agentPreset',
+      sample_id: sample.id ?? null,
+      ask: 'none',
+    }
+  }
+  if (ageMs < thresholdMs) {
+    return {
+      ...aged,
+      verdict: 'HOLD',
+      code: BOOT_CODES.noSessionAfterRestart,
+      why: `距上次重启 ${aged.restart_age_days} 天（restart_age_days = ${aged.restart_age_days} · 阈值 ${thresholdDays} 天 · `
+        + `到期 ${aged.expires_at_iso}）—— 这一格还在阈值内，**不催人**`,
+      decided_by: 'restart_age_days < threshold_days',
+      sample_id: null,
+      /** `none` = 报文里**没有**要他做的事（阈值内不许把 HOLD 变成每日功课）。 */
+      ask: 'none',
+    }
+  }
+  return {
+    ...aged,
+    verdict: 'RED',
+    code: BOOT_CODES.noSessionAfterRestartExpired,
+    why: `距上次重启 ${aged.restart_age_days} 天 ≥ 阈值 ${thresholdDays} 天（到期时刻 ${aged.expires_at_iso} 已经过了）`
+      + ` —— 重启之后一直没有出现"T 之后的顶层会话"`,
+    decided_by: 'restart_age_days >= threshold_days',
+    sample_id: null,
+    ask: 'boss-once',
   }
 }
 

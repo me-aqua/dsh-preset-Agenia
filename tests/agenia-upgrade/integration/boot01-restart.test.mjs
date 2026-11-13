@@ -27,14 +27,41 @@
  *   ① **身份**：`T` = 这一次客户端启动的时刻（`AGENIA_BOOT_AT` 或宿主进程启动时刻）；
  *      取该工作区里**首轮对话在 `T` 之后**、**顶层**（`delegationDepth === 0` 且不是委派会话）的
  *      最新一份会话，判它的 `agentPreset`：
- *        · 没有这样的会话 ⇒ `HOLD BOOT-NO-SESSION-AFTER-RESTART`（**永远不是绿**）；
- *        · `agentPreset === 'agenia'` ⇒ 这一格成立；
- *        · `'standard'` ⇒ `RED BOOT-PRESET-NOT-REGISTERED`（= 事故形态：无角色 ⇒ 窄权限）；
- *        · 别的值 ⇒ `RED BOOT-PRESET-UNEXPECTED`。
+ *        · 有样本：`'agenia'` ⇒ 这一格成立 · `'standard'` ⇒ `RED BOOT-PRESET-NOT-REGISTERED`
+ *          （= 事故形态：无角色 ⇒ 窄权限）· 别的值 ⇒ `RED BOOT-PRESET-UNEXPECTED`。
+ *        · **没有样本**（`bug-20261113-18`，老板 2026-11-13 原话：「不要再搞这种需要我开新会话的
+ *          判据了，偶尔一次还行，如果每天都需要我开新会话那就是这个条目本身有问题」）⇒ 判词读的是
+ *          **距上次重启多久了**，不是"请你去开个新会话"：
+ *          `restart_age_days < 3` ⇒ `HOLD BOOT-NO-SESSION-AFTER-RESTART`（读数带 `restart_age_days`
+ *          + 具名 owner + 到期时刻，报文里**不催人**）；
+ *          `>= 3` ⇒ `RED BOOT-NO-SESSION-AFTER-RESTART-EXPIRED`，报文点名年龄与到期时刻。
+ *          ⇒ "没有样本"**不是**永久 HOLD，也**不是**恒绿：它买 3 天，第 3 天起自己变红。
+ *          🔴 阈值只作用于**没有样本**那一支；有样本时年龄只当上下文（判词仍由 `presetVerdict()` 给）。
+ *          为什么"没有样本"是常态而不是缺口：顶层会话只有客户端「新建会话」能建出来 —— 盘上 111/111
+ *          份顶层会话 `origin` 全是 null，机器建的 1856 份都带 `origin: subagent`。
+ *      同批落 `readings.identity.post_restart`（`selectPostRestartSample()` 的整份读数）：样本的
+ *      **出处**（哪条流 / 头里声明了什么 / `creator_kind`）、放宽入口（`createdAt >= T`，**只在主锚点
+ *      空着时**顶上）、以及 `machine_created_after_T`（T 之后的组员会话 —— 只记**不判**）。
  *      ⚠️ 读数里**两个时刻都给**（`createdAt` 只当上下文）：`readings.identity.anchor` 点名用的
  *      是哪个锚点，`readings.identity.selected_anchor` 写出**比的那个时刻**（`firstTurnAt >= T`）。
  *      同批落一份**反向读数**：同一个 `T` 下**不过滤**顶层会把谁选中（今天 = 委派出去的组员会话，
  *      `agenia-member`）—— 证明那个过滤器是承重的，不是装饰。
+ *   ①' **年龄判词 + 放宽样本面 的自证（刀）**：`postRestartRulerLeg()` —— 同一把尺子喂七组合成读数（与
+ *      盘上有没有活会话无关），必须各自给出**预期的那一格**：
+ *        · `0 天` 无样本 ⇒ **HOLD** 且 `restart_age_days === 0`（卡上的刀①：0 天必须是 HOLD，不是红）；
+ *        · `4 天` 无样本 ⇒ **RED `…-EXPIRED`**（卡上的刀②：4 天必须红，并点名年龄）；
+ *        · 边界两侧 `2.999 天` ⇒ HOLD / `3 天` ⇒ RED（阈值只有一个意思）；
+ *        · **有样本时年龄不许说话**：`0 天` 有样本 ⇒ GREEN；`30 天` 有样本 ⇒ **GREEN**（不是超期红）；
+ *        · 两条红**必须分得开**：`4 天` 无样本 ⇒ `…-EXPIRED`，`4 天` 有样本而 preset=`standard`
+ *          ⇒ `BOOT-PRESET-NOT-REGISTERED`（两个红混成一个码，就把"该催人"与"该修产品"读成同一句话）；
+ *        · `ask` 的口径：HOLD 那一支必须是 `none`（阈值内不许把 HOLD 变成每日功课），
+ *          超期 RED 那一支是 `boss-once`；
+ *        · `T` 读不出来 ⇒ HOLD `BOOT-R2-RESTART-TIME-UNKNOWN` 且 `restart_age_days === null`
+ *          （没有年龄就如实写 null，不许写 0）。
+ *      外加 ①'' `selectPostRestartSample()` 的四把刀：`createdAt` 入口**只在主锚点空着时**顶上（两份都在
+ *      ⇒ `picked_by === 'firstTurnAt'`）· 只有组员会话 ⇒ `newest === null` 但 `machine_created_after_T`
+ *      有记录 · 出处点名 **哪条流 + `creator_kind`**（顶层 `origin: null` ⇒ `undeclared-top-level`，
+ *      **不许读成"老板亲手开的"**）。
  *   ② **回滚（R5）**：**撤挂载 = 删 `# @host-level` 标记 + 重跑生成器**（2026-11-05 深夜组长裁定：
  *      "重定义，不退役"）。判两半，各自一个落点：
  *      · **产物 × 落点**（`rollbackRouteReading()`）：标记**在** ⇒ 那一行只住顶层 `- insert:`
@@ -100,6 +127,7 @@ import {
   BOOT_CODES,
   EXPECTED_PRESET,
   IDENTITY_ANCHOR,
+  POST_RESTART_SAMPLE,
   bootPayloadReading,
   findWorkspaceKey,
   hostBootReading,
@@ -109,6 +137,7 @@ import {
   packageReading,
   patchReaderVerdict,
   pluginChunkReading,
+  postRestartSampleVerdict,
   presetVerdict,
   profilePatchCoverage,
   readRollbackExercise,
@@ -116,8 +145,10 @@ import {
   rollbackExerciseVerdict,
   rollbackRouteReading,
   readSessionHeader,
+  restartAgeDays,
   scanHeaders,
   selectNewestAfter,
+  selectPostRestartSample,
   sessionRootReading,
   treeIdentity,
 } from '../support/boot-readings.mjs'
@@ -355,6 +386,273 @@ function firstTurnAnchorLeg({ tmpDir }) {
   }
 }
 
+// ── ①' 年龄判词 + 放宽样本面 的**刀**（`bug-20261113-18`，纯函数、与盘上无关）────────────
+/**
+ * 七组读数喂 `postRestartSampleVerdict()`，必须各自落在**预期那一格**上。
+ *
+ * 卡上的两把刀是头两行（`0 天 ⇒ HOLD` / `4 天 ⇒ RED`）；其余五行是让这两把刀**站得住**的东西：
+ *   · 边界两侧（`2.999` / `3`）—— 阈值只有一个意思，且边界那一侧归 RED；
+ *   · **有样本时年龄不许说话**（`0 天` / `30 天` 有样本都必须是 GREEN）—— 否则"重启 30 天后补上的
+ *     那份样本"会被读成超期红，那等于把一条真判据换成了日历；
+ *   · 两条红**必须分得开**（`…-EXPIRED` vs `BOOT-PRESET-NOT-REGISTERED`）—— 合成同一个码就是把
+ *     "该催人"与"该修产品"读成同一句话，读的人会去催人而不是去修产品；
+ *   · `T` 读不出来那一格 —— 没有年龄就写 `null`，不许写 0（0 与"没量"是两件事）。
+ *
+ * 外加 `selectPostRestartSample()` 的四把刀（放宽入口**只加不减** + 组员会话**只记不判** +
+ * 出处点名哪条流与 `creator_kind`）。
+ */
+function postRestartRulerLeg({ now }) {
+  const DAY = 86400000
+  const problems = []
+  const sampleOf = (preset) => ({
+    id: 'session-fixture-sample',
+    dir: 'session-fixture-sample',
+    file: '（合成读数，没有文件）',
+    agentPreset: preset,
+    createdAt: now - 1 * DAY,
+    createdAt_iso: new Date(now - 1 * DAY).toISOString(),
+    firstTurnAt: now - 1 * DAY,
+    firstTurnAt_iso: new Date(now - 1 * DAY).toISOString(),
+    is_top_level: true,
+    is_subagent: false,
+    delegationDepth: 0,
+    origin: null,
+    parentSession: null,
+  })
+  const FIXTURES = [
+    {
+      key: 'knife-0d-no-sample',
+      T: now,
+      sample: null,
+      want: { verdict: 'HOLD', code: BOOT_CODES.noSessionAfterRestart, age: 0, ask: 'none' },
+      what: '刀①（卡上）：重启 0 天、没有样本 ⇒ **HOLD**（不是红），读数里带 `restart_age_days`',
+    },
+    {
+      key: 'knife-4d-no-sample',
+      T: now - 4 * DAY,
+      sample: null,
+      want: { verdict: 'RED', code: BOOT_CODES.noSessionAfterRestartExpired, age: 4, ask: 'boss-once' },
+      what: '刀②（卡上）：重启 4 天、没有样本 ⇒ **RED** 并点名年龄',
+    },
+    {
+      key: 'boundary-2.999d-no-sample',
+      T: now - 2.999 * DAY,
+      sample: null,
+      want: { verdict: 'HOLD', code: BOOT_CODES.noSessionAfterRestart, age: 2.999, ask: 'none' },
+      what: '边界下方：阈值是闭区间右端的对侧，2.999 天仍是 HOLD',
+    },
+    {
+      key: 'boundary-3d-no-sample',
+      T: now - 3 * DAY,
+      sample: null,
+      want: { verdict: 'RED', code: BOOT_CODES.noSessionAfterRestartExpired, age: 3, ask: 'boss-once' },
+      what: '边界点上：满 3 天就红（`>=` 归 RED）',
+    },
+    {
+      key: 'sample-0d',
+      T: now,
+      sample: sampleOf(EXPECTED_PRESET),
+      want: { verdict: 'GREEN', code: null, age: 0, ask: 'none' },
+      what: '有样本 ⇒ 绿（照旧）：阈值不许把一份真样本变成红',
+    },
+    {
+      key: 'sample-30d',
+      T: now - 30 * DAY,
+      sample: sampleOf(EXPECTED_PRESET),
+      want: { verdict: 'GREEN', code: null, age: 30, ask: 'none' },
+      what: '**年龄不许说话**：30 天后才出现的样本仍然判 green 不判超期',
+    },
+    {
+      key: 'sample-standard-4d',
+      T: now - 4 * DAY,
+      sample: sampleOf('standard'),
+      want: { verdict: 'RED', code: BOOT_CODES.presetNotRegistered, age: 4, ask: 'none' },
+      what: '两条红分得开：同样 4 天，有样本而 preset=standard ⇒ 红在 `BOOT-PRESET-NOT-REGISTERED`（不是超期）',
+    },
+  ]
+  const rows = FIXTURES.map((f) => {
+    const got = postRestartSampleVerdict({ sample: f.sample, T: f.T, now })
+    return {
+      key: f.key,
+      what: f.what,
+      T_iso: new Date(f.T).toISOString(),
+      want: f.want,
+      got: {
+        verdict: got.verdict,
+        code: got.code ?? null,
+        restart_age_days: got.restart_age_days,
+        threshold_days: got.threshold_days,
+        expires_at_iso: got.expires_at_iso,
+        owner: got.owner,
+        ask: got.ask,
+        decided_by: got.decided_by,
+        why: got.why,
+      },
+    }
+  })
+
+  for (const row of rows) {
+    const want = row.want
+    const got = row.got
+    if (got.verdict !== want.verdict || got.code !== want.code) {
+      problems.push(problem(BOOT_CODES.selectorDead,
+        `[①' 刀 ${row.key}] ${row.what}：期望 ${want.verdict}/${JSON.stringify(want.code)}，`
+        + `实得 ${got.verdict}/${JSON.stringify(got.code)}（decided_by=${JSON.stringify(got.decided_by)}）`))
+    }
+    // `restart_age_days` 必须**每一支都带**，且与刀自己从 T 算出来的那个数同值（不是"有个字段就行"）。
+    const wantAge = restartAgeDays(Math.max(0, now - Date.parse(row.T_iso)))
+    if (got.restart_age_days !== want.age) {
+      problems.push(problem(BOOT_CODES.selectorDead,
+        `[①' 刀 ${row.key}] \`restart_age_days\` 必须印 ${want.age}，实得 ${JSON.stringify(got.restart_age_days)}`
+        + ' —— 这一格最容易出的错不是判错，是读数里没有年龄（人还得自己去减两个时刻）'))
+    }
+    // 夹具自己也得站得住：从 T 算出来的天数必须就是这一行写的那个数。
+    if (wantAge !== want.age) {
+      problems.push(problem(BOOT_CODES.selectorDead,
+        `[①\\' 刀的夹具自己写歪了] ${row.key}：\`restartAgeDays()\` 从 T 算出 ${wantAge}，而这一行写的是 ${want.age}`))
+    }
+    if (got.ask !== want.ask) {
+      problems.push(problem(BOOT_CODES.selectorDead,
+        `[①' 刀 ${row.key}] \`ask\` 必须是 ${JSON.stringify(want.ask)}（阈值内的 HOLD 不许变成每日功课；超期那一支才点名人），实得 ${JSON.stringify(got.ask)}`))
+    }
+    if (typeof got.expires_at_iso !== 'string' || !Number.isFinite(Date.parse(got.expires_at_iso))) {
+      problems.push(problem(BOOT_CODES.selectorDead, `[①' 刀 ${row.key}] 读数里没有可解析的 \`expires_at_iso\`（实得 ${JSON.stringify(got.expires_at_iso)}）—— 阈值必须带一个到得了的时刻，不许只写一个天数`))
+    }
+  }
+  // 报文里必须**印出**那个字段名与那个数（卡上的验收是"读数带 restart_age_days"，不是"结构体里有"）。
+  const holdRow = rows.find((r) => r.key === 'knife-0d-no-sample')
+  if (!String(holdRow.got.why).includes('restart_age_days')) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[①' 刀①] HOLD 的报文里必须印 \`restart_age_days\` 这个名字（它就是这个读数的键），实得 ${JSON.stringify(holdRow.got.why)}`))
+  }
+  const redRow = rows.find((r) => r.key === 'knife-4d-no-sample')
+  if (!String(redRow.got.why).includes('4 天') && !String(redRow.got.why).includes('4天')) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[①' 刀②] 超期红必须**点名年龄**（报文里要出现 4 天），实得 ${JSON.stringify(redRow.got.why)}`))
+  }
+  // 两条红必须是两个码（同一份尺子的两个红不许塌成一个）。
+  if (BOOT_CODES.noSessionAfterRestartExpired === BOOT_CODES.presetNotRegistered) {
+    problems.push(problem(BOOT_CODES.selectorDead, '[①\' 刀] 超期红与 preset 红用了同一个码 —— 读的人分不出"该催人"与"该修产品"'))
+  }
+  // `T` 读不出来：`restart_age_days` 必须是 null，不许是 0。
+  const noT = postRestartSampleVerdict({ sample: null, T: null, now })
+  if (noT.verdict !== 'HOLD' || noT.code !== BOOT_CODES.restartTimeUnknown || noT.restart_age_days !== null) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[①' 刀] 没有 T ⇒ 必须 HOLD \`${BOOT_CODES.restartTimeUnknown}\` 且 \`restart_age_days: null\`（"没量"与"0 天"是两件事），实得 ${JSON.stringify({ verdict: noT.verdict, code: noT.code, age: noT.restart_age_days })}`))
+  }
+
+  // ── `selectPostRestartSample()` 的四把刀 ──────────────────────────────────
+  const topLevelOldFirstTurn = {
+    id: 'session-fixture-widened',
+    dir: 'session-fixture-widened',
+    file: '（合成读数，没有文件）',
+    agentPreset: EXPECTED_PRESET,
+    createdAt: now - 60 * 1000,
+    createdAt_iso: new Date(now - 60 * 1000).toISOString(),
+    firstTurnAt: null,
+    firstTurnAt_iso: null,
+    firstTurn_is_first: false,
+    firstTurn_why: 'first-turn-not-in-stream',
+    is_top_level: true,
+    is_subagent: false,
+    delegationDepth: 0,
+    origin: null,
+    parentSession: null,
+  }
+  const topLevelOldHeaderFreshTurn = {
+    ...topLevelOldFirstTurn,
+    id: 'session-fixture-primary',
+    dir: 'session-fixture-primary',
+    createdAt: now - 10 * DAY,
+    createdAt_iso: new Date(now - 10 * DAY).toISOString(),
+    firstTurnAt: now - 60 * 1000,
+    firstTurnAt_iso: new Date(now - 60 * 1000).toISOString(),
+    firstTurn_is_first: true,
+    firstTurn_why: null,
+  }
+  const delegatedFresh = {
+    ...topLevelOldFirstTurn,
+    id: 'session-fixture-member',
+    dir: 'session-fixture-member',
+    agentPreset: 'agenia-member',
+    is_top_level: false,
+    is_subagent: true,
+    delegationDepth: 1,
+    origin: 'subagent',
+    parentSession: 'session-fixture-primary',
+    firstTurnAt: now - 30 * 1000,
+    firstTurnAt_iso: new Date(now - 30 * 1000).toISOString(),
+    firstTurn_is_first: true,
+    firstTurn_why: null,
+  }
+  const both = selectPostRestartSample([topLevelOldFirstTurn, topLevelOldHeaderFreshTurn, delegatedFresh], { T: now - 3600 * 1000 })
+  const widenedOnly = selectPostRestartSample([topLevelOldFirstTurn, delegatedFresh], { T: now - 3600 * 1000 })
+  const delegatedOnly = selectPostRestartSample([delegatedFresh], { T: now - 3600 * 1000 })
+  const widenedRows = {
+    both: {
+      picked_by: both.picked_by,
+      id: both.newest?.id ?? null,
+      widened_used: both.widened.used,
+      provenance: both.provenance,
+      machine_count: both.machine_created_after_T.count,
+      machine_counts_as_sample: both.machine_created_after_T.counts_as_sample,
+    },
+    widened_only: { picked_by: widenedOnly.picked_by, id: widenedOnly.newest?.id ?? null, widened_used: widenedOnly.widened.used },
+    delegated_only: {
+      id: delegatedOnly.newest?.id ?? null,
+      picked_by: delegatedOnly.picked_by,
+      machine_count: delegatedOnly.machine_created_after_T.count,
+      machine_counts_as_sample: delegatedOnly.machine_created_after_T.counts_as_sample,
+    },
+  }
+  // 刀③：主锚点选得中就用它（`createdAt` 那一支**不许**顶掉它）。
+  if (both.picked_by !== 'firstTurnAt' || both.newest?.id !== 'session-fixture-primary') {
+    problems.push(problem(BOOT_CODES.selectorDead, `[①'' 刀③] 放宽入口**只加不减**：主锚点选得中时必须用它，实得 picked_by=${JSON.stringify(both.picked_by)} id=${JSON.stringify(both.newest?.id ?? null)}`))
+  }
+  if (both.widened.used === true) {
+    problems.push(problem(BOOT_CODES.selectorDead, '[①\'\' 刀③] 主锚点已经有样本时 `widened.used` 必须是 false —— 否则读数会让人以为两份都在用'))
+  }
+  // 刀④：主锚点空着时，`createdAt` 入口顶上（这就是"放宽"本身有对象的证明）。
+  if (widenedOnly.picked_by !== 'createdAt' || widenedOnly.newest?.id !== 'session-fixture-widened' || widenedOnly.widened.used !== true) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[①'' 刀④] 主锚点空着时 \`createdAt >= T\` 那一支必须顶上（这就是放宽），实得 ${JSON.stringify({ picked_by: widenedOnly.picked_by, id: widenedOnly.newest?.id ?? null, used: widenedOnly.widened.used })}`))
+  }
+  // 刀⑤：只有组员会话 ⇒ 一个样本都没有（但它要被**记下来**）。
+  if (delegatedOnly.newest !== null || delegatedOnly.picked_by !== null) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[①'' 刀⑤] 只有 T 之后的**组员会话**时必须一个样本都没有（它的 preset 从父会话那条路来，不是等价证据），实得 ${JSON.stringify(delegatedOnly.newest?.id ?? null)}`))
+  }
+  if (delegatedOnly.machine_created_after_T.count !== 1 || delegatedOnly.machine_created_after_T.counts_as_sample !== false) {
+    problems.push(problem(BOOT_CODES.selectorDead, `[①'' 刀⑤] T 之后的组员会话必须**记下来**且明写 \`counts_as_sample: false\`，实得 ${JSON.stringify({ count: delegatedOnly.machine_created_after_T.count, counts: delegatedOnly.machine_created_after_T.counts_as_sample })}`))
+  }
+  // 刀⑥：出处必须点名**哪条流**与 `creator_kind`，且顶层 `origin: null` **不许**被读成"老板亲手开的"。
+  const prov = both.provenance
+  if (prov === null || typeof prov.stream?.file !== 'string' || typeof prov.creator_kind !== 'string') {
+    problems.push(problem(BOOT_CODES.selectorDead, `[①'' 刀⑥] 样本必须带出处（哪条流 + \`creator_kind\`），实得 ${JSON.stringify(prov)}`))
+  }
+  if (prov?.creator_kind !== 'undeclared-top-level') {
+    problems.push(problem(BOOT_CODES.selectorDead, `[①'' 刀⑥] 顶层会话头里 \`origin: null\` ⇒ \`creator_kind\` 必须是 \`undeclared-top-level\`（"谁建的读不出来"），不许编一个人出来；实得 ${JSON.stringify(prov?.creator_kind)}`))
+  }
+  if (prov?.creator_kind === 'undeclared-top-level' && String(prov.creator_note ?? '').includes('老板')) {
+    problems.push(problem(BOOT_CODES.selectorDead, '[①\'\' 刀⑥] `creator_kind: undeclared-top-level` 的说明里不许出现"老板"——那是替一个没量过的字段编一个值'))
+  }
+
+  return {
+    readings: {
+      measured_at: new Date(now).toISOString(),
+      now,
+      now_iso: new Date(now).toISOString(),
+      policy: {
+        threshold_days: POST_RESTART_SAMPLE.threshold_days,
+        owner: POST_RESTART_SAMPLE.owner,
+        owner_key: POST_RESTART_SAMPLE.owner_key,
+        clear_condition: POST_RESTART_SAMPLE.clear_condition,
+        why_only_the_boss: POST_RESTART_SAMPLE.why_only_the_boss,
+        one_time_note: POST_RESTART_SAMPLE.one_time_note,
+      },
+      rows,
+      no_T: { verdict: noT.verdict, code: noT.code, restart_age_days: noT.restart_age_days },
+      widened_rows: widenedRows,
+    },
+    problems,
+  }
+}
+
 test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 之后的会话，头里 agentPreset 必须是 agenia（锚点 = 会话流 turn/start）；standard ⇒ 塌了；R5 撤挂载 = 删标记 + 重跑生成器', async () => {
   await runCase('BOOT-01', async (rec) => {
     const tmpDir = path.join(caseDir('BOOT-01'), 'tmp')
@@ -384,6 +682,16 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
     const anchorLeg = firstTurnAnchorLeg({ tmpDir: path.join(caseDir('BOOT-01'), 'anchor-fixtures') })
     rec.readings.anchor_leg = anchorLeg.readings
     for (const p of anchorLeg.problems) rec.problems.push(problem(p.code, p.message))
+
+    /**
+     * ── ①' **年龄判词的刀**（`bug-20261113-18`）────────────────────────────────
+     * 卡上的两把刀打在 `postRestartSampleVerdict()` 上：`0 天` 无样本 ⇒ HOLD（带 `restart_age_days`）、
+     * `4 天` 无样本 ⇒ RED。与"盘上有没有活会话"无关 —— **这一层不过，下面那句"HOLD 是因为还没到期"
+     * 就没有合法性来源**（它可能只是"这一格只会 HOLD"）。
+     */
+    const ruleLeg = postRestartRulerLeg({ now: Date.now() })
+    rec.readings.post_restart_ruler = ruleLeg.readings
+    for (const p of ruleLeg.problems) rec.problems.push(problem(p.code, p.message))
 
     // ── 0 前置：会话流根 + 工作区键 + 启动时刻 ────────────────────────────────
     if (!store.exists) {
@@ -433,14 +741,17 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
       rec.readings.controls.negative_created_before_restart_ms = negative.identity.createdAt === null ? null : T - negative.identity.createdAt
     }
 
-    // ── ① 身份：**首轮在 T 之后**的顶层会话（锚点 = `IDENTITY_ANCHOR`，不是 `createdAt`）──────────
-    // 只看"文件 mtime ≥ T"的那一小把（首轮在 T 之后的会话，文件 mtime 必然也 ≥ T）——
+    // ── ① 身份：**T 之后的顶层会话**（主锚点 `IDENTITY_ANCHOR`；放宽入口 `createdAt` 只加不减）──
+    // 只看"文件 mtime ≥ T"的那一小把（T 之后的会话，文件 mtime 必然也 ≥ T）——
     // 这样不必扫整棵树；上限自报。
     const pool = sessions.filter((s) => s.mtimeMs >= T)
     const scan = scanHeaders(pool, { tmpDir, limit: 20 })
     const identities = scan.identities
-    const pick = selectNewestAfter(identities, { T, mode: 'top-level' })
+    const pick = selectPostRestartSample(identities, { T })
+    const primaryPick = selectNewestAfter(identities, { T, mode: 'top-level' })
     const naive = selectNewestAfter(identities, { T, mode: 'all' })
+    /** 🔴 没有样本时判的是**年龄**（`bug-20261113-18`）：这一格会翻面，两把刀打在上面。 */
+    const sampleVerdict = postRestartSampleVerdict({ sample: pick.newest, T, now: Date.now() })
     rec.readings.identity = {
       measured_at: new Date().toISOString(),
       T,
@@ -461,9 +772,9 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
         .map((x) => ({ id: x.id, createdAt_iso: x.createdAt_iso, firstTurnAt_iso: x.firstTurnAt_iso, agentPreset: x.agentPreset, is_top_level: x.is_top_level })),
       first_turn_after_T: identities.filter((x) => x.firstTurn_is_first === true && typeof x.firstTurnAt === 'number' && x.firstTurnAt >= T)
         .map((x) => ({ id: x.id, firstTurnAt_iso: x.firstTurnAt_iso, created_at_iso: x.createdAt_iso, turn: x.firstTurn_turn, seq: x.firstTurn_seq, agentPreset: x.agentPreset, is_top_level: x.is_top_level, file_sha256: x.file_sha256, first_frame_sha256: x.first_frame_sha256 })),
-      anchor_unavailable: pick.anchor_unavailable,
-      resumed_touched_after_T: pick.resumed_touched_after_T,
-      resumed_count: pick.resumed_count,
+      anchor_unavailable: primaryPick.anchor_unavailable,
+      resumed_touched_after_T: primaryPick.resumed_touched_after_T,
+      resumed_count: primaryPick.resumed_count,
       selected: pick.newest === null ? null : whereOf(pick.newest),
       /** 🔴 判词**比的那个时刻**（一个数、一个来源、一个会话 id）—— 下一句就能重复这一跑的比较。 */
       selected_anchor: pick.newest === null ? null : {
@@ -476,9 +787,27 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
         header_created_at_iso: pick.newest.createdAt_iso,
         T,
         T_iso: new Date(T).toISOString(),
-        comparison: `firstTurnAt(${pick.newest.firstTurnAt_iso}) >= T(${new Date(T).toISOString()})`,
+        comparison: pick.picked_by === 'firstTurnAt'
+          ? `firstTurnAt(${pick.newest.firstTurnAt_iso}) >= T(${new Date(T).toISOString()})`
+          : `createdAt(${pick.newest.createdAt_iso}) >= T(${new Date(T).toISOString()})〔放宽入口：主锚点在这一跑没选中任何一份〕`,
       },
       selected_detail: pick.newest,
+      /**
+       * 🔴 **样本面**（`bug-20261113-18` 的 ②）：哪条入口给的样本、它的出处（哪条流 / 谁建的 /
+       * 头里声明了什么），以及"T 之后的组员会话"那一份**只记不判**的旁证。
+       */
+      post_restart: {
+        picked_by: pick.picked_by,
+        primary: pick.primary,
+        widened: { by: pick.widened.by, role: pick.widened.role, why_safe: pick.widened.why_safe, count: pick.widened.count, used: pick.widened.used, candidates: pick.widened.candidates },
+        provenance: pick.provenance,
+        machine_created_after_T: pick.machine_created_after_T,
+      },
+      /**
+       * 🔴 **没有样本时读年龄**（`bug-20261113-18` 的 ①）：`restart_age_days` + owner + 到期时刻。
+       * 有样本时这一块仍落盘（年龄是上下文），但**判词不读它** —— `decided_by` 会说出判词是谁给的。
+       */
+      post_restart_verdict: sampleVerdict,
       naive_selection: naive.newest === null ? null : { id: naive.newest.id, agentPreset: naive.newest.agentPreset, is_top_level: naive.newest.is_top_level, why: '不过滤顶层 ⇒ 会选中委派出去的组员会话' },
       filter_is_load_bearing: naive.newest?.agentPreset !== pick.newest?.agentPreset,
     }
@@ -504,18 +833,39 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
         rec.problems.push(problem(BOOT_CODES.selectorDead, `选择器换一个 T 也给不出 GREEN：T=${new Date(probeT).toISOString()} 时选中 ${JSON.stringify(probe.newest?.id ?? null)}（${JSON.stringify(probe.newest?.agentPreset ?? null)}），判成 ${probeVerdict.verdict} —— 那"现在 HOLD"就不是"没有新会话"，是选择器坏了`))
       }
     }
-    const v = presetVerdict(pick.newest)
-    rec.readings.identity.verdict = v
-    if (pick.newest === null) {
-      caseHold(rec, BOOT_CODES.noSessionAfterRestart,
-        `工作区 ${key.key} 里**没有**首轮对话发生在 ${new Date(T).toISOString()}（${boot.source}）**之后**的顶层会话 `
-          + `（锚点 = ${IDENTITY_ANCHOR.name}：${IDENTITY_ANCHOR.source}）—— `
-          + `这一跑读了 ${identities.length} 份会话：${pick.resumed_count} 份的首轮在 T 之前（早就说过话、之后又被碰过，`
-          + `例如 ${JSON.stringify((pick.resumed_touched_after_T ?? []).slice(0, 2).map((x) => ({ id: x.id, firstTurnAt_iso: x.firstTurnAt_iso })))}），`
-          + `${pick.anchor_unavailable_count} 份**读不到首轮**（${JSON.stringify((pick.anchor_unavailable ?? []).slice(0, 2))}）。`
-          + ' ⇒ 请老板在客户端里**新建一个会话并说一句话**，再跑这一条；在那之前这一格是 HOLD（**不是绿**）')
-    } else if (v.verdict === 'RED') {
-      rec.problems.push(problem(v.code, `${v.why}（${whereOf(pick.newest)}；锚点 ${IDENTITY_ANCHOR.name} 比的时刻 = ${rec.readings.identity.selected_anchor?.comparison}；T 来源 ${boot.source}）`))
+    rec.readings.identity.verdict = { verdict: sampleVerdict.verdict, code: sampleVerdict.code ?? null, decided_by: sampleVerdict.decided_by, restart_age_days: sampleVerdict.restart_age_days }
+    if (sampleVerdict.verdict === 'HOLD') {
+      /**
+       * **没有样本、但还没到期** ⇒ HOLD，读数带年龄。报文里**不催人**：
+       * 阈值内这一格自己挂着（"不要你动手"），到期那一刻它自己变红。
+       * 真要他动手时，卡上要求的那两句必须同句出现：**就这一次** + **为什么只有他能做**。
+       */
+      caseHold(rec, sampleVerdict.code,
+        `工作区 ${key.key} 里**没有** T（= ${new Date(T).toISOString()}，${boot.source}）**之后**的顶层会话 `
+          + `（主锚点 = ${IDENTITY_ANCHOR.name}：${IDENTITY_ANCHOR.source}；放宽入口 \`createdAt >= T\` 也没选中任何一份）—— `
+          + `**restart_age_days = ${sampleVerdict.restart_age_days}**（阈值 ${sampleVerdict.threshold_days} 天 · `
+          + `到期 ${sampleVerdict.expires_at_iso} · owner = ${sampleVerdict.owner}）。`
+          + `这一跑扫了 ${identities.length} 份会话（池子 = 文件 mtime ≥ T 的那 ${pool.length} 份，全工作区共 ${sessions.length} 份）：`
+          + `${primaryPick.resumed_count} 份的首轮在 T 之前（早就说过话、之后又被碰过，`
+          + `例如 ${JSON.stringify((primaryPick.resumed_touched_after_T ?? []).slice(0, 2).map((x) => ({ id: x.id, firstTurnAt_iso: x.firstTurnAt_iso })))}），`
+          + `${primaryPick.anchor_unavailable_count} 份**读不到首轮**；T 之后建出来的组员会话 ${pick.machine_created_after_T.count} 份`
+          + `（**只记不判**：它的 preset 从父会话那条路来，不是这一格的证据）。`
+          + ` ⇒ 阈值内**不要你做任何事**；就是真需要的那一次也只是「就这一次、为什么只有他能做」：`
+          + `顶层会话只有客户端「新建会话」能建出来（盘上顶层会话的 \`origin\` 全是 null，机器侧没有这条入口），`
+          + `所以清空它的动作 = ${POST_RESTART_SAMPLE.clear_condition}。`
+          + `${sampleVerdict.restart_age_days >= sampleVerdict.threshold_days ? '' : `超过 ${sampleVerdict.threshold_days} 天仍没有样本，这一格会自己变红（不是绿）。`}`)
+    } else if (sampleVerdict.verdict === 'RED') {
+      rec.problems.push(problem(sampleVerdict.code,
+        sampleVerdict.decided_by === 'restart_age_days >= threshold_days'
+          /**
+           * **超期红**：报文点名年龄、到期时刻、owner，与"样本在那儿而 preset 不对"那条红**分开写**。
+           */
+          ? `[缺样本超期] ${sampleVerdict.why}（工作区 ${key.key} · 主锚点 ${IDENTITY_ANCHOR.name} · `
+            + `放宽入口 \`createdAt >= T\` 也没选中任何一份 · owner = ${sampleVerdict.owner} · `
+            + `清空动作 = ${POST_RESTART_SAMPLE.clear_condition}）`
+          : `${sampleVerdict.why}（${whereOf(pick.newest)}；锚点 ${sampleVerdict.decided_by === 'sample.agentPreset' ? rec.readings.identity.selected_anchor?.comparison : '—'}；`
+            + `样本由 ${JSON.stringify(pick.picked_by)} 那条入口选中；出处 ${JSON.stringify(pick.provenance?.creator_kind)} @ ${JSON.stringify(pick.provenance?.stream?.file)}；`
+            + `T 来源 ${boot.source}；restart_age_days = ${sampleVerdict.restart_age_days}）`))
     }
 
     // ── ② R5 回滚：**撤挂载 = 删标记 + 重跑生成器**（2026-11-05 深夜 · 组长裁定"重定义，不退役"）──
@@ -593,7 +943,7 @@ test('BOOT-01 启动后读数 A（身份）：重启之后**首轮对话**在 T 
     // ⇒ 判词是 HOLD `BOOT-R5-ROW-DISABLED-UNMEASURED`（缺一个读数，不是失败；补量后重交回执，契约 §3.7.2）。
     const exercise = readRollbackExercise()
     const exerciseVerdict = rollbackExerciseCaseVerdict(exercise)
-    const r2 = pick.newest === null ? 'HOLD' : v.verdict
+    const r2 = sampleVerdict.verdict
     rec.readings.rollback_exercise = {
       path: exercise.path,
       supplied: exercise.supplied,
