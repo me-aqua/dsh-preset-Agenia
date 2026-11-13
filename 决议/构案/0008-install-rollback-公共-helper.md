@@ -85,7 +85,8 @@ B1 只治了 `writeFileAtomic` 一处；这 8 个是同一类病（下一次只�
 
 ⇒ 本票**明确保留**这三份（不合并），但必须被钉住，不许「悄悄第三份」：
 - `canonical` / `insideTestScene`：三处**正文逐字相同**（判据按归一文本比）；
-- `refuseDelete`：三处**同码、同 `delete_gate` 字段、同 `err.name`**（正文可不同，语义不许不同）；
+- `refuseDelete`：三处**同码、同 `delete_gate` 字段**；`err.name` **不要求字面相等** —— 三处各自沿用本文件 `cliError()` 的类名（`CliGuardError` / `InstallCliError` / `RollbackCliError`），且**没有任何消费者读它**。⇒ 判据按「**同一条规则 + 逐处钉死**」实现：每个位置的类名被冻结成常量表，改一处即红；读数里诚实记 `names_literal_equal: false`，不许把它写成相等。
+  （2026-11-13 第 4 关 r2 前修正：本节初稿写「同 `err.name`」是按字面想的，落地时按字面做不到 —— 判据侧按真实语义钉，我改的是这句话，不是判据。）
 - 判据必须盖到**模块那第三份**（原 `CG-FORK-COUNT` 只数两支 CLI，看不见它 —— 这是第 4 关 r1 的 MF-4）。
 
 这不是「以后统一」的借口：一旦哪一处语义变了，判据当场红；真要变，改的是这三处 + 判据同批。
