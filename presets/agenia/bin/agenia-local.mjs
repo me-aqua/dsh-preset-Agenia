@@ -23,6 +23,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { cliError, emit, parseArgs } from '../lib/cli-harness.mjs'
 import { CODES } from '../lib/error-codes.mjs'
 import { dataRootVerdict, resolveWithin, TEST_ROOT_MARKER, testModeOf } from '../lib/paths.mjs'
 import { writeJsonAtomic } from '../lib/atomic.mjs'
@@ -44,38 +45,23 @@ const OP_NAMES = Object.freeze([
 
 const TEAM_DIR_NAME = '.team'
 
-function cliError(code, message, details = null) {
-  const err = new Error(message)
-  err.name = 'LocalCliError'
-  err.code = code
-  err.details = details
-  return err
-}
-
 // ── 参数与根 ───────────────────────────────────────────────────────────────
-function parseArgs(argv) {
-  const out = {
-    op: null, workspace: null, statusRoot: null, dataRoot: null, inFile: null,
-    testMode: false, forceRecover: false, unknown: [],
-  }
-  for (let i = 0; i < argv.length; i += 1) {
-    const raw = argv[i]
-    const eq = raw.indexOf('=')
-    const key = eq >= 0 ? raw.slice(0, eq) : raw
-    const inline = eq >= 0 ? raw.slice(eq + 1) : null
-    const take = () => (inline !== null ? inline : (argv[i + 1] !== undefined ? argv[(i += 1)] : null))
-    switch (key) {
-      case '--op': out.op = take(); break
-      case '--workspace': out.workspace = take(); break
-      case '--status-root': out.statusRoot = take(); break
-      case '--data-root': out.dataRoot = take(); break
-      case '--in': out.inFile = take(); break
-      case '--test-mode': out.testMode = true; break
-      case '--force-recover': out.forceRecover = true; break
-      default: out.unknown.push(raw); break
-    }
-  }
-  return out
+/**
+ * 本支 CLI 认得的参数（逻辑在 `lib/cli-harness.mjs`：`--k v` 与 `--k=v` 都收、不认识的抛 `E_ARG_USAGE`）。
+ * 从前这里是一段 948 字符的手写解析器，未知参数进了 `unknown[]` 就再没人读过 ⇒ 参数写错等于没写。
+ */
+const ARG_SPEC = {
+  value: {
+    '--op': 'op',
+    '--workspace': 'workspace',
+    '--status-root': 'statusRoot',
+    '--data-root': 'dataRoot',
+    '--in': 'inFile',
+  },
+  flag: {
+    '--test-mode': 'testMode',
+    '--force-recover': 'forceRecover',
+  },
 }
 
 function readPayload(args) {
@@ -590,14 +576,10 @@ const OPS = {
   'receipt-check': opReceiptCheck,
 }
 
-function emit(envelope) {
-  process.stdout.write(`${JSON.stringify(envelope)}\n`)
-}
-
 function main(argv) {
   let op = null
   try {
-    const args = parseArgs(argv)
+    const args = parseArgs(argv, ARG_SPEC)
     op = args.op
     if (op === null || String(op).trim() === '') throw cliError('E_USAGE', `缺 --op；可用：${OP_NAMES.join(' / ')}`)
     if (op === 'help') {

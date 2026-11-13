@@ -31,6 +31,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { writeFileAtomic } from '../presets/agenia/lib/atomic.mjs'
+import { emit, parseArgs } from '../presets/agenia/lib/cli-harness.mjs'
 import {
   DASH, GEN_MARKER_NEEDLES, INDEX_COLUMNS, INDEX_REL, INDEX_UNIT_COLUMN, REPO_ROOT, SERIES, TABLE_REL,
   dedupeProblems, firstTable, linesOf, parseRefList, problem, readText, resolveRef, scanLedger, splitHeaderBlock,
@@ -614,36 +615,33 @@ export function runSupersede({ root, oldRef, byRef, dryRun = false }) {
 }
 
 // ── 命令行 ─────────────────────────────────────────────────────────────────
-export function parseArgs(argv) {
-  const args = { op: 'check', root: null, json: false, card: null, by: null, dryRun: false, positional: [], bad: [] }
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i]
-    if (a === '--json') args.json = true
-    else if (a === '--dry-run') args.dryRun = true
-    else if (a.startsWith('--op=')) args.op = a.slice('--op='.length)
-    else if (a === '--op') args.op = argv[++i] ?? ''
-    else if (a.startsWith('--root=')) args.root = a.slice('--root='.length)
-    else if (a === '--root') args.root = argv[++i] ?? ''
-    else if (a.startsWith('--card=')) args.card = a.slice('--card='.length)
-    else if (a === '--card') args.card = argv[++i] ?? ''
-    else if (a.startsWith('--by=')) args.by = a.slice('--by='.length)
-    else if (a === '--by') args.by = argv[++i] ?? ''
-    else if (a.startsWith('-')) args.bad.push(a)
-    else args.positional.push(a)
-  }
-  return args
+/**
+ * 本支 CLI 认得的参数（逻辑在 `presets/agenia/lib/cli-harness.mjs`：`--k v` 与 `--k=v` 都收、
+ * 不认识的抛 `E_ARG_USAGE`）。从前这里是一段 924 字符的手写解析器：未知参数只印一行
+ * `DECISION-CHECK-USAGE:`、stdout 上没有信封码。`--op supersede <旧编号>` 的那个位置参数照收。
+ */
+export const ARG_SPEC = {
+  value: { '--op': 'op', '--root': 'root', '--card': 'card', '--by': 'by' },
+  flag: { '--json': 'json', '--dry-run': 'dryRun' },
+  defaults: { op: 'check' },
+  positional: true,
 }
 
 const OPS = new Set(['check', 'gate2-card', 'supersede'])
 
 export function main(argv = process.argv.slice(2)) {
-  const args = parseArgs(argv)
+  let args
+  try {
+    args = parseArgs(argv, ARG_SPEC)
+  } catch (err) {
+    emit({ ok: false, error: { code: err?.code ?? 'E_ARG_USAGE', message: String(err?.message ?? err), details: err?.details ?? null } })
+    process.exit(2)
+  }
   const usage = (msg) => {
     process.stderr.write(`DECISION-CHECK-USAGE: ${msg}\n`
       + '  用法：node .tools/决议-check.mjs [--root=<绝对目录>] [--json] [--op=<check|gate2-card|supersede>] [--card=<路径>] [--by=<新编号>]\n')
     process.exit(3)
   }
-  if (args.bad.length > 0) usage(`不认识的参数：${JSON.stringify(args.bad)}`)
   if (!OPS.has(args.op)) usage(`--op ${JSON.stringify(args.op)} 不认识（只认 ${[...OPS].join(' / ')}）`)
   const root = args.root === null ? REPO_ROOT : path.resolve(args.root)
   let rootOk = true

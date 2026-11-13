@@ -66,24 +66,15 @@ import { definitionForms } from './cli-guards-shared.mjs'
 /**
  * 共享件里那一对标记的描述符（内联块的第三块 —— `CLI 骨架正文`）。
  *
- * 🔴 **今天住在这里，Gate 3 同批搬进 `support/injector-inline.mjs::INLINE_BLOCKS`**：
- *    搬运的时点**必须**与"实现 + `--op publish-staged`"同批 —— 出厂件带上那一块之前就搬，
- *    `ATM-01` 腿 7b（出厂件每一块）会红，连它自己的阳性对照（"真出厂件原文应当绿"）一起红。
- *    搬运之后本文件从这里读、`ATM-01` 从 `INLINE_BLOCKS` 读 —— 那时**同一个事实有两个读者**，
- *    正是想要的样子；今天只有一个读者（本文件），因为另一个读者（`ATM-01`）的对象还不存在。
- *
- * `label` 与发布器的包装标记逐字一致；`fingerprints` 是内容锚（不锚行号）：
- *   · `function parseArgs(` / `function cliError(` —— 两个骨架的定义形状；
- *   · `B4-KNIFE-ANCHOR` —— 未知参数"出声"那一行上的刀锚（必须在块里：出厂件里的未知参数也走同一行）。
- * `emit` **不在**这块里：它的唯一定义在 `lib/cli-guards.mjs`（B3），这里只导出。
+ * 🔴 **Gate 3 起它住在 `support/injector-inline.mjs::INLINE_BLOCKS.cliHarness`**（与"实现 +
+ *    `--op publish-staged`"同批搬的）：本文件只是**别名**，`ATM-01` 腿 7b 从 `INLINE_BLOCKS` 迭代 ——
+ *    同一个事实于是有**两个读者**、一份正文（`cand-20261104-0020`：一个数有几份载体，改一处 = 没改）。
+ *    `label` 与发布器的包装标记逐字一致；`fingerprints` 是内容锚（不锚行号）：
+ *      · `function parseArgs(` / `function cliError(` —— 两个骨架的定义形状；
+ *      · `B4-KNIFE-ANCHOR` —— 未知参数"出声"那一行上的刀锚（必须在块里：出厂件里的未知参数也走同一行）。
+ *    `emit` **不在**这块里：它的唯一定义在 `lib/cli-guards.mjs`（B3），骨架共享件只转出。
  */
-export const CLI_HARNESS_BLOCK = Object.freeze({
-  id: 'cliHarness',
-  label: 'CLI 骨架正文',
-  sourceRel: 'presets/agenia/lib/cli-harness.mjs',
-  fingerprints: Object.freeze(['function parseArgs(', 'function cliError(', 'B4-KNIFE-ANCHOR']),
-  definitions: Object.freeze(['parseArgs', 'cliError']),
-})
+export const CLI_HARNESS_BLOCK = INLINE_BLOCKS.cliHarness
 export const HARNESS_REL = CLI_HARNESS_BLOCK.sourceRel
 export const GUARDS_REL = INLINE_BLOCKS.guards.sourceRel
 export const ROLLBACK_REL = 'presets/agenia/bin/rollback.mjs'

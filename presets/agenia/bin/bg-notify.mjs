@@ -27,6 +27,7 @@
  */
 import { readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { cliError, emit, parseArgs } from '../lib/cli-harness.mjs'
 import { CODES } from '../lib/error-codes.mjs'
 import { dataRootVerdict, resolveWithin, TEST_ROOT_MARKER, testModeOf } from '../lib/paths.mjs'
 import { readJsonFile, writeJsonAtomic } from '../lib/atomic.mjs'
@@ -53,47 +54,31 @@ function jobIdShapeVerdict(jobId, job) {
   return JOB_ID_SUFFIX_RE.test(String(jobId).slice(prefix.length))
 }
 
-function cliError(code, message, details = null) {
-  const err = new Error(message)
-  err.name = 'NotifyCliError'
-  err.code = code
-  err.details = details
-  return err
-}
-
 const isFilledString = (v) => typeof v === 'string' && v.trim() !== ''
 
 // ── 参数与根 ───────────────────────────────────────────────────────────────
-function parseArgs(argv) {
-  const out = {
-    op: null, dataRoot: null, statusRoot: null, job: null, jobId: null, state: null,
-    resultFile: null, exitCode: null, failureReason: null, dropNotice: false,
-    parentSessionId: null, livenessFile: null, testMode: false, unknown: [],
-  }
-  for (let i = 0; i < argv.length; i += 1) {
-    const raw = argv[i]
-    const eq = raw.indexOf('=')
-    const key = eq >= 0 ? raw.slice(0, eq) : raw
-    const inline = eq >= 0 ? raw.slice(eq + 1) : null
-    const take = () => (inline !== null ? inline : (argv[i + 1] !== undefined ? argv[(i += 1)] : null))
-    switch (key) {
-      case '--op': out.op = take(); break
-      case '--data-root': out.dataRoot = take(); break
-      case '--status-root': out.statusRoot = take(); break
-      case '--job': out.job = take(); break
-      case '--job-id': out.jobId = take(); break
-      case '--state': out.state = take(); break
-      case '--result-file': out.resultFile = take(); break
-      case '--exit-code': out.exitCode = take(); break
-      case '--failure-reason': out.failureReason = take(); break
-      case '--drop-notice': out.dropNotice = true; break
-      case '--parent-session-id': out.parentSessionId = take(); break
-      case '--liveness-file': out.livenessFile = take(); break
-      case '--test-mode': out.testMode = true; break
-      default: out.unknown.push(raw); break
-    }
-  }
-  return out
+/**
+ * 本支 CLI 认得的参数（逻辑在 `lib/cli-harness.mjs`：`--k v` 与 `--k=v` 都收、不认识的抛 `E_ARG_USAGE`）。
+ * 从前这里是一段 1,401 字符的手写解析器，未知参数进了 `unknown[]` 就再没人读过 ⇒ 参数写错等于没写。
+ */
+const ARG_SPEC = {
+  value: {
+    '--op': 'op',
+    '--data-root': 'dataRoot',
+    '--status-root': 'statusRoot',
+    '--job': 'job',
+    '--job-id': 'jobId',
+    '--state': 'state',
+    '--result-file': 'resultFile',
+    '--exit-code': 'exitCode',
+    '--failure-reason': 'failureReason',
+    '--parent-session-id': 'parentSessionId',
+    '--liveness-file': 'livenessFile',
+  },
+  flag: {
+    '--drop-notice': 'dropNotice',
+    '--test-mode': 'testMode',
+  },
 }
 
 function resolveRoot(args, { label, raw, markerInParent = false, required = true }) {
@@ -308,14 +293,10 @@ function opParentDead(args) {
 // ── 入口 ───────────────────────────────────────────────────────────────────
 const OPS = { deliver: opDeliver, 'parent-dead': opParentDead }
 
-function emit(envelope) {
-  process.stdout.write(`${JSON.stringify(envelope)}\n`)
-}
-
 function main(argv) {
   let op = null
   try {
-    const args = parseArgs(argv)
+    const args = parseArgs(argv, ARG_SPEC)
     op = args.op
     if (op === null || String(op).trim() === '') throw cliError('E_USAGE', `缺 --op；可用：${OP_NAMES.join(' / ')}`)
     if (op === 'help') {

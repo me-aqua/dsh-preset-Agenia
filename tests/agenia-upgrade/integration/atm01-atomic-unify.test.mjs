@@ -346,18 +346,21 @@ function shippedPair(tag, { mode, liveExtra = true }) {
 }
 
 /**
- * **两块内联的阳性对照树**（`构案 0008` · 腿 7b 的刀架）。
+ * **三块内联的阳性对照树**（`构案 0008` · 腿 7b 的刀架；构案 0009 加第三块）。
  *
  * 造一对**合规的** `{repoRoot, presetRoot}`：
  *   · `repoRoot/lib/atomic.mjs` = 真共享件逐字节复制（它自带那一对标记）；
  *   · `repoRoot/lib/cli-guards.mjs` = 从**真 repo `rollback.mjs`** 里逐段抠出那 8 个 helper，
  *     按 `@inline-begin 公共 helper 正文` 包起来（**不是手写的近似体**：正文就是今天那 8 段字节）；
- *   · `presetRoot/bin/rollback.mjs` = 一份"发布器造出来的"文本：两块包装段各放逐字正文，
+ *   · `repoRoot/lib/cli-harness.mjs` = 真共享骨架（Gate 3 起它也是被内联的一块）；
+ *   · `presetRoot/bin/rollback.mjs` = 一份"发布器造出来的"文本：三块包装段各放逐字正文，
  *     包装段之外只剩一行 `#!/usr/bin/env node`（零静态 import、没有第二份定义）。
  *
  * 为什么要有它：真出厂件在 Gate 3 之前**本来就没有第二块** ⇒ 拿它当刀架，"剥掉一块"构造不出来，
  * 判据会退化成"永远红"或"永远绿"。这一对合成读数把"该绿"与"该红"两侧都做出来（`ATM-01` 腿 7
  * 的同一套做法：判词在**该红**的字节上必须红、在**该绿**的字节上必须绿）。
+ * 🔴 块数不写死：`INLINE_BLOCKS` 加一块，这里就要跟着加一段包装 —— 少一段，控制面会以
+ *    `SHIP-INLINE-SOURCE-MISSING` / `SHIP-INLINE-MISSING` 红（那是夹具没跟上，不是产品坏了）。
  */
 function postGateFixture(tag) {
   const root = fixtureRoot(tag)
@@ -374,6 +377,11 @@ function postGateFixture(tag) {
   const sharedGuardsAbs = path.join(LIVE, ...INLINE_BLOCKS.guards.sourceRel.split('/'))
   const sharedGuardsText = existsSync(sharedGuardsAbs) ? readFileSync(sharedGuardsAbs, 'utf8') : null
   const sharedGuardsBlock = sharedGuardsText === null ? { found: false, text: '' } : blockOf(sharedGuardsText, beginOf(INLINE_BLOCKS.guards))
+  /** 第三块（构案 0009）：CLI 骨架正文 —— 共享件在就用它那一块（Gate 3 之后的真身）。 */
+  const sharedHarnessAbs = path.join(LIVE, ...INLINE_BLOCKS.cliHarness.sourceRel.split('/'))
+  const sharedHarnessText = existsSync(sharedHarnessAbs) ? readFileSync(sharedHarnessAbs, 'utf8') : null
+  const sharedHarnessBlock = sharedHarnessText === null ? { found: false, text: '' } : blockOf(sharedHarnessText, beginOf(INLINE_BLOCKS.cliHarness))
+  const harnessBody = sharedHarnessBlock.found ? sharedHarnessBlock.text : '// （夹具）共享件里没有 CLI 骨架那一块'
   const repoRollback = readFileSync(path.join(LIVE, 'presets', 'agenia', 'bin', 'rollback.mjs'), 'utf8')
   const helperTexts = []
   const missing = []
@@ -403,9 +411,14 @@ function postGateFixture(tag) {
     guardsBody,
     SHIPPED_END_MARKER,
     '',
+    `${SHIPPED_BEGIN_PREFIX}${INLINE_BLOCKS.cliHarness.label}（夹具：发布时逐字拼进来）──`,
+    harnessBody,
+    SHIPPED_END_MARKER,
+    '',
   ].join('\n')
   put(root, `repo/${INLINE_BLOCKS.atomic.sourceRel}`, atomicSource)
   put(root, `repo/${INLINE_BLOCKS.guards.sourceRel}`, guardsSource)
+  put(root, `repo/${INLINE_BLOCKS.cliHarness.sourceRel}`, sharedHarnessText ?? '// （夹具）共享件不在\n')
   put(root, 'staged-preset/bin/rollback.mjs', artifact)
   return {
     root,
@@ -1195,15 +1208,15 @@ test('ATM-01 原子写归一：presets/** 只剩一份定义（fsync · wx · al
       blockNote(id, want, codes, ok, { line: read.line })
       return { ok, codes, line: read.line }
     }
-    // 控制 · 合规的两块 ⇒ 必须绿（证明腿 7b 会翻面，不是"永远红"）
+    // 控制 · 合规的三块 ⇒ 必须绿（证明腿 7b 会翻面，不是"永远红"）
     {
       const read = inlineBlocksReading({ presetRoot: postGate.presetRoot, repoRoot: postGate.repoRoot })
       const v = inlineBlocksVerdict(read)
       const codes = codesOf(v.problems)
-      blockNote('control-two-blocks', 'GREEN', codes, v.verdict === 'GREEN', { line: read.line, blocks: read.blocks.map((b) => ({ id: b.id, same: b.same })) })
+      blockNote('control-three-blocks', 'GREEN', codes, v.verdict === 'GREEN', { line: read.line, blocks: read.blocks.map((b) => ({ id: b.id, same: b.same })) })
       rec.readings.ship_inline_blocks_control = { verdict: v.verdict, codes, line: read.line, blocks: read.blocks.map((b) => ({ id: b.id, label: b.label, source: b.source.block, shipped: b.shipped, same: b.same, fingerprints: b.fingerprints, definitions_in_artifact: b.definitions_in_artifact })) }
       if (v.verdict !== 'GREEN') {
-        push('SHIP-KNIFE-CONTROL', `腿7b 的控制面不成立：合成的一对合规读数（两块都在、逐字同源）应当绿，实得 ${v.verdict}（${codes.join(' / ') || '无红因'}）—— ${read.line}`)
+        push('SHIP-KNIFE-CONTROL', `腿7b 的控制面不成立：合成的一对合规读数（三块都在、逐字同源）应当绿，实得 ${v.verdict}（${codes.join(' / ') || '无红因'}）—— ${read.line}`)
       }
     }
     // 刀 ① · 剥掉**公共 helper** 那一块（原子写那块留着）⇒ `SHIP-INLINE-MISSING`，且报文点名那一块

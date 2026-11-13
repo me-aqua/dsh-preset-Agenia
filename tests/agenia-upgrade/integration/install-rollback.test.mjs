@@ -56,6 +56,7 @@ import { staticImportLines } from '../support/staged-artifact.mjs'
 import { extractFunctionText } from '../support/atomic-writers.mjs'
 import { SHARED_HELPERS, helperDefinitionVerdict, scanHelperDefinitions } from '../support/cli-guards-shared.mjs'
 import { runB4Legs } from '../support/cli-harness-shared.mjs'
+import { HARNESS_REL } from '../support/cli-harness-shared.mjs'
 import { HOST_ADAPTERS, hostAdapterVerdict, scanHostAdapters } from '../support/host-adapters.mjs'
 import { INLINE_BLOCKS, beginOf, blockOf } from '../support/injector-inline.mjs'
 import { LEFTOVER_SHAPE } from '../support/temp-scan.mjs'
@@ -523,6 +524,12 @@ describe('integration · install-rollback (INS)', () => {
       }
       const adapterKnife = ({ id, file, find, replace, wantCode }) => {
         const sources = Object.fromEntries(adapterReading.pins.map((rel) => [rel, readFileSync(path.join(PATHS.repo, ...rel.split('/')), 'utf8')]))
+        /**
+         * `cliError` 的唯一定义（构案 0009 · B4 起在 `lib/cli-harness.mjs`）：两支 CLI 的 `refuseDelete`
+         * 引用的就是它 ⇒ scratch 树里也要有那一份，否则钳出来的 `refuseDelete` 编译不起来，
+         * 读数会变成 `CG-ADAPTER-READ`（"依赖不在"）而不是这一刀要翻的那一格。
+         */
+        sources[HARNESS_REL] = readFileSync(path.join(PATHS.repo, ...HARNESS_REL.split('/')), 'utf8')
         const before = sources[file]
         const after = before.replace(find, replace)
         if (after === before) {

@@ -73,7 +73,7 @@ import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
 import { caseFail, caseHold, preflight, problem, runCase, runRoot, treeHash, treePaths } from '../support/evidence.mjs'
 import {
-  buildFixtureRepo, codeDigestOfCommit, exporterPath, runExport, verifyCopyIsCommit,
+  buildFixtureRepo, codeDigestOfCommit, copyToolClosure, exporterPath, runExport, verifyCopyIsCommit,
 } from '../support/tree-at-commit.mjs'
 
 before(() => {
@@ -388,6 +388,9 @@ describe('integration · measuring/copy (MCR) · F-166 副本不许落在被测 
       //   阳性对照：坏尺子自己 `--is-code` 必须 exit 3 —— 否则"拒"可能来自别处，因果就不成立。
       const brokenDir = path.join(root, 'fixtures', 'mcr01-broken-ruler')
       mkdirSync(brokenDir, { recursive: true })
+      // 导出器与尺子都 import `presets/agenia/lib/*`（构案 0009）⇒ 夹具树里先铺上那条相对路径，
+      // 否则拷过去的工具加载期就死，读数会长得像"刀没咬住"。
+      copyToolClosure({ fixturesDir: path.join(root, 'fixtures') })
       const brokenTool = path.join(brokenDir, 'tree-at-commit.mjs')
       const brokenFingerprint = path.join(brokenDir, 'fingerprint.mjs')
       copyFileSync(ex.file, brokenTool)

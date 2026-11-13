@@ -38,7 +38,7 @@ import path from 'node:path'
 import { PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import {
-  buildFixtureRepo, codeDigestOfCommit, copyIntegrityVerdict, exporterPath,
+  buildFixtureRepo, codeDigestOfCommit, copyIntegrityVerdict, copyToolClosure, exporterPath,
   runExport, runVerify,
 } from '../support/tree-at-commit.mjs'
 
@@ -157,6 +157,8 @@ describe('integration · measuring/copy (MCR) · F-170 equal 的覆盖边界', (
       {
         const knifeDir = path.join(root, 'fixtures', 'mcr04-knife')
         mkdirSync(knifeDir, { recursive: true })
+        // 导出器与尺子都 import `presets/agenia/lib/*`（构案 0009）⇒ 夹具树里铺上那条相对路径。
+        copyToolClosure({ fixturesDir: path.join(root, 'fixtures') })
         const knifeTool = path.join(knifeDir, 'tree-at-commit.mjs')
         copyFileSync(ex.file, knifeTool)
         copyFileSync(path.join(path.dirname(ex.file), 'fingerprint.mjs'), path.join(knifeDir, 'fingerprint.mjs'))
@@ -281,6 +283,7 @@ describe('integration · measuring/copy (MCR) · bug-20261107-03 多一个文件
       // ③ 刀：拷一份导出器，把"副本多一份"那一行关掉 ⇒ 同一输入必须 exit 0
       const knifeDir = path.join(root, 'fixtures', 'mcr06-knife')
       mkdirSync(knifeDir, { recursive: true })
+      copyToolClosure({ fixturesDir: path.join(root, 'fixtures') })
       const knifeTool = path.join(knifeDir, 'tree-at-commit.mjs')
       const knifeFingerprint = path.join(knifeDir, 'fingerprint.mjs')
       copyFileSync(ex.file, knifeTool)

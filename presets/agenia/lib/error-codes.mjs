@@ -58,7 +58,7 @@ export const CODES = Object.freeze({
   // v1.10 ② 补冻：入参不成形状（必填缺失 / 类型不对 / 枚举越界）也归这一族。
   E_ARG_SCHEMA: { exit: 2, zh: '入参 schema 不合（必填缺失 / 类型不对 / 枚举越界）' },
   E_ARG_HASH: { exit: 2, zh: '哈希形状或内容不符（64 hex、内容 SHA 对不上）' },
-  E_ARG_USAGE: { exit: 2, zh: '调用方用法错误（缺必需上下文，例如删除前没给 runRoot）' },
+  E_ARG_USAGE: { exit: 2, zh: '调用方用法错误：参数不认识 / 少了值 / 缺必需上下文（例如删除前没给 runRoot）' },
 
   // ── 3 路径与隔离 ─────────────────────────────────────────────────────────
   E_ROOT_MISSING: { exit: 3, zh: '根路径缺失（省略或空串）' },

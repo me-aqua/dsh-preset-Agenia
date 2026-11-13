@@ -20,10 +20,34 @@
  *    不会静默放过。改这一份之前先改 `.tools/fingerprint.mjs` 的文件头，两份一起改。
  */
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { PATHS } from './env.mjs'
+
+/**
+ * 把**导出器的模块闭包**铺进夹具树（构案 0009 · B4 起导出器与尺子都 import `presets/agenia/lib/*`）。
+ *
+ * 为什么需要：MCR-01 / MCR-04 把 `.tools/tree-at-commit.mjs` 与 `.tools/fingerprint.mjs` **拷进**
+ * `<运行根>/fixtures/<名字>/` 再跑（刀 / 坏尺子）。拷贝保留**相对路径**解析 ⇒
+ * `<fixtures>/<名字>/{tree-at-commit,fingerprint}.mjs` 里的 `../presets/agenia/lib/*` 落到
+ * `<fixtures>/presets/agenia/lib/*` —— 不铺就是 `ERR_MODULE_NOT_FOUND`，而那个读数与"刀没咬住"同形
+ * （`cand-20261108-0234`：一次失败必须归到对的机制上）。
+ *
+ * 只铺**那三份**（`atomic` / `cli-guards` / `cli-harness`）：它们是两个工具在加载期真的会走到的模块。
+ *
+ * @param {{fixturesDir:string, repoRoot?:string}} input
+ * @returns {{lib_dir:string, files:string[]}}
+ */
+export function copyToolClosure({ fixturesDir, repoRoot = PATHS.repo }) {
+  const names = ['atomic.mjs', 'cli-guards.mjs', 'cli-harness.mjs']
+  const libDir = path.join(fixturesDir, 'presets', 'agenia', 'lib')
+  mkdirSync(libDir, { recursive: true })
+  for (const name of names) {
+    copyFileSync(path.join(repoRoot, 'presets', 'agenia', 'lib', name), path.join(libDir, name))
+  }
+  return { lib_dir: libDir, files: names }
+}
 
 /** 导出器的规范落点（`F-160` 范围 #2）。换名字也行 —— 用 `AGENIA_TREE_AT_COMMIT` 指过来。 */
 export const EXPORTER_REL = '.tools/tree-at-commit.mjs'

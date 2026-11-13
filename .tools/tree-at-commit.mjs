@@ -122,6 +122,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { emit, parseArgs } from '../presets/agenia/lib/cli-harness.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 /** 同一把尺子：CODE 收录口径 / 基线 / 比对的**唯一实现**（见文件头「CODE 收录口径只有一份」）。 */
@@ -154,14 +155,10 @@ const USAGE = [
 ].join('\n')
 
 // ── 输出：stdout 只放那**一行** JSON（人话一律走 stderr）────────────────────────
-function emit(obj, code) {
-  process.stdout.write(`${JSON.stringify(obj)}\n`)
-  process.exitCode = code
-}
-
 function fail(code, message, extra = {}) {
   process.stderr.write(`tree-at-commit.mjs: ${message}\n`)
-  emit({ ok: false, error: { code, message }, ...extra }, 2)
+  emit({ ok: false, error: { code, message }, ...extra })
+  process.exitCode = 2
 }
 
 // ── git ────────────────────────────────────────────────────────────────────
@@ -717,49 +714,48 @@ function liveMoved(liveRoot, baselineFile) {
 }
 
 // ── 参数 ───────────────────────────────────────────────────────────────────
-function parseArgs(argv) {
-  const out = { mode: null, repo: null, commit: null, out: null, verify: null, expect: null, liveBaseline: null, liveRoot: null, withStaging: false, stagingManifest: null, json: false }
-  const missingValue = []
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i]
-    const next = () => {
-      const v = argv[i + 1]
-      i += 1
-      // 少了值（或者把下一个 `--flag` 当成了值）也要走"印 JSON + 非 0"那条路 ——
-      // `path.resolve(undefined)` 抛出来的是一段栈，不是读数，而且"`--commit --out x`"会静默把 `--out` 吃掉。
-      if (v === undefined || v.startsWith('--')) {
-        missingValue.push(a)
-        if (v !== undefined) i -= 1
-        return null
-      }
-      return v
-    }
-    if (a === '--json') out.json = true
-    else if (a === '--repo') out.repo = next()
-    else if (a === '--commit') out.commit = next()
-    else if (a === '--out') out.out = next()
-    else if (a === '--verify') out.verify = next()
-    else if (a === '--expect') out.expect = next()
-    else if (a === '--live-baseline') out.liveBaseline = next()
-    else if (a === '--live-root') out.liveRoot = next()
-    else if (a === '--with-staging') out.withStaging = true
-    else if (a === '--staging-manifest') out.stagingManifest = next()
-    else if (a === '--help' || a === '-h') out.help = true
-    else return { error: `未知参数：${a}` }
-  }
-  if (missingValue.length > 0) return { error: `这些参数少了值：${missingValue.join(' · ')}` }
+/**
+ * 本支 CLI 认得的参数。**词法**在 `presets/agenia/lib/cli-harness.mjs`：`--k v` 与 `--k=v` 都收，
+ * 未知参数 / 少了值 ⇒ 抛 `E_ARG_USAGE`（从前只认空格形式，未知参数报 `E_USAGE` —— 与本树"op 不认识"
+ * 那个码同形，读数上分不开）。下面剩下的是**语义**校验：两种模式各自的必填项。
+ */
+const ARG_SPEC = {
+  value: {
+    '--repo': 'repo',
+    '--commit': 'commit',
+    '--out': 'out',
+    '--verify': 'verify',
+    '--expect': 'expect',
+    '--live-baseline': 'liveBaseline',
+    '--live-root': 'liveRoot',
+    '--staging-manifest': 'stagingManifest',
+  },
+  flag: {
+    '--with-staging': 'withStaging',
+    '--json': 'json',
+    '--help': 'help',
+    '-h': 'help',
+  },
+}
+
+/**
+ * 语义校验：合法 ⇒ 原样返回（并带上 `mode`）；不合法 ⇒ `{error}`，由 `main` 印成 `E_ARG_USAGE` 的信封。
+ * 少了值 / 认不得的参数走不到这里 —— 解析器当场抛。
+ */
+function resolveArgs(argv) {
+  const out = parseArgs(argv, ARG_SPEC)
   if (out.help) return out
   if (out.stagingManifest !== null && !out.withStaging) {
     return { error: '--staging-manifest 只在 --verify --with-staging 下有意义（它是那一层的参考清单；不给 --with-staging 时这一层根本不在判据面上）' }
   }
-  if (out.repo === undefined || out.repo === null || String(out.repo).trim() === '') return { error: '--repo 不能是空串' }
-  if (out.commit === undefined || out.commit === null || String(out.commit).trim() === '') return { error: '--commit 不能是空串' }
+  if (out.repo === null || String(out.repo).trim() === '') return { error: '--repo 不能是空串' }
+  if (out.commit === null || String(out.commit).trim() === '') return { error: '--commit 不能是空串' }
   if (out.verify !== null) {
     out.mode = 'verify'
-    if (out.expect === undefined || out.expect === null || String(out.expect).trim() === '') return { error: '校验模式要 --expect <派工卡上的 before_sha256>（校验方自己复算，不是照抄它）' }
+    if (out.expect === null || String(out.expect).trim() === '') return { error: '校验模式要 --expect <派工卡上的 before_sha256>（校验方自己复算，不是照抄它）' }
   } else {
     out.mode = 'export'
-    if (out.out === undefined || out.out === null || String(out.out).trim() === '') return { error: '导出模式要 --out <副本目录>' }
+    if (out.out === null || String(out.out).trim() === '') return { error: '导出模式要 --out <副本目录>' }
   }
   return out
 }
@@ -1041,7 +1037,8 @@ function doExport(args) {
     files: written,
     bytes,
     ...(staging === null ? {} : { staging }),
-  }, 0)
+  })
+  process.exitCode = 0
 }
 
 // ── 校验 ───────────────────────────────────────────────────────────────────
@@ -1211,13 +1208,20 @@ function doVerify(args) {
     is_that_commit: isThatCommit,
     live: { baseline: baselineFile, moved: live.moved, places: live.places, detail: live.detail },
     ...(args.withStaging ? { staging: isThatStaging } : {}),
-  }, ok ? 0 : 1)
+  })
+  process.exitCode = ok ? 0 : 1
 }
 
 // ── 入口 ───────────────────────────────────────────────────────────────────
 function main(argv) {
-  const args = parseArgs(argv)
-  if (args.error) return fail('E_USAGE', `${args.error}\n${USAGE}`)
+  let args
+  try {
+    args = resolveArgs(argv)
+  } catch (err) {
+    // 解析器抛的是 `E_ARG_USAGE`（未知参数 / 少了值）—— 印成同一形状的信封，不落一段栈。
+    return fail(err?.code ?? 'E_ARG_USAGE', String(err?.message ?? err))
+  }
+  if (args.error) return fail('E_ARG_USAGE', `${args.error}\n${USAGE}`)
   if (args.help) {
     process.stderr.write(`${USAGE}\n`)
     return

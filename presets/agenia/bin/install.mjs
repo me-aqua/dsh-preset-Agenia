@@ -62,11 +62,11 @@
  *   `--repo` 缺省 = 按本文件位置推导的仓库根（不是预设根）。
  *   🔴 **回滚那一份不是逐字节拷贝**：出厂件必须**单文件、零静态引用**（拍板 Q6），所以发布时
  *   ① 把 `lib/atomic.mjs` 的原子写并集正文与 `lib/cli-guards.mjs` 的公共 helper 正文**逐字内联**进去、
- *   去掉那两条指向共享件的静态语句（两块共用一次内建绑定，去重 —— 否则声明两次当场 SyntaxError）；
+ *   去掉那三条指向共享件的静态语句（三段共用一次内建绑定，去重 —— 否则声明两次当场 SyntaxError）；
  *   ② 把 repo 那一份里"本文件是 repo 那一份、引用了共享件"那段自述**换成出厂件口径**（见
  *   `rollback.mjs` 的 `@ship-header-begin` / `@ship-header-end`）。发布只对拼出来的字节下断言：
  *   零静态 import / 头是生成的那一段 / 头里没有 `import` 这个词 / 头里自报"出厂件" / 三个并集指纹在 /
- *   两块包装各一份（起点带标签、终点逐字）。
+ *   三段包装各一份（起点带标签、终点逐字）。
  *   这处"两棵树必然不同"由 `<stagedPreset>/../target-lag.json` 声明成**受控差异**
  *   （点名 `bin/rollback.mjs` + 双向 sha256 + 字节差 + 理由/批准/收口条件）。
  */
@@ -75,7 +75,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync,
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CLI_WRITE_MAX_ATTEMPTS, gateReport, writeFileAtomic } from '../lib/atomic.mjs'
-import { assertDeletableTarget, defaultBackupRoot, emit, isUnder, normKey, pathVerdict } from '../lib/cli-guards.mjs'
+import { cliError, emit, parseArgs } from '../lib/cli-harness.mjs'
+import { assertDeletableTarget, defaultBackupRoot, isUnder, normKey, pathVerdict } from '../lib/cli-guards.mjs'
 
 const SELF = fileURLToPath(import.meta.url)
 const REPO = path.resolve(path.dirname(SELF), '..', '..', '..')
@@ -102,43 +103,31 @@ const TEST_ROOT_MARKER = '.agenia-test-root'
 const PROTECTED_REL_SEGMENTS = ['.runtime', '.team']
 const OP_NAMES = ['install', 'publish-staged', 'help']
 
-function cliError(code, message, details = null) {
-  const err = new Error(message)
-  err.name = 'InstallCliError'
-  err.code = code
-  err.details = details
-  return err
-}
-
 // ── 参数 ───────────────────────────────────────────────────────────────────
-function parseArgs(argv) {
-  const out = {
-    op: 'install', staged: null, live: null, manifest: null, backup: null,
-    dryRun: false, strictHashes: false, allowNewLive: false, repo: REPO, testMode: false,
-  }
-  const takesValue = new Set(['--op', '--staged', '--release', '--live', '--target', '--manifest', '--backup', '--repo'])
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i]
-    if (!a.startsWith('--')) throw cliError('E_USAGE', `不认这个位置参数：${JSON.stringify(a)}`)
-    if (takesValue.has(a)) {
-      const v = argv[i + 1]
-      if (v === undefined || v.startsWith('--')) throw cliError('E_USAGE', `${a} 后面要跟一个值`)
-      i += 1
-      if (a === '--op') out.op = v
-      else if (a === '--staged' || a === '--release') out.staged = v
-      else if (a === '--live' || a === '--target') out.live = v
-      else if (a === '--manifest') out.manifest = v
-      else if (a === '--backup') out.backup = v
-      else if (a === '--repo') out.repo = v
-      continue
-    }
-    if (a === '--dry-run') out.dryRun = true
-    else if (a === '--strict-hashes') out.strictHashes = true
-    else if (a === '--allow-new-live') out.allowNewLive = true
-    else if (a === '--test-mode') out.testMode = true
-    else throw cliError('E_USAGE', `未知参数：${a}`)
-  }
-  return out
+/**
+ * 本支 CLI 认得的参数（逻辑在 `lib/cli-harness.mjs`：`--k v` 与 `--k=v` 都收、不认识的抛 `E_ARG_USAGE`）。
+ * 从前这里是一段 1,273 字符的手写解析器：只认空格形式（`--op=help` ⇒ `E_USAGE`），
+ * 而且未知参数与位置参数报的是 `E_USAGE` —— 与"op 不认识"同一个码，读数上分不开。
+ * `--release` / `--target` 是历史别名，都落在同一个属性上。
+ */
+const ARG_SPEC = {
+  value: {
+    '--op': 'op',
+    '--staged': 'staged',
+    '--release': 'staged',
+    '--live': 'live',
+    '--target': 'live',
+    '--manifest': 'manifest',
+    '--backup': 'backup',
+    '--repo': 'repo',
+  },
+  flag: {
+    '--dry-run': 'dryRun',
+    '--strict-hashes': 'strictHashes',
+    '--allow-new-live': 'allowNewLive',
+    '--test-mode': 'testMode',
+  },
+  defaults: { op: 'install', repo: REPO },
 }
 
 // ── 路径守卫 ───────────────────────────────────────────────────────────────
@@ -523,13 +512,13 @@ function opInstall(args) {
  * 回滚的适用场合正是"刚装上去的那一版是坏的"，它不能依赖新装上去的 `lib/`）。
  *
  * 而 repo 里的那一份（去重之后）是**正常引用共享件**的。两者的差由发布这一步抹平，共两处：
- *   ① **内联**：把共享件里的**两个标记块**逐字拼进去（构案 0008 · B3 起是两块）——
+ *   ① **内联**：把共享件里的**三个标记块**逐字拼进去（构案 0008 · B3 起是两块，0009 加第三块）——
  *      · `原子写并集正文`（源 `lib/atomic.mjs`：删除三闸 + `RETRYABLE_RENAME` + `CLI_WRITE_MAX_ATTEMPTS` +
  *        `sleepSync` + `ioError` + `cleanupTemp` + `writeFileAtomic`）；
  *      · `公共 helper 正文`（源 `lib/cli-guards.mjs`：与 `install.mjs` 共用的 8 个 helper）。
  *      同时去掉指向这两份共享件的静态语句。边界由各共享件里的 `@inline-begin <标签>` / `@inline-end <标签>`
  *      定：标记缺一条 ⇒ 发布当场失败。出厂件的包装段里**只放逐字正文**（内建绑定放在起点标记之前、
- *      两块共用一次声明）—— 这样"两边同一段正文"是一条字节级判据，不是"看着差不多"。
+ *      三段共用一次声明）—— 这样"两边同一段正文"是一条字节级判据，不是"看着差不多"。
  *   ② **换头**：repo 那一份文件头里那段自述说的是"本文件是 repo 那一份、引用了共享件"——
  *      它在**出厂件里是假话**（那一份正文里根本没有共享件）。`rollback.mjs` 里那段自述被
  *      `@ship-header-begin` / `@ship-header-end` 夹住，发布时整段换成 `shippedHeaderLines()`
@@ -537,23 +526,23 @@ function opInstall(args) {
  *
  * 发布这一步**只对拼出来的字节下断言**（不看输入、不看意图）：零静态 import · 头必须是生成的那一段
  * （逐字）· 头里不许出现 `import` 这个词 · 头里必须有"出厂件" · 头里不许出现"本文件是 repo 那一份" ·
- * 三个并集指纹都在 · **两块包装各一份（起点带标签、终点逐字）**。任何一条不成立 ⇒ `E_INTERNAL` 拒发
+ * 三个并集指纹都在 · **三段包装各一份（起点带标签、终点逐字）**。任何一条不成立 ⇒ `E_INTERNAL` 拒发
  * （宁可拒发，也不发一份自述造假的回滚脚本）。
  *
  * ⚠️ 这是**切片 + 换段**，不是第二份实现：源只有 `lib/atomic.mjs`、`lib/cli-guards.mjs` 与 `rollback.mjs`。
  */
 /**
- * 两块内联的源（顺序固定：原子写在前、公共 helper 在后）。
+ * 三块内联的源（顺序固定：原子写在前、公共 helper 次之、CLI 骨架最后 —— 出厂件里 `main` 调的三个名字
+ * `parseArgs` / `cliError` / `emit` 由后两块提供）。
  * `label` 必须与共享件里 `@inline-begin <标签>` 那个标签**逐字**一致（切块按标签认人，不按行号）。
  */
 const SHIPPED_INLINE_BLOCKS = [
   { label: '原子写并集正文', rel: ['lib', 'atomic.mjs'], what: '删除三闸 + fsync/wx/重试/信封' },
   { label: '公共 helper 正文', rel: ['lib', 'cli-guards.mjs'], what: '路径判据 + 安装现场 + 备份根 + 输出信封（与 install.mjs 共用的 8 个）' },
+  { label: 'CLI 骨架正文', rel: ['lib', 'cli-harness.mjs'], what: '参数解析 + 错误信封（11 支 CLI 共用的 parseArgs / cliError；emit 在上面那一块里）' },
 ]
-/** 发布时从 repo 那一份里去掉的静态 import（指到那两份共享件的两条；出厂件直连内建）。 */
+/** 发布时从 repo 那一份里去掉的静态 import（指到那三份共享件的三条；出厂件直连内建）。 */
 const SHIPPED_DROPPED_IMPORTS = SHIPPED_INLINE_BLOCKS.map((b) => `../${b.rel[0]}/${b.rel[1]}`)
-/** 被内联的那两份共享件（发布时它们也要同步进预设树的 lib/ —— 否则两棵树在 lib/ 上分叉）。 */
-const SHIPPED_INLINE_SOURCE_FILES = SHIPPED_INLINE_BLOCKS.map((b) => b.rel[1])
 /** 发布名单里**唯一**发成出厂件形状的那一支（其余逐字节拷贝）。 */
 const SHIPPED_ROLLBACK_NAME = 'rollback.mjs'
 /** repo 那一份 rollback 里"这段自述发布时要换掉"的标记（夹在同一段块注释里）。 */
@@ -566,7 +555,7 @@ const SHIPPED_END_MARKER = '// ── 内联结束 ──'
 
 /**
  * 取一段标记之间的正文（不含两条标记行）。缺标记 ⇒ 抛 `E_INTERNAL`（不许静默发半份）。
- * 按**标签**认：两块同处一份文件时，起点行不带标签就分不清谁是谁。
+ * 按**标签**认：几块同处一份文件时，起点行不带标签就分不清谁是谁。
  */
 function inlineSection(source, label, where) {
   const lines = String(source).split('\n')
@@ -591,11 +580,13 @@ function shippedHeaderLines() {
     ' * 🔴 **单文件自足、零静态引用**（拍板 Q6）：回滚的适用场合正是"刚装上去的那一版是坏的" ——',
     ' *    所以本文件**不依赖任何新装上去的东西**（新 `lib/`、新 `bin/`、新模块）。',
     ' *    ⚠️ **本文件是出厂件（用户跑的那一份）**：文件名与 repo 里的 `presets/agenia/bin/rollback.mjs`',
-    ' *    相同，但正文不同 —— **两段**正文都是发布时**逐字内联**进来的（发布者：`presets/agenia/bin/install.mjs`',
+    ' *    相同，但正文不同 —— **三段**正文都是发布时**逐字内联**进来的（发布者：`presets/agenia/bin/install.mjs`',
     ' *    的 `--op publish-staged`）：① 原子写并集正文（fsync · `wx` 独占临时件 · 重试码 · `allowedRoot` 删除闸 ·',
     ' *    统一信封），源 `presets/agenia/lib/atomic.mjs` 里 `@inline-begin 原子写并集正文` 那一段；',
     ' *    ② 公共 helper 正文（路径判据 · 删除三闸 · 安装现场 · 备份根 · 输出信封 —— 与 `install.mjs` 共用的',
     ' *    那 8 个），源 `presets/agenia/lib/cli-guards.mjs` 里 `@inline-begin 公共 helper 正文` 那一段。',
+    ' *    ③ CLI 骨架正文（`parseArgs` / `cliError` —— 11 支 CLI 共用的那一份），源',
+    ' *    `presets/agenia/lib/cli-harness.mjs` 里 `@inline-begin CLI 骨架正文` 那一段。',
     ' *    内建模块**运行时**取得 —— 那不是对已装代码的依赖。',
     ' *    重试上限 **6 次**（`CLI_WRITE_MAX_ATTEMPTS`，随原子写正文一起进来）—— 与 repo 那一份同一个数。',
     ' *    两棵树的这处差是**受控差异**，由 `<staging>/target-lag.json` 声明（点名 `bin/rollback.mjs`）。',
@@ -625,12 +616,12 @@ function leadingBlockComment(text) {
 }
 
 /**
- * 内联侧的内建绑定：**两块正文合起来**要用到的 `node:fs` / `node:crypto` 名字。
+ * 内联侧的内建绑定：**三段正文合起来**要用到的 `node:fs` / `node:crypto` 名字。
  *
  * 三条口径：
  *   · 名字**从共享件的 import 行现读**（不手抄）；只绑某一块正文**真的用到**的那个名字
  *     （按标识符边界找）—— 不绑死名字，免得出厂件里带一串用不上的绑定；
- *   · **两块共用一次声明**（去重）：`const { existsSync } = fs` 声明两次 ⇒ 出厂件当场 SyntaxError；
+ *   · **三段共用一次声明**（去重）：`const { existsSync } = fs` 声明两次 ⇒ 出厂件当场 SyntaxError；
  *   · 绑定行放在**起点标记之前**（包装段里只许放逐字正文），所以这里只产出两行，不做拼接。
  */
 function shippedBindingLines(blocks) {
@@ -651,14 +642,14 @@ function shippedBindingLines(blocks) {
   const cryptoNames = used['node:crypto']
   if (fsNames.length === 0 || cryptoNames.length === 0) {
     throw cliError('E_INTERNAL',
-      `两块正文合起来读不出内建名字（node:fs ${fsNames.length} 个 / node:crypto ${cryptoNames.length} 个）—— `
+      `三段正文合起来读不出内建名字（node:fs ${fsNames.length} 个 / node:crypto ${cryptoNames.length} 个）—— `
         + '出厂件会缺绑定、在用户回滚那一刻才炸，拒绝发布')
   }
   return [`const { ${fsNames.join(', ')} } = fs`, `const { ${cryptoNames.join(', ')} } = crypto`]
 }
 
 /**
- * 造出厂件 `bin/rollback.mjs` 的正文：repo 那一份（换头 + 去掉那两条共享件 import）+ **两块**内联正文。
+ * 造出厂件 `bin/rollback.mjs` 的正文：repo 那一份（换头 + 去掉那三条共享件 import）+ **三段**内联正文。
  *
  * 内联段插在"运行时取内建"那四行之后：函数声明会提升，但 `RETRYABLE_RENAME` / 内联绑定这种
  * `const` 不会 —— 插在那儿保证它先求值、再有人调 `writeFileAtomic`。
@@ -668,15 +659,15 @@ function shippedRollbackSource(repoRoot, source) {
     const relPosix = `presets/agenia/${block.rel.join('/')}`
     const file = path.join(repoRoot, ...relPosix.split('/'))
     if (!existsSync(file)) {
-      throw cliError('E_DATA_MISSING', `内联源不在：${file} —— 出厂件要内联两块（${SHIPPED_INLINE_BLOCKS.map((b) => b.label).join(' / ')}），缺一份就拒发`)
+      throw cliError('E_DATA_MISSING', `内联源不在：${file} —— 出厂件要内联三段（${SHIPPED_INLINE_BLOCKS.map((b) => b.label).join(' / ')}），缺一份就拒发`)
     }
     const sourceText = readFileSync(file, 'utf8')
     return { ...block, relPosix, source: sourceText, body: inlineSection(sourceText, block.label, relPosix) }
   })
   const headerParagraph = shippedHeaderLines().join('\n')
   const inline = [
-    `// 出厂件的内联：两块正文（${blocks.map((b) => b.label).join(' + ')}），逐字取自共享件里同名标签那一段。`,
-    '// 内建绑定放在每一块的起点标记**之前**（包装段里只许放逐字正文）；两块共用一次声明（去重）。',
+    `// 出厂件的内联：三段正文（${blocks.map((b) => b.label).join(' + ')}），逐字取自共享件里同名标签那一段。`,
+    '// 内建绑定放在每一块的起点标记**之前**（包装段里只许放逐字正文）；三段共用一次声明（去重）。',
     ...shippedBindingLines(blocks),
     '',
     ...blocks.flatMap((block) => [
@@ -722,7 +713,7 @@ function shippedRollbackSource(repoRoot, source) {
   // ⑤ 三个并集指纹都在（内联真的发生了）
   const missing = SHIPPED_FINGERPRINTS.filter((f) => !out.includes(f))
   if (missing.length > 0) throw cliError('E_INTERNAL', `出厂件缺并集指纹 ${missing.join(' / ')} —— 内联没发生，拒绝发布`)
-  // ⑥ 两块包装各一份：起点行带标签、终点行逐字（切块 / 剥块都靠这一对认人）
+  // ⑥ 三段包装各一份：起点行带标签、终点行逐字（切块 / 剥块都靠这一对认人）
   const outLines = out.split('\n')
   const endMarkers = outLines.filter((l) => l.includes(SHIPPED_END_MARKER)).length
   if (endMarkers !== blocks.length) {
@@ -762,9 +753,10 @@ function shippedDeclaration({ presetRoot, file, repoFile, stagedFile }) {
         // 功能名目录（`FROZEN.targetLag.markers`）是 inject.js 那一族；回滚脚本里一个都没有 ⇒ 空的才对。
         // 万一将来某一份真的缺了某一族，读数面会报 `TARGET-MARKER-UNDERCLAIM`（红），不会静默。
         missing_markers: [],
-        reason: 'publish-staged 在发布时把两段正文逐字内联进 bin/rollback.mjs（inlined at publish）：'
+        reason: 'publish-staged 在发布时把三段正文逐字内联进 bin/rollback.mjs（inlined at publish）：'
           + '① writeFileAtomic 所在的原子写并集正文（源 lib/atomic.mjs）；'
-          + '② 与 install.mjs 共用的 8 个公共 helper（源 lib/cli-guards.mjs —— 路径判据 / 删除三闸 / 备份根 / 输出信封都在里面）。'
+          + '② 与 install.mjs 共用的 8 个公共 helper（源 lib/cli-guards.mjs —— 路径判据 / 删除三闸 / 备份根 / 输出信封都在里面）；'
+          + '③ CLI 骨架正文（源 lib/cli-harness.mjs —— parseArgs / cliError，11 支 CLI 共用的那一份；emit 在 ② 里）。'
           + '出厂件因此保持单文件、零静态 import（拍板 Q6），与现役那一份必然不同。这处差异受控，只此一份。',
         approved_by: '组长（决议/构案/0006-原子写归一.md · 改定段第三方案 · RC-4）',
         approved_on: '2026-11-12',
@@ -787,10 +779,23 @@ function opPublishStaged(args) {
   }
   const repoV = pathVerdict(args.repo, '--repo')
   if (!repoV.ok) throw cliError(repoV.code, repoV.message)
+  /**
+   * 发布名单 = live `bin/` 的**全部七支**（不是只发三支）。
+   *
+   * 为什么是七支：staging 那个靶子根（`_staging/agenia-upgrade/preset`，由 `.gitignore` 挡着、不在提交里）
+   * 是套件的**靶子**，`F57-TARGET` 要求它与现役
+   * `presets/agenia/` **逐字节相同**（唯一允许不同的是声明里点名的那一份出厂件）。改一支 bin 却只发三支，
+   * 剩下几支就在靶子里**静默变旧** —— 套件跑的是旧代码，`F57-TARGET` 报"未声明的差"。
+   * （构案 0009 · B4 实测：四支 CLI 接了共享骨架之后，靶子里那四支还是旧的。）
+   */
   const map = [
+    ['agenia-brain.mjs', 'agenia-brain.mjs'],
+    ['agenia-local.mjs', 'agenia-local.mjs'],
+    ['agenia-route.mjs', 'agenia-route.mjs'],
+    ['bg-notify.mjs', 'bg-notify.mjs'],
     ['install.mjs', 'install.mjs'],
-    ['rollback.mjs', 'rollback.mjs'],
     ['release-scan.mjs', 'release-scan.mjs'],
+    ['rollback.mjs', 'rollback.mjs'],
   ]
   const published = []
   const drift = []
@@ -817,19 +822,34 @@ function opPublishStaged(args) {
     const entry = { name: dstName, from, to, bytes: statSync(to).size, sha256: sha, was: drift.some((d) => d.name === dstName) ? 'identical' : 'synced' }
     if (inlined) {
       entry.transform = 'inlined'
-      entry.transform_note = '出厂件：repo 那一份去掉两条共享件 import + 内联两块正文（原子写并集正文 + 公共 helper 正文；单文件零静态 import，拍板 Q6）'
+      entry.transform_note = '出厂件：repo 那一份去掉三条共享件 import + 内联三段正文（原子写并集正文 + 公共 helper 正文 + CLI 骨架正文；单文件零静态 import，拍板 Q6）'
       shipped = { from, to }
     }
     published.push(entry)
   }
   if (shipped === null) throw cliError('E_INTERNAL', '发布名单里没有回滚脚本 —— 出厂件那一份必须带内联（名单坏了）')
-  // 内联**源**也要同批发过去（两块各一份）：出厂件自己是自足的，但预设树里那一份 `lib/` 是给"装好之后"用的 ——
-  // 只发 bin 不发 lib，两棵树就会在 `lib/` 上分叉（`STAT-01` / `F57-TARGET` 当场红）。
-  // 只发**被内联的那两份源**：发布这一步读了谁、就同步谁，不多发。
-  for (const name of SHIPPED_INLINE_SOURCE_FILES) {
-    const libFrom = path.join(repoV.path, 'presets', 'agenia', 'lib', name)
+  /**
+   * `lib/` **整目录**同批同步（不止被内联的那三份）。
+   *
+   * 为什么是整目录：靶子（staged preset）与现役 `presets/agenia/` 必须**逐字节相同**（唯一允许不同的
+   * 是声明里点名的那一份出厂件，`STAT-01` / `F57-TARGET`）。只同步"被内联的三份"，其余 `lib/*.mjs`
+   * 一改（例如 `error-codes.mjs` 的一句人话）靶子就静默变旧 —— 那一跑会是"未声明的差"，而红因
+   * 长得像发布步骤出了问题。`lib/` 全是共享件（无 `.runtime`），整份同步没有例外要照顾。
+   *
+   * ⚠️ 仍有**手工面**（本 op 不管、写在这里让下一个人看得见）：`presets/agenia/` 下除 `bin/` 与 `lib/`
+   * 之外的正文（`inject.js` / `agent.cordis.yml` / `*.md` / `team/` …）改了以后要**同批**同步进
+   * 靶子（`CONTRACT.md` 的"实现关同批同步"）。本 op 不自作主张搬整棵预设树：那是一次发布设计的
+   * 决定，不属于这一票。
+   */
+  const libDir = path.join(repoV.path, 'presets', 'agenia', 'lib')
+  const libNames = readdirSync(libDir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.mjs'))
+    .map((e) => e.name)
+    .sort()
+  if (libNames.length === 0) throw cliError('E_DATA_MISSING', `live lib/ 里一份 .mjs 都没有：${libDir}`)
+  for (const name of libNames) {
+    const libFrom = path.join(libDir, name)
     const libTo = path.join(presetRoot, 'lib', name)
-    if (!existsSync(libFrom)) throw cliError('E_DATA_MISSING', `内联源不在：${libFrom}`)
     mkdirSync(path.dirname(libTo), { recursive: true })
     const libR = writeFileAtomic(libTo, readFileSync(libFrom), { allowedRoot: presetRoot })
     if (!libR.ok) {
@@ -837,8 +857,16 @@ function opPublishStaged(args) {
       if (libR.cleanup_refused?.delete_gate) err.delete_gate = libR.cleanup_refused.delete_gate
       throw err
     }
-    if (sha256File(libTo) !== sha256File(libFrom)) throw cliError('E_MANIFEST_MISMATCH', `publish 之后内联源逐字节对不上：${libTo}`)
-    published.push({ name: 'lib/' + name, from: libFrom, to: libTo, bytes: statSync(libTo).size, sha256: sha256File(libTo), was: 'synced', transform: 'inline-source' })
+    if (sha256File(libTo) !== sha256File(libFrom)) throw cliError('E_MANIFEST_MISMATCH', `publish 之后 lib 逐字节对不上：${libTo}`)
+    published.push({
+      name: 'lib/' + name,
+      from: libFrom,
+      to: libTo,
+      bytes: statSync(libTo).size,
+      sha256: sha256File(libTo),
+      was: 'synced',
+      transform: 'lib-sync',
+    })
   }
   const declFile = path.join(path.dirname(presetRoot), 'target-lag.json')
   const declaration = shippedDeclaration({ presetRoot, repoFile: shipped.from, stagedFile: shipped.to })
@@ -856,8 +884,8 @@ function opPublishStaged(args) {
       baseline_sha256: declaration.entries[0].baseline_sha256,
       note: '两棵树的**受控差异**要有人认领：这一份声明点名了唯一允许不同的那一个文件（发布时内联造成的）',
     },
-    note: 'bin/ 那三支从 live `presets/agenia/bin/` 取；回滚那一份发成出厂件形状（两块内联、零静态 import），其余逐字节拷贝；'
-      + '被内联的那两份 `lib/` 共享件同批发过去',
+    note: 'bin/ 那七支从 live `presets/agenia/bin/` 取（靶子于是与现役逐字节相同）；回滚那一份发成出厂件形状（三段内联、零静态 import），其余逐字节拷贝；'
+      + '被内联的那三份 `lib/` 共享件同批发过去',
   }
 }
 
@@ -868,7 +896,7 @@ const OPS = { install: opInstall, 'publish-staged': opPublishStaged }
 function main(argv) {
   let op = 'install'
   try {
-    const args = parseArgs(argv)
+    const args = parseArgs(argv, ARG_SPEC)
     op = args.op
     if (op === null || String(op).trim() === '') throw cliError('E_USAGE', `缺 --op；可用：${OP_NAMES.join(' / ')}`)
     if (op === 'help') {

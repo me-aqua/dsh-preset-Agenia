@@ -160,11 +160,13 @@ test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；�
     /** 副本树的**模块闭包** —— 入口（`.tools/决议-check.mjs`）在**模块加载时**静态 import 的每一份，
      *  除入口自己（它由 patches 版代替）：
      *    · `.tools/lib/决议-ledger.mjs` —— 头块切分 / `INDEX` 派生那一份解析面；
-     *    · `presets/agenia/lib/atomic.mjs` —— 写盘走共享原子写（`writeFileAtomic`；`MF-1` 接走之后新增的这一份）。
-     *  两份都只 import `node:*`（`fs` / `path` / `url` / `crypto`）⇒ **闭包到它们为止，没有第四份**；
+     *    · `presets/agenia/lib/atomic.mjs` —— 写盘走共享原子写（`writeFileAtomic`；`MF-1` 接走之后新增的这一份）；
+     *    · `presets/agenia/lib/cli-harness.mjs` —— 入口骨架（构案 0009 · B4：`parseArgs` / `cliError` / `emit`）；
+     *    · `presets/agenia/lib/cli-guards.mjs` —— `emit` 的唯一定义处（骨架共享件只转出它）。
+     *  四份都只 import `node:*`（`fs` / `path` / `url` / `crypto`）或彼此 ⇒ **闭包到这里为止**；
      *  这条结论由 `assertSandboxClosed()` 每次现量，不靠这句话自证。
      *  ⚠️ 少铺一份 = 副本子进程 `ERR_MODULE_NOT_FOUND` —— 那是"刀没跑起来"，读数却与"刀没咬住"同形。 */
-    const SANDBOX_MODULES = ['.tools/lib/决议-ledger.mjs', 'presets/agenia/lib/atomic.mjs']
+    const SANDBOX_MODULES = ['.tools/lib/决议-ledger.mjs', 'presets/agenia/lib/atomic.mjs', 'presets/agenia/lib/cli-harness.mjs', 'presets/agenia/lib/cli-guards.mjs']
 
     /**
      * 现量一棵副本树的闭包：从副本入口走一遍 `from '<相对路径>'`，**每一份**都必须落在副本树里，

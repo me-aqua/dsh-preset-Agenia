@@ -63,6 +63,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { cliError, emit, parseArgs } from '../presets/agenia/lib/cli-harness.mjs'
 
 const REPO_DEFAULT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -218,22 +219,28 @@ function fingerprint(root, includeEnv) {
   }
 }
 
-function parseArgs(argv) {
-  const out = { root: REPO_DEFAULT, set: 'both', json: false, save: null, compare: null, isCode: null }
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i]
-    if (a === '--json') out.json = true
-    else if (a === '--root') out.root = argv[++i]
-    else if (a === '--set') out.set = argv[++i]
-    else if (a === '--save') out.save = argv[++i]
-    else if (a === '--compare') out.compare = argv[++i]
-    else if (a === '--is-code') out.isCode = argv[++i]
-    else if (a === '--help' || a === '-h') out.help = true
-    else return { error: `未知参数：${a}` }
+/**
+ * 本支 CLI 认得的参数（逻辑在 `presets/agenia/lib/cli-harness.mjs`：`--k v` 与 `--k=v` 都收、
+ * 不认识的抛 `E_ARG_USAGE`）。从前这里是一段 837 字符的手写解析器：只认空格形式，
+ * 未知参数只在 stderr 印一行、stdout 上没有信封码。
+ */
+const ARG_SPEC = {
+  value: { '--root': 'root', '--set': 'set', '--save': 'save', '--compare': 'compare', '--is-code': 'isCode' },
+  flag: { '--json': 'json', '--help': 'help', '-h': 'help' },
+  defaults: { root: REPO_DEFAULT, set: 'both' },
+}
+
+/**
+ * 语义校验（解析器只管形状；"哪一套 / 根空不空"是这支 CLI 自己的事）。
+ * 这些也是**参数**问题 ⇒ 同一个码 `E_ARG_USAGE`，不再走"一行 stderr + exit 2"。
+ */
+function resolveArgs(argv) {
+  const args = parseArgs(argv, ARG_SPEC)
+  if (!['code', 'all', 'both'].includes(args.set)) {
+    throw cliError('E_ARG_USAGE', `--set 只认 code / all / both，实得 ${JSON.stringify(args.set)}`)
   }
-  if (!['code', 'all', 'both'].includes(out.set)) return { error: `--set 只认 code / all / both，实得 ${JSON.stringify(out.set)}` }
-  if (out.root === undefined || String(out.root).trim() === '') return { error: '--root 不能是空串' }
-  return out
+  if (args.root === null || String(args.root).trim() === '') throw cliError('E_ARG_USAGE', '--root 不能是空串')
+  return args
 }
 
 const USAGE = [
@@ -248,9 +255,11 @@ const USAGE = [
 ].join('\n')
 
 function main(argv) {
-  const args = parseArgs(argv)
-  if (args.error) {
-    process.stderr.write(`fingerprint.mjs: ${args.error}\n${USAGE}\n`)
+  let args
+  try {
+    args = resolveArgs(argv)
+  } catch (err) {
+    emit({ ok: false, error: { code: err?.code ?? 'E_ARG_USAGE', message: String(err?.message ?? err), details: err?.details ?? null } })
     return 2
   }
   if (args.help) {

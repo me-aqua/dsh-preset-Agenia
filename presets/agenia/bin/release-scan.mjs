@@ -62,6 +62,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { cliError, emit, parseArgs } from '../lib/cli-harness.mjs'
 
 const SELF = fileURLToPath(import.meta.url)
 const REPO = path.resolve(path.dirname(SELF), '..', '..', '..')
@@ -82,7 +83,7 @@ const PROTECTED_SEGMENTS = ['.runtime', '.team']
  */
 const SELF_REL = path.relative(path.resolve(path.dirname(SELF), '..'), SELF).replace(/\\/g, '/')
 
-const CODES = Object.freeze({ E_USAGE: 2, E_ARG_SCHEMA: 2, E_ROOT_MISSING: 3, E_ROOT_RELATIVE: 3, E_ROOT_UNC: 3, E_ROOT_C_DRIVE: 3, E_PATH_ESCAPE: 3, E_MANIFEST_MISMATCH: 5, E_INTERNAL: 8 })
+const CODES = Object.freeze({ E_USAGE: 2, E_ARG_SCHEMA: 2, E_ARG_USAGE: 2, E_ROOT_MISSING: 3, E_ROOT_RELATIVE: 3, E_ROOT_UNC: 3, E_ROOT_C_DRIVE: 3, E_PATH_ESCAPE: 3, E_MANIFEST_MISMATCH: 5, E_INTERNAL: 8 })
 
 /** 十份岗位说明书（顺序照契约 §B2.3 的角色表）。 */
 const ROLE_TEXTS = [
@@ -126,36 +127,23 @@ const CODE_EXT = /\.(mjs|cjs|js|mts|cts|ts|yml|yaml|ps1|sh|cmd|bat)$/i
 const DATA_EXT = /\.json$/i
 const PROSE_EXT = /\.(md|markdown|txt)$/i
 
-function cliError(code, message) {
-  const err = new Error(message)
-  err.name = 'ScanCliError'
-  err.code = code
-  return err
-}
-
 // ── 参数 ───────────────────────────────────────────────────────────────────
-function parseArgs(argv) {
-  const out = { op: 'scan', release: null, staged: null, live: null, backup: null, repo: REPO, strict: false }
-  const takesValue = new Set(['--op', '--release', '--staged', '--live', '--backup', '--repo'])
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i]
-    if (!a.startsWith('--')) throw cliError('E_USAGE', `不认这个位置参数：${JSON.stringify(a)}`)
-    if (takesValue.has(a)) {
-      const v = argv[i + 1]
-      if (v === undefined || v.startsWith('--')) throw cliError('E_USAGE', `${a} 后面要跟一个值`)
-      i += 1
-      if (a === '--op') out.op = v
-      else if (a === '--release') out.release = v
-      else if (a === '--staged') out.staged = v
-      else if (a === '--live') out.live = v
-      else if (a === '--backup') out.backup = v
-      else if (a === '--repo') out.repo = v
-      continue
-    }
-    if (a === '--strict') out.strict = true
-    else throw cliError('E_USAGE', `未知参数：${a}`)
-  }
-  return out
+/**
+ * 本支 CLI 认得的参数（逻辑在 `lib/cli-harness.mjs`：`--k v` 与 `--k=v` 都收、不认识的抛 `E_ARG_USAGE`）。
+ * 从前这里是一段 950 字符的手写解析器：只认空格形式，未知参数与位置参数都报 `E_USAGE`
+ * —— 与"op 不认识"同一个码，读数上分不开。
+ */
+const ARG_SPEC = {
+  value: {
+    '--op': 'op',
+    '--release': 'release',
+    '--staged': 'staged',
+    '--live': 'live',
+    '--backup': 'backup',
+    '--repo': 'repo',
+  },
+  flag: { '--strict': 'strict' },
+  defaults: { op: 'scan', repo: REPO },
 }
 
 // ── 路径小工具 ─────────────────────────────────────────────────────────────
@@ -647,15 +635,12 @@ function opFrozenLines(args) {
 }
 
 // ── 入口 ───────────────────────────────────────────────────────────────────
-function emit(envelope) {
-  process.stdout.write(`${JSON.stringify(envelope)}\n`)
-}
 const OPS = { scan: opScan, 'frozen-lines': opFrozenLines }
 
 function main(argv) {
   let op = 'scan'
   try {
-    const args = parseArgs(argv)
+    const args = parseArgs(argv, ARG_SPEC)
     op = args.op
     if (op === null || String(op).trim() === '') throw cliError('E_USAGE', `缺 --op；可用：${OP_NAMES.join(' / ')}`)
     if (op === 'help') {

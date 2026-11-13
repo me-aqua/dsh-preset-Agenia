@@ -40,6 +40,7 @@ import path from 'node:path'
 import vm from 'node:vm'
 import { extractFunctionText } from './atomic-writers.mjs'
 import { CLI_PAIR_FILES, SHARED_GUARDS_REL, definitionForms } from './cli-guards-shared.mjs'
+import { HARNESS_REL } from './cli-harness-shared.mjs'
 
 /** 三处钉子的顺序：**模块在前**（第三份也要被数进来），再两支 CLI。 */
 export const ADAPTER_PINS = Object.freeze([SHARED_GUARDS_REL, ...CLI_PAIR_FILES])
@@ -56,11 +57,16 @@ export const ADAPTER_FIELDS = Object.freeze(['code', 'delete_gate', 'name'])
 /**
  * `err.name` 逐处钉死（**字面不相等是记录在案的写法差**，见文件头）。
  * 键 = 相对仓库根的 posix 路径；值 = 那一处 `refuseDelete()` 产出的 `err.name`。
+ *
+ * 🔴 **2026-11-13（构案 0009 · B4）**：`cliError` 收成一份（`presets/agenia/lib/cli-harness.mjs`），
+ *    两支 CLI 的 `refuseDelete` 不再各用本文件的 `cliError()`，而是**同一个** ⇒ 它们产出的 `err.name`
+ *    由三个名字塌成一个（`CliHarnessError`）。这是那一票的**直接后果**，不是随手改钉子：
+ *    三处仍然是"逐处钉死、谁改一处就红并点名那个文件"，变的只是 install / rollback 那两格的值。
  */
 export const PINNED_ERR_NAMES = Object.freeze({
   'presets/agenia/lib/cli-guards.mjs': 'CliGuardError',
-  'presets/agenia/bin/install.mjs': 'InstallCliError',
-  'presets/agenia/bin/rollback.mjs': 'RollbackCliError',
+  'presets/agenia/bin/install.mjs': 'CliHarnessError',
+  'presets/agenia/bin/rollback.mjs': 'CliHarnessError',
 })
 
 /** 归一尺子（写进读数：谁读这一格都能照着复算）。 */
@@ -241,7 +247,7 @@ function compileInContext(context, text, name, filename) {
 }
 
 /** `refuseDelete` 的字段读数：三处各喂同一份输入，记 `code` / `delete_gate` 身份 / `err.name`。 */
-function probeRefuseDelete(texts, readErrors) {
+function probeRefuseDelete(texts, readErrors, harnessSource = null) {
   const rows = []
   for (const rel of ADAPTER_PINS) {
     const text = texts[rel]
@@ -250,10 +256,15 @@ function probeRefuseDelete(texts, readErrors) {
       continue
     }
     const context = vm.createContext({})
-    // 依赖：本文件自己的 `cliError()`（install / rollback 有；模块那份只 new Error）。
-    const cliError = compileInContext(context, text, 'cliError', rel)
-    if (rel !== SHARED_GUARDS_REL && cliError.fn === null) {
-      rows.push({ file: rel, ok: false, why: `拿不到本文件的 \`cliError()\`：${cliError.why}`, line: null, probes: [] })
+    // 依赖：`cliError()`。B4（构案 0009）之后它只有一份（`lib/cli-harness.mjs`）——
+    // 两支 CLI 不再各留一份 ⇒ 本文件那一份取不到时，从共享骨架取同一个函数。
+    // 口径没变：三处 `refuseDelete` 的正文照旧各判各的，变的只是"它引用的 `cliError` 从哪来"。
+    let cliError = compileInContext(context, text, 'cliError', rel)
+    if (cliError.fn === null && rel !== SHARED_GUARDS_REL && harnessSource !== null) {
+      cliError = compileInContext(context, String(harnessSource).replace(/^export /gm, ''), 'cliError', HARNESS_REL)
+    }
+    if (cliError.fn === null && rel !== SHARED_GUARDS_REL) {
+      rows.push({ file: rel, ok: false, why: `拿不到 \`cliError()\`（本文件与 ${HARNESS_REL} 都没有）：${cliError.why}`, line: null, probes: [] })
       continue
     }
     if (cliError.fn !== null) context.cliError = cliError.fn
@@ -329,6 +340,14 @@ export function scanHostAdapters({ root }) {
       reading.read_errors.push({ file: rel, code: String(err?.code ?? err?.name ?? 'E_READ') })
     }
   }
+  /** `cliError` 的**唯一定义**（B4 起两支 CLI 从它取；读不到就记读数，不让三处 `refuseDelete` 变成"拿不到依赖"）。 */
+  const harnessFile = path.join(base, ...HARNESS_REL.split('/'))
+  let harnessText = null
+  try {
+    harnessText = readFileSync(harnessFile, 'utf8')
+  } catch (err) {
+    reading.read_errors.push({ file: HARNESS_REL, code: String(err?.code ?? err?.name ?? 'E_READ') })
+  }
   // ── 每个名字：三处各几处定义 / 归一副本 / 归一之后的比较 ────────────────────
   for (const name of HOST_ADAPTERS) {
     const copies = []
@@ -402,7 +421,7 @@ export function scanHostAdapters({ root }) {
         }
       }
     } else {
-      row.probe_rows = probeRefuseDelete(texts, reading.read_errors)
+      row.probe_rows = probeRefuseDelete(texts, reading.read_errors, harnessText)
       const okRows = row.probe_rows.filter((r) => r.ok)
       row.field_equal = {
         code: okRows.length === ADAPTER_PINS.length && okRows.every((r) => r.probes.every((p) => p.err_code === p.input_code)),

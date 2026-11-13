@@ -61,6 +61,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
+import { cliError, emit, parseArgs } from '../lib/cli-harness.mjs'
 import { CODES } from '../lib/error-codes.mjs'
 import { dataRootVerdict, realInitVerdict, realModeVerdict, realRootsFor, TEST_ROOT_MARKER, testModeOf, workspaceWriteVerdict } from '../lib/paths.mjs'
 import { acquireLock, readJsonFile, releaseLock, writeJsonAtomic } from '../lib/atomic.mjs'
@@ -100,36 +101,25 @@ const REAL_MODE_WRITE_OPS = Object.freeze(
   COMMANDS.filter((c) => c.cli === CLI_NAME && c.writes === true).map((c) => c.op),
 )
 
-function cliError(code, message, details = null) {
-  const err = new Error(message)
-  err.name = 'BrainCliError'
-  err.code = code
-  err.details = details
-  return err
-}
-
 // ── 参数 ───────────────────────────────────────────────────────────────────
-function parseArgs(argv) {
-  const out = { op: null, dataRoot: null, workspace: null, statusRoot: null, inFile: null, testMode: false, realMode: false, forceRecover: false, unknown: [] }
-  for (let i = 0; i < argv.length; i += 1) {
-    const raw = argv[i]
-    const eq = raw.indexOf('=')
-    const key = eq >= 0 ? raw.slice(0, eq) : raw
-    const inline = eq >= 0 ? raw.slice(eq + 1) : null
-    const take = () => (inline !== null ? inline : (argv[i + 1] !== undefined ? argv[(i += 1)] : null))
-    switch (key) {
-      case '--op': out.op = take(); break
-      case '--data-root': out.dataRoot = take(); break
-      case '--workspace': out.workspace = take(); break
-      case '--status-root': out.statusRoot = take(); break
-      case '--in': out.inFile = take(); break
-      case '--test-mode': out.testMode = true; break
-      case '--real-mode': out.realMode = true; break
-      case '--force-recover': out.forceRecover = true; break
-      default: out.unknown.push(raw); break
-    }
-  }
-  return out
+/**
+ * 本支 CLI 认得的参数（逻辑在 `lib/cli-harness.mjs`：两种写法都收、不认识的抛 `E_ARG_USAGE`）。
+ * 从前这里是一段 1,007 字符的手写解析器，未知参数被推进 `unknown[]` 而后**没有任何地方读它**
+ * ⇒ 参数写错与没写这个参数在读数上同形（`bug-20261113-19` 的根因）。
+ */
+const ARG_SPEC = {
+  value: {
+    '--op': 'op',
+    '--data-root': 'dataRoot',
+    '--workspace': 'workspace',
+    '--status-root': 'statusRoot',
+    '--in': 'inFile',
+  },
+  flag: {
+    '--test-mode': 'testMode',
+    '--real-mode': 'realMode',
+    '--force-recover': 'forceRecover',
+  },
 }
 
 function readPayload(args) {
@@ -1681,14 +1671,10 @@ const OPS = {
   'judge-pending': opJudgePending,
 }
 
-function emit(envelope) {
-  process.stdout.write(`${JSON.stringify(envelope)}\n`)
-}
-
 function main(argv) {
   let op = null
   try {
-    const args = parseArgs(argv)
+    const args = parseArgs(argv, ARG_SPEC)
     op = args.op
     if (op === null || String(op).trim() === '') throw cliError('E_USAGE', `缺 --op；可用：${OP_NAMES.join(' / ')}`)
     if (op === 'help') {

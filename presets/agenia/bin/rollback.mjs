@@ -60,7 +60,8 @@
  *   退出码：0 成功（含 NO-BACKUP）· 2 用法 · 3 路径 · 4 IO · 5 校验 · 7 数据/清单缺失 · 8 内部
  */
 import { CLI_WRITE_MAX_ATTEMPTS, writeFileAtomic } from '../lib/atomic.mjs'
-import { assertDeletableTarget, defaultBackupRoot, emit, isUnder, normKey, pathVerdict } from '../lib/cli-guards.mjs'
+import { cliError, emit, parseArgs } from '../lib/cli-harness.mjs'
+import { assertDeletableTarget, defaultBackupRoot, isUnder, normKey, pathVerdict } from '../lib/cli-guards.mjs'
 
 const fs = await import('node:fs')
 const path = await import('node:path')
@@ -97,35 +98,24 @@ const CODES = Object.freeze({
   E_INTERNAL: 8,
 })
 
-function cliError(code, message, details = null) {
-  const err = new Error(message)
-  err.name = 'RollbackCliError'
-  err.code = code
-  err.details = details
-  return err
-}
-
 // ── 参数 ───────────────────────────────────────────────────────────────────
-function parseArgs(argv) {
-  const out = { op: 'rollback', target: null, backup: null, requireBackup: false, dryRun: false }
-  const takesValue = new Set(['--op', '--target', '--live', '--backup'])
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i]
-    if (!a.startsWith('--')) throw cliError('E_USAGE', `不认这个位置参数：${JSON.stringify(a)}`)
-    if (takesValue.has(a)) {
-      const v = argv[i + 1]
-      if (v === undefined || v.startsWith('--')) throw cliError('E_USAGE', `${a} 后面要跟一个值`)
-      i += 1
-      if (a === '--op') out.op = v
-      else if (a === '--target' || a === '--live') out.target = v
-      else if (a === '--backup') out.backup = v
-      continue
-    }
-    if (a === '--require-backup') out.requireBackup = true
-    else if (a === '--dry-run') out.dryRun = true
-    else throw cliError('E_USAGE', `未知参数：${a}`)
-  }
-  return out
+/**
+ * 本支 CLI 认得的参数（逻辑在 `lib/cli-harness.mjs`：`--k v` 与 `--k=v` 都收、不认识的抛 `E_ARG_USAGE`）。
+ * 从前这里是一段 859 字符的手写解析器：只认空格形式，未知参数与位置参数都报 `E_USAGE`
+ * —— 与"op 不认识"同一个码，读数上分不开。`--live` 是 `--target` 的历史别名。
+ */
+const ARG_SPEC = {
+  value: {
+    '--op': 'op',
+    '--target': 'target',
+    '--live': 'target',
+    '--backup': 'backup',
+  },
+  flag: {
+    '--require-backup': 'requireBackup',
+    '--dry-run': 'dryRun',
+  },
+  defaults: { op: 'rollback' },
 }
 
 // ── 路径守卫 ───────────────────────────────────────────────────────────────
@@ -467,7 +457,7 @@ const OPS = { rollback: opRollback }
 function main(argv) {
   let op = 'rollback'
   try {
-    const args = parseArgs(argv)
+    const args = parseArgs(argv, ARG_SPEC)
     op = args.op
     if (op === null || String(op).trim() === '') throw cliError('E_USAGE', `缺 --op；可用：${OP_NAMES.join(' / ')}`)
     if (op === 'help') {

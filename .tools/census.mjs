@@ -32,6 +32,7 @@ import { existsSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { writeFileAtomic } from '../presets/agenia/lib/atomic.mjs'
+import { emit, parseArgs } from '../presets/agenia/lib/cli-harness.mjs'
 import { INDEX_REL, REPO_ROOT, renderIndex, relPosix, scanLedger } from './lib/决议-ledger.mjs'
 
 /**
@@ -102,29 +103,30 @@ export function writeIndex(root, text) {
   return relPosix(root, file)
 }
 
-export function parseArgs(argv) {
-  const args = { root: null, json: false, concept: null, writeIndex: false, bad: [] }
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i]
-    if (a === '--json') args.json = true
-    else if (a === '--write-index') args.writeIndex = true
-    else if (a.startsWith('--root=')) args.root = a.slice('--root='.length)
-    else if (a === '--root') args.root = argv[++i] ?? ''
-    else if (a.startsWith('--concept=')) args.concept = a.slice('--concept='.length)
-    else if (a === '--concept') args.concept = argv[++i] ?? ''
-    else args.bad.push(a)
-  }
-  return args
+/**
+ * 本支 CLI 认得的参数（逻辑在 `presets/agenia/lib/cli-harness.mjs`：`--k v` 与 `--k=v` 都收、
+ * 不认识的抛 `E_ARG_USAGE`）。从前这里是一段 613 字符的手写解析器：等号形式只支持了一半
+ * （`--root=` / `--concept=` 认，`--json` 一类开关不认），未知参数只印一行 `CENSUS-USAGE:`、
+ * stdout 上没有信封码 —— 读信封的人分不清"参数写错"与"普查坏了"。
+ */
+export const ARG_SPEC = {
+  value: { '--root': 'root', '--concept': 'concept' },
+  flag: { '--json': 'json', '--write-index': 'writeIndex' },
 }
 
 export function main(argv = process.argv.slice(2)) {
-  const args = parseArgs(argv)
+  let args
+  try {
+    args = parseArgs(argv, ARG_SPEC)
+  } catch (err) {
+    emit({ ok: false, error: { code: err?.code ?? 'E_ARG_USAGE', message: String(err?.message ?? err), details: err?.details ?? null } })
+    process.exit(2)
+  }
   const usage = (msg) => {
     process.stderr.write(`CENSUS-USAGE: ${msg}\n`
       + '  用法：node .tools/census.mjs [--root=<绝对目录>] [--json] [--concept=<概念>] [--write-index]\n')
     process.exit(3)
   }
-  if (args.bad.length > 0) usage(`不认识的参数：${JSON.stringify(args.bad)}`)
   const root = args.root === null ? REPO_ROOT : path.resolve(args.root)
   let isDirRoot = true
   try {
