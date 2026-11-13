@@ -15,8 +15,16 @@
  *   · **缺 ≠ 空**（对照表 §5）：文件不在 / JSON 坏 / 形状不对 ⇒ `value: null` + `未知` + 报警；
  *     **集合为空** ⇒ 显式 `0`。把这两件事塌成一种，读的人就分不清"没有"和"坏了"。
  */
-import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from 'node:fs'
+/**
+ * `mkdirSync` / `writeFileSync` 在这一份文件里**没有活的调用点**，但它们必须留在这一行：
+ * `DASH-11` 的④/⑤两把写手刀（`tests/agenia-upgrade/integration/dash05-snapshot.test.mjs` 的
+ * `sharedWriterSource` / `directWriterSource`）会把下面 `writeDashboardSnapshot` 的**函数体整段换掉**，
+ * 换进去的正文按**本模块作用域**取这两个名字。删掉 ⇒ 那两把刀以 `ReferenceError` 收场（不是判据变严，是判据跑不动）。
+ * 同理这一行不能加行尾注释：那把"外来写手"刀的锚点是一条整行 `import { … } from 'node:fs'` 的正则。
+ */
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { writeFileAtomic as writeSharedAtomic } from './atomic.mjs'
 import { FIVE_GATES, headlineOf, ticketStatusOf } from './route.mjs'
 import { openCounts } from './bug-ledger.mjs'
 import { NODE_STATES } from './local-state.mjs'
@@ -166,7 +174,9 @@ export function readDashboardSources({ routeFile = null, bugFile = null, localFi
  * 把一份视图写成**快照文件**（插件把"视图怎么到浏览器"落成这一份文件；
  * 渲染层只经 `workspaceFiles` 读它，不读账本、不自己算）。
  *
- * 原子写：同目录先写 `<file>.tmp` 再 `rename` —— 半截文件等于让读的人看到半份账。
+ * 原子写：交给共享件 `lib/atomic.mjs::writeFileAtomic`（同目录临时件 → `writeSync` → `fsync` → `rename`，
+ * Windows 上 rename 被占用会退避重试）—— 本文件不再自己拼临时名。失败**抛**（调用方 `lib/index.js`
+ * 折成一条警告）：半截文件等于让读的人看到半份账，静默失败等于让他看旧账还以为那是新的。
  *
  * @param {{input:object, outFile:string}} args
  * @returns {{file:string, bytes:number}}
@@ -174,10 +184,8 @@ export function readDashboardSources({ routeFile = null, bugFile = null, localFi
 export function writeDashboardSnapshot({ input, outFile }) {
   const view = dashboardOf(input)
   const text = `${JSON.stringify(view)}\n`
-  mkdirSync(path.dirname(outFile), { recursive: true })
-  const tmp = `${outFile}.tmp`
-  writeFileSync(tmp, text, 'utf8')
-  renameSync(tmp, outFile)
+  const written = writeSharedAtomic(outFile, text)
+  if (written.ok !== true) throw new Error(`${written.code}: ${written.message}`)
   return { file: outFile, bytes: Buffer.byteLength(text, 'utf8') }
 }
 

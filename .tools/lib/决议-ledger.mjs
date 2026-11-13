@@ -82,6 +82,15 @@ export const COUNT_RULES = Object.freeze({
   /** 零代码决定（契约 §3.2）：这一条**按设计就没有实现**，实现数恒为 0。
    *  探针照旧扫，命中的文件进读数 `files`（witness）—— 它是"库里唯一留下的痕迹"，不是实现。 */
   '零代码': { label: '零代码决定', kind: 'zero', comments: 'any' },
+  /**
+   * **按形状数手搓原子写**（构案 0007 · 史山清查 B2 · 契约 `.team/test/2026-11-13/CONTRACT-史山清查-B2.md` §0.2）。
+   *
+   * 这一行的「实现探针」是**规则名本身**：它不是子串探针，数的是"手搓原子写"这个形状，不是某个名字。
+   * 为什么需要它：按**名字**数的口径（`writeFileAtomic`）数不到"自己拼临时名 + 写 + rename"那种实现 ——
+   * 名字根本不在那三处里。口径细节（临时名怎么认 / A、B 两族 / 数出来的数怎么拆 / 允许清单）
+   * 见 `SHAPE_*` 常量与 `countShapeSites()`；读数会带上 `sites[]` / `allowlist[]` / `scanned_files`。
+   */
+  'atomic-write-by-shape': { label: '处手搓原子写（按形状）', kind: 'shape', comments: 'code' },
 })
 /** 概念表不写第五列时的口径（= 契约 §3.2 的老口径）。 */
 export const DEFAULT_COUNT_RULE = 'file'
@@ -182,9 +191,67 @@ export function firstTable(lines, from = 0) {
 
 // ── 概念表（契约 §3.1）──────────────────────────────────────────────────────
 /**
+ * 读 `决议/概念表.md` 里**第二张表**（`## 原子写形状允许清单`）的条目。
+ *
+ * 只认第一张表后面的那一节；四列逐字 `| 路径 | 行 | 类别 | 理由 |`（契约 §0.3）。
+ * 每一行归一成 `{file, line, kind, why, source_line}`；行级坏法（格子数不是 4 / 行号不是正整数 /
+ * 表头不认识）⇒ 该条目带 `malformed` 标记或整体 `problem` —— 判词在 `countShapeSites()` 里按契约的
+ * 判定次序给码（这一处只负责"把表读成条目"）。
+ *
+ * @returns {{present:boolean, entries:Array<object>, problems:Array<object>}}
+ */
+export function readShapeAllowlist(lines) {
+  const headingAt = lines.findIndex((l) => /^\s{0,3}#{2,6}\s+/.test(l) && String(l).includes(SHAPE_ALLOWLIST_HEADING))
+  if (headingAt < 0) return { present: false, entries: [], problems: [] }
+  const table = firstTable(lines, headingAt + 1)
+  if (table === null) {
+    return {
+      present: true,
+      entries: [],
+      problems: [problem('SHAPE-ALLOWLIST-SHAPE', `${TABLE_REL}:${headingAt + 1} 「${SHAPE_ALLOWLIST_HEADING}」下面没有表 —— `
+        + `这一节要么是四列表 ${JSON.stringify(SHAPE_ALLOWLIST_COLUMNS)}，要么整节不写（契约 §0.3）`, { file: TABLE_REL, line: headingAt + 1 })],
+    }
+  }
+  if (table.columns.length !== SHAPE_ALLOWLIST_COLUMNS.length || table.columns.some((c, i) => c !== SHAPE_ALLOWLIST_COLUMNS[i])) {
+    return {
+      present: true,
+      entries: [],
+      problems: [problem('SHAPE-ALLOWLIST-SHAPE', `${TABLE_REL}:${table.startLine} 的列名不是 ${JSON.stringify(SHAPE_ALLOWLIST_COLUMNS)}`
+        + `（实得 ${JSON.stringify(table.columns)}）—— 四列逐字、次序也逐字（契约 §0.3）`, { file: TABLE_REL, line: table.startLine })],
+    }
+  }
+  const entries = []
+  const problems = []
+  table.rows.forEach((cells, idx) => {
+    const line = table.startLine + 2 + idx
+    if (cells.length !== SHAPE_ALLOWLIST_COLUMNS.length) {
+      entries.push({ file: cells[0] ?? null, line: null, kind: cells[2] ?? null, why: cells[3] ?? null, source_line: line, malformed: true, malformed_why: `有 ${cells.length} 格，应当是 4 格`, raw: cells })
+      return
+    }
+    const [fileCell, lineCell, kindCell, whyCell] = cells
+    const lineNo = Number(lineCell)
+    const entry = {
+      file: fileCell,
+      line: Number.isInteger(lineNo) && lineNo > 0 ? lineNo : lineCell,
+      kind: kindCell,
+      why: whyCell,
+      source_line: line,
+    }
+    if (!Number.isInteger(entry.line) || entry.line <= 0) {
+      // 行号不是正整数 ⇒ 这一条指不了路："过期"与"写错了"必须分得开（前者报 STALE，后者报 SHAPE）
+      entries.push({ ...entry, line: null, raw_line: lineCell, malformed: true, malformed_why: `「行」${JSON.stringify(lineCell)} 不是正整数`, raw: cells })
+      return
+    }
+    entries.push(entry)
+  })
+  return { present: true, entries, problems }
+}
+
+/**
  * 读 `<root>/决议/概念表.md`。
  *
- * @returns {{present:boolean, file:string, rows:Array<object>, problems:Array<object>}}
+ * @returns {{present:boolean, file:string, rows:Array<object>, problems:Array<object>,
+ *            allowlist:Array<object>, allowlist_present:boolean}}
  */
 export function readConceptTable(root) {
   const rel = TABLE_REL
@@ -194,29 +261,35 @@ export function readConceptTable(root) {
       present: false,
       file: rel,
       rows: [],
+      allowlist: [],
+      allowlist_present: false,
       problems: [problem('CONCEPT-TABLE-MISSING', `${rel} 不在 —— 它是 census 的**唯一**概念源（契约 §3.1）；`
         + '这一条上游缺了，`INDEX` 的派生与 `census` 的数都无从谈起')],
     }
   }
   const lines = linesOf(readFileSync(file, 'utf8'))
+  const allowlist = readShapeAllowlist(lines)
   const table = firstTable(lines)
   if (table === null) {
     return {
       present: true,
       file: rel,
       rows: [],
+      allowlist: allowlist.entries,
+      allowlist_present: allowlist.present,
       problems: [problem('CONCEPT-TABLE-SHAPE', `${rel} 里没有第一张 md 表（契约 §3.1）；`
         + '概念表必须是一张四列表：`| 概念 | 实现探针 | 扫描 | 归属 |`')],
     }
   }
   const problems = []
+  const allowlistProblems = [...allowlist.problems]
   const want = CONCEPT_COLUMNS
   const hasRuleColumn = table.columns.length === want.length + 1 && table.columns[want.length] === CONCEPT_RULE_COLUMN
   if (!hasRuleColumn && (table.columns.length !== want.length || table.columns.some((c, i) => c !== want[i]))) {
     problems.push(problem('CONCEPT-TABLE-SHAPE', `${rel}:${table.startLine} 的列名不是 ${JSON.stringify(want)}`
       + `（或 ${JSON.stringify([...want, CONCEPT_RULE_COLUMN])}，实得 ${JSON.stringify(table.columns)}）`
       + ' —— 四列逐字、次序也逐字；第五列可选的 `计数口径` 只能加在最后一列（契约 §3.1 / M4）'))
-    return { present: true, file: rel, rows: [], problems, declares_rule: false }
+    return { present: true, file: rel, rows: [], problems, declares_rule: false, allowlist: allowlist.entries, allowlist_present: allowlist.present, allowlist_problems: allowlistProblems }
   }
   const columns = hasRuleColumn ? table.columns.length : want.length
   const rows = []
@@ -255,7 +328,16 @@ export function readConceptTable(root) {
     seen.add(concept)
     rows.push({ concept, probe, scan, owner, rule: ruleRaw, line })
   })
-  return { present: true, file: rel, rows, problems, declares_rule: hasRuleColumn }
+  return {
+    present: true,
+    file: rel,
+    rows,
+    problems,
+    declares_rule: hasRuleColumn,
+    allowlist: allowlist.entries,
+    allowlist_present: allowlist.present,
+    allowlist_problems: allowlistProblems,
+  }
 }
 
 // ── 扫描（glob）────────────────────────────────────────────────────────────
@@ -337,6 +419,223 @@ export function isCommentLine(line) {
   return /^\s*(\/\/|\/\*|\*|#!|#)/.test(String(line))
 }
 
+// ── 按形状数手搓原子写（构案 0007 · 契约 §0.2 / §0.3）────────────────────────
+/**
+ * 概念表**第二张表**（允许清单）的标题与四列（逐字）。第一张表仍是概念表：`readConceptTable` 只认第一张，
+ * 所以多这一张不改任何现有解析。
+ */
+export const SHAPE_ALLOWLIST_HEADING = '原子写形状允许清单'
+export const SHAPE_ALLOWLIST_COLUMNS = Object.freeze(['路径', '行', '类别', '理由'])
+/** 允许清单的类别闭集（契约 §0.3）。 */
+export const SHAPE_ALLOWLIST_KINDS = Object.freeze(['shared-implementation', 'non-atomic-rename'])
+/** 理由写这些等于没写。 */
+export const SHAPE_ALLOWLIST_PLACEHOLDERS = Object.freeze(['—', '-', '?', 'TODO', 'TBD', '待补'])
+/** 理由至少要是一句能读的话（契约 §0.3）。 */
+export const SHAPE_ALLOWLIST_MIN_REASON = 12
+/** 临时名：标识符里含 `tmp`（不区分大小写：`tmp` / `tmpFile` / `bodyTmp` 都算）…… */
+const SHAPE_TMP_IDENT = /tmp/i
+/** ……或者右值 / 字面量里含 `.tmp` / `.tmp-` / `agenia-tmp`（`` `${file}.tmp-${pid}` `` 也算）。 */
+const SHAPE_TMP_LITERAL = /\.tmp|agenia-tmp/i
+/** 写临时名的两个原语（`writeFile` 是异步那一个的名字，形状同一个）。第一实参：标识符 / 引号 / 模板串。 */
+const SHAPE_WRITE_RE = /\b(?:writeFileSync|writeFile)\s*\(\s*([A-Za-z_$][\w$]*|`[^`]*`|'[^']*'|"[^"]*")/g
+const SHAPE_RENAME_RE = /\brenameSync\s*\(\s*([A-Za-z_$][\w$]*|`[^`]*`|'[^']*'|"[^"]*")/g
+const SHAPE_DECL_RE = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+)$/
+const BARE_IDENT = /^[A-Za-z_$][\w$]*$/
+
+/** 一个实参是不是**临时名**（标识符按声明表的"含不含 tmp"判，字面量按 `.tmp` / `agenia-tmp` 判）。 */
+function shapeIsTempName(arg, decls) {
+  if (BARE_IDENT.test(arg)) return decls.get(arg) === true || SHAPE_TMP_IDENT.test(arg)
+  return SHAPE_TMP_LITERAL.test(arg)
+}
+
+/**
+ * **一份文件里的原子写形状**（契约 §0.2；这是一个纯文本扫描，不做语法分析）。
+ *
+ * 两族，各自按**处**记，站点行按契约钉死：
+ *   · **A 族 · 手搓文件原子写**：临时名上的 `writeFileSync` / `writeFile`，同一份文件里**之后**有
+ *     `renameSync(<同一个临时名>, …)`。**站点行 = 写那一行**。这一族永远不许进允许清单（它就是病）。
+ *   · **B 族 · 只 rename 的临时名**：`renameSync(<临时名>, …)`，而这一份文件**没有**直接写那个名字。
+ *     可能是合法的（整目录换名 / 清残渣），所以**可以**进允许清单。**站点行 = rename 那一行**。
+ *
+ * 三条保守选择（判错的方向都是"多算一处"，因为少算会让一处重复实现藏起来）：
+ *   ① 整行注释不算（与 `isCommentLine` 同一口径）；行尾注释不剥；
+ *   ② 临时名只认**裸标识符**与**字面量**：`writeFileSync(path.join(tmp, 'x'))` 写的不是 `tmp` 这个名字本身
+ *      ⇒ 不算"写了那个临时名"（`bodyTmp` 那种整目录换名因此是 B 族）；
+ *   ③ 声明表按整份文件收集（跨函数也算）—— "同一个临时名"按**名字**对，不按作用域对。
+ *
+ * @returns {Array<{line:number, shape:'A'|'B', name:string, line_text:string}>}
+ */
+export function shapeSitesOf(text) {
+  const lines = String(text).split(/\r?\n/)
+  const decls = new Map()
+  for (const line of lines) {
+    if (isCommentLine(line)) continue
+    const m = SHAPE_DECL_RE.exec(line)
+    if (m === null) continue
+    const [, name, rhs] = m
+    if (decls.has(name)) continue
+    decls.set(name, SHAPE_TMP_IDENT.test(name) || SHAPE_TMP_LITERAL.test(rhs.trim()))
+  }
+  const writes = []
+  const renames = []
+  lines.forEach((line, i) => {
+    if (isCommentLine(line)) return
+    for (const m of line.matchAll(SHAPE_WRITE_RE)) {
+      if (!shapeIsTempName(m[1], decls)) continue
+      writes.push({ line: i + 1, name: m[1] })
+    }
+    for (const m of line.matchAll(SHAPE_RENAME_RE)) {
+      if (!shapeIsTempName(m[1], decls)) continue
+      renames.push({ line: i + 1, name: m[1] })
+    }
+  })
+  const sites = []
+  for (const w of writes) {
+    if (!renames.some((r) => r.name === w.name && r.line > w.line)) continue
+    sites.push({ line: w.line, shape: 'A', name: w.name, line_text: lines[w.line - 1].trim() })
+  }
+  for (const r of renames) {
+    if (writes.some((w) => w.name === r.name)) continue
+    sites.push({ line: r.line, shape: 'B', name: r.name, line_text: lines[r.line - 1].trim() })
+  }
+  return sites.sort((a, b) => (a.line - b.line) || (a.shape < b.shape ? -1 : a.shape > b.shape ? 1 : 0))
+}
+
+/** 一条允许清单条目的**结构**问题（契约 §0.3 的六条；证据面在判据侧，不在这里）。 */
+function shapeAllowlistEntryProblems(entry) {
+  const problems = []
+  const push = (message) => problems.push(problem('SHAPE-ALLOWLIST-SHAPE', message))
+  const file = typeof entry.file === 'string' ? entry.file.trim() : ''
+  if (file === '') push(`允许清单条目缺「${SHAPE_ALLOWLIST_COLUMNS[0]}」（实得 ${JSON.stringify(entry.file)}）`)
+  else if (/[*?]/.test(file)) push(`允许清单的「路径」是通配 ${JSON.stringify(file)} —— 一条只许点名**一处**，不许一次盖一片`)
+  if (!Number.isInteger(entry.line) || entry.line <= 0) {
+    push(`允许清单条目 ${JSON.stringify(file)} 缺「行」（实得 ${JSON.stringify(entry.line)}）—— 不允许"整份文件"进清单`)
+  }
+  if (!SHAPE_ALLOWLIST_KINDS.includes(entry.kind)) {
+    push(`允许清单条目 ${JSON.stringify(file)} 的「类别」是 ${JSON.stringify(entry.kind)}，只认 ${JSON.stringify(SHAPE_ALLOWLIST_KINDS)}`)
+  }
+  const why = typeof entry.why === 'string' ? entry.why.trim() : ''
+  if (why === '' || SHAPE_ALLOWLIST_PLACEHOLDERS.includes(why)) {
+    push(`允许清单条目 ${JSON.stringify(file)} 的「理由」是空的 / 占位值（实得 ${JSON.stringify(entry.why)}）`)
+  } else if ([...why].length < SHAPE_ALLOWLIST_MIN_REASON) {
+    push(`允许清单条目 ${JSON.stringify(file)} 的「理由」只有 ${[...why].length} 个字（至少 ${SHAPE_ALLOWLIST_MIN_REASON}）：读的人要能据它判"该不该留"`)
+  }
+  return problems
+}
+
+/**
+ * **按形状数**（`COUNT_RULES['atomic-write-by-shape']` 的实现，契约 §0.2）。
+ *
+ * 数出来的那个数怎么拆（读的人必须能回推）：
+ * ```
+ * count = A 族处数 + (B 族处数 − 被允许清单盖住的 B 族处数)
+ * sites = 全部命中（A + B）
+ * implementations = 算数的那些处（`路径:行号`，升序）
+ * ```
+ * 允许清单的**判定次序**（契约 §0.3 钉死，免得同一棵树两个码各说一半）：
+ *   ① 条目命中一处 **A 族** ⇒ **只报** `SHAPE-ALLOWLIST-HIDES-HANDROLLED`（不再报结构码），那一处**仍计数**；
+ *   ② 一处都命不中 ⇒ `SHAPE-ALLOWLIST-STALE`（清单是账，不是许愿池）；
+ *   ③ 命中 **B 族**但条目字段不合法 ⇒ `SHAPE-ALLOWLIST-SHAPE`（这一处**不**放行，按 B 计）；
+ *   ④ 都合法 ⇒ 放行这一处 B。
+ * 形状坏到连 (路径, 行) 都拼不出来的条目（格子少了 / 行号不是整数）⇒ `SHAPE-ALLOWLIST-SHAPE`：
+ * 它从来不是一条能指路的条目，报 STALE 会让人去查"那一处是不是没了"，而病在这一行的写法上。
+ */
+function countShapeSites(root, { ruleName, rule, files, allowlist }) {
+  const failures = []
+  const sites = []
+  const hitFiles = new Set()
+  for (const file of files) {
+    const rel = relPosix(root, file)
+    let text = null
+    try {
+      if (statSync(file).size > MAX_FILE_BYTES) {
+        failures.push({ file: rel, reason: `超过 ${MAX_FILE_BYTES} B，本工具不读` })
+        continue
+      }
+      text = readFileSync(file, 'utf8')
+    } catch (err) {
+      failures.push({ file: rel, reason: String(err?.code ?? err).slice(0, 120) })
+      continue
+    }
+    for (const site of shapeSitesOf(text)) {
+      sites.push({ file: rel, line: site.line, shape: site.shape, name: site.name, line_text: site.line_text })
+      hitFiles.add(rel)
+    }
+  }
+  sites.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || (a.line - b.line) || (a.shape < b.shape ? -1 : 1))
+  const problems = []
+  const released = new Set()
+  const reading = []
+  for (const entry of allowlist) {
+    const file = typeof entry.file === 'string' ? entry.file.trim().replace(/\\/g, '/') : ''
+    const key = (s) => `${s.file}:${s.line}`
+    const matched = entry.malformed === true
+      ? []
+      : sites.filter((s) => s.file === file && s.line === entry.line)
+    const entryRead = {
+      file,
+      line: Number.isInteger(entry.line) ? entry.line : null,
+      kind: typeof entry.kind === 'string' ? entry.kind : null,
+      why: typeof entry.why === 'string' ? entry.why : null,
+      shape: matched.length === 0 ? null : matched[0].shape,
+      source_line: entry.source_line ?? null,
+    }
+    if (entry.malformed === true) {
+      // 连 (路径, 行) 都拼不出来：结构码 + 点出那一行原文（不是 STALE）
+      problems.push(problem('SHAPE-ALLOWLIST-SHAPE',
+        `${TABLE_REL}:${entry.source_line ?? '?'} 这一行拼不成一条允许清单条目（${entry.malformed_why ?? '格子数不对'}）：${JSON.stringify(entry.raw ?? null)}`,
+        { file: TABLE_REL, line: entry.source_line ?? null }))
+      reading.push(entryRead)
+      continue
+    }
+    const structProblems = shapeAllowlistEntryProblems(entry)
+    const aHit = matched.find((s) => s.shape === 'A') ?? null
+    if (aHit !== null) {
+      // ① A 族不许被清单藏起来：只报这一条，而且它**仍然计数**（放行只对 B 族有效）
+      problems.push(problem('SHAPE-ALLOWLIST-HIDES-HANDROLLED',
+        `${TABLE_REL}:${entry.source_line ?? '?'} 的允许清单条目点名了 ${file}:${aHit.line}，而那一处是**手搓文件原子写**（A 族：临时名上的写 + rename）`
+        + ' —— A 族就是这一条口径要抓的东西，清单不许把它藏起来；这一处仍然计数（清单不是"消红开关"）',
+        { file, line: aHit.line }))
+      reading.push(entryRead)
+      continue
+    }
+    if (matched.length === 0) {
+      problems.push(problem('SHAPE-ALLOWLIST-STALE',
+        `${TABLE_REL}:${entry.source_line ?? '?'} 的允许清单条目点名 ${file}:${entry.line ?? '?'}，而那一处**不是**任何一处命中`
+        + '（路径对但行过期 / 那一处已经改好了 / 文件不在扫描面里）—— 清单是账，不是许愿池：过期的条目要删掉或改到真行上',
+        { file, line: entry.line ?? null }))
+      reading.push(entryRead)
+      continue
+    }
+    if (structProblems.length > 0) {
+      // ③ 命中 B 族但字段不合法：报结构码，**不放行**（这一处照 B 计数）
+      for (const p of structProblems) problems.push(problem(p.code, `${TABLE_REL}:${entry.source_line ?? '?'} ${p.message}`, { file, line: entry.line }))
+      reading.push(entryRead)
+      continue
+    }
+    // ④ 都合法 ⇒ 放行这一处 B
+    for (const s of matched) released.add(key(s))
+    reading.push(entryRead)
+  }
+  const aSites = sites.filter((s) => s.shape === 'A')
+  const bSites = sites.filter((s) => s.shape === 'B')
+  const counted = [...aSites, ...bSites.filter((s) => !released.has(`${s.file}:${s.line}`))]
+  const implementations = counted.map((s) => `${s.file}:${s.line}`).sort()
+  return {
+    count: implementations.length,
+    implementations,
+    scan_empty: files.length === 0,
+    read_failures: failures.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
+    rule: ruleName,
+    unit: rule.label,
+    files: [...hitFiles].sort(),
+    scanned_files: files.length,
+    sites,
+    allowlist: reading,
+    problems,
+  }
+}
+
 /**
  * 一个概念的实现读数（契约 §3.2 的四条边界 + M4 的**每行计数口径**）。
  *
@@ -345,21 +644,30 @@ export function isCommentLine(line) {
  *   · `site` / `site-code` ⇒ 元素是 `路径:行号`（一个实现点一行），所以 `count === implementations.length` 永远成立。
  *   · `零代码` ⇒ 实现数**恒为 0**（这一条按设计没有实现）；探针命中的文件只进 `files` 当见证，
  *     `implementations` 为空 —— 页上印 `0 | 零代码决定`（契约 §3.2）。
+ *   · `atomic-write-by-shape` ⇒ 交给 `countShapeSites()`：数**处**（A 族 + 未被允许清单盖住的 B 族），
+ *     `sites[]` 记全部命中、`allowlist[]` 记每条允许清单条目盖住了哪一处（详见 `SHAPE_*`）。
  * `-code` 的那两种只认**代码行**（`isCommentLine` 的保守判法）。
  *
+ * @param {{allowlist?:Array<object>|null}} [options] 形状口径要的允许清单（`决议/概念表.md` 第二张表）
  * @returns {{count:number, implementations:string[], scan_empty:boolean, read_failures:Array<object>,
- *            rule:string, unit:string, sites:number, files:string[]}}
+ *            rule:string, unit:string, files:string[], scanned_files:number,
+ *            sites?:Array<{file:string, line:number, shape:'A'|'B'}>, allowlist?:Array<object>, problems?:Array<object>}}
+ *          `sites` / `allowlist` / `problems` **只有**按形状那一条口径才有（其余口径不按处数，没有这三样可报）。
  */
-export function countConcept(root, row) {
+export function countConcept(root, row, options = {}) {
   const ruleName = Object.hasOwn(COUNT_RULES, row.rule) ? row.rule : DEFAULT_COUNT_RULE
   const rule = COUNT_RULES[ruleName]
   const abs = new Set()
   for (const glob of row.scan) for (const file of walkGlob(root, glob)) abs.add(path.resolve(file))
+  const files = [...abs].sort()
+  if (rule.kind === 'shape') {
+    return countShapeSites(root, { ruleName, rule, files, allowlist: options.allowlist ?? [] })
+  }
   const probeBuf = Buffer.from(String(row.probe), 'utf8')
   const implementations = []
-  const files = []
+  const hitFiles = []
   const failures = []
-  for (const file of [...abs].sort()) {
+  for (const file of files) {
     let bytes = null
     try {
       if (statSync(file).size > MAX_FILE_BYTES) {
@@ -381,7 +689,7 @@ export function countConcept(root, row) {
       hitLines.push(i + 1)
     })
     if (hitLines.length === 0) continue // 只出现在注释里（且这一行的口径说"只看代码"）⇒ 不算
-    files.push(rel)
+    hitFiles.push(rel)
     if (rule.kind === 'site') for (const n of hitLines) implementations.push(`${rel}:${n}`)
     else implementations.push(rel)
   }
@@ -394,8 +702,8 @@ export function countConcept(root, row) {
     read_failures: failures.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
     rule: ruleName,
     unit: rule.label,
-    sites: zeroCode ? 0 : implementations.length,
-    files: files.sort(),
+    files: hitFiles.sort(),
+    scanned_files: abs.size,
   }
 }
 
@@ -837,7 +1145,7 @@ export function judgePointers(decisions) {
  *   · 该概念的决议有头块问题 / 指针问题 ⇒ 跳过（`DEC-*` / `POINTER-*` 已经说了）；
  *   · 其余 ⇒ 0 或 1 条生效构案，直接派生（没有 ⇒ `—`）。
  */
-export function deriveIndexRows(root, concepts, decisions, judge) {
+export function deriveIndexRows(root, concepts, decisions, judge, { allowlist = [] } = {}) {
   const byTopicLive = new Map()
   for (const d of decisions) {
     if (d.series !== '构案' || d.status !== '生效') continue
@@ -846,7 +1154,7 @@ export function deriveIndexRows(root, concepts, decisions, judge) {
     byTopicLive.get(d.topic).push(d)
   }
   return concepts.map((row) => {
-    const counted = countConcept(root, row)
+    const counted = countConcept(root, row, { allowlist })
     const live = byTopicLive.get(row.concept) ?? []
     const untrusted = judge.untrustedTopics.has(row.concept) || live.some((d) => !d.header_clean || !d.pointer_clean)
     const decision = untrusted || live.length > 1 ? null : (live[0]?.id ?? DASH)
@@ -862,7 +1170,12 @@ export function deriveIndexRows(root, concepts, decisions, judge) {
       files: counted.files,
       scan: row.scan,
       scan_empty: counted.scan_empty,
+      scanned_files: counted.scanned_files,
       read_failures: counted.read_failures,
+      /** 按形状那一条口径才有的三样（其余口径下没有，读的人按 `rule` 分得开）。 */
+      sites: counted.sites,
+      allowlist: counted.allowlist,
+      problems: counted.problems ?? [],
     }
   })
 }
@@ -991,7 +1304,17 @@ export function scanLedger(root) {
   }
   const judge = { dupTopics, untrustedTopics }
   const concepts = table.present && table.problems.length === 0
-    ? deriveIndexRows(root, table.rows, decisions, judge)
+    ? deriveIndexRows(root, table.rows, decisions, judge, { allowlist: table.allowlist ?? [] })
     : []
-  return { table, decisions, concepts, problems: dedupeProblems(problems), judge }
+  /**
+   * 按形状那一条口径的判词（允许清单的三条坏法 + 表级坏法）—— 单独一份，因为
+   * `census` 的 `problems[]` 只报"概念表本身"的问题，而 `决议-check` 要的是全部。
+   * 表级那几条**不进** `table.problems`：它们不该让 `concepts` 整体变成空（派生叶还是能算的）。
+   */
+  const shapeProblems = [
+    ...(table.allowlist_problems ?? []),
+    ...concepts.flatMap((c) => c.problems ?? []),
+  ]
+  for (const p of shapeProblems) problems.push(p)
+  return { table, decisions, concepts, problems: dedupeProblems(problems), judge, shapeProblems: dedupeProblems(shapeProblems) }
 }

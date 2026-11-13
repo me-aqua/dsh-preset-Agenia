@@ -41,7 +41,8 @@ import { INDEX_REL, REPO_ROOT, renderIndex, relPosix, scanLedger } from './lib/�
  */
 export function censusReading(root) {
   const scan = scanLedger(root)
-  const problems = [...scan.table.problems]
+  // `problems[]` 只报**概念表本身**（含允许清单第二张表）的问题；决议/指针/`INDEX` 那几族是 `决议-check` 的判词。
+  const problems = [...scan.table.problems, ...(scan.table.allowlist_problems ?? []), ...(scan.shapeProblems ?? [])]
   const concepts = scan.concepts.map((c) => ({
     concept: c.concept,
     owner: c.owner,
@@ -52,6 +53,11 @@ export function censusReading(root) {
     files: c.files,
     scan: c.scan,
     scan_empty: c.scan_empty,
+    /** 这个扫描面**扫到几份文件**（"0 处"与"没扫到"必须分得开：`scan_empty` 只说是不是一份都没有）。 */
+    scanned_files: c.scanned_files ?? null,
+    /** 只有按形状那一条口径才有：每一处命中（`{file, line, shape: 'A'|'B'}`）与允许清单条目（它盖住了哪一处）。 */
+    sites: c.sites ?? [],
+    allowlist: c.allowlist ?? [],
     decision: c.decision,
     skip_decision: c.skip_decision,
     read_failures: c.read_failures,

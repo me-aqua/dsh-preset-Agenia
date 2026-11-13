@@ -35,11 +35,351 @@
  * （.md 不用重启，存盘就生效。）
  */
 
-import { randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { randomBytes, randomUUID } from 'node:crypto'
+import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+// ── 内联自共享件：原子写并集正文 ────────────────────────────────────────────────
+// 源：`presets/agenia/lib/atomic.mjs` 里那一对 `@inline-begin` / `@inline-end` 标记之间的正文
+//   （删除三闸 + `writeFileAtomic`），**逐字**搬进来；版本 = `presets/agenia/package.json` v3.0.0
+//   （切出来的那一版共享件在提交 c3f9166）。
+// 为什么内联而不是 import：注入器由宿主加载、ESM 按 URL 缓存，静态 import 共享件会把它的 `node:fs`
+//   依赖拖进加载期（构案 0007 §不复用什么）；与出厂件 `bin/rollback.mjs` 同一个手法。
+// 改这一份必须同步改共享件（反之亦然）：`ATM-01` 腿 10 逐字比这两段正文，漂了会翻 INLINE-DRIFT。
+//   内联侧只少行首 `export `（这三个内部件不对外导出）—— 同源判等本来就先归一掉它。
+// @inline-begin 原子写并集正文
+// ── 删除三闸（契约 §2.5）────────────────────────────────────────────────────
+/**
+ * **每个**删除/递归删除点删之前都要过这三关（缺一即拒删，绝不"先删了再说"）：
+ *   ① **解析绝对路径** —— `path.resolve` 吃掉 `.`/`..`，盘上存在再 `realpath`（连 junction 一起）；
+ *      相对 / UNC / C 盘 / 数据目录（`.runtime`）一律拒
+ *      （`E_ROOT_RELATIVE` / `E_ROOT_UNC` / `E_ROOT_C_DRIVE` / `E_PATH_ESCAPE`）。
+ *   ② **身份 marker** —— 目标自己，或它所属的那个允许根，必须自证身份：
+ *      · `.agenia-test-root`：运行根（自己那一层，或往上 4 层 —— 与 `insideTestScene` 同口径）
+ *      · `hash-manifest.json`：备份根（只认**目标自己**那一层，且里面的 `live_root` 必须就是本次靶子
+ *        —— 别人的备份不当自己的删）
+ *      · `agent.cordis.yml`：预设根（只认**目标自己**那一层 —— 与 `--op publish-staged` 认预设根同一条判据）
+ *      三者都没有 ⇒ `E_ROOT_NO_MARKER`。
+ *   ③ **落点在允许删的根之下** —— 必须**严格**在它之下（那个根本身不许被删），
+ *      而且不许把**活体根**包进去（`--backup` 指到靶子的上层目录时，删一次连靶子一起没）。
+ *      一个允许根都装不下它 ⇒ `E_ROOT_OUTSIDE`（报文里列出允许根）。
+ */
+const DG_TEST_ROOT_MARKER = '.agenia-test-root'
+const DG_BACKUP_MANIFEST_NAME = 'hash-manifest.json'
+const DG_PRESET_ROOT_MARKER = 'agent.cordis.yml'
+/** 靶子根、备份根都不许落在数据目录里（与 `lib/paths.mjs` / 两支 CLI 的黑名单同一份）。 */
+const DG_PROTECTED_TARGET_SEGMENTS = ['.runtime']
+
+function dgCanonical(p) {
+  const abs = path.resolve(String(p))
+  try {
+    return realpathSync.native(abs) // 盘上存在 ⇒ 连 junction/symlink 一起吃掉
+  } catch {
+    return abs
+  }
+}
+
+function dgNormKey(p) {
+  let s = dgCanonical(p).replace(/\\/g, '/')
+  while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1)
+  return s.toLowerCase()
+}
+
+function dgIsUnder(child, parent) {
+  const c = dgNormKey(child)
+  const p = dgNormKey(parent)
+  return c === p || c.startsWith(`${p}/`)
+}
+
+function dgDriveOf(p) {
+  const m = /^([A-Za-z]):/.exec(String(p ?? ''))
+  return m ? m[1].toUpperCase() : null
+}
+
+/**
+ * 路径判定（删除目标那一侧）。与 `bin/install.mjs::pathVerdict` 同源同值，
+ * 只是不带 `allowProtected` 那一档 —— 删除目标**永远**不许落在 `.runtime` 里。
+ */
+function dgPathVerdict(raw, label) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return { ok: false, code: 'E_ROOT_MISSING', message: `${label} 缺失（省略 / 空串都算缺失）` }
+  }
+  const s = String(raw)
+  if (/^\\\\/.test(s) || /^\/\//.test(s)) return { ok: false, code: 'E_ROOT_UNC', message: `${label} 不许是 UNC：${s}` }
+  if (!/^[A-Za-z]:[\\/]/.test(s)) return { ok: false, code: 'E_ROOT_RELATIVE', message: `${label} 必须是绝对路径：${s}` }
+  const abs = dgCanonical(s)
+  // 拒的时候把**解析出来的绝对路径**一起带回去（`path`）：报文里的 `delete_gate.resolved` 要它。
+  // 解析不出来的那几档（相对 / UNC / 缺失）没有 `path` —— 那一档不许拿 cwd 现编一个。
+  if (dgDriveOf(abs) === 'C') return { ok: false, code: 'E_ROOT_C_DRIVE', message: `${label} 不许在 C 盘：${abs}`, path: abs }
+  const segs = abs.replace(/\\/g, '/').split('/').map((x) => x.toLowerCase())
+  for (const bad of DG_PROTECTED_TARGET_SEGMENTS) {
+    if (segs.includes(bad)) return { ok: false, code: 'E_PATH_ESCAPE', message: `${label} 落在数据目录里（${bad}）：${abs}`, path: abs }
+  }
+  return { ok: true, code: null, path: abs }
+}
+
+/** 一个目录里有没有这个文件 —— 判据是"在不在"，读不动就当没有。 */
+function dgHasFileIn(dir, name) {
+  try {
+    return statSync(path.join(dir, name)).isFile()
+  } catch {
+    return false
+  }
+}
+
+/** 备份根自证：带 `hash-manifest.json`、kind 对、**而且点名了本次靶子**。 */
+function dgIsOurBackupRoot(dir, liveRoot) {
+  if (liveRoot === undefined || liveRoot === null) return false
+  let doc = null
+  try {
+    doc = JSON.parse(readFileSync(path.join(dir, DG_BACKUP_MANIFEST_NAME), 'utf8'))
+  } catch {
+    return false
+  }
+  if (doc === null || typeof doc !== 'object' || !Array.isArray(doc.files)) return false
+  if (doc.kind !== undefined && doc.kind !== 'agenia-install-backup') return false
+  // `live_root` 缺失（早期版本的备份）⇒ 不当成"我们的"：宁可拒删，也不删错。
+  return typeof doc.live_root === 'string' && dgNormKey(doc.live_root) === dgNormKey(liveRoot)
+}
+
+/**
+ * 身份 marker（第 ② 闸的判据）。目标是文件时判**它所在的目录**（"这个落点属于哪个根"）。
+ * @returns {{kind:string, at:string}|null}
+ */
+function dgMarkerOf(target, { liveRoot } = {}) {
+  let isDir = false
+  try {
+    isDir = statSync(target).isDirectory()
+  } catch {
+    isDir = false
+  }
+  let at = dgCanonical(isDir ? target : path.dirname(target))
+  for (let i = 0; i < 5; i += 1) {
+    if (dgHasFileIn(at, DG_TEST_ROOT_MARKER)) return { kind: 'run-root', at }
+    if (i === 0 && dgHasFileIn(at, DG_BACKUP_MANIFEST_NAME) && dgIsOurBackupRoot(at, liveRoot)) return { kind: 'backup-root', at }
+    if (i === 0 && dgHasFileIn(at, DG_PRESET_ROOT_MARKER)) return { kind: 'preset-root', at }
+    const up = path.dirname(at)
+    if (up === at) break
+    at = up
+  }
+  return null
+}
+
+/**
+ * 闸的决定 → 报文里那个**加性字段**（裁定 v1.20 ②）：五个键，一个不多、一个不少。
+ *   · `allowed_roots` —— 这一次判定的"应删的根"（解析成绝对路径；没给的那一档不占位）；
+ *   · `marker_kind`   —— 第 ② 闸认出的身份（`run-root` / `backup-root` / `preset-root`）；
+ *     **没走到第 ② 闸**（①就拒了 · 落点把活体根包住了）⇒ `null` —— 不编造"它带了 marker"；
+ *   · `resolved`      —— 第 ① 闸解析后的落点；解析不出来（相对 / UNC / 缺失）⇒ `null`；
+ *   · `verdict`       —— `"allow"` / `"deny"`；`code` —— 拒的那个稳定码（放行时 `null`）。
+ * ⚠️ 它只是一份**投影**：判定本身是 `deletableVerdict()` 那一份，报文不许反过来改判定。
+ */
+function gateReport({ allowedRoots, marker, resolved, verdict, code }) {
+  return {
+    allowed_roots: (allowedRoots ?? [])
+      .filter((r) => r?.root !== undefined && r.root !== null && String(r.root).trim() !== '')
+      .map((r) => dgCanonical(r.root)),
+    marker_kind: marker ?? null,
+    resolved: resolved ?? null,
+    verdict,
+    code: code ?? null,
+  }
+}
+
+/**
+ * 删除前判定（三闸，**不抛**）：过 ⇒ `{ok:true, path:<解析后的落点>, root, marker…, delete_gate}`；
+ * 不过 ⇒ `{ok:false, code, message, delete_gate}`（稳定码 + 一句能读的报文 + 报文里那一项）。
+ *
+ * 谁读它：`bin/install.mjs`（旧备份）· `bin/rollback.mjs`（墓碑 / 空目录回收）·
+ * 本模块的 `cleanupTemp()`（原子写失败后的残渣）。出厂件里这一份是发布时内联进去的**同一段正文**。
+ *
+ * @param {string} rawTarget 要删的落点（**原样**传进来，别预先 canonical —— 第 ① 闸要自己解析）
+ * @param {{label:string, liveRoot:string, allowedRoots:Array<{root:string|null, why:string}>}} options
+ *        `allowedRoots` = 契约里那句"**应删的根**"：目标必须严格落在其中之一
+ */
+function deletableVerdict(rawTarget, { label, liveRoot, allowedRoots }) {
+  /** 拒的那一支：稳定码 + 那一项 `delete_gate`（裁定 v1.20 ②：拒删不许只有 stderr 一行）。 */
+  const deny = (code, message, { marker = null, resolved = null } = {}) => ({
+    ok: false,
+    code,
+    message,
+    delete_gate: gateReport({ allowedRoots, marker, resolved, verdict: 'deny', code }),
+  })
+
+  // ① 解析绝对路径（相对 / UNC / C 盘 / 数据目录在这条路上就拒）
+  const v = dgPathVerdict(rawTarget, label)
+  if (!v.ok) return deny(v.code, `拒绝删除：${v.message}`, { resolved: v.path ?? null })
+  const target = v.path
+
+  // 删的落点不许把活体根包进去（否则"清旧备份"会把靶子本身一起清掉）
+  if (liveRoot !== undefined && liveRoot !== null && dgNormKey(target) !== dgNormKey(liveRoot) && dgIsUnder(liveRoot, target)) {
+    return deny('E_ROOT_OUTSIDE', `拒绝删除：${label} 把活体根包在里面（删一次连靶子一起没）：${target} ⊇ ${dgCanonical(liveRoot)}`, { resolved: target })
+  }
+
+  // ③ 落点：挑最贴身（最长）的那个允许根 —— 也用于第 ② 闸判"它所属的根"
+  let matched = null
+  for (const r of allowedRoots ?? []) {
+    if (r?.root === undefined || r.root === null || String(r.root).trim() === '') continue
+    const root = dgCanonical(r.root)
+    if (dgNormKey(target) === dgNormKey(root)) continue // 严格：允许根本身不许被删
+    if (!dgIsUnder(target, root)) continue
+    if (matched === null || dgNormKey(root).length > dgNormKey(matched.root).length) matched = { root, why: r.why }
+  }
+
+  // ② 身份 marker：目标自己，或它所属的那个允许根
+  const onTarget = dgMarkerOf(target, { liveRoot })
+  const onRoot = matched === null ? null : dgMarkerOf(matched.root, { liveRoot })
+  if (onTarget === null && onRoot === null) {
+    return deny('E_ROOT_NO_MARKER', `拒绝删除：${label} 自己不带 ${DG_BACKUP_MANIFEST_NAME} / ${DG_PRESET_ROOT_MARKER}，所属根也不带 ${DG_TEST_ROOT_MARKER}：${target}${matched === null ? '' : `（所属根 ${matched.root}）`}`, { resolved: target })
+  }
+
+  // ③ 报：一个允许根都装不下
+  if (matched === null) {
+    const where = (allowedRoots ?? []).filter((r) => r?.root).map((r) => `${r.root}（${r.why}）`).join(' · ') || '（没给允许根）'
+    return deny('E_ROOT_OUTSIDE', `拒绝删除：${label} 不在任何允许删的根之下：${target} —— 允许根：${where}`, { marker: (onTarget ?? onRoot)?.kind ?? null, resolved: target })
+  }
+  const marker = onTarget ?? onRoot
+  return {
+    ok: true,
+    code: null,
+    message: '',
+    path: target,
+    root: matched.root,
+    root_why: matched.why,
+    marker,
+    marker_on: onTarget !== null ? 'target' : 'root',
+    delete_gate: gateReport({ allowedRoots, marker: marker?.kind ?? null, resolved: target, verdict: 'allow', code: null }),
+  }
+}
+
+// ── 原子写 ─────────────────────────────────────────────────────────────────
+/** 这些 rename 失败是可重试的（Windows 上被占用的句柄）：①被占用 ②设备忙 ③权限瞬时拒绝。 */
+const RETRYABLE_RENAME = new Set(['EPERM', 'EBUSY', 'EACCES'])
+
+/**
+ * `install` / `rollback` 这两条写盘路径的 rename 重试上限 = **6**（其余调用者仍是本函数的默认 5）。
+ *
+ * 为什么不是 5：并集之前 CLI 那两份各自重试 **6** 次（构案 0006 §背景 那张表），RC-2 的前提也写的是
+ * "6 次不够" —— 取并集时如果只留共享件的默认 5，两条**最重的写盘路径**就各少一次重试
+ * （最坏情形少约 240 ms 退避预算），而且没有任何判据盖住这个数。⇒ 那两处调用点显式传本常量。
+ * 出厂件（`bin/rollback.mjs`）里这个常量随内联正文一起过去 —— 它的第 2 处写盘路径读的是同一个 6。
+ */
+const CLI_WRITE_MAX_ATTEMPTS = 6
+
+/** 同步睡（无第三方依赖）：主线程上用 `Atomics.wait` 阻塞，不引入定时器与事件循环。 */
+function sleepSync(ms) {
+  if (!(ms > 0)) return
+  const buf = new Int32Array(new SharedArrayBuffer(4))
+  Atomics.wait(buf, 0, 0, ms)
+}
+
+function ioError(message, extra = {}) {
+  return { ok: false, code: 'E_TXN_IO', message, ...extra }
+}
+
+/**
+ * 收残留临时件 —— **一次判定，两条失败路径共用**（临时件写不出来 / rename 重试用尽）。
+ *
+ * · `allowedRoot` 没给 ⇒ 与加闸之前一字不差：尽力 `unlink`，不问（这个模块的老调用方全都走这一档）；
+ * · 给了 ⇒ 走 `deletableVerdict()` 的三闸（残留临时件也是**删除**）；
+ *   闸不过 ⇒ **出声留着**（静默的"清不掉"和"清干净了"长得一模一样），并把那一份判定回给调用方
+ *   —— 调用方据此把它挂到错误信封上（`cleanup_refused.delete_gate`）。
+ *
+ * @returns {null|{code:string, message:string, delete_gate:object}} 拒删时那一份判定；其余 `null`
+ */
+function cleanupTemp(tmp, allowedRoot) {
+  if (allowedRoot === undefined || allowedRoot === null) {
+    try { unlinkSync(tmp) } catch { /* 临时件可能压根没建起来 */ }
+    return null
+  }
+  const cleanup = deletableVerdict(tmp, {
+    label: '原子写的残留临时件',
+    liveRoot: allowedRoot,
+    allowedRoots: [{ root: allowedRoot ?? null, why: '本次写入的根' }],
+  })
+  if (!cleanup.ok) {
+    process.stderr.write(`[atomic] ${cleanup.code} ${cleanup.message} —— 临时件留着，不静默\n`)
+    return { code: cleanup.code, message: cleanup.message, delete_gate: cleanup.delete_gate }
+  }
+  try {
+    unlinkSync(cleanup.path)
+  } catch {
+    /* 清不掉就留着 —— 但绝不静默当成功 */
+  }
+  return null
+}
+
+/**
+ * 原子写一个文件（同目录临时件 → `writeSync` → `fsync` → `rename`）。
+ *
+ * 这个函数是**唯一一份**原子写实现：`bin/install.mjs` / `bin/rollback.mjs` 从这里 import，
+ * 出厂件那一份由 `install.mjs --op publish-staged` 在发布时把同一段正文内联进去
+ * （出厂件保持单文件零静态 import —— 拍板 Q6）。
+ *
+ * @param {string} file 目标文件（父目录会自动建）
+ * @param {string|Buffer|Uint8Array} data 内容
+ * @param {object} [options] `{ fsync?:boolean, maxAttempts?:number, retryBaseMs?:number, allowedRoot?:string|null, pid?, rand?, sleep? }`
+ *        `allowedRoot` = 这一次写进去的那个根：**不给就不判**残渣该不该删（老行为）；
+ *        给了 ⇒ 删之前过三闸，拒删就出声留着（见 `cleanupTemp`）。
+ * @returns {{ok:true,code:null,message:string,path:string,bytes:number,attempts:number}
+ *          |{ok:false,code:string,message:string,path?:string,attempts?:number,cleanup_refused?:object|null}}
+ */
+function writeFileAtomic(file, data, options = {}) {
+  const {
+    fsync = true,
+    maxAttempts = 5,
+    retryBaseMs = 15,
+    allowedRoot = null,
+    pid = process.pid,
+    rand = randomBytes(6).toString('hex'),
+    sleep = sleepSync,
+  } = options ?? {}
+
+  const target = path.resolve(String(file))
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf8')
+  // 临时件**必须同目录**（同卷 rename 才原子）；名字里带 pid+随机串，撞名会当场炸而不是静默覆盖。
+  const tmp = `${target}.tmp-${pid}-${rand}`
+
+  try {
+    mkdirSync(path.dirname(target), { recursive: true })
+  } catch (err) {
+    return ioError(`目标目录建不出来：${err?.code ?? ''} ${err?.message}`, { path: target })
+  }
+
+  let handle = null
+  try {
+    handle = openSync(tmp, 'wx')
+    writeSync(handle, buf)
+    if (fsync) fsyncSync(handle)
+    closeSync(handle)
+    handle = null
+  } catch (err) {
+    if (handle !== null) {
+      try { closeSync(handle) } catch { /* 已经在失败路径上，关不掉就算了 */ }
+    }
+    const cleanupRefused = cleanupTemp(tmp, allowedRoot)
+    return ioError(`写临时件失败（${err?.code ?? 'UNKNOWN'}）：${err?.message}`, { path: target, attempts: 1, cleanup_refused: cleanupRefused })
+  }
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      renameSync(tmp, target)
+      return { ok: true, code: null, message: '', path: target, bytes: buf.length, attempts: attempt }
+    } catch (err) {
+      const retryable = RETRYABLE_RENAME.has(err?.code)
+      if (!retryable || attempt === maxAttempts) {
+        const cleanupRefused = cleanupTemp(tmp, allowedRoot)
+        return ioError(`rename 失败（${err?.code ?? 'UNKNOWN'}，第 ${attempt} 次）：${err?.message}`, { path: target, attempts: attempt, cleanup_refused: cleanupRefused })
+      }
+      sleep(retryBaseMs * 2 ** (attempt - 1))
+    }
+  }
+  return ioError('rename 重试耗尽', { path: target, attempts: maxAttempts })
+}
+// @inline-end 原子写并集正文
 
 /** 插件名，只出现在排查信息里。 */
 export const name = 'agenia'
@@ -1071,13 +1411,11 @@ export async function recordIdentityAlarm({ cwd, nowMs, kind, record } = {}) {
     unknown_preset: kind === 'unknown' ? dedupe([...before, record]) : (Array.isArray(base.unknown_preset) ? base.unknown_preset : []),
     preset_downgrade: kind === 'downgrade' ? dedupe([...before, record]) : (Array.isArray(base.preset_downgrade) ? base.preset_downgrade : []),
   }
-  try {
-    mkdirSync(dir, { recursive: true })
-    const tmp = `${file}.tmp`
-    writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
-    renameSync(tmp, file)
-  } catch (err) {
-    return { ok: false, code: 'write-failed', path: file, reason: `${err?.code ?? 'UNKNOWN'}: ${err?.message ?? err}` }
+  // 写盘走**内联的共享件**（本文件头上那段并集正文）：同目录临时件 + `fsync` + `rename`，
+  // 失败会收掉残渣并回一个具名码 —— 半截 JSON 等于让下一个读的人把这条报警当成没发生过。
+  const writtenReport = writeFileAtomic(file, `${JSON.stringify(next, null, 2)}\n`)
+  if (writtenReport.ok !== true) {
+    return { ok: false, code: 'write-failed', path: file, reason: `${writtenReport.code}: ${writtenReport.message}` }
   }
   IDENTITY_WRITTEN.add(once)
   return { ok: true, code: null, path: file, reason: null }
@@ -2789,15 +3127,10 @@ export function memoryRotationRoundOf({ root, project, snapshot, rotation, say }
   let written = false
   if (block.note === 'ok' && moved) {
     cursor = { cursor_general: block.nextCursorGeneral, cursor_project: block.nextCursorProject, snapshot: snapNow, updated_at: new Date().toISOString() }
-    try {
-      mkdirSync(dirname(file), { recursive: true })
-      const tmp = `${file}.tmp-${process.pid}`
-      writeFileSync(tmp, `${JSON.stringify(cursor, null, 1)}\n`, 'utf8')
-      renameSync(tmp, file)
-      written = true
-    } catch (error) {
-      sayIt('rotation-cursor-write', `[agenia] 记忆轮转的游标写不回去（${String(error?.message ?? error)}）—— 下一轮可能重贴同一批。`)
-    }
+    // 写盘同样走**内联的共享件**（见本文件头上那段并集正文）：临时件 + `fsync` + `rename`。
+    const writtenCursor = writeFileAtomic(file, `${JSON.stringify(cursor, null, 1)}\n`)
+    if (writtenCursor.ok === true) written = true
+    else sayIt('rotation-cursor-write', `[agenia] 记忆轮转的游标写不回去（${writtenCursor.code}: ${writtenCursor.message}）—— 下一轮可能重贴同一批。`)
   }
   if (block.note !== 'ok') {
     sayIt(`rotation-${block.note}`, `[agenia] 记忆轮转这一轮「${block.note}」—— 块里写明了，别读成"没有记忆"。`)

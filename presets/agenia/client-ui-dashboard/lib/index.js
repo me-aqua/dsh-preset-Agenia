@@ -33,7 +33,7 @@ export const inject = []
 const REFRESH_MS = 15000
 
 /**
- * 重新算一次视图并写快照（**原子写**：同目录 `<file>.tmp` → rename，见 `writeDashboardSnapshot`）。
+ * 重新算一次视图并写快照（**原子写**走共享件 `lib/atomic.mjs::writeFileAtomic`，见 `writeDashboardSnapshot`）。
  *
  * @param {{root:string, now?:Date}} args `root` = 工作区根（绝对路径）；`now` = 可选注入时刻
  *   （默认走 `lib/clock.mjs::now()`：`AGENIA_NOW_FILE` 在就按它，不在就真实时钟）
