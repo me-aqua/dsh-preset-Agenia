@@ -131,7 +131,7 @@ import {
   retryVerdict,
   scanWriteFileAtomicDefinitions,
 } from '../support/atomic-writers.mjs'
-import { BLOCK_BEGIN, BLOCK_END, SHARED_REL, blockOf, inlineSourceProblems, injectorInlineReading } from '../support/injector-inline.mjs'
+import { BLOCK_BEGIN, BLOCK_END, INJECTOR_REL, SHARED_REL, blockOf, inlineSourceProblems, injectorInlineReading } from '../support/injector-inline.mjs'
 
 const LIVE = PATHS.repo
 const LIB_REL = 'presets/agenia/lib'
@@ -632,18 +632,24 @@ test('ATM-01 原子写归一：presets/** 只剩一份定义（fsync · wx · al
     // ══ 腿 0 · 定义：presets/** 恰好一份 ═══════════════════════════════════════════════════
     const defs = scanWriteFileAtomicDefinitions({ root: LIVE })
     const defVerdict = definitionVerdict(defs)
+    const primaryHits = defs.primary_hits ?? defs.hits
     rec.readings.definitions = {
       scan_root: defs.scan_root,
       scanned_files: defs.scanned_files,
       count: defs.count,
-      hits: defs.hits.map((h) => ({ file: h.file, line: h.line, kind: h.kind, exported: h.exported })),
+      raw_count: defs.raw_count ?? defs.hits.length,
+      primary_hits: primaryHits.map((h) => ({ file: h.file, line: h.line, kind: h.kind, exported: h.exported, classification: h.classification ?? 'primary' })),
+      derived_inline_spans: defs.derived_inline_spans ?? [],
+      mismatch_spans: defs.derived_inline_mismatch_spans ?? [],
+      shared_block: defs.shared_block ?? null,
+      marker_literals: defs.marker_literals ?? null,
       line: defs.line,
       verdict: defVerdict.verdict,
       problem_codes: codesOf(defVerdict.problems),
     }
-    recordLeg({ id: 'def', label: '腿0 定义（presets/** 恰好 1 处 · 落在共享件 · CLI 副本 0）', want: 'GREEN', list: defVerdict.problems })
+    recordLeg({ id: 'def', label: '腿0 定义（presets/** 恰好 1 处实现：源 + 逐字同源的派生内联 · 落在共享件 · CLI 副本 0）', want: 'GREEN', list: defVerdict.problems })
     forward(defVerdict.problems, '腿0 定义')
-    const unique = defs.count === 1 ? defs.hits[0] : null
+    const unique = defs.count === 1 ? primaryHits[0] : null
     const subjectRel = unique === null ? CANONICAL_ATOMIC : unique.file
     rec.readings.subject = {
       rel: subjectRel,
@@ -651,6 +657,27 @@ test('ATM-01 原子写归一：presets/** 只剩一份定义（fsync · wx · al
       note: unique === null
         ? `定义 ${defs.count} 处 ⇒ 并集腿在共享件（${CANONICAL_ATOMIC}）上量 —— 那是合并的候选；定义腿自己带红`
         : '唯一那份定义就是并集腿的被测面',
+    }
+
+    // 两条腿读的是**同一对字面量**：腿 10 的 blockOf 与腿 0 的 markedSpans 必须看到同一段（一处来源）
+    {
+      const injectorAbs = path.join(LIVE, ...INJECTOR_REL.split('/'))
+      const injectorSource = existsSync(injectorAbs) ? readFileSync(injectorAbs, 'utf8') : null
+      const span10 = injectorSource === null ? { found: false, begin_line: null, end_line: null } : blockOf(injectorSource)
+      const span0 = (defs.derived_inline_spans ?? []).find((s) => s.file === INJECTOR_REL) ?? null
+      rec.readings.marker_pair = {
+        injector: INJECTOR_REL,
+        leg10: span10.found ? { begin_line: span10.begin_line, end_line: span10.end_line } : null,
+        leg0: span0,
+        literals: defs.marker_literals ?? null,
+      }
+      if (span10.found) {
+        if (span0 === null) {
+          push('ATM-DEF-DERIVED-SPAN-MISSING', `腿 10 在 ${INJECTOR_REL} 读到一段内联正文（${span10.begin_line}…${span10.end_line}），腿 0 的读数里却没有把它点名成"派生内联"—— 跳过要看得见，否则"跳过了"和"没看见"同形`)
+        } else if (span0.begin_line !== span10.begin_line || span0.end_line !== span10.end_line) {
+          push('ATM-DEF-MARKER-SPLIT', `两条腿认的标记跨度不是同一段（腿 10：${span10.begin_line}…${span10.end_line}；腿 0：${span0.begin_line}…${span0.end_line}）—— 必须从同一处读标记字面量`)
+        }
+      }
     }
 
     // 腿 0 的刀：scratch 树里只有共享件 ⇒ 绿；把共享件那一段逐字复制进 CLI ⇒ 红（点名两边）
@@ -691,6 +718,50 @@ test('ATM-01 原子写归一：presets/** 只剩一份定义（fsync · wx · al
         push('ATM-DEF-KNIFE-DEAD', `[腿0 刀] 把共享件那一段复制进 \`presets/agenia/bin/install.mjs\` 之后必须红，实得 ${knifeVerdict.verdict} —— 刀不咬，这一格守不住"副本再长出来"`)
       } else if (!namesBoth) {
         push('ATM-DEF-KNIFE-NAMES', `[腿0 刀] 红报文没点名两边路径（要同时出现 ${CANONICAL_ATOMIC} 与 presets/agenia/bin/install.mjs）：${named.slice(0, 400)}`)
+      }
+
+      // 标记块的正文 = **共享件那一对标记之间的整段**（不是 `writeFileAtomic` 一个函数）——
+      // §0.7 的豁免条件是"那段正文逐字等于共享件那一对标记之间的正文"，刀 / 控制必须拿同一段来构造。
+      const canonicalBlock = blockOf(canonicalSource)
+      if (!canonicalBlock.found) {
+        push('ATM-DEF-KNIFE-ANCHOR', '共享件里没有 `@inline-begin` / `@inline-end` 那一对标记 —— 标记块的刀 / 控制没有正文可取')
+      } else {
+        // 刀 b：同一对标记里放**不同正文** ⇒ 仍必须是第二份实现（不许靠"打个标记"免检）
+        {
+          const scene = fixtureRoot('def-knife-marked-mismatch')
+          put(scene, CANONICAL_ATOMIC, canonicalSource)
+          const mutated = canonicalBlock.text.replace("openSync(tmp, 'wx')", "openSync(tmp, 'w')")
+          if (mutated === canonicalBlock.text) {
+            push('ATM-DEF-KNIFE-ANCHOR', '[刀 marked-mismatch] 改不动函数体（`openSync(tmp, \'wx\')` 锚点不在）')
+          } else {
+            put(scene, INJECTOR_REL, `// ${BLOCK_BEGIN}\n${mutated}\n// ${BLOCK_END}\n`)
+            const read = scanWriteFileAtomicDefinitions({ root: scene })
+            const verdict = definitionVerdict(read)
+            const codes = codesOf(verdict.problems)
+            rec.readings.definitions_knife_mismatch = {
+              count: read.count, raw_count: read.raw_count, derived_inline_spans: read.derived_inline_spans, mismatch_spans: read.derived_inline_mismatch_spans, codes, line: read.line,
+            }
+            if (read.count !== 2) push('ATM-DEF-KNIFE-DEAD', `[刀 marked-mismatch] 标记块里的不同正文必须被数成第二处（count 2），实得 ${read.count}（raw ${read.raw_count}）`)
+            if (!codes.includes('ATM-DEF-COUNT')) push('ATM-DEF-KNIFE-DEAD', `[刀 marked-mismatch] 必须报 \`ATM-DEF-COUNT\`，实得 ${JSON.stringify(codes)}`)
+            if (!codes.includes('ATM-DEF-DERIVED-MISMATCH')) push('ATM-DEF-KNIFE-DEAD', `[刀 marked-mismatch] 必须报 \`ATM-DEF-DERIVED-MISMATCH\`，实得 ${JSON.stringify(codes)}`)
+          }
+        }
+        // 控制 c：同一对标记里放**逐字同源**的正文 ⇒ 只算一处、无红（这是作用域修正，不是放宽）
+        {
+          const scene = fixtureRoot('def-knife-marked-same')
+          put(scene, CANONICAL_ATOMIC, canonicalSource)
+          put(scene, INJECTOR_REL, `// ${BLOCK_BEGIN}\n${canonicalBlock.text}\n// ${BLOCK_END}\n`)
+          const read = scanWriteFileAtomicDefinitions({ root: scene })
+          const verdict = definitionVerdict(read)
+          const codes = codesOf(verdict.problems)
+          rec.readings.definitions_control_marked = { count: read.count, raw_count: read.raw_count, derived_inline_spans: read.derived_inline_spans, codes, line: read.line }
+          if (read.count !== 1 || codes.length > 0) {
+            push('ATM-DEF-KNIFE-CONTROL', `[控制 marked-same] 逐字同源的派生内联必须只算一处且无红（实得 count ${read.count} · codes ${JSON.stringify(codes)}）—— 否则这不是"作用域修正"，是放宽`)
+          }
+          if ((read.derived_inline_spans ?? []).length !== 1) {
+            push('ATM-DEF-KNIFE-CONTROL', `[控制 marked-same] 读数必须点名跳过的那一段（derived_inline_spans），实得 ${JSON.stringify(read.derived_inline_spans)}`)
+          }
+        }
       }
     }
 

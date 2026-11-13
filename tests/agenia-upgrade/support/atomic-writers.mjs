@@ -21,6 +21,7 @@
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { BLOCK_BEGIN, BLOCK_END, INJECTOR_REL, blockOf, markedSpans, normalizeBlock } from './injector-inline.mjs'
 
 /** 函数名（唯一）。 */
 export const ATOMIC_FN = 'writeFileAtomic'
@@ -33,6 +34,7 @@ export const CLI_COPY_FILES = ['presets/agenia/bin/install.mjs', 'presets/agenia
 export const ATOMIC_CODES = [
   'ATM-DEF-COUNT',
   'ATM-DEF-LOCATION',
+  'ATM-DEF-DERIVED-MISMATCH',
   'ATM-DEF-CLI-COPY',
   'ATM-SCAN-EMPTY',
   'ATM-SCAN-DIR',
@@ -128,6 +130,18 @@ export function scanWriteFileAtomicDefinitions({ root }) {
   }
   const listed = listSourceFiles(presets)
   reading.skipped_dirs = listed.skipped
+  // 共享正文的规范化文本（"派生副本"的判等基准）。读不到 ⇒ 判不了"同源" ⇒ 不豁免（fail-closed）。
+  let sharedNorm = null
+  reading.shared_block_found = false
+  reading.marker_literals = { begin: BLOCK_BEGIN, end: BLOCK_END }
+  try {
+    const sharedBlock = blockOf(readFileSync(path.join(base, ...CANONICAL_ATOMIC.split('/')), 'utf8'))
+    reading.shared_block = sharedBlock.found ? { begin_line: sharedBlock.begin_line, end_line: sharedBlock.end_line, lines: sharedBlock.text === '' ? 0 : sharedBlock.text.split('\n').length } : null
+    reading.shared_block_found = sharedBlock.found
+    if (sharedBlock.found) sharedNorm = normalizeBlock(sharedBlock.text)
+  } catch {
+    reading.shared_block = null
+  }
   for (const file of listed.files) {
     let text = null
     try {
@@ -139,6 +153,10 @@ export function scanWriteFileAtomicDefinitions({ root }) {
     reading.scanned_files += 1
     const rel = path.relative(base, file).replace(/\\/g, '/')
     const lines = text.split(/\r?\n/)
+    const spans = markedSpans(text)
+    /** 只豁免**腿 10 读的那一段**：注入器的第一段，且正文与共享件逐字相同。 */
+    const derivedSpan = rel === INJECTOR_REL ? spans[0] ?? null : null
+    const derivedMatches = derivedSpan !== null && sharedNorm !== null && normalizeBlock(derivedSpan.text) === sharedNorm
     const hitLines = new Set()
     for (const form of DEFINITION_FORMS) {
       const re = new RegExp(form.re.source, 'g')
@@ -148,6 +166,12 @@ export function scanWriteFileAtomicDefinitions({ root }) {
         if (isCommentLine(lines[line - 1] ?? '')) continue
         if (hitLines.has(line)) continue
         hitLines.add(line)
+        const inside = spans.find((s) => line > s.begin_line && line < s.end_line) ?? null
+        let classification = 'primary'
+        if (inside !== null) {
+          if (inside === derivedSpan) classification = derivedMatches ? 'derived_inline' : 'derived_inline_mismatch'
+          else classification = 'marked_outside_derived_span'
+        }
         reading.hits.push({
           file: rel,
           abs: file,
@@ -156,6 +180,8 @@ export function scanWriteFileAtomicDefinitions({ root }) {
           exported: /export\s+(?:async\s+)?function\s+writeFileAtomic\b|\bexport\s*\{[^}]*\bwriteFileAtomic\b/.test(
             lines.slice(Math.max(0, line - 1), line).join('\n'),
           ) || /export\s+(?:async\s+)?function|export\s*\{/.test(lines[line - 1] ?? ''),
+          classification,
+          span: inside === null ? null : { begin_line: inside.begin_line, end_line: inside.end_line },
         })
       }
     }
@@ -168,11 +194,28 @@ export function scanWriteFileAtomicDefinitions({ root }) {
     }
   }
   reading.hits.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line))
-  reading.count = reading.hits.length
-  reading.line = reading.count === 0
-    ? `presets/** 扫了 ${reading.scanned_files} 份源码：**0 处** ${ATOMIC_FN} 定义`
-    : `presets/** 扫了 ${reading.scanned_files} 份源码：**${reading.count} 处** ${ATOMIC_FN} 定义 ⇒ `
-      + reading.hits.map((h) => `${h.file}:${h.line}（${h.kind}${h.exported ? ' · exported' : ''}）`).join(' · ')
+  const spanRows = (list) => {
+    const bySpan = new Map()
+    for (const h of list) {
+      if (h.span === null) continue
+      const key = `${h.file}#${h.span.begin_line}-${h.span.end_line}`
+      if (!bySpan.has(key)) bySpan.set(key, { file: h.file, begin_line: h.span.begin_line, end_line: h.span.end_line, definitions: [] })
+      bySpan.get(key).definitions.push(h.line)
+    }
+    return [...bySpan.values()]
+  }
+  // 只有 `derived_inline`（注入器第一段 + 逐字同源）不是实现；**标记里放了不同正文**仍是第二份实现
+  // —— 否则"打个标记"就成了免检章（契约 §0.7 的刀 b：`count = 2` + `ATM-DEF-DERIVED-MISMATCH`）。
+  reading.primary_hits = reading.hits.filter((h) => h.classification !== 'derived_inline')
+  reading.derived_inline_spans = spanRows(reading.hits.filter((h) => h.classification === 'derived_inline'))
+  reading.derived_inline_mismatch_spans = spanRows(reading.hits.filter((h) => h.classification === 'derived_inline_mismatch'))
+  reading.raw_count = reading.hits.length
+  reading.count = reading.primary_hits.length
+  const defsLine = reading.primary_hits.map((h) => `${h.file}:${h.line}（${h.kind}${h.exported ? ' · exported' : ''}）`).join(' · ')
+  const derivedLine = reading.derived_inline_spans.map((s) => `${s.file}:${s.begin_line}…${s.end_line}`).join(' · ')
+  reading.line = `presets/** 扫了 ${reading.scanned_files} 份源码：**${reading.count} 处** ${ATOMIC_FN} 定义`
+    + ` ⇒ ${defsLine || '（没有）'}`
+    + (derivedLine === '' ? '' : ` · 派生内联（逐字同源，不算第二份实现）⇒ ${derivedLine}`)
   return reading
 }
 
@@ -193,12 +236,18 @@ export function definitionVerdict(reading) {
   }
   for (const e of reading.read_errors) push('ATM-SCAN-READ', `读不动一份源码（${e.code}）：${e.file}`)
   if (reading.count !== 1) {
-    push('ATM-DEF-COUNT', `\`${ATOMIC_FN}\` 必须**恰好 1 处**定义，实得 ${reading.count} 处：${reading.hits.map((h) => `${h.file}:${h.line}`).join(' · ') || '（没有）'}`)
+    const named = reading.primary_hits.map((h) => `${h.file}:${h.line}`).join(' · ') || '（没有）'
+    const skipped = reading.derived_inline_spans.map((s) => `${s.file}:${s.begin_line}…${s.end_line}`).join(' · ')
+    push('ATM-DEF-COUNT', `\`${ATOMIC_FN}\` 必须**恰好 1 处**实现（源 + 逐字同源的派生内联不算第二处），实得 ${reading.count} 处：${named}`
+      + (skipped === '' ? '' : `；已按"派生内联"跳过 ${skipped}`))
   }
-  if (reading.count === 1 && reading.hits[0].file !== CANONICAL_ATOMIC) {
-    push('ATM-DEF-LOCATION', `唯一那处定义不在共享件里：${reading.hits[0].file}:${reading.hits[0].line}（要 ${CANONICAL_ATOMIC}）`)
+  if (reading.derived_inline_mismatch_spans !== undefined && reading.derived_inline_mismatch_spans.length > 0) {
+    push('ATM-DEF-DERIVED-MISMATCH', `标记块里的正文**不是**共享件那一份（${reading.derived_inline_mismatch_spans.map((s) => `${s.file}:${s.begin_line}…${s.end_line}`).join(' · ')}）—— 这不是"派生副本"，是第二份实现`)
   }
-  const cliHits = reading.hits.filter((h) => CLI_COPY_FILES.includes(h.file))
+  if (reading.count === 1 && reading.primary_hits[0].file !== CANONICAL_ATOMIC) {
+    push('ATM-DEF-LOCATION', `唯一那处定义不在共享件里：${reading.primary_hits[0].file}:${reading.primary_hits[0].line}（要 ${CANONICAL_ATOMIC}）`)
+  }
+  const cliHits = reading.primary_hits.filter((h) => CLI_COPY_FILES.includes(h.file))
   for (const h of cliHits) {
     push('ATM-DEF-CLI-COPY', `CLI 里还留着自己的那份 \`${ATOMIC_FN}\`：${h.file}:${h.line} —— 与共享件 ${CANONICAL_ATOMIC} 是同一功能的第二份实现（并集之后必须删掉）`)
   }

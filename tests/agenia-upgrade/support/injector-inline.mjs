@@ -43,16 +43,40 @@ const stripComment = (text) => String(text).split(/\r?\n/).filter((l) => !/^\s*(
 const countOf = (text, needle) => String(text).split(needle).length - 1
 
 /**
- * 从一份源码里切出标记之间的正文（**含**标记行也算读数，调用方自己决定用不用）。
+ * 一份源码里**所有**标记跨度（`@inline-begin` … `@inline-end`；行号 1 起，`text` 不含标记行）。
+ *
+ * 为什么要有"全部"这一份：腿 10 只认**第一段**（注入器那一份正文），而腿 0 的
+ * "派生副本不算第二份实现"要按**第一段**判（别处的标记块 / 第二段都不豁免）。
+ * 标记字面量只有这一处（`BLOCK_BEGIN` / `BLOCK_END`）—— 两条腿都从这里读，不各写一份。
+ *
+ * @param {string} source
+ * @returns {Array<{begin_line:number, end_line:number, text:string}>}
+ */
+export function markedSpans(source) {
+  const lines = String(source).split(/\r?\n/)
+  const spans = []
+  let begin = -1
+  for (let i = 0; i < lines.length; i += 1) {
+    if (begin < 0) {
+      if (lines[i].includes(BLOCK_BEGIN)) begin = i
+      continue
+    }
+    if (lines[i].includes(BLOCK_END)) {
+      spans.push({ begin_line: begin + 1, end_line: i + 1, text: lines.slice(begin + 1, i).join('\n') })
+      begin = -1
+    }
+  }
+  return spans
+}
+
+/**
+ * 从一份源码里切出**第一段**标记之间的正文（**含**标记行也算读数，调用方自己决定用不用）。
  * @returns {{found:boolean, begin_line:number|null, end_line:number|null, text:string, marker_lines:number[]}}
  */
 export function blockOf(source) {
-  const lines = String(source).split(/\r?\n/)
-  const begin = lines.findIndex((l) => l.includes(BLOCK_BEGIN))
-  const end = lines.findIndex((l, i) => i > begin && l.includes(BLOCK_END))
-  if (begin < 0 || end < 0) return { found: false, begin_line: null, end_line: null, text: '', marker_lines: [] }
-  const body = lines.slice(begin + 1, end)
-  return { found: true, begin_line: begin + 1, end_line: end + 1, text: body.join('\n'), marker_lines: [begin + 1, end + 1] }
+  const first = markedSpans(source)[0]
+  if (first === undefined) return { found: false, begin_line: null, end_line: null, text: '', marker_lines: [] }
+  return { found: true, begin_line: first.begin_line, end_line: first.end_line, text: first.text, marker_lines: [first.begin_line, first.end_line] }
 }
 
 /**
