@@ -819,7 +819,15 @@ function deletionSampleProblems(text, spec = deletionSampleSpec()) {
     // 别的表（检查项 / 统计）不挡 —— 不能因为报告里有一张无关的表就说它不是零条发现。
     const table = sampleTableFindings(lines, spec)
     const tableStray = (() => {
-      if (table !== null) return 0
+      if (table !== null) {
+        if (table.rows.length > 0) return 0
+        // 表头认得出、但一行都读不出来（id 列空着）⇒ 那些 `|` 行仍然是"表格行"，不许当零条。
+        let count = 0
+        for (let i = table.headerAt + 1; i < lines.length && /^\s*\|/.test(lines[i]); i += 1) {
+          if (!isTableSeparator(tableCells(lines[i]))) count += 1
+        }
+        return count
+      }
       const rows = sampleTableRowLines(lines)
       const header = rows.find((l) => tableCells(l).some((c) => /^(发现|id)$/i.test(c)))
       return header === undefined ? 0 : rows.length
@@ -1281,6 +1289,21 @@ const DELETE_FIRST_SAMPLES = [
     // r2 修（R2-3）：零条发现必须是**正面**声明；「不是零条发现」这种否定句不算（判不了就是红）。
     id: 'zero-findings-negated',
     text: '# 技术评审（合成样本 · 否定句）\n\n结论：不是零条发现，是三个可整删的模块（清单没贴）。\n',
+    want: ['DEL-SAMPLE-SHAPE'],
+  },
+  {
+    // r2 修（R2-3）：表头认得出、但 id 列空着 ⇒ 那一行仍然是"表格行"，不能当零条发现。
+    id: 'zero-findings-empty-id-row',
+    text: [
+      '# 技术评审（合成样本 · 空 id 的表格行）',
+      '',
+      '| 发现 | 删除可行性 |',
+      '|---|---|',
+      '|  | 未验 |',
+      '',
+      '零条发现（`findings: []`）。',
+      '',
+    ].join('\n'),
     want: ['DEL-SAMPLE-SHAPE'],
   },
   {
