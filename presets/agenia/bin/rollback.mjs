@@ -7,15 +7,18 @@
  *   共享件"这类自述 —— 那一份的正文里根本没有共享件。
  * 🔴 **出厂件是单文件、零静态引用**（拍板 Q6）。理由：回滚的适用场合正是"刚装上去的那一版是坏的" ——
  *    这时候它**不能依赖任何新装上去的东西**（新 `lib/`、新 `bin/`、新模块）。
- *    ⚠️ **本文件是 repo 那一份，不是出厂件**：两支 CLI 与共享件去重是构案 0006 的目的，所以本文件
- *    引用了 `../lib/atomic.mjs`（原子写并集正文 + 删除三闸，两者在同一份共享件里）。
- *    **出厂件由 `install.mjs --op publish-staged` 在发布时造出来**：它把 `lib/atomic.mjs` 的
- *    原子写并集正文（删除三闸 + 原子写）**逐字内联**进来、去掉那条静态引用 ⇒ 用户拿到的那一份
+ *    ⚠️ **本文件是 repo 那一份，不是出厂件**：两支 CLI 与共享件去重是构案 0006 / 0008 的目的，所以本文件
+ *    引用了两份共享件 —— `../lib/atomic.mjs`（原子写并集正文 + 删除三闸）与 `../lib/cli-guards.mjs`
+ *    （与 `install.mjs` 共用的 8 个 helper：路径判据 / 安装现场 / 备份根 / 输出信封）。
+ *    **出厂件由 `install.mjs --op publish-staged` 在发布时造出来**：它把这两份共享件里各自那段标记正文
+ *    （`原子写并集正文` + `公共 helper 正文`）**逐字内联**进来、去掉那两条静态引用 ⇒ 用户拿到的那一份
  *    仍然是单文件、零静态引用，且 `node:` 内建仍走运行时取（不构成"依赖新代码"）。
  *    两棵树的这处差是**受控差异**，由 `<staging>/target-lag.json` 声明（点名本文件那一个路径）。
  *    判据：`INS-02 ①` / `ENV-02 ROLLBACK-IMPORT` 扫**出厂件**；`ATM-01` 扫**本文件**（一份定义 + 调用点）。
- *  · 路径判据（`canonical` / `isUnder` / `pathVerdict`）与哈希仍就地一份 —— 它们是本脚本自己的策略，
- *    不跨脚本共用。
+ *  · 已分叉的那几个（`canonical` / `insideTestScene` / `refuseDelete` / `parseArgs` / `main` …）与哈希
+ *    仍就地一份 —— 它们是本脚本自己的策略，构案 0008 §④ 明确不许顺手合并。
+ *  · ⚠️ 上面这几个名字里有三个（`canonical` · `insideTestScene` · `refuseDelete`）**被内联块引用**：
+ *    出厂件里它们就是本文件这几份（同一个模块作用域）⇒ 本文件删掉任何一份，出厂件当场跑不动。
  * @ship-header-end
  *
  * ── 它做什么（四步，顺序固定）──────────────────────────────────────────────
@@ -57,6 +60,7 @@
  *   退出码：0 成功（含 NO-BACKUP）· 2 用法 · 3 路径 · 4 IO · 5 校验 · 7 数据/清单缺失 · 8 内部
  */
 import { CLI_WRITE_MAX_ATTEMPTS, deletableVerdict, writeFileAtomic } from '../lib/atomic.mjs'
+import { assertDeletableTarget, defaultBackupRoot, emit, isUnder, normKey, pathVerdict } from '../lib/cli-guards.mjs'
 
 const fs = await import('node:fs')
 const path = await import('node:path')
@@ -72,8 +76,10 @@ const TEST_ROOT_MARKER = '.agenia-test-root'
  *   · `PROTECTED_TARGET_SEGMENTS` —— 判**根路径**（`--target` / `--backup`）：只拦 `.runtime`。
  *     ⚠️ `.team` **不在**这里：测试现场与队伍的办公桌都住在 `.team/` 底下，
  *        靶子落在 `.team/test/…` 是**正常**的。
+ *     判根路径的那份判据（`pathVerdict()`）现在住在 `lib/cli-guards.mjs`；本文件保留这份黑名单，
+ *     是因为**出厂件内联块**里的 `pathVerdict()` 读的就是它（同一个模块作用域 —— 行为与抽出前一致）。
  *   · `PROTECTED_REL_SEGMENTS` —— 判**备份清单里的相对路径**（相对靶子根）：两个都拦。
- *     这一条才是"**回滚只回代码、不回数据**"的真判据。
+ *     这一条才是"**回滚只回代码、不回数据**"的真判据（本文件自己读，也在本文件里）。
  */
 const PROTECTED_TARGET_SEGMENTS = ['.runtime']
 const PROTECTED_REL_SEGMENTS = ['.runtime', '.team']
@@ -122,7 +128,12 @@ function parseArgs(argv) {
   return out
 }
 
-// ── 路径守卫（与 staged `lib/paths.mjs` 同一套判据；就地一份）──────────────
+// ── 路径守卫 ───────────────────────────────────────────────────────────────
+/**
+ * 本文件自己那一份 canonical。`normKey` / `isUnder` / `driveOf` / `pathVerdict` 已搬进
+ * `lib/cli-guards.mjs`（构案 0008）；本文件保留这一份是因为**出厂件内联块**里的
+ * `normKey` / `slugOf` / `pathVerdict` 读的就是它（同一个模块作用域，行为与抽出前一致）。
+ */
 function canonical(p) {
   const abs = path.resolve(String(p))
   try {
@@ -130,43 +141,6 @@ function canonical(p) {
   } catch {
     return abs
   }
-}
-function normKey(p) {
-  let s = canonical(p).replace(/\\/g, '/')
-  while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1)
-  return s.toLowerCase()
-}
-function isUnder(child, parent) {
-  const c = normKey(child)
-  const p = normKey(parent)
-  return c === p || c.startsWith(`${p}/`)
-}
-function driveOf(p) {
-  const m = /^([A-Za-z]):/.exec(String(p ?? ''))
-  return m ? m[1].toUpperCase() : null
-}
-/**
- * 路径判定。`allowProtected` 只对**备份落点**开：备份本来就该落在一个普通目录里。
- * ⚠️ 靶子（`--target`）与备份清单里的路径**永远**不许碰 `.runtime` / `.team`。
- */
-function pathVerdict(raw, label, { allowProtected = false } = {}) {
-  if (raw === undefined || raw === null || String(raw).trim() === '') {
-    return { ok: false, code: 'E_ROOT_MISSING', message: `${label} 缺失（省略 / 空串都算缺失）` }
-  }
-  const s = String(raw)
-  if (/^\\\\/.test(s) || /^\/\//.test(s)) return { ok: false, code: 'E_ROOT_UNC', message: `${label} 不许是 UNC：${s}` }
-  if (!/^[A-Za-z]:[\\/]/.test(s)) return { ok: false, code: 'E_ROOT_RELATIVE', message: `${label} 必须是绝对路径：${s}` }
-  const abs = canonical(s)
-  // ⚠️ 拒的时候把**解析出来的绝对路径**一起带回去（`path`）：报文里的 `delete_gate.resolved`
-  //    要它。解析不出来的那几档（相对 / UNC / 缺失）没有 `path` —— 那一档**不许**拿 cwd 现编一个。
-  if (driveOf(abs) === 'C') return { ok: false, code: 'E_ROOT_C_DRIVE', message: `${label} 不许在 C 盘：${abs}`, path: abs }
-  if (!allowProtected) {
-    const segs = abs.replace(/\\/g, '/').split('/').map((x) => x.toLowerCase())
-    for (const bad of PROTECTED_TARGET_SEGMENTS) {
-      if (segs.includes(bad)) return { ok: false, code: 'E_PATH_ESCAPE', message: `${label} 落在数据目录里（${bad}）：${abs}`, path: abs }
-    }
-  }
-  return { ok: true, code: null, path: abs }
 }
 function resolveWithin(base, rel) {
   const baseAbs = canonical(base)
@@ -181,25 +155,20 @@ function resolveWithin(base, rel) {
  * 缺一即拒删，稳定码 + 出声，绝不"先删了再说"）。
  *
  * 判定本身**只有一份**：`lib/atomic.mjs` 的 `deletableVerdict()`（出厂件里那一段是发布时逐字内联进来的同一段正文）。
- * 本文件只留两个适配层 —— `refuseDelete()`（把判定包成 CLI 错误）与 `assertDeletableTarget()`（过 ⇒ 给落点）。
- * 出厂件（用户跑的那一份）里这段判定是**发布时逐字内联**进去的（单文件零静态 import —— 拍板 Q6）。
+ * 本文件只留**拒删**那个适配层 —— `refuseDelete()`（把判定包成 CLI 错误）。
+ * **执行**那个适配层（`assertDeletableTarget()`）在 `lib/cli-guards.mjs` 里，与 `install.mjs` 共用一份；
+ * 出厂件里它是发布时**逐字内联**进来的（单文件零静态 import —— 拍板 Q6），届时调用的就是本文件这份 `refuseDelete()`。
  */
 
 /**
  * **拒删的错误形状**（裁定 v1.20 ②：拒删不许只有 stderr 一行）：稳定码 + 一份 `delete_gate`，
  * 由 `main()` 落到信封顶层、与 `ok:false` 并排。三闸那一支把已经算好的投影**原样**递进来。
+ * 本文件自己不再直接调它 —— 共享件里的 `assertDeletableTarget()` 在出厂件里读到的是这一份。
  */
 function refuseDelete({ code, message, gate }) {
   const err = cliError(code, message)
   err.delete_gate = gate
   return err
-}
-
-/** 三闸的**执行**形状：不过就抛（调用方据此非零退出 + 出声），过就给出解析后的落点。 */
-function assertDeletableTarget(rawTarget, options) {
-  const v = deletableVerdict(rawTarget, options)
-  if (!v.ok) throw refuseDelete({ code: v.code, message: v.message, gate: v.delete_gate })
-  return v
 }
 
 /** 本靶子的允许删根（墓碑、临时件、空目录回收都在这一个根底下）。 */
@@ -234,9 +203,11 @@ function treeHashOf(root, only = null) {
 }
 
 // ── 备份落点（与 install.mjs 同一条规则）──────────────────────────────────
-function slugOf(p) {
-  return canonical(p).replace(/^[A-Za-z]:/, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase()
-}
+/**
+ * `slugOf()` / `defaultBackupRoot()` 已搬进 `lib/cli-guards.mjs`（构案 0008，与 `install.mjs` 共用一份）。
+ * 本文件保留 `insideTestScene()` 与 `REPO`：出厂件内联块里的 `defaultBackupRoot()` 读的就是它们
+ * （同一个模块作用域 —— 默认落点与抽出前一致）。
+ */
 function insideTestScene(liveRoot) {
   let dir = canonical(liveRoot)
   for (let i = 0; i < 4; i += 1) {
@@ -245,12 +216,6 @@ function insideTestScene(liveRoot) {
     if (fs.existsSync(path.join(dir, TEST_ROOT_MARKER))) return dir
   }
   return null
-}
-function defaultBackupRoot(liveRoot) {
-  const slug = slugOf(liveRoot)
-  const scene = insideTestScene(liveRoot)
-  if (scene !== null) return path.join(scene, '.agenia-install-backup', slug)
-  return path.join(REPO, '.tools', '_backup', 'agenia-install', slug)
 }
 
 /** 读备份清单：缺 / 坏 / 形状不合 ⇒ 抛（**绝不回落成"没有备份"**）。 */
@@ -496,9 +461,7 @@ function opRollback(args) {
 }
 
 // ── 入口 ───────────────────────────────────────────────────────────────────
-function emit(envelope) {
-  process.stdout.write(`${JSON.stringify(envelope)}\n`)
-}
+// 输出信封（`emit`）与 `install.mjs` 共用一份：`lib/cli-guards.mjs`（两支 CLI 的信封形状本来就一样）。
 const OPS = { rollback: opRollback }
 
 function main(argv) {
