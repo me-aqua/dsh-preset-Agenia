@@ -324,8 +324,10 @@ describe('integration · install-rollback (INS)', () => {
         return { codes: v.problems.map((p) => p.code), messages: v.problems.map((p) => p.message), line: read.line, read }
       }
       // 刀 ①（本票点名的那把）· 手抄一份回 install ⇒ 红，且报文**点名两边**
+      // 正文来源 = `guardsBody`（共享件那一块，:260）：这 8 个 helper 的定义只在共享件里，
+      // 刀就从那一块里抠 —— 两支 CLI 里本来就没有可抠的正文。
       {
-        const fn = extractFunctionText(pairFiles.rollback, 'pathVerdict')
+        const fn = extractFunctionText(guardsBody, 'pathVerdict')
         if (fn === null) {
           push('CG-KNIFE-ANCHOR', '[刀 copy-back] 抠不出 `pathVerdict` 那一整段 —— 手抄这一刀建不起来')
         } else {
