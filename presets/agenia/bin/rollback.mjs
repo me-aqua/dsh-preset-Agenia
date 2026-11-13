@@ -59,7 +59,7 @@
  *   `--target <dir>`（别名 `--live`）· `--backup <dir>` · `--require-backup` · `--dry-run` · `--op rollback`
  *   退出码：0 成功（含 NO-BACKUP）· 2 用法 · 3 路径 · 4 IO · 5 校验 · 7 数据/清单缺失 · 8 内部
  */
-import { CLI_WRITE_MAX_ATTEMPTS, deletableVerdict, writeFileAtomic } from '../lib/atomic.mjs'
+import { CLI_WRITE_MAX_ATTEMPTS, writeFileAtomic } from '../lib/atomic.mjs'
 import { assertDeletableTarget, defaultBackupRoot, emit, isUnder, normKey, pathVerdict } from '../lib/cli-guards.mjs'
 
 const fs = await import('node:fs')

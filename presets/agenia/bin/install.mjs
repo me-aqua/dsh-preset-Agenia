@@ -74,7 +74,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { CLI_WRITE_MAX_ATTEMPTS, deletableVerdict, gateReport, writeFileAtomic } from '../lib/atomic.mjs'
+import { CLI_WRITE_MAX_ATTEMPTS, gateReport, writeFileAtomic } from '../lib/atomic.mjs'
 import { assertDeletableTarget, defaultBackupRoot, emit, isUnder, normKey, pathVerdict } from '../lib/cli-guards.mjs'
 
 const SELF = fileURLToPath(import.meta.url)
