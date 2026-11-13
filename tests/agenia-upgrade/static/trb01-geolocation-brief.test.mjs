@@ -443,27 +443,37 @@ function runDocCase(caseId, kind, extra = null) {
 // ── 0010 · 删除优先（构案 `决议/构案/0010-评审删除优先.md` §② / §⑤ / 验收口径）────────────────────
 /**
  * 五处载体、同一段文字。这一段在 `0261c70` 落四处、`eb22836` 补第五处（`team/design.md`）⇒
- * **"红先"不能靠"功能没做"**：本块用**变异体**（删 / 挪 / 换行）证明每条腿能单独翻面；五份原件是阳性对照。
+ * **"红先"不能靠"功能没做"**：本块用**变异体**（删 / 挪 / 换行 / 换词）证明每条腿能单独翻面；五份原件是阳性对照。
  *
- * 三条腿（各一个码前缀，红的时候一眼看得出是哪一条）：
+ * 三条腿 + 逐行的措辞面（各一个码前缀，红的时候一眼看得出是哪一条）：
  *   · 腿 1 `DEL-PRIORITY-*`：优先级句那一**整行**（`trim()` 后逐字相等）五份各恰好 1 次。
  *     `MISSING` = 整行不在；`DRIFT` = 那一行还在、但不是逐字那一行（行尾加字）；`DUPLICATE` = 整行出现多次。
  *     子串命中不算命中（`countOf` 的教训：行尾追加「（时间紧可跳过）」仍是 1 次）。
  *   · 腿 2 `DEL-SLOT-*`：那一段里有 `删除可行性` 那一格，且两种形状都是**完整形状**
  *     （`可整删（证据：…）` / `删不掉（因为：…）`：前缀 + `…` + 收尾 `）`）、「未验」兜底、「每条发现」范围。
+ *     **`DEL-SLOT-FORCE`（r2 修 R2-1）**：第 5 行另钉**义务词 + 逐字面** —— `必须` 改成 `建议`、
+ *     行尾补一句软化话，都会让这一行不再等值（只钉"行在哪"挡不住这两种改法）。
  *     **外加合成报告样本**的判据（`DEL-SAMPLE-*`）：三种合法报告形状（`### 发现` 块 / 表格 / 零条发现声明）
  *     都收；粗体标签、全角冒号、Windows 反斜杠路径也收；缺格 / 留空 / 抄占位符 / 只写"看起来没人用"
  *     各自一条红、**点名那条发现**。
+ *     **r2 修（R2-3）**：零条发现 = **真的没有发现形状的东西**（任何级别的「发现 <id>」标题、读得出表头的
+ *     发现表行都不许有；光一个 `## 发现` 节名或一张无关的表不算），声明行必须是**正面**说的；
+ *     表格行必须**带证据**（表头要有证据列）—— 光有 id + 那一格不算"核过"。
  *     ⚠️ **判的是合成样本，不是真报告**：今天没有技术评审报告，本腿也**不要求**它存在；真报告那一层由
  *     下一次技术评审按新格式交（构案 §⑥ / 验收口径「行为」行），本腿不声称它已经发生。
  *   · 腿 3 `DEL-ORDER-*`：**整段的五行顺序**（第 1 行「第一问 + 删得掉就整删」/ 第 2 行证据 /
  *     第 3 行优先级 / 第 4 行三支候选 + 第一格 / 第 5 行 `删除可行性`）；段 = 前后都到空行的连续非空行块，
  *     段内不许夹别的行、也不许被空行断开。三支候选的**第一格**取「第一格必须是」后面第一个「」并做**等值**
  *     比较（不是拿整段尾巴 `includes`）。「改成……」**不许**排在「删得掉就整删」之前（整份文件量）。
+ *     **`DEL-ORDER-FORCE`（r2 修 R2-1）**：第 1 / 2 / 4 行另钉**义务词 + 逐字面** —— `判据是` / `不是` /
+ *     `必须是` + `那一支` 一个都不许被改弱，行尾补软化话同样红。第 3 行的整行面归腿 1
+ *     （不同的行归不同的腿，刀账才分得开）。
  *
  * 每条腿的"只翻自己"由 `legs` 对账：刀落下去以后**另两腿必须 0 条**。唯一的例外是"删掉一行"那两把刀：
  * 删一行必然让那一段不再是五行 ⇒ 顺序腿同红；例外不靠嘴说，逐把写进 `also`（声明会同红的码），
  * 未声明的同红 ⇒ `DEL-KNIFE-LEAK`，声明了却不同红 ⇒ `DEL-KNIFE-VECTOR`（刀没落到该落的地方）。
+ * ⚠️ r2 之后**没有跨腿的 `also`**：改第 5 行出的 `DEL-SLOT-FORCE` 记在腿 2、改第 1/2/4 行出的
+ * `DEL-ORDER-FORCE` 记在腿 3 —— 措辞面跟着那一行所属的腿走，不另开一条腿（腿少一条，刀账就少一处缺口）。
  *
  * 🔴 本块**不**做的事（写出来，别让绿读成"评审会照做"）：
  *   · 不判真报告（没有；合成样本只证明那一格**可核对**，且只收三种常见形状 —— 真报告的 Markdown 形状
@@ -471,10 +481,14 @@ function runDocCase(caseId, kind, extra = null) {
  *   · 不判「删不掉（因为：…）」里的依赖有没有点到 `file:line` —— 构案 RC-4 只是**反悔条件**（未触发），
  *     不替它提前加码；只判样本里「可整删」的证据不是空话（`file:line` 或 `0 处`，验收口径「行为」行）；
  *     段落本身只说「证据给到调用方 / 可达性」，**样本更严**——这个粒度差写在读数 `sample.note` 里；
- *   · **不**做整段逐字相等：那会把三腿耦合成一条（删任一句 ⇒ 整段不等 ⇒ 三腿同红）。五份整段的 sha256
- *     进读数，分叉由人看一眼；逐字面钉优先级句（腿 1）、两种形状（腿 2）、五行顺序与第一格（腿 3）。
- *   · 不改 `presets/**`：三份「交活」清单 + `findings.json` 单条 finding 字段里的 `删除可行性`（评审 F7）
- *     今天**不在产品文字里**；本块只把它记成读数（`readings.deliverables`），要补的是产品侧一行，归组长。
+ *   · **段外**再补一句「以上时间紧时不适用」这种软化不在本块判据内（那是整段的语义，归人眼）。
+ *   · **不**做整段逐字相等：五份整段的 sha256 进读数（同一段 ⇒ 同值；分叉由人看一眼）。逐字面钉在**行**上：
+ *     五行各钉整行（第 3 行归腿 1，第 1 / 2 / 4 行归腿 3 的 `DEL-ORDER-FORCE`，第 5 行归腿 2 的
+ *     `DEL-SLOT-FORCE`）—— "五行都逐字"因此是**五条行判据**，不是一条整段判据：
+ *     删一行只翻那一行所属的腿 + 顺序腿，不会把三条腿一起打翻。
+ *   · 不改 `presets/**`：四处交活清单 + `findings.json` 单条 finding 字段里的 `删除可行性` 已经由产品侧落了
+ *     （`77293be`；读数 `slot_listed` 4/4 true，见 `readings.deliverables_counts`）；本块只把它记成读数
+ *     （`readings.deliverables`），**不判产品红** —— 那一格的**值**填得对不对归第 4/5 关。
  */
 const DELETE_FIRST_PARAGRAPH = [
   '**第一问：这块该不该存在。** 删得掉就整删 —— 判据是「删掉之后当前功能一行不变」，',
@@ -486,15 +500,21 @@ const DELETE_FIRST_PARAGRAPH = [
 /** 派工卡给的独立摘要（209 字 / 557 B，LF 行尾）。它是**期望侧**的冻结值，不是拿产品算的。 */
 const DELETE_FIRST_SHA256 = 'a18655e77ae27f48339be2a59420ebe4222017b772298e84b76ebfc36c5f35ea'
 const DELETE_FIRST_LINES = DELETE_FIRST_PARAGRAPH.split('\n')
-/** 起点用**短语**（不是整行）：合法改写第一行时仍定位得到；整行是腿 1 的冻结面，不拿它当取样锚。 */
-const DELETE_FIRST_START = '第一问：这块该不该存在'
-/** 那一格的名字（段落里的术语；三份交活清单也用它）。 */
-const DELETE_FIRST_SLOT_NAME = '删除可行性'
-const DELETE_FIRST_PRIORITY_LINE = DELETE_FIRST_LINES[2]
+/**
+ * 起点用**短语**（不是整行）：合法改写第一行时仍定位得到；整行是腿 1 的冻结面，不拿它当取样锚。
+ * r2 修（R2-7）：它从第 1 行**派生**（去掉开头的 `**`、再取第一个「。」之前），不再手抄一遍。
+ */
+const DELETE_FIRST_START = DELETE_FIRST_LINES[0].replace(/^\*\*/, '').split('。')[0]
+/** 那一格的名字（段落里的术语；四处交活清单也用它）—— 与样本侧同一个出处：第 5 行的反引号片段。 */
 const DELETE_FIRST_SLOT_LINE = DELETE_FIRST_LINES[4]
+const DELETE_FIRST_SLOT_NAME = deletionSampleSpec().slot
+const DELETE_FIRST_PRIORITY_LINE = DELETE_FIRST_LINES[2]
 /**
  * 段内每一行的**位置**（1-based）与定位锚。锚只回答"这一行是不是它"；
- * 措辞面归腿 1（优先级整行）与腿 2（两种形状），不在这里再钉一遍。
+ * 措辞面归腿 1（优先级整行）、腿 2 的 `DEL-SLOT-FORCE`（第 5 行）、腿 3 的 `DEL-ORDER-FORCE`（第 1/2/4 行），
+ * 不在这里再钉一遍 —— 否则改一个字会同时翻两条腿，刀账就分不开了。
+ * ⚠️ 这些锚是**手写短语**：它们不是从期望段派生的（能派生的那两样已派生：起点、那一格的名字），
+ * "挑自期望行"这件事由下面的 `DELETE_FIRST_SELF_CHECKS` 逐条自检。
  */
 const DELETE_FIRST_LINE_SLOTS = [
   { line: 1, label: '第一问 + 删得掉就整删', anchors: ['第一问：这块该不该存在', '删得掉就整删'] },
@@ -502,6 +522,34 @@ const DELETE_FIRST_LINE_SLOTS = [
   { line: 3, label: '优先级固定', anchors: ['优先级固定'] },
   { line: 4, label: '给三种候选时 + 第一格必须是', anchors: ['给三种候选时', '第一格必须是'] },
   { line: 5, label: '删除可行性 + 未验', anchors: ['删除可行性', '未验'] },
+]
+/**
+ * 每行的**义务词**（r2 修 R2-1）：行在哪还不够，话有多硬也要钉。第 3 行的整行面归腿 1；
+ * 这里四行各钉"义务词在 + 整行逐字"：
+ *   · 第 1 行 `判据是`（判据句不许被改弱）；
+ *   · 第 2 行 `不是`（"不是看起来没人用"那一半）；
+ *   · 第 4 行 `必须是` + `那一支`（第一格是整删那一支）；
+ *   · 第 5 行 `必须`（每条发现**必须**带一格）。
+ * `anchor` 只用来找"这一行是不是它"：找不到 ⇒ 缺行归腿 2 / 腿 3，这里不重复报。
+ */
+const DELETE_FIRST_FORCE = [
+  { line: 1, words: ['判据是'], anchor: DELETE_FIRST_START },
+  { line: 2, words: ['不是'], anchor: '证据给到调用方' },
+  { line: 4, words: ['必须是', '那一支'], anchor: '给三种候选时' },
+  { line: 5, words: ['必须'], anchor: DELETE_FIRST_SLOT_NAME },
+]
+/**
+ * 期望侧自检（r2 修 R2-7）：判据里那些**手写短语**必须是期望行的子串 —— 期望段被改一个字时先在这里红，
+ * 而不是让针去指一段不存在的字（那时五份产品会以"锚点找不到"的形式假红，红因还指错地方）。
+ */
+const DELETE_FIRST_SELF_CHECKS = [
+  ...DELETE_FIRST_LINE_SLOTS.flatMap((slot) => slot.anchors.map((a) => ({ what: `第 ${slot.line} 行的定位锚 ${JSON.stringify(a)}`, line: slot.line, needle: a }))),
+  ...DELETE_FIRST_FORCE.flatMap((at) => at.words.map((w) => ({ what: `第 ${at.line} 行的义务词 ${JSON.stringify(w)}`, line: at.line, needle: w }))),
+  { what: '腿 3 的「改成……」', line: 3, needle: '改成……' },
+  { what: '腿 3 的「删得掉就整删」', line: 1, needle: '删得掉就整删' },
+  { what: '腿 3 的「第一格必须是」', line: 4, needle: '第一格必须是' },
+  { what: '腿 2 的「每条发现」', line: 5, needle: '每条发现' },
+  { what: '腿 2 的「未验」', line: 5, needle: '未验' },
 ]
 /** 五处载体（构案 §② 的名单；顺序 = 读数里的顺序）。 */
 const DELETE_FIRST_CARRIERS = [
@@ -577,6 +625,16 @@ function deleteFirstProblems(rel, text) {
     if (incomplete.length > 0) {
       legs.slot.push(problem('DEL-SLOT-SHAPE', `${rel} 的 \`${DELETE_FIRST_SLOT_NAME}\` 那一行缺完整形状 ${JSON.stringify(incomplete)} —— 两种形状都要带中间的 \`…\` 与收尾 ${JSON.stringify(spec.deletable.suffix)}（只写前缀不算；实得 ${JSON.stringify(line)}）`))
     }
+    // ── 腿 2b（r2 修 R2-1）：第 5 行的**义务词 + 逐字面** ──────────────────────────────
+    // 只钉"行在哪"挡不住两种便宜改法：把 `必须` 换成 `建议`（行还在、形状还在），或行尾补一句
+    // 「（时间紧可跳过）」这种软化话（锚都还在）。所以这一行既查义务词，也查整行等值。
+    const slotForce = DELETE_FIRST_FORCE.find((at) => at.line === 5)
+    const weakWords = slotForce.words.filter((w) => !line.includes(w))
+    if (weakWords.length > 0) {
+      legs.slot.push(problem('DEL-SLOT-FORCE', `${rel} 的 \`${DELETE_FIRST_SLOT_NAME}\` 那一行的义务词被换掉了：缺 ${JSON.stringify(weakWords)}（实得 ${JSON.stringify(line.trim())}）—— 「必须」是这一格的硬度，不是可省的字`))
+    } else if (line.trim() !== DELETE_FIRST_SLOT_LINE) {
+      legs.slot.push(problem('DEL-SLOT-FORCE', `${rel} 的 \`${DELETE_FIRST_SLOT_NAME}\` 那一行不是逐字那一行（实得 ${JSON.stringify(line.trim())}；期望 ${JSON.stringify(DELETE_FIRST_SLOT_LINE)}）—— 行尾补一句软化话，和把义务词改弱同效`))
+    }
   }
 
   // ── 腿 3a：整段的**五行顺序**（行号固定；段内不许夹行、不许被空行断开）──────────────
@@ -612,6 +670,21 @@ function deleteFirstProblems(rel, text) {
       legs.order.push(problem('DEL-ORDER-FIRST-SLOT', `${rel} 的三支候选第一格是「${first}」，不是「整块删掉」：${JSON.stringify(candidateLine)}`))
     }
   }
+  // ── 腿 3d（r2 修 R2-1）：第 1 / 2 / 4 行的**义务词 + 逐字面**（第 5 行归腿 2 的 `DEL-SLOT-FORCE`）──
+  // 义务词是"话有多硬"：`判据是` / `不是` / `必须是` + `那一支` 被换掉，或者行尾补一句「（时间紧可跳过）」，
+  // 行还在、锚也还在 —— 只钉"行在哪"的判据会全绿。所以这里既查义务词，也查整行等值。
+  for (const at of DELETE_FIRST_FORCE) {
+    if (at.line === 5) continue
+    const expected = DELETE_FIRST_LINES[at.line - 1]
+    for (const line of block.lines.filter((l) => l.includes(at.anchor))) {
+      const weakWords = at.words.filter((w) => !line.includes(w))
+      if (weakWords.length > 0) {
+        legs.order.push(problem('DEL-ORDER-FORCE', `${rel} 第 ${at.line} 行的义务词被换掉了：缺 ${JSON.stringify(weakWords)}（实得 ${JSON.stringify(line.trim())}）—— 这一行的硬度就在这几个词上`))
+      } else if (line.trim() !== expected) {
+        legs.order.push(problem('DEL-ORDER-FORCE', `${rel} 第 ${at.line} 行不是逐字那一行（实得 ${JSON.stringify(line.trim())}；期望 ${JSON.stringify(expected)}）—— 行尾补一句软化话，和把义务词改弱同效`))
+      }
+    }
+  }
   return { block, legs, problems: [...legs.priority, ...legs.slot, ...legs.order] }
 }
 
@@ -637,46 +710,73 @@ function sampleSlotLineRe(slot) {
   return new RegExp(`^\\s*(?:[-*+]\\s*)?(?:\\*\\*)?${name}(?:\\*\\*)?\\s*[:：]\\s*(.*)$`)
 }
 
-/** 表格报告：表头要有 `发现`/`id` 列与槽名列；分隔行跳过，缺格记 `null`、空格记 `''`。 */
-function sampleTableFindings(lines, spec) {
-  const cells = (l) => l.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|')
+/** 表格的一行 → 单元格（去掉首尾 `|`、粗体星号、首尾空白）。 */
+function tableCells(line) {
+  return line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|')
     .map((c) => c.trim().replace(/^\*\*(.*)\*\*$/, '$1').trim())
+}
+
+/** 分隔行（`|---|---|`）—— 不是数据行。 */
+const isTableSeparator = (cells) => cells.every((c) => /^:?-{2,}:?$/.test(c) || c === '')
+
+/** 表格数据行（任何非分隔行的 `|` 行）—— 零条发现那一支用它证明"没有表"。 */
+function sampleTableRowLines(lines) {
+  return lines.filter((l) => /^\s*\|/.test(l) && !isTableSeparator(tableCells(l)))
+}
+
+/**
+ * 表格报告：表头要有 `发现`/`id` 列、槽名列、**证据列**；分隔行跳过，缺格记 `null`、空格记 `''`。
+ * r2 修（R2-3）：以前只读 id + 槽列 ⇒ `| F1 | 未验 |` 这种"只有 id + 那一格"的行也算绿。
+ * 现在证据列是**必填**：表头没有证据列 ⇒ `evidenceCol = -1`（调用方报一条表级红）；
+ * 有列但格是空的/只有 `—` ⇒ 逐行红。唯一例外：槽那一格是 `未验` 时允许 `—` ——
+ * 没验就没有证据；这条例外本身写进读数 `sample.note`，并说明它不能让"表格样本"充当"证据被检查"的证据。
+ */
+function sampleTableFindings(lines, spec) {
   const headerAt = lines.findIndex((l) => /^\s*\|/.test(l)
-    && cells(l).some((c) => c === spec.slot)
-    && cells(l).some((c) => /^(发现|id)$/i.test(c)))
+    && tableCells(l).some((c) => c === spec.slot)
+    && tableCells(l).some((c) => /^(发现|id)$/i.test(c)))
   if (headerAt < 0) return null
-  const header = cells(lines[headerAt])
+  const header = tableCells(lines[headerAt])
   const idCol = header.findIndex((c) => /^(发现|id)$/i.test(c))
   const slotCol = header.findIndex((c) => c === spec.slot)
-  const out = []
+  const evidenceCol = header.findIndex((c) => /^(证据|evidence)$/i.test(c))
+  const rows = []
   for (let i = headerAt + 1; i < lines.length; i += 1) {
     if (!/^\s*\|/.test(lines[i])) break
-    const row = cells(lines[i])
-    if (row.every((c) => /^:?-{2,}:?$/.test(c) || c === '')) continue
+    const row = tableCells(lines[i])
+    if (isTableSeparator(row)) continue
     const id = row[idCol]
     if (id === undefined || id === '') continue
     const cell = row[slotCol]
-    out.push({ id, value: cell === undefined ? null : cell })
+    rows.push({
+      id,
+      value: cell === undefined ? null : cell,
+      evidence: evidenceCol < 0 || row[evidenceCol] === undefined ? null : row[evidenceCol],
+    })
   }
-  return out
+  return { headerAt, idCol, slotCol, evidenceCol, rows }
 }
 
 /**
  * 合成报告的**三种合法形状**（都收，别让"样本过"变成"只有我这一种写法过"）：
- *   ① `### 发现 <id>` 块（每块一行那一格）；② Markdown 表格；③ **零条发现**声明
- *      （`presets/agenia/team/technical-review.md:6`：零条也是一份合法结果）。
+ *   ① 「发现 <id>」块（2–6 级标题都收，每块一行那一格）；② Markdown 表格（**表头必须有证据列**）；
+ *   ③ **零条发现**声明（`presets/agenia/team/technical-review.md:6`：零条也是一份合法结果）——
+ *      r2 修（R2-3）：零条 = 真的一条发现形状的东西都没有（任何级别的「发现 <id>」标题、读得出表头的
+ *      发现表行都不许有；光一个节名 `## 发现` 或一张无关的表不算），且声明是正面说的
+ *      （`零条发现…` / `findings: []` 打头；「不是零条发现」不算）。
  * 三种都不是 ⇒ `DEL-SAMPLE-SHAPE`（判不了就是红，不是"零条发现"）。
  * 值的三态：缺格 / 留空 / `未验` / 两种形状（可整删的证据要 `file:line` 或 `0 处`，反斜杠路径也收）。
+ * 表格那一侧多一条 `DEL-SAMPLE-TABLE-EVIDENCE`：行必须带证据（见 `sampleTableFindings` 的注释）。
  */
 function deletionSampleProblems(text, spec = deletionSampleSpec()) {
   const problems = []
   const lines = text.split(/\r?\n/)
   const slotRe = sampleSlotLineRe(spec.slot)
   const collected = []
-  // ① `### 发现 <id>` 块
+  // ① `### 发现 <id>` 块（任何标题级别都收：`#### 发现 F1` 也是"有发现"，不许漏成零条）
   const heads = []
   lines.forEach((l, i) => {
-    const m = /^###\s+发现\s+(\S+)\s*$/.exec(l)
+    const m = /^#{2,6}\s+发现\s+(\S+)\s*$/.exec(l)
     if (m !== null) heads.push({ id: m[1], at: i })
   })
   for (let k = 0; k < heads.length; k += 1) {
@@ -687,22 +787,56 @@ function deletionSampleProblems(text, spec = deletionSampleSpec()) {
     collected.push({ id, value: hit === undefined ? null : slotRe.exec(hit)[1] })
   }
   let shape = 'heading-blocks'
-  // ② Markdown 表格
+  // ② Markdown 表格（r2 修 R2-3：证据列必填，光有 id + 那一格不算"核过"）
   if (collected.length === 0) {
-    const rows = sampleTableFindings(lines, spec)
-    if (rows !== null) {
-      collected.push(...rows)
+    const table = sampleTableFindings(lines, spec)
+    if (table !== null && table.rows.length > 0) {
       shape = 'table'
+      if (table.evidenceCol < 0) {
+        problems.push(problem('DEL-SAMPLE-TABLE-EVIDENCE', `[合成报告样本] 表格表头没有「证据」列（表头 ${JSON.stringify(lines[table.headerAt].trim())}）—— 光有 id + 那一格不算"这一条被核过"；表头要有 \`证据\` / \`evidence\` 列`))
+      } else {
+        for (const row of table.rows) {
+          const evidence = String(row.evidence ?? '').trim().replace(/^`([^`]*)`$/, '$1').trim()
+          const slotValue = String(row.value ?? '').trim().replace(/^`([^`]*)`$/, '$1').trim()
+          const placeholder = /^[—–-]+$/.test(evidence)
+          if (evidence === '' || (placeholder && slotValue !== '未验')) {
+            problems.push(problem('DEL-SAMPLE-TABLE-EVIDENCE', `[合成报告样本] 表格里发现 ${row.id} 那一行没有证据（证据格 = ${JSON.stringify(row.evidence)}）—— 只有槽那一格是「未验」时，才允许用 \`—\` 表示"没验就没有证据"`))
+          }
+        }
+      }
+      for (const row of table.rows) collected.push({ id: row.id, value: row.value })
     }
   }
-  // ③ 零条发现
+  // ③ 零条发现（r2 修 R2-3）：**必须真的没有发现形状的东西**
+  //    ① 没有任何「发现」块（任何标题级别：`#### 发现 F1` 也算）；
+  //    ② 没有任何读不出表头的表格数据行（认得出的表头 + 0 行数据行可以：那就是"零条"）；
+  //    ③ 声明是**正面**说的（`零条发现…` / `findings: []` 打头），不是「不是零条发现」这种否定句。
   if (collected.length === 0) {
-    if (/(零条发现|0\s*条发现|findings\s*[:：]\s*\[\s*\])/.test(text)) {
-      return { findings: [], problems, shape: 'zero-findings' }
+    // 「发现」形状 = 标题里那个词后面还有东西（id / 冒号 / 描述）；光一个 `## 发现` 小标题不算 ——
+    // 那是节名，节下一句「零条发现」是自洽的。
+    const findingish = lines.filter((l) => /^#{1,6}\s*(?:发现|finding|findings)\s*(?:[:：]\s*)?\S+/i.test(l))
+    // 读不出表头的表：只有**看起来像发现表**的（表头有 `发现` / `id` 列）才挡零条发现；
+    // 别的表（检查项 / 统计）不挡 —— 不能因为报告里有一张无关的表就说它不是零条发现。
+    const table = sampleTableFindings(lines, spec)
+    const tableStray = (() => {
+      if (table !== null) return 0
+      const rows = sampleTableRowLines(lines)
+      const header = rows.find((l) => tableCells(l).some((c) => /^(发现|id)$/i.test(c)))
+      return header === undefined ? 0 : rows.length
+    })()
+    if (findingish.length > 0 || tableStray > 0) {
+      return {
+        findings: [],
+        problems: [problem('DEL-SAMPLE-SHAPE', `[合成报告样本] 有 ${findingish.length} 个「发现」形状的标题、${tableStray} 行读不出表头的发现表 —— 这不能按「零条发现」收（判不了就是红；有发现就要让每一条都带那一格）`)],
+        shape: 'not-zero',
+      }
     }
+    const zeroDecl = lines.find((l) => /^\s*(?:#{1,6}\s*|[-*+]\s*)?零条发现/.test(l))
+      ?? lines.find((l) => /^\s*(?:[-*+]\s*)?findings\s*[:：]\s*\[\s*\]\s*$/.test(l))
+    if (zeroDecl !== undefined) return { findings: [], problems, shape: 'zero-findings' }
     return {
       findings: [],
-      problems: [problem('DEL-SAMPLE-SHAPE', '[合成报告样本] 既没有「### 发现 <id>」块、也没有带那一格的表格、也没有「零条发现」声明 —— 判不了就是红（别把"没读到"读成"零条发现"）')],
+      problems: [problem('DEL-SAMPLE-SHAPE', '[合成报告样本] 既没有「发现 <id>」块、也没有带那一格的表格、也没有**正面**写「零条发现」—— 判不了就是红（别把"没读到"读成"零条发现"）')],
       shape: 'not-a-report',
     }
   }
@@ -758,7 +892,11 @@ const deletionSampleReport = (slots) => [
   ]),
 ].join('\n')
 
-/** 表格形状的合成报告（`F9`：报告没规定 Markdown 形状 ⇒ 表格也是一份合法交活）。 */
+/**
+ * 表格形状的合成报告（`F9`：报告没规定 Markdown 形状 ⇒ 表格也是一份合法交活）。
+ * F3 是 `未验` + 证据格 `—`（r2 修 R2-3 的例外：没验就没有证据）—— 这一行**不证明**"证据被检查"，
+ * 证明证据列的是 `table-no-evidence` / `table-dash-evidence` 两条红样本（读数 `sample.note` 写清这一点）。
+ */
 const deletionSampleTable = () => [
   '# 技术评审（合成样本 · 表格形状）',
   '',
@@ -829,6 +967,15 @@ function applyDeleteFirstKnife(text, knife) {
 }
 
 /**
+ * r2 修（R2-1 覆盖面）：五行的 **C(5,2) = 10 种对调**，r1 只有 `swap-3-4` 一把，其余九种没有刀 ——
+ * 「顺序腿对顺序敏感」这件事只被一种对调证明过。十种全生成（表驱动，加一行不贵），逐把核：
+ *   · 对调不改段长、只换两个位置 ⇒ 只该翻顺序腿（`DEL-ORDER-LINES`）；
+ *   · 例外：**把第 1 行挪到第 3 行以下**（1↔3 / 1↔4 / 1↔5）⇒ 「改成……」排到「删得掉就整删」前面，
+ *     `DEL-ORDER-REWRITE-FIRST` 是同一份判据对同一份改动的第二个读数 —— 逐把写进 `want`，不是漏红。
+ */
+const DELETE_FIRST_SWAPS = [[1, 2], [1, 3], [1, 4], [1, 5], [2, 3], [2, 4], [2, 5], [3, 4], [3, 5], [4, 5]]
+
+/**
  * 刀表。`want` = 这把刀**自己那条腿**该出的码；`also` = 同一次里**声明**会一起红的别的腿
  * （只有"删掉一行"那一族需要：删一行必然让那一段不再是五行）。没有声明就同红 ⇒ `DEL-KNIFE-LEAK`。
  */
@@ -870,10 +1017,54 @@ const DELETE_FIRST_KNIVES = [
     op: 'replace-line',
     line: DELETE_FIRST_SLOT_LINE,
     to: DELETE_FIRST_SLOT_LINE.replace('）', '').replace('）', ''),
-    want: ['DEL-SLOT-SHAPE'],
-    why: '两种形状各去掉收尾 `）` ⇒ 形状不完整（第 5 行仍在、仍在第 5 行）',
+    want: ['DEL-SLOT-SHAPE', 'DEL-SLOT-FORCE'],
+    why: '两种形状各去掉收尾 `）` ⇒ 形状不完整（第 5 行仍在、仍在第 5 行）；同一个改动也让逐字面不再等值（两个码同属腿 2，不是跨腿）',
   },
   {
+    // r2 修（R2-1）：一个词的软化 —— 行还在、形状还在、`每条发现` / `未验` 都在 ⇒ 只钉"行在哪"的判据全绿。
+    id: 'slot-advice',
+    leg: 'slot',
+    carrier: 'presets/agenia/team/design.md',
+    op: 'replace-line',
+    line: DELETE_FIRST_SLOT_LINE,
+    to: DELETE_FIRST_SLOT_LINE.replace('必须', '建议'),
+    want: ['DEL-SLOT-FORCE'],
+    why: '「每条发现必须带一格」→「建议带一格」⇒ 行还在、形状还在，但这一格的硬度没了',
+  },
+  {
+    // r2 修（R2-1）：行尾补一句软化话 —— 锚都还在，腿 1/2/3 的旧判据全绿。
+    id: 'line1-caveat',
+    leg: 'order',
+    carrier: 'presets/agenia/team/review.md',
+    op: 'append-suffix',
+    line: DELETE_FIRST_LINES[0],
+    suffix: '（时间紧可跳过）',
+    want: ['DEL-ORDER-FORCE'],
+    why: '第 1 行尾补「（时间紧可跳过）」⇒ `判据是` 还在、顺序也没变，但那句话不再是硬判据',
+  },
+  {
+    id: 'line2-caveat',
+    leg: 'order',
+    carrier: 'presets/agenia/job-briefs/conversation-review.md',
+    op: 'append-suffix',
+    line: DELETE_FIRST_LINES[1],
+    suffix: '（可不给证据）',
+    want: ['DEL-ORDER-FORCE'],
+    why: '第 2 行尾补「（可不给证据）」⇒ 证据那一行被开了个后门',
+  },
+  {
+    id: 'line4-caveat',
+    leg: 'order',
+    carrier: 'presets/agenia/job-briefs/technical-review.md',
+    op: 'append-suffix',
+    line: DELETE_FIRST_LINES[3],
+    suffix: '（也可以不是）',
+    want: ['DEL-ORDER-FORCE'],
+    why: '第 4 行尾补「（也可以不是）」⇒ 第一格必须是整删那一支被软化',
+  },
+  {
+    // ── r2 修（R2-1 覆盖面）：五种行的**十种对调**全有刀（r1 只有 `swap-3-4`），
+    //    由下面的 `DELETE_FIRST_SWAPS` 逐对生成，见那一处的注释。──
     id: 'priority-to-end',
     leg: 'order',
     carrier: 'presets/agenia/team/review.md',
@@ -881,16 +1072,6 @@ const DELETE_FIRST_KNIVES = [
     line: DELETE_FIRST_PRIORITY_LINE,
     want: ['DEL-ORDER-LINES'],
     why: '优先级行挪到段尾 ⇒ 段还是五行，但第 3 行不再是它',
-  },
-  {
-    id: 'swap-3-4',
-    leg: 'order',
-    carrier: 'presets/agenia/team/review.md',
-    op: 'swap',
-    a: DELETE_FIRST_PRIORITY_LINE,
-    b: DELETE_FIRST_LINES[3],
-    want: ['DEL-ORDER-LINES'],
-    why: '优先级行与三支候选行对调 ⇒ 第 3 / 第 4 行都错位',
   },
   {
     id: 'interleave',
@@ -909,8 +1090,8 @@ const DELETE_FIRST_KNIVES = [
     op: 'replace-line',
     line: DELETE_FIRST_LINES[3],
     to: '给三种候选时，第一格必须是「保留原样」，第二格必须是「整块删掉」那一支。',
-    want: ['DEL-ORDER-FIRST-SLOT'],
-    why: '第一格换成「保留原样」、第二格才是整删 ⇒ 只翻第一格那条',
+    want: ['DEL-ORDER-FIRST-SLOT', 'DEL-ORDER-FORCE'],
+    why: '第一格换成「保留原样」、第二格才是整删 ⇒ 只翻第一格那条；同一个改动也让逐字面不再等值（两个码同属腿 3）',
   },
   {
     id: 'rewrite-first',
@@ -932,9 +1113,25 @@ const DELETE_FIRST_KNIVES = [
     want: ['DEL-ORDER-LINES'],
     why: '三支候选行挪到段首 ⇒ 段还是五行，但第 1 / 3 / 4 行都错位',
   },
+  // ── 十种对调（生成；`want` 见 `DELETE_FIRST_SWAPS` 的注释）────────────────────────────
+  ...DELETE_FIRST_SWAPS.map(([i, j]) => {
+    const rewriteFirst = i === 1 && j >= 3
+    return {
+      id: `swap-${i}-${j}`,
+      leg: 'order',
+      carrier: 'presets/agenia/team/review.md',
+      op: 'swap',
+      a: DELETE_FIRST_LINES[i - 1],
+      b: DELETE_FIRST_LINES[j - 1],
+      want: rewriteFirst ? ['DEL-ORDER-LINES', 'DEL-ORDER-REWRITE-FIRST'] : ['DEL-ORDER-LINES'],
+      why: rewriteFirst
+        ? `第 ${i} 行与第 ${j} 行对调 ⇒ 第 1 行跑到「改成……」之后：行序 + 「改成……」抢先两条一起红`
+        : `第 ${i} 行与第 ${j} 行对调 ⇒ 段还是五行，但那两个位置都错位`,
+    }
+  }),
 ]
 
-/** 合成样本：合法形状 + 五种反面 + 一种"不是报告"。`want` 是**恰好**的码集。 */
+/** 合成样本：8 个合法形状（`want: []`，含两个"收窄别收过头"的阳性对照）+ 10 个反面。`want` 是**恰好**的码集。 */
 const DELETE_FIRST_SAMPLES = [
   {
     id: 'good',
@@ -1012,13 +1209,110 @@ const DELETE_FIRST_SAMPLES = [
     want: ['DEL-SAMPLE-EVIDENCE'],
     names: 'F2',
   },
+  {
+    // r2 修（R2-3）：只有 id + 那一格的表格，以前算绿；现在没有证据列就是红。
+    id: 'table-no-evidence',
+    text: [
+      '# 技术评审（合成样本 · 表格没有证据列）',
+      '',
+      '| 发现 | 删除可行性 |',
+      '|---|---|',
+      '| F1 | 未验 |',
+      '| F2 | 可整删（证据：0 处调用） |',
+      '',
+    ].join('\n'),
+    want: ['DEL-SAMPLE-TABLE-EVIDENCE'],
+  },
+  {
+    // r2 修（R2-3）：有证据列、但那一行写 `—`（槽不是 `未验`）⇒ 红。
+    id: 'table-dash-evidence',
+    text: [
+      '# 技术评审（合成样本 · 证据格是破折号）',
+      '',
+      '| 发现 | 证据 | 删除可行性 |',
+      '|---|---|---|',
+      '| F1 | — | 可整删（证据：0 处调用） |',
+      '| F2 | `presets/agenia/foo.mjs:3` | 未验 |',
+      '',
+    ].join('\n'),
+    want: ['DEL-SAMPLE-TABLE-EVIDENCE'],
+    names: 'F1',
+  },
+  {
+    // r2 修（R2-3）：三条发现写成**四级**标题 + 一句「不是零条发现」—— 以前被读成零条发现（全绿）。
+    // 现在四级标题也是「发现」块 ⇒ 三条各缺那一格，红三条、点名三条。
+    id: 'zero-findings-with-headings',
+    text: [
+      '# 技术评审（合成样本 · 三条发现写成四级标题）',
+      '',
+      '#### 发现 F1',
+      '- 严重度: P2',
+      '- 证据: `presets/agenia/foo.mjs:12`',
+      '',
+      '#### 发现 F2',
+      '- 严重度: P2',
+      '- 证据: `presets/agenia/bar.mjs:7`',
+      '',
+      '#### 发现 F3',
+      '- 严重度: P3',
+      '- 证据: `presets/agenia/baz.mjs:3`',
+      '',
+      '不是零条发现：上面三条都在，只是这一份没给 `删除可行性` 那一格。',
+      '',
+    ].join('\n'),
+    want: ['DEL-SAMPLE-SLOT-MISSING', 'DEL-SAMPLE-SLOT-MISSING', 'DEL-SAMPLE-SLOT-MISSING'],
+  },
+  {
+    // r2 修（R2-3）：零条发现声明 + 表格行 ⇒ 不许按零条发现收（表格行就是发现）。
+    id: 'zero-findings-with-table',
+    text: [
+      '# 技术评审（合成样本 · 零条发现声明 + 表格）',
+      '',
+      '| 发现 | 删除可行性 |',
+      '|---|---|',
+      '| F1 | 未验 |',
+      '',
+      '零条发现（`findings: []`）。',
+      '',
+    ].join('\n'),
+    want: ['DEL-SAMPLE-TABLE-EVIDENCE'],
+  },
+  {
+    // r2 修（R2-3）：零条发现必须是**正面**声明；「不是零条发现」这种否定句不算（判不了就是红）。
+    id: 'zero-findings-negated',
+    text: '# 技术评审（合成样本 · 否定句）\n\n结论：不是零条发现，是三个可整删的模块（清单没贴）。\n',
+    want: ['DEL-SAMPLE-SHAPE'],
+  },
+  {
+    // r2 修（R2-3）的**阳性对照**：光一个 `## 发现` 节名（后面没有 id）不等于"有发现"——
+    // 节里写「零条发现」是自洽的。没有这一格，上面那条收窄就可能变成"凡有表/有标题都红"。
+    id: 'zero-findings-section-header',
+    text: '# 技术评审（合成样本 · 节名 + 零条）\n\n## 发现\n\n零条发现（`findings: []`）。\n',
+    want: [],
+  },
+  {
+    // r2 修（R2-3）的**阳性对照**：零条发现 + 一张无关的表（检查项 / 统计）⇒ 仍然零条。
+    id: 'zero-findings-unrelated-table',
+    text: [
+      '# 技术评审（合成样本 · 零条 + 统计表）',
+      '',
+      '| 检查项 | 结果 |',
+      '|---|---|',
+      '| 代码面 | 扫了 `presets/agenia/` |',
+      '',
+      '零条发现（`findings: []`）。',
+      '',
+    ].join('\n'),
+    want: [],
+  },
   { id: 'not-a-report', text: '# 今天的日志\n\n今天没人评审，我也没看代码。\n', want: ['DEL-SAMPLE-SHAPE'] },
 ]
 
 /**
- * 评审的交活字段（`F7`）：三份清单 + `findings.json` 的单条 finding 都该有那一格。
- * 🔴 **这一格只记读数、不判产品**：`presets/**` 不在测试岗写区 —— 今天四处交活清单都没有那一格（读数里是 `false`），
- * 要补的是产品侧一行，归组长另起一条改 `presets/agenia/{job-briefs,team}`；本块不替它把产品判红。
+ * 评审的交活字段（`F7`）：四处交活清单（三份清单 + `findings.json` 的单条 finding 字段）都该有那一格。
+ * 🔴 **这一格只记读数、不判产品**：`presets/**` 不在测试岗写区 —— 产品侧已经把那一格落了（`77293be`；
+ * 读数 `slot_listed` 4/4 true，见 `readings.deliverables_counts`），本块只证"清单里有没有这一格"，
+ * 不判那一格的**值**填得对不对（归第 4/5 关）。
  */
 const REVIEW_DELIVERABLE_EXPECTATIONS = [
   {
@@ -1050,19 +1344,29 @@ const REVIEW_DELIVERABLE_EXPECTATIONS = [
 /** 0010 的三条腿（并进 `TRB-01` 那一格；产品零字节，刀与样本都只写运行根）。 */
 async function deleteFirstLegs(rec, push) {
   const readings = {
-    contract: '构案 0010 §② / §⑤ / §六；本文件 `DELETE_FIRST_*` 那一段（r1 修：F1 行序 / F2 第一格 / F3 整行 / F10 形状 / F9 样本 / F7 交活读数 + 第五处载体）',
+    contract: '构案 0010 §② / §⑤ / §六；本文件 `DELETE_FIRST_*` 那一段（r1 修：F1 行序 / F2 第一格 / F3 整行 / F10 形状 / F9 样本 / F7 交活读数 + 第五处载体；r2 修：R2-1 五行义务词与逐字面 / R2-2 交活读数自证 / R2-3 零条发现与表格证据 / R2-7 派生与自检）',
     expected_sha256: sha256Text(DELETE_FIRST_PARAGRAPH),
     expected_sha256_pinned: DELETE_FIRST_SHA256,
-    expected_slots: DELETE_FIRST_LINE_SLOTS.map((s) => ({ line: s.line, label: s.label })),
+    expected_slots: DELETE_FIRST_LINE_SLOTS.map((s) => ({ line: s.line, label: s.label, anchors: s.anchors })),
+    expected_force: DELETE_FIRST_FORCE.map((s) => ({ line: s.line, words: s.words })),
+    self_check: [],
     carriers: {},
     knives: {},
     sample: {},
     deliverables: {},
+    deliverables_counts: null,
   }
   rec.readings.delete_first = readings
   // 期望侧自检：常量必须与派工卡给的独立摘要一致（复制错一个字，这里先红；别等五份产品去证明它）。
   if (readings.expected_sha256 !== DELETE_FIRST_SHA256) {
     push('DEL-EXPECTED-DRIFT', `期望段常量的 sha256 = ${readings.expected_sha256}，派工卡给的是 ${DELETE_FIRST_SHA256} —— 期望文本被改过（不是产品的问题）`)
+  }
+  // 期望侧自检（R2-7）：手写锚 / 义务词 / 短语必须真的长在期望行里（否则针指向不存在的字，红因会指错地方）。
+  for (const check of DELETE_FIRST_SELF_CHECKS) {
+    if (!DELETE_FIRST_LINES[check.line - 1].includes(check.needle)) {
+      readings.self_check.push(check.what)
+      push('DEL-EXPECTED-DRIFT', `期望段自检：${check.what} 不在第 ${check.line} 行里 —— 期望文本被改过，这一针会指向不存在的字（不是产品的问题）`)
+    }
   }
 
   // ── ① 五份原件：阳性对照（必须 0 problem），同时记整段 sha256 / 行号 / 整行命中 ────────────
@@ -1085,11 +1389,16 @@ async function deleteFirstLegs(rec, push) {
       paragraph_sha256: out.block === null ? null : sha256Text(out.block.raw),
       priority_whole_hits: lines.filter((l) => l.trim() === DELETE_FIRST_PRIORITY_LINE).length,
       priority_embedded_hits: lines.filter((l) => l.includes(DELETE_FIRST_PRIORITY_LINE)).length,
+      force_verbatim: out.block === null ? null : DELETE_FIRST_FORCE.filter((at) => {
+        const hit = out.block.lines.filter((l) => l.includes(at.anchor))
+        return hit.length === 1 && hit[0].trim() === DELETE_FIRST_LINES[at.line - 1]
+      }).length,
       codes: out.problems.map((p) => p.code),
     }
   }
   readings.carriers_note = '五份整段的 sha256 记在这里（同一段文字 ⇒ 同值）；分叉由人看一眼。'
-    + '逐字面钉三样：优先级句整行（腿 1）、两种完整形状（腿 2）、五行顺序 + 第一格（腿 3）。'
+    + '逐字面钉在**行**上：优先句整行（腿 1）、两种完整形状（腿 2）、五行顺序 + 第一格（腿 3）、'
+    + '四行的义务词 + 逐字面（`force_verbatim` 4/4：第 1 / 2 / 4 行归腿 3、第 5 行归腿 2）。'
 
   // ── ② 腿 2b：合成报告样本（判样本，不判真报告）────────────────────────────
   for (const sample of DELETE_FIRST_SAMPLES) {
@@ -1110,10 +1419,15 @@ async function deleteFirstLegs(rec, push) {
       push('DEL-SAMPLE-CONTROL', `[合成报告样本/${sample.id}] 红因必须点名那条发现 ${sample.names}，实得 ${JSON.stringify(out.problems.map((p) => p.message))}`)
     }
   }
-  readings.sample.note = '判的是**合成样本**，不是真报告：本腿只收三种报告形状（发现块 / 表格 / 零条发现声明），'
+  readings.sample.note = '判的是**合成样本**，不是真报告：本腿只收三种报告形状（「发现 <id>」块 / 表格 / 零条发现声明），'
     + '粗体标签 / 全角冒号 / 反斜杠路径也收；真报告的 Markdown 形状在交活清单里没有规定，这一格不替它发明格式，'
     + '也不证明评审会照做。证据粒度上，段落只说「调用方 / 可达性」，样本要 `file:line` 或 `0 处`（更严）——'
     + '这个差是卡的判据与段落之间的粒度差，归第 4/5 关的人眼。'
+    + 'r2 修（R2-3）后的口径：① 零条发现 = 真的没有发现形状的东西（任何级别的「发现 <id>」标题、'
+    + '读得出表头的**发现表**行都不许有 —— 光一个 `## 发现` 节名、或一张无关的统计表不算；声明要正面写）；'
+    + '② 表格行必须有证据列且那一格有字 —— **唯一例外**是槽那一格写 `未验` 时允许 `—`'
+    + '（没验就没有证据），所以表格样本里 F3 那一行的绿**不证明**「证据被检查」，证明证据列的是两条红样本；'
+    + '③ 发现块那一种形状**不查证据**（只查那一格的值），别把它的绿读成"证据也被检查了"。'
 
   // ── ③ 交活字段（F7）：只记读数，不判产品 ──────────────────────────────────
   for (const item of REVIEW_DELIVERABLE_EXPECTATIONS) {
@@ -1126,8 +1440,15 @@ async function deleteFirstLegs(rec, push) {
       slot_listed: sec !== null && sec.raw.includes(DELETE_FIRST_SLOT_NAME),
     }
   }
-  readings.deliverables_note = '四处「交活」清单今天都没有 `删除可行性` 那一格（读数 `slot_listed:false`）—— 这是评审 F7 的缺口；'
-    + '测试岗不改 `presets/**`，补产品文字那一行归组长（另起一条）。本块只把缺口记成读数，不判产品红。'
+  // r2 修（R2-2）：这一段话**从值派生**，不再手写「四处都是 false」—— 产品侧一落（`77293be`），
+  // 手写的那句就和 4/4 的读数自相矛盾（读数自己打自己，比两处都错更难发现）。
+  const deliverableRows = Object.entries(readings.deliverables)
+  const listedKeys = deliverableRows.filter(([, d]) => d.slot_listed).map(([k]) => k)
+  const missingKeys = deliverableRows.filter(([, d]) => !d.slot_listed).map(([k]) => k)
+  readings.deliverables_counts = { listed: listedKeys.length, total: deliverableRows.length, missing: missingKeys }
+  readings.deliverables_note = `${listedKeys.length}/${deliverableRows.length} 处交活清单写着 \`${DELETE_FIRST_SLOT_NAME}\` 那一格`
+    + (missingKeys.length === 0 ? '（四处齐了）' : `；没写的：${JSON.stringify(missingKeys)}（要补的是产品侧一行，归组长）`)
+    + ' —— 这一格只记读数、**不判产品红**：判的是"清单里有没有这一格"，那一格的**值**填得对不对归第 4/5 关。'
 
   // ── ④ 刀：每把只翻自己那条腿（`also` 里声明的例外也要真红）─────────────────────
   for (const knife of DELETE_FIRST_KNIVES) {
@@ -1145,7 +1466,6 @@ async function deleteFirstLegs(rec, push) {
     const out = deleteFirstProblems(knife.carrier, mutated.text)
     const codes = out.problems.map((p) => p.code)
     const also = knife.also ?? {}
-    const allowed = new Set(Object.values(also).flat())
     const foreign = {}
     for (const leg of ['priority', 'slot', 'order']) {
       if (leg === knife.leg) continue
@@ -1187,5 +1507,5 @@ async function deleteFirstLegs(rec, push) {
   }
 }
 
-test('TRB-01 作业书 `job-briefs/technical-review.md` §三「地基」：七条义务逐句咬住 + 整段反面话必红（副本里翻面、还原变绿）· 另 0010 删除优先三腿（五处同文 / 五行顺序 + 第一格逐字 / 那一格在合成样本里可核对）', runDocCase('TRB-01', 'brief', deleteFirstLegs))
+test('TRB-01 作业书 `job-briefs/technical-review.md` §三「地基」：七条义务逐句咬住 + 整段反面话必红（副本里翻面、还原变绿）· 另 0010 删除优先三腿（五处同文 / 五行顺序 + 第一格逐字 / 五行业务词逐字 / 那一格在合成样本里可核对）', runDocCase('TRB-01', 'brief', deleteFirstLegs))
 test('TRB-02 说明书 `team/technical-review.md` §一「地基」：四条义务逐句咬住 + 整段反面话必红（副本里翻面、还原变绿）', runDocCase('TRB-02', 'charter'))
