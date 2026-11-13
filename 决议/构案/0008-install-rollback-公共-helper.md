@@ -49,7 +49,11 @@ B1 只治了 `writeFileAtomic` 一处；这 8 个是同一类病（下一次只�
 
 - 新模块 `presets/agenia/lib/cli-guards.mjs`（8 个导出）
 - 内联机制从「一个块」到「两个块」（发布器 + 出厂件断言 + 声明算术）
-- 一条判据：这 8 个 helper 在 `presets/**` 里**各只有一处定义**（`install.mjs` / `rollback.mjs` 里 0 定义），刀 = 手抄回一份必红
+- 一条判据，**按实测拆三腿**（组长原稿写「各只有一处定义」是**量都没量就写的错**：`driveOf` 还在 `release-scan.mjs:170`、`emit` 在另外 5 个 CLI、`isUnder`/`normKey` 本来就在 `lib/paths.mjs:137/130` —— 抽完是 2/6/2/2 不是 1；要它字面绿就得删别的票的代码）：
+  (a) **成对腿**：`install.mjs` / `rollback.mjs` 里这 8 个**各 0 处定义**；
+  (b) **共享腿**：每个在 `lib/cli-guards.mjs` 的共享块里**恰好 1 处**且导出；
+  (c) **同名清单腿**：这 8 个名字在冻结的「同名允许清单」之外**不得有定义**（清单逐条给文件 + 理由；剩下的同名者是别的票的范围）。
+  刀：手抄回一份 ⇒ (a) 红并点名两边 · 删共享定义 ⇒ (b) 红（不许崩）· 清单外新写一份 ⇒ (c) 红。
 
 ## ⑥ 公共化时点
 
@@ -68,7 +72,7 @@ B1 只治了 `writeFileAtomic` 一处；这 8 个是同一类病（下一次只�
 
 | 层 | 判据 | 读数 |
 | --- | --- | --- |
-| 定义 | 8 个 helper 在 `presets/**` 各 1 处定义（在 `lib/cli-guards.mjs`），install/rollback 内 0 | grep 计数 + 判据一条 |
+| 定义 | 三腿：成对腿（两文件 0）· 共享腿（`lib/cli-guards.mjs` 各 1）· 清单腿（清单外 0） | 三条读数 + 各自刀 |
 | 出厂件 | staged `rollback.mjs` 零静态 import · 两个内联块都在 · 指纹与共享源同源 | 判据读数 |
 | 声明 | `target-lag.json` 单条、`bin/rollback.mjs`、双 sha + `lag_bytes` 实测对上 | 发布器 + 导出器 |
 | 行为 | install→rollback 真机跑（staged 对）exit 0、数据未动、无残留 | 探针 |
