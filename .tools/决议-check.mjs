@@ -4,7 +4,7 @@
  *
  * 规格：`.team/test/2026-11-12/CONTRACT-构案.md`（下称「契约」）§5（判词）· §6（拒接闸）· §4（派生叶对账）。
  *
- * 三个 op（`--op=<x>` 与 `--op <x>` 两种写法都收）：
+ * 四个 op（`--op=<x>` 与 `--op <x>` 两种写法都收）：
  *
  *   · `check`（缺省）—— 判七件事，**只读**：
  *       ① 头块七键齐 / 可解析 / 值形状对        ② 指针解析得到 + 双向对称 + 不许自称
@@ -12,6 +12,10 @@
  *       ⑤ 状态与指针自洽                        ⑥ 生效构案的 主题 在概念表里
  *       ⑦ 构案正文七节 + ⑦ 反悔条件那张四列表
  *   · `gate2-card --card=<路径>` —— 第 2 关拒接闸：**新机制票无构案编号 ⇒ 拒**（exit 1，fail-closed）。
+ *   · `card-land --card=<路径> --day=<YYYY-MM-DD> --role=<test|dev|review|design>` —— **派工路径上的那一道**
+ *       （`bug-20261112-09`）：把卡逐字节落到 `<root>/.team/leader/<day>/cards/<HHmmss>-<role>.md`
+ *       （`open(…,'wx')` 独占建，永不覆盖），**再在落下去的那一份上**跑上面那条 `gate2-card`。
+ *       拒 ⇒ exit 1 + 闸自己的码；过 ⇒ exit 0 + `card landed: <路径>` + 闸的 `GATE2-PASS` 那一句。
  *   · `supersede <旧编号> --by <新编号>` —— 组长跑的**写手**：只翻旧文头块两个字段
  *       （`状态`→`已废`、`superseded_by`→新编号），**正文一个字节不动**；指针不成立就拒。
  *
@@ -27,7 +31,7 @@
  * 退出码（契约 §5.5）：`0` 无 problems · `1` 有 problems（含 gate 拒接 / supersede 拒做）· `3` 用法或根不成立。
  */
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, writeSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { writeFileAtomic } from '../presets/agenia/lib/atomic.mjs'
@@ -484,6 +488,158 @@ export function runGate2Card({ root, card }) {
   return out
 }
 
+/**
+ * `gate2-card` 那一句判词 —— `--op gate2-card` 与 `--op card-land` **共用这一处渲染**。
+ *
+ * 为什么不让两个 op 各印一遍：同一句事实两处各写一份，下一次只改一处就分叉，
+ * 而分叉的样子恰好是"闸拒了，卡那边却印了过"。拒的前缀与码同源：闸自己的码是 `GATE2-*`，
+ * `card-land` 的写盘失败是 `E_TXN_IO` —— 看码就知道拒在哪一层。
+ */
+function gate2Line(out) {
+  if (out === null || out === undefined) return 'GATE2-REFUSE GATE2-CARD-MISSING: （没有判词）\n'
+  return out.ok === true
+    ? `GATE2-PASS · ${out.ticket_kind} · 构案 ${out.decision}\n`
+    : `GATE2-REFUSE ${out.code}: ${out.problems[0]?.message ?? ''}\n`
+}
+
+// ── op: card-land（把第 2 关拒接闸接到派工路径上 · `bug-20261112-09`）──────────
+/** `--role` 的**闭集** —— 卡落在谁那一格由它说；写错一个字母就是把卡放进没人读的抽屉。 */
+export const CARD_ROLES = Object.freeze(['test', 'dev', 'review', 'design'])
+
+/** 同名（同一秒 + 同一 role）时最多顺延到第几个名字；用完就拒，不覆盖。 */
+const LAND_MAX_ATTEMPTS = 20
+
+/** `--day` 的形状**且**真是这一天（`2026-02-30` 会被 `Date` 规整成 3 月 ⇒ 与原文不符 ⇒ 假）。 */
+export function dayShapeOk(day) {
+  if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(day)) return false
+  const t = Date.parse(`${day}T00:00:00Z`)
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === day
+}
+
+/** 文件名里的时刻：**本机此刻**（`--day` 是抽屉，不是时钟）。 */
+function hhmmssOf(now) {
+  const p = (n) => String(n).padStart(2, '0')
+  return `${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`
+}
+
+/**
+ * **派工卡落地 → 在落下去的那一份上跑 `gate2-card`**（`bug-20261112-09`）。
+ *
+ * 一条命令两件事，顺序不能反：
+ *   ① **先落**：输入卡的字节**逐字**写进 `<root>/.team/leader/<day>/cards/<HHmmss>-<role>.md`，
+ *      写完再读回来逐字节比一遍（`verbatim.same`）—— 落下去的若与输入不同，"判过的就是落下的"
+ *      这句话当场不成立，拒。
+ *   ② **后判**：`runGate2Card({card: <落下去的那一份>})` —— 闸判的路径就是最终路径。
+ *      先判后落的话，判过的字节与落下去的字节之间隔着一次重读，那正是"量的是副本"要防的形。
+ *
+ * **拒了也不删**：`cards/` 是追加的证据抽屉，被拒的卡留在那里才答得出"这票被拒过、拒在哪个码"。
+ * 所以拒的那一路印的是 `card kept:`，`card landed:` 只留给过闸的那一张（一个词不许两个意思）。
+ *
+ * **永不覆盖**（append-only）：落盘用 `open(…, 'wx')` 独占建，同名（同一秒 + 同一 role）就顺延
+ * `-2` / `-3`。这里**不用** `writeFileAtomic`：共享原子写是"替换"语义（临时件 rename 过去，
+ * 目标在不在都会被盖掉），而这一条要的是"目标在就换名字"。也没有临时名 / 没有 rename
+ * ⇒ 「原子写剩余实现」那一行按形状数不到它。
+ *
+ * 卡首一个字都不补：没有 `票类:` / `构案:` 就是没有 —— 那正是这道闸要拒的东西。
+ *
+ * @param {{root:string, card:string, day:string, role:string, build?:string|null, now?:Date}} p
+ * @returns `card-land` 的整份读数：过闸时 `ok:true` / `verdict:'pass'` / `decision` = 解析到的编号；
+ *          拒时 `ok:false` / `verdict:'refuse'` / `code` = 闸的码（或 `E_TXN_IO`），
+ *          `landed` 仍是那张卡落下去的地方（除非它连盘都没上去）。
+ */
+export function runCardLand({ root, card, day, role, build = null, now = new Date() }) {
+  const out = {
+    ok: false, root: path.resolve(root), op: 'card-land',
+    verdict: 'refuse', code: null, day, role, build,
+    card: card ?? null, landed: null,
+    bytes: null, sha256: null,
+    ticket_kind: null, decision: null, problems: [], readings: {}, gate: null,
+  }
+  const refuse = (code, message, extra = {}) => {
+    out.verdict = 'refuse'
+    out.code = code
+    out.problems = [problem(code, message, extra)]
+    out.ok = false
+    return out
+  }
+  if (!dayShapeOk(day)) {
+    return refuse('E_ARG_USAGE', `--day ${JSON.stringify(day ?? null)} 不是一个真日期（要 YYYY-MM-DD，且这一天真的存在）`)
+  }
+  if (!CARD_ROLES.includes(role)) {
+    return refuse('E_ARG_USAGE', `--role ${JSON.stringify(role ?? null)} 不认识 —— 卡只能落进 ${CARD_ROLES.join(' / ')} 这四格之一`)
+  }
+  if (typeof card !== 'string' || card === '' || !existsSync(card)) {
+    return refuse('GATE2-CARD-MISSING', `派工卡读不出来：${JSON.stringify(card ?? null)} —— 读不到卡就是拒（契约 §6.2）`)
+  }
+  let buf
+  try {
+    buf = readFileSync(card)
+  } catch (err) {
+    return refuse('GATE2-CARD-MISSING', `派工卡读不出来（${err?.code ?? 'UNKNOWN'}）：${card}`)
+  }
+  const dir = path.join(out.root, '.team', 'leader', day, 'cards')
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch (err) {
+    return refuse('E_TXN_IO', `卡抽屉建不出来（${err?.code ?? 'UNKNOWN'}）：${err?.message}（${dir}）`)
+  }
+  const base = `${hhmmssOf(now)}-${role}.md`
+  const nameOf = (n) => (n === 1 ? base : base.replace(/\.md$/u, `-${n}.md`))
+  for (let n = 1; n <= LAND_MAX_ATTEMPTS; n += 1) {
+    const candidate = path.join(dir, nameOf(n))
+    let handle = null
+    try {
+      handle = openSync(candidate, 'wx')
+      writeSync(handle, buf)
+      fsyncSync(handle)
+      closeSync(handle)
+      handle = null
+    } catch (err) {
+      if (handle !== null) {
+        try { closeSync(handle) } catch { /* 已经在失败路径上，关不掉就算了 */ }
+      }
+      if (err?.code === 'EEXIST') continue
+      return refuse('E_TXN_IO', `卡落不进去（${err?.code ?? 'UNKNOWN'}）：${err?.message}（${candidate}）`)
+    }
+    out.landed = candidate
+    break
+  }
+  if (out.landed === null) {
+    return refuse('E_TXN_IO', `${dir} 里同一秒的 ${role} 卡已经占了 ${LAND_MAX_ATTEMPTS} 个名字 —— 这一秒不再往下试`)
+  }
+  out.bytes = buf.length
+  out.sha256 = sha256(buf)
+  let landedBuf = null
+  try {
+    landedBuf = readFileSync(out.landed)
+  } catch (err) {
+    landedBuf = null
+  }
+  if (landedBuf === null || Buffer.compare(landedBuf, buf) !== 0) {
+    return refuse('E_TXN_IO', `落下去的那一份与输入不逐字节相同：${out.landed} —— 这一张不许当"落地了"（路径留着，人去看）`)
+  }
+  out.readings = {
+    land: 'open(…, "wx") 独占建 · 追加不覆盖 · 同名顺延 -2 / -3',
+    name_rule: '<HHmmss>-<role>.md（HHmmss = 本机此刻；冲突就顺延）',
+    verbatim: { bytes: buf.length, sha256: out.sha256, source: card, landed: out.landed },
+  }
+  const gate = runGate2Card({ root: out.root, card: out.landed })
+  out.gate = gate
+  out.ticket_kind = gate.ticket_kind
+  out.decision = gate.decision
+  if (gate.ok) {
+    out.verdict = 'pass'
+    out.code = null
+    out.ok = true
+    return out
+  }
+  out.verdict = 'refuse'
+  out.code = gate.code
+  out.ok = false
+  out.problems = gate.problems
+  return out
+}
+
 // ── op: supersede（组长跑的写手）────────────────────────────────────────────
 /**
  * 一次原子翻转。**只碰头块那两个字段**：
@@ -621,13 +777,13 @@ export function runSupersede({ root, oldRef, byRef, dryRun = false }) {
  * `DECISION-CHECK-USAGE:`、stdout 上没有信封码。`--op supersede <旧编号>` 的那个位置参数照收。
  */
 export const ARG_SPEC = {
-  value: { '--op': 'op', '--root': 'root', '--card': 'card', '--by': 'by' },
+  value: { '--op': 'op', '--root': 'root', '--card': 'card', '--by': 'by', '--day': 'day', '--role': 'role', '--build': 'build' },
   flag: { '--json': 'json', '--dry-run': 'dryRun' },
   defaults: { op: 'check' },
   positional: true,
 }
 
-const OPS = new Set(['check', 'gate2-card', 'supersede'])
+const OPS = new Set(['check', 'gate2-card', 'card-land', 'supersede'])
 
 export function main(argv = process.argv.slice(2)) {
   let args
@@ -639,7 +795,8 @@ export function main(argv = process.argv.slice(2)) {
   }
   const usage = (msg) => {
     process.stderr.write(`DECISION-CHECK-USAGE: ${msg}\n`
-      + '  用法：node .tools/决议-check.mjs [--root=<绝对目录>] [--json] [--op=<check|gate2-card|supersede>] [--card=<路径>] [--by=<新编号>]\n')
+      + '  用法：node .tools/决议-check.mjs [--root=<绝对目录>] [--json] [--op=<check|gate2-card|card-land|supersede>]'
+      + ' [--card=<路径>] [--by=<新编号>] [--day=<YYYY-MM-DD>] [--role=<test|dev|review|design>] [--build=<编号>]\n')
     process.exit(3)
   }
   if (!OPS.has(args.op)) usage(`--op ${JSON.stringify(args.op)} 不认识（只认 ${[...OPS].join(' / ')}）`)
@@ -656,8 +813,26 @@ export function main(argv = process.argv.slice(2)) {
     if (args.card === null) usage('--op gate2-card 必须给 --card=<路径>')
     const out = runGate2Card({ root, card: args.card })
     if (args.json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`)
-    else if (out.verdict === 'pass') process.stdout.write(`GATE2-PASS · ${out.ticket_kind} · 构案 ${out.decision}\n`)
-    else process.stdout.write(`GATE2-REFUSE ${out.code}: ${out.problems[0]?.message ?? ''}\n`)
+    else process.stdout.write(gate2Line(out))
+    process.exit(out.ok ? 0 : 1)
+  }
+
+  if (args.op === 'card-land') {
+    if (args.card === null) usage('--op card-land 必须给 --card=<路径>')
+    if (args.day === null) usage('--op card-land 必须给 --day=<YYYY-MM-DD>')
+    if (!dayShapeOk(args.day)) usage(`--day ${JSON.stringify(args.day)} 不是一个真日期（要 YYYY-MM-DD，且这一天真的存在）`)
+    if (args.role === null) usage('--op card-land 必须给 --role=<test|dev|review|design>')
+    if (!CARD_ROLES.includes(args.role)) usage(`--role ${JSON.stringify(args.role)} 不认识 —— 卡只能落进 ${CARD_ROLES.join(' / ')} 这四格之一`)
+    const out = runCardLand({ root, card: args.card, day: args.day, role: args.role, build: args.build })
+    const buildTail = out.build === null || out.build === undefined ? '' : ` · build ${out.build}`
+    if (args.json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`)
+    else if (out.ok) {
+      process.stdout.write(`card landed: ${out.landed}${buildTail}\n`)
+      process.stdout.write(gate2Line(out.gate))
+    } else {
+      if (out.landed !== null) process.stdout.write(`card kept: ${out.landed}${buildTail}\n`)
+      process.stdout.write(gate2Line(out))
+    }
     process.exit(out.ok ? 0 : 1)
   }
 
