@@ -5,18 +5,20 @@
  * 决定：`决议/构案/0008-install-rollback-公共-helper.md` §决定 ①②。
  *
  * ## 病（2026-11-13 现量 · 本文件的常量就是从这一次量出来的）
- * `presets/agenia/bin/install.mjs` 与 `rollback.mjs` 共有 **18 个同名函数**：
+ * `presets/agenia/bin/install.mjs` 与 `rollback.mjs` 共有 **18 个同名函数**（B3 现量；B4 起这张量具管 **16 个**
+ * —— `parseArgs` / `cliError` 移交给 `lib/cli-harness.mjs`，见下）：
  *   · **8 个逐字同体**（合计 2,194 字符）—— `assertDeletableTarget` · `defaultBackupRoot` · `driveOf` ·
  *     `emit` · `isUnder` · `normKey` · `pathVerdict` · `slugOf`。两份各揣一份，改一边不会有任何判据变红；
- *   · **10 个已分叉**（语义已经不同）—— `allowedDeleteRoots` · `canonical` · `cliError` · `insideTestScene` ·
- *     `main` · `parseArgs` · `refuseDelete` · `resolveWithin` · `treeHashOf` · `walkFiles`。
+ *   · **已分叉的同名函数**（B3 时 10 个、B4 起 8 个 —— `parseArgs` / `cliError` 移交给
+ *     `lib/cli-harness.mjs`，由 `support/cli-harness-shared.mjs` 判）：`allowedDeleteRoots` · `canonical` ·
+ *     `insideTestScene` · `main` · `refuseDelete` · `resolveWithin` · `treeHashOf` · `walkFiles`。
  *     它们**不在本票**：盲合会把行为改掉。这一份量具只给它们留一条**范围腿**（"别顺手合并"）。
  *
  * ## 判什么（一条用例 = 一格；这里只是那两腿的量具）
  *   · **腿 ③ · 定义**：8 个 helper 在 `presets/**` 里各**恰好 1 处**定义，落在
  *     `presets/agenia/lib/cli-guards.mjs` 的**标记块**（`@inline-begin 公共 helper 正文` … ）里、
  *     且是 `export`；`install.mjs` / `rollback.mjs` 里各 **0 处**。
- *   · **腿 ⑤ · 已分叉的 10 个不许被动**：每个在 `install.mjs` / `rollback.mjs` 里仍**各 1 处**
+ *   · **腿 ⑤ · 已分叉的 8 个不许被动**：每个在 `install.mjs` / `rollback.mjs` 里仍**各 1 处**
  *     （合计 2）—— 合并 / 删除任何一支都红（防范围蔓延）。
  *
  * ## 三条口径（写在明处）
@@ -49,14 +51,21 @@ export const SHARED_HELPERS = Object.freeze([
   'slugOf',
 ])
 
-/** 10 个**已分叉**的同名函数（**不在本票**；只判"没有被顺手合并 / 删掉"）。 */
+/**
+ * 已经**分叉**的同名函数（B3 时 10 个；**B4 起 8 个** —— `parseArgs` / `cliError` 已交给
+ * `lib/cli-harness.mjs`，见下）。
+ *
+ * 🔴 **2026-11-13 的第二刀（构案 0009 · 史山清查 B4）**：`parseArgs` 与 `cliError` 从这张表里**移出**。
+ *    它们的两支 CLI 副本（`install.mjs` / `rollback.mjs`）由 B4 的骨架腿判（0 处定义 + 共享件 1 处），
+ *    比这里"各 1 处"更严 —— 两张表同时管这两个名字只会互相打脸（B4 落地那一刻这一格会红成假红）。
+ *    `main` 留在表里：B4 明确不动 `main`（每个入口本来就不同），"两支各 1 处"仍是它的范围栅栏。
+ *    `emit` 从来不在这一族（B3 已把它做成共享件）。
+ */
 export const FORKED_HELPERS = Object.freeze([
   'allowedDeleteRoots',
   'canonical',
-  'cliError',
   'insideTestScene',
   'main',
-  'parseArgs',
   'refuseDelete',
   'resolveWithin',
   'treeHashOf',
@@ -339,7 +348,7 @@ export function helperDefinitionVerdict(reading) {
     const missing = counts.filter((c) => c.hits.length !== 1).map((c) => `${c.file}:${c.hits.length} 处`)
     if (missing.length > 0) {
       push('CG-FORK-COUNT',
-        `\`${name}\` 是**已分叉**的 10 个之一（不在本票）—— 它在两支 CLI 里必须**各 1 处**，`
+        `\`${name}\` 是**已分叉**的 ${FORKED_HELPERS.length} 个之一（不在本票）—— 它在两支 CLI 里必须**各 1 处**，`
         + `实得 ${counts.map((c) => `${c.file}:${c.hits.length}`).join(' · ')}`
         + `（少的：${missing.join(' / ')}）；合并 / 删除它会改掉行为，这一票不许动它`)
     }

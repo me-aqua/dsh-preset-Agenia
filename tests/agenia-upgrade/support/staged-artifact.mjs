@@ -14,10 +14,10 @@
  *     两棵树因此**必然不同** ⇒ 由 `<staging>/target-lag.json` 声明成**受控差异**，
  *     `STAT-01` 判「差异已声明」而不是「分叉」。
  *
- * 🔴 **2026-11-13（构案 0008 · B3）起，内联**两块**：`原子写并集正文`（B1）+
- *     `公共 helper 正文`（8 个 install/rollback 共用 helper）。两块的字面量与指纹都在
- *     `injector-inline.mjs::INLINE_BLOCKS` 里（**一份**来源），本文件只判"出厂件里那两段
- *     与 `lib/` 里那两段是同一段正文"。
+ * 🔴 **2026-11-13（构案 0008 · B3）起，出厂件里内联的是"共享正文"那几块**：`原子写并集正文`（B1）+
+ *     `公共 helper 正文`（8 个 install/rollback 共用 helper）。块的字面量与指纹都在
+ *     `injector-inline.mjs::INLINE_BLOCKS` 里（**一份**来源），本文件只判"出厂件里那几段
+ *     与 `lib/` 里那几段是同一段正文"。
  *
  * 三条口径（写在明处）：
  *   ① **"内联了没有"看的是正文同源**（`normalizeBlock` 之后逐字相等），不是字节偏移、
@@ -534,13 +534,14 @@ export function retryBudgetVerdict(reading) {
   return { verdict: problems.length === 0 ? 'GREEN' : 'RED', problems }
 }
 
-// ── 腿 7b · 出厂件里的**两块**内联（构案 0008 · 史山清查 B3）────────────────────────
+// ── 腿 7b · 出厂件里的**每块**内联（构案 0008 · 史山清查 B3）────────────────────────
 /**
- * 读出**两块**内联的读数：每块一行，说清"共享件那一块在第几行 / 出厂件那一块在第几行 /
+ * 读出**每一块**内联的读数：每块一行，说清"共享件那一块在第几行 / 出厂件那一块在第几行 /
  * 规范化之后是不是同一段 / 每条指纹两边各出现几次"。
  *
- * 判据对象只有**出厂件**（`<staging>/preset/bin/rollback.mjs`）与**共享件**（`lib/` 那两份）；
- * repo 那一份 `bin/rollback.mjs` 不在这里判（它现在 import 共享件，由 `INS-02 ③` 的普查腿判）。
+ * 判据对象只有**出厂件**（`<staging>/preset/bin/rollback.mjs`）与**共享件**（`INLINE_BLOCKS` 的
+ * `sourceRel` 那几份）；repo 那一份 `bin/rollback.mjs` 不在这里判（它 import 共享件，由 `INS-02 ③`
+ * 的普查腿与 `cli-harness-shared.mjs` 的骨架腿判）。
  *
  * @param {{presetRoot?: string, repoRoot?: string}} [input]
  */
@@ -610,7 +611,7 @@ export function inlineBlocksReading({ presetRoot = PATHS.stagedPreset, repoRoot 
 }
 
 /**
- * 腿 7b 的判词：**两块都在** · **两块都与共享件同源** · 每块指纹两边同值 · 不许留下第二份定义。
+ * 腿 7b 的判词：**每一块都在** · **每一块都与共享件同源** · 每块指纹两边同值 · 不许留下第二份定义。
  *
  * 码的分工（红的时候读得出"是哪一块、缺还是漂"）：
  *   · `SHIP-INLINE-SOURCE-MISSING` —— 共享件那一块都不在（发布器的源没了，判不了同源）；
@@ -623,7 +624,7 @@ export function inlineBlocksVerdict(reading) {
   const problems = []
   const push = (code, message, detail) => problems.push({ code, message, detail: detail ?? null })
   if (!reading.exists) {
-    push('SHIP-ROLLBACK-MISSING', `出厂件里没有 ${SHIPPED_ROLLBACK_REL}：${reading.file} —— 两块内联无从判起`)
+    push('SHIP-ROLLBACK-MISSING', `出厂件里没有 ${SHIPPED_ROLLBACK_REL}：${reading.file} —— 内联块无从判起`)
     return { verdict: 'RED', problems }
   }
   if (reading.read_error !== null) {
@@ -638,7 +639,7 @@ export function inlineBlocksVerdict(reading) {
     }
     if (row.shipped.found !== true) {
       push('SHIP-INLINE-MISSING',
-        `出厂件的 \`${row.label}\` 那一段包装不在（${JSON.stringify(row.shipped.reason)}）—— 发布器要内联**两块**：`
+        `出厂件的 \`${row.label}\` 那一段包装不在（${JSON.stringify(row.shipped.reason)}）—— 发布器要把每块共享正文都内联进去：`
         + `单文件自足 + 零静态引用（Q6）靠的就是"用户那一份里什么都有"；缺 @${row.label} 这一块，`
         + `出厂件里的 helper 只能来自旧副本（那是这一票要清掉的第二份实现）`)
     } else if (row.source.block.found === true && row.same !== true) {

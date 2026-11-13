@@ -16,7 +16,8 @@
  *   · **腿 ③ · 公共 helper 只剩一份**：8 个**逐字同体**的 helper 在 `install.mjs` / `rollback.mjs` 里各 **0 处**定义、
  *     在 `presets/agenia/lib/cli-guards.mjs` 的 `@inline-begin 公共 helper 正文` 标记块里各 **1 处**（且导出）；
  *     别处只许出现**已知同名物**（清单在 `support/cli-guards-shared.mjs::NAMESAKE_ALLOWLIST`）。
- *     另加一条**范围腿**：10 个**已分叉**的同名函数（`canonical` / `parseArgs` / `main` …）在两支 CLI 里仍各 1 处
+ *     另加一条**范围腿**：**已分叉**的同名函数（`canonical` / `main` …；B3 时 10 个、B4 起 8 个 ——
+ *     `parseArgs` / `cliError` 已交给 `lib/cli-harness.mjs`，由腿 ⑦ 判）在两支 CLI 里仍各 1 处
  *     —— 它们不在本票，合并 / 删除任何一支都红。
  *   · **腿 ④ · staged 那一对：装 → 回 一轮**（行为面；RC-1 的绊线）：同一份现场先 `install` 再 `rollback`，
  *     两个 exit 0 · 代码回旧版 · **数据逐字节不动** · 未知文件在 · 目标树无 `.tmp-*` / `*.partial` 残渣。
@@ -28,6 +29,21 @@
  *     量具 = `support/host-adapters.mjs`（模块那份算三处里的第三处，不是第四份）。
  *   · **单位**（第 4 关 r1 `MF-3`）：读数里凡是 `*_bytes` 都是**字节**（`Buffer.byteLength`，与 `statSync().size` 同值），
  *     不是 `String.length` 的 UTF-16 code unit；要字符数读 `*_chars`。
+ *
+ * 🔴 **`INS-02` 在 2026-11-13 之后再加一组腿：CLI 骨架归一**（构案 0009 · 史山清查 B4；契约
+ *    `.team/test/2026-11-13/CONTRACT-史山清查-B4.md`）—— 病是 20 支 CLI 各写一套入口骨架，
+ *    后果是**参数形式不统一**（`bug-20261113-19` 的 `--backup-dir=<dir>` 被静默忽略）。
+ *   · **腿 ⑦ · 定义**：11 支有 `parseArgs` 的 CLI 里 `parseArgs`/`cliError`/`emit` 各 **0 处**；
+ *     `presets/agenia/lib/cli-harness.mjs` 三个名字都导出；树里 `parseArgs`/`cliError` 各 1 处定义，
+ *     `emit` 的定义仍只有 `lib/cli-guards.mjs` 那一处（两块各定义一个 `emit` ⇒ `B4-EMIT-DUPLICATE`）。
+ *     `tree-at-commit.mjs` 可以经**具名允许清单**（文件名 + ≥ 24 字理由）留着它自己的 `parseArgs`；
+ *     清单今天是**空的** ⇒ 读数里就写"空 ⇒ 严格形态"（放行了谁要看得见，不许悄悄放行）。
+ *   · **腿 ⑧ · 参数形式**：11 支各自 `--k v` 与 `--k=v` 的退出码与输出**逐字相同**；未知参数 ⇒ 非零退出 +
+ *     stdout 信封 `error.code === 'E_ARG_USAGE'`（**静默算红** —— 那正是 `-19` 的根因）。
+ *     两把刀：合成骨架自控（今天跑）/ 真源刀（Gate 3 之后，把共享件里带锚那一行换成"静默"⇒ 必须点名那一支）。
+ *   · **腿 ⑨ · 行为**：11 支平凡路径 exit 0；3 支代表 CLI 的 4 条主路径 = **改前冻结的退出码**
+ *     （`brain init` 0 / `brain state-read` 7·`E_DATA_MISSING` / `local health` 0 / `census --json` 0）。
+ *   · **腿 ⑩ · `main` 栅栏**：仍是 **13 处**（决定 §① 写 12，2026-11-13 实测 13，逐处清单在契约 §1.1）。
  */
 import { before, describe, test } from 'node:test'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
@@ -39,6 +55,7 @@ import { loadStagedModule, readStagedText, runCli, stagingExists, stagingPath } 
 import { staticImportLines } from '../support/staged-artifact.mjs'
 import { extractFunctionText } from '../support/atomic-writers.mjs'
 import { SHARED_HELPERS, helperDefinitionVerdict, scanHelperDefinitions } from '../support/cli-guards-shared.mjs'
+import { runB4Legs } from '../support/cli-harness-shared.mjs'
 import { HOST_ADAPTERS, hostAdapterVerdict, scanHostAdapters } from '../support/host-adapters.mjs'
 import { INLINE_BLOCKS, beginOf, blockOf } from '../support/injector-inline.mjs'
 import { LEFTOVER_SHAPE } from '../support/temp-scan.mjs'
@@ -716,6 +733,18 @@ describe('integration · install-rollback (INS)', () => {
       seqReading.refusal_knives = refusalKnives
       rec.readings.staged_pair_roundtrip = { ...seqReading, problem_codes: seqProblems.map((p) => p.code) }
       for (const p of seqProblems) push(p.code, `[腿④ 装→回一轮] ${p.message}`, p.detail)
+
+      // ══ 腿 ⑦–⑩ · CLI 骨架归一（构案 0009 · 史山清查 B4）═══════════════════════════════════
+      // 病：20 支 CLI 各写一套入口骨架（parseArgs 11 套 / cliError 7 套 / emit 3 种），
+      // 后果是**参数形式不统一**（`bug-20261113-19`：`--backup-dir=<dir>` 被静默忽略、回落默认目录）。
+      // 这一组判四件（口径与逐条刀都在 `.team/test/2026-11-13/CONTRACT-史山清查-B4.md`）：
+      //   ⑦ 定义：11 支里 `parseArgs`/`cliError`/`emit` 各 0 处；共享件各导出；树里各 1 处定义
+      //   ⑧ 参数：`--k v` 与 `--k=v` 不可区分；未知参数报 `E_ARG_USAGE`（静默 ⇒ 红并点名那一支）
+      //   ⑨ 行为：每支的平凡路径 exit 0；3 支代表 CLI 的主路径 = 改前冻结的退出码
+      //   ⑩ 栅栏：`main` 仍是 13 处（决定 §① 写 12，2026-11-13 实测 13 —— 见读数）
+      const b4 = runB4Legs({ repo: PATHS.repo, stagedPreset: PATHS.stagedPreset, runRoot: runRoot(), env: process.env })
+      rec.readings.cli_skeleton = b4.readings
+      for (const p of b4.problems) push(p.code, `[腿⑦–⑩ CLI 骨架] ${p.message}`)
 
       caseFail(problems)
     })

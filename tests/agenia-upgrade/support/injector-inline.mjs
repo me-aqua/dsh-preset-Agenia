@@ -6,8 +6,9 @@
  * 🔴 **2026-11-13 起，这一份还是"内联块"字面量的唯一出处**（构案 0008 · 史山清查 B3）：
  * `INLINE_BLOCKS` 里有**两块**（`atomic` / `guards`），`@inline-begin/@inline-end` 的标签、
  * 出厂件那一侧的成对包装标记前缀、每块的正文指纹，全部从这张表派生。
- * 腿 10（注入器同源）只读 `atomic` 那一块；`support/staged-artifact.mjs` 的腿 7b（出厂件两块）
+ * 腿 10（注入器同源）只读 `atomic` 那一块；`support/staged-artifact.mjs` 的腿 7b（出厂件每一块）
  * 与 `support/cli-guards-shared.mjs` 的普查腿各读自己那一块 —— **不许**在别处再写一遍这些字面量。
+ * ⚠️ 构案 0009（B4）的第三块 `CLI 骨架正文` 到 Gate 3 才搬进来（搬运时点见文件末那条注释）。
  *
  * 病：`inject.js` 是**注入器**（宿主加载、ESM 缓存），它不一定能静态 import `lib/atomic.mjs`；
  * 若 Gate 3 把共享正文**内联**进去，就会出现第二份正文 —— 两份各自被改，谁也看不见。
@@ -40,6 +41,9 @@ export const INJECTOR_REL = 'presets/agenia/inject.js'
  * 两块的分工：
  *   · `atomic` —— `lib/atomic.mjs` 的原子写并集正文（B1 起就在内联；标记与指纹 **逐字不变**）；
  *   · `guards` —— `lib/cli-guards.mjs` 的公共 helper 正文（B3 新增：install/rollback 共用的 8 个 helper）。
+ *     ⚠️ `emit` 的**唯一定义**在这一块里（B3）。构案 0009 的 CLI 骨架共享件只能**导出**它
+ *     （`export { emit } from './cli-guards.mjs'`）—— 两块各定义一个 `emit` 就是"同一件事两份正文"，
+ *     正是那一票要清的病；骨架腿（`support/cli-harness-shared.mjs`）数这件事。
  *
  * `shipped_*` 两格是**出厂件那一侧**的包装标记（发布器写进出厂件的）：
  *   · 起点行：`// ── 出厂件内联：<标签>（…）──`（**标签必须在这一行里** —— 切块 / 剥块都靠它认人）；
@@ -87,6 +91,15 @@ export const INLINE_BLOCKS = Object.freeze({
     ]),
     definitions: Object.freeze(['assertDeletableTarget', 'defaultBackupRoot', 'driveOf', 'emit', 'isUnder', 'normKey', 'pathVerdict', 'slugOf']),
   }),
+  /**
+   * 今天只有两块：`atomic` / `guards`。
+   *
+   * 🔴 **构案 0009（史山清查 B4）会加第三块 `CLI 骨架正文`**（源 `presets/agenia/lib/cli-harness.mjs`）——
+   *    搬运时点**必须**是 Gate 3 的实现与发布**同批**：先在 Gate 2 立骨架腿（`support/cli-harness-shared.mjs`
+   *    自带一块同名的描述符），到 Gate 3 落地时把那块描述符**搬到这里**、`inlineBlocksReading` 自动多读一块。
+   *    先搬会怎样：出厂件还没带上那一块 ⇒ `ATM-01` 腿 7b 立刻红，连它自己的**阳性对照**（"真出厂件原文
+   *    应当绿"）都跟着红 —— 那一条红的来历是"还没发布"，不是 B1/B2 的病，会把两个票的读数搅在一起。
+   */
 })
 
 /** 正文标记（与各共享件里那一对逐字相同；内联副本必须用同名标记）。 */
