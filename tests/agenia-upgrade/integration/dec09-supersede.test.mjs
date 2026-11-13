@@ -14,7 +14,7 @@
  *
  * 刀：把写手复制到运行根里、**把"翻旧文状态"那一行改回去**（K1）⇒ 这一格必须红；再把正文闸摘掉、
  * 写的时候少一个换行（K2）⇒ 夹具量到的正文 sha 变了（而工具自报仍是"没变"）。
- * 副本刀不碰生产文件；刀锚点不在 ⇒ `DEC09-KNIFE-ANCHOR`。
+ * 副本刀不碰生产文件；副本树自带模块闭包（加载期不向仓库要文件）；刀锚点不在 / 闭包不闭合 ⇒ `DEC09-KNIFE-ANCHOR`。
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -157,9 +157,57 @@ test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；�
     refuse({ tag: 'refuse-no-reciprocal', spec: pair({ reciprocal: false }), old: '0001', by: '0002', wantCode: 'SUPERSEDE-NO-RECIPROCAL' })
 
     // ── ③ 两把副本刀（不碰生产文件）──────────────────────────────────────────────
+    /** 副本树的**模块闭包** —— 入口（`.tools/决议-check.mjs`）在**模块加载时**静态 import 的每一份，
+     *  除入口自己（它由 patches 版代替）：
+     *    · `.tools/lib/决议-ledger.mjs` —— 头块切分 / `INDEX` 派生那一份解析面；
+     *    · `presets/agenia/lib/atomic.mjs` —— 写盘走共享原子写（`writeFileAtomic`；`MF-1` 接走之后新增的这一份）。
+     *  两份都只 import `node:*`（`fs` / `path` / `url` / `crypto`）⇒ **闭包到它们为止，没有第四份**；
+     *  这条结论由 `assertSandboxClosed()` 每次现量，不靠这句话自证。
+     *  ⚠️ 少铺一份 = 副本子进程 `ERR_MODULE_NOT_FOUND` —— 那是"刀没跑起来"，读数却与"刀没咬住"同形。 */
+    const SANDBOX_MODULES = ['.tools/lib/决议-ledger.mjs', 'presets/agenia/lib/atomic.mjs']
+
+    /**
+     * 现量一棵副本树的闭包：从副本入口走一遍 `from '<相对路径>'`，**每一份**都必须落在副本树里，
+     * 而且走到的集合必须**恰好**是 `[入口, ...SANDBOX_MODULES]`。
+     *  · 缺一份 ⇒ 抛（`DEC09-KNIFE-ANCHOR`：刀装不起来）；
+     *  · 多一份（入口又 import 了没登记的东西）⇒ 也抛 —— 否则下一次同样会死在加载上，
+     *    而这一次的读数会像"刀咬了"。
+     * @returns {string[]} 走到的相对路径（排序；进 `readings`，刀的证据里要能看见闭包是什么）
+     */
+    const assertSandboxClosed = (dir) => {
+      const entry = '.tools/决议-check.mjs'
+      const seen = new Set()
+      const queue = [entry]
+      while (queue.length > 0) {
+        const rel = queue.shift()
+        if (seen.has(rel)) continue
+        seen.add(rel)
+        let src = null
+        try {
+          src = readFileSync(path.join(dir, rel), 'utf8')
+        } catch (err) {
+          throw new Error(`DEC09-KNIFE-ANCHOR：副本树里缺 ${rel}（${String(err?.code ?? err)}）—— `
+            + '入口模块加载时就要它，这一格会以 ERR_MODULE_NOT_FOUND 死掉，读数与"刀咬了"分不开')
+        }
+        for (const m of src.matchAll(/from\s+['"](\.[^'"]+)['"]/gu)) {
+          queue.push(path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1])))
+        }
+      }
+      const expected = new Set([entry, ...SANDBOX_MODULES])
+      const missing = [...expected].filter((rel) => !seen.has(rel))
+      const extra = [...seen].filter((rel) => !expected.has(rel))
+      if (missing.length > 0 || extra.length > 0) {
+        throw new Error('DEC09-KNIFE-ANCHOR：副本树的模块闭包与登记对不上（'
+          + `入口 import 到 ${JSON.stringify([...seen].sort())}，登记的是 ${JSON.stringify([...expected].sort())}）`
+          + ' —— 入口每多 / 少 import 一份，`SANDBOX_MODULES` 与这里就要同批改')
+      }
+      return [...seen].sort()
+    }
+
     /** 把写手复制到运行根里、按 patches 改一行；返回副本入口路径。
-     *  ⚠️ 副本必须保持 `.tools/决议-check.mjs` + `.tools/lib/决议-ledger.mjs` 的形状：
-     *  入口只在 `process.argv[1] === <repo>/.tools/决议-check.mjs` 时才跑 `main()`（与生产同一份判法）。 */
+     *  ⚠️ 副本必须保持 `.tools/决议-check.mjs` 的形状：入口只在
+     *  `process.argv[1] === <repo>/.tools/决议-check.mjs` 时才跑 `main()`（与生产同一份判法）。
+     *  其余模块按 `SANDBOX_MODULES` 逐份铺进来 —— 副本树**自足**，加载期一个字节都不向仓库要。 */
     const copyWriter = (tag, patches) => {
       const dir = sceneRoot('DEC-09', `knife-${tag}`)
       const toolsDir = path.join(dir, '.tools')
@@ -171,7 +219,12 @@ test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；�
         text = text.replace(from, to)
       }
       writeFileSync(path.join(toolsDir, '决议-check.mjs'), text, 'utf8')
-      writeFileSync(path.join(toolsDir, 'lib', '决议-ledger.mjs'), readFileSync(path.join(PATHS.repo, '.tools', 'lib', '决议-ledger.mjs'), 'utf8'), 'utf8')
+      for (const rel of SANDBOX_MODULES) {
+        const dst = path.join(dir, rel)
+        mkdirSync(path.dirname(dst), { recursive: true })
+        writeFileSync(dst, readFileSync(path.join(PATHS.repo, rel), 'utf8'), 'utf8')
+      }
+      rec.readings[`knife_${tag}_closure`] = assertSandboxClosed(dir)
       return path.join(toolsDir, '决议-check.mjs')
     }
     try {
@@ -190,9 +243,12 @@ test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；�
         push('DEC09-KNIFE-DEAD', `[刀 K1] 写手少了"翻状态"这一步，夹具却仍读到 \`${k1Reading.status_line}\` —— 那这一格判不出"只翻两个字段"`)
       }
       // K2：摘掉正文闸 + 写的时候少一个换行 ⇒ 工具自报"正文没变"，夹具量到变了
+      //     锚点是**共享写手那一行** `writeFileAtomic(target, nextText)`（写盘从手搓 `writeFileSync(tmp, …)`
+      //     接走之后就是这一行）。判据侧不钉在别人会改的函数字节上：那一行改形，这把刀**同批**跟着改
+      //     （`cand-20261106-0140`）。锚点出现次数不是 1 ⇒ `copyWriter` 当场 `DEC09-KNIFE-ANCHOR`。
       const k2 = copyWriter('k2', [
         ['if (out.body_sha256.before !== out.body_sha256.after) {', 'if (false) {'],
-        ["writeFileSync(tmp, nextText, 'utf8')", "writeFileSync(tmp, nextText.replace(/\\n$/, ''), 'utf8')"],
+        ['writeFileAtomic(target, nextText)', "writeFileAtomic(target, nextText.replace(/\\n$/, ''))"],
       ])
       const k2Scene = goodLedger({ caseId: 'DEC-09', tag: 'knife-k2-run', ...pair() })
       const k2File = path.join(k2Scene.root, OLD_FILE)
