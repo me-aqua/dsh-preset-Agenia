@@ -28,9 +28,10 @@
  * 退出码：`0` 无问题 · `1` 有 problems · `3` 用法/根不成立。
  * `--write-index` 是**唯一**允许写盘的开关；不开它，本脚本一个字节都不写（契约 §5.4）。
  */
-import { existsSync, mkdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { writeFileAtomic } from '../presets/agenia/lib/atomic.mjs'
 import { INDEX_REL, REPO_ROOT, renderIndex, relPosix, scanLedger } from './lib/决议-ledger.mjs'
 
 /**
@@ -58,6 +59,8 @@ export function censusReading(root) {
     /** 只有按形状那一条口径才有：每一处命中（`{file, line, shape: 'A'|'B'}`）与允许清单条目（它盖住了哪一处）。 */
     sites: c.sites ?? [],
     allowlist: c.allowlist ?? [],
+    /** 扫描面里被**排除**的非代码区（`{path, files}`）：切掉了什么必须印出来，否则"没扫到"与"排除掉"分不开。 */
+    scan_excluded: c.scan_excluded ?? [],
     decision: c.decision,
     skip_decision: c.skip_decision,
     read_failures: c.read_failures,
@@ -84,22 +87,18 @@ export function renderCensusText(reading) {
   return `${lines.join('\n')}\n`
 }
 
-/** 写 `INDEX.md`（原子：同目录临时件 + rename；**这是唯一允许写盘的路径**）。 */
+/**
+ * 写 `INDEX.md`（**唯一允许写盘的路径**）。
+ *
+ * 写盘走**共享原子写**（`presets/agenia/lib/atomic.mjs` 的 `writeFileAtomic`：同目录临时件 →
+ * `writeSync` → `fsync` → `rename`）。工具不再自己拼临时名 + `rename`：那个形状在仓库里只许有一份实现
+ * （`决议/概念表.md` 的「原子写剩余实现」那一行为此按形状数）。
+ * `writeFileAtomic` 按判决风格返回 `{ok, code, …}`、不抛；这里把失败转成异常 —— 本函数的调用方只认"写成/抛"。
+ */
 export function writeIndex(root, text) {
   const file = path.join(root, INDEX_REL)
-  mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = `${file}.tmp-${process.pid}`
-  try {
-    writeFileSync(tmp, text, 'utf8')
-    renameSync(tmp, file)
-  } catch (err) {
-    try {
-      unlinkSync(tmp)
-    } catch {
-      /* 临时件没落成，不掩盖原始错误 */
-    }
-    throw err
-  }
+  const written = writeFileAtomic(file, text)
+  if (!written.ok) throw new Error(`${written.code}：${written.message}`)
   return relPosix(root, file)
 }
 

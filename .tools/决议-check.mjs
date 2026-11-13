@@ -27,9 +27,10 @@
  * 退出码（契约 §5.5）：`0` 无 problems · `1` 有 problems（含 gate 拒接 / supersede 拒做）· `3` 用法或根不成立。
  */
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { writeFileAtomic } from '../presets/agenia/lib/atomic.mjs'
 import {
   DASH, GEN_MARKER_NEEDLES, INDEX_COLUMNS, INDEX_REL, INDEX_UNIT_COLUMN, REPO_ROOT, SERIES, TABLE_REL,
   dedupeProblems, firstTable, linesOf, parseRefList, problem, readText, resolveRef, scanLedger, splitHeaderBlock,
@@ -600,17 +601,11 @@ export function runSupersede({ root, oldRef, byRef, dryRun = false }) {
     return out
   }
   const target = path.join(root, oldD.file)
-  const tmp = `${target}.tmp-${process.pid}`
-  try {
-    writeFileSync(tmp, nextText, 'utf8')
-    renameSync(tmp, target)
-  } catch (err) {
-    try {
-      unlinkSync(tmp)
-    } catch {
-      /* 临时件没落成，不掩盖原始错误 */
-    }
-    return refuse('SUPERSEDE-WRITE-FAILED', `${oldD.file} 写不进去：${String(err?.message ?? err)}`)
+  // 写盘走**共享原子写**（`presets/agenia/lib/atomic.mjs` 的 `writeFileAtomic`：同目录临时件 → fsync → rename）。
+  // 这里不再自己拼临时名：那个形状在仓库里只许有一份实现（「原子写剩余实现」那一行按形状数它）。
+  const written = writeFileAtomic(target, nextText)
+  if (!written.ok) {
+    return refuse('SUPERSEDE-WRITE-FAILED', `${oldD.file} 写不进去：${written.code} ${written.message}`)
   }
   out.verdict = 'pass'
   out.ok = true

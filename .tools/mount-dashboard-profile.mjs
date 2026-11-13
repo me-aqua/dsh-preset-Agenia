@@ -56,11 +56,12 @@
  * ③ 上面两条都**不在 `.tools` 这一层能关死**；能用的是人工前提"客户端真的关着"。
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { writeFileAtomic } from '../presets/agenia/lib/atomic.mjs'
 import {
   compareDashboardMount,
   dashboardMountPayload,
@@ -190,16 +191,16 @@ function writeBackup(file, root, profile) {
   return dst
 }
 
-/** 原子写：同目录临时件 → rename（半截文件不会被热重载层读到）。 */
+/**
+ * 原子写：同目录临时件 → rename —— **走共享件**（`presets/agenia/lib/atomic.mjs` 的 `writeFileAtomic`：
+ * 临时件与目标同目录、`'wx'` 独占建、`fsync` 之后 `rename`、失败退避重试；半截文件不会被热重载层读到）。
+ *
+ * 这里不自己拼临时名：那个形状在仓库里只许有一份实现（`决议/概念表.md` 的「原子写剩余实现」按形状数它）。
+ * 共享件返回 `{ok, code, message}`、不抛；本函数的调用方只认"写成 / 抛"，所以这里转成异常。
+ */
 function writeAtomic(file, text) {
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
-  try {
-    writeFileSync(tmp, text, 'utf8')
-    renameSync(tmp, file)
-  } catch (err) {
-    try { if (existsSync(tmp)) unlinkSync(tmp) } catch { /* 清理失败不盖住原错误 */ }
-    throw err
-  }
+  const written = writeFileAtomic(file, text)
+  if (!written.ok) throw new Error(`${written.code}：${written.message}`)
 }
 
 const indentOf = (line) => (/^[ ]*/.exec(line) ?? [''])[0].length

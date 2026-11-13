@@ -89,8 +89,12 @@ export const COUNT_RULES = Object.freeze({
    * 为什么需要它：按**名字**数的口径（`writeFileAtomic`）数不到"自己拼临时名 + 写 + rename"那种实现 ——
    * 名字根本不在那三处里。口径细节（临时名怎么认 / A、B 两族 / 数出来的数怎么拆 / 允许清单）
    * 见 `SHAPE_*` 常量与 `countShapeSites()`；读数会带上 `sites[]` / `allowlist[]` / `scanned_files`。
+   *
+   * 🔴 **单位必须说清盖的是哪些面**（Gate 4 round-1 的 `MF-1`：名字 / 单位比它量的面窄，是同一族病）：
+   * 这一行盖两份根（`presets` 两份 glob + `.tools` 那份 `.mjs` glob），所以单位写「全库代码面」——
+   * 短、且不随面漂。写「（presets 面）」当场红（那正是"0 处"被读成"全库只剩一份实现"的那个病）。
    */
-  'atomic-write-by-shape': { label: '处手搓原子写（按形状）', kind: 'shape', comments: 'code' },
+  'atomic-write-by-shape': { label: '处手搓原子写（全库代码面）', kind: 'shape', comments: 'code' },
 })
 /** 概念表不写第五列时的口径（= 契约 §3.2 的老口径）。 */
 export const DEFAULT_COUNT_RULE = 'file'
@@ -361,19 +365,58 @@ const SKIP_DIRS = new Set(['.git', 'node_modules'])
 const MAX_FILE_BYTES = 8 * 1024 * 1024
 
 /**
- * 按 glob 枚举文件（**只走匹配到的目录**：`src/**\/*.mjs` 不会去读 `.team/`）。
+ * **按形状那条口径的扫描面排除项**（Gate 4 round-1 `MF-2`；相对 `<root>` 的 posix 前缀，逐字）。
  *
- * 语法（契约 §3.1）：`*` = 段内任意、`**` = 跨段、`?` = 一个字符。
- * `决议/` 在根这一级整体跳过（契约 §3.2 第 2 条：概念表自己含探针字面量）。
+ * 六条都是**非代码的施工 / 数据区**，每一条在 `.gitignore` 里都有来历 —— 它们是"换台机器重跑一次就有"的东西，
+ * 不是仓库交付的代码：数据根（记忆快照 / 报告 / 一次性 scratch）、施工区、staging 镜像、备份、排查脚手架、字节码。
+ *
+ * 🔴 三条约束：
+ *   ① **只给 `atomic-write-by-shape` 这一条口径用**（别的概念行的面与读数不跟着变）；
+ *   ② 切掉了什么必须**印在读数上**（`scan_excluded`：路径 + 那里有几份代码文件）——
+ *      不印，"没有实现"与"没扫到"就分不开（`MF-2`：地板靠 9 份未提交 scratch 撑着的那个病）；
+ *   ③ 只排**非代码区**。排掉代码面里的真目录就是缩面，不是排除。
  */
-export function walkGlob(root, glob) {
+export const SHAPE_SCAN_EXCLUSIONS = Object.freeze([
+  'presets/agenia/.runtime',
+  '.tools/_scratch',
+  '.tools/_staging',
+  '.tools/_backup',
+  '.tools/mount-test',
+  '.tools/__pycache__',
+])
+
+/** 一份相对 posix 路径落在哪条排除前缀下（不在任何一条下 ⇒ `null`）。 */
+function exclusionPrefixOf(rel, prefixes) {
+  for (const prefix of prefixes) {
+    if (rel === prefix || rel.startsWith(`${prefix}/`)) return prefix
+  }
+  return null
+}
+
+/**
+ * 按 glob 枚举文件，并把**被排除前缀切掉的文件**按前缀记下来（一次走完 ⇒ 两个数同源，不会各说各的）。
+ *
+ * @param {{exclude?: string[]}} [options] `exclude` = 相对 `<root>` 的 posix 前缀；命中的文件不进 `files`，
+ *        进 `excluded`（前缀 → 绝对路径列表）。不给 `exclude` ⇒ 与老行为一字不差。
+ * @returns {{files:string[], excluded:Map<string, string[]>}}
+ */
+export function walkGlobDetailed(root, glob, options = {}) {
+  const excludes = (options.exclude ?? []).map((p) => String(p).replace(/\\/g, '/'))
   const rel = String(glob).replace(/\\/g, '/')
   const segments = rel.split('/').filter((s) => s !== '' && s !== '.')
   const out = []
-  if (segments.length === 0) return out
+  const excluded = new Map()
+  if (segments.length === 0) return { files: out, excluded }
+  const top = path.resolve(root)
   const go = (abs, i) => {
     if (i === segments.length) {
-      if (isFile(abs)) out.push(abs)
+      if (!isFile(abs)) return
+      const hit = excludes.length === 0 ? null : exclusionPrefixOf(relPosix(top, abs), excludes)
+      if (hit === null) out.push(abs)
+      else {
+        if (!excluded.has(hit)) excluded.set(hit, [])
+        excluded.get(hit).push(path.resolve(abs))
+      }
       return
     }
     const segment = segments[i]
@@ -396,11 +439,22 @@ export function walkGlob(root, glob) {
       if (re.test(name)) go(path.join(abs, name), i + 1)
     }
   }
-  const top = path.resolve(root)
   go(top, 0)
   // `决议/` 整个子树不算（根这一级判；更深的 `x/决议/` 不是账本，照算）
-  const prefix = `${path.resolve(top, LEDGER_REL)}${path.sep}`
-  return out.filter((abs) => !abs.startsWith(prefix))
+  const ledgerPrefix = `${path.resolve(top, LEDGER_REL)}${path.sep}`
+  const files = out.filter((abs) => !abs.startsWith(ledgerPrefix))
+  return { files, excluded }
+}
+
+/**
+ * 按 glob 枚举文件（**只走匹配到的目录**：`src/**\/*.mjs` 不会去读 `.team/`）。
+ *
+ * 语法（契约 §3.1）：`*` = 段内任意、`**` = 跨段、`?` = 一个字符。
+ * `决议/` 在根这一级整体跳过（契约 §3.2 第 2 条：概念表自己含探针字面量）。
+ * 不排除任何前缀（要排除、并要求"切掉了什么"的读数时用 `walkGlobDetailed`）。
+ */
+export function walkGlob(root, glob) {
+  return walkGlobDetailed(root, glob).files
 }
 
 /**
@@ -539,8 +593,11 @@ function shapeAllowlistEntryProblems(entry) {
  *   ④ 都合法 ⇒ 放行这一处 B。
  * 形状坏到连 (路径, 行) 都拼不出来的条目（格子少了 / 行号不是整数）⇒ `SHAPE-ALLOWLIST-SHAPE`：
  * 它从来不是一条能指路的条目，报 STALE 会让人去查"那一处是不是没了"，而病在这一行的写法上。
+ *
+ * `scanExcluded` = 扫描面里被切掉的非代码区（`countConcept` 现算：路径 + 那里有几份代码文件）——
+ * 原样进读数 `scan_excluded`：这个 0 是"量过全库代码面之后"的 0，不是"没扫到"。
  */
-function countShapeSites(root, { ruleName, rule, files, allowlist }) {
+function countShapeSites(root, { ruleName, rule, files, allowlist, scanExcluded = [] }) {
   const failures = []
   const sites = []
   const hitFiles = new Set()
@@ -630,6 +687,7 @@ function countShapeSites(root, { ruleName, rule, files, allowlist }) {
     unit: rule.label,
     files: [...hitFiles].sort(),
     scanned_files: files.length,
+    scan_excluded: scanExcluded,
     sites,
     allowlist: reading,
     problems,
@@ -646,22 +704,45 @@ function countShapeSites(root, { ruleName, rule, files, allowlist }) {
  *     `implementations` 为空 —— 页上印 `0 | 零代码决定`（契约 §3.2）。
  *   · `atomic-write-by-shape` ⇒ 交给 `countShapeSites()`：数**处**（A 族 + 未被允许清单盖住的 B 族），
  *     `sites[]` 记全部命中、`allowlist[]` 记每条允许清单条目盖住了哪一处（详见 `SHAPE_*`）。
+ *     这一条口径的扫描面**排除 `SHAPE_SCAN_EXCLUSIONS` 那六个非代码区**，切掉了什么进 `scan_excluded`
+ *     （路径 + 那里有几份代码文件）。**别的口径不排**：它们的面与读数与加排除之前一字不差。
  * `-code` 的那两种只认**代码行**（`isCommentLine` 的保守判法）。
  *
  * @param {{allowlist?:Array<object>|null}} [options] 形状口径要的允许清单（`决议/概念表.md` 第二张表）
  * @returns {{count:number, implementations:string[], scan_empty:boolean, read_failures:Array<object>,
  *            rule:string, unit:string, files:string[], scanned_files:number,
- *            sites?:Array<{file:string, line:number, shape:'A'|'B'}>, allowlist?:Array<object>, problems?:Array<object>}}
- *          `sites` / `allowlist` / `problems` **只有**按形状那一条口径才有（其余口径不按处数，没有这三样可报）。
+ *            sites?:Array<{file:string, line:number, shape:'A'|'B'}>, allowlist?:Array<object>, problems?:Array<object>,
+ *            scan_excluded?:Array<{path:string, files:number}>}}
+ *          `sites` / `allowlist` / `problems` / `scan_excluded` **只有**按形状那一条口径才有
+ *          （其余口径不按处数、也没有排除面可报）。
  */
 export function countConcept(root, row, options = {}) {
   const ruleName = Object.hasOwn(COUNT_RULES, row.rule) ? row.rule : DEFAULT_COUNT_RULE
   const rule = COUNT_RULES[ruleName]
+  const shape = rule.kind === 'shape'
   const abs = new Set()
-  for (const glob of row.scan) for (const file of walkGlob(root, glob)) abs.add(path.resolve(file))
+  /** 被排除前缀切掉的代码文件（前缀 → 绝对路径集合）；**只**在按形状那一条口径下收集。 */
+  const excludedHits = new Map()
+  if (shape) {
+    // 只印**盘上存在**的前缀（空目录也给一行 `files: 0`：读者要能看出这一块被切过）
+    for (const prefix of SHAPE_SCAN_EXCLUSIONS) {
+      if (existsSync(path.join(root, ...String(prefix).split('/')))) excludedHits.set(prefix, new Set())
+    }
+  }
+  for (const glob of row.scan) {
+    const walked = walkGlobDetailed(root, glob, shape ? { exclude: SHAPE_SCAN_EXCLUSIONS } : {})
+    for (const file of walked.files) abs.add(path.resolve(file))
+    for (const [prefix, hits] of walked.excluded) {
+      if (!excludedHits.has(prefix)) excludedHits.set(prefix, new Set())
+      for (const file of hits) excludedHits.get(prefix).add(path.resolve(file))
+    }
+  }
   const files = [...abs].sort()
-  if (rule.kind === 'shape') {
-    return countShapeSites(root, { ruleName, rule, files, allowlist: options.allowlist ?? [] })
+  const scanExcluded = [...excludedHits]
+    .map(([prefix, hits]) => ({ path: prefix, files: hits.size }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  if (shape) {
+    return countShapeSites(root, { ruleName, rule, files, allowlist: options.allowlist ?? [], scanExcluded })
   }
   const probeBuf = Buffer.from(String(row.probe), 'utf8')
   const implementations = []
@@ -1172,9 +1253,11 @@ export function deriveIndexRows(root, concepts, decisions, judge, { allowlist = 
       scan_empty: counted.scan_empty,
       scanned_files: counted.scanned_files,
       read_failures: counted.read_failures,
-      /** 按形状那一条口径才有的三样（其余口径下没有，读的人按 `rule` 分得开）。 */
+      /** 按形状那一条口径才有的几样（其余口径下没有，读的人按 `rule` 分得开）。 */
       sites: counted.sites,
       allowlist: counted.allowlist,
+      /** 扫描面里被切掉的非代码区（路径 + 那里有几份代码文件）——"没扫到"与"排除掉"必须分得开。 */
+      scan_excluded: counted.scan_excluded,
       problems: counted.problems ?? [],
     }
   })
