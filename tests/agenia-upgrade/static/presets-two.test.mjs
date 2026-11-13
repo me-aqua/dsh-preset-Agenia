@@ -723,6 +723,11 @@ describe('static · presets-two (任务 A)', () => {
             ['row3 组长', { header: { cwd: contentRoot, agentPreset: 'agenia' }, id: 'prs-side-row3', config: leaderConf }, 'leader', false],
             ['row5 手动组员', { header: { cwd: contentRoot, agentPreset: 'agenia-member' }, id: 'prs-side-row5', config: memberConf }, 'member', true],
             ['row7 未知预设', { header: { cwd: contentRoot }, id: 'prs-side-row7', config: memberConf }, 'member', true],
+            // 🔴 **外聘那一行（卡 222443 · 构案 0011）**：外聘走裸 `subagent`，头里带 `toolName: subagent`
+            //    ⇒ 身份表 row 4、角色 `hire`、说明书 `team/hire.md`；预设是那份通用组员预设 ⇒ 它吃的就是
+            //    `memberOrder`（`work-guidelines` + `memory` + `charter`）。这一行是**名册**那一半的判据：
+            //    "外聘在不在拿记忆的那一拨人里"由 `agenia:memory` 与 `agenia:charter:hire` 两条读数回答。
+            ['row4 外聘（subagent → hire）', { header: { cwd: contentRoot, agentPreset: 'agenia-member', toolName: 'subagent' }, id: 'prs-side-hire', config: memberConf }, 'member', false],
           ]
           /** 跑一条会话，量"这一侧拿到了什么"。
            *  ⚠️ agent id 就用 spec 里那个（**不要**加后缀）：row 0.5 的判定靠"id 恰在升级快照里"，
@@ -779,6 +784,68 @@ describe('static · presets-two (任务 A)', () => {
             }
           }
           rec.readings.inject_side = sideRows
+
+          // ── ⑦' 外聘（`toolName: subagent` ⇒ 角色 `hire`）在**同一份组员名册**里 · 受众同一份 ────────
+          // 🔴 **本格判的是配置，不是注入结果**（卡 `222443` · 构案 0011）：
+          //    · 判的是 `inject.js` 的受众规则 + 名册（`agent.cordis.yml` 的 `memberOrder` 里那一份
+          //      `memory`，以及角色表把 `subagent` 映射到 `hire` / `team/hire.md`）在**合成会话头**上
+          //      装配出来的那一段正文；
+          //    · **不判**真外聘拿到什么 —— 那是注入结果，2026-11-13 手工量过一次（探针读回：
+          //      正文里有 `## 共享记忆 · 常识`、后面 `## 共享记忆 · 索引` 只出现分类名、没有 `boss` /
+          //      项目标签）；真注入腿是**将来的升级**，不在这一格里冒充。
+          //    · 为什么钉这一格：外聘原来那句"队伍的历史不在你手上"之所以能一直撒谎，正是因为
+          //      **没有任何读数**区分"配置给了"与"它读到了"。这一格补的是前一半；后一半靠那次手工读数。
+          const hireRow = sideRows['row4 外聘（subagent → hire）']
+          const hireReading = hireRow === null || hireRow === undefined
+            ? null
+            : {
+              judges: 'config（`inject.js` 受众规则 + 名册含 `hire`）· 不是注入结果',
+              injection_result: 'not judged here —— 2026-11-13 手工探针量过一次；真注入腿是可能的将来升级',
+              role_row: 'row4（组员预设 + `toolName: subagent`）',
+              role: 'hire',
+              charter: 'team/hire.md',
+              names: hireRow.names,
+              has_memory: hireRow.names.includes('agenia:memory'),
+              has_hire_charter: hireRow.names.includes('agenia:charter:hire'),
+              memory_index: hireRow.memory_index,
+              memory_common_sense: hireRow.memory_common_sense,
+              memory_full: hireRow.memory_full,
+              leader_only_present: hireRow.leader_only_present,
+            }
+          rec.readings.hire_roster = hireReading
+          if (hireReading === null) {
+            push('HIRE-ROSTER', '外聘那一行没量出东西（`inject.js` 的装配没回来）—— "外聘在不在拿记忆的那一拨人里"没有读数')
+          } else {
+            if (!hireReading.has_memory) push('HIRE-ROSTER', `外聘的注入面里没有 \`agenia:memory\`（实得 ${JSON.stringify(hireReading.names)}）—— 名册里那一份记忆没到他手上`)
+            if (!hireReading.has_hire_charter) push('HIRE-ROSTER', `外聘的注入面里没有 \`agenia:charter:hire\`（实得 ${JSON.stringify(hireReading.names)}）—— 角色表到说明书那一条不成立`)
+            if (!hireReading.memory_index || !hireReading.memory_common_sense) {
+              push('HIRE-MEMORY', `外聘拿到的记忆里该有常识与索引（索引=${hireReading.memory_index} · 常识=${hireReading.memory_common_sense}）`)
+            }
+            if (hireReading.memory_full.length > 0) push('HIRE-MEMORY-LEAK', `外聘拿到了组长那三类全条 ${JSON.stringify(hireReading.memory_full)}（0011 §④：boss 类 / 项目专名不给外聘）`)
+            if (hireReading.leader_only_present.length > 0) push('SIDE-LEADER-LEAK', `外聘拿到了组长那几样 ${JSON.stringify(hireReading.leader_only_present)}`)
+
+            // 量具自证：把**同一份 config 的名册**里 `memory` 拿掉，这一条腿必须翻面（外聘拿不到记忆）。
+            // 不翻 ⇒ 上面那个"有记忆"不是这条腿量的（可能是别处漏进来的 / 读的是兜底名单）。
+            let knifeMemory = null
+            await withHarness(mod, {
+              contentDir: contentRoot,
+              config: { ...memberConf, memberOrder: memberConf.memberOrder.filter((k) => k !== 'memory') },
+              header: { cwd: contentRoot, agentPreset: 'agenia-member', toolName: 'subagent' },
+              id: 'prs-side-hire-knife',
+              catalog,
+            }, async (h) => {
+              const out = await h.assemble()
+              knifeMemory = {
+                config: 'memberOrder 去掉 memory',
+                names: injectedNames(out),
+                has_memory: injectedNames(out).includes('agenia:memory'),
+              }
+            })
+            rec.readings.hire_roster_knife = knifeMemory
+            if (knifeMemory === null || knifeMemory.has_memory) {
+              push('HIRE-ROSTER-NOT-PROVEN', `名册里拿掉 \`memory\` 之后外聘仍然拿到 \`agenia:memory\`（${JSON.stringify(knifeMemory)}）⇒ 这条腿翻不了面，它的"绿"不作数`)
+            }
+          }
 
           // 刀：`isMemberSide = identity.row >= 4`（第二轮之前的规则）⇒ row 0 / 0.5 必须变回组长侧；
           //    row 5 必须**不动**（它在两条规则下都是组员侧 —— 它是"刀没切宽"的证人）。
