@@ -37,7 +37,14 @@
       "id": "bug-20261105-01",
       "at": "2026-11-05T20:23:26+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "small —— 落一行读数（装配时把 toolName_source / role / charter_rel 写进 .team/state/identity/<day>.json）+ 一条对账判据，约 2–3 小时；不需要先改注入逻辑。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**前提核实**：说明书路径本身没错 —— `presets/agenia/inject.js:277-359` 的 ROLE_TABLE 里 `conversation-review`（:345）与 `technical-review`（:355）各一条、各自指向 `team/conversation-review.md` / `team/technical-review.md`。错的是**哪一行被认成谁**：角色由 `identityVerdict()` 认 `toolName`，而子会话头里没有 `toolName`（:1561-1564 写明九个 `team_*` / `job_*` 全一样）⇒ 只能走插件桥 `bridgeTakeClaim()`；对号靠**子会话第一条用户消息全文相等**，`childPrompt` 为空时退回 `fresh.shift()` 队首（:597）—— 并行派两条一次性作业时队列顺序本来就不成立（同文件 :466 记着 2026-11-02 实测：`team_test` 取到了 `job_technical_review` 的 claim）。**但这一次的证据是自述**（报告末尾一句），盘上没有第二份读数：`presets/agenia/.runtime/state/jobs/*.json` 记 `role/tool_name/state`、不记注入了哪份说明书；`.team/state/identity/2026-11-05.json` 今天只记了一条 `unknown_preset`（row 7 · session-cc5c68d1），没有「哪份 charter 被注进去」。⇒ 建议处置 **defer · needs a reading first**。读数 = 每次装配落一行 `{toolName_source, role, charter_rel}`（`agenia:charter:<role>` 那条注入行已经在吐，只差落盘），再拿作业的 expected role 与它对账。**触发条件**：下一次并行派两条一次性作业（两份每日评审同开的那一刻，`shift` 的现场就在那里）。不 adopt：一条自述还不够格当量过的前提。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 3,
@@ -93,7 +100,13 @@
       "at": "2026-11-05T20:23:26+08:00",
       "verdict": "true",
       "severity_line": "function_broken_repro",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "small —— 一处对账实现（.tools/agenia-release-scan.mjs:341-408 的 `checkPatchMatchesComposition`），约 1–2 小时；删掉第二套算式比补一份更省。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**前提核实（今天复跑）**：`node .tools/agenia-release-scan.mjs --op scan --release E:\\Harness\\presets\\agenia` ⇒ exit 0（默认不翻红），findings 里 `SCAN-PATCH-DRIFT`（源 21 条 / 补丁 41 条）与 `SCAN-PATCH-ROW-TEXT`（第一处不同在第 24 行）**两条都在**。同一次评估里跑 `node .tools/make-bundle-patch.mjs --check` ⇒ **exit 0**，自报「21 条顶格行 → 21 条预设级 / 0 条宿主级 · 2 份预设（1 组长 + 1 通用组员）· 9 条委派行同指 agenia-member · 拷进来 41 个 id」⇒ **派生件是对的，扫描器的模型是旧的**：`checkPatchMatchesComposition()` 把「整份组合缩进 10 格」当成补丁正文（:382-385），而生成器从 2026-11-01 并员起写的是**两份预设体**（各带自己的 10 格 id）；`srcIds`（组合顶格 21）与 `bodyIds`（补丁全部 10 格 41）按序全等**永远不成立**。⇒ 建议处置 **adopt**；owner = 实现岗（`.tools/**` 不在测试岗写面）；order = 下一次带 `--strict` 的发布扫描之前。修法取「删掉第二套算式」：`make-bundle-patch --check` 已经逐字节对账同一件事，扫描器这一格应调生成器的结论（或按两份预设体分行比），不要自己再重算一遍 —— 否则同一个事实永远有两个作者。严重线 = function_broken_repro（可复现：上面两条读数）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 6,
@@ -155,7 +168,13 @@
       "at": "2026-11-05T20:23:26+08:00",
       "verdict": "true",
       "severity_line": "function_broken_repro",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "small —— `tests/agenia-upgrade/support/evidence.mjs::walk()` 一处分叉（ENOENT 分「两次系统调用之间消失」与「根不在」）+ 一条阳性对照，约 1–2 小时。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**前提核实**：`tests/agenia-upgrade/support/evidence.mjs:105` 的 `walk()` 仍是 `for (const name of readdirSync(dir).sort()) { … statSync(full) }` —— readdir 与 stat 之间文件消失就抛 ENOENT，与「文件真的没了」不分。写入侧两处原子写都在：`presets/agenia/lib/dashboard.mjs:178-180` 同目录 `<file>.tmp` → `renameSync`；`presets/agenia/lib/atomic.mjs:82` 用 `<file>.tmp-<pid>-<rand>`。被走的三个根是 `realRootsSnapshot()` 的 brain / route / **finalPreset（整棵 presets/agenia）**（evidence.mjs:127-135）⇒ `.runtime/state/dashboard/` 就在里面，2026-11-05 14:59:44 那条栈（BRG-02 · `stat … view.json.tmp` at walk）可解释，而且**不止看板一处**：`.team/route`、`.team/bug` 两处的原子写也在被走的根里。今天这一格暂时不响，是因为看板那一行 `disabled: true`（15 秒写手停了），**不是缺陷修好了**。⇒ 建议处置 **adopt**；owner = 测试岗（`tests/**`）；order = 另一个测试实例把 `tests/**` 那一批改完之后（现在同时动会互相作废）。修法：`walk()` 对 ENOENT 分两种 —— 目录项在两次系统调用之间消失 ⇒ 跳过并计一条 `vanished:N` 读数（不失败）；根不存在才 `exists:false`。阳性对照 = 夹具里挂一个「读目录后立刻删掉一个临时件」的钩子，必须 skip 而不是抛；阴性对照 = 真删掉一个常驻文件，必须照旧红。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 9,
@@ -204,7 +223,14 @@
       "at": "2026-11-05T20:23:27+08:00",
       "verdict": "true",
       "severity_line": "reading_lies",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "small —— 三处同批：`dashboard.mjs` 视图加一键 · `DASH-11` 的 VIEW_KEYS 加一键 · `client.js` 画「读数日 + N 分钟前」；约 2–3 小时。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**前提核实**：`presets/agenia/lib/dashboard.mjs:337-346` 返回的视图恰好 8 键（schema / day / header / badge / main / emptyNotice / debts / alerts），**没有生成时刻**；盘上 `presets/agenia/.runtime/state/dashboard/view.json` 也是 8 键，mtime **2026-11-05T09:40:48Z**（本次现量：比现在早 5 小时以上 —— 因为那一行 `disabled: true`，15 秒写手停着）；判据侧 `tests/agenia-upgrade/integration/dash05-snapshot.test.mjs:153` 的 `VIEW_KEYS` 把 8 键逐字锁死、:174 直接比 `keys.join(',')` ⇒ 加一键会同时红 DASH-11 与快照形状。⇒ 建议处置 **defer**（真、但不是现在）。**触发条件** = 面板经 profile 层（R1）挂上、重新能被看见的那一刻 —— 那一刻「画三小时前的读数」才第一次有人受害；在那之前改一个冻结形状，是给一个看不见的面板动三处。修法（到时一次做完）：`writeDashboardSnapshot` 一处写 `generated_at`（ISO 带偏移，与 receipt 同一个 `nowIso`）· DASH-11 加这一键 · 面板画「读数日 + N 分钟前」，超过 N 个周期显式标旧。判据要在「刷新死了」与「刷新活着」两种现实上翻面（假 ctx 跑一拍 + 把 mtime 拨旧）。",
+      "sample_version": null,
+      "hides": "function_broken_repro",
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 12,
@@ -253,7 +279,14 @@
       "at": "2026-11-05T20:23:27+08:00",
       "verdict": "true",
       "severity_line": "reading_lies",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "medium —— 先定「哪本是真源」（组长裁），再改一处派生 + 一条对账判据，约半天；若要保手写，则要加一个读者 + 一条「漏标即红」。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**前提核实（现量，两份账对着看）**：`.team/state/local/2026-11-02.json / -03.json / -04.json` 三份的 `memory_review.state` 都是 `unclaimed`；而 `presets/agenia/.runtime/state/jobs/memory-review-2026-11-04.json` 的 `state` 是 `done`（started 2026-11-04T06:28:51.944Z / finished 06:46:51.882Z，role=memory-review，tool_name=job_memory_review）⇒ **两本账说的是两件事**。⚠️ 这一条**不是**共享记忆 `cand-20261101-0552` 那个「非 owner 工作区」的例外：那条的前提是「当天 owner 不是我」，而这里 `presets/agenia/.runtime/reports/memory-update/2026-11-04.json` 在盘上（generated_at 2026-11-04T06:27:51.698Z）⇒ 这一天的 owner 就是本工作区、复核作业也交了活，只是**没人把节点标成 done**。读者侧再核一遍：`daily-cards.py` 只在 :849 的注释里提到 `memory_review`（没有功能读者）；`check-notes.mjs:135` 只把它当角色表一行；`health.mjs:49` 的 NODE_KEYS 是三节点、GREEN 要 3/3 ⇒ 拿 11-04 事实复算就是 `E_LOCAL_INCOMPLETE`（done=2/3）。⇒ 建议处置 **adopt**；owner = 组长（先裁「哪本是真源」）+ 实现岗（接线）+ 测试岗（判据）；order = 挂载票（R1–R5）之后。修法二选一，写进契约：① **派生**：`memory_review` 的 done 只由 `presets/agenia/.runtime/state/jobs/memory-review-<day>*.json` 的 state 推出来，本地那份不再手写（一份事实一个作者）；② **保留手写 + 给它读者**：daily-cards 三节点都读，并把「作业 done 而节点 unclaimed」变成显式红、点名哪一本。判据两条都要能翻面（漏标 ⇒ 红；正常日 ⇒ 绿）。",
+      "sample_version": null,
+      "hides": "function_broken_repro",
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 15,
@@ -301,7 +334,14 @@
       "id": "bug-20261105-06",
       "at": "2026-11-05T20:23:27+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "0 —— 已修（同一天两处：参数形状 + 内层路径前缀），本条只需要关闭。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**已由后续工作关闭（不是靠措辞）**：`tests/agenia-upgrade/support/dashboard-surface.mjs:175` 现在是**位置参数** `spawnSync(process.execPath, [tool, asarFile, outDir, innerPath])`；失败分四种码（:86-88 `DASH-OFFICIAL-NO-ASAR / -TOOL-MISSING / -CALL-FAILED / -TARGET-MISSING`），不再把「我调坏了」说成「这台机器上没有」；内层路径带 `dsh/` 前缀（:60-65，评审 F5 没点到的第二个错）。当天的重复跑读数 `_runs/f5-clone-3`（2026-11-05，DASH-05/06/07 · 3/3 GREEN · 0 HOLD · `official.origin = asar-extracted` · 25 399 B）在**没有设计抽屉**的树上真取到了官方件。⇒ 建议处置 **adopted（关闭）**。本评估不重判严重线（条目已无活体可判，重判会把一条已关的红算成新的假红）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 18,
@@ -350,7 +390,13 @@
       "at": "2026-11-05T20:23:27+08:00",
       "verdict": "true",
       "severity_line": "function_broken_repro",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "small —— `.tools/daily-cards.py:791` 一处（`all` → `any`，或改 `_anchor_candidates` 的返回语义），约 15 分钟 + 一条正控。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**前提核实（自己的探针，不引评审那份）**：`.team/test/2026-11-05/_probe/assess-07-anchor-probe.py` 用 importlib 直接调**盘上那版** `_anchor_candidates()` / `review_carriers()`（不复制代码、不写 `.tools/`），夹具里那份报告真的在盘上：① 锚写成不带前缀 `retro/2026-11-05/会话评审.md` ⇒ 候选 2 支、`isfile=[true,false]`、`all=False`、`any=True` ⇒ `review_carriers.technical = false`（报告就在隔壁却被印成「不在」）；② 正控：同一份文件、锚写成 `.team/…` ⇒ 候选 1 支、present。读数存 `.team/test/2026-11-05/_evidence/assess-07-anchor-probe.json`。⇒ `.tools/daily-cards.py:791` 的 `all()` 与 :811-820「不带前缀就给两支候选」自相矛盾（**一支在就够了**：它们是同一个落点的两种写法）。今天潜伏：`.team/state/local/*.json` 十份的 `report_path` 现查**全部带 `.team/` 前缀**。建议处置 **adopt**（一行改动，错的方向是「静默印不在」）；owner = 实现岗（`.tools/**` 不在测试岗写面）；order = 与 `bug-20261105-02` 同一批 `.tools` 修。**触发条件（若不修）**：任何一处 `report_path` 写成不带 `.team/` 前缀 —— 下一次手工 `local-mark` 或换一个写者就会发生，而那种「不在」与「真的没交」在卡上**逐字相同**（`_anchor_candidates` 的注释记着 2026-11-04 已经栽过同一形状一次）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 21,
@@ -398,7 +444,14 @@
       "id": "bug-20261105-08",
       "at": "2026-11-05T20:23:27+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "0 —— 条目描述的缺陷不存在；唯一真实残余是 `receipt.mjs:267` 报文与判据不一致，一行可对齐（要不要单开一条由组长定）。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**前提是假的（逐值现量）**：`presets/agenia/.runtime/memory/snapshots/v18..v21.json` 的 `generated_at` 分别是 `2026-11-01T01:40:37.262Z` / `2026-11-02T02:23:21.922Z` / `2026-11-03T01:16:44.471Z` / `2026-11-04T06:27:51.698Z`（四份 mtime 也还是 11-01..11-04，**没有被今天改过**）；`reports/memory-update/2026-11-04.json` 同值 ⇒ **全是 ISO8601**，不是 `11/04/2026 06:27:51`。第二半也站不住：`presets/agenia/lib/receipt.mjs:267` 的判据是 `!isFilledString(obj.generated_at)` —— **只要求非空字符串**，括号里那句「ISO8601 带偏移」只是**报文**；全库再无第二处校验 `generated_at` 的格式（`snapshot.mjs:132` 只查键在不在）。⇒ 本条目描述的缺陷（同一份产物一个读者认、一个读者不认）**不存在** ⇒ 建议处置 **rejected**。⚠️ 读数是怎么来的（留给下一个人当心）：把 ISO 串塞进 `ConvertFrom-Json` / `new Date().toString()` 一类**渲染器**，出来就是 `2026年11月4日 6:27:51`（本次评估第一遍自己就撞了一下）—— 那不是文件里的字节，是显示层的重新格式化。**唯一真实的残余**（与条目不是一件事，别拿它救这一条）：`receipt.mjs:267` 的报文承诺了一个判据不做的检查，属于「注释里承诺、判据里不存在」那一类；要不要单开一条由组长定，本评估不新登记。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 24,
@@ -454,7 +507,14 @@
       "id": "bug-20261105-09",
       "at": "2026-11-05T20:23:27+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "0 —— 已修；本条只需要关闭，外加一句覆盖面边界。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**已由后续工作关闭**：`tests/agenia-upgrade/integration/dash01-fields.test.mjs` 现在有 `liveDataPresence()`（:30 引入、:171-177 自带翻面自证）与 `DASH-LIVE-DATA-ABSENT` 的 HOLD（:180-183 / :287-297）；DASH-01 的解析器阳性改成**夹具**自证（:160-175，红码 `DASH-RULER-BROKEN` 只在解析器自己失败时出）；DASH-02 的「这一格今天判不了」两支走 HOLD 而不是 problems。当天读数 `_runs/f6-clone-2`（副本树，DASH-01/02/09）⇒ RED 0 / GREEN 1 / HOLD 2，两条 HOLD 都点名缺的四个根（`.team/test/2026-11-05/log.md §三`）。⇒ 建议处置 **adopted（关闭）**。⚠️ 残余照旧写清：**干净 clone 上的全量**仍然没跑过（今天只有活树那 148 条全量）⇒「副本上只有 HOLD、没有红」这条结论的覆盖面仍是窄跑（那 2 条 HOLD 在副本全量里会不会变成别的，还没量）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 27,
@@ -504,7 +564,14 @@
       "id": "bug-20261105-10",
       "at": "2026-11-05T20:23:27+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "0 —— 判据已由 DASH-16 交付（含变异探针）；本条只需要关闭，外带一条覆盖面边界。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**已由后续工作关闭**：`tests/agenia-upgrade/integration/dash06-mount.test.mjs:783-` 的 `DASH-16` 就是评审 R-1 要的那条**语义**判据 —— 对每份预设 `plugins` 里的行，用 `name` 解析到盘上的 `package.json`；声明 `dsh.client.platform: \"web\"` 却不在顶层 `- insert:` ⇒ `DASH-CLIENT-IN-PRESET`；阳性腿 = 当前看板行必须是顶层 insert 的直接成员（否则 `DASH-HOST-MISSING`）；**不读 `# @host-level`、不读生成器 `HOST_LEVEL_IDS`、不认行 id**（文件头 :60-70 逐条写明）。提交 `9483a76`（2026-11-05 16:03:28），而本条登记在 15:47:32 ⇒ **登记时前提成立，之后被后来的工作关掉**（不是假前提）。当天读数：`_runs/dash16-r3` 16/16 GREEN + 变异探针（关掉语义面 ⇒ `syntheticInPreset` 变 CLEAN，两条红确实来自语义面）见 `.team/test/2026-11-05/log.md §七`。⇒ 建议处置 **adopted（关闭）**。⚠️ 边界：官方 npm 形状的客户端 UI 行（裸包名、装在 profile / app.asar 里）这一版抓不到（log §七 已写），要不要覆盖那一形由组长定。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 30,
@@ -571,7 +638,14 @@
       "id": "bug-20261105-11",
       "at": "2026-11-05T20:23:27+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "0 —— 已修；本条只需要关闭，外加一句「同一个数仍有三份载体」的残余。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**已由后续工作关闭（条目里的读数是旧的）**：`.tools/check-notes.mjs:345` 现在的期望是 `5 + RETIRED_ROLES.length`（`RETIRED_ROLES = ['retro']` ⇒ **6**），而 `presets/agenia/agent.cordis.yml` 里 `disabled: true` 的有效行现量 **6**；`node .tools/check-notes.mjs` **128/128 通过 · exit 0**（本次评估现跑）。组长在 `.team/leader/2026-11-05/log.md §十四` 记了这次改动（`4+1 → 5+1`，注释写明「等这一行重新打开要跟回 5」）。⇒ 建议处置 **adopted（关闭）**。⚠️ 残余（不是这一条的处置，是同一形状的下一处）：这个数现在仍有**三份载体** —— 组合真身（6）· `check-notes.mjs:345` 的 `5 + RETIRED` · `tests/agenia-upgrade/support/env.mjs` 的 `disabledLiteralRows`（staged 与 liveWitness 两处 6）；它与 `bug-20261103-03` 的「一个数只有一个载体认」是**同一个病、不同的一处**，别当成新开的一条。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 33,
@@ -628,7 +702,14 @@
       "at": "2026-11-05T20:27:02+08:00",
       "verdict": "true",
       "severity_line": "reading_lies",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "medium —— 缺的那条读数（R2/R3/R5 的可执行形态）约 0.5–1 天（测试岗）；挂载本身（R1）只等老板一次关客户端的窗口。两件事分开排，别把 R1 的等待算进读数。",
+      "fix_sketch": "评估修正（2026-11-05 20:3x · 测试岗，第二遍：第一遍按条目原文写了「产品记下了这次降级」，核实之后**那句要改**）。**① 机制这一半是真的**：会话头 `agentPreset` = `standard` ⇒ `presetKindOf()`（`presets/agenia/inject.js:1548-1555`）认不出 ⇒ `identityVerdict()` 落 row 6/7 ⇒ 窄 + 无角色；`.team/state/identity/2026-11-05.json` 的 `unknown_preset[0]`（row 7 · session-cc5c68d1 · at 2026-11-05T08:07:07.835Z）是产品侧确凿的读数。**② 但条目的 how_seen 有一处错**：`session-cc5c68d1` **不是新会话** —— 多帧 zstd 全解后它的头是 `createdAt 2026-10-19T03:03:54.661Z` + `agentPreset: standard`，16:07 那一次是**续跑**（dump 在 `.team/test/2026-11-05/_tmp/cc5c68d1.jsonl`）；它 2026-11-01 有 `agent-preset/selected → agenia` 一帧，而那一帧不改头。「老会话全是 agenia」也不成立：这一份老会话出生就是标准档。**③ 反向读数**：事故窗口里唯一**新建**的会话 `session-e0ed642a`（createdAt 2026-11-05T08:15:00.935Z = **16:15 +08**，比回滚提交 `e97c6ee`（16:23）还早 8 分钟）头里是 `agentPreset: agenia` —— 按**本条目自己的定形**（`定形-看板挂载profile层.md` §三 R2：新建会话头必须是 agenia，标准档才是塌了）这一格读作「没塌」。**④ 所以**：「宿主层 insert 把 bundle 层带塌」这个**归因在盘上找不到支持**；16:09 那次窄权限最省的解释是**续跑会话沿用出生头**（已单开 `bug-20261105-13`）。这不改变「缺一条启动后读数」这个真缺口（反而更硬：正因为没有 R2，所有人都只能猜，而且猜错了一次）。**建议处置仍 adopt，blocked on R2/R3 criteria**，但 R2 的定义要先补三支：只有 `createdAt >= T` 的会话才算这次启动的读数；**续跑的会话不算证据**、单列 `resumed_touched_after_T`；没有 `createdAt >= T` 的会话 ⇒ `HOLD BOOT-NO-SESSION-AFTER-RESTART`（永不绿）。并行做的那份 `tests/agenia-upgrade/support/boot-readings.mjs`（20:2x 出现在工作树里、未提交）已经把这三条写进去了 —— 以它为准。owner：R2/R3/R5 = 测试岗；R1 挂载 = 组长（只能关着客户端写）；设计岗不动。order：**R2（身份读数，且必须把「续跑」判成 HOLD 而不是红）→ R3（包可达）→ R1 → GUI 那一格（只能老板点一次）**。**同根因三条**：本条 + `bug-20261104-02` + `bug-20261105-10`（已由 DASH-16 关闭）= 一个缺口的三面，keeper 记在本条。⚠️ 另外一条给出题人：回滚（`e97c6ee`）本身无害（面板关着是对的），但它**少了一个理由** —— 真因看起来是续跑头，不是 bundle 层；profile 层路线（R1）仍然要，理由是 `bug-20261104-02`（浏览器只收宿主层）。",
+      "sample_version": null,
+      "hides": "function_broken_repro",
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 36,
@@ -695,7 +776,13 @@
       "at": "2026-11-05T20:28:41+08:00",
       "verdict": "true",
       "severity_line": "function_broken_repro",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "small —— 判据侧一条读数 + 一处口径（role 从哪里读）；真正的修法要看平台给不给口径（会话头是「创建那一刻」的快照，运行时切换只落一帧 agent-preset/selected）。约 2–4 小时（不含平台改动）。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗，与登记同批）。**前提核实在本条 evidence 里**（两份会话流全解 + 产品自己记的 row 7）。**机理链**：`presetKindOf()`（`presets/agenia/inject.js:1548-1555`）只认头里的 `agenia` / `agenia-member`（组员 id），其余一律 `unknown` ⇒ `identityVerdict()` 落 row 6/7 ⇒ 窄 + 无角色（:811-830）；而头是**出生那一刻**的快照，`agent-preset/selected` 那一帧不改头（`session-cc5c68d1` 的 seq 4 就是这一帧，2026-11-01）⇒ 重启续跑 = 回到出生值。**建议处置 adopt**；owner = 组长先定口径（这是「身份从哪读」的裁定，不是实现细节）+ 实现岗改读面 + 测试岗补读数；order：与 `bug-20261105-12` 的 R2 **同一批**（R2 不把「续跑」这一支分出来，就会把这一条误判成「bundle 层塌了」——今天已经误判过一次，见 -12 的评估）。修法三选一（写进契约，别在代码里各写一份）：① 守卫读**最后一次** `agent-preset/selected`（会话流里那一帧），头只当缺省；② 选择动作同时改头（平台若允许）；③ 续跑时把最后一次选择重新应用一次。三条都要配一条能翻面的读数：同一 session、先 standard 后 selected=agenia、丢掉内存态只留流（≈重启）⇒ 必须读 agenia；从没选择过的会话 ⇒ 必须读 standard。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 39,
@@ -764,7 +851,13 @@
       "at": "2026-11-05T20:27:16+08:00",
       "verdict": "true",
       "severity_line": "function_broken_repro",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "small —— 合并规则两行（`hides` 与 `cost` / `fix_sketch` 同一套「没传就保留」的写法；reading_lies 的完整性判据要在合并**之后**再判一次）+ 一条纯函数用例，约 1 小时。",
+      "fix_sketch": "评估（2026-11-05 20:3x · 测试岗）。**前提核实**：`presets/agenia/bin/agenia-route.mjs:1481-1493` —— `verdict` / `severity_line` / `severity_confidence` / `cost` / `fix_sketch` 五格都是「没传就保留 prev」，只有 `hides` 是「severity !== null && exit === 'reading_lies' 时才写」⇒ 第二次写（只改文字）把一条 `reading_lies` 的 `hides` 静默删掉。现场：bug-20261105-12 在 20:26:36 那次写之后盘上 `'hides' in assessment === false`（本班第三次写已补回，v49）。**为什么它算缺陷而不是小瑕疵**：`hides` 是这条评估**一半的事实**（定形 §4.2：第三线只有在掩盖前两条时才算），删掉之后读者看到的是一条「没有地基的 reading_lies」，而且 `entryVerdict()` / `bugLedgerShapeVerdict()` 都不查 ⇒ **没有任何一格会报**。**建议处置 adopt**；owner = 实现岗（`presets/agenia/bin/**` 是生产代码）；order：与下一次动 route CLI 的票同批。修法：① `hides: p.hides === undefined ? (prev?.hides ?? null) : p.hides`（与另外五格同一套合并规则）；② 合并完之后**再跑一次**完整性判定：`severity_line === 'reading_lies'` 且 `hides` 不在 {data_broken, function_broken_repro} ⇒ 拒 `E_BUG_SEVERITY_THIRD_LINE_UNGROUNDED`（同一个判据、同一个出口，别另写一份）；③ 判据（纯函数，喂假 prev/假 payload 不真跑 CLI）：连写两次、第二次只传 `fix_sketch` ⇒ `hides` 必须还在；第三次传 `hides` ⇒ 改得动；传非法的 `hides` ⇒ 拒。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 42,
@@ -824,7 +917,14 @@
       "id": "bug-20261105-15",
       "at": "2026-11-06T10:42:06+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "0 —— 已修（提交 24d6242 · 2026-11-05 21:49:13 +0800）；本条只需要关闭。",
+      "fix_sketch": "评估（2026-11-06 · 测试岗）。**前提核实（现量，不是引条目自述）**：① 代码在 —— `tests/agenia-upgrade/support/composition.mjs` 有 `isPlainScalarStart()`（:94）与 `readPlainScalarContinuation()`（:120），两处调入（:169 序列项 / :219 映射值）；`git log -S` 定位到提交 24d6242（2026-11-05 21:49:13，晚于 38c5b46）。② 真文件读数 —— 现役 profile 补丁 `C:\\Users\\DAVID\\.dsh\\profiles\\desktop\\cordis.patch.yml`（sha256 F176DA5E… · 63 行 · mtime 2026-10-31）：**未解析 0 条**、顶层 item **8 个**、最后一条顶层 item 两把尺子都给出 `id:web-search-deepseek`（agree=true）⇒ 与条目记的「18→0、5→8」一致。③ 阳性对照落在**那一处**（防「0 条」是空转的绿）—— 第 44–45 行那句多行 plain scalar 仍在，解析结果是 `$[4].config.models[1].description` 一个**折成一个空格**的字符串（无换行，尾部 `to complex or quality-critical tasks at higher cost.` 在里面）。④ 合成自证 `patchReaderSelfProof()` problems=[]：两条阳性（映射 / 序列）warnings 为空且值对；三条阴性（标量后跟更深 `key:` / 引号标量后跟缩进行 / 标量后跟 `- `）都出声并点到第 2 行。⇒ 判 **true（真缺陷，已修好）**。严重线不重判（活体已无受害者；重判会把一条已关的修算成新的假红，与 -06/-09/-10/-11 同一口径）。**更正（同班第二次写，只改这一句）**：初评时工作树里有 `composition.mjs` 的两行措辞改动（`acceptableLiveRows` 报文改 join）未提交 —— 那句话按 10:40 那一刻为真；**10:37:14 的提交 7d8e015 已把它收进去**，与本条修复无关（只改报文、不动解析）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 45,

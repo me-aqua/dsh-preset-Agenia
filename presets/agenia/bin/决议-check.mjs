@@ -13,8 +13,9 @@
  *   · `init` —— 建 `账本/{产品,缺陷,构案}/` + 三张派生页骨架。**幂等**：已建的一个字节都不动。
  *   · `index` —— **唯一**允许写派生页的 op（三张一起重写，跑两次字节相同）。
  *   · `fold` —— 折叠缺陷册（调 `lib/缺陷折叠.mjs`，自己不折）。
- *   · `reconcile --archive=<旧 ledger.json>` —— 与旧台账逐条对账（**七格**：id / 现象 / 处置 /
- *     how_seen / evidence / recipe / batch；后四格是 Gate 3 r3 补的），差异逐条点名。
+ *   · `reconcile --archive=<旧 ledger.json>` —— 与旧台账逐条对账（**按 kind 的键宇宙**：
+ *     `registered` / `assessed` / `disposed` 三族各自取「旧台账视图 ∪ 事件视图」的全集，逐键比
+ *     identical / missing / differing，报文点名 id + kind + 键；比对面不手写），差异逐条点名。
  *   · `gate2-card --card=<路径>` —— 第 2 关拒接闸的新词表（`票类: 产品 | 构案`，+ `数据` 的具名豁免）。
  *   · `card-land --card=… --day=… --role=…` —— **先落盘、再过闸**：被拒的卡照样在盘上，逐字节相同。
  *   · `supersede <旧编号> --by <新编号>` —— 写手：只翻旧文头块两个字段，正文一个字节不动。
@@ -126,13 +127,47 @@ export function runFold({ root }) {
 }
 
 /**
- * 对账比的**七格**（契约 §4.2；Gate 3 r3 从三格扩到七格）。
+ * 对账的三族（= 缺陷事件的三个 kind，契约 §3.1）。
  *
- * 为什么扩：迁移只带 `id` / `phenomenon` / `disposition` 三格就没人看得见
- * `how_seen` / `evidence` / `recipe` / `batch` 全丢（2026-11-15 第 4 关 M-1）——
- * `evidence` 还是登记准入的第二扇门。对账面不比它，损失就落在验收口径之外。
+ * 🔴 **比对面不手写**：按 kind 取「旧台账视图 ∪ 事件载荷」的**键宇宙**，逐键比。
+ * 为什么（2026-11-15 第 4 关 r2 · M-5/M-6）：手写的七字段表已经两次比数据窄 ——
+ * 上一轮漏 `registered` 的四个字段，这一轮漏 `assessed` 的 `fix_sketch` / `cost`。
+ * 手写表只要有人加字段就再漏一次；键宇宙是从数据自己长出来的（契约 §4.2）。
  */
-export const RECONCILE_FIELDS = Object.freeze(['id', 'phenomenon', 'disposition', 'how_seen', 'evidence', 'recipe', 'batch'])
+export const RECONCILE_KINDS = Object.freeze(['registered', 'assessed', 'disposed'])
+
+/** 事件信封：`seq` / `kind` 是流的结构，不是记录字段（形状由折叠判 `BUG-EVENT-SHAPE`）。 */
+export const EVENT_ENVELOPE_KEYS = Object.freeze(['seq', 'kind'])
+
+const hasOwn = (value, key) => value !== null && typeof value === 'object' && !Array.isArray(value)
+  && Object.prototype.hasOwnProperty.call(value, key)
+
+/**
+ * 旧台账的键 → 本族的键（只改名，不改值）。
+ * `kind` 是旧台账的"条目种类"（`bug`），在事件里叫 `entry_kind`；`registered_at` 就是事件的 `at`。
+ */
+const REGISTERED_KEYS = Object.freeze({
+  id: 'id', kind: 'entry_kind', phenomenon: 'phenomenon', reporter: 'reporter', source: 'source',
+  tags: 'tags', how_seen: 'how_seen', evidence: 'evidence', recipe: 'recipe', batch: 'batch',
+  finding_refs: 'finding_refs', registered_at: 'at',
+})
+
+/**
+ * 旧台账一行混着三族 + 册级书签。**每个键都要分类**（`FOLD-ARCHIVE-KEY-UNCLASSIFIED` 守它）：
+ *   · `registered` —— 登记那一族（表见 `REGISTERED_KEYS`）；
+ *   · `assessed`   —— 评估那一族：嵌套的 `assessment.*` + **条目级**的 `line_decision` /
+ *                     `escalated_at` / `card_red`（读面 `ledgerFromBugBook` 从 `assessed_payload` 取它们）；
+ *   · `disposed`   —— 处置那一族：`disposition.*`；
+ *   · `bookkeeping`—— `author`：读面按写者身份写死 `'leader'`，不在事件载荷里（旧台账每条都有）。
+ * 分类表**不是比对面**：比的是每一族视图里**实际出现的键的并集**。分类只保证"旧台账新加一个键，
+ * 要么进某一族、要么当场红"，不让它静默落在比较面之外。
+ */
+export const ARCHIVE_KEY_PARTITION = Object.freeze({
+  registered: Object.keys(REGISTERED_KEYS),
+  assessed: Object.freeze(['assessment', 'line_decision', 'escalated_at', 'card_red']),
+  disposed: Object.freeze(['disposition']),
+  bookkeeping: Object.freeze(['author']),
+})
 
 /**
  * 一个值的**规范形**（两条读数用同一份口径比）：
@@ -149,19 +184,68 @@ export function canonicalJson(value) {
 }
 
 /**
- * 一条记录的七格。`registered` 是 `registered` 事件的载荷（折叠出来的 `registered_payload`）：
- * 后四格（`how_seen` / `evidence` / `recipe` / `batch`）在**事件载荷**里，不在折叠后的现状上。
+ * 旧台账一条在某个 kind 下的**视图**（expected 侧）。**只搬键**、不补默认值 ——
+ * 旧台账没有的键，视图里也没有：presence 本身是数据（回填要逐字，见 §3.1）。
+ *
+ * 三处派生（写在契约 §4.2，别在别处再补一份）：
+ *   · `kind` → `entry_kind`、`registered_at` → `at`（改名）；
+ *   · `assessment.*` / `disposition.*` 摊平 / 整体搬（嵌套载荷）；
+ *   · `历史: disposition.value` —— 旧台账里的每条处置都是**迁移前**写的，
+ *     所以它在事件里必然带 `历史`（契约 §3.2）；这是本对账唯一一处补值。
  */
-function reconcileFieldsOf(entry, registered = entry) {
-  return {
-    id: String(entry?.id ?? ''),
-    phenomenon: String(entry?.phenomenon ?? ''),
-    disposition: String(entry?.disposition?.value ?? ''),
-    how_seen: registered?.how_seen,
-    evidence: registered?.evidence,
-    recipe: registered?.recipe,
-    batch: registered?.batch,
+export function archiveKindView(entry, kind) {
+  const view = {}
+  if (entry === null || typeof entry !== 'object') return view
+  if (kind === 'registered') {
+    for (const [from, to] of Object.entries(REGISTERED_KEYS)) {
+      if (hasOwn(entry, from)) view[to] = entry[from]
+    }
+    return view
   }
+  if (kind === 'assessed') {
+    // 旧台账 31 条没有 `assessment`（`null`）—— 那一族对它们**不存在**（不是"空视图"）。
+    if (!hasOwn(entry, 'assessment') || entry.assessment === null) return view
+    if (hasOwn(entry, 'id')) view.id = entry.id
+    for (const [k, v] of Object.entries(entry.assessment)) view[k] = v
+    for (const k of ['line_decision', 'escalated_at', 'card_red']) {
+      if (hasOwn(entry, k)) view[k] = entry[k]
+    }
+    return view
+  }
+  // disposed
+  if (hasOwn(entry, 'id')) view.id = entry.id
+  if (hasOwn(entry, 'disposition')) {
+    view.disposition = entry.disposition
+    if (entry.disposition !== null && hasOwn(entry.disposition, 'value')) view['历史'] = entry.disposition.value
+  }
+  return view
+}
+
+/**
+ * 折叠出来的现状在某个 kind 下的**视图**（actual 侧）。
+ * `registered` / `assessed` 的载荷原件就在 state 上（`registered_payload` / `assessed_payload`，
+ * 折叠逐字带出来）；`disposed` 没有载荷原件 —— 折叠留下的是**解析过的** `disposition` 与 `chain`，
+ * 视图从这两处还原（`历史` / `构案` / `判假` 由 `chain.kind` 选择），不再回写事件。
+ */
+export function eventKindView(state, kind) {
+  if (state === null || typeof state !== 'object') return null
+  if (kind === 'registered' || kind === 'assessed') {
+    const payload = kind === 'registered' ? state.registered_payload : state.assessed_payload
+    if (payload === null || typeof payload !== 'object') return null
+    const view = {}
+    for (const [k, v] of Object.entries(payload)) {
+      if (EVENT_ENVELOPE_KEYS.includes(k)) continue
+      view[k] = v
+    }
+    return view
+  }
+  if (state.disposition === null || state.disposition === undefined) return null
+  const view = { id: state.id, disposition: state.disposition }
+  const chain = state.chain ?? { kind: null }
+  if (chain.kind === 'legacy') view['历史'] = chain.ref
+  if (chain.kind === 'scheme') view['构案'] = chain.ref
+  if (chain.kind === 'judged_false') view['判假'] = chain.ref
+  return view
 }
 
 /** 报文里的一格值：规范形，太长就截断（全量留在 `diffs[]` 里）。 */
@@ -171,13 +255,103 @@ function showFieldValue(value, max = 240) {
 }
 
 /**
- * 与旧台账逐条对账（契约 §4.2）：条数 · 逐条**七格** · id 集合。
- * 「少了 1 条」不算读数 —— 报文必须点名少了哪几条。
+ * 逐 kind 比「旧台账视图」与「事件视图」：键宇宙 = 两侧键的并集，逐键记
+ * identical / missing / differing（外加两边都没有的 `absent`，四数之和 = `compared`）。
+ *
+ * 为什么 presence 也判：只比值的对账会漏掉「值是 null 的键被删掉」——
+ * `undefined` 与 `null` 在 `canonicalJson` 里同义。回填是逐字搬，presence 也是数据。
+ * `id` 同时出现在三族视图里（记录身份），归 `registered` 那一族的分类表。
+ */
+function compareKind(kind, archiveEntries, states, archiveIds, presentIds, archiveUpdatedAt) {
+  const want = new Map()
+  for (const entry of archiveEntries) {
+    const view = archiveKindView(entry, kind)
+    if (Object.keys(view).length > 0) want.set(String(entry.id), view)
+  }
+  const got = new Map()
+  for (const state of states) {
+    const view = eventKindView(state, kind)
+    if (view !== null) got.set(String(state.id), view)
+  }
+  const keys = new Set()
+  for (const view of want.values()) for (const k of Object.keys(view)) keys.add(k)
+  for (const view of got.values()) for (const k of Object.keys(view)) keys.add(k)
+  const table = {}
+  for (const k of [...keys].sort()) table[k] = { identical: 0, missing: 0, missing_side: {}, differing: 0, absent: 0 }
+  const diffs = []
+  const missingKeys = []
+  const missingKinds = []
+  const postMigrationKinds = []
+  let compared = 0
+  const ids = [...new Set([...want.keys(), ...got.keys()])].sort()
+  for (const id of ids) {
+    const a = want.get(id)
+    const b = got.get(id)
+    // 只比两边都**在旧台账里**的记录：迁移之后新登记的不可能在这份归档里（外层 `post_migration` 已单列）。
+    if (!archiveIds.has(id)) continue
+    // 整条记录丢了（旧台账有、事件流没有）由外层 `FOLD-TOTAL-MISMATCH` 点名 ——
+    // 这里不再按三族各报一次（同一个病只报一条，契约 §9.3）。
+    if (!presentIds.has(id)) continue
+    if (a === undefined) {
+      // 事件流里这一族有、旧台账没有：**迁移之后补记的**（`at` 晚于归档）不算损失；
+      // 早于归档的才是"归档里有、事件流漏折了"（下面这一支）。
+      const at = Date.parse(b?.at ?? '')
+      if (Number.isFinite(archiveUpdatedAt) && Number.isFinite(at) && at > archiveUpdatedAt) {
+        postMigrationKinds.push({ id, kind })
+        continue
+      }
+      missingKinds.push({ id, kind, side: 'archive' })
+      continue
+    }
+    if (b === undefined) {
+      missingKinds.push({ id, kind, side: 'event' })
+      continue
+    }
+    compared += 1
+    for (const k of keys) {
+      const ah = hasOwn(a, k)
+      const bh = hasOwn(b, k)
+      if (!ah && !bh) { table[k].absent += 1; continue }
+      if (ah && !bh) {
+        table[k].missing += 1
+        table[k].missing_side.event = (table[k].missing_side.event ?? 0) + 1
+        missingKeys.push({ id, kind, field: k, side: 'event' })
+        continue
+      }
+      if (!ah && bh) {
+        table[k].missing += 1
+        table[k].missing_side.archive = (table[k].missing_side.archive ?? 0) + 1
+        missingKeys.push({ id, kind, field: k, side: 'archive' })
+        continue
+      }
+      if (canonicalJson(a[k]) === canonicalJson(b[k])) { table[k].identical += 1; continue }
+      table[k].differing += 1
+      diffs.push({ id, kind, field: k, expected: canonicalJson(a[k]), actual: canonicalJson(b[k]) })
+    }
+  }
+  return {
+    kind, archive_records: want.size, event_records: got.size, compared,
+    keys: table, diffs, missing_keys: missingKeys, missing_kinds: missingKinds, post_migration_kinds: postMigrationKinds,
+  }
+}
+
+/**
+ * 与旧台账逐条对账（契约 §4.2）。判四件：
+ *   ① **条数**：旧台账每条都要折得出来（缺一条 ⇒ `FOLD-TOTAL-MISMATCH` 点名 id）；
+ *      迁移之后**新登记**的条目不是损失（按 `registered_at` 晚于旧台账 `updated_at` 归档为
+ *      `post_migration` 读数，不算问题）；同一条时间窗之外多出来的 id 才算 `FOLD-TOTAL-MISMATCH`。
+ *   ② **逐 kind 的键宇宙**（`registered` / `assessed` / `disposed`）：每族的键 = 旧台账视图 ∪ 事件视图，
+ *      逐键记 identical / missing / differing；缺键 ⇒ `FOLD-FIELD-MISSING`，值不同 ⇒ `FOLD-DIFF`，
+ *      整族记录（如 `assessed` 事件）丢了 ⇒ `FOLD-KIND-MISSING`。报文点名 id + kind + 键。
+ *   ③ **旧台账的键必须全部分类**（`ARCHIVE_KEY_PARTITION`）：新加一个字段而不分类 ⇒
+ *      `FOLD-ARCHIVE-KEY-UNCLASSIFIED` —— 否则它落在比对面之外，"比对面比数据窄"就会再犯一次。
+ *   ④ 读数：`kinds` 里逐族逐键的四数（identical + missing + differing + absent = compared）。
  */
 export function runReconcile({ root, archive }) {
   const out = {
     ok: false, root: path.resolve(root), op: 'reconcile', archive: archive ?? null,
-    archive_entries: 0, folded_states: 0, compared: 0, legacy_disposed: 0, diffs: [], problems: [],
+    archive_entries: 0, folded_states: 0, compared: 0, legacy_disposed: 0,
+    kinds: {}, post_migration: [], diffs: [], problems: [],
   }
   if (typeof archive !== 'string' || archive === '' || !existsSync(archive)) {
     out.problems.push(problem('FOLD-ARCHIVE-MISSING', `对账的旧台账读不出来：${JSON.stringify(archive ?? null)} —— `
@@ -201,29 +375,60 @@ export function runReconcile({ root, archive }) {
   out.archive_entries = entries.length
   out.folded_states = folded.states.length
   out.legacy_disposed = folded.states.filter((s) => s.disposition !== null && s.disposition !== undefined && s.chain.kind === 'legacy').length
-  const want = new Map(entries.map((e) => [String(e.id), reconcileFieldsOf(e)]))
-  const got = new Map(folded.states.map((s) => [String(s.id), reconcileFieldsOf(s, s.registered_payload)]))
-  const missing = [...want.keys()].filter((id) => !got.has(id)).sort()
-  const extra = [...got.keys()].filter((id) => !want.has(id)).sort()
-  for (const id of missing) {
+  const archiveIds = new Set(entries.map((e) => String(e.id)))
+  const stateIds = new Set(folded.states.map((s) => String(s.id)))
+  const archiveUpdatedAt = typeof json?.updated_at === 'string' ? Date.parse(json.updated_at) : Number.NaN
+  for (const id of [...archiveIds].filter((x) => !stateIds.has(x)).sort()) {
     out.problems.push(problem('FOLD-TOTAL-MISMATCH', `旧台账有 ${id}，缺陷册里折叠不出来 —— 迁移丢了一条（契约 §4.2-1）`, { id }))
   }
-  for (const id of extra) {
-    out.problems.push(problem('FOLD-TOTAL-MISMATCH', `缺陷册里有 ${id}，旧台账里没有 —— 多出来一条（契约 §4.2-1）`, { id }))
+  for (const state of folded.states) {
+    const id = String(state.id)
+    if (archiveIds.has(id)) continue
+    const registeredAt = Date.parse(state.registered_at ?? '')
+    // 归档是迁移那一刻的回滚点：之后新登记的不是"多出来一条"（事件流 append-only）。
+    // 时间读不出来 ⇒ fail-closed（按"多出来"报），不许把判不了的当合法。
+    if (Number.isFinite(archiveUpdatedAt) && Number.isFinite(registeredAt) && registeredAt > archiveUpdatedAt) {
+      out.post_migration.push({ id, registered_at: state.registered_at })
+      continue
+    }
+    out.problems.push(problem('FOLD-TOTAL-MISMATCH', `缺陷册里有 ${id}（${state.registered_at ?? 'registered_at 读不出来'}），`
+      + `旧台账里没有、也不晚于归档的 updated_at（${json?.updated_at ?? '读不出来'}）—— 多出来一条（契约 §4.2-1）`, { id }))
   }
-  for (const [id, w] of want) {
-    const g = got.get(id)
-    if (g === undefined) continue
-    for (const field of RECONCILE_FIELDS) {
-      if (canonicalJson(w[field]) === canonicalJson(g[field])) continue
-      const expected = canonicalJson(w[field])
-      const actual = canonicalJson(g[field])
-      out.diffs.push({ id, field, expected, actual })
-      out.problems.push(problem('FOLD-DIFF', `${id} 的 \`${field}\` 对不上：旧台账 ${showFieldValue(w[field])} / 折叠 ${showFieldValue(g[field])}`
-        + '（契约 §4.2-2）', { id, field }))
+  // ③ 旧台账的键分类（覆盖，不要求互斥）：漏一个 = 它不在比对面里。
+  const classified = new Set([...Object.values(ARCHIVE_KEY_PARTITION).flat()])
+  const unclassified = new Map()
+  for (const entry of entries) {
+    for (const key of Object.keys(entry)) {
+      if (classified.has(key)) continue
+      const hit = unclassified.get(key) ?? { key, ids: [] }
+      if (hit.ids.length < 5) hit.ids.push(String(entry.id))
+      unclassified.set(key, hit)
     }
   }
-  out.compared = [...want.keys()].filter((id) => got.has(id)).length
+  for (const { key, ids } of [...unclassified.values()].sort((a, b) => (a.key < b.key ? -1 : 1))) {
+    out.problems.push(problem('FOLD-ARCHIVE-KEY-UNCLASSIFIED', `旧台账的键 \`${key}\` 没有分类（${ids.join(' / ')}…）—— `
+      + '它落在比对面之外：把它归进 registered / assessed / disposed 之一，或写进 bookkeeping（契约 §4.2-3）', { field: key }))
+  }
+  // ② 逐 kind 的键宇宙
+  for (const kind of RECONCILE_KINDS) {
+    const result = compareKind(kind, entries, folded.states, archiveIds, stateIds, archiveUpdatedAt)
+    out.kinds[kind] = result
+    for (const miss of result.missing_kinds) {
+      out.problems.push(problem('FOLD-KIND-MISSING', `${miss.id} 的 \`${kind}\` 记录在${miss.side === 'event' ? '事件流' : '旧台账'}里缺了 —— `
+        + '整族记录丢了，不是某个键丢了（契约 §4.2-2）', { id: miss.id, kind, side: miss.side }))
+    }
+    for (const miss of result.missing_keys) {
+      out.problems.push(problem('FOLD-FIELD-MISSING', `${miss.id} 的 \`${kind}.${miss.field}\` 在${miss.side === 'event' ? '事件流' : '旧台账'}里缺这个键 —— `
+        + '缺键也是数据损失（presence 是数据，契约 §4.2-2）', { id: miss.id, kind, field: miss.field, side: miss.side }))
+    }
+    for (const diff of result.diffs) {
+      out.diffs.push(diff)
+      const clip = (text) => (text.length > 240 ? `${text.slice(0, 240)}…（共 ${text.length} 字符）` : text)
+      out.problems.push(problem('FOLD-DIFF', `${diff.id} 的 \`${kind}.${diff.field}\` 对不上：旧台账 ${clip(diff.expected)}`
+        + ` / 折叠 ${clip(diff.actual)}（契约 §4.2-2）`, { id: diff.id, kind, field: diff.field }))
+    }
+  }
+  out.compared = [...archiveIds].filter((id) => stateIds.has(id)).length
   out.problems = dedupeProblems(out.problems)
   out.ok = out.problems.length === 0
   return out

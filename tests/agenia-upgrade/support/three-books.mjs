@@ -78,11 +78,24 @@ export const LEDGER_READERS = Object.freeze([
 ])
 
 /**
- * 旧台账里对账要比的**七格**（契约 §4.2；Gate 3 r3 从三格扩到七格 ——
- * 迁移丢的正是后四格：`how_seen` / `evidence` / `recipe` / `batch`）。
- * 测试侧这份是**手写的期望**（与工具那份同值但不是 import 来的）：刀要看的是"两边各自成立"。
+ * 对账的**三族**（= 缺陷事件的三个 kind，契约 §3.1/§4.2）。
+ *
+ * 🔴 比对面**不手写字段表**（Gate 3 r4 · 2026-11-15）：按 kind 取「旧台账视图 ∪ 事件视图」的
+ * **键宇宙**，逐键比 identical / missing / differing。上一版手写的七字段表已经两次比数据窄
+ * （漏 `registered` 四字段、漏 `assessed` 的 fix_sketch / cost）。
+ * 测试侧这份是**同一规则的手写实现**（不 import 产品那份）：产品那份把比对面改窄时，
+ * 两边的 `kinds.*.keys` 键集合会对不上 ⇒ `FOLD-ORACLE-DISAGREES`（一把刀切"规则"，不切"值"）。
  */
-export const RECONCILE_FIELDS = Object.freeze(['id', 'phenomenon', 'disposition', 'how_seen', 'evidence', 'recipe', 'batch'])
+export const ORACLE_KINDS = Object.freeze(['registered', 'assessed', 'disposed'])
+
+/** 旧台账键 → 本族键（改名表；与产品侧同一张，但这里是期望侧手写的）。 */
+export const ORACLE_ARCHIVE_RENAMES = Object.freeze({
+  registered: Object.freeze({
+    id: 'id', kind: 'entry_kind', phenomenon: 'phenomenon', reporter: 'reporter', source: 'source',
+    tags: 'tags', how_seen: 'how_seen', evidence: 'evidence', recipe: 'recipe', batch: 'batch',
+    finding_refs: 'finding_refs', registered_at: 'at',
+  }),
+})
 
 // ── 夹具正文 ────────────────────────────────────────────────────────────
 
@@ -179,9 +192,50 @@ export function archiveText(entries) {
   }, null, 2)}\n`
 }
 
-/** 旧台账的一条（对账要七格：`id` / 现象 / 处置 + `how_seen` / `evidence` / `recipe` / `batch`）。 */
+/** 旧台账的一条（对账的 expected 侧；`extra` 原样并进条目 —— `assessment` / `line_decision` / `escalated_at` / `card_red` 也走它）。 */
 export function archiveEntry({ id, phenomenon = '夹具现象', value = 'adopted', reason = '夹具处置理由', at = '2026-11-15T11:00:00+08:00', extra = {} }) {
   return { id, kind: 'bug', phenomenon, disposition: { value, reason, by: 'leader', at }, ...extra }
+}
+
+/** 从一天的事件里删掉某一条的**一个键**（刀：只动一个键；不改原数组）。 */
+export function withoutEventKey(events, { id, kind, key }) {
+  return events.map((event) => {
+    if (event.id !== id || event.kind !== kind) return event
+    if (!Object.prototype.hasOwnProperty.call(event, key)) {
+      throw new Error(`夹具里没有 ${id} 的 \`${kind}.${key}\` —— 刀切不到对象`)
+    }
+    const copy = { ...event }
+    delete copy[key]
+    return copy
+  })
+}
+
+/**
+ * 工具与 oracle 的 `kinds` 读数是不是**同一张表**（键集合 + 四数 + 记录数）。
+ * 这是"一个规则，不是两个"的证人：产品侧把比对面改窄时键集合先对不上。
+ */
+export function kindTableDiff(toolKinds, oracleKinds) {
+  const out = []
+  for (const kind of ORACLE_KINDS) {
+    const a = toolKinds?.[kind]
+    const b = oracleKinds?.[kind]
+    if (a === undefined || b === undefined) { out.push({ kind, why: 'kind 不在读数里' }); continue }
+    const ak = Object.keys(a.keys ?? {}).sort()
+    const bk = Object.keys(b.keys ?? {}).sort()
+    if (JSON.stringify(ak) !== JSON.stringify(bk)) out.push({ kind, why: '键集合', tool: ak, oracle: bk })
+    for (const field of ['archive_records', 'compared']) {
+      if (a[field] !== b[field]) out.push({ kind, field, tool: a[field], oracle: b[field] })
+    }
+    for (const key of ak) {
+      if (b.keys?.[key] === undefined) continue
+      for (const field of ['identical', 'missing', 'differing']) {
+        if ((a.keys[key]?.[field] ?? null) !== (b.keys[key]?.[field] ?? null)) {
+          out.push({ kind, key, field, tool: a.keys[key]?.[field] ?? null, oracle: b.keys[key]?.[field] ?? null })
+        }
+      }
+    }
+  }
+  return out
 }
 
 /** 派工卡正文（契约 §7；H1 → 空行 → 头块 → 空行 → 正文）。 */
@@ -483,7 +537,7 @@ export function indexMarkerReading(text) {
 }
 
 // ── 折叠对账的**测试侧 oracle**（`LDG-05`）──────────────────────────────────
-/** 一条记录七格的规范形（对象 / 数组按键排序；`undefined` 与 `null` 同义）。 */
+/** 一个值的规范形（对象 / 数组按键排序；`undefined` 与 `null` 同义）。 */
 function canonicalFieldValue(value) {
   if (value === undefined || value === null) return 'null'
   if (Array.isArray(value)) return `[${value.map(canonicalFieldValue).join(',')}]`
@@ -493,62 +547,159 @@ function canonicalFieldValue(value) {
   return JSON.stringify(value)
 }
 
-/** 旧台账那一条的七格（后四格就在条目自己身上）。 */
-function archiveFieldsOf(entry) {
-  return {
-    id: String(entry.id),
-    phenomenon: String(entry.phenomenon ?? ''),
-    disposition: String(entry?.disposition?.value ?? ''),
-    how_seen: entry.how_seen,
-    evidence: entry.evidence,
-    recipe: entry.recipe,
-    batch: entry.batch,
+const hasOwnKey = (value, key) => value !== null && typeof value === 'object' && !Array.isArray(value)
+  && Object.prototype.hasOwnProperty.call(value, key)
+
+/** 旧台账一条在某个 kind 下的视图（**只搬键**，不补默认值；presence 是数据）。 */
+function oracleArchiveView(entry, kind) {
+  const view = {}
+  if (entry === null || typeof entry !== 'object') return view
+  if (kind === 'registered') {
+    for (const [from, to] of Object.entries(ORACLE_ARCHIVE_RENAMES.registered)) {
+      if (hasOwnKey(entry, from)) view[to] = entry[from]
+    }
+    return view
   }
+  if (kind === 'assessed') {
+    if (!hasOwnKey(entry, 'assessment') || entry.assessment === null) return view
+    if (hasOwnKey(entry, 'id')) view.id = entry.id
+    for (const [k, v] of Object.entries(entry.assessment)) view[k] = v
+    for (const k of ['line_decision', 'escalated_at', 'card_red']) if (hasOwnKey(entry, k)) view[k] = entry[k]
+    return view
+  }
+  if (hasOwnKey(entry, 'id')) view.id = entry.id
+  if (hasOwnKey(entry, 'disposition')) {
+    view.disposition = entry.disposition
+    if (entry.disposition !== null && hasOwnKey(entry.disposition, 'value')) view['历史'] = entry.disposition.value
+  }
+  return view
 }
 
-/** 折叠出来的现状的七格（后四格在 `registered_payload` 里 —— 那是事件的载荷原件）。 */
-function foldedFieldsOf(state) {
-  const reg = state?.registered_payload ?? {}
-  return {
-    id: String(state.id),
-    phenomenon: String(state.phenomenon ?? ''),
-    disposition: String(state?.disposition?.value ?? ''),
-    how_seen: reg.how_seen,
-    evidence: reg.evidence,
-    recipe: reg.recipe,
-    batch: reg.batch,
+/** 折叠状态在某个 kind 下的视图（载荷原件在 state 上；disposed 由 disposition + chain 还原）。 */
+function oracleEventView(state, kind) {
+  if (state === null || typeof state !== 'object') return null
+  if (kind === 'registered' || kind === 'assessed') {
+    const payload = kind === 'registered' ? state.registered_payload : state.assessed_payload
+    if (payload === null || typeof payload !== 'object') return null
+    const view = {}
+    for (const [k, v] of Object.entries(payload)) {
+      if (k === 'seq' || k === 'kind') continue
+      view[k] = v
+    }
+    return view
   }
+  if (state.disposition === null || state.disposition === undefined) return null
+  const view = { id: state.id, disposition: state.disposition }
+  const chain = state.chain ?? { kind: null }
+  if (chain.kind === 'legacy') view['历史'] = chain.ref
+  if (chain.kind === 'scheme') view['构案'] = chain.ref
+  if (chain.kind === 'judged_false') view['判假'] = chain.ref
+  return view
+}
+
+/** 逐 kind 的键宇宙比对（与产品侧同一规则；期望侧独立实现）。 */
+function oracleCompareKind(kind, entries, states, archiveIds, presentIds, archiveUpdatedAt) {
+  const want = new Map()
+  for (const entry of entries) {
+    const view = oracleArchiveView(entry, kind)
+    if (Object.keys(view).length > 0) want.set(String(entry.id), view)
+  }
+  const got = new Map()
+  for (const state of states) {
+    const view = oracleEventView(state, kind)
+    if (view !== null) got.set(String(state.id), view)
+  }
+  const keys = new Set()
+  for (const view of want.values()) for (const k of Object.keys(view)) keys.add(k)
+  for (const view of got.values()) for (const k of Object.keys(view)) keys.add(k)
+  const table = {}
+  for (const k of [...keys].sort()) table[k] = { identical: 0, missing: 0, differing: 0, absent: 0 }
+  const diffs = []
+  const missingKeys = []
+  const missingKinds = []
+  const postMigrationKinds = []
+  let compared = 0
+  for (const id of [...new Set([...want.keys(), ...got.keys()])].sort()) {
+    if (!archiveIds.has(id)) continue
+    // 整条记录丢了由 `missing` 点名（外层）；族级缺失只在"记录在、这一族不在"时报。
+    if (!presentIds.has(id)) continue
+    const a = want.get(id)
+    const b = got.get(id)
+    if (a === undefined) {
+      const at = Date.parse(b?.at ?? '')
+      if (Number.isFinite(archiveUpdatedAt) && Number.isFinite(at) && at > archiveUpdatedAt) {
+        postMigrationKinds.push({ id, kind })
+        continue
+      }
+      missingKinds.push({ id, kind, side: 'archive' })
+      continue
+    }
+    if (b === undefined) {
+      missingKinds.push({ id, kind, side: 'event' })
+      continue
+    }
+    compared += 1
+    for (const k of keys) {
+      const ah = hasOwnKey(a, k)
+      const bh = hasOwnKey(b, k)
+      if (!ah && !bh) { table[k].absent += 1; continue }
+      if (ah !== bh) {
+        table[k].missing += 1
+        missingKeys.push({ id, kind, field: k, side: ah ? 'event' : 'archive' })
+        continue
+      }
+      if (canonicalFieldValue(a[k]) === canonicalFieldValue(b[k])) { table[k].identical += 1; continue }
+      table[k].differing += 1
+      diffs.push({ id, kind, field: k, expected: canonicalFieldValue(a[k]), actual: canonicalFieldValue(b[k]) })
+    }
+  }
+  return { kind, archive_records: want.size, event_records: got.size, compared, keys: table, diffs, missing_keys: missingKeys, missing_kinds: missingKinds, post_migration_kinds: postMigrationKinds }
 }
 
 /**
- * 独立于工具的一份对账：拿旧台账（expected）与 `--op fold` 出来的 states（actual）逐条比七格。
+ * 独立于工具的一份对账：拿旧台账（expected）与 `--op fold` 出来的 states（actual），**按 kind 比键宇宙**。
  * 🔴 为什么测试要自己算一遍：工具的 `ok` 是**被审方自报**（`cand-20261022-0151`）；
  *    两侧不一致时这一格必须红 `FOLD-ORACLE-DISAGREES`，而不是让"工具说绿"单独成立。
+ *    `kinds.*.keys` 的**键集合**也要两边相等：产品侧把比对面改窄（手写回七个字段）时，
+ *    键集合会对不上 —— 那是"规则被改窄"的证人，值全对也照样红。
  */
-export function reconcileOracle({ entries, states }) {
-  const expected = new Map()
-  for (const e of entries) expected.set(String(e.id), archiveFieldsOf(e))
-  const actual = new Map()
-  for (const s of states) actual.set(String(s.id), foldedFieldsOf(s))
-  const missing = [...expected.keys()].filter((id) => !actual.has(id)).sort()
-  const extra = [...actual.keys()].filter((id) => !expected.has(id)).sort()
+export function reconcileOracle({ entries, states, archiveUpdatedAt = null }) {
+  const archiveIds = new Set(entries.map((e) => String(e.id)))
+  const stateIds = new Set(states.map((s) => String(s.id)))
+  const missingRecords = [...archiveIds].filter((id) => !stateIds.has(id)).sort()
+  const extra = [...stateIds].filter((id) => !archiveIds.has(id)).sort()
+  const updatedMs = typeof archiveUpdatedAt === 'string' ? Date.parse(archiveUpdatedAt) : Number.NaN
+  const postMigration = []
+  const unexpected = []
+  for (const id of extra) {
+    const state = states.find((s) => String(s.id) === id)
+    const at = Date.parse(state?.registered_at ?? '')
+    if (Number.isFinite(updatedMs) && Number.isFinite(at) && at > updatedMs) postMigration.push({ id, registered_at: state.registered_at })
+    else unexpected.push(id)
+  }
+  const kinds = {}
   const diffs = []
-  for (const [id, want] of expected) {
-    const got = actual.get(id)
-    if (got === undefined) continue
-    for (const field of RECONCILE_FIELDS) {
-      if (canonicalFieldValue(want[field]) !== canonicalFieldValue(got[field])) {
-        diffs.push({ id, field, expected: canonicalFieldValue(want[field]), actual: canonicalFieldValue(got[field]) })
-      }
-    }
+  const missingKindRecords = []
+  const missingKeys = []
+  for (const kind of ORACLE_KINDS) {
+    const result = oracleCompareKind(kind, entries, states, archiveIds, stateIds, updatedMs)
+    kinds[kind] = result
+    diffs.push(...result.diffs)
+    missingKindRecords.push(...result.missing_kinds)
+    missingKeys.push(...result.missing_keys)
   }
   return {
-    ok: missing.length === 0 && extra.length === 0 && diffs.length === 0,
-    archive_entries: expected.size,
-    folded_states: actual.size,
-    compared: [...expected.keys()].filter((id) => actual.has(id)).length,
-    missing,
-    extra,
+    ok: missingRecords.length === 0 && unexpected.length === 0 && diffs.length === 0
+      && missingKindRecords.length === 0 && missingKeys.length === 0,
+    archive_entries: archiveIds.size,
+    folded_states: stateIds.size,
+    compared: [...archiveIds].filter((id) => stateIds.has(id)).length,
+    missing: missingRecords,
+    missing_kind_records: missingKindRecords,
+    missing_keys: missingKeys,
+    extra: unexpected,
+    post_migration: postMigration,
+    kinds,
     diffs,
   }
 }

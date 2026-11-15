@@ -1416,6 +1416,7 @@ export function judgePointers(decisions) {
  *   · `SCHEME-PARENT-DANGLING` —— 解析不到（产品册 / 缺陷册都没有这个号）；
  *   · `SCHEME-PARENT-RETIRED` —— 解析到了，但那条产品是 `已废`（要的是**生效**记录）；
  *   · `SCHEME-PARENT-NOT-PRODUCT` —— 解析到的是**构案**（`父` 只许写产品号或缺陷 id）。
+ *     显式写 `构案/NNNN` 的父**不必解析**就落这一码（它自己说它指一条构案；号上有没有同号产品都不改变这一点）。
  *
  * 边界：缺陷册的事件流**没有 `状态` 字段**（`registered` / `assessed` / `disposed` 三段，契约 §3.1），
  * 所以缺陷父的"生效"只有一种机器判得了的读法 —— **它在折叠出来的现状里存在**；已判假（`判假`）
@@ -1445,6 +1446,14 @@ export function judgeParentRefs(decisions, states, problems, {
       unresolved += 1
       problems.push(problem('SCHEME-PARENT-DANGLING', `${d.file} 的 ${name} 在缺陷册里解析不到（缺陷册里没有 ${ref.id}）—— `
         + '构案的父必须指得到一条真的记录（契约 §2.2）', { file: d.file, ref: d.parent }))
+      continue
+    }
+    // 显式写了 `构案/` 前缀 ⇒ 这个父**自己说**它指一条构案 —— 不管号上有没有产品，都不是产品父。
+    // 这一支要放在"产品册不在"之前：它由头块的字面量就能判，不依赖盘上有没有产品。
+    if (ref.series === '构案') {
+      unresolved += 1
+      problems.push(problem('SCHEME-PARENT-NOT-PRODUCT', `${d.file} 的 ${name} 写了 \`构案/\` 前缀 —— `
+        + '`父` 只许写产品号（`NNNN` / `产品/NNNN`）或缺陷 id（`bug-YYYYMMDD-NN`）（契约 §2.2）', { file: d.file, ref: d.parent }))
       continue
     }
     // 产品册不在 ⇒ 同上：判不了不等于悬空。
@@ -1674,7 +1683,12 @@ export function judgeProductChain(decisions, problems) {
   return { resolved: decisions.filter((d) => d.book === '产品' && d.status === '生效').length - unresolved, unresolved }
 }
 
-/** §5.2 缺陷 → 构案。三种记账之一即可；悬空 / 不对称各自成码。 */
+/** §5.2 缺陷 → 构案。三种记账之一即可；悬空 / 不对称各自成码。
+ *
+ * `deferred`（暂缓）是**未结**，不是结论：它的落点就是延迟本身（`disposition.reason` 里写到期与负责人），
+ * 不要求 `构案` / `判假` / `历史`。只有 `adopted` / `rejected` 是结论、必须有着落 ——
+ * 否则「今天先记下、下周再做」这条正常的开票路径会被判成链断了（2026-11-15 实测：三张 deferred 票红三条）。
+ */
 export function judgeBugChain(decisions, states, problems) {
   let unresolved = 0
   const liveSchemes = decisions.filter((d) => d.book === '构案' && d.status === '生效')
@@ -1699,12 +1713,18 @@ export function judgeBugChain(decisions, states, problems) {
       }
       continue
     }
+    // 暂缓 = 未结：延迟本身就是它的落点（到期与负责人在 reason 里）。结论才要求有着落。
+    if (s.disposition.value === 'deferred') continue
     unresolved += 1
     problems.push(problem('CHAIN-BUG-NO-SCHEME', `缺陷 ${s.id} 已经处置（${s.disposition.value}），但既不指向构案、也不判假、也不标历史 —— `
       + '关上的缺陷必须有一个着落（契约 §5.2）', { ref: s.id, id: s.id }))
   }
-  const closed = states.filter((s) => s.disposition !== null && s.disposition !== undefined).length
-  return { resolved: closed - unresolved, unresolved, closed }
+  // `closed` = **有结论**的条数（adopted / rejected）；`deferred` 是未结，单独数 ——
+  // 把暂缓算进"关上了"会让"还有多少条开着"这个读数永远偏低（2026-11-15 立）。
+  const concluded = states.filter((s) => s.disposition !== null && s.disposition !== undefined && s.disposition.value !== 'deferred')
+  const deferred = states.filter((s) => s.disposition !== null && s.disposition !== undefined && s.disposition.value === 'deferred')
+  const closed = concluded.length
+  return { resolved: closed - unresolved, unresolved, closed, deferred: deferred.length }
 }
 
 // ── 文件级 `依据:`（§5.3 / §6 / §10.2）──────────────────────────────────────

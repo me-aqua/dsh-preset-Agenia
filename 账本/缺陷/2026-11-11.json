@@ -36,7 +36,23 @@
       "id": "bug-20261111-01",
       "at": "2026-11-12T21:23:46+08:00",
       "verdict": "duplicate",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "两条原形状都已关（`2d5d99c`；本跑探针 A/B 实测）：① 折行实参 + 别名（`const poolFile = poolPath(root)` → `writeFileAtomic(\\n poolFile, …)`）在 `tests/agenia-upgrade/support/pool-writer-shape.mjs:291-327` 的结构判法下报 `PWL-POOL-WRITE-ELSEWHERE`；② 不带 flag 的 `/['\"]/` 已被 `:103-131` 认成正则（`regex_literals` 一条），后面的池写照旧可见。**残留只剩一处、且与 `bug-20261112-02` 是同一个缺陷**（同文件 `maskComments`、同后果「静默绿」）：`:122` 的 `!isIdent(raw[k+1])` 把 flag `g` 当标识符 ⇒ 按除号放行 ⇒ 正则体里的 `'` 当字符串开头吞到文件尾、池写被抹掉，探针 C 读到 `ok:true` · `write_sites=0` · `pool_target_lines=1`（不是 SCAN-BLIND，所以真的静默）。⇒ 本票并入 `bug-20261112-02`（到期 2026-11-13）跟踪，不再单记；`-01` 自己没有别的静默面（扫面里 `readPool(root)` 只装池子内容、不装路径，声明边界与真源码一致）。",
+      "sample_version": null,
+      "line_decision": {
+        "value": {
+          "decision": "duplicate",
+          "canonical": "bug-20261112-02",
+          "reason": "测试岗判 duplicate：两条名字的两个形状已闭；残留的 flag 变体（`:122` 把 flag `g` 当标识符 ⇒ 按除号吞到 EOF ⇒ ok:true）正是 -12-02 那条。并到 -02。"
+        },
+        "by_role": "leader",
+        "at": "2026-11-12T21:25:24+08:00"
+      },
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 3,
@@ -85,7 +101,14 @@
       "id": "bug-20261111-02",
       "at": "2026-11-12T21:23:49+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`2fc5cc0`；`git log -S E_UNMOUNT_PATCH_UNREADABLE` 只命中它）：`.tools/unmount-host-row.mjs:779-791` 先用 `readPatchFile()` 把「读不出来」接走并报 `E_UNMOUNT_PATCH_UNREADABLE`，`:805-820` 在 `--check` 非 0 之后再探一次可读性 —— 只有补丁读得出来才报 `E_UNMOUNT_PATCH_NOT_DERIVED`；判据侧 `unreadable-patch` 腿（`tests/agenia-upgrade/integration/umh01-unmount-host-row.test.mjs:1009-1040`，把补丁换成同名目录）+ 刀 K15（摘掉那道判）各咬一面。生成器自己的 `--check` 里 `catch { current = '' }` 还在（`.tools/make-bundle-patch.mjs:1152-1156`），但**没有任何调用方再把它的退出码单独当「不是派生物」**，所以 phenomenon 里「一次失败归到错的机制」在这个工具面上不可达。⚠️ 相邻但不同的一条仍开着：工具起不来 / 180s 超时被归成 `E_UNMOUNT_PATCH_NOT_DERIVED`（`derivationCheck` 的 `exit:null` 分支，`:409-411`）—— 已登记为 `bug-20261112-06`，不属本票。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 6,
@@ -134,7 +157,14 @@
       "id": "bug-20261111-03",
       "at": "2026-11-12T21:23:49+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`2fc5cc0`；`git log -S COMPOSITION_CARRIERS` 与 `-S withLockedPoolRow` 都只命中它）：`.tools/unmount-host-row.mjs:499-502` 是两行描述符表、`:547-559` 是唯一一对循环（先删后插），第三载体只加 1 行、不再抄两个镜像循环 —— 旁证是 dev 探针 `/E:/Harness/.team/dev/2026-11-11/_probe/g3-batch/readings/unmount-probe.json` 的 `d2.third_carrier`：`added_lines` 恰好 1 行、`added_outside_table: []`、`skeleton_lines_added: 0`、apply/restore 各 exit 0。② `withPoolRow` / `withPoolRowSync` 收成一条骨架 `presets/agenia/lib/proposals.mjs:798-812`，两个口只剩「怎么拿锁」一行（`:818-820` / `:826-828`）。⚠️ 声明边界：那个探针**不在提交里**（评审 11-11 §二已点「副本里没有这个串」）⇒ 这一格靠结构成立，没有能翻面的判据腿。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 9,
@@ -183,7 +213,14 @@
       "id": "bug-20261111-04",
       "at": "2026-11-12T21:23:50+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`2fc5cc0`；`git log -S \"generated_at: new Date().toISOString()\"` 在 `.tools/tree-at-commit.mjs` / `.tools/fingerprint.mjs` 上只命中它）：导出那行 JSON 现量 `generated_at`（`.tools/tree-at-commit.mjs:845`），活树基线由 `.tools/fingerprint.mjs:341-353` 的 `--save` 写同一字段（实盘旁证：`.team/review/2026-11-12/live-baseline.json` 的键集含 `generated_at`）。判据侧 `baseline-time` 腿判**三份载体**（`--save` 写的基线 · 导出器现写的基线 · 导出 JSON 落盘那份），每份判 missing / ISO 形状 / 与 mtime 差 ≤3 s，另有四份合成输入各只翻自己一条码 + 一条阳性对照（`tests/agenia-upgrade/integration/rev04-review-copy-valid.test.mjs:204-260`）。⇒ phenomenon 的「export.json 无 / live-baseline.json 无」两半都不再复现。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 12,
@@ -232,7 +269,14 @@
       "id": "bug-20261111-05",
       "at": "2026-11-12T21:23:52+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`33216e9`；`git log -S position-tail-old-sidecar` 只命中它）—— 四条残留各有落点：① 旧格式旁证腿 `tests/agenia-upgrade/integration/umh01-unmount-host-row.test.mjs:388-430`（把旁证里的 `list_items` 删掉再造 restore，还带夹具自检「改前必须有、改后必须没有」，期望 `source:'tail'` 而非 `sidecar`）；② §3.7.1-B 的理由句按真刀重写（`tests/agenia-upgrade/support/registry.mjs` 的 CARD-05 行末：「再切一刀只能切'删掉读表'，那会同时打红两条码、分不开」）；③ `hidden-only` 单码样本 `tests/agenia-upgrade/report/card05-status-bar.test.mjs:665`；④ `state-step` 腿 `umh01…:1069-1095` 把副本 `.team/state` 做成文件 ⇒ 断言点名 `ENOTDIR` + 旁证路径，并配刀 K17。⇒ phenomenon 四条都不再复现。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 15,
@@ -281,7 +325,14 @@
       "id": "bug-20261111-06",
       "at": "2026-11-12T21:23:52+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "phenomenon 不再复现，而且是**同一批修掉的**：`520cd46`（`bug-20261110-08` 的收口，其处置原话就写着「信封不再写死 technical 段」）把信封改成按节点取 —— `presets/agenia/bin/agenia-local.mjs:487` 的 `node = result.state[fieldName]`、`:491-503` 的 `receipt_path` / `receipt_version` / `versions` 全从 `node` 出，还多回一个 `field`；票面写的 `:426-433` 现在是 `receipt_version` / `receipt_path` / `receipt_sha256` 三条入参校验（行号漂了约 +65）。⇒ 用 `node: conversation` 登记时返回的就是 conversation 段，票面那条链走不到。⚠️ 同一条信封里还剩一处按名字写死：`:502` 的 `L.receiptVersionsOnDisk(teamDir, day)` 只认 `技术复盘回执[.n].json`（`lib/local-state.mjs:224`）—— 那是 `bug-20261111-08` 的第四个载体，不是本票那句。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 18,
@@ -330,7 +381,14 @@
       "id": "bug-20261111-07",
       "at": "2026-11-12T21:23:52+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "悬空那一半已闭合、实质那一半仍开着：本票就是 `bug-20261107-11` ③ 点名的那条票（两个形状都写在票面），但 `bug-20261107-11` 自己仍不指向它（全台账出现 `bug-20261111-07` 只有本票自己那一行）—— 补指向是组长的台账动作。两个形状可证：`.tools/tree-at-commit.mjs:493` 的 `catch (err) { real = cur }` 在 realpath 失败时**静默**退回词法形态（不报警、不计数），`:645` 的 `.git` 守卫是 `path.resolve` 之后的**字符串**比较（经 junction / 别名指到 `.git` 就不成立）；两处都被自认（`tests/agenia-upgrade/integration/mcr01-copy-inside-audited.test.mjs:66` · `support/registry.mjs` 的 MCR-01 行末「同族残余 · 今天不制造假绿」）。⚠️ 票面证据指的 `tests/agenia-upgrade/integration/mcr03-copy-provenance.test.mjs` **不存在**（`git log --all -- <该路径>` 零命中）—— 证据路径是假的；真实载体是 `mcr01:66`。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 21,
@@ -390,7 +448,14 @@
       "id": "bug-20261111-08",
       "at": "2026-11-12T21:23:52+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷、今天在读者层就复现：输入 = 一个**没登记** `receipt_path` 的日子（实盘 `2026-11-10` 抽屉里没有 `state/local/2026-11-10.json`）⇒ `presets/agenia/lib/health.mjs:216` 回落到默认名 `leader/2026-11-10/技术复盘回执.json` ⇒ 该名字不在盘上，而真回执叫 `技术评审回执.json`（同抽屉实存）⇒ 读取器报 `E_DATA_MISSING`。本跑探针实测（`probe-08-receipt-default.mjs`）：11-10 `default_on_disk=false` · `reader.ok=false` · `code=E_DATA_MISSING`；对照 11-08（真名恰好是旧名）绿、11-11（登记过）读登记路径绿。卡面那一半：`technical.state='done'` 而 `hasReceipt=false` ⇒ `health.mjs:143-146` 报 `E_RECEIPT_MISSING` 并把 source 指向那个默认路径（`probe-08b`，合成输入）—— 今天没有这种日子，只因为每个 done 的日子都恰好登记过。同一句默认名有**四份代码载体**：`lib/health.mjs:216` · `bin/agenia-local.mjs:195`（`opReceiptCheck`）· `bin/agenia-brain.mjs:1424` · `lib/local-state.mjs:224`（按名字数版本）；另有 `health.mjs:202` / `local-state.mjs:207,518` / `agenia-local.mjs:313,383` 复述同一句。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 24,

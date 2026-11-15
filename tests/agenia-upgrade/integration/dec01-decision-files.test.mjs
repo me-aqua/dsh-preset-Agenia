@@ -505,6 +505,33 @@ test('DEC-08 头的跨字段自洽 + 构案正文形态：产品无父 · 构案
         if (!messagesOf(run.json).some((m) => m.includes('0002'))) push('NOT-NAMED', '[DEC-08/parent-not-product] 报文必须点名那个构案编号 0002')
       }
     }
+    // ⑨' 父**显式写成 `构案/0001`**（号上同时有一条活着的产品 0001）⇒ 仍必须是 `SCHEME-PARENT-NOT-PRODUCT`。
+    // 这一格的变量只有"系列前缀"：id 解析得到产品、来源列表也自洽 ⇒ 只看 `ref.series` 这一条判不判得出来。
+    {
+      const childOfScheme = goodScheme('0002', '显式指构案的父', { 父: '构案/0001', 依据P: '0001' })
+      const { run } = runSample(problems, rec, {
+        caseId: 'DEC-08', tag: 'parent-series-scheme',
+        spec: { decisions: [product, scheme, childOfScheme] },
+      })
+      if (expectCodes(problems, run, ['SCHEME-PARENT-NOT-PRODUCT'], push, { label: 'DEC-08/parent-series-scheme' })) {
+        const msg = messagesOf(run.json).join(' ')
+        if (!(msg.includes('构案/0001') && msg.includes('0001'))) {
+          push('NOT-NAMED', `[DEC-08/parent-series-scheme] 报文必须点名父的原值 \`构案/0001\`，实得 ${JSON.stringify(msg.slice(0, 240))}`)
+        }
+      }
+    }
+    // ⑨'' 缺产品册 ⇒ **只红 `BOOK-MISSING`**，不许把"判不了"读成 `SCHEME-PARENT-DANGLING`
+    // （卡上「缺册不许读成悬空」那把刀：夹具里构案的父是产品号 0001，正好走进产品父分支）。
+    {
+      const { run } = runSample(problems, rec, {
+        caseId: 'DEC-08', tag: 'parent-book-missing',
+        spec: { decisions: [scheme], withoutBooks: ['产品'] },
+      })
+      if (expectCodes(problems, run, ['BOOK-MISSING'], push, { label: 'DEC-08/parent-book-missing' })) {
+        if (!messagesOf(run.json).some((m) => m.includes('产品'))) push('NOT-NAMED', '[DEC-08/parent-book-missing] BOOK-MISSING 报文必须点名缺的是产品册')
+        if (messagesOf(run.json).some((m) => m.includes('父: 0001'))) push('NOT-NAMED', '[DEC-08/parent-book-missing] 缺册时不许再点名 `父: 0001`（判不了 ≠ 悬空）')
+      }
+    }
 
     // ⑩ 正文形态（0012 §③）—— **每一格都走检查器**（`决定-text` 的 `body` 只改正文一处）；
     //    真树那一条静态读数留在 `DEC-01`（`rec.readings.real.product_0001_sections`），与这里分开印。

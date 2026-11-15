@@ -37,7 +37,14 @@
       "id": "bug-20261104-01",
       "at": "2026-11-04T14:59:48+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "small —— 四处载体已经对齐并提交（dc29ecc，2026-11-04 14:57:09）；剩「一条把四处钉在一起的判据」，约 1 小时",
+      "fix_sketch": "**这一条不写严重线**（第四段说明为什么三条线一条都装不下）—— 只写修法。四处载体按「写者一个落点、读者认四个」收口，四处现已一致（同一份事实、四个载体）：① 写者：presets/agenia/job-briefs/technical-review.md:13/:18 写「技术评审只落 .team/technical-review/」、conversation-review.md:16 写「会话评审只落 .team/conversation-review/」，并把「抽屉日期 = 被评的那一天」补进两份 brief；② 读者 .tools/check-notes.mjs：reviewDirs = ['retro','technical-review','conversation-review','memory-review']（原来只读 retro/<day>/{技术评审,会话评审}.md 两行）；③ 读者 .tools/daily-cards.py：review_dirs() 收四个抽屉（HEAD 217eb88 上是三个，缺 memory-review），文件头注释 :23 同批改成四个；④ presets/agenia/leader.md 与两份 team 页同步。**这些已经在 dc29ecc 提交，工作树干净**（我在 14:53 量到的是「已改但未提交」，14:57:09 提交，两个读数分开记）。剩下的唯一一件：**加一条把四处钉在一起的判据** —— 建议放 tests/agenia-upgrade/static/：从 job-briefs/*.md 抽出每个作业声明的落点抽屉，与 check-notes.mjs 的 reviewDirs、daily-cards.py 的 review_dirs() 三方对账，任一处漏/多一个抽屉 ⇒ 红。依据：现在这四处一致是人肉对齐的结果，我在 tests/ 里没找到任何一条判据压着「抽屉名单」这件事（只有 dby01 压切点，不是抽屉）。事实读数：HEAD 217eb88 上 daily-cards 读 3 个抽屉、check-notes 只读 retro/ 一个抽屉（git show HEAD:.tools/check-notes.mjs 的 techReport/convReport），而 11-03 的实物是 技术评审.md 在 .team/technical-review/2026-11-03/、会话评审.md 在 .team/retro/2026-11-03/、记忆复核.md 在 .team/memory-review/2026-11-03/ ⇒ 按 HEAD 的读者，技术评审那一格会判「缺」而文件就在隔壁抽屉（**假红**，这一侧是读代码 + 盘上事实推的，按 static 记）；活树现在 128/128 全绿（14:52 跑出来的，按 run 记）。不写严重线：不是 data_broken（数据没坏）、不是 function_broken_repro（评审照落盘、回执自带 findings_path，没有用户可见功能失败，我也没量到「静默 0 条」）、也不是 reading_lies（假红不是「掩盖前两条」，第三线定义收不了它）；unclassified 会强制 escalate + 卡红，我不想拿它当「不够严重」的同义词去给板上刷一格假红 —— 这一格请组长拍。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 3,
@@ -88,7 +95,14 @@
       "at": "2026-11-05T20:23:26+08:00",
       "verdict": "true",
       "severity_line": "reading_lies",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "medium —— 不在「再改一次层」，在换路线：profile 层一行宿主级 insert（R1）+ 两条启动后读数（R2/R3）+ 一条回滚开关（R4）。R2/R3 的可执行形态约 0.5–1 天（测试岗）；R1 要客户端关着，只能等老板一次窗口。",
+      "fix_sketch": "评估（2026-11-05 20:2x · 测试岗）。**前提核实**：盘上 148 条判据全绿而界面空，今天仍未挂上 —— `presets/agenia/agent.cordis.yml:571-572` 那一行是 `disabled: true`，回滚理由写在 :573-575。**修法**照 `定形-看板挂载profile层.md` 的 R1–R5，不在这里重写一份：R1 profile 层挂载；R2 新建会话头 `agentPreset === 'agenia'`；R3 宿主侧证浏览器收得到包；R4 一步撤掉、撤掉后 R2 仍绿。没有 R3，「盘上有文件」与「挂上了」在读数上长得一样（今天就是在这上面栽的）。建议处置 **adopt**；owner = 组长（R1 只能在客户端关着时写）+ 测试岗（R2/R3/R5 可执行形态）；order：R1 → R2/R3 → GUI 那一格（只能老板点一次）。**同一缺口的三个条目**：本条（层选错 ⇒ 面板到不了界面）· `bug-20261105-10`（未来没登记的行会静默落回预设；已由 DASH-16 补上判据，提交 9483a76）· `bug-20261105-12`（同一行挂宿主层把整个 bundle 层带塌）。三条不是三个独立缺陷，共用的是**「启动后没有一条读数回答：预设还注册得上吗 / 浏览器收到包了吗」**；keeper 记在 `bug-20261105-12`（R2/R3 在那里做）。今天判据侧的诚实读数是三格 **HOLD**（具名码 `DASH-MOUNT-DISABLED-PENDING-PROFILE-LAYER`），HOLD ≠ 通过。",
+      "sample_version": null,
+      "hides": "function_broken_repro",
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 6,

@@ -37,7 +37,14 @@
       "id": "bug-20261107-11",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 13）：目录措辞改 `askIsCode(repoCanon, …)`、两条 junction 腿补 HOLD（`MCR-01` 文件头 ⑥ 写着「判不了任何东西的判据必须 HOLD」）、「11/11」更正为「10 次真翻 + 1 次按设计不翻」。⚠️ 它自己写「③ 另开一条」——台账里**没有**那条票（见本批备注）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 3,
@@ -85,7 +92,19 @@
       "id": "bug-20261108-01",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 16 · `80cee92`）：孪生/工作副本落在受审副本之外（`<copy父>/.agenia-test-twins/`），刀 `TWIN-BASE-INSIDE-COPY` 在盘 —— 副本里 `MCR-02/03` 不再自己拷自己。",
+      "sample_version": null,
+      "line_decision": {
+        "value": null,
+        "by_role": "leader",
+        "at": "2026-11-08T13:07:37+08:00"
+      },
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 6,
@@ -133,7 +152,19 @@
       "id": "bug-20261108-02",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 16 · `80cee92`）：夹具基改成「同盘 · repo 外 · 无 `.team`」向上找；搭不起来记 `caseHold` 而不是让 `REV-02` 替它红（8×HOLD + REV-02 HOLD、RED 0 的刀已实测）。",
+      "sample_version": null,
+      "line_decision": {
+        "value": null,
+        "by_role": "leader",
+        "at": "2026-11-08T13:07:37+08:00"
+      },
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 9,
@@ -181,7 +212,14 @@
       "id": "bug-20261108-03",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：`tree-at-commit` 现在有「一个副本一个时间点」的闸（`E_STAGING_TIME_MISMATCH` + 读出 0 份另立 `E_STAGING_TIME_UNMEASURABLE`，1 处引用）⇒ 不再把两个时间点装进同一棵树。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 12,
@@ -229,7 +267,19 @@
       "id": "bug-20261108-04",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 16 · `80cee92`）：`dataSegmentExclusionVerdict()` 三态 —— 命中>0 红 / 命中=0 且有数据根 绿 / 命中=0 且没数据根 ⇒ HOLD `DR02-EXCLUSION-NO-DATA-ROOT`（22 处引用）。",
+      "sample_version": null,
+      "line_decision": {
+        "value": null,
+        "by_role": "leader",
+        "at": "2026-11-08T13:07:37+08:00"
+      },
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 15,
@@ -277,7 +327,14 @@
       "id": "bug-20261108-05",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：窄会话传 `strict === true`，退回**只认会话头那棵树**的 `.team`（`inject.js:1695-1700` 写着「不能是 cwd 的最近 `.team` 祖先」）⇒ 会话头 cwd 自己在 `.team` 里时不能再写同层别的抽屉。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 18,
@@ -325,7 +382,19 @@
       "id": "bug-20261108-06",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 16 · `80cee92`）：`PRS-02` 与 `REV-02` 用同一个 `.team`-free 基，基落在别人 `.team` 下报 `PRS02-FIXTURE-UNDER-TEAM`（红在夹子上，不冒充产品红）。",
+      "sample_version": null,
+      "line_decision": {
+        "value": null,
+        "by_role": "leader",
+        "at": "2026-11-08T13:07:37+08:00"
+      },
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 21,
@@ -373,7 +442,14 @@
       "id": "bug-20261108-07",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：两条 junction 腿现在建不出就 HOLD（`JUNCTION-ALIAS-UNAVAILABLE` / `REPO-JUNCTION-ALIAS-UNAVAILABLE`），并把「2 + 两条 junction 是否建成」写进复算 ⇒ 删一条落点不会静默通过。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 24,
@@ -421,7 +497,14 @@
       "id": "bug-20261108-08",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "证据洞仍在：`DASH-17` 那把刀要 `f558f63` 的真字节，副本里取不到 ⇒ HOLD（活树那一跑有证据、本跑 DASH-17 非 HOLD）；修法是把刀基线那份真字节随副本一起导出（像 MCR 的 baseline 那样），别让 git 可达性决定判据有没有证据。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 27,
@@ -469,7 +552,14 @@
       "id": "bug-20261108-09",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：`fingerprint.mjs:69-92` 现在「表」与「为什么是这几条（理由不是表）」两段分开、表是 `EXCLUDE_PREFIXES/SEGMENTS/BASENAMES/SUFFIXES` 四行一块 ⇒ 界线读得出来。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 30,
@@ -517,7 +607,14 @@
       "id": "bug-20261108-10",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺口（判据的样本只能合成）：`READ_MAX_LINES = 200`（`client.js:351`），而产品自己写的快照是 598 B / 1 行（`_scratch/dashboard/view.json` 实测）⇒ `truncated` 在产品产出上不可达；要么把窗口按真实快照收紧，要么在契约里写「这一格只有合成页」。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 33,
@@ -597,7 +694,19 @@
       "id": "bug-20261108-11",
       "at": "2026-11-11T15:36:15+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 16 · `80cee92` + `36a44aa`）：`git ls-tree` 补 `--full-tree`，`E_STAGING_TIME_UNMEASURABLE` 分开「读不出」与「不一致」；副本里 `CPY-01` 首跑即绿。",
+      "sample_version": null,
+      "line_decision": {
+        "value": null,
+        "by_role": "leader",
+        "at": "2026-11-08T13:07:37+08:00"
+      },
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 36,
@@ -670,7 +779,19 @@
       "id": "bug-20261108-12",
       "at": "2026-11-11T15:36:15+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 16 · `80cee92`）：`BRD-01` 的会话 cwd 与写目标改到 `.team`-free 的夹具树（`BRD01-FIXTURE-UNDER-TEAM` 3 处引用 + `AGENIA_BRD01_BASE` 刀）⇒ 副本里 5 条腿不再空告警。",
+      "sample_version": null,
+      "line_decision": {
+        "value": null,
+        "by_role": "leader",
+        "at": "2026-11-08T13:07:37+08:00"
+      },
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 39,
@@ -720,7 +841,14 @@
       "id": "bug-20261108-13",
       "at": "2026-11-11T15:36:15+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：`agenia-local.mjs::opLocalReceiptSet` 现在按 `field`/`node` 分派（`NODE_FIELDS = technical / conversation / memory_review`），认不出的名字点名报错、不再静默写进 technical。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 42,
@@ -770,7 +898,19 @@
       "id": "bug-20261108-14",
       "at": "2026-11-11T15:36:15+08:00",
       "verdict": "duplicate",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "重复项: bug-20261110-08 —— 同一个堵点（回执登记这条路走不通：先写字就撞写前守卫、不写字 `receipt_sha256` 又对不上）；10-08 带 11-10 的六种载荷原始报文与「谁写回执」的二选一处置，本条只是它的前传。",
+      "sample_version": null,
+      "line_decision": {
+        "value": "duplicate → bug-20261110-08（回执守卫与哈希锚锁死，后者是主）",
+        "by_role": "leader",
+        "at": "2026-11-11T15:40:47+08:00"
+      },
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 45,
@@ -830,7 +970,14 @@
       "id": "bug-20261108-15",
       "at": "2026-11-11T15:36:15+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 9）：按 `F-165` 禁 CR ⇒ `MTC-01`/`MTC-03` 那两条「CRLF 400 字必须接受」的腿被删（理由写进文件三处），`F-125` 的意图由 BOM 腿 + `ruler.chars.crlf400` 读数继续承重。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 48,
@@ -879,7 +1026,14 @@
       "id": "bug-20261108-16",
       "at": "2026-11-11T15:36:15+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 13）：移回刀钉死 `where_label = entries[37].text`（新码 `CTL-REAL-KNIFE-MOVE-WHERE` 2 处）、`[尺子]` 同树判定进 `judgement.txt`、`copy` 助手去重；拒绝顺序那条**只记不改**（两边都拒）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 51,
@@ -928,7 +1082,14 @@
       "id": "bug-20261108-17",
       "at": "2026-11-11T15:37:44+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 13 · `3502a19`，是 `b7f1e9e` 的祖先）：假字面量换成占位串 ⇒ 那五个内容串的外部出现 = 0；刀仍 `bites:true`（处置写的读数，并有提交在史）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 54,
@@ -977,7 +1138,14 @@
       "id": "bug-20261108-18",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "缺口仍在（文件头自己认了）：`FLIP-01` 选的是「钉面」那条路，而 `flip01-bridge-reading.test.mjs:17` 明写「面之外的改动**不会**让这一格红」—— 弱化 `brg01` 那条断言/改 `toolNameOf()`/改 `cordis.patch.yml` 那两行都不翻码；修法是把这三处也纳进 `FACE`（或让那格自己跑一刀）。契约 §2.4 那行 `E_OFFICE_LEDGER_UNREADABLE` 已补（CONTRACT-batch15 §2.4）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 57,

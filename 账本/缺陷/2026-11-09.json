@@ -52,7 +52,14 @@
       "id": "bug-20261109-01",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`7ea32b9`，`b7f1e9e` 的祖先）：判官改为按池子那一行的 `kind` 认维护案，`maintenance-`/`MR-` 前缀只作兜底；池子读不到时 fail-open 也有判据（`694b1d5`）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 3,
@@ -100,7 +107,14 @@
       "id": "bug-20261109-02",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（仍在）：`memory-rotation.mjs:70-71` 还是 `s.length <= ENTRY_CAP` + `s.slice(0, 399)` ⇒ 400 字这一把尺子仍按 **UTF-16 单元**裁、且能把代理对切成两半；修法是全树只留 `charCountOf`/码点裁一处（`proposals.mjs` 那侧已经这么做了）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 6,
@@ -148,7 +162,14 @@
       "id": "bug-20261109-03",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（仍在）：`controlCharVerdict`（`memory.mjs:92-113`）只拒 `cp < 32`，`U+007F` 与 C1（含 `U+0085` NEL）放行，而报错话/标题写的是「控制字符（只放行 LF）」；二选一写进契约（收窄标题 或 扩到 DEL/C1）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 9,
@@ -196,7 +217,14 @@
       "id": "bug-20261109-04",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（仍在）：唯一调用点 `inject.js:2781` 传的是 `cursorGeneral`/`cursorProject`，`rotationBlockOf({cursor})` 与返回里的 `nextCursor` 都没人读 ⇒ 死接口还在；删掉形参/别名，或给它一个调用点。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 12,
@@ -244,7 +272,14 @@
       "id": "bug-20261109-05",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（仍在）：`memory-rotation.mjs:35-38` 的 `projectNameOf` 还是手写 split 取末段（不是 `path.basename`），win32 语义（尾分隔符、盘符根）靠自己兜；一行替换 + win32 对照即可。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 15,
@@ -292,7 +327,14 @@
       "id": "bug-20261109-06",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：`job-briefs/technical-review.md:20-21` 现在把两件产物一次说清（`技术评审.md` = 人读正文、`技术评审.findings.json` = 作业产物/锚点），`report_path` 示例也带 `.team/` 前缀 ⇒ 不再有两套名字并存。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 18,
@@ -342,7 +384,14 @@
       "id": "bug-20261109-07",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：契约 §1.2.1 的值表落成产品的 V1–V6（`officeLedgerRowRule` 写方/读方共用），V1 现在**拒**相对路径与根相对路径（`inject.js:1921-1928`）⇒ 那条实测分歧输入两侧都拒，不再各写一把尺子。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 21,
@@ -391,7 +440,14 @@
       "id": "bug-20261109-08",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：今天最近一跑 `judgement.txt` 已有 `[锚] 提交 b7f1e9e4… · 来源=现役活树的 HEAD`（`.team/test/2026-11-11/_runs/t6commit-145321/judgement.txt`）⇒ 一跑能绑定到提交。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 24,
@@ -440,7 +496,14 @@
       "id": "bug-20261109-09",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（口径差仍在）：`.tools/mount-test/` 被 `.gitignore` 挡着、`git ls-files` 里 0 份（50 份生成物在盘上），而 `fingerprint.mjs` 的排除表没有它 ⇒ 活树 CODE 比任何提交导出的副本天然多这 50 份；要么进排除表，要么导出时补上并说明。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 27,
@@ -489,7 +552,14 @@
       "id": "bug-20261109-10",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（修法没落）：V3 的 `line[key].trim()` 与 V1 的 `isAbsolute(value)` 仍**没有**自带 typeof guard（`inject.js:1911-1924`），安全性仍挂在「V5 先跑」这个隐式前提上；把两条规则各自补 `typeof === 'string'`，判据侧那把 K-V5 刀就会稳定报 V5 而不是 `THREW`。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 30,

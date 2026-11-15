@@ -73,7 +73,13 @@
       "at": "2026-11-13T01:10:11+08:00",
       "verdict": "true",
       "severity_line": "function_broken_repro",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "low —— 判据侧两处：`shippedPair()` 改成三种构造（artifact / 按标记切片 / repo 副本）+ 一个 `stripInlinedBlock()`（约 60 行，全是夹具，不碰产品）；一个全量跑约 6 分钟。",
+      "fix_sketch": "夹具不再拿出厂件原文冒充『剥掉内联』（那样它必含三个并集指纹，与同一格 `ship_artifact` 的『必须有』互斥 ⇒ 刀永死）。改成两条独立构造：① `// ── 出厂件内联` ←→ `// ── 内联结束 ──` 之间按标记切片（真剥：47629 B → 31065 B、删 325 行），② repo 那份逐字复制（= 发布器没内联的世界）。两条都必须咬到 `SHIP-ROLLBACK-NO-INLINE` + `TARGET-LAG-UNDECLARED`；控制面（真出厂件原文 ⇒ 绿）保留。实测已咬（run `atm01-t2-full2`：`ship_knives` 6/6 bit，14 条腿全绿）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 3,

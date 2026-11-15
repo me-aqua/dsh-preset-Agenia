@@ -35,7 +35,14 @@
       "id": "bug-20261110-01",
       "at": "2026-11-11T15:37:45+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`eb4a0e5`，`b7f1e9e` 的祖先）：`maintenance_file` 现在在任何写与快照之前拒非绝对 root（`E_MAINTENANCE_SHAPE`），`MNF-02` 补了相对 root 腿。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 3,
@@ -83,7 +90,14 @@
       "id": "bug-20261110-02",
       "at": "2026-11-11T15:37:46+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`1a34083`，`b7f1e9e` 的祖先）：`flip01-bridge-reading.test.mjs` 的 `caseHold` 补上 `rec`；并新增 `HCA-01` 让「少传实参」不再被记成产品红。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 6,
@@ -131,7 +145,14 @@
       "id": "bug-20261110-03",
       "at": "2026-11-11T15:37:46+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`eb4a0e5`，`b7f1e9e` 的祖先）：`judge-pending` 输出 `pending_kinds` + `kind_missing`，缺省仍落 `proposal` 但被计数；`JUD-01` 面 E + 两把刀。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 9,
@@ -179,7 +200,14 @@
       "id": "bug-20261110-04",
       "at": "2026-11-11T15:37:46+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`eb4a0e5` + `9f2ca8f`，都是 `b7f1e9e` 的祖先）：三份写入骨架收成 `writePoolRowLocked`、锁外 `mkdirSync` 删掉，`PWL-01` 实测 `mkdir_sites: []`。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 12,
@@ -228,7 +256,14 @@
       "id": "bug-20261110-05",
       "at": "2026-11-11T15:37:46+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：最近一跑结算行已逐条点名 —— `HOLD BOOT-02 BOOT-R3-HALF-PROOF case` + `[结算·成因] 非绿 1 例（1 条成因）= HOLD 1 … 成因 BOOT-R3-HALF-PROOF=1`（`_runs/t6commit-145321/judgement.txt`）⇒ 盘上追得到 id 与成因。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 15,
@@ -277,7 +312,14 @@
       "id": "bug-20261110-06",
       "at": "2026-11-11T15:37:46+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（仍在，且结构性）：启动路径不留证 —— `presets/agenia/.runtime/state/` 下没有 `boot/`，`BOOT-01` 仍只能靠「老板在 GUI 新建一次会话」拿样本；修法是注入器在启动/首次 pre-step 写 `state/boot/<boot_id>.json`（`{boot_at, preset_id, session_id, source}`），`BOOT-01` 优先读它（与处置里定的方向一致，到期 11-12）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 18,
@@ -331,7 +373,14 @@
       "id": "bug-20261110-07",
       "at": "2026-11-11T15:37:46+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`d31c30e`，`b7f1e9e` 的祖先）：锚点换成 `first-turn-start`（流里第一条 `turn/start` 且 `data.turn===1`），带两条负控 + 两把刀；老板那条 Meow 会话实测进 GREEN 身份腿。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 21,
@@ -385,7 +434,14 @@
       "id": "bug-20261110-08",
       "at": "2026-11-11T15:37:46+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（仍在，一字未改）：`receiptWriteVerdict`（`receipt.mjs:626`）对 `target_exists === true` **无条件**报 `E_RECEIPT_OVERWRITE`，而 `local-receipt-set` 同时要求 `receipt_sha256` 等于盘上字节（`agenia-local.mjs:391`、`:418`）⇒ 先写字就撞守卫、不写字没哈希；二选一（A 允许「已存在的就是本次这一版」／B 让 op 收 `content` 自己写）落进契约前，这一格关不掉。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 24,
@@ -434,7 +490,14 @@
       "id": "bug-20261110-09",
       "at": "2026-11-11T15:38:24+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "口径那一半已按**形状 B** 落地（定形已定、这段评估本身就是它的执行）：SLA 仍只认 `assessment`（`bug-ledger.mjs:58` 的 `isAssessed`），卡上点名「测试岗 欠」并印条数（`daily-cards.py:1184` 的 `SLA_OVER_CYCLE`）；剩下的是欠账清空，不是再改判据。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 27,
@@ -483,7 +546,14 @@
       "id": "bug-20261110-10",
       "at": "2026-11-11T15:38:25+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`9f2ca8f`，`b7f1e9e` 的祖先）：`appendJudgedRows` 的锁外 `mkdirSync` 删掉，`PWL-01` 实测 `mkdir_sites: []`；口径也纠正成「建目录先手是 `acquireLock`，两处都在 `atomic.mjs`、都返回 `E_TXN_IO`」。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 30,
@@ -532,7 +602,14 @@
       "id": "bug-20261110-11",
       "at": "2026-11-11T15:38:25+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（仍在，措辞没改）：`cpy01:281` 的红句还是「导出器没能在带 `--with-staging` 的情况下导出…现在红在**工具那一半**」—— `E_STAGING_TIME_MISMATCH` 只在 `error=` 那个 JSON 里，人读那一句既不点名它、也不给「先提交 presets 再导出」的出路 ⇒ 读的人还是会去修导出器。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 33,
@@ -581,7 +658,14 @@
       "id": "bug-20261110-12",
       "at": "2026-11-11T15:38:25+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（四个载体一处没改）：`proposals.mjs:141` / `:861` 与 `pool-writer-shape.mjs:6` / `:283` 仍写「`acquireLock` 建锁文件、`writeFileAtomic` 建父目录」—— 池子路径上「两个目录」这个错说法还活着（同一句在 judged 那条路上已被 `9f2ca8f` 纠正）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 36,
@@ -630,7 +714,14 @@
       "id": "bug-20261110-13",
       "at": "2026-11-11T15:38:25+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（仍在）：`judge-pending` 的 `pending_kinds` 仍是**普通对象**（`kindById` Map 摊成对象）⇒ 整数形 `imported_id` 会被引擎按数值升序重排、键序不可能恒等于 `pending_ids`；`kind_missing` 也仍按 pending id 数。改法二选一（发有序对数组 / 合同与判据按集合比）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 39,
@@ -684,7 +775,14 @@
       "id": "bug-20261110-14",
       "at": "2026-11-11T15:38:25+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`2fc5cc0` + `25dabb6`）：「撤挂载」已是一个命令 —— `.tools/unmount-host-row.mjs` 一次改 A 标记 / B `HOST_LEVEL_IDS` / C `disabled:true` 三处、重跑生成器、自证 `{insert:0, preset_bodies:2}`，`--restore` 反向，入口只认 M/U 两态。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 42,
@@ -739,7 +837,14 @@
       "id": "bug-20261110-15",
       "at": "2026-11-11T15:38:25+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（仍在，HOLD 是今天唯一那条）：最近一跑 `judgement.txt` 的 `HOLD BOOT-02 BOOT-R3-HALF-PROOF` 就是它；两条进门路径都没打开 —— 没找到客户端那份 launch URL（401 的 body 点名它），`/plugins/` 前缀也没核正 ⇒ 这一格仍只能 HOLD。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 45,
@@ -793,7 +898,14 @@
       "id": "bug-20261110-16",
       "at": "2026-11-11T15:38:25+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（`2fc5cc0` + `25dabb6`）：`--apply` 记原位置旁证、`--restore` 先核名单再**按位**插回，过期旁证走上 `stale-sidecar` 尾插并出声；`position-sidecar` / `position-tail` / `stale-sidecar` 三条腿 + K16/K18。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 48,
@@ -848,7 +960,14 @@
       "id": "bug-20261110-17",
       "at": "2026-11-11T15:38:25+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（仍在）：`boot-readings.mjs` 里 `row_disabled` **零处**、`disabled` 只有 1 处注释 ⇒ 「撤挂载成功」的回执仍只证明「行不在宿主层、在两份预设体里」，证明不了那一行是关着的；要么回执加 `row_disabled: true|false|null`（`null` 不许当绿），要么契约里写「这一处只有生成器兜」。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 51,
@@ -898,7 +1017,14 @@
       "id": "bug-20261110-18",
       "at": "2026-11-11T15:38:25+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：`support/r5-exercise.mjs` 现在 env 优先、其次**默认落点** `.team/leader/_r5/receipt.json`（还有按日那一档），来源三态在读数里各有一个名字（`env` / `default` / `none`）⇒「没设变量」与「没做过练习」不再共用 `MISSING`。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 54,

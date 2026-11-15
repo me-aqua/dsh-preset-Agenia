@@ -36,7 +36,14 @@
       "id": "bug-20261112-01",
       "at": "2026-11-13T13:34:05+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "中 —— 一处判据（空 prompt 时不许按队首选）+ 一条「作业自报说明书名」的读回腿；机制已由本跑探针复现，修完可复跑同一探针当阳性对照。",
+      "fix_sketch": "`ROLE_TABLE` 这一格是对的（`presets/agenia/inject.js:696-700`：`job_conversation_review` → `team/conversation-review.md`），坏在委派桥的**空 prompt 回退**：子会话第一次装配时若还读不到第一条用户消息（`firstUserPromptOf()` 返回 `''`，`:825-861`），`bridgeTakeClaim()` 在 `:948` 退回 `fresh.shift()` 取队首 —— 并行派两个作业时谁先装配就把队首那条 claim 发给谁，会话评审于是拿到 `technical-review` 的说明书。本跑探针 `probe-01-brief-routing.mjs` 实测（两个子会话都不带消息、反序装配）：`conversation` 拿到 `[\"agenia:charter:technical-review\"]`、`technical` 拿到 `[\"agenia:charter:conversation-review\"]`，两个方向都串；同次序但子会话带自己那条 prompt 的对照组各拿自己那份。修法：队列里有多条未过期 claim 且 prompt 读空时**不许按队首选**（落 row 5 窄权限或等第一条消息），同批补一条「作业自报说明书名」的读回腿。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 3,
@@ -84,7 +91,14 @@
       "id": "bug-20261112-02",
       "at": "2026-11-13T13:34:05+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "低 —— 扫描器一处（flags 段与「是不是正则」同一次判定）+ 一条判据腿；重跑 PWL-01 单格约 1 分钟。",
+      "fix_sketch": "输入 `const BAD = /['\"]/g` 后面跟一条写池子的调用 ⇒ `tests/agenia-upgrade/support/pool-writer-shape.mjs:122` 的 `!isIdent(raw[k+1])` 把 flag `g` 当标识符 ⇒ 判不成正则、按除号放行 ⇒ 正则体里的引号被当字符串开头吞到文件尾，后面的池写整段消失。本跑探针 `probe-02-mask-comments-flags.mjs`：带 flag 那一发读到 `ok:true · write_sites=0 · pool_target_lines=1`（静默绿），对照（`/[A-Z]/g` 与不带 flag 的 `/['\"]/`）都报 `PWL-POOL-WRITE-ELSEWHERE`。修法：判「是不是正则」时把 flags 段一起认（先吃 `/…/` 再吃 `[a-z]*`），补一条「带 flag 的正则后紧跟池写必须红」的腿。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 6,
@@ -132,7 +146,14 @@
       "id": "bug-20261112-03",
       "at": "2026-11-13T13:34:05+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "低 —— 一行谓词 + 两条腿（2.5 / 4）；重跑 EXR-01 单格分钟级。",
+      "fix_sketch": "合成回执 `row_landing:{insert:0,preset_bodies:2.5}` 或 `{…:4}` ⇒ `tests/agenia-upgrade/support/boot-readings.mjs:1097` 只判 `typeof === 'number' && >= 2` ⇒ GREEN（契约「两份预设各一次」要求整数且 === 2），只有 `0` 才红。本跑探针 `probe-03-05.mjs` 四发：2→GREEN · 2.5→GREEN · 4→GREEN · 0→RED(`BOOT-R5-ROLLBACK-CONTRACT-BROKEN`)。修法：改为 `Number.isInteger(x) && x === 2`，同批补腿（2.5 与 4 各红、2 绿）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 9,
@@ -180,7 +201,14 @@
       "id": "bug-20261112-04",
       "at": "2026-11-13T13:34:05+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "中 —— 产品侧统一取行规则要动 `judgedRowSpecsOf()` 与 `opJudgePending()` 两处，或判据两侧各断各的序并对账；涉及契约 §6.2 一句话。",
+      "fix_sketch": "同一个 `imported_id` 在池子里出现两行、两行 `kind` 不同时：`judgedRowSpecsOf()` 按 `readPool()` 的**文件行序**取第一行（`presets/agenia/bin/agenia-brain.mjs:1026-1029`），`opJudgePending()` 按 **seq 序**排序后取第一行（`:1154-1157` / `:1190`）⇒ 同一条 id 的「走 proposal 还是 maintenance」与 `pending_kinds` 可以各指一行。两处都还在、契约 §6.2 仍写着这个分叉；收口只能二选一：产品统一取行规则（按 seq），或两侧各按自己的序断言并互相对账。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 12,
@@ -228,7 +256,14 @@
       "id": "bug-20261112-05",
       "at": "2026-11-13T13:34:06+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "低 —— `statSync().isDirectory()` + 失败分类（一处），加一条「`.team/leader` 不是目录 ⇒ RED」的腿。",
+      "fix_sketch": "`rollbackExerciseCandidates()`（现役在 `tests/agenia-upgrade/support/r5-exercise.mjs:61-71`）只判 `.team/leader` **存在**，`readdirSync` 的任何失败被 `catch { days = [] }` 吞成「没有日期抽屉」⇒ 本跑探针把 `.team/leader` 做成文件（ENOTDIR）：`candidates=[\"default\"]` · `readRollbackExercise` 返回 `source:\"none\" · error:null` ⇒ 按 `boot-readings.mjs:1188-1197` 记 HOLD，而不是「默认落点读不出来」的 RED。修法：先 `statSync().isDirectory()`；`readdirSync` 失败进读数（具名 error）并让调用方记 RED。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 15,
@@ -276,7 +311,14 @@
       "id": "bug-20261112-06",
       "at": "2026-11-13T13:34:06+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "中 —— 新码 + 归因分支（一处），加两条腿（超时 / 非零退出）；超时腿要能不等 180s（缩 timeout 或换桩），夹具成本最高。",
+      "fix_sketch": "`derivationCheck()` 在 `.tools/unmount-host-row.mjs:409-411` 把 spawn error / 超时压成 `{ok:false, exit:null}`，`:805-831` 的 no-op 段只按「补丁读不读得出来」二分 —— 读得出来就一律报 `E_UNMOUNT_PATCH_NOT_DERIVED`（语义是「字节不是派生物」）⇒ 生成器起不来 / 超时 / 崩溃都被归到「补丁被伪造」。全树搜不到 `E_UNMOUNT_CHECK_UNAVAILABLE`。修法：新增该码（`check.error` 含超时走它）、`status !== 0` 把 exit 带进归因；判据补「生成器超时」「生成器非零退出」两条腿。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 18,
@@ -324,7 +366,14 @@
       "id": "bug-20261112-07",
       "at": "2026-11-13T13:34:06+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "中 —— 单一作者落点要先定（presets 侧数据/常量），三个读者跟着改；脚够得着但跨 `.tools` / `presets` / `tests` 三面。",
+      "fix_sketch": "闭合判词集有三份载体、两处独立硬编码：`.tools/daily-cards.py:648-650` 的 `ASSESSED_VERDICTS = (\"true\",\"false\",\"duplicate\")`、`presets/agenia/lib/bug-ledger.mjs:42` 的 `ASSESSMENTS`（`:50` 再过滤出 `ASSESSED_VERDICTS`）、`tests/agenia-upgrade/support/card-surface.mjs:131-135` 的 `SLA_DEBT.closure_verdicts`（今天只有 `isSlaClosed()` 在 `:147` 读它）⇒ 改表时 Python 卡与产品侧 `isAssessed()` 都不跟着变，而判据还绿。修法要给一个**shipped** 的单一作者（`presets/**` 不能 import `tests/**`，所以「从 `SLA_DEBT` 派生」只在测试侧成立）：集合落进 presets 侧的数据/常量，Python 与腿都从它派生，并加「改那一处 ⇒ 三个读者一起变」的腿。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 21,
@@ -373,7 +422,14 @@
       "id": "bug-20261112-08",
       "at": "2026-11-13T13:34:06+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "零（已修，`867d09c`）—— 只剩本票收口。",
+      "fix_sketch": "现象不再复现（`867d09c`）：`tests/agenia-upgrade/support/decision-ledger.mjs:504-507` 在 `quotePath: true` 时走 `git -c core.quotepath=false ls-files`，`realTrackedFiles()`（`:543-555`）已用它并另留一条 bare 对照；判据侧 `dec01-decision-files.test.mjs:92-110` 用 `quotepathRepo()`（夹具仓本地 `core.quotepath=true`）造刀 —— 加 `-c` 列出字面路径、bare 被 octal-quote，两条都咬 ⇒ 这条腿钉的是工具参数，不是机器配置。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 24,
@@ -422,7 +478,14 @@
       "id": "bug-20261112-09",
       "at": "2026-11-13T13:34:06+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "中 —— 接线一处（派工路径）+ 一条腿；要先定「派工前」是哪一个函数（`ticket-open` 还是组长侧 guard）。",
+      "fix_sketch": "`决议-check.mjs --op gate2-card` 能咬（`tests/agenia-upgrade/integration/dec06-gate-manuals.test.mjs:41` 七张卡各咬一面），但它在 `presets/**` 里 **0 个调用点**（本跑整树 grep 零命中）⇒ 派工链上没有任何东西会在「派一张没有构案编号的新机制票」时拒，只有组长记得手敲才拦得住。修法：把这条检查接进派工路径（`ticket-open` / 派工前那一处），补一条「同一张无号卡走派工 ⇒ 当场拒」的腿；`supersede` 的零调用点按处置是设计，不在本票。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 27,
@@ -553,7 +616,14 @@
       "id": "bug-20261112-12",
       "at": "2026-11-13T13:34:06+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "低 —— 两处注释改成「现算」+ 一条腿；不碰代码。",
+      "fix_sketch": "`.tools/lib/决议-ledger.mjs:66` 的注释仍写「四个 token（闭集…）」，而 `COUNT_RULES`（`:76-84`）已有五个键（多了 `零代码`）；`.tools/census.mjs:17-19` 同句只列 `file` / `file-code` / `site` / `site-code` 四个名字。图例已按 `COUNT_RULES` 现算（`INDEX` 页首），注释还停在旧数 ⇒ 下一个照注释改表的人会漏掉 `零代码`。修法：两处注释改成「由 `COUNT_RULES` 现算、不写具体数」，同批补一条「注释/文档里不出现 token 个数」的腿。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 34,
@@ -602,7 +672,14 @@
       "id": "bug-20261112-13",
       "at": "2026-11-13T13:34:06+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "低 —— 一条腿扩到三载体（读三个文件各一句），分钟级。",
+      "fix_sketch": "`PARSE-POINTER` 腿（`tests/agenia-upgrade/integration/dec04-index-census.test.mjs:225-242`）只读 `tests/agenia-upgrade/support/decision-ledger.mjs` 这一份 ⇒ 另两个载体改回旧指针不会红：`.tools/决议-check.mjs:24`（「全在 `.tools/lib/决议-ledger.mjs` 里」）与 `决议/构案/0001-决议账本三册制.md:36`（同一句）。三处今天都在、旧句只被钉在测试夹具头这一处。修法：腿改成三载体各一条（缺一 / 留旧句各红），期望句手写、不从被测物反推。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 37,
@@ -651,7 +728,14 @@
       "id": "bug-20261112-14",
       "at": "2026-11-13T13:34:06+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "零（已修，`d91ba39`）—— 残留只欠一条「不带 `--repo` 默认路径」的腿。",
+      "fix_sketch": "现象已由 `d91ba39`（2026-11-12 22:35:59，早于本票登记 1 分 31 秒）修掉：`presets/agenia/bin/install.mjs:78` 的 `REPO` 从「一个 `..`（= `<repo>/presets/agenia`）」改成三个 `..`（= 仓库根，`:21-22` / `:62` 的注释与它一致），`:116` 的默认 `repo: REPO` 跟着对，`rollback.mjs:67` / `release-scan.mjs:67` 同批改 ⇒ 不带 `--repo` 的 `publish-staged` 不再拼双份路径，默认备份根回到 `<repo>/.tools/_backup/agenia-install/<slug>`（`:313-317`）。残留（不属 phenomenon）：判据侧仍只覆盖 `.agenia-test-root` 那一支，处置点名要补的「不带 `--repo` 的默认路径」那条腿还欠着。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 40,
@@ -700,7 +784,14 @@
       "id": "bug-20261112-15",
       "at": "2026-11-13T13:34:06+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "低 —— 一处注释；只有人手读，暂不立法。",
+      "fix_sketch": "同一件事两个数还在：`presets/agenia/bin/install.mjs:51` 注释写「靶子往上三层内有 `.agenia-test-root`」，而 `insideTestScene()`（`:304-311`）是 `for (let i = 0; i < 4; i += 1)`（往上 4 层），同文件 `:207` 自己也写「往上 4 层」⇒ 读注释的人会按 3 层理解测试现场边界。修法：`:51` 改成 4 层（或让注释引用同一个常量）；这族暂不立法（人手读的注释）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 43,

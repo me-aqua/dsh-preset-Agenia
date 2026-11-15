@@ -42,7 +42,13 @@
       "at": "2026-11-04T15:10:04+08:00",
       "verdict": "true",
       "severity_line": "function_broken_repro",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "medium —— 闸本体 34 行（presets/agenia/inject.js:988-1006 + :2634 的接线）+ RGATE-01 565 行（A/B/C/D 四格 + 三条负对照 + 时钟夹具）+ harness/registry 约 80 行；按实做约 2–3 小时。难点不在行数：tools.guard 的回调必须同步，而 dayKeyOf 在 ESM 里 ⇒ 要在装配时把函数对象取出来存成同步调用面（localDayKeySync），取不到就拒，不许猜「今天」。",
+      "fix_sketch": "**如果它还开着，我要的修法与复现**（不是「以后注意」）：\n① 闸落在 guard 的真实执行路径上：在 presets/agenia/inject.js 的 tools.guard 回调里、bridgeRecordClaim 之前接 dailyReviewGateVerdict(toolName, contentDir)（今天在 :2634；工具名集合 :940 只认 job_conversation_review / job_technical_review），非 null 就 `return `${code}：${message}``。\n② 判据钉产物、不钉 phase：`<内容根>/.runtime/reports/memory-update/<day>.json` 在不在；`<day>` 只走 presets/agenia/lib/route.mjs::dayKeyOf（本地 04:00 切，唯一一份），本文件不许再写一份日期算法；同步接缝用 localDayKeySync，取不到 dayKeyOf ⇒ 拒 E_REVIEW_DAY_UNKNOWN（不许拿「今天」猜）。\n③ 码与报文：E_REVIEW_BEFORE_JUDGE，报文点名那一天（且只点名一天），并写清「判决链：claim-update → candidates-freeze → job_memory_judge → judge-commit」。\n**复现（当时该怎样量出来）**：静态 —— `git show 0c352f2:presets/agenia/inject.js`（de95a52 的父提交）里搜不到 dailyReviewGateVerdict / E_REVIEW_BEFORE_JUDGE，只有两个工具名（用于 claim 桥）⇒ 那版的 guard 对这两发没有「报告不在就拒」的分支；动态 —— 用 RGATE-01 的载具（tests/agenia-upgrade/integration/rgate01-daily-review-gate.test.mjs：真跑 apply() + 假 ctx + 合成内容根 + mock.timers 钉 Date）发一次 job_technical_review：没有当天的报告 ⇒ 拒；同一 call 对象、只种一份当天报告 ⇒ 放行 undefined；负对照 team_test 在同一副「没有报告」的根上照旧放行；01:30 / 04:00:01 两个时刻分别点名 11-02 / 11-03（两向一夹 ⇒ 切点只能是 4）。今天 15:01 的全量跑里这四格全绿（RGATE-01 GREEN；settle 132/132 · RED 0 · exit 0），实测读数：A:job_technical_review = reject E_REVIEW_BEFORE_JUDGE（报文点名 2026-11-02）、B:job_technical_review = allow、B2:job_technical_review = reject（点名 2026-11-03，切点上方 11-02 的报告不顶用）、C:team_test = allow。\n**关闭所必需的那一格（what would have had to be true）**：要判它**不是** bug，得三次派发都发生在当天报告已落盘之后（只是「完成通知」慢了）；记录不是这样 —— 11-03 09:14 check-notes 127/128 的唯一红就是 reports/memory-update/2026-11-03.json 不在，09:1x 两份评审已在跑，老板当场停掉（.team/leader/2026-11-03/log.md:24-33；11-02 同形，见证据第 1 条）。要判**修好了**：闸必须在 guard 的真实路径上、日子必须与卡同用 04:00 切、且要有「无关工具不受影响」的负对照 —— RGATE-01 四格全中。**残余窗口（写明，不藏）**：闸判的是报告「在不在」，不是 judge-commit 已走完；代码注释的论据是「报告是发布事务第一个写的、失败回滚会删掉它」（inject.js:930-939），窗口窄但不是零。若要把「判决完成」也钉死，判据要换成事务完成标记 —— 那是另一张票，不在这一条里。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 3,
@@ -98,7 +104,13 @@
       "at": "2026-11-04T14:58:37+08:00",
       "verdict": "true",
       "severity_line": "function_broken_repro",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "medium —— 新增一个写 op + 一个纯函数裁决 + 正/负对照用例，约 2–3 小时；动 presets/agenia/bin/agenia-route.mjs（op 表 + opRouteRepair）、presets/agenia/lib/route.mjs（repairVerdict），加 tests/agenia-upgrade/integration/route-repair.test.mjs",
+      "fix_sketch": "加一个写 op `--op route-repair`：入参 {expected_current_sha256, reason}，先拿盘上现算 sha 与入参比（不等 ⇒ 拒），再把「链上末条 next_sha256 / 盘上 sha」两个数一起报出来，然后只追加一条 op:route-repair 的审计记录（prev_sha256 = 链上末条、next_sha256 = 盘上现算、detail 带两份原件路径），**current.json 内容零改写**。落点：presets/agenia/bin/agenia-route.mjs（op 表 + opRouteRepair）、presets/agenia/lib/route.mjs（repairVerdict 纯函数，与 chainVerdict 同一个口径）。判据三条：① 篡改之后 route-repair 成功、紧接着 ticket-close 能过；② expected_current_sha256 不对 ⇒ 仍拒（不许变成万能钥匙）；③ 修复前后 current.json 逐字节相同（只追加审计行）。复现读数（2026-11-04 14:56，工作区 .team/test/2026-11-04/_probe/bug02-ws）：init 之后 headline-set 成功 exit 0；把 current.json 按 4 空格缩进重写（盘上 sha 0dce4d0… → eed9f20…，链上仍记 0dce4d0…）再跑，headline-set / verify / init 三条全部 E_ROUTE_TAMPERED exit 7；--op repair / route-repair / route-fix 三条全 E_USAGE exit 2（--op help 的 24 个 op 里没有修复 op）⇒ 除手写审计行外无路可走，与 11-03 现场一致。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 6,
@@ -149,7 +161,14 @@
       "at": "2026-11-04T14:58:37+08:00",
       "verdict": "true",
       "severity_line": "reading_lies",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "small —— 三处各自几行、互不相干，约 1–2 小时；动 .tools/tree-at-commit.mjs、tests/agenia-upgrade/run-all.mjs、.tools/check-notes.mjs",
+      "fix_sketch": "三条分开修，别合成一条：①「52 份」9 处字面量（.tools/tree-at-commit.mjs:40/66/125/338/343/681/702/762/831，其中 :125 是 --help 的运行期文案）—— 今天这个数**是对的**（preset 50 + oracle 2 = 52，2026-11-04 14:52 实测，导出 JSON 的 staging.sha256.files 也是 52），所以它不是「读数说假话」，是**第二份真相**：改成从 stagingFilesOf() 的 files 或 manifest.list.length 派生，--help 那一句改成「条数以清单为准」，否则那一层一换版 9 处一起漂。② AGENIA_STAGING_MANIFEST：tests/agenia-upgrade/run-all.mjs 的 ENV（:195-209）只设了 AGENIA_STAGING_PRESET（:201）与 AGENIA_DESKTOP_ORACLE_STANDARD（:206），全文 0 处 MANIFEST ⇒ 全量跑时 pinnedGiven:false，fileCountDrift 里那条 declared_live_vs_pinned **根本不进 pairs**（tests/agenia-upgrade/support/tree-at-commit.mjs:588-589），judged / allOk 仍读 true。2026-11-04 14:56 纯函数 A/B（喂假输入，不真跑）：不配 ⇒ 6 对 / judged:true / allOk:true；配了且差 1 ⇒ 7 对 / allOk:false / drifted=[declared_live_vs_pinned] ⇒ 修法：run-all.mjs 在导出副本那一步把导出 JSON 路径写进 ENV；更硬的一条是 pinnedGiven:false 时让 judged 读 false 并 push CPY-FILE-COUNT-UNJUDGED（判不了不许读成绿）。③ .tools/check-notes.mjs 在纯树副本上分母 128 → 123：活树 128/128 exit 0（14:52），HEAD 217eb88 带 staging 的副本 118/123 exit 1（14:53）⇒ 消失的 5 条 = dev/review/test/leader 的「now.md 有多旧（只报不红）」4 条 + 「昨天那一轮记忆更新走完了」1 条（**这一条是真判定**）；它们不是挂起、是**根本没登记**（rows 少 5 条），输出只剩 118/123，没有一行说哪 5 条去哪了 —— 与 check-notes.mjs:1932-1955 自己那条「挂起留在分母里、明写」的纪律相反。修法：这 5 门在缺输入时也 add 一条 ok:null 的挂起行、并把缺什么写进 detail（.team/ 不在提交里是 by design，但「缺数据」要明写，不许让分母自己缩）。",
+      "sample_version": null,
+      "hides": "function_broken_repro",
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 9,
@@ -200,7 +219,13 @@
       "at": "2026-11-04T14:58:37+08:00",
       "verdict": "true",
       "severity_line": "function_broken_repro",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "small —— 一处正则 + 一条准入分支 + 正/负用例，约 1 小时；动 presets/agenia/lib/tickets.mjs（SOURCE_RE :48 / sourceVerdict :62 / validateTicket :285）",
+      "fix_sketch": "在 presets/agenia/lib/tickets.mjs 的 SOURCE_RE（:48，现在只认 ^technical-review:<64hex>#<finding>$）之外加**第二种合法形状**给老板/组长插的票：<carrier>:<ref>，carrier ∈ boss|leader|test，ref 非空（例如 boss:2026-11-03#1）；在 sourceVerdict（:62）里按前缀分叉，返回 {carrier, ref} 而不是只返回 {report_sha256, finding_id}；并让 openAdoptedTicketIds 与 REVIEW_SOURCE_PREFIX（:51）那两条「评审票覆盖对账」只对 technical-review: 这一条线生效 —— 别把插票卷进评审覆盖率的对账（否则插票会变成 coverage 的幽灵缺口）。判据：① 三种 carrier 各一条正例都收（exit 0、票出现在 current.json 的 tickets 里）；② 形状不对仍拒（E_TICKET_SOURCE_BAD）；③ 老板插的票在卡上的票数不再读成 0。复现读数（2026-11-04 14:57，工作区 .team/test/2026-11-04/_probe/bug04-ws）：同一条票只换 source —— boss:2026-11-03#1 ⇒ E_TICKET_SOURCE_BAD exit 5；leader:2026-11-03#1 ⇒ 同一个码 exit 5；technical-review:<64hex>#F1 ⇒ exit 0，票落进账（ticket-20261104-01）。前两次先被 next_step / acceptance 的必填挡过，补全之后才落到 source 这一格 ⇒ 挡住它的确实只有形状这一条。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 12,
@@ -261,7 +286,14 @@
       "at": "2026-11-04T15:10:07+08:00",
       "verdict": "true",
       "severity_line": "reading_lies",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "small —— 处置那一版只动 now.md 一行（把「当前阶段」改成「阶段那一格」）+ 重跑 docs.test.mjs，约 15 分钟；**判据那一侧没动**（docs.test.mjs:599-613 的 stageClaims 仍是 /当前(项目)?阶段|当前大阶段/ 的行内子串匹配）。若按机理修（我当时会要求的那一版）：约 1 小时，改 stageClaims + 加正/负自控。",
+      "fix_sketch": "**如果它还开着，我要的修法与复现**：\n① 先复现（已有真读数）：2026-11-03 21:29 全量（.team/test/2026-11-03/_runs/mj1-full，HEAD 1cc8d3f）DOC-01 RED，problems=[STAGE-MISSING]，readings.leader_now_stage_lines = 10:[keyword] claimed=执行一 / 30:[no-stage] claimed=null，第 30 行原文是「**不单独做「活组员数」那一格**；**「在忙什么」与「当前阶段」合成一行**」—— 它讲的是看板 UI 口径，不是阶段声明，但 stageClaims() 只要行内出现这四个字就当声明（docs.test.mjs:599-613），没有阶段关键词 ⇒ no-stage ⇒ 红（:642-644）。同页第 10 行是合法声明。最小夹具：一页 now.md 只有第 10 行一条合法声明 + 一行「「在忙什么」与「当前阶段」合成一行」的看板口径 ⇒ 同一页被判成「缺阶段」。\n② 修法（按机理，不是按措辞）：让 stageClaims 只认**声明形状** —— `- 当前阶段：<唯一关键词>` / `- 当前项目阶段：<…>` / `当前大阶段已从…切到<关键词>`；「提到」不算：引号里 / 句子中间出现的词形不构成声明。加两条自控：a 负控 = 只有「提到」行 + 一条合法声明 ⇒ 必须绿（且 claims 只 1 条）；b 正控 = 原来的缺陷（第 8 行计划 + 第 18 行执行一）⇒ 必须仍红 STAGE-CONTRADICTION。原两条 CONTROL_OLD / CONTROL_NEW（:615-626）保留。\n③ 当时的便宜处置（已落地）是改 now.md 那一行为「阶段那一格」，docs.test.mjs 两条转绿（处置记录：run lead-doc RED 0 / GREEN 2）—— 这一版能关掉当天那条红，但它关的是**这一页**，不是**判据**。\n**关闭所必需的那一格（what would have had to be true）**：要判它**不是** bug，得第 30 行真的在声明阶段（或第 10 行不存在 / 与它同值）；记录正相反（第 30 行是看板口径、第 10 行才是声明）⇒ 这条红是假红。要让「只改措辞、判据不动」这一版**足够**，必须成立：被检查的每一页、未来每一次重写，凡出现这四个字的行都恰好点名唯一的大阶段 —— 这是对人写散文的保证，判据没有压着它。实际情况：now.md 每天重写（2026-11-04 14:31 已重写），11-03 那一行现在不存在了，今天 DOC-01 绿（15:01 全量跑 GREEN，stage_lines 只剩 10:[keyword] claimed=执行一）是**另一页**的绿，不能当成「这个判据不会再误报」的证据。若这一条还开着，我会要求判据那一侧也动，或者至少补上 a 负控；只改措辞的关法，下一次同一页再写到这四个字就会复发。\n**为什么判 reading_lies（hides=function_broken_repro）**：假红把「判据认不出提到与声明」这一条真功能坏掩盖成「组长这一页缺阶段」—— 读的人会去改页面，不会去改判据；这正是第三线要收的「读数说假话」。不判 data_broken（数据没坏）；不判 unclassified（那会强升级 + 卡红，而这一条已按处置关闭、红早已消失，拿它换一格假红不是读数）。",
+      "sample_version": null,
+      "hides": "function_broken_repro",
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 15,

@@ -213,9 +213,9 @@ export function goodLedger(spec = {}) {
   const {
     caseId, tag, decisions = [goodDecisionProduct0001(), goodDecision0001()],
     concepts = [...GOOD_CONCEPTS], impls = [...GOOD_IMPLS], index = true,
-    card = null, extraFiles = [], bugs = null,
+    card = null, extraFiles = [], bugs = null, withoutBooks = [],
   } = spec
-  return buildScene({ caseId, tag, decisions, concepts, impls, index, card, extraFiles, bugs })
+  return buildScene({ caseId, tag, decisions, concepts, impls, index, card, extraFiles, bugs, withoutBooks })
 }
 
 /**
@@ -252,7 +252,7 @@ export function sceneRoot(caseId, tag) {
  *          index?: boolean|null, card?: object|null, extraFiles?: Array<{rel:string,text:string}>,
  *          bugs?: Array<object>|null}} spec
  */
-export function buildScene({ caseId, tag, decisions = [], concepts = [], impls = [], index = true, card = null, extraFiles = [], bugs = null }) {
+export function buildScene({ caseId, tag, decisions = [], concepts = [], impls = [], index = true, card = null, extraFiles = [], bugs = null, withoutBooks = [] }) {
   const root = sceneRoot(caseId, tag)
   const writes = []
   const write = (rel, text) => {
@@ -277,8 +277,11 @@ export function buildScene({ caseId, tag, decisions = [], concepts = [], impls =
   if (index !== null) {
     // 派生页由**产品自己的读面**生成（与 `--op index` 同一份 scanLedger + renderIndexPage）：
     // 头块不成立时，页也必须按"解析不到那一条"来渲染 —— 否则夹具页会替实现兜底。
+    // `withoutBooks` 的那几册**不建目录、不写页**（造"缺册"样本；删目录会被 ENV-02 的删除闸记一笔，
+    // 而"不建"比"建了再删"更贴这个样本的语义）。
     const scan = scanLedger(root)
     for (const book of BOOKS) {
+      if (withoutBooks.includes(book)) continue
       const file = path.join(root, '账本', book, 'INDEX.md')
       mkdirSync(path.dirname(file), { recursive: true })
       writeFileSync(file, renderIndexPage(book, {
@@ -290,6 +293,7 @@ export function buildScene({ caseId, tag, decisions = [], concepts = [], impls =
     }
     if (index && index.marker === false) {
       for (const book of BOOKS) {
+        if (withoutBooks.includes(book)) continue
         const file = path.join(root, '账本', book, 'INDEX.md')
         writeFileSync(file, readFileSync(file, 'utf8').replace(/^<!--[^\n]*-->\n\n/u, ''), 'utf8')
       }

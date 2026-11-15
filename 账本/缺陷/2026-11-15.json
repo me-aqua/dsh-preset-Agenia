@@ -88,6 +88,131 @@
         "at": "2026-11-15T13:28:34+08:00"
       },
       "历史": "deferred"
+    },
+    {
+      "seq": 5,
+      "kind": "registered",
+      "id": "bug-20261115-03",
+      "entry_kind": "bug",
+      "phenomenon": "**`依据P` / `依据bug` 指向不存在的记录，校验器不判**：0012 只把「主父」`父` 补成了必须解析到存在且生效的记录（`SCHEME-PARENT-DANGLING` 等三码），而 `依据P:` / `依据bug:` 两栏只查「是不是 `父` 的成员」，指到一个不存在的号照样绿。⇒ 三条链里的「产品→构案」「缺陷→构案」只闭了一半。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "ledger",
+        "criteria"
+      ],
+      "how_seen": "2026-11-15 第 4 关 r2 评审（`.team/review/2026-11-15/评审报告-0012-r2.md`）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/决议-ledger.mjs",
+          "note": "judgeParentRefs 只覆盖 父"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-15T21:33:42+08:00"
+    },
+    {
+      "seq": 6,
+      "kind": "disposed",
+      "id": "bug-20261115-03",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-17 · 测试岗：先给契约加一行（`依据P`/`依据bug` 的每个成员都必须解析到存在且生效的记录），再同批实现两码 + 两把刀（各指不存在 / 已废）+ 对照绿。**不许**先改代码后补契约 —— 契约是规格。",
+        "by": "leader",
+        "at": "2026-11-15T21:33:42+08:00"
+      },
+      "at": "2026-11-15T21:33:42+08:00"
+    },
+    {
+      "seq": 7,
+      "kind": "registered",
+      "id": "bug-20261115-04",
+      "entry_kind": "bug",
+      "phenomenon": "**`bug-ledger.mjs:567` 死三元**：一段三元表达式的两个分支等价（评审标为 N-4），删掉无行为变化，留着会让读者以为那里有分支语义。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "code-quality",
+        "dead-code"
+      ],
+      "how_seen": "2026-11-15 第 3 关 r3 交活自报 + 第 4 关 r2 评审确认",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/bug-ledger.mjs",
+          "note": "第 567 行附近"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-15T21:33:42+08:00"
+    },
+    {
+      "seq": 8,
+      "kind": "disposed",
+      "id": "bug-20261115-04",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-18 · 实现岗：一行删除 + 跑套件确认 227 不变（这是 `mig-wg-05` 的「只改必须改的地方」）。",
+        "by": "leader",
+        "at": "2026-11-15T21:33:43+08:00"
+      },
+      "at": "2026-11-15T21:33:43+08:00"
+    },
+    {
+      "seq": 9,
+      "kind": "registered",
+      "id": "bug-20261115-05",
+      "entry_kind": "bug",
+      "phenomenon": "**`canonicalJson` 出现第二份实现**（UTF-16 与 UTF-8 各一份），而契约写着「树里只有一份」。两份在同内容上的键序规则一致，但只要有一处对 Unicode 的处理不同，两侧的「相等」就会出现只有实现知道的分叉。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "single-source",
+        "criteria"
+      ],
+      "how_seen": "2026-11-15 第 4 关 r2 评审（非阻塞项）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/决议-check.mjs",
+          "note": "canonicalJson:142"
+        },
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/support/three-books.mjs",
+          "note": "第二份"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-15T21:33:43+08:00"
+    },
+    {
+      "seq": 10,
+      "kind": "disposed",
+      "id": "bug-20261115-05",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-18 · 测试岗+实现岗：把 canonicalJson 收成**一份**（住 `presets/agenia/lib/`，测试侧 import 它），并加一条「树里只有一处定义」的形状判据（刀：加第二份 ⇒ 红）。",
+        "by": "leader",
+        "at": "2026-11-15T21:33:43+08:00"
+      },
+      "at": "2026-11-15T21:33:43+08:00"
     }
   ]
 }

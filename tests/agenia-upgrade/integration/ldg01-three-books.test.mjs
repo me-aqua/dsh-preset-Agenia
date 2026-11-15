@@ -491,6 +491,27 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
         if (!namedIn(run.json, bugA)) push('NOT-NAMED', '[LDG-03/double-dispose] 报文必须点名重复处置的那条缺陷 A')
       }
     }
+    // ⑤' `deferred`（暂缓）是**未结**：没有 `构案` / `判假` / `历史` 也不许红。
+    // 这是"开票先记下、以后再做"的正常路径；把暂缓判成链断掉，会让每张新票都红（2026-11-15 实测）。
+    {
+      const deferredOnly = {
+        days: [{
+          day: '2026-11-15',
+          events: [
+            eventRegistered({ seq: 1, id: bugA }),
+            eventAssessed({ seq: 2, id: bugA, verdict: 'true' }),
+            eventDisposed({ seq: 3, id: bugA, value: 'deferred', reason: '到期 2026-11-20 · 暂缓，还没有落点' }),
+          ],
+        }],
+      }
+      const { run } = checkScene(problems, rec, { caseId: 'LDG-03', tag: 'deferred-open', spec: goodLedger({ schemes: schemeKillsA, ...deferredOnly }) })
+      if (expectCodes(problems, run, [], push, { label: 'LDG-03/deferred-open' })) {
+        const chain = run.json?.chain?.bug ?? null
+        rec.readings.deferred_open = chain
+        if (chain?.deferred !== 1) push('CHAIN-READING-MISSING', `[LDG-03/deferred-open] chain.bug.deferred 实得 ${JSON.stringify(chain?.deferred)}，期望 1（暂缓单独数，不算关上了）`)
+        if (chain?.closed !== 0) push('CHAIN-READING-MISSING', `[LDG-03/deferred-open] chain.bug.closed 实得 ${JSON.stringify(chain?.closed)}，期望 0（deferred 不是结论）`)
+      }
+    }
     // ⑥ 真树：legacy_disposed = 153（旧台账的每一条处置都显式标成历史）+ 本族 0 码
     {
       const run = runCheck(PATHS.repo)

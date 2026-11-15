@@ -62,7 +62,14 @@
       "id": "bug-20261105-16",
       "at": "2026-11-11T15:34:28+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：`bridgeTakeClaim` 现在先按子会话第一条用户消息**完整相等**对号（`firstUserPromptOf`），对不上就**不取**、落 row 5；队列顺序只在 prompt 读空时兜底。判据 `BRG-07`（并行两发、启动次序与调用次序相反）钉的正是这一面。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 3,
@@ -110,7 +117,14 @@
       "id": "bug-20261106-01",
       "at": "2026-11-06T10:40:56+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "small —— 一段文案（`registry.mjs:1132` 的 R5 条件式）+ 一条「判据说明里点到的码必须真能发出」的对账，约 1–2 小时。",
+      "fix_sketch": "评估（2026-11-06 · 测试岗）。**前提核实**：`tests/agenia-upgrade/support/registry.mjs:1132` 仍把 R5 写成「profile 补丁里那一行 × 判词 ⇒ `BOOT-ROLLBACK-DID-NOT-RESTORE` / `BOOT-MOUNT-BROKE-IDENTITY`」并要求「一步撤掉否则 `BOOT-ROLLBACK-NOT-REMOVABLE`」；实现侧 `boot-readings.mjs` 已把这五个码列成**墓碑**（:128-136「退役（墓碑，2026-11-05 深夜）」），`oneStepRemoval()` / `profilePatchReading()` 双双退役（:960-981），R5 现在是 `rollbackRouteReading()`（两件产物 × 落点真值表）+ `rollbackExerciseVerdict()`（练习回执）。全树现查：这三个码**除 registry:1132 外只在注释/墓碑里**出现 ⇒ 再也发不出来。⇒ 判 **true**（判据目录在讲一条已不存在的路线）。**严重线**：三条线没有合适档 —— 不是数据坏、不是可复现功能坏，也不是「掩盖前两条」的假读数（新码照常会响）；按定形 §4.2 不硬塞，请组长拍（先例 `bug-20261104-01`）。修法：把 :1132 的 R5 条件式改成今天这一版（删标记 + 重跑生成器；码换成 `BOOT-R5-*` / `BOOT-ROLLBACK-CONTRACT-BROKEN` 那一族）；再加一条对账：判据说明里点名的 `BOOT-*` 码必须能在 `BOOT_CODES` 里找到**活**的那一条（墓碑不算）—— 否则同样的漂移下次没人看得见。owner 测试岗（`tests/**`）；order = 与 -03/-02 同一批（都在 `support/` 里）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 6,
@@ -158,7 +172,14 @@
       "id": "bug-20261106-02",
       "at": "2026-11-06T10:40:56+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "small —— 一处夹具（把 `d586215^` 的 client.js 固化成带 sha256 的 fixture）+ 三处调用点改成「有 .git 就用 git、否则用夹具并自证 sha256」，约 2–3 小时。",
+      "fix_sketch": "评估（2026-11-06 · 测试岗）。**前提核实（现量）**：`support/dash-client-harness.mjs:461` 的 `preFailureClientSource()` 第一句就是 `if (!existsSync(path.join(repo, '.git'))) return { …why: '这棵树没有 `.git`…' }`；三条真字节腿各自把它读成 HOLD —— DASH-10 ⑤ `DASH-POS-KNIFE-UNAVAILABLE`（dash04-wiring:475）、DASH-11 ⑥ `DASH11-KNIFE-UNAVAILABLE`（dash05-snapshot:760）、DASH-15 ③ `knifeUnreadable`（dash06-mount:592）。评审对象 `.team/technical-review/2026-11-05/tree-at-b3c9797` 现查**没有 `.git`**（活树有）⇒「这三条判据抓得住 11-05 那次真故障」这条最硬的证据，在**被评的那一份**上按构造缺席。⇒ 判 **true**（真缺口：证据不可移植；与 `bug-20261105-09` 同一族，那次也是用夹具关掉的）。**反方读法写在这里供组长驳回**：HOLD 是诚实的读法、不含假话 —— 若口径是「副本没有历史，HOLD 就是正确形态」，这条可 `rejected`；但那样要接受「每一次评审这三格都只剩 HOLD」。**严重线**：不判（无运行期受害者，今天活树上这三腿是绿的）。修法：把 `d586215^` 那一版 client.js 的真字节固化成 fixture（附 sha256 常量）；`preFailureClientSource()` 改成：有 `.git` ⇒ 走 git 并**对夹具复算** sha256（两把尺子必须相等，否则 `DASH-KNIFE-FIXTURE-DRIFT` 红）；没有 `.git` ⇒ 用夹具并把 `source: 'fixture'` 写进读数。⚠️ 夹具不许当唯一真源：git 在的时候仍以 git 为准 —— 夹具只是缓存，漂了要红。owner 测试岗（`tests/**`）；order = 与 -03 同批（同一族 support 文件）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 9,
@@ -206,7 +227,14 @@
       "id": "bug-20261106-03",
       "at": "2026-11-06T10:40:56+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "0–small —— 一处条件（`dash.length !== 1` → `> 1`）+ 一条「这两个码不许同时出」的夹具断言，约 30 分钟。",
+      "fix_sketch": "评估（2026-11-06 · 测试岗）。**前提核实**：同一个函数 `client-ui-placement.mjs::clientUiPlacementVerdict()` 里，`dash.length === 0` 时 ② 先推 `CODES.rowAbsent`（:519「挂载**没做** ⇒ **红**」），④ 又因 `dash.length !== 1` 推 `CODES.hostRowCount`（:677-683「应恰好 1 行，实得 0 行」）⇒ **一次真跑、一个事实两个码**。而 `registry.mjs:1128` 里 DASH-16 自己立过「两套码同时声称『挂载没做』是禁止的」。⇒ 判 **true**（不是两套判据各说一半，是同一趟里同一件事被打了两个名字；红集被虚增，读的人要追两条）。严重线不判（读数不假，只是重名）。修法：④ 只对「多了」说话 —— `if (dash.length > 1)`；缺席那一半留给 ② 的 `DASH-ROW-ABSENT`（「缺席是关于产品的事实」）。配一条夹具：看板行缺席 ⇒ `problems` 里**只许**有 `DASH-ROW-ABSENT`（这条断言同时挡住「以后谁也不许给缺席再起第二个名字」）。owner 测试岗；order = 与 -02/-01 同批。⚠️ 改 ④ 时别把 :684 那条文本命中判据（`dash.length > 0 || textHits > 0`）一起放掉 —— 它管的是「行还在预设体里、insert 里没有」那一支。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 12,
@@ -254,7 +282,14 @@
       "id": "bug-20261106-04",
       "at": "2026-11-06T10:40:56+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "small —— 把族正则提到 `pkg.client === null` 之外（一处位置）+ 一格对照（族名进了点名表也必须拒），约 1 小时。",
+      "fix_sketch": "评估（2026-11-06 · 测试岗）。**前提核实（读自代码，未跑** —— 造一条能跑的复现要在 `.tools/` 里加夹具，那是实现岗写面）：`.tools/make-bundle-patch.mjs` 文件头 :153 写「框架自己的客户端 UI 包族 —— **命中即拒**（更早于裸名分类表）」，而实体 `BARE_CLIENT_UI_FAMILY.test(pkg.raw)`（:417）**住在 `if (pkg.client === null)` 分支内部**（:409）；而 `rowPackage()` 对 `BARE_ROWS_IN_PRESET` 里的裸名返回 `client: false`（:323-325）⇒ 只要一条 `@deepseek-ai/dsh-client-ui-*` 被加进那张表（表头 :169 只有一句「别加进来」），它就**跳过整个 null 分支**、族正则一次不跑、静默进两份预设体 —— 正是 11-04 那个病的形状。判据侧也看不见：`client-ui-placement.mjs:669-674` 对解析不到的预设行**只记** `unresolved_in_preset` 读数、不开火。⇒ 判 **true**。修法两条同批：① 把族判断提到 `classifyPresetRow()` 最前面（先看裸名的族，再看表/包事实）：命中则无论表里有没有都给 `E_BUNDLE_CLIENT_UI_IN_PRESET`；② `--interlock-control` 加一格「族名进了 `BARE_ROWS_IN_PRESET` ⇒ 必须 throw」（与 `bug-20261106-08` 的新格同批，之后由 `bug-20261106-05` 的执行点统一跑）。owner 实现岗（`.tools/**`）；order = 与 -08 同批，排在 -05 的执行点**之前**（先有格，再有跑格的人）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 15,
@@ -302,7 +337,14 @@
       "id": "bug-20261106-05",
       "at": "2026-11-06T10:40:56+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "small —— 一条判据（子进程跑 `--interlock-control`，断言 `INTERLOCK-CONTROL n/n`）+ 清掉 `composition.mjs:542` 的「19/19」措辞，约 1–2 小时。",
+      "fix_sketch": "评估（2026-11-06 · 测试岗）。**前提核实（跑 + 全树现查）**：① 本体是活的 —— 现跑 `node .tools/make-bundle-patch.mjs --interlock-control` ⇒ 19 格逐条 `ok`、末行 `INTERLOCK-CONTROL 19/19 都翻面`、exit 0。② **全树没有任何执行点**：`interlock-control` 的命中只有生成器自己（:60/:65/:1000/:1112 的自派发）与 `composition.mjs:542` 的一句注释；`tests/**` 里对生成器的调用只有 `--check`（DASH-15 ④）与 `checkBranchSafe()` 读源码文本（dash06:729-739），`check-notes.mjs:1950-1952` 只断言**文件在**并把 `--check` 推给人手 ⇒ 那 19 格从来没人跑过，「19/19」是个没被产生过的数。⇒ 判 **true**（**确是死控制，不是我把接线看漏了**：若它在某处被跑过，那个调用点会出现在上面这份清单里）。③ 顺带给修的人一条读数：它**可以**当执行点而不碰产物 —— 跑前跑后各量一次 `presets/agenia/cordis.patch.yml`（sha256 F1E1C5B5… 完全相同、mtime 未变），跑完 `.tools/` 下没留下 `interlock-tmp-*`；因为 `runInterlockControl()` 在 :1108 `process.exit(0)`，走不到 :1174 那句对活体补丁的写。⚠️ 但仍**不许 import** 它（加载期就写活体）⇒ 新判据必须用**子进程**。严重线不判（今天生成器是好的、没有受害者；这是「证据不存在」不是「假读数」）。owner 测试岗（`tests/**`；`.tools/**` 归实现岗）；order = **排在 -04 与 -08 的生成器改动之后**（先补格，再把格接上执行点，否则接的是 19 格旧账）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 18,
@@ -351,7 +393,13 @@
       "at": "2026-11-06T10:40:56+08:00",
       "verdict": "true",
       "severity_line": "function_broken_repro",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_confidence": "yes",
+      "cost": "small —— 渲染前一条形状判据（不是逐字段 try/catch）+ DASH-11 ⑥ 补三种畸形样本，约 2–3 小时。",
+      "fix_sketch": "评估（2026-11-06 · 测试岗）。**前提核实（跑出来的，不是读出来的）**：用**盘上那一版** `client.js` 走测试侧载具（`createDashboardHarness().scene()`），把 `remote.workspaceFiles.read` 换成 `schema: 1` 但形状坏的回包 —— 阳性对照（八键齐全）不抛、槽位在；**缺 `alerts` ⇒ `render_threw: \"Cannot read properties of undefined (reading 'length')\"`**；缺 `header` ⇒ 抛 `reading 'text'`；`alerts` 不是数组 ⇒ `view.alerts.map is not a function`；`debts: null` ⇒ 抛 `reading 'map'`；只有「`header` 是字符串」那一支**不抛**（`view.header.text` 在字符串上是 undefined，静默画空标题）。`readable = view !== null && view.schema === VIEW_SCHEMA`（:164）只认版本号，其余全是裸解引用（:236/:239/:241/:254/:263）；插件里没有 error boundary（`index.js:60-66` 的 try/catch 是**写盘定时器**那一侧，不是渲染）。⇒ 判 **true**（护栏只盖住「读」，形状坏了从渲染那一侧把同一个症状带回来）。⚠️ 覆盖面写清：载具**只量到「同步抛」**；「槽位被拆掉」那一半是 11-05 已证过的机制（同步抛 + 无 boundary ⇒ 整块槽位没了），本探针没有再演一遍 React 卸载 —— 要那一条得在真界面上点一次（GUI 清单）。严重线 = `function_broken_repro`（复现步骤就是上面四个形状各一条）。修法：渲染前先用一条 `isRenderableView(view)`（八键逐类型）判形状，判不过就画**红条**（复用 `failure` 那条既有通路）而不是抛；判据侧 DASH-11 ⑥ 把「schema 对、形状坏」三种喂进去，必须出红条且槽位在（`buttonGone` 不许出现）。owner 实现岗（`presets/**`）+ 测试岗（判据）；order = 下一次动 client.js 时同批，排在 .tools 那批之后（这条是用户在界面上会撞到的那个）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 21,
@@ -399,7 +447,14 @@
       "id": "bug-20261106-07",
       "at": "2026-11-06T10:40:57+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "small —— 二选一（留：一条只记读数的 `--check` 腿；退：删工具 + 清三处「都验过」的注释），约 1–2 小时，但**先要组长裁定留还是退**。",
+      "fix_sketch": "评估（2026-11-06 · 测试岗）。**前提核实**：① `.tools/mount-dashboard-profile.mjs` 还在，头注释 :14-15 仍写「形状的**唯一来源**是 `./lib/dashboard-mount.mjs` 的 `dashboardMountRow()`：… `BOOT-01/02` 能 import 的那份形状，全都从它来」；现查 `boot-readings.mjs` **一次也没 import `dashboard-mount.mjs`**，`profilePatchReading()` 已退役（:960-970 自己写着「这个函数没有读者了」）⇒ 那句话是旧的。② **没有执行点**：全树 import `lib/dashboard-mount.mjs` 的只有 `mount-dashboard-profile.mjs` 自己（:71/:82）；`tests/**` 提到它只在注释里（dash06:78/:851、client-ui-placement:43/:756、registry:1128），三处都写「`--check/--apply/--revert` 都验过」—— **没有任何一次运行**支撑那句。⇒ 判 **true**（孤儿刀 + 注释冒充读数）。它值得修的理由不是「没人用」，而是：`--apply/--revert` 写的是 **profile 补丁 = 热重载层**（`patchReload: live`，头注释 :11-12 自己写着「在会话里写它 = 正在跑的工具当场掉光」），而它没有任何判据、也没人跑过它的 `--check`。严重线不判（今天没有受害者的功能坏，也没有假红）。修法（组长拍一个）：**留** ⇒ 在 DASH-06 或 BOOT-01 里加一条**只记读数**的腿（跑 `--check`：ok ⇒ GREEN，不 ok ⇒ HOLD + 具名码；**不许**把备用路线当交付项判红）；**退** ⇒ 删工具 + `lib/dashboard-mount.mjs` + 清掉上面三处「都验过」的注释与 registry:1128 那句。owner：组长裁定（留/退）+ 实现岗执行；order = 与 -04/-08 同一批 `.tools` 改动。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 24,
@@ -447,7 +502,14 @@
       "id": "bug-20261106-08",
       "at": "2026-11-06T10:40:57+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": "small —— 宿主级分支加一处包事实判（`rowPackage()` 的 client 必须是 true）+ 一格对照，约 1 小时。",
+      "fix_sketch": "评估（2026-11-06 · 测试岗）。**前提核实（读自代码，未跑）**：`partitionHostLevel()` 的宿主级分支（:493-511）只判三件事 —— 标记位置、id 在不在 `HOST_LEVEL_IDS`、是不是 `disabled: true`；它**不进** `classifyPresetRow()`，也就是**不问那个包是什么** ⇒ 一条非客户端 UI 的行只要标了 `# @host-level` 并进点名表，就会被 :590 原样拼进顶层 `- insert:`。同一份文件的下行方向（预设行）是查包事实的（:518 / :409-435）。而 `registry.mjs:1128` 里 DASH-16 ① 的原则是「一行的层归属由它指向的包决定，不由作者记得的两把钥匙决定」—— 今天这条原则**只在向下方向成立**。⇒ 判 **true**（同一条原则两个作者；时机一到就是「第二条宿主行被静默抬出两份预设体」，只有判据侧「宿主级行至多 1 条且必须是看板包」会响）。严重线不判。修法：宿主级分支补一次 `rowPackage(facts.name)` —— `client !== true` ⇒ 新码 `E_BUNDLE_HOST_NOT_CLIENT_UI`（报文写清：宿主级行必须是客户端 UI 包，否则它既到不了浏览器、又被从两份预设体里摘走）；`client === null`（判不了）也拒（与裸名表同一个 fail-closed 口径）。配一格 `--interlock-control`（「非客户端行标了宿主级 ⇒ 必须 throw」）。owner 实现岗（`.tools/**`）；order = 与 -04 同批，排在 -05 的执行点之前。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 27,
@@ -501,7 +563,19 @@
       "id": "bug-20261106-09",
       "at": "2026-11-11T15:34:28+08:00",
       "verdict": "duplicate",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "重复项: bug-20261109-02 —— 同一批 5 条（398–400 码点、UTF-16 长度 400+），同一个病：「超 400 了吗」有码点/UTF-16 两把尺子，两处读数不同名不同数。",
+      "sample_version": null,
+      "line_decision": {
+        "value": "duplicate → bug-20261109-02（400 字两单位问题，后者是新主）",
+        "by_role": "leader",
+        "at": "2026-11-11T15:40:47+08:00"
+      },
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 30,
@@ -560,7 +634,14 @@
       "id": "bug-20261106-10",
       "at": "2026-11-11T15:34:28+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（不可复现）：快照落点已搬出被测树 —— `DASHBOARD_SNAPSHOT_REL = '.tools/_scratch/dashboard/view.json'`（渲染层 `SNAPSHOT_PATH` 逐字相同），15 秒写手不再翻 `presets/agenia`；`dash05` ⑨ 把「两半都不在许多被测树之下」写成判据。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 33,
@@ -608,7 +689,19 @@
       "id": "bug-20261106-11",
       "at": "2026-11-11T15:34:28+08:00",
       "verdict": "duplicate",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "重复项: bug-20261106-10 —— 同一条现象（开着客户端 ⇒ `DR-02` 按拍必红）的续报：收口换了一格、红灯没消失；两条的根因都是「快照住在被哈希的树里」。",
+      "sample_version": null,
+      "line_decision": {
+        "value": "duplicate → bug-20261106-10（DR-02 livePreset 整棵预设，后者是主）",
+        "by_role": "leader",
+        "at": "2026-11-11T15:40:47+08:00"
+      },
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 36,
@@ -656,7 +749,14 @@
       "id": "bug-20261106-12",
       "at": "2026-11-11T15:34:28+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：`daily-cards.py::disposition_of` 现在要求落点带「采纳 ·」/「不采纳 ·」分隔符，`不采纳：…` 不会再印成采纳（函数头逐条记了三错值，`CARD-08` 的刀钉住翻面）。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 39,
@@ -704,7 +804,19 @@
       "id": "bug-20261106-13",
       "at": "2026-11-11T15:34:28+08:00",
       "verdict": "duplicate",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "重复项: bug-20261106-15 —— 同一现象（合法 JSON、形状不对 ⇒ 渲染期抛 ⇒ 槽位被拆）：-13 是缺 alerts/header 那一批，-15 是逐形状实测出来的四种（debts:[null]/alerts:[null]/缺 badge/缺 main）。",
+      "sample_version": null,
+      "line_decision": {
+        "value": "duplicate → bug-20261106-15（快照形状不对拆槽，后者是主）",
+        "by_role": "leader",
+        "at": "2026-11-11T15:40:47+08:00"
+      },
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 42,
@@ -752,7 +864,14 @@
       "id": "bug-20261106-14",
       "at": "2026-11-11T15:34:28+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：CODE 集把 `.tools/_scratch/` 整个排除（`fingerprint.mjs:74-79`），而快照已被搬到 `.tools/_scratch/dashboard/view.json` ⇒ 15 秒写手不再驱动 CODE 指纹，「活树动了 N 处」可复现。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 45,
@@ -801,7 +920,14 @@
       "id": "bug-20261106-15",
       "at": "2026-11-11T15:34:28+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：`client.js::viewProblem` 现在判 `debts`/`alerts` 的元素是不是对象、`badge`/`main` 键必须存在（可 null）；`dash05` ⑩ 用十种现场逐格断言「不抛 + 点名缺陷」。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 48,
@@ -850,7 +976,14 @@
       "id": "bug-20261106-16",
       "at": "2026-11-11T15:34:28+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：三个错值都在 `disposition_of` 里各有一条口径（对象里的 `ticket` 也算落点 / 「采纳不了」不算采纳 / 「map 不在」与「map 在但没这一条」两句不同），`CARD-08` 的七格 + 刀逐条钉住。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 51,
@@ -899,7 +1032,14 @@
       "id": "bug-20261106-17",
       "at": "2026-11-11T15:34:28+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（读数会随时间变旧）：`client.js` 里没有 tick（`setInterval` 零处），`generated_at` 只在打开那一刻算 ⇒ 面板开着，「· N 分钟前」不再往前走、停在打开那一刻；修法是一个 60 s 的 `useEffect` 定时器只重算 ageSuffix。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 54,
@@ -948,7 +1088,14 @@
       "id": "bug-20261106-18",
       "at": "2026-11-11T15:34:28+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（读数说假话）：`jload` 把「读不出」折成 `{}`，而 `map_present = os.path.isfile(...)` 仍为真 ⇒ 一份坏掉的 findings-map 会让**每一行**都印「在，但没有这一条的落点」；修法是 `jload` 与存在性分开判，坏文件给第三个状态与独立码。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 57,
@@ -997,7 +1144,14 @@
       "id": "bug-20261106-19",
       "at": "2026-11-11T15:34:29+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（判据盲区仍在）：`CARD-08` 把 `data_rows` 只记成读数（`card08-…test.mjs:354`），全文没有整页行数断言；`CARD-07` 已补 `ROWS-LOST`，`CARD-08` 多印一行今天不翻任何码。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 60,

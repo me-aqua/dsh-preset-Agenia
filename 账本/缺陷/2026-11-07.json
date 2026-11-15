@@ -36,7 +36,14 @@
       "id": "bug-20261106-20",
       "at": "2026-11-11T15:34:29+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：`DR-01` 的见证换成**路径集合**（`realRootsSnapshot().brain`），`data-root.test.mjs:374-386` 的注释直接点名这条 bug；「内容合法地变」不再被记成「这次测试写了」。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 3,
@@ -85,7 +92,14 @@
       "id": "bug-20261107-01",
       "at": "2026-11-11T15:34:29+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（整张卡生不出来）：`fmap = _fmap_doc.get('map', {})` 不判形状，`{\"map\":\"oops\"}` ⇒ `fmap` 是字符串 ⇒ 下一行 `.get()` `AttributeError` ⇒ `E_INTERNAL`、没有 xlsx；另 `landing:null` 仍与「没登记」同一句话。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 6,
@@ -134,7 +148,14 @@
       "id": "bug-20261107-02",
       "at": "2026-11-11T15:34:29+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 8 · `469be46`）：两个树读者都点名读不到的子树，判据格 `MCR-05` 在盘（6 处引用）——「读失败」与「没有」不再长得一样。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 9,
@@ -183,7 +204,14 @@
       "id": "bug-20261107-03",
       "at": "2026-11-11T15:34:29+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 8 · `469be46`）：补了「副本里多一个文件」那一格 `MCR-06`（11 处引用）+ 退化刀 ⇒ `equal:true` 对多出来的文件不再是瞎的。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 12,
@@ -232,7 +260,14 @@
       "id": "bug-20261107-04",
       "at": "2026-11-11T15:34:29+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修：`client.js:171-196` 的 `useEffect` 在读数之前先 `setView(null)` ⇒ 上一次的读数不会留在提示条底下冒充新数字。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 15,
@@ -281,7 +316,14 @@
       "id": "bug-20261107-05",
       "at": "2026-11-11T15:34:29+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 11 · `67a4779`）：临时件扫描抽成 `support/temp-scan.mjs`，扫描目标从运行根算、空/缺目录记 HOLD `TEMP-SCAN-NO-SAMPLE`，不再写死 2026-10-14 那个目录。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 18,
@@ -330,7 +372,14 @@
       "id": "bug-20261107-06",
       "at": "2026-11-11T15:34:29+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 11 · `67a4779`）：结算行改读 `DR-02/result.json`（`dr02WitnessReading()` 3 处），内容字段只从读数印 ⇒ 删掉见证不再「照旧印差异=无」。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 21,
@@ -379,7 +428,14 @@
       "id": "bug-20261107-07",
       "at": "2026-11-11T15:34:29+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 11 · `67a4779`）：`dr02_witness_outside` 守卫读数已落（`data-root.test.mjs:2066`），`wit01-witness-grave` 逐条量「只删被守段 / 只删守卫」各红一次。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 24,
@@ -428,7 +484,14 @@
       "id": "bug-20261107-08",
       "at": "2026-11-11T15:36:13+08:00",
       "verdict": "true",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "真缺陷（迟到的结果把旧看板画回来）：`client.js:171-200` 的 `useEffect` 只有 `setView(null)`，没有请求代号/alive 标志 —— 关掉再打开时上一次 `readSnapshot` 的 promise 仍会 `setView`；修法是一个自增的 request token，落定时 `if (token !== latest) return`。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 27,
@@ -477,7 +540,14 @@
       "id": "bug-20261107-09",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 13 · `3502a19`/`0f29993`）：`stripComments` 认正则字面量的刀与读数写在 `dash07` 文件头（`:1141`），报文改成「没有一处码位写着它」、`codeTable` 按顶层键 + `RDW-` 字面量数并点名未解析的键。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 30,
@@ -526,7 +596,14 @@
       "id": "bug-20261107-10",
       "at": "2026-11-11T15:36:14+08:00",
       "verdict": "false",
-      "by_role": "test"
+      "by_role": "test",
+      "severity_line": null,
+      "severity_confidence": null,
+      "cost": null,
+      "fix_sketch": "已修（batch 15 · `8c7cdce`+`8614989`）：放行的 write/edit 现在往 `<header_office>/state/office-landings.jsonl` 追加七键（9 处引用），`OFFICE_TREE_DIFFERS` 改从账上读 `cross_tree>0` ⇒ 同树相对路径也说得出来。",
+      "sample_version": null,
+      "escalated_at": null,
+      "card_red": false
     },
     {
       "seq": 33,
