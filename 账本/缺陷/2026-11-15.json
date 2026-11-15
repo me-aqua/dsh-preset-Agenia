@@ -227,6 +227,94 @@
       "owner": "实现岗 + 测试岗",
       "next_step": "实现岗: 决议-check.mjs 删本地 canonicalJson、改 import receipt.mjs → 测试岗: 比较器改名 + 加「树里只有一处 canonicalJson」形状判据（刀：加第二份 ⇒ 红）",
       "at": "2026-11-15T21:33:43+08:00"
+    },
+    {
+      "seq": 11,
+      "kind": "registered",
+      "id": "bug-20261115-06",
+      "entry_kind": "bug",
+      "phenomenon": "**`bug-dispose` 仍接受调用方传 `历史` ⇒ 新票可以自封 legacy，绕过刚加固的两道闸**：`agenia-route.mjs:1707-1716` 把调用方给的 `历史` 原样写进 disposed 事件；一条新 `deferred` + `历史: \"deferred\"` 会变成 `chain.kind='legacy'`，从而**跳过 `DEFERRED-NO-LANDING-PLAN`（缺 due_at/owner/next_step 也不红）与 `CHAIN-BUG-DEFERRED-OVERDUE`（过期不红）**，`check` 照样绿 —— 只有 Harness 测试的 `legacy_disposed === 153` 会响，而那是按条数、不是按语义。⇒ 我 23:1x 加固的「deferred 必须有落地计划」在**写入口**上是可绕过的。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "ledger",
+        "bypass",
+        "P1"
+      ],
+      "how_seen": "2026-11-15 第 4 关 r4 评审（`评审报告-0012-r4.md` · N-1，判「单点缺一个写入门」）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-route.mjs",
+          "note": ":1707-1716 历史 分支"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-15T23:26:48+08:00"
+    },
+    {
+      "seq": 12,
+      "kind": "disposed",
+      "id": "bug-20261115-06",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 **2026-11-16**（P1）。**不是 adopted**：关上的票必须有生效构案引用，现在还没有。本条经历过一次数据修正 —— 2026-11-15 我先把处置写成 adopted（错）、又直接追加第二条 disposed（违 §3.1）；两条 disposed 已按一次性修正删除，本 event 是唯一一条。",
+        "by": "leader",
+        "at": "2026-11-15T23:33:55+08:00"
+      },
+      "at": "2026-11-15T23:33:55+08:00"
+    },
+    {
+      "seq": 13,
+      "kind": "registered",
+      "id": "bug-20261115-06",
+      "entry_kind": "bug",
+      "phenomenon": "**`bug-dispose` 仍接受调用方传 `历史` ⇒ 新票可以自封 legacy，绕过刚加固的两道闸**：`agenia-route.mjs:1707-1716` 把调用方给的 `历史` 原样写进 disposed 事件；一条新 `deferred` + `历史: \"deferred\"` 会变成 `chain.kind='legacy'`，从而**跳过 `DEFERRED-NO-LANDING-PLAN`（缺 due_at/owner/next_step 也不红）与 `CHAIN-BUG-DEFERRED-OVERDUE`（过期不红）**，`check` 照样绿 —— 只有 Harness 测试的 `legacy_disposed === 153` 会响，而那是按条数、不是按语义。⇒ 我 23:1x 加固的「deferred 必须有落地计划」在**写入口**上是可绕过的。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "ledger",
+        "bypass",
+        "P1"
+      ],
+      "how_seen": "2026-11-15 第 4 关 r4 评审（`评审报告-0012-r4.md` · N-1，判「单点缺一个写入门」）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-route.mjs",
+          "note": ":1707-1716 历史 分支"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "reopened": true,
+      "reopen_reason": "r6 合法路径修正：seq 12 的 deferred 缺落地计划（写入口当时还不认三字段）⇒ 先重开作废旧处置，再用带三字段的 bug-dispose 重新处置。",
+      "reopen_by": "leader",
+      "at": "2026-11-15T23:45:48+08:00"
+    },
+    {
+      "seq": 14,
+      "kind": "disposed",
+      "id": "bug-20261115-06",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 **2026-11-16**（P1）。重开后的合法处置：N-1 票会删掉写入口的 `历史` 分支；关上前这条仍是 deferred（没有生效构案引用，不是 adopted）。",
+        "by": "leader",
+        "at": "2026-11-15T23:45:52+08:00"
+      },
+      "due_at": "2026-11-16",
+      "owner": "实现岗",
+      "next_step": "N-1：删掉 `opBugDispose` 的 `历史` 分支（新票不许自封 legacy），并补刀：新 disposed 带 `历史` ⇒ 拒",
+      "at": "2026-11-15T23:45:52+08:00"
     }
   ]
 }
