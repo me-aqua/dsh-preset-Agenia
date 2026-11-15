@@ -9,13 +9,16 @@
  *   · `check`（缺省）—— 只读，判六件事：① 三册在（缺册 / 旧树还在 / 册里混进别的文件）
  *       ② 头字段两套（产品**没有父** · 构案**必须有父**、主父在来源列表里、**且父解析得到一条生效记录**）
  *       ③ 三张派生页与重算逐字节相同 ④ 产品→构案 ⑤ 缺陷→构案 ⑥ 构案→文件（`依据:`）。
- *       读数带**链的四段**（`parent` + 三条链）+ `legacy_disposed`。
+ *       读数带**链的四段**（`parent` + 三条链）+ `legacy_disposed`；`chain.bug` 按**五组**印
+ *       （`closed_by_scheme` / `closed_judged_false` / `legacy_closed` / `deferred_open` / `legacy_frozen`）。
+ *       `--today=YYYY-MM-DD` 是「暂缓过期」那条判据的**注入时钟**（缺省 = 本机今天）。
  *   · `init` —— 建 `账本/{产品,缺陷,构案}/` + 三张派生页骨架。**幂等**：已建的一个字节都不动。
  *   · `index` —— **唯一**允许写派生页的 op（三张一起重写，跑两次字节相同）。
  *   · `fold` —— 折叠缺陷册（调 `lib/缺陷折叠.mjs`，自己不折）。
  *   · `reconcile --archive=<旧 ledger.json>` —— 与旧台账逐条对账（**按 kind 的键宇宙**：
- *     `registered` / `assessed` / `disposed` 三族各自取「旧台账视图 ∪ 事件视图」的全集，逐键比
- *     identical / missing / differing，报文点名 id + kind + 键；比对面不手写），差异逐条点名。
+ *     `registered` / `assessed` / `disposed` / **`bookkeeping`（兜底：旧账的册级书签）** 四族各自取
+ *     「旧台账视图 ∪ 事件视图」的全集，逐键比 identical / missing / differing，报文点名 id + kind + 键；
+ *     比对面不手写），差异逐条点名。
  *   · `gate2-card --card=<路径>` —— 第 2 关拒接闸的新词表（`票类: 产品 | 构案`，+ `数据` 的具名豁免）。
  *   · `card-land --card=… --day=… --role=…` —— **先落盘、再过闸**：被拒的卡照样在盘上，逐字节相同。
  *   · `supersede <旧编号> --by <新编号>` —— 写手：只翻旧文头块两个字段，正文一个字节不动。
@@ -922,7 +925,7 @@ export function main(argv = process.argv.slice(2)) {
     process.stderr.write(`DECISION-CHECK-USAGE: ${msg}\n`
       + '  用法：node presets/agenia/bin/决议-check.mjs [--root=<目录>] [--json] '
       + `[--op=<${[...OPS].join('|')}>] [--card=<路径>] [--archive=<旧 ledger.json>] `
-      + '[--by=<新编号>] [--day=<YYYY-MM-DD>] [--role=<test|dev|review|design>] [--build=<编号>]\n')
+      + '[--by=<新编号>] [--day=<YYYY-MM-DD>] [--role=<test|dev|review|design>] [--build=<编号>] [--today=<YYYY-MM-DD>]\n')
     process.exit(3)
   }
   if (!OPS.has(args.op)) usage(`--op ${JSON.stringify(args.op)} 不认识（只认 ${[...OPS].join(' / ')}）`)
