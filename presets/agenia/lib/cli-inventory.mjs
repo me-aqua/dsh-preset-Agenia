@@ -82,7 +82,7 @@ const ROUTE_OPS = Object.freeze([
   { op: 'verify', writes: false },
   { op: 'summarize', writes: false },
   // ── 任务 B · bug 系统（2026-11-01）─────────────────────────────────────
-  // 九个 bug op 落在**同一支 CLI**（契约 `.team/test/CONTRACT-B.md` §9.1 的裁定：不新造
+  // bug 系统那一组 op 落在**同一支 CLI**（契约 `.team/test/CONTRACT-B.md` §9.1 的裁定：不新造
   // `agenia-bug.mjs` —— 新 CLI 会连带 `install.mjs` / `release-scan` / `binFiles` /
   // `surfaceInventory` 四张清单同批动）。它们写的是**另一本账**（`.team/bug/ledger.json`
   // 与 `.team/routing.jsonl`，两本账不互串；三册模式下条目追加到 `账本/缺陷/<day>.json`）——

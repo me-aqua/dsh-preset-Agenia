@@ -69,7 +69,7 @@ const newEntry = (over = {}) => ({
 /** 期望的条目必填键（契约 §3.1；**加性键不判名字**）。 */
 const ENTRY_KEYS = ['id', 'kind', 'phenomenon', 'how_seen', 'evidence', 'recipe', 'reporter', 'author', 'source', 'tags', 'registered_at', 'finding_refs', 'assessment', 'disposition']
 
-test('BUG-01 bug 登记簿：九个 op · 登记不建路线 · 现象+证据准入 · open=无 disposition · 50/30 封顶 · 票不串进来', async () => {
+test('BUG-01 bug 登记簿：十个 op · 登记不建路线 · 现象+证据准入 · open=无 disposition · 50/30 封顶 · 票不串进来', async () => {
   await runCase('BUG-01', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -85,7 +85,7 @@ test('BUG-01 bug 登记簿：九个 op · 登记不建路线 · 现象+证据准
     } else {
       const missing = BUG_OPS.filter((op) => !help.json.ops.includes(op))
       if (missing.length > 0) {
-        push('BUG-OPS-MISSING', `\`--op help\` 里少了 ${missing.length}/${BUG_OPS.length} 条 bug op：${missing.join(' / ')} —— 契约 §9.1 冻的九个 op 一个都还没有（这是"功能没做"那一侧的红）`)
+        push('BUG-OPS-MISSING', `\`--op help\` 里少了 ${missing.length}/${BUG_OPS.length} 条 bug op：${missing.join(' / ')} —— 契约 §9.1 的九个 + 构案 0012 §3.1 的 bug-reopen 一个都不能少（这是"功能没做"那一侧的红）`)
       }
       // 阳性对照：今天这一支必须成立 —— CLI 通道通着，缺的是注册。
       for (const must of ['init', 'task-set', 'read', 'help']) {

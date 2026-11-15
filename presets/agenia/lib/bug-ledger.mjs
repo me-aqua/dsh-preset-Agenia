@@ -18,7 +18,7 @@
  *      **entry 的 open/closed = 有无 disposition**，不是"评估为 true"（契约 §4.1）；
  *   ④ **判不了不许猜**：分流表判不了就拒；严重线判不了 ⇒ `escalate:true` + 卡红（不是静默保留 open）。
  *
- * ⚠️ 本文件**不认识 CLI**，也不认识 `.team/` 的路径：落点与读写全在 `bin/agenia-route.mjs` 那九个 op 里。
+ * ⚠️ 本文件**不认识 CLI**，也不认识 `.team/` 的路径：落点与读写全在 `bin/agenia-route.mjs` 那一族 op 里。
  *   （唯一的例外是 `ledgerFromBugBook` / `bugBookPresent`：三册账本的折叠是**纯读**，
  *     它由 `lib/缺陷折叠.mjs` 一处实现，这里只把折出来的现状转成台账的形状给读面用。构案 0012。）
  */
