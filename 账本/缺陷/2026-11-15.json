@@ -180,7 +180,7 @@
       "kind": "registered",
       "id": "bug-20261115-05",
       "entry_kind": "bug",
-      "phenomenon": "**`canonicalJson` 出现第二份实现**：`presets/agenia/lib/receipt.mjs:99`（UTF-8 —— Q10 写死的那一份，回执用）与 `presets/agenia/bin/决议-check.mjs:177`（UTF-16）各一份，而契约写着「树里只有一份」。两份在常见内容上键序规则一致，但只要有一处对 Unicode / 代理对的处理不同，两侧的「相等」就会出现只有实现知道的分叉。**测试侧没有第二份**：`tests/agenia-upgrade/support/three-books.mjs:541` 的 `canonicalFieldValue` 是**期望侧的独立比较器**，不是 `canonicalJson` 的第二份。",
+      "phenomenon": "**`canonicalJson` 出现第二份实现**：`presets/agenia/lib/receipt.mjs:99`（UTF-8 —— Q10 写死的那一份，回执用）与 `presets/agenia/bin/决议-check.mjs` 的 `canonicalJson`（UTF-16；r5 读数为 `:192`，r3 评审引的是 `:177` —— 行号会随同一文件的其它改动漂移，认函数名）各一份，而契约写着「树里只有一份」。两份在常见内容上键序规则一致，但只要有一处对 Unicode / 代理对的处理不同，两侧的「相等」就会出现只有实现知道的分叉。**测试侧没有第二份**：`tests/agenia-upgrade/support/three-books.mjs` 的 `canonicalFieldValue`（r5 读数为 `:558`，r3 评审引的是 `:541`）是**期望侧的独立比较器**，不是 `canonicalJson` 的第二份。",
       "reporter": "组长",
       "source": {
         "carrier": "leader",
@@ -200,12 +200,12 @@
         {
           "kind": "file",
           "ref": "presets/agenia/bin/决议-check.mjs",
-          "note": "第一份（UTF-16）:177"
+          "note": "第一份（UTF-16）canonicalJson：r5 读数 :192（r3 评审引 :177，行号随改动漂）"
         },
         {
           "kind": "file",
           "ref": "tests/agenia-upgrade/support/three-books.mjs",
-          "note": "canonicalFieldValue:541 —— 期望侧比较器，不是第二份"
+          "note": "canonicalFieldValue：期望侧比较器，不是第二份（r5 读数 :558）"
         }
       ],
       "recipe": null,
