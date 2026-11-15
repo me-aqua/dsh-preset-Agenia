@@ -179,9 +179,18 @@ test('LDG-05 折叠对账：与旧 ledger.json 逐条对（id + 现象 + 处置�
     }
     // ── ⑤ 真树：153 条逐条对上（工具 + oracle 两边）+ 归档在盘上 ──────────────────
     {
-      const old = readOldLedger()
+      // expected 侧：**归档优先**（0012 §⑤ 说旧台账归档留回滚点；活的那份删没删不判，
+      // 契约 §13 —— 但"能对账的那一份"必须在）。
       const archive = findArchive()
-      rec.readings.real_archive = { old_ledger: { ok: old.ok, count: old.count, error: old.error }, archive }
+      const archived = archive.ok ? readJson(archive.file) : { ok: false, json: null, error: '归档不在' }
+      const old = archive.ok && Array.isArray(archived.json?.entries)
+        ? { ok: true, entries: archived.json.entries, count: archived.json.entries.length, error: null, source: archive.file }
+        : { ...readOldLedger(), source: '.team/bug/ledger.json' }
+      rec.readings.real_archive = {
+        archive,
+        old_ledger: { ok: old.ok, count: old.count, error: old.error, source: old.source },
+        live_old_ledger: (() => { const l = readOldLedger(); return { ok: l.ok, count: l.count, error: l.error } })(),
+      }
       const fold = runFold(PATHS.repo)
       rec.readings.real_fold = {
         exit: fold.exit,

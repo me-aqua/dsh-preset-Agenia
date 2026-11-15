@@ -13,7 +13,7 @@ import { before, test } from 'node:test'
 import { PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
 import {
-  CHECK, LEDGER_REL, basisReading, basisSurface, buildScene, codesOf, copyCheckTool, eventDisposed,
+  CHECK, basisReading, basisSurface, buildScene, codesOf, copyCheckTool, eventDisposed,
   eventRegistered, expectCodes, knifeClearExemptNames, messagesOf, namedIn, productionFile, readText,
   runCheck, runIndex, runToolAt, toolPresent,
 } from '../support/three-books.mjs'
@@ -185,9 +185,8 @@ test('LDG-08 豁免清单：now.md/log.md/账本/.team 不要求依据（刀：�
       { rel: 'presets/agenia/job-briefs/log.md', text: '# log（夹具）\n\n没有依据，也不该红。\n' },
       { rel: 'presets/agenia/lib/fixture-a.mjs', text: productionFile({ id: '0012', kind: 'code', name: 'fixture_a' }) },
     ]
-    /** 账本本身与 `.team/**`：各放一份不写依据的 md（它们的豁免由"不在面里"承重）。 */
+    /** 账本本身与 `.team/**`：账本里那几页不需要自己给自己写出处（它们的豁免由"不在面里"承重）。 */
     const outOfSurface = [
-      { rel: `${LEDGER_REL}/产品/0001-已有一条.md`, text: '# 产品 0001\n\n账本是账本，不需要自己给自己写出处。\n' },
       { rel: '.team/dev/report.md', text: '# 报告（夹具）\n\n.team 的产物不要求依据。\n' },
     ]
 

@@ -19,7 +19,7 @@ import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
 import {
   BOOKS, CHECK, LEDGER_REL, buildScene, codesOf, eventAssessed, eventDisposed, eventRegistered,
   expectCodes, indexMarkerReading, messagesOf, namedIn, productText, readText, runCheck, runIndex,
-  toolPresent,
+  schemeText, toolPresent,
 } from '../support/three-books.mjs'
 
 before(() => {
@@ -313,9 +313,15 @@ test('LDG-01 三册结构：三册在 / 一条一 md / 一天一 JSON / 三张�
     }
     {
       // 正样本（反面）：跑完 index 之后再落一条产品 ⇒ 页上没有它（派生页必须跟着账本走）
+      // ⚠️ 新落的产品也要有一条子构案，否则这一格会同时红产品链（那就不是"只判页"了）
       const scene = buildScene({ caseId: 'LDG-01', tag: 'stale-page', ...goodLedger() })
       runIndex(scene.root)
       writeFileSync(path.join(scene.root, LEDGER_REL, '产品', '0002-第二条.md'), productText({ id: '0002', title: '第二条' }), 'utf8')
+      writeFileSync(
+        path.join(scene.root, LEDGER_REL, '构案', '0013-第二条的方案.md'),
+        schemeText({ id: '0013', title: '第二条的方案', parent: '0002', basisP: ['0002'] }),
+        'utf8',
+      )
       const run = runCheck(scene.root)
       rec.readings['stale-page'] = { exit: run.exit, codes: codesOf(run.json), messages: messagesOf(run.json).map((m) => m.slice(0, 240)) }
       if (expectCodes(problems, run, ['INDEX-ROW-MISSING'], push, { label: 'LDG-01/stale-page' })) {
