@@ -18,7 +18,7 @@ import { before, test } from 'node:test'
 import { FROZEN, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, runId, runRoot } from '../support/evidence.mjs'
 import { ensureMarkedDir } from '../support/root-guard.mjs'
-import { runRoute } from '../support/sut.mjs'
+import { loadStagedModule, runRoute } from '../support/sut.mjs'
 import {
   BOOKS, CHECK, LEDGER_REL, buildScene, codesOf, eventAssessed, eventDisposed, eventRegistered,
   expectCodes, indexMarkerReading, messagesOf, namedIn, productText, readJson, readText, runBugRead, runCheck, runFold,
@@ -118,6 +118,34 @@ function bugBookSnapshot(root) {
   return files
 }
 const sameSnapshot = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+
+/**
+ * 落地计划三格**只有一个定义**（`LANDING_PLAN_KEYS` 在折叠库导出，写入口 import）。
+ *
+ * 两处各写一份键表时，改一处 = 没改：写入口收、折叠不收（或反过来），而今天不会有任何读数变红。
+ * 判三件：折叠库里恰好一处 `export const LANDING_PLAN_KEYS`（值 = 契约的三格）· 写入口没有第二份
+ * 定义 · 写入口确实从折叠库 import 它。刀：往写入口插一份定义 / 改折叠那份的值 ⇒ 各红一处。
+ */
+function landingPlanSingleSourceProblems({ foldText, routeText }) {
+  const problems = []
+  const frozenKeys = ['due_at', 'owner', 'next_step']
+  const defs = [...foldText.matchAll(/LANDING_PLAN_KEYS\s*=\s*Object\.freeze\(\[([^\]]*)\]\)/gu)]
+  if (defs.length !== 1) problems.push(`折叠库里 \`LANDING_PLAN_KEYS\` 定义应恰好 1 处，实得 ${defs.length} 处`)
+  const exported = /export const LANDING_PLAN_KEYS = Object\.freeze\(\[([^\]]*)\]\)/u.exec(foldText)
+  if (exported === null) {
+    problems.push('折叠库没有 `export const LANDING_PLAN_KEYS`（写入口没有可 import 的真源）')
+  } else {
+    const keys = exported[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/gu, '')).filter(Boolean)
+    if (JSON.stringify(keys) !== JSON.stringify(frozenKeys)) {
+      problems.push(`折叠库的 \`LANDING_PLAN_KEYS\` 实得 ${JSON.stringify(keys)}，期望 ${JSON.stringify(frozenKeys)}（契约 §5.2.1）`)
+    }
+  }
+  if (/const\s+LANDING_PLAN_KEYS\s*=/u.test(routeText)) problems.push('写入口又在本地定义了一份 `LANDING_PLAN_KEYS`（要 import，不许抄）')
+  if (!/import\s*\{[^}]*LANDING_PLAN_KEYS[^}]*\}\s*from\s*'\.\.\/lib\/缺陷折叠\.mjs'/u.test(routeText)) {
+    problems.push('写入口没有从 `../lib/缺陷折叠.mjs` import `LANDING_PLAN_KEYS`')
+  }
+  return problems
+}
 
 /** 把真树的 `账本/` 逐文件拷进一棵夹具根（对照刀要在**真数据的形状**上跑，而不写活树）。 */
 function copyRealBook(caseId, tag) {
@@ -673,22 +701,24 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
           ],
         }],
       }))
-      const dayFile = path.join(scene.root, LEDGER_REL, '缺陷', '2026-11-15.json')
-      const before = readText(dayFile)
+      runIndex(scene.root)
+      // 零写入量的**整棵 `账本/缺陷/`**（含 `INDEX.md` 与别的日文件）—— 不是只量这一个日文件。
+      const before = bugBookSnapshot(scene.root)
       const payload = { id: bugA, disposition: 'deferred', reason: '夹具：暂缓', by_role: 'leader', ...PLAN }
       delete payload[missingKey]
       const res = await runRoute('LDG-03', 'bug-dispose', payload, { workspace: scene.root, env })
-      const after = readText(dayFile)
+      const after = bugBookSnapshot(scene.root)
       const code = res?.json?.error?.code ?? null
       rec.readings.dispose_missing_cli[missingKey] = {
-        exit: res?.exit_code ?? null, code, event_written: before !== after,
+        exit: res?.exit_code ?? null, code, event_written: !sameSnapshot(before, after),
+        files: Object.keys(before).length,
         events: dayEventsOf(scene.root)?.length ?? null,
       }
       if (res?.exit_code !== 2 || code !== 'E_ARG_SCHEMA') {
         push('KNIFE-NO-BITE', `[LDG-03/${tag}] 新 deferred 缺 ${missingKey} 时 CLI 必须拒（exit 2 / E_ARG_SCHEMA），实得 exit=${res?.exit_code} / ${JSON.stringify(code)} / ${JSON.stringify(messagesOf(res?.json ?? {}).slice(0, 2))}`)
       }
-      if (before !== after) {
-        push('KNIFE-WROTE', `[LDG-03/${tag}] 被拒的那一次改写了事件流 —— fail-closed 要求零写入（${dayFile}）`)
+      if (!sameSnapshot(before, after)) {
+        push('KNIFE-WROTE', `[LDG-03/${tag}] 被拒的那一次改写了 \`账本/缺陷/\` —— fail-closed 要求零写入（改动 ${JSON.stringify(Object.keys(after).filter((k) => before[k] !== after[k]).slice(0, 6))}）`)
       }
     }
     // ⑤'''' 刀（r6）：重开再处置 —— `bug-reopen` 追加 `registered`，之后 `bug-dispose` 才允许；
@@ -696,14 +726,14 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
     {
       const { scene, env } = bookCliScene('LDG-03', 'reopen-then-dispose', goodLedger({ schemes: schemeKillsA, ...plannedDeferred() }))
       runIndex(scene.root)
-      const before = dayEventsOf(scene.root) ?? []
+      const before = bugBookSnapshot(scene.root)
       // 重开之前直接再处置 ⇒ 写入口先挡（不写一条必然冲突的流）
       const blocked = await runRoute('LDG-03', 'bug-dispose', {
         id: bugA, disposition: 'deferred', reason: '夹具：没重开就再处置', by_role: 'leader',
         due_at: '2026-11-21', owner: '实现岗', next_step: '不该写进去',
       }, { workspace: scene.root, env })
       const blockedCode = blocked?.json?.error?.code ?? null
-      const afterBlocked = dayEventsOf(scene.root) ?? []
+      const afterBlocked = bugBookSnapshot(scene.root)
       const reopened = await runRoute('LDG-03', 'bug-reopen', {
         id: bugA, reason: '夹具：重开后重新规划落地', by_role: 'leader',
       }, { workspace: scene.root, env })
@@ -789,6 +819,86 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
       if (read.json?.counts?.bug_open !== 1) {
         push('KNIFE-NO-BITE', `[LDG-03/reopen-without-dispose] bug-read 的 counts.bug_open 实得 ${JSON.stringify(read.json?.counts?.bug_open ?? null)}，期望 1`)
       }
+    }
+    // ⑤''''''' 刀（r7）：`dueOk` 判**整串**（不是前 10 字符）—— `2026-11-1` 与 `2026-11-16` 不是同一天；
+    // 带杂尾巴 / 25 点的 ISO 必须拒；写入口同批拒（`E_ARG_SCHEMA` + 整棵 `账本/缺陷/` 零写入），有效日期照收。
+    {
+      const foldLib = await loadStagedModule('lib/缺陷折叠.mjs', ['dueOk', 'LANDING_PLAN_KEYS'])
+      const dueOk = foldLib.mod?.dueOk ?? null
+      const cases = [
+        ['2026-11-16', true],
+        ['2026-11-16T09:00:00+08:00', true],
+        ['2026-11-1', false],
+        ['2026-11-16junk', false],
+        ['2026-11-16T25:00:00Z', false],
+      ]
+      rec.readings.due_ok = { surface_missing: foldLib.surfaceMissing, missing: foldLib.missing, cases: [] }
+      if (typeof dueOk !== 'function') {
+        push('SUT-SURFACE-MISSING', `[LDG-03/due-ok] staged \`lib/缺陷折叠.mjs\` 没导出 \`dueOk\`（缺：${JSON.stringify(foldLib.missing)}）`)
+      } else {
+        for (const [value, want] of cases) {
+          const got = dueOk(value)
+          rec.readings.due_ok.cases.push({ value, want, got })
+          if (got !== want) push('KNIFE-NO-BITE', `[LDG-03/due-ok] \`dueOk(${JSON.stringify(value)})\` 实得 ${JSON.stringify(got)}，期望 ${JSON.stringify(want)}（整串校验，契约 §5.2.1）`)
+        }
+        // 组长那张卡的原话刀：这两个**不许判成同一天**。
+        if (dueOk('2026-11-1') === dueOk('2026-11-16')) {
+          push('KNIFE-NO-BITE', '[LDG-03/due-ok] `2026-11-1` 与 `2026-11-16` 被判成了同一格 —— `dueOk` 还在只看前 10 字符')
+        }
+      }
+      // 写入口那一半：同一个槽位，junk 拒 + 有效日期收（同一棵树，先拒后收）。
+      const { scene, env } = bookCliScene('LDG-03', 'due-ok-cli', goodLedger({
+        days: [{
+          day: '2026-11-15',
+          events: [
+            eventRegistered({ seq: 1, id: bugA, at: '2026-11-15T09:00:00+08:00' }),
+            eventAssessed({ seq: 2, id: bugA, at: '2026-11-15T10:00:00+08:00', verdict: 'true' }),
+          ],
+        }],
+      }))
+      const before = bugBookSnapshot(scene.root)
+      const junk = await runRoute('LDG-03', 'bug-dispose', {
+        id: bugA, disposition: 'deferred', reason: '夹具：junk 日期', by_role: 'leader',
+        due_at: '2026-11-16junk', owner: '实现岗', next_step: '不该写进去',
+      }, { workspace: scene.root, env })
+      const afterJunk = bugBookSnapshot(scene.root)
+      const ok = await runRoute('LDG-03', 'bug-dispose', {
+        id: bugA, disposition: 'deferred', reason: '夹具：有效日期', by_role: 'leader',
+        due_at: '2026-11-16', owner: '实现岗', next_step: '收',
+      }, { workspace: scene.root, env })
+      const afterOk = bugBookSnapshot(scene.root)
+      rec.readings.due_ok.cli = {
+        junk: { exit: junk?.exit_code ?? null, code: junk?.json?.error?.code ?? null, wrote: !sameSnapshot(before, afterJunk) },
+        ok: { exit: ok?.exit_code ?? null, wrote: !sameSnapshot(afterJunk, afterOk) },
+      }
+      if (junk?.exit_code !== 2 || (junk?.json?.error?.code ?? null) !== 'E_ARG_SCHEMA') {
+        push('KNIFE-NO-BITE', `[LDG-03/due-ok-cli] \`due_at: "2026-11-16junk"\` 必须被写入口拒（exit 2 / E_ARG_SCHEMA），实得 exit=${junk?.exit_code} / ${JSON.stringify(junk?.json?.error?.code ?? null)}`)
+      }
+      if (!sameSnapshot(before, afterJunk)) {
+        push('KNIFE-WROTE', `[LDG-03/due-ok-cli] 被拒的 junk 日期改写了 \`账本/缺陷/\`（改动 ${JSON.stringify(Object.keys(afterJunk).filter((k) => before[k] !== afterJunk[k]).slice(0, 6))}）`)
+      }
+      if (ok?.exit_code !== 0 || sameSnapshot(afterJunk, afterOk)) {
+        push('KNIFE-NO-BITE', `[LDG-03/due-ok-cli] 同一条票带有效日期必须照收（exit 0 且写盘），实得 exit=${ok?.exit_code} / wrote=${!sameSnapshot(afterJunk, afterOk)}`)
+      }
+    }
+    // ⑤'''''''' 刀（r7）：落地计划三格**单一来源**（折叠导出 `LANDING_PLAN_KEYS`，写入口 import）；
+    // 刀：往写入口插一份定义 / 改折叠那份的值 ⇒ 各红一处。
+    {
+      const foldText = readText(path.join(PATHS.repo, 'presets', 'agenia', 'lib', '缺陷折叠.mjs'))
+      const routeText = readText(path.join(PATHS.repo, 'presets', 'agenia', 'bin', 'agenia-route.mjs'))
+      const clean = landingPlanSingleSourceProblems({ foldText, routeText })
+      const dupRoute = landingPlanSingleSourceProblems({
+        foldText,
+        routeText: routeText.replace('function landingPlanOf(payload) {', "const LANDING_PLAN_KEYS = Object.freeze(['due_at', 'owner'])\nfunction landingPlanOf(payload) {"),
+      })
+      const shortFold = landingPlanSingleSourceProblems({
+        foldText: foldText.replace("export const LANDING_PLAN_KEYS = Object.freeze(['due_at', 'owner', 'next_step'])", "export const LANDING_PLAN_KEYS = Object.freeze(['due_at', 'owner'])"),
+        routeText,
+      })
+      rec.readings.landing_plan_single_source = { clean, dup_route: dupRoute, short_fold: shortFold }
+      if (clean.length > 0) push('LANDING-PLAN-NOT-SINGLE-SOURCE', `[LDG-03/landing-plan] 三格键表不是单一来源：${JSON.stringify(clean)}`)
+      if (dupRoute.length === 0) push('KNIFE-NO-BITE', '[LDG-03/landing-plan] 往写入口插一份 `LANDING_PLAN_KEYS` 定义后判据没红（刀不咬）')
+      if (shortFold.length === 0) push('KNIFE-NO-BITE', '[LDG-03/landing-plan] 把折叠那份键表改成两格后判据没红（刀不咬）')
     }
     // ⑤'''''' 刀（r7）：**迁移 legacy 票重开必须被写入口拒**（具名码 + 整棵 `账本/缺陷/` 零写入）；
     // 对照 = 迁移后的 `-06` 照旧能重开、再处置。判定跑在抢锁前 ⇒ 连锁文件都不该出现。

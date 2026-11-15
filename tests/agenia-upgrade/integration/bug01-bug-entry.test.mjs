@@ -10,7 +10,7 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════
  * 这一格守的是**登记簿**那一半，五件事各一段（红的时候码上就看得出来是哪一段）：
  *
- * `A` **op 面**：九条 bug op 在 `agenia-route.mjs --op help` 里；纯函数模块 `lib/bug-ledger.mjs`
+ * `A` **op 面**：十条 bug op 在 `agenia-route.mjs --op help` 里；纯函数模块 `lib/bug-ledger.mjs`
  *     导出契约 §9.2 那七个名字。缺面 ⇒ `BUG-OPS-MISSING` / `BUG-LEDGER-SURFACE-MISSING`
  *     —— **这是"功能没做"，不是"这条输入被拒"**（两种红必须分得开）。
  * `B` **登记不需要路线**：裸工作区（无 `current.json`）上 `bug-register` 必须成，
@@ -33,7 +33,8 @@
  * · `lib/route.mjs` 的 `FIVE_GATES` / `TASK_STATUSES` 在里面 —— bug 任务**共用**那一套五关，
  *   所以这两个名字是 B 的地基；它们绿着，才说明下面那些红是"bug 侧没做"，不是"我把面读错了"。
  * · `--op help` 今天**能**返回信封（exit 0 + `ops` 数组）—— 证明子进程通道是通的，
- *   `bug-*` 那九条缺的是**注册**，不是"CLI 起不来"。
+ *   `bug-*` 那九条缺的是**注册**，不是"CLI 起不来"（01 一节写的是当时九条；0012 加了第十个 `bug-reopen`，
+ *   见 §9.1 与 `CONTRACT-0012.md` §3.1）。
  */
 import { before, test } from 'node:test'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'

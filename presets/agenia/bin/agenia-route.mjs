@@ -44,7 +44,7 @@ import { validateBossEvidence, spentEvidenceRecord } from '../lib/evidence.mjs'
 import * as R from '../lib/route.mjs'
 import * as T from '../lib/tickets.mjs'
 import * as B from '../lib/bug-ledger.mjs'
-import { dayFileOf, dueOk, foldBugBook, readDayFiles } from '../lib/缺陷折叠.mjs'
+import { LANDING_PLAN_KEYS, dayFileOf, dueOk, foldBugBook, readDayFiles } from '../lib/缺陷折叠.mjs'
 
 const CLI_NAME = 'agenia-route.mjs'
 
@@ -1683,15 +1683,14 @@ function opBugAssess(ctx) {
 }
 
 // ── op：bug-dispose ────────────────────────────────────────────────────────
-/** 落地计划三字段（契约 §5.2.1）：只对非 `历史` 的 `deferred` 必填。 */
-const LANDING_PLAN_KEYS = Object.freeze(['due_at', 'owner', 'next_step'])
-
 /**
  * 读并校验 `due_at` / `owner` / `next_step`（写入口与折叠同一条口径）。
  *
  * 判定跑在抢锁**之前**（被拒 ⇒ 零写入）：
  *   · `deferred`：三格缺任一格 / 空串 / 空白 ⇒ `E_ARG_SCHEMA`（fail-closed，绝不写半条）；
- *   · 其它处置：可以缺；给了就必须是字符串（`due_at` 还必须是可解析日期）。
+ *   · 其它处置：可以缺；给了就必须是字符串（`due_at` 还必须是**整串**可解析的日期）。
+ *
+ * 键表本身不在这里定义：`LANDING_PLAN_KEYS` 从折叠库导出（单一来源）。
  */
 function landingPlanOf(payload) {
   const plan = {}

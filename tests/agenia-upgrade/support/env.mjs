@@ -818,7 +818,7 @@ export const FROZEN = {
       // 🔴 `writes` 必须与 `presets/agenia/lib/cli-inventory.mjs::ROUTE_OPS` 逐条相同 —— DR-01 两个方向
       //    都比（漏一条 / 多一条 / `writes` 差一个值，各一条红）。
       // ⚠️ `needsDataRoot` 不用写：`FROZEN_COMMANDS` 按 `cli === 'agenia-brain.mjs'` 派生 ⇒ 这一支恒 false，
-      //    与清单一致；也正因为 false，这九条**不进** DR-01 那张「非法根 × 写命令」矩阵（那矩阵只跑写命令）。
+      //    与清单一致；也正因为 false，这十条**不进** DR-01 那张「非法根 × 写命令」矩阵（那矩阵只跑写命令）。
       { op: 'bug-register', writes: true }, { op: 'bug-assess', writes: true },
       { op: 'bug-dispose', writes: true },
       // 构案 0012 §3.1（r6）：重开 = 追加一条 `registered`；写面是 `账本/缺陷/<day>.json` ⇒ `writes: true`。

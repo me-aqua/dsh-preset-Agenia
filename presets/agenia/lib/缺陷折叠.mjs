@@ -44,6 +44,14 @@ const DISPOSITIONS = Object.freeze(['adopted', 'rejected', 'deferred'])
 /** `disposed` 的三种记账（至多一格，契约 §3.2）。 */
 const DISPOSED_REFS = Object.freeze(['构案', '判假', '历史'])
 
+/**
+ * **落地计划三格**（契约 §5.2.1）—— 唯一一份定义。
+ *
+ * 写入口（`agenia-route.mjs::landingPlanOf`）与折叠（本文件）都从这一份派生：
+ * 两边各写一份键表时，改一处 = 没改（一个收、一个不收），而今天不会有任何读数变红。
+ */
+export const LANDING_PLAN_KEYS = Object.freeze(['due_at', 'owner', 'next_step'])
+
 const problem = (code, message, extra = {}) => ({ code, message, ...extra })
 const posix = (p) => String(p).replace(/\\/g, '/')
 const filled = (v) => typeof v === 'string' && v.trim() !== ''
@@ -53,16 +61,33 @@ function atOk(value) {
   return typeof value === 'string' && value.trim() !== '' && Number.isFinite(Date.parse(value))
 }
 
-/** 一个 ISO 值的**日期部分**（`YYYY-MM-DD`；读不出来就是空串）。 */
-const dayOf = (value) => (typeof value === 'string' ? value.slice(0, 10) : '')
-
-/** `due_at` 能不能当**到期日**用：有真实存在的日期部分（`2026-11-17` 或带时间的 ISO 都收）。 */
-export function dueOk(value) {
-  if (typeof value !== 'string') return false
-  const day = dayOf(value)
-  if (!/^\d{4}-\d{2}-\d{2}$/u.test(day)) return false
+/** 一份**真实的** `YYYY-MM-DD`（`2026-02-30` 这种回环不回来的不算）。 */
+function realDay(day) {
   const t = Date.parse(`${day}T00:00:00Z`)
   return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === day
+}
+
+/** 完整日期 + 带时间的 ISO（`T` 分隔；秒与小数秒可省；时区可省）。 */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/u
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?$/u
+
+/**
+ * `due_at` 能不能当**到期日**用：整串都得是日期（`YYYY-MM-DD`）或带时间的 ISO。
+ *
+ * 只校验前 10 个字符时，`2026-11-17junk` / `2026-11-17T25:00:00Z` 都会被收进事件
+ * （第 4 关 r5 · N-10）—— 于是写入口存了一条「判得了日期部分、整串不是日期」的值。
+ * 这里按**整串**判：日期部分是真实的 `YYYY-MM-DD`，多出来的部分只许是 ISO 时间戳形状，
+ * 且整串 `Date.parse` 得出来。`2026-11-1`（少零填充）与 `2026-11-16` 因此不是同一天。
+ */
+export function dueOk(value) {
+  if (typeof value !== 'string') return false
+  const raw = value.trim()
+  if (raw === '') return false
+  const day = raw.slice(0, 10)
+  if (!ISO_DATE.test(day) || !realDay(day)) return false
+  if (raw.length === 10) return true
+  if (!ISO_TIMESTAMP.test(raw)) return false
+  return Number.isFinite(Date.parse(raw))
 }
 
 function listDir(dir) {
@@ -235,10 +260,12 @@ export function foldBugBook({ root }) {
       // 也不该被读成"今天开的待办"（2026-11-15 第 4 关 r3 · M-1）。
       const legacyRef = filled(event['历史']) ? event['历史'] : null
       if (d.value === 'deferred' && legacyRef === null) {
+        // 三格键表只有一份（`LANDING_PLAN_KEYS`）—— 写入口与这里同源，改一处就两边一起改。
         const missing = []
-        if (!dueOk(event.due_at)) missing.push('due_at')
-        if (!filled(event.owner)) missing.push('owner')
-        if (!filled(event.next_step)) missing.push('next_step')
+        for (const key of LANDING_PLAN_KEYS) {
+          const ok = key === 'due_at' ? dueOk(event[key]) : filled(event[key])
+          if (!ok) missing.push(key)
+        }
         if (missing.length > 0) {
           // 处置本身是事实（照收），但它不是一张可执行的延期 ⇒ 单独一个码，不从状态里抹掉。
           // 只在折叠结束时、这条 disposed 仍是现状时才报（重开会把它作废）。
