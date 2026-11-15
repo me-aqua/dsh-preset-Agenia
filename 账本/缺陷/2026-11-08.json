@@ -1,0 +1,726 @@
+{
+  "schema": 1,
+  "day": "2026-11-08",
+  "events": [
+    {
+      "seq": 1,
+      "kind": "registered",
+      "id": "bug-20261107-11",
+      "at": "2026-11-08T00:23:26+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "batch 8 第 4 关的三条非阻塞 + 一处口径：① `registry` 里第二把刀的描述仍写 `askIsCode(repoAbs, …)`（实际是 `repoCanon`）；② junction 那条腿没有 HOLD（判不了时既不放行也不说话）；③ `.git` 守卫仍是词法比较、`canonicalOut` 的 catch 静默回落（都不是今天的洞，但形状与 M-2a 同族）；④ 「11/11」在报告里按「按预期」用 —— 其中 `MCR-03` 按设计**不翻**，真翻面是 `mcr03b`，读的人容易读成 11 次变色。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "catalogue",
+        "prose",
+        "residual"
+      ]
+    },
+    {
+      "seq": 2,
+      "kind": "assessed",
+      "id": "bug-20261107-11",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 3,
+      "kind": "disposed",
+      "id": "bug-20261107-11",
+      "at": "2026-11-08T18:30:10+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 13，提交 `3502a19` / `0f29993`；全量 179 · RED 0 / GREEN 177 / HOLD 2）：目录措辞改 `askIsCode(repoCanon, outCanon)`（`askIsCode(repoAbs` 0 命中）；junction 腿的 HOLD 由作者补（我已批，要求证明这条不可达）；`.git` 词法守卫 / `canonicalOut` 静默回落**另开一条**；「11/11」更正为「10 次真翻 + 1 次按设计不翻」。",
+        "by": "leader",
+        "at": "2026-11-08T18:30:10+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 4,
+      "kind": "registered",
+      "id": "bug-20261108-01",
+      "at": "2026-11-08T11:33:50+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "评审副本里 MCR-02/MCR-03 崩（套件即副本时 cpSync 把仓库拷进自己子目录）⇒ 「针/入口/尺子指副本」在副本里零证据（P1）",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1107"
+      ]
+    },
+    {
+      "seq": 5,
+      "kind": "assessed",
+      "id": "bug-20261108-01",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 6,
+      "kind": "disposed",
+      "id": "bug-20261108-01",
+      "at": "2026-11-08T13:06:47+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 16，提交 `80cee92`，副本内验收 RED 0）：F1：`MCR-02/03` 在副本里不再崩（孪生/工作副本落在受审副本**之外** `<copy父>/.agenia-test-twins/<RUN_ID>`，拷时跳过 `.team/`）；副本内读数 `source=suite-tree-is-a-copy` · `under_copy:false`。刀：把基钉进副本 ⇒ 红（`TWIN-BASE-INSIDE-COPY`）。",
+        "by": "leader",
+        "at": "2026-11-08T13:06:47+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 7,
+      "kind": "registered",
+      "id": "bug-20261108-02",
+      "at": "2026-11-08T11:33:51+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "OFB-01…08 一条都没跑 + REV-02 连带红：夹具守卫在评审布局（祖先链有 .team）里抛错 ⇒ 「夹具搭不起来」被算成「产品坏了」（P1）",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1107"
+      ]
+    },
+    {
+      "seq": 8,
+      "kind": "assessed",
+      "id": "bug-20261108-02",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 9,
+      "kind": "disposed",
+      "id": "bug-20261108-02",
+      "at": "2026-11-08T13:06:47+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 16，提交 `80cee92`，副本内验收 RED 0）：F2：夹具基从 repo 父目录**向上**找第一个「同盘 · repo 外 · 无 `.team`」目录（活树仍落 `E:\\`，逐字节不变）；真搭不起来 ⇒ `caseHold` 而不是让 `REV-02` 替它红。刀：把基钉死 ⇒ `OFB-01…08` **8×HOLD** + `REV-02` HOLD，**RED 0、0 缺失**。",
+        "by": "leader",
+        "at": "2026-11-08T13:06:47+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 10,
+      "kind": "registered",
+      "id": "bug-20261108-03",
+      "at": "2026-11-08T11:33:51+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`--with-staging` 把两个时间点装进同一棵树（提交时的现役 vs 导出时的暂存）⇒ STAT-01/F57-TARGET 对副本报红，而盘上两者逐字节相同（P2）",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1107"
+      ]
+    },
+    {
+      "seq": 11,
+      "kind": "assessed",
+      "id": "bug-20261108-03",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 12,
+      "kind": "disposed",
+      "id": "bug-20261108-03",
+      "at": "2026-11-08T11:33:51+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "adopted（已采纳，已排期）：owner = 组长 · 到期 **2026-11-10** · 导出器",
+        "by": "leader",
+        "at": "2026-11-08T11:33:51+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 13,
+      "kind": "registered",
+      "id": "bug-20261108-04",
+      "at": "2026-11-08T11:33:51+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "DR-02 的「排除生效了」在数据根缺席的树里报红而不是 HOLD（同一条件五条兄弟判据都是 HOLD）（P2）",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1107"
+      ]
+    },
+    {
+      "seq": 14,
+      "kind": "assessed",
+      "id": "bug-20261108-04",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 15,
+      "kind": "disposed",
+      "id": "bug-20261108-04",
+      "at": "2026-11-08T13:06:47+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 16，提交 `80cee92`，副本内验收 RED 0）：F4：`dataSegmentExclusionVerdict()` 三态 —— 命中>0 ⇒ 红（点路径）· 命中=0 且数据根在盘上 ⇒ 绿 · 命中=0 且**没有数据根** ⇒ HOLD `DR02-EXCLUSION-NO-DATA-ROOT`（「0 分不清排除与没东西可排」）。自守改成**数判词**（11 格）。两向刀每次真跑。",
+        "by": "leader",
+        "at": "2026-11-08T13:06:47+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 16,
+      "kind": "registered",
+      "id": "bug-20261108-05",
+      "at": "2026-11-08T11:33:51+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "窄会话 strict 分支在「会话头 cwd 自己就在 `.team` 里」时认**外层**那棵 ⇒ 能写同层别的岗位抽屉（P2）",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1107"
+      ]
+    },
+    {
+      "seq": 17,
+      "kind": "assessed",
+      "id": "bug-20261108-05",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 18,
+      "kind": "disposed",
+      "id": "bug-20261108-05",
+      "at": "2026-11-08T11:33:51+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "adopted（已采纳，已排期）：owner = 组长 · 到期 **2026-11-10** · inject.js",
+        "by": "leader",
+        "at": "2026-11-08T11:33:51+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 19,
+      "kind": "registered",
+      "id": "bug-20261108-06",
+      "at": "2026-11-08T11:33:51+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "REV-02 的夹具换了、PRS-02 没换：仓库路径落在 .team 下时它两条「必须拒」翻成放行（P2）",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1107"
+      ]
+    },
+    {
+      "seq": 20,
+      "kind": "assessed",
+      "id": "bug-20261108-06",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 21,
+      "kind": "disposed",
+      "id": "bug-20261108-06",
+      "at": "2026-11-08T13:06:47+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 16，提交 `80cee92`，副本内验收 RED 0）：F7：`PRS-02` 与 `REV-02` 用同一个 `.team`-free 基；基落在别人 `.team` 下 ⇒ `PRS02-FIXTURE-UNDER-TEAM`（红在夹子上，同时记旧基的 `header_office`）。",
+        "by": "leader",
+        "at": "2026-11-08T13:06:47+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 22,
+      "kind": "registered",
+      "id": "bug-20261108-07",
+      "at": "2026-11-08T11:33:51+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "MCR-01 两处「没有样本也算过」：报文判据在空报文时整条跳过、两条 junction 腿会静默消失（P3）",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1107"
+      ]
+    },
+    {
+      "seq": 23,
+      "kind": "assessed",
+      "id": "bug-20261108-07",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 24,
+      "kind": "disposed",
+      "id": "bug-20261108-07",
+      "at": "2026-11-08T11:33:51+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "adopted（已采纳，已排期）：owner = 测试岗 · 到期 **2026-11-10** · batch 13",
+        "by": "leader",
+        "at": "2026-11-08T11:33:51+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 25,
+      "kind": "registered",
+      "id": "bug-20261108-08",
+      "at": "2026-11-08T11:33:52+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "DASH-17 在副本里是 HOLD（拿不到 f558f63 的真字节）⇒ 「这条判据抓得住那次真故障」没有证据（P3）",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1107"
+      ]
+    },
+    {
+      "seq": 26,
+      "kind": "assessed",
+      "id": "bug-20261108-08",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 27,
+      "kind": "disposed",
+      "id": "bug-20261108-08",
+      "at": "2026-11-08T11:33:52+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "adopted（已采纳，已排期）：owner = 测试岗 · 到期 **2026-11-10** · batch 13",
+        "by": "leader",
+        "at": "2026-11-08T11:33:52+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 28,
+      "kind": "registered",
+      "id": "bug-20261108-09",
+      "at": "2026-11-08T11:33:52+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "fingerprint.mjs 文件头的排除表被 11-07 的编辑搅乱：表与理由分不出界线（P3）",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1107"
+      ]
+    },
+    {
+      "seq": 29,
+      "kind": "assessed",
+      "id": "bug-20261108-09",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 30,
+      "kind": "disposed",
+      "id": "bug-20261108-09",
+      "at": "2026-11-08T11:33:52+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "adopted（已采纳，已排期）：owner = 组长 · 到期 **2026-11-10** · batch 13",
+        "by": "leader",
+        "at": "2026-11-08T11:33:52+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 31,
+      "kind": "registered",
+      "id": "bug-20261108-10",
+      "at": "2026-11-08T11:33:52+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "读窗上限 200 行比产品自己写的快照大 ~200 倍 ⇒ truncated 这条状态在产品产出上不可达（只有合成页能触发）（P3）",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1107"
+      ]
+    },
+    {
+      "seq": 32,
+      "kind": "assessed",
+      "id": "bug-20261108-10",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 33,
+      "kind": "disposed",
+      "id": "bug-20261108-10",
+      "at": "2026-11-08T11:33:52+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "adopted（已采纳，已排期）：owner = 测试岗 · 到期 **2026-11-10** · batch 13",
+        "by": "leader",
+        "at": "2026-11-08T11:33:52+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 34,
+      "kind": "registered",
+      "id": "bug-20261108-11",
+      "at": "2026-11-08T12:35:23+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`--with-staging` 的「一个副本一个时间点」闸（提交 121ae74 新增）漏了 `--full-tree`：cwd 不是 git 顶层时，它读到的**提交那一侧** `presets/agenia` 是 0 份 ⇒ 本来一致的一棵树也被判 `E_STAGING_TIME_MISMATCH` 并拒绝导出（拒在任何写之前，所以现场只是「导不出来」）。活树里（cwd = 仓根）同一个用例绿；副本里（cwd = 副本，git 顶层在上一层）红。",
+      "reporter": "测试岗（玛尔塔）· batch 16",
+      "source": {
+        "carrier": "test",
+        "ref": "batch 16 · 副本全量跑（run root: .team/test/2026-11-08/_copies/tree-at-121ae748/.team/test/2026-11-08/_runs/full-16）"
+      },
+      "tags": [
+        "batch16",
+        "copy-family",
+        "exporter",
+        "with-staging"
+      ]
+    },
+    {
+      "seq": 35,
+      "kind": "assessed",
+      "id": "bug-20261108-11",
+      "at": "2026-11-11T15:36:15+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 36,
+      "kind": "disposed",
+      "id": "bug-20261108-11",
+      "at": "2026-11-08T13:06:47+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 16，提交 `80cee92`，副本内验收 RED 0）：`CPY-01`：`git ls-tree` 补 `--full-tree`（从非 git 顶层的 cwd 读不出提交的 presets ⇒ 自洽的树被误判「两个时间点」）；另立 `E_STAGING_TIME_UNMEASURABLE`（读出 0 份是「判不了」，不是「不一致」）。提交 `36a44aa`。副本内 `CPY-01` 首跑即绿。",
+        "by": "leader",
+        "at": "2026-11-08T13:06:47+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 37,
+      "kind": "registered",
+      "id": "bug-20261108-12",
+      "at": "2026-11-08T12:35:26+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`BRD-01` 的会话 cwd 与「动过的项目文件」都取 `PATHS.repo` ⇒ **套件自己住在 `.team/…` 下面时**（评审副本 / 本批验收副本都是），产品把那些写当成「队里的本子」（`officeLandingVerdict(...).allow === true` ⇒ 账本 `return`，不计「项目文件动过」）⇒ 板子那几条告警永远不出现 ⇒ 5 条腿读到空告警、整条红。活树里（`E:\\Harness`，祖先链上没有 `.team`）绿。",
+      "reporter": "测试岗（玛尔塔）· batch 16",
+      "source": {
+        "carrier": "test",
+        "ref": "batch 16 · 副本全量跑（run root: .team/test/2026-11-08/_copies/tree-at-121ae748/.team/test/2026-11-08/_runs/full-16）"
+      },
+      "tags": [
+        "batch16",
+        "copy-family",
+        "brd",
+        "fixture-position"
+      ]
+    },
+    {
+      "seq": 38,
+      "kind": "assessed",
+      "id": "bug-20261108-12",
+      "at": "2026-11-11T15:36:15+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 39,
+      "kind": "disposed",
+      "id": "bug-20261108-12",
+      "at": "2026-11-08T13:06:47+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 16，提交 `80cee92`，副本内验收 RED 0）：`BRD-01`：会话 `cwd` 改到 `.team`-free 的 fixture 树（与 `REV-02/PRS-02` 同一个基），写目标改相对路径；加 `BRD01-FIXTURE-UNDER-TEAM` 探测器 + `AGENIA_BRD01_BASE` 刀。副本内绿（原来 5 条空告警腿）。",
+        "by": "leader",
+        "at": "2026-11-08T13:06:47+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 40,
+      "kind": "registered",
+      "id": "bug-20261108-13",
+      "at": "2026-11-08T13:08:40+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`agenia-local.mjs --op local-receipt-set` **只认 technical 节点**（源码里写死 `state.technical`，`opLocalReceiptSet` 里 `next.technical = L.applyReceiptRegistration(...)`）⇒ ① 传 `node: conversation` 会被**静默写成 technical**（实测：两次调用都落在 `technical.receipt_versions`，conversation 节点始终空）；② 因为它占的是技术那一段的版本号，下一次真登记技术回执会撞 `E_RECEIPT_OVERWRITE`。⇒ 会话评审那一段的回执**没有任何受支持的写法**能标 done，卡上 `RECEIPT_EXPIRED:conversation` 永远红。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "local-state",
+        "receipt",
+        "card"
+      ]
+    },
+    {
+      "seq": 41,
+      "kind": "assessed",
+      "id": "bug-20261108-13",
+      "at": "2026-11-11T15:36:15+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 42,
+      "kind": "disposed",
+      "id": "bug-20261108-13",
+      "at": "2026-11-08T13:08:40+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "adopted（已采纳，已排期）：owner = 组长 · 到期 **2026-11-09** · 修法：`local-receipt-set` 按入参 `node` 分派（technical / conversation），并对被忽略的 node 名报错，不许静默默认。",
+        "by": "leader",
+        "at": "2026-11-08T13:08:40+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 43,
+      "kind": "registered",
+      "id": "bug-20261108-14",
+      "at": "2026-11-08T13:09:15+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "回执的形状与锚点没写清：`local-mark` 要求回执是**带整数 version 的 JSON**（`E_DATA_CORRUPT`：读不出整数 version），且 `receipt_sha256` 必须等于**盘上字节**（`E_ARG_HASH`：自报的摘要不算锚）；而 `daily-cards.py` **每跑一次都会重写**同名 xlsx ⇒ 拿 xlsx 当回执锚的登记必然过期。两条路选一条：让卡片同内容同字节（不重写），或把回执做成**稳定 JSON**（版本号 + 内容摘要），别两头都松。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "receipt",
+        "local-state",
+        "card"
+      ]
+    },
+    {
+      "seq": 44,
+      "kind": "assessed",
+      "id": "bug-20261108-14",
+      "at": "2026-11-11T15:36:15+08:00",
+      "verdict": "duplicate",
+      "by_role": "test"
+    },
+    {
+      "seq": 45,
+      "kind": "disposed",
+      "id": "bug-20261108-14",
+      "at": "2026-11-08T13:09:15+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "adopted（已采纳，已排期）：owner = 组长 · 到期 **2026-11-09** · 与 `bug-20261108-13` 同批（补收口仪式的两笔）。",
+        "by": "leader",
+        "at": "2026-11-08T13:09:15+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 46,
+      "kind": "registered",
+      "id": "bug-20261108-15",
+      "at": "2026-11-08T14:48:59+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`F-165` 的 CR 禁令与 `F-125` 的「CRLF 归一后 400 也算过」相撞：`MTC-01` 的 `entry_crlf400`（`maintenance-cap.test.mjs:340`）与 `MTC-03` 的 `cand_crlf400`（`:657`）喂的样本是 `cjk(300) + '\\r\\n'×100`，断言正文**必须收**；产品按 `F-165` 装好控制字符闸后，同一个样本必被 `E_PROPOSAL_CONTROL_CHAR` 拒（第 301 个字符 U+000D）⇒ 这两格在「装闸后的验收跑」里必红，`RED 0` 到不了。",
+      "reporter": "测试岗",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "maintenance-cap",
+        "control-chars",
+        "criterion-conflict"
+      ]
+    },
+    {
+      "seq": 47,
+      "kind": "assessed",
+      "id": "bug-20261108-15",
+      "at": "2026-11-11T15:36:15+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 48,
+      "kind": "disposed",
+      "id": "bug-20261108-15",
+      "at": "2026-11-08T15:31:03+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 9）：`F-165` 禁 CR ⇒ `MTC-01` / `MTC-03` 那两条「CRLF 400 字必须接受」的腿被删，理由写进文件三处；`F-125` 的意图（400 按字符数算、不按 `.length`）由 **BOM 那条腿** + `ruler.chars.crlf400` 计数读数继续承重。`CONTRACT.md` §8.2/§8.3 同批改成现状。",
+        "by": "leader",
+        "at": "2026-11-08T15:31:03+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 49,
+      "kind": "registered",
+      "id": "bug-20261108-16",
+      "at": "2026-11-08T16:24:35+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "batch 9 第 3 轮复审的四条非阻塞：① `CTL-05` 移回变异体只断言「不是 `entries_patch[0]`」，没断言恰好 `entries[37]`；② `[尺子]` 的 same-tree 那行只打控制台（`run-all.mjs:44-46`），作废只留在 log、不在 `judgement.txt`；③ P1 仍先查长度再查控制字符（不影响判词，但两处口径该统一）；④ 两把真源码刀里 `copy` 助手重复一份。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review",
+        "polish"
+      ]
+    },
+    {
+      "seq": 50,
+      "kind": "assessed",
+      "id": "bug-20261108-16",
+      "at": "2026-11-11T15:36:15+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 51,
+      "kind": "disposed",
+      "id": "bug-20261108-16",
+      "at": "2026-11-08T18:30:10+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 13，提交 `3502a19` / `0f29993`；全量 179 · RED 0 / GREEN 177 / HOLD 2）：移回刀钉死 `where_label = entries[37].text`（新码 `CTL-REAL-KNIFE-MOVE-WHERE`）；`[尺子]` 同树判定落进 `judgement.txt`；拒绝顺序**只记不改**（P1 无 per-op 循环、P2/P3 逐条 ⇒ 两边都拒，为对称去改产品不值）；`copy` 助手去重。",
+        "by": "leader",
+        "at": "2026-11-08T18:30:10+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 52,
+      "kind": "registered",
+      "id": "bug-20261108-17",
+      "at": "2026-11-08T17:47:01+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "batch 11 第 2 轮的非阻塞：`STM-01` 的 G 刀里那个**假字面量**（`data-root.test.mjs:2568`）是「那五个内容串」在盘上的**第二处出现** —— 它是测试输入、不是真相载体（评审也这么判），但严格说『唯一手写载体』要成立，它该换成占位串。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "polish",
+        "single-source"
+      ]
+    },
+    {
+      "seq": 53,
+      "kind": "assessed",
+      "id": "bug-20261108-17",
+      "at": "2026-11-11T15:37:44+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 54,
+      "kind": "disposed",
+      "id": "bug-20261108-17",
+      "at": "2026-11-08T18:30:10+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 13，提交 `3502a19` / `0f29993`；全量 179 · RED 0 / GREEN 177 / HOLD 2）：假字面量换成占位串 ⇒ 五个串的**外部出现 = 0**，「唯一手写载体」字面成立；刀仍咬（`bites:true`）。",
+        "by": "leader",
+        "at": "2026-11-08T18:30:10+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 55,
+      "kind": "registered",
+      "id": "bug-20261108-18",
+      "at": "2026-11-08T22:21:12+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`FLIP-01` 改成钉「面」之后变窄：它守住「读数点名的那条修没动」，但不再守住「那两个计数是在我们发的这份代码上量的」。会溜过去的那一格：面外但能翻 `BRG-07` 的改动 —— 最干净的是量具本身（`brg01-toolname-bridge.test.mjs` 里弱化一条断言），`inject.js` 零改动 ⇒ FLIP-01 照样绿。同形状还有 `toolNameOf()` 与 `cordis.patch.yml` 的两实例行。另两件小的：契约 §2.4 码位表仍缺 `E_OFFICE_LEDGER_UNREADABLE` 那一行；面摘要只比 16 位前缀（比 64 位会撞假红，是刻意的）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review",
+        "criteria"
+      ]
+    },
+    {
+      "seq": 56,
+      "kind": "assessed",
+      "id": "bug-20261108-18",
+      "at": "2026-11-11T15:37:45+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 57,
+      "kind": "disposed",
+      "id": "bug-20261108-18",
+      "at": "2026-11-08T22:21:12+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "adopted（已采纳，已排期）：owner = 测试岗 · 到期 2026-11-11 · 与 batch 13 的 (a) 方案同一张票（让那格自己跑刀，或把量具本身也纳进「面」）；契约 §2.4 补那一行同批做。",
+        "by": "leader",
+        "at": "2026-11-08T22:21:12+08:00"
+      },
+      "历史": "deferred"
+    }
+  ]
+}

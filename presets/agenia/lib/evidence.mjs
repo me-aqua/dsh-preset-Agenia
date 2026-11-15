@@ -241,3 +241,4 @@ export function spentEvidenceRecord(evidence, { transitionId, fromStageId, toSta
     spent_at: spentAt,
   }
 }
+// 依据: 0008

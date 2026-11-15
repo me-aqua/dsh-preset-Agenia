@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "day": "2026-11-15",
+  "events": [
+    {
+      "seq": 1,
+      "kind": "registered",
+      "id": "bug-20261115-01",
+      "at": "2026-11-15T13:28:34+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "**宿主换版后我们的插件调用契约漂了**：同一个提交 `56b893d` 在 11-13 是 216 绿 / 0 红，11-15 跑出 **2 红**，而仓库 11-14 零提交 —— 期间变的是**运行时**（`~/.dsh/dsh-runtimes/dsh-primary-runtime` mtime = 11-14 14:17）。\n· `PRS-05`：九条委派行（`team_*` ×4 + `job_*` ×4 + `subagent`）的 `agentOptions` **一个都没落到子会话上**（报文：配置读到了、`startActivation` 请求里没有）；\n· `DASH-05`：看板主行 / 插件身份对不上官方。\n⇒ 症状是「我们的代码没动，但契约过期了」。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "host-drift",
+        "composition"
+      ]
+    },
+    {
+      "seq": 2,
+      "kind": "disposed",
+      "id": "bug-20261115-01",
+      "at": "2026-11-15T13:28:34+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗+测试岗：① 先**量**新旧运行时的契约差异（`startActivation` 收哪些字段、`agentOptions` 是否改名/挪层），不许凭猜改；② 按新契约把 `agentOptions` 真正落到子会话，九行逐行验；③ `DASH-05` 的「插件身份对得上官方」同批核；④ 判据侧补一条「宿主版本变了就红」的前件（现在这两条红长得像产品坏了，其实是契约过期）。",
+        "by": "leader",
+        "at": "2026-11-15T13:28:34+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 3,
+      "kind": "registered",
+      "id": "bug-20261115-02",
+      "at": "2026-11-15T13:28:34+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "0011 新加的 8 条断言里 **6 条与既有通用循环重复**（连码名 `SIDE-LEADER-LEAK` 都重了：`:825` 与 `:769`），且 `hire.md:8` **那句话本身没有任何判据在读** —— 它第一次撒谎没被发现就是因为没人读它。（第 4 关 r1 的质量项，判「赘不是错」，可整删）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "criteria",
+        "duplicate"
+      ]
+    },
+    {
+      "seq": 4,
+      "kind": "disposed",
+      "id": "bug-20261115-02",
+      "at": "2026-11-15T13:28:34+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 测试岗：① 删掉那 6 条重复断言（通用循环已覆盖，码名不许重）；② **补一条真读 `hire.md:8` 那句话的腿**（正例：句子在且措辞含「记忆库…有」；反例：写回「队伍的历史不在你手上」⇒ 红）—— 这是它第一次没被发现的根因；③ 顺手把「引路径必须先存在」做成卡模板检查（见 11-15 log 的 B-1/B-2）。",
+        "by": "leader",
+        "at": "2026-11-15T13:28:34+08:00"
+      },
+      "历史": "deferred"
+    }
+  ]
+}

@@ -97,7 +97,11 @@ export function productText({ id = '0001', title = '产品口径样张', header 
     superseded_by: dash,
     ...header,
   }
-  const lines = headerLines ?? PRODUCT_KEYS.filter((k) => !drop.includes(k)).map((k) => `${k}: ${merged[k]}`)
+  // `header` 里多出来的键（例如产品那条**不该有**的 `父`）也要写进盘上的文件 ——
+  // 否则那一格的夹具写出来的是一份合法产品，而用例期望 `PRODUCT-HAS-PARENT`：**期望值在盘上没有对象**
+  // （2026-11-15 实测：`product-parent` 那一格实得 []、期望 [PRODUCT-HAS-PARENT]）。
+  const keys = headerLines ?? [...new Set([...PRODUCT_KEYS, ...Object.keys(header)])].filter((k) => !drop.includes(k))
+  const lines = headerLines ?? keys.map((k) => `${k}: ${merged[k]}`)
   const out = [`${h1 ?? `# 产品 ${id} · ${title}`}`, '', ...lines, '', body ?? '## 需求\n这一份是夹具。\n']
   if (h1Extra !== null) out.push(h1Extra)
   return `${out.join('\n')}\n`

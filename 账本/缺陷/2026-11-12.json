@@ -1,0 +1,554 @@
+{
+  "schema": 1,
+  "day": "2026-11-12",
+  "events": [
+    {
+      "seq": 1,
+      "kind": "registered",
+      "id": "bug-20261112-01",
+      "at": "2026-11-12T11:28:39+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`job_conversation_review` 派工注入的岗位说明书是「技术评审·阿玛拉」而不是会话评审那一张 —— 作业自己按卡做完并当场点名（2026-11-12 的 11-11 会话评审报告头）。同族：`cand-20261102-0573`（team_test/team_review 互换过）；这次是四类一次性作业里的一类。影响：若作业不较真，会用技术评审的判词写会话评审的报告。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "injection",
+        "job-brief"
+      ]
+    },
+    {
+      "seq": 2,
+      "kind": "assessed",
+      "id": "bug-20261112-01",
+      "at": "2026-11-13T13:34:05+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 3,
+      "kind": "disposed",
+      "id": "bug-20261112-01",
+      "at": "2026-11-12T11:28:39+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-14 · 实现岗：查四类一次性作业的说明书注入路由（job-briefs 那族），让每类作业拿到的是自己那张；判据侧加一条「作业自报说明书名」的读回。",
+        "by": "leader",
+        "at": "2026-11-12T11:28:39+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 4,
+      "kind": "registered",
+      "id": "bug-20261112-02",
+      "at": "2026-11-12T11:35:52+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`maskComments()` 只认「闭合斜杠后不是标识符字符」才当正则：`/['\"]/g` 下一字符是 flag g ⇒ 条件失败按除号放行，正则体里的引号被当字符串开头吞到文件尾 —— 后面跟着池写也照样 `ok:true`。（11-11 技术评审 F1，P1；昨天 T1 修了正则字面量、漏了 flags）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1111"
+      ]
+    },
+    {
+      "seq": 5,
+      "kind": "assessed",
+      "id": "bug-20261112-02",
+      "at": "2026-11-13T13:34:05+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 6,
+      "kind": "disposed",
+      "id": "bug-20261112-02",
+      "at": "2026-11-12T11:35:52+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-13 · 测试岗：按票面现象修 + 同批加判据（改坏哪处红哪条）。",
+        "by": "leader",
+        "at": "2026-11-12T11:35:52+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 7,
+      "kind": "registered",
+      "id": "bug-20261112-03",
+      "at": "2026-11-12T11:35:52+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`EXR-01` 的 `preset_bodies` 只要求 number 且 >=2：`{insert:0,preset_bodies:4}` 或 `2.5` 都判 GREEN。契约是「两份预设各一次」⇒ 必须整数且 === 2。（11-11 技术评审 F2，P2）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1111"
+      ]
+    },
+    {
+      "seq": 8,
+      "kind": "assessed",
+      "id": "bug-20261112-03",
+      "at": "2026-11-13T13:34:05+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 9,
+      "kind": "disposed",
+      "id": "bug-20261112-03",
+      "at": "2026-11-12T11:35:52+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-13 · 测试岗：按票面现象修 + 同批加判据（改坏哪处红哪条）。",
+        "by": "leader",
+        "at": "2026-11-12T11:35:52+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 10,
+      "kind": "registered",
+      "id": "bug-20261112-04",
+      "at": "2026-11-12T11:35:52+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "同一 id 在池子里两行时，`judgedRowSpecsOf` 按**文件行序**取第一行、`opJudgePending` 按 **seq 序**取第一行 ⇒ 两处 `kind` 可以不同。昨天 -13 只钉了判据侧「钉 judge-pending」，产品侧分叉留在契约 §6.2 —— 现在评审再点一次（F3，P2）：要么产品统一取行规则，要么判据两侧都按各自的序断言并互相对账。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1111"
+      ]
+    },
+    {
+      "seq": 11,
+      "kind": "assessed",
+      "id": "bug-20261112-04",
+      "at": "2026-11-13T13:34:05+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 12,
+      "kind": "disposed",
+      "id": "bug-20261112-04",
+      "at": "2026-11-12T11:35:52+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-14 · 实现岗+测试岗：按票面现象修 + 同批加判据（改坏哪处红哪条）。",
+        "by": "leader",
+        "at": "2026-11-12T11:35:52+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 13,
+      "kind": "registered",
+      "id": "bug-20261112-05",
+      "at": "2026-11-12T11:35:52+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`rollbackExerciseCandidates` 只判断 `.team/leader` **存在**、不判断它是目录：`readdirSync` 的 EACCES/ENOTDIR 被空 catch 吞成「没有日期目录」⇒ 默认落点读不出时回执被当成 `none`（HOLD），而不是「给了路径却读不出来」的 RED。契约 §3.7.2 说坏回执任何来源都 RED —— 这一支违反了。（11-11 技术评审 F4，P2）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1111"
+      ]
+    },
+    {
+      "seq": 14,
+      "kind": "assessed",
+      "id": "bug-20261112-05",
+      "at": "2026-11-13T13:34:06+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 15,
+      "kind": "disposed",
+      "id": "bug-20261112-05",
+      "at": "2026-11-12T11:35:52+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-13 · 测试岗：按票面现象修 + 同批加判据（改坏哪处红哪条）。",
+        "by": "leader",
+        "at": "2026-11-12T11:35:52+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 16,
+      "kind": "registered",
+      "id": "bug-20261112-06",
+      "at": "2026-11-12T11:35:52+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`derivationCheck` 把 spawn error / 180s 超时 / exit≠0 全压成 `ok:false · exit:null`；调用方按「补丁读不读得出来」分叉 ⇒ 生成器崩溃/超时被归成 `E_UNMOUNT_PATCH_NOT_DERIVED`（语义是「字节不是派生物」）。要新码 `E_UNMOUNT_CHECK_UNAVAILABLE`（工具起不来/超时），与 NOT_DERIVED 分开。（11-11 技术评审 F5，P2；`cand-20261108-0234`：一次失败归到对的机制）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1111"
+      ]
+    },
+    {
+      "seq": 17,
+      "kind": "assessed",
+      "id": "bug-20261112-06",
+      "at": "2026-11-13T13:34:06+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 18,
+      "kind": "disposed",
+      "id": "bug-20261112-06",
+      "at": "2026-11-12T11:35:52+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-14 · 实现岗+测试岗：按票面现象修 + 同批加判据（改坏哪处红哪条）。",
+        "by": "leader",
+        "at": "2026-11-12T11:35:52+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 19,
+      "kind": "registered",
+      "id": "bug-20261112-07",
+      "at": "2026-11-12T11:36:11+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`SLA_DEBT.closure_verdicts` 表里已有闭合判词集，但 Python 侧仍硬编码 `ASSESSED_VERDICTS = (true,false,duplicate)`、JS 侧 bug-ledger 里又一份 —— 三处同一个集合、两处硬编码。表改了，判词不跟着变。（11-11 技术评审 F8，P3；`cand-20261104-0020` 族：一个数几份载体）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review-1111"
+      ]
+    },
+    {
+      "seq": 20,
+      "kind": "assessed",
+      "id": "bug-20261112-07",
+      "at": "2026-11-13T13:34:06+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 21,
+      "kind": "disposed",
+      "id": "bug-20261112-07",
+      "at": "2026-11-13T13:37:21+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-15 · 实现岗：**评估指出原处方不可行** —— 「从 `SLA_DEBT.closure_verdicts` 派生」只在判据侧成立，`presets/**` 不能 import `tests/**`。⇒ 改成：先在出货侧（`presets/agenia/lib/*.mjs` 或派生成的数据文件）立一个唯一作者，`daily-cards.py` / `bug-ledger.mjs` / `card-surface.mjs` 三处都读它；判据断「改表 ⇒ 三处跟着变」。",
+        "by": "leader",
+        "at": "2026-11-13T13:37:21+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 22,
+      "kind": "registered",
+      "id": "bug-20261112-08",
+      "at": "2026-11-12T12:55:56+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`DEC-01` 的 git 腿（`support/decision-ledger.mjs:436`）用裸 `git ls-files` 比较中文路径 —— CJK 路径会被 octal-quote ⇒ 换一台没设 `core.quotepath false` 的机器就**假红**。今天绿是因为实现岗手设了仓库本地配置（`dev/log.md:21-22`），判据却钉在机器配置上。仓库里 `tree-at-commit.mjs:162` 早有现成做法（`git -c core.quotepath=false`）。（2026-11-12 第 4 关 r1 · M5）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "criteria",
+        "machine-dependent"
+      ]
+    },
+    {
+      "seq": 23,
+      "kind": "assessed",
+      "id": "bug-20261112-08",
+      "at": "2026-11-13T13:34:06+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 24,
+      "kind": "disposed",
+      "id": "bug-20261112-08",
+      "at": "2026-11-13T13:37:21+08:00",
+      "disposition": {
+        "value": "rejected",
+        "reason": "评估判 false：`867d09c` 已修（`decision-ledger.mjs:504-507` 在 `quotePath:true` 时跑 `git -c core.quotepath=false ls-files`；`:543-555` 保留裸命令作对照读数；`dec01:92-110` 用 `core.quotepath=true` 的夹具仓钉住参数）。⇒ 缺陷不成立，收口。",
+        "by": "leader",
+        "at": "2026-11-13T13:37:21+08:00"
+      },
+      "历史": "rejected"
+    },
+    {
+      "seq": 25,
+      "kind": "registered",
+      "id": "bug-20261112-09",
+      "at": "2026-11-12T13:47:12+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`决议-check.mjs --op gate2-card` 与 `--op supersede` 在 `presets/**` 里 **0 个调用点** —— 两个闸今天都靠组长人工敲命令，派工链上没有任何东西会拦一张无构案编号的新机制票。`DEC-06`/`DEC-09` 证明它们**能**咬，不证明**会被**咬。（第 4 关 r1 §6-🅲）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "wiring"
+      ]
+    },
+    {
+      "seq": 26,
+      "kind": "assessed",
+      "id": "bug-20261112-09",
+      "at": "2026-11-13T13:34:06+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 27,
+      "kind": "disposed",
+      "id": "bug-20261112-09",
+      "at": "2026-11-13T18:58:06+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "`4c30a69` 接线完成：`.tools/决议-check.mjs --op card-land`（卡先**逐字落盘**到 `.team/leader/<日>/cards/`，再对**落盘那份**跑既有 `gate2-card`；拒绝 exit 1 且只印 `card kept:`、通过才印 `card landed:`）· 三份岗位说明书（test/dev/review）各加一段「卡首无 `票类:`/`构案:` ⇒ 当场停」。\n**`design.md` 故意不加**（组长裁定）：那段文字含 `构案`/`决议`，而 `DEC-07` 要求该文件里 `DESIGN_FORBIDDEN` 四个词出现 0 次（方案岗搁置的封条），加了就红一条判据 —— 而**机器闸仍然覆盖 design 卡**（`CARD_ROLES = ['test','dev','review','design']`，design 卡照样要过 `card-land`）。⇒ 少的是「人侧最后一道」，不是机器闸；不为此放宽 `DESIGN_FORBIDDEN`（那等于动搁置决定）。",
+        "by": "leader",
+        "at": "2026-11-13T18:58:06+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 28,
+      "kind": "registered",
+      "id": "bug-20261112-10",
+      "at": "2026-11-12T13:58:18+08:00",
+      "entry_kind": "observation",
+      "phenomenon": "`决议-check.mjs --op supersede` 设计为**组长手动调用**（契约 §0.3-D4：supersede = 拍板动作，不自动接线）。零调用点不是缺陷，是设计；与 gate2-card 的接线（`bug-20261112-09`）区分记录。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "design"
+      ]
+    },
+    {
+      "seq": 29,
+      "kind": "disposed",
+      "id": "bug-20261112-10",
+      "at": "2026-11-12T13:59:21+08:00",
+      "disposition": {
+        "value": "rejected",
+        "reason": "重复登记：与 bug-20261112-11 同文（我脚本第一次失败其实已入池，重试造成两条）。口径以 -11 那条为准。",
+        "by": "leader",
+        "at": "2026-11-12T13:59:21+08:00"
+      },
+      "历史": "rejected"
+    },
+    {
+      "seq": 30,
+      "kind": "registered",
+      "id": "bug-20261112-11",
+      "at": "2026-11-12T13:58:31+08:00",
+      "entry_kind": "observation",
+      "phenomenon": "`决议-check.mjs --op supersede` 设计为**组长手动调用**（契约 §0.3-D4：supersede = 拍板动作，不自动接线）。零调用点不是缺陷，是设计；与 gate2-card 的接线（`bug-20261112-09`）区分记录。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "design"
+      ]
+    },
+    {
+      "seq": 31,
+      "kind": "disposed",
+      "id": "bug-20261112-11",
+      "at": "2026-11-12T13:59:22+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "设计口径采纳：supersede 由组长手动调用是契约 §0.3-D4 的设计（拍板动作不自动接线），零调用点不是缺陷。",
+        "by": "leader",
+        "at": "2026-11-12T13:59:22+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 32,
+      "kind": "registered",
+      "id": "bug-20261112-12",
+      "at": "2026-11-12T14:34:31+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`.tools/lib/决议-ledger.mjs:21/66` 与 `census.mjs:17-19` 的注释仍写「四个 token」，而 COUNT_RULES 已是 5 个（多了 零代码）。图例已改现算，注释还停在旧数 —— 又是「一个数两处写」的尾部。（r3 非阻塞 A）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "drift"
+      ]
+    },
+    {
+      "seq": 33,
+      "kind": "assessed",
+      "id": "bug-20261112-12",
+      "at": "2026-11-13T13:34:06+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 34,
+      "kind": "disposed",
+      "id": "bug-20261112-12",
+      "at": "2026-11-12T14:34:31+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-13 · 实现岗：注释改成「由 COUNT_RULES 现算」不留具体数；判据侧补一条「注释里不出现 token 个数」的腿。",
+        "by": "leader",
+        "at": "2026-11-12T14:34:31+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 35,
+      "kind": "registered",
+      "id": "bug-20261112-13",
+      "at": "2026-11-12T14:34:31+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`PARSE-POINTER` 那条腿只钉了 3 个载体里的 1 个（support/decision-ledger.mjs），另外两个（决议-check.mjs 头 · 0001:36）改回旧指针不会红。（r3 非阻塞 C）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "criteria",
+        "coverage"
+      ]
+    },
+    {
+      "seq": 36,
+      "kind": "assessed",
+      "id": "bug-20261112-13",
+      "at": "2026-11-13T13:34:06+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 37,
+      "kind": "disposed",
+      "id": "bug-20261112-13",
+      "at": "2026-11-12T14:34:31+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-13 · 测试岗：PARSE-POINTER 钉满 3 个载体（lib 头 · 0001:36 · support 头），改任一个都红。",
+        "by": "leader",
+        "at": "2026-11-12T14:34:31+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 38,
+      "kind": "registered",
+      "id": "bug-20261112-14",
+      "at": "2026-11-12T22:34:28+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`install.mjs:65` 的 `REPO` 解析成 `<repo>/presets/agenia`（不是仓库根），而 `:103` 的默认值把它当仓库根用：⇒ `publish-staged` 不带 `--repo` 时拼出双份路径、报 `E_DATA_MISSING`；同一处推导还让 install/rollback 的**默认备份根**落进预设内部（活体=真预设时现场撞 `E_ROOT_OUTSIDE`），也让 `release-scan` 的默认根错位。判据侧只覆盖了 `.agenia-test-root` 那一支，所以一直绿。（A1 第 4 关 r1 点名，out-of-ticket）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "paths",
+        "defaults"
+      ]
+    },
+    {
+      "seq": 39,
+      "kind": "assessed",
+      "id": "bug-20261112-14",
+      "at": "2026-11-13T13:34:06+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 40,
+      "kind": "disposed",
+      "id": "bug-20261112-14",
+      "at": "2026-11-13T13:37:21+08:00",
+      "disposition": {
+        "value": "rejected",
+        "reason": "评估判 false：`d91ba39`（登记后 1 分 31 秒）已修 —— `install.mjs:78` 的 `REPO` 从一层 `..` 改成三层（=仓库根），`rollback.mjs:67` / `release-scan.mjs:67` 同批改；默认 `publish-staged` 不再拼双份路径、默认备份根回到 `<repo>/.tools/_backup/`。**残余**：判据侧还没有「不带 `--repo` 的默认路径」那条腿，另行跟踪。",
+        "by": "leader",
+        "at": "2026-11-13T13:37:21+08:00"
+      },
+      "历史": "rejected"
+    },
+    {
+      "seq": 41,
+      "kind": "registered",
+      "id": "bug-20261112-15",
+      "at": "2026-11-12T23:15:22+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`presets/agenia/bin/install.mjs:51` 的注释写「往上三层」，而代码 `:429` 是 `i < 4`（即 4 层），同一文件 `:198` 自己又写「往上 4 层」—— 同一件事两个数。位置在 MF-2 刚改过的那一段里，只有 `:53` 被修。（A1 r2 非阻塞①，MF-1 同族）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "docs",
+        "drift"
+      ]
+    },
+    {
+      "seq": 42,
+      "kind": "assessed",
+      "id": "bug-20261112-15",
+      "at": "2026-11-13T13:34:06+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 43,
+      "kind": "disposed",
+      "id": "bug-20261112-15",
+      "at": "2026-11-12T23:15:22+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-13 · 实现岗：`:51` 改成与代码一致的层数（或让代码引用同一个常量）；判据侧这族暂不立法（注释措辞，只有人手会读）。",
+        "by": "leader",
+        "at": "2026-11-12T23:15:22+08:00"
+      },
+      "历史": "deferred"
+    }
+  ]
+}

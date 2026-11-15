@@ -228,3 +228,4 @@ export function parentAlive(pid, options = {}) {
     return err?.code === 'EPERM'
   }
 }
+// 依据: 0009

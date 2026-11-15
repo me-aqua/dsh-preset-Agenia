@@ -1083,3 +1083,4 @@ export function poolByKind(root, kind) {
   if (!pool.ok) return []
   return pool.entries.filter((e) => e?.kind === kind)
 }
+// 依据: 0009

@@ -662,3 +662,4 @@ export function receiptWriteVerdict(spec = {}) {
   }
   return { ok: true, code: null, version: want, head, message: '' }
 }
+// 依据: 0008

@@ -134,3 +134,4 @@ export function slugOf(p) {
   return canonical(p).replace(/^[A-Za-z]:/, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase()
 }
 // @inline-end 公共 helper 正文（这一行与上面那条 begin 标记成对；缺一条 ⇒ 发布拒跑）
+// 依据: 0009

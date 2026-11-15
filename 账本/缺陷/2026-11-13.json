@@ -1,0 +1,869 @@
+{
+  "schema": 1,
+  "day": "2026-11-13",
+  "events": [
+    {
+      "seq": 1,
+      "kind": "registered",
+      "id": "bug-20261112-16",
+      "at": "2026-11-13T00:32:11+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "ATM-01 腿 7 的刀 `knife-strip-inlining` 在**真发布之后不可满足**：它要验的『剥掉内联』夹具，直接拿**出厂件本身**当夹具（`shippedPair({inlined:false})` 把 `stagedText` 设成 `shipped`，而 `shipped` = 读 `<staging>/preset/bin/rollback.mjs`）。出厂件一旦真的内联了，这份『被剥掉的』夹具里就有 `fsyncSync` / `RETRYABLE_RENAME` / `wx` 三个指纹 ⇒ `SHIP-ROLLBACK-NO-INLINE` 永远不报 ⇒ 刀判 `dead` ⇒ 这一格红在 `SHIP-KNIFE-DEAD`。它与同一格 `ship_artifact`（要求出厂件**有**这三个指纹）互相排斥：同一份字节不可能既『含指纹』又『缺指纹』。契约 §1 腿 7 的原话是「①**剥掉内联**（形状夹具）」—— 判据实现没有真的剥，Bug 在夹具侧。",
+      "reporter": "实现岗（team_dev · 佐西亚）",
+      "source": {
+        "carrier": "test",
+        "ref": ".team/test/2026-11-12/CONTRACT-史山清查-B1.md §1 腿 7（刀 1 的原话是『剥掉内联（形状夹具）』）"
+      },
+      "tags": [
+        "atm-01",
+        "knife",
+        "fixture",
+        "gate-3",
+        "unfixable-by-impl"
+      ]
+    },
+    {
+      "seq": 2,
+      "kind": "assessed",
+      "id": "bug-20261112-16",
+      "at": "2026-11-13T01:10:11+08:00",
+      "verdict": "true",
+      "severity_line": "function_broken_repro",
+      "by_role": "test"
+    },
+    {
+      "seq": 3,
+      "kind": "disposed",
+      "id": "bug-20261112-16",
+      "at": "2026-11-13T01:17:55+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "`56f44c1`：夹具改由**独立构造**的两份剥皮样本（`sliced` = 按内联标记切 325 行；`repo-copy` = repo 原文件逐字拷贝），各咬各的；控制腿用真出厂件绿。读数：`slices 6/6 · ATM-01 14/14`。测试岗判 `true`（功能破坏可复现），我采纳。",
+        "by": "leader",
+        "at": "2026-11-13T01:17:55+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 4,
+      "kind": "registered",
+      "id": "bug-20261113-01",
+      "at": "2026-11-13T10:31:42+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`决议-check` / `census` 把「读不到」当成「没有」：决议目录读不动、或 9 MB 那类实现文件被跳过时，两者都以 exit 0 收场（唯一信号是「决议 0 条」/「0 处」）；`readText` 读不动直接崩栈 —— 三种态（读到 / 读不到 / 坏了）里没有一种是具名红。（11-12 技术评审 F2，P2）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "silent-green"
+      ]
+    },
+    {
+      "seq": 5,
+      "kind": "disposed",
+      "id": "bug-20261113-01",
+      "at": "2026-11-13T10:31:42+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-15 · 实现岗+测试岗：读不动 ⇒ 具名码（不许 exit 0）；判据补「目录不可读 / 大文件超限」两条腿。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:42+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 6,
+      "kind": "registered",
+      "id": "bug-20261113-02",
+      "at": "2026-11-13T10:31:42+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "构案检查没判「已触发的反悔条件指向的继任者是否生效」：三层链里 0001 的 RC-1 已触发、`superseded_by` 指向**已废的 0002**，check 仍绿；而注释与报文都写着「指向生效」。 （11-12 技术评审 F3，P2）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "pointer"
+      ]
+    },
+    {
+      "seq": 7,
+      "kind": "disposed",
+      "id": "bug-20261113-02",
+      "at": "2026-11-13T10:31:42+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-15 · 实现岗+测试岗：指针目标必须 `状态: 生效` 才算解析成功，否则具名红。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:42+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 8,
+      "kind": "registered",
+      "id": "bug-20261113-03",
+      "at": "2026-11-13T10:31:42+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`target-lag.json` 只证明「差异被描述过」，证明不了「出厂件是忠实内联」：把 staged 换成任意字节、再把 state/lag/sha/baseline_sha 按实测重写，`targetVerdict` 就绿 ⇒ 受控差异与分叉在机器眼里同形。缺「出厂件内联段必须逐字等于 repo 源」的派生判据。（11-12 技术评审 F4，P2）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "inline"
+      ]
+    },
+    {
+      "seq": 9,
+      "kind": "disposed",
+      "id": "bug-20261113-03",
+      "at": "2026-11-13T10:31:42+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-15 · 测试岗：加一条派生腿（内联段归一后与 `lib/atomic.mjs` 同源段逐字相等），刀 = 改内联一处只绿在声明上。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:42+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 10,
+      "kind": "registered",
+      "id": "bug-20261113-04",
+      "at": "2026-11-13T10:31:42+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`gate2-card` 的「数据票的改动面落在机制代码面上」这条反驳只认带斜杠的写法：`presets` 放行，`presets/` 才拒 —— 一个裸目录名就绕过了。（11-12 技术评审 F5，P3）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "gate"
+      ]
+    },
+    {
+      "seq": 11,
+      "kind": "disposed",
+      "id": "bug-20261113-04",
+      "at": "2026-11-13T10:31:42+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗：改动面规范化后按目录前缀比；判据补「裸目录 / 带斜杠 / 子路径」三形。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:42+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 12,
+      "kind": "registered",
+      "id": "bug-20261113-05",
+      "at": "2026-11-13T10:31:42+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`DUP-01` 的扫描面只到 `.tools` 顶层：`mkdir .tools/sub && cp bin/install.mjs .tools/sub/agenia-install.mjs` 之后它仍报 0 对 GREEN —— 一个 mkdir 就能重建它要治的病。（11-12 技术评审 F6，P3）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "criteria",
+        "duplicate"
+      ]
+    },
+    {
+      "seq": 13,
+      "kind": "disposed",
+      "id": "bug-20261113-05",
+      "at": "2026-11-13T10:31:42+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 测试岗：扫描改递归（且报出扫了几层），刀 = 子目录副本必须红。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:42+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 14,
+      "kind": "registered",
+      "id": "bug-20261113-06",
+      "at": "2026-11-13T10:31:43+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "同一棵树上「原子写」有两个数：`census` 7（提到该符号的代码文件）与 `writeFileAtomic` 定义 3；而 INDEX 页首把这格叫「实现点数」⇒ 评审三段核拿 7 会读成 7 处实现。（11-12 技术评审 F7，P3）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "unit"
+      ]
+    },
+    {
+      "seq": 15,
+      "kind": "disposed",
+      "id": "bug-20261113-06",
+      "at": "2026-11-13T10:31:43+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗+测试岗：列名/单位改准（「提到符号的代码文件」不是「实现」），或按实现口径重扫。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:43+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 16,
+      "kind": "registered",
+      "id": "bug-20261113-07",
+      "at": "2026-11-13T10:31:43+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`--op supersede` 成功后不重生成 INDEX：同一棵树立刻 `INDEX-ROW-MISMATCH`（exit 1），而成功报文一句都不提「重跑 census --write-index」—— 唯一会写盘的 op 把树留在红上。（11-12 技术评审 F8，P3）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "supersede"
+      ]
+    },
+    {
+      "seq": 17,
+      "kind": "disposed",
+      "id": "bug-20261113-07",
+      "at": "2026-11-13T10:31:43+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗：supersede 成功后自动重生成 INDEX（或在报文里点名要跑哪条命令），判据补一条。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:43+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 18,
+      "kind": "registered",
+      "id": "bug-20261113-08",
+      "at": "2026-11-13T10:31:43+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`.tools/clear-dsh-auth-cookies.mjs` 的出处指针指向 `修复-DSH桌面版启动失败.md`（仓库根），而该文档已归档进 `.team/_archive/维修/` 且不进 git ⇒ 指针悬空。（11-12 技术评审 F11，P3）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "docs",
+        "pointer"
+      ]
+    },
+    {
+      "seq": 19,
+      "kind": "disposed",
+      "id": "bug-20261113-08",
+      "at": "2026-11-13T10:31:43+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗：指针改成归档路径并注明「不进 git，属本机档案」。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:43+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 20,
+      "kind": "registered",
+      "id": "bug-20261113-09",
+      "at": "2026-11-13T10:31:47+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`决议-check` / `census` 把「读不到」当成「没有」：决议目录读不动、或 9 MB 那类实现文件被跳过时，两者都以 exit 0 收场（唯一信号是「决议 0 条」/「0 处」）；`readText` 读不动直接崩栈 —— 三种态（读到 / 读不到 / 坏了）里没有一种是具名红。（11-12 技术评审 F2，P2）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "silent-green"
+      ]
+    },
+    {
+      "seq": 21,
+      "kind": "disposed",
+      "id": "bug-20261113-09",
+      "at": "2026-11-13T10:31:47+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-15 · 实现岗+测试岗：读不动 ⇒ 具名码（不许 exit 0）；判据补「目录不可读 / 大文件超限」两条腿。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:47+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 22,
+      "kind": "registered",
+      "id": "bug-20261113-10",
+      "at": "2026-11-13T10:31:47+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "构案检查没判「已触发的反悔条件指向的继任者是否生效」：三层链里 0001 的 RC-1 已触发、`superseded_by` 指向**已废的 0002**，check 仍绿；而注释与报文都写着「指向生效」。 （11-12 技术评审 F3，P2）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "pointer"
+      ]
+    },
+    {
+      "seq": 23,
+      "kind": "disposed",
+      "id": "bug-20261113-10",
+      "at": "2026-11-13T10:31:47+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-15 · 实现岗+测试岗：指针目标必须 `状态: 生效` 才算解析成功，否则具名红。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:47+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 24,
+      "kind": "registered",
+      "id": "bug-20261113-11",
+      "at": "2026-11-13T10:31:47+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`target-lag.json` 只证明「差异被描述过」，证明不了「出厂件是忠实内联」：把 staged 换成任意字节、再把 state/lag/sha/baseline_sha 按实测重写，`targetVerdict` 就绿 ⇒ 受控差异与分叉在机器眼里同形。缺「出厂件内联段必须逐字等于 repo 源」的派生判据。（11-12 技术评审 F4，P2）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "inline"
+      ]
+    },
+    {
+      "seq": 25,
+      "kind": "disposed",
+      "id": "bug-20261113-11",
+      "at": "2026-11-13T10:31:48+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-15 · 测试岗：加一条派生腿（内联段归一后与 `lib/atomic.mjs` 同源段逐字相等），刀 = 改内联一处只绿在声明上。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:48+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 26,
+      "kind": "registered",
+      "id": "bug-20261113-12",
+      "at": "2026-11-13T10:31:48+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`gate2-card` 的「数据票的改动面落在机制代码面上」这条反驳只认带斜杠的写法：`presets` 放行，`presets/` 才拒 —— 一个裸目录名就绕过了。（11-12 技术评审 F5，P3）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "gate"
+      ]
+    },
+    {
+      "seq": 27,
+      "kind": "disposed",
+      "id": "bug-20261113-12",
+      "at": "2026-11-13T10:31:48+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗：改动面规范化后按目录前缀比；判据补「裸目录 / 带斜杠 / 子路径」三形。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:48+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 28,
+      "kind": "registered",
+      "id": "bug-20261113-13",
+      "at": "2026-11-13T10:31:48+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`DUP-01` 的扫描面只到 `.tools` 顶层：`mkdir .tools/sub && cp bin/install.mjs .tools/sub/agenia-install.mjs` 之后它仍报 0 对 GREEN —— 一个 mkdir 就能重建它要治的病。（11-12 技术评审 F6，P3）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "criteria",
+        "duplicate"
+      ]
+    },
+    {
+      "seq": 29,
+      "kind": "disposed",
+      "id": "bug-20261113-13",
+      "at": "2026-11-13T10:31:48+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 测试岗：扫描改递归（且报出扫了几层），刀 = 子目录副本必须红。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:48+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 30,
+      "kind": "registered",
+      "id": "bug-20261113-14",
+      "at": "2026-11-13T10:31:48+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "同一棵树上「原子写」有两个数：`census` 7（提到该符号的代码文件）与 `writeFileAtomic` 定义 3；而 INDEX 页首把这格叫「实现点数」⇒ 评审三段核拿 7 会读成 7 处实现。（11-12 技术评审 F7，P3）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "unit"
+      ]
+    },
+    {
+      "seq": 31,
+      "kind": "disposed",
+      "id": "bug-20261113-14",
+      "at": "2026-11-13T10:31:48+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗+测试岗：列名/单位改准（「提到符号的代码文件」不是「实现」），或按实现口径重扫。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:48+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 32,
+      "kind": "registered",
+      "id": "bug-20261113-15",
+      "at": "2026-11-13T10:31:48+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`--op supersede` 成功后不重生成 INDEX：同一棵树立刻 `INDEX-ROW-MISMATCH`（exit 1），而成功报文一句都不提「重跑 census --write-index」—— 唯一会写盘的 op 把树留在红上。（11-12 技术评审 F8，P3）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "decisions",
+        "supersede"
+      ]
+    },
+    {
+      "seq": 33,
+      "kind": "disposed",
+      "id": "bug-20261113-15",
+      "at": "2026-11-13T10:31:48+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗：supersede 成功后自动重生成 INDEX（或在报文里点名要跑哪条命令），判据补一条。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:48+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 34,
+      "kind": "registered",
+      "id": "bug-20261113-16",
+      "at": "2026-11-13T10:31:48+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`.tools/clear-dsh-auth-cookies.mjs` 的出处指针指向 `修复-DSH桌面版启动失败.md`（仓库根），而该文档已归档进 `.team/_archive/维修/` 且不进 git ⇒ 指针悬空。（11-12 技术评审 F11，P3）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "docs",
+        "pointer"
+      ]
+    },
+    {
+      "seq": 35,
+      "kind": "disposed",
+      "id": "bug-20261113-16",
+      "at": "2026-11-13T10:31:48+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗：指针改成归档路径并注明「不进 git，属本机档案」。",
+        "by": "leader",
+        "at": "2026-11-13T10:31:48+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 36,
+      "kind": "registered",
+      "id": "bug-20261113-17",
+      "at": "2026-11-13T10:59:03+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "PATCH-B2-gate3-腿0作用域.md 有两处构造缺陷，照抄会把『作用域修正』写成必红：(1) §2.3 的 primary_hits 过滤把 derived_inline_mismatch 排除在 count 之外 ⇒ 刀 b（标记里放不同正文）得到 count 1、不报 ATM-DEF-COUNT，与契约 §0.7 刀表（count=2 ⇒ COUNT + DERIVED-MISMATCH）和 §3.4 自己的断言（read.count !== 2 即 push 红）互相打脸 —— 补丁按字面落地，ATM-01 会红在它自己的刀上；(2) §3.4 的标记块夹具把 `fnText.text`（= extractFunctionText 抠出的 52 行函数）放进标记之间，而豁免条件是『那段正文逐字等于共享件那一对标记之间的正文』（328 行）⇒ 控制 c（逐字同源必须绿）必然红，刀 b 也不是『同一段正文只改一处』。",
+      "reporter": "test",
+      "source": {
+        "carrier": "test",
+        "ref": "2026-11-13 测试岗落地 B2 Gate 3 补丁（窄权限会话留下的补丁说明）"
+      },
+      "tags": [
+        "test",
+        "patch",
+        "fixture",
+        "b2",
+        "atm-01"
+      ]
+    },
+    {
+      "seq": 37,
+      "kind": "disposed",
+      "id": "bug-20261113-17",
+      "at": "2026-11-13T11:01:38+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "`90233c9`：补丁两处构造缺陷（① `primary_hits` 过滤把 `derived_inline_mismatch` 排出了 count ⇒ 刀 b 不红；② 控制样本的标记夹具塞的是 52 行函数体、而豁免要求「与共享标记段逐字相同」= 328 行 ⇒ 控制必红）已按补丁**自己声明的语义**修正并落地；三把刀 + 一控制 + 一条「标记在别处不豁免」全部实测咬住。这条记「交接物的构造缺陷」，不追责写补丁的那一轮（它是窄权限，跑不了验证）。",
+        "by": "leader",
+        "at": "2026-11-13T11:01:38+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 38,
+      "kind": "registered",
+      "id": "bug-20261113-18",
+      "at": "2026-11-13T11:26:47+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`BOOT-01` 的样本来源是「客户端重启后**新建的顶层会话**」—— 而新建顶层会话只能由老板开，于是每次客户端重启后这格都挂起并把「请你开个新会话说一句话」变成每日家务。2026-11-13 老板当场指出：「不要再搞这种需要我开新会话的判据了，偶尔一次还行，如果每天都需要我开新会话那就是这个条目本身有问题」。**判据的输入不许挂在需求方的一个日常动作上**（同族 `cand-20261105-0095`：闸门条件要机器判得了）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "criteria",
+        "boot",
+        "owner"
+      ]
+    },
+    {
+      "seq": 39,
+      "kind": "disposed",
+      "id": "bug-20261113-18",
+      "at": "2026-11-13T20:25:03+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "`ac19c4a` 已修（①+②，③ 不做）：没样本时 HOLD 且读数带 `restart_age_days` / `threshold_days` / `expires_at_iso` / `owner` / `ask`；`≥ 3 天` 才红（新码 `BOOT-NO-SESSION-AFTER-RESTART-EXPIRED`，与「该催人」「该修产品」分开）；样本面放宽到「`createdAt ≥ T` 的顶层会话，只在主锚点空着时顶上」，组员会话只记不判。刀：旧版 0 天/4 天都是同一个 HOLD（分不开）⇒ 新版 0 天 HOLD（带年龄）、4 天 RED。套件 218 · RED 0 / GREEN 216 / HOLD 2。\n残留口径（另一张票）：阈值按「距上次重启」算 ⇒ 客户端重开比 3 天勤时年龄天天清零、这一格会长期 HOLD。",
+        "by": "leader",
+        "at": "2026-11-13T20:25:03+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 40,
+      "kind": "registered",
+      "id": "bug-20261113-19",
+      "at": "2026-11-13T11:45:00+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`.tools/mount-dashboard-profile.mjs` 只认**空格形式**的 `--backup-dir <dir>`；等号形式 `--backup-dir=<dir>` 被**静默忽略**，备份回落到 `.team/leader/backup` —— 参数写错与没写这个参数在读数上同形，而落点跑到了组长抽屉里。（2026-11-13 B2 实现岗实跑踩到一次，落进 `.team/leader/backup` 的两份文件与空目录已清）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "cli",
+        "silent-fallback"
+      ]
+    },
+    {
+      "seq": 41,
+      "kind": "disposed",
+      "id": "bug-20261113-19",
+      "at": "2026-11-13T11:45:01+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-15 · 实现岗：参数解析认两种形式（`--k v` 与 `--k=v`）；未知/写错的参数必须**出声**（具名码），不许静默回落；判据补一条「等号形式写进同一个目录」的腿。",
+        "by": "leader",
+        "at": "2026-11-13T11:45:01+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 42,
+      "kind": "registered",
+      "id": "bug-20261113-20",
+      "at": "2026-11-13T12:15:32+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`atomic-shape.mjs::shapeSummary()` 把被排除的 1315 份文件统称「非代码文件」，而其中 `_scratch` 1267 / `_staging` 36 等都是**代码面**的拷贝（只是不属交付面）⇒ 摘要句与机器字段 `scan_excluded`（6 行逐条带数目）自相矛盾，读摘要的人会以为排除的全是非代码。（B2 r2 非阻塞）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "criteria",
+        "wording"
+      ]
+    },
+    {
+      "seq": 43,
+      "kind": "disposed",
+      "id": "bug-20261113-20",
+      "at": "2026-11-13T12:15:32+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-15 · 测试岗：摘要句改成「按口径排除的 N 份文件（其中代码面 K 份）」并把 K 从同一趟扫描现算；判据侧那两句必须与 `scan_excluded` 同源。",
+        "by": "leader",
+        "at": "2026-11-13T12:15:32+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 44,
+      "kind": "registered",
+      "id": "bug-20261113-21",
+      "at": "2026-11-13T14:11:13+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`INS-02 腿③` 的刀 ①（`knife-copy-back`）锚在**真 repo 的 `presets/agenia/bin/rollback.mjs`** 里那段 `pathVerdict` 正文上（`install-rollback.test.mjs:328` 的 `extractFunctionText(pairFiles.rollback, 'pathVerdict')`）。Gate 3 落地正是要把这段从那份文件里删掉 ⇒ `extractFunctionText` 返回 null ⇒ 走 `push('CG-KNIFE-ANCHOR', '[刀 copy-back] 抠不出 pathVerdict 那一整段 —— 手抄这一刀建不起来')` ⇒ `INS-02` 红在**判据自己身上**，而三个定义腿（成对 0 / 共享块 1 / 清单外 0）与控制面全绿。契约 §3.1 的「两个世界」规则只落在 `guardsBody` / 控制树上，这把刀漏了：它的正文来源应当与 `guardsBody` 同一条（共享件在就用共享件那一块，不在才从句 rollback 里逐段抠）。",
+      "reporter": "实现岗（佐西亚）",
+      "source": {
+        "carrier": "test",
+        "ref": "tests/agenia-upgrade/integration/install-rollback.test.mjs:328"
+      },
+      "tags": [
+        "criterion-anchor",
+        "knife-dead",
+        "gate-3",
+        "b3"
+      ]
+    },
+    {
+      "seq": 45,
+      "kind": "disposed",
+      "id": "bug-20261113-21",
+      "at": "2026-11-13T14:45:27+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "`edbc96f` 已修：刀 ① 的样本改从 `guardsBody`（共享块，`:260` 现成算好的）取，不再从 repo `rollback.mjs` 取 —— 后者正是本票清空的那一段。复验：旧锚 → null；新锚 → 1,117 字符、命中 `export function pathVerdict(...)`；把该段抄回 `install.mjs` ⇒ 恰好一条 `CG-DEF-PAIR-COPY` 并点名两边；控制树绿。6 刀 + 2 控制全咬。全量 **218 · RED 0 / GREEN 216 / HOLD 2**（锚 `edbc96f`）。",
+        "by": "leader",
+        "at": "2026-11-13T14:45:27+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 46,
+      "kind": "registered",
+      "id": "bug-20261113-22",
+      "at": "2026-11-13T17:11:37+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`proposal_file` 每写一条候选都会打印「这条 source 之后走不了命令行导入（`--op proposal-import` 会回 `E_ARG_HASH`）」—— 两条写入口对 `entry_id` / 正文哈希的口径不一致：工具写进池子的是**它自己算的那套**，命令行 import 按另一套核，于是同一个工具刚写好的候选，用 import 再导一次必被拒。2026-11-13 老板问「这个还碍事吗」时实测：池子 105 条、判决链（工具 → 池子 → 次日判决）**正常**，只有 import 这条路死。另：那句警告引的是**评审发现编号 F-58**，不是台账票号 —— 读的人按票号查不到任何东西（我查过：台账里 `proposal-import` 命中 0 张票）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "proposal",
+        "two-writers",
+        "wording"
+      ]
+    },
+    {
+      "seq": 47,
+      "kind": "disposed",
+      "id": "bug-20261113-22",
+      "at": "2026-11-13T17:11:37+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗：① 让 `proposal-import` 认工具写的那套（`entry_id` + 正文 sha256 都从池子条目读，不重算另一套）；② 两条写入口必须**同源**：把哈希算法收到一个函数里，两处都调它（`cand-20261104-0020`：一个数几份载体 = 改一处等于没改）；③ 那句警告改成引**台账票号**（本票），并在修好后自动消失 —— 不许提前删警告。",
+        "by": "leader",
+        "at": "2026-11-13T17:11:37+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 48,
+      "kind": "registered",
+      "id": "bug-20261113-23",
+      "at": "2026-11-13T17:50:53+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`publish-staged` 的拷贝表是**手写清单**（原来只有 3 支 bin + 3 个内联源），于是 B4 改了 11 支 CLI 之后，staging 靶子里那 4 支被转换的 CLI **仍是旧版**，而判据腿 ⑧ 判的是 staging 里的**旧代码** —— 更糟的是 `F57-TARGET` 报「差 1 份（bin/rollback.mjs）」，**它看不见那 4 处**：靶子对比只按 `target-lag.json` 的声明条目走，未声明的差异不进读数（2026-11-13 B4 第 3 关实现岗实测并当场把拷贝表扩成 7 支 bin + 整个 lib/）。⇒ 同一个病：**手维护的清单 = 第二份真相**；以及**量具只量自己声明的那几处**。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "publish",
+        "staging",
+        "two-writers",
+        "measuring-instrument"
+      ]
+    },
+    {
+      "seq": 49,
+      "kind": "disposed",
+      "id": "bug-20261113-23",
+      "at": "2026-11-13T18:13:08+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗+测试岗。**票面二已按第 4 关 r1 更正**：`F57-TARGET` 其实**看得见**未声明差异（`support/target.mjs:436-455` 逐文件枚举，凡未声明的不等 ⇒ `TARGET-LAG-UNDECLARED`；`verdict.mjs:74` 算红；T-03/T-07 是它的阳性对照）—— 票面引的「差 1 份」是**扩面之后**的读数，不能拿来证明扩面之前看不见。\n真正剩下的洞是两条：① **发布名单仍是手写 7 支 `bin`**（应派生）；③ **发布器侧没有「靶子必须等于现役」的断言**（现在只有导出侧比对，发布完不回头看）。②已实现，从本票删除。",
+        "by": "leader",
+        "at": "2026-11-13T18:13:08+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 50,
+      "kind": "registered",
+      "id": "bug-20261113-24",
+      "at": "2026-11-13T18:13:08+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`census.mjs:130` 与 `决议-check.mjs:646` 对 `--root=`（空值）**静默落回 cwd** —— 写错参数与写对参数在读数上同形，且错的落点是在「当前目录」而不是报错。与 `bug-20261113-19` 同族（参数写错必须出声）。2026-11-13 B4 第 4 关 P2-8。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "cli",
+        "silent-fallback"
+      ]
+    },
+    {
+      "seq": 51,
+      "kind": "disposed",
+      "id": "bug-20261113-24",
+      "at": "2026-11-13T18:13:09+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗：`--root=` 空值 ⇒ 具名码（`E_ARG_USAGE`），不许落 cwd；同批把「根参数」的解析收到共享 harness 里（B4 已立）。",
+        "by": "leader",
+        "at": "2026-11-13T18:13:09+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 52,
+      "kind": "registered",
+      "id": "bug-20261113-25",
+      "at": "2026-11-13T18:39:15+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "台账**没有改写 `phenomenon` 的通道**：`bug-dispose` 只写 `disposition`（`agenia-route.mjs:1526`），而登记时写错的现象（如 `bug-20261113-23` 票面二那句「F57 看不见未声明差异」）没有任何合法出口去更正 —— 只能靠 disposition 里补一段解释，读只读 phenomenon 的人会一直拿到错的那句。（2026-11-13 B4 第 4 关 r2 提出：这不是「该回写现象」，而是缺一个「现象更正」的正式通道。）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "ledger",
+        "record"
+      ]
+    },
+    {
+      "seq": 53,
+      "kind": "disposed",
+      "id": "bug-20261113-25",
+      "at": "2026-11-13T18:39:15+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗+测试岗：加 `--op bug-amend`（只许追加「现象更正」条目，带时刻 + 理由 + 更正后文本，**原现象不删**，读的时候两段一起印）；判据：一条票被更正后，读数必须同时出现「原现象」与「更正在 YYYY-MM-DD」两段。",
+        "by": "leader",
+        "at": "2026-11-13T18:39:15+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 54,
+      "kind": "registered",
+      "id": "bug-20261113-26",
+      "at": "2026-11-13T20:48:02+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`.team/**/log.md` 是**只许追加**的档案，但**没有任何机器闸**：2026-11-13 实现岗写 `dev/2026-11-13/log.md` §12 时用整篇替换，把当天 §1–§11 覆盖掉；`.team/` 不进 git、无备份、写前没量字节数 ⇒ 正文永久丢失（它自搜未果）。⇒ 病根：写入口（`write` / `WriteAllText`）可以任意整篇重写一份档案，而「只许追加」这条规矩只活在散文里。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "append-only",
+        "destructive-ops",
+        "guard"
+      ]
+    },
+    {
+      "seq": 55,
+      "kind": "disposed",
+      "id": "bug-20261113-26",
+      "at": "2026-11-13T20:48:02+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 实现岗+测试岗：① 加一个 `log-append` 小工具（`.tools/` 或 `presets/agenia/bin/`），**只追加**、写前量原文件 bytes/lines 并写进新段落头（`[append @ <时刻> 原 N B → 现 M B]`），`--replace` 必须显式且要 `--i-know`；② 判据：一份 `log.md` 的**每次**改动都必须是「旧内容是新内容的前缀」（用两次快照对比，非前缀 ⇒ 红）；③ 副产物：`now.md` 里那句「只许追加」改成指向工具的指针（散文 → 闸）。",
+        "by": "leader",
+        "at": "2026-11-13T20:48:02+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 56,
+      "kind": "registered",
+      "id": "bug-20261113-27",
+      "at": "2026-11-13T22:23:26+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "整跑（`run-all.mjs` 全量 218）下 `DR-02` 会偶发少抓一个 CLI 子调用窗口：`子调用计数器 cliCalls=28`（28 个都叫到了，与冻结表的分母 28 一致）但 `窗口 27 个`，于是 `DR02-BRAIN-WINDOWS-UNGUARDED` 判红；`STM-01` 按设计跟着红（它自己写着「本跑的 DR-02 = RED ⇒ 这一格也坏」）⇒ 观感上是 RED 2，根因只有一条。同一棵树、同一份测试树指纹（`1beab987043a9e79` · 166 份）下：单跑 `data-root.test.mjs` 绿（5/5），全量再跑一次绿（216/0/2），测试岗 13:54 的全量也绿 ⇒ 非确定，落在「窗口捕获」这一步，不是命令行为变了。",
+      "reporter": "dev（实现岗）",
+      "source": {
+        "carrier": "report",
+        "ref": ".team/dev/2026-11-13/log.md §14.7"
+      },
+      "tags": [
+        "flaky-case",
+        "measuring-instrument",
+        "dr-02"
+      ]
+    },
+    {
+      "seq": 57,
+      "kind": "disposed",
+      "id": "bug-20261113-27",
+      "at": "2026-11-15T13:28:46+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-16 · 测试岗：DR-02 的窗口抓取偶发漏一个（cliCalls 28 / 窗口 27）⇒ 要么抓取改成「等齐 28 个再判」，要么把分母改成「实际启动的进程数」并单跑复核；先判它是竞态还是计数口径（同一条红单跑 5 次：全绿=竞态，仍红=口径）。",
+        "by": "leader",
+        "at": "2026-11-15T13:28:46+08:00"
+      },
+      "历史": "deferred"
+    }
+  ]
+}

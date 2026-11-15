@@ -796,6 +796,10 @@ function opPublishStaged(args) {
     ['install.mjs', 'install.mjs'],
     ['release-scan.mjs', 'release-scan.mjs'],
     ['rollback.mjs', 'rollback.mjs'],
+    // 构案 0012：三册账本的两支工具（`决议-check` / `census`）也要进靶子 ——
+    // 否则套件跑的是没有它们的旧靶子，`F57-TARGET` 报"靶子里没有这份文件"。
+    ['决议-check.mjs', '决议-check.mjs'],
+    ['census.mjs', 'census.mjs'],
   ]
   const published = []
   const drift = []
@@ -920,3 +924,4 @@ function main(argv) {
 }
 
 process.exitCode = main(process.argv.slice(2))
+// 依据: 0008

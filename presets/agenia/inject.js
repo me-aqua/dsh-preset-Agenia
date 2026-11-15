@@ -1,3 +1,4 @@
+// 依据: 0009
 /**
  * 每一轮对话开始之前，把这个文件夹里的 .md 读出来，贴到这次请求上：
  * 组长那份「每天开工第一步」贴**最前面**（`sections` → `system/message`，第 0 条），其余进快照那条（`contexts`）。
@@ -393,11 +394,11 @@ export const inject = ['systemPrompt', 'tools']
  * 组长默认收到哪些、按什么顺序。⚠️ `agent.cordis.yml` 的 `leaderOrder` 是事实来源，这一份只是兜底：
  * 配置里没写名单（`leaderOrder` 不是数组）时，注入按这一份走。
  *
- * @roster memory=present style=absent leader=present work-guidelines=present persona=present
+ * @roster memory=present style=absent leader=present work-guidelines=present persona=present 决策账本=present
  *
  * 成员语义见 `CONTRACT.md §7`。
  */
-const DEFAULT_LEADER_ORDER = ['leader', 'work-guidelines', 'memory', 'leader', 'work-guidelines', 'persona']
+const DEFAULT_LEADER_ORDER = ['leader', 'work-guidelines', 'memory', 'leader', 'work-guidelines', '决策账本', 'persona']
 
 /**
  * 组员默认收到哪些。名单以下方常量本身为准；组员线不贴尾巴（⑤ 只贴组长），没写名单时注入面就是这一份。
@@ -4728,3 +4729,4 @@ export async function apply(ctx, config = {}) {
     if (typeof id === 'string') ledgers.delete(id)
   })
 }
+// 依据: 0009

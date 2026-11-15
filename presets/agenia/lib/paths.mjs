@@ -527,3 +527,4 @@ export function routeDirBindingVerdict({
 export function testModeOf(config = {}, env = process.env) {
   return config?.testMode === true || Boolean(env?.AGENIA_TEST_RUN_ROOT)
 }
+// 依据: 0009

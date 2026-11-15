@@ -1,0 +1,205 @@
+{
+  "schema": 1,
+  "day": "2026-11-03",
+  "events": [
+    {
+      "seq": 1,
+      "kind": "registered",
+      "id": "bug-20261103-01",
+      "at": "2026-11-03T09:10:49+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "判决未完成就派两份每日评审（第三次犯，2026-11-02 也犯过两次）—— 评审读到的是判决还没落盘的中间态",
+      "reporter": "leader",
+      "source": {
+        "carrier": "leader",
+        "ref": "2026-11-03 09:10"
+      },
+      "tags": [
+        "process",
+        "review-order"
+      ]
+    },
+    {
+      "seq": 2,
+      "kind": "assessed",
+      "id": "bug-20261103-01",
+      "at": "2026-11-04T15:10:04+08:00",
+      "verdict": "true",
+      "severity_line": "function_broken_repro",
+      "by_role": "test"
+    },
+    {
+      "seq": 3,
+      "kind": "disposed",
+      "id": "bug-20261103-01",
+      "at": "2026-11-10T16:20:23+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "**冻结为历史（台账整理那一批，无到期日）**：这条属于 **bundle 路线改造之前**（profile 层挂载 / 旧看板行 / 旧回执口径）那一批世界；它描述的载体大多已不存在，继续挂着只会让红清单失去分辨力。**冻结 ≠ 作废**：① 同类现象在 11-07 之后的代码里再现 ⇒ 按当时那条重开一张新票，并在这条上写「复活于 <新 id>」；② 需要回看原始现场 ⇒ 条目正文与证据都还在台账里，`bug-read` 可直接取。⚠️ 本理由**故意不写日期**：冻结不是到期日，写了日期会让「按到期日读」的人把它数成待办。",
+        "by": "leader",
+        "at": "2026-11-10T16:20:23+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 4,
+      "kind": "registered",
+      "id": "bug-20261103-02",
+      "at": "2026-11-03T21:19:15+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "路线账本 current.json 在 2026-11-02 23:37:59 被写过一次，而审计链末条（22:45:30）记的 next_sha256 是另一个值 —— 那次写没经过 updater。后果：之后每一个票写 op 都以 E_ROUTE_TAMPERED 拒绝，六张票关不掉。今天用一条 route-repair 审计记录把链接上（内容一个字节没改，next_sha256 就是盘上现算的 3912ab00…），修复前后的两份原件备份在 .team/leader/2026-11-03/route-repair/。工具侧没有修复 op ⇒ 只能手写审计行。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "route",
+        "ledger",
+        "tamper"
+      ]
+    },
+    {
+      "seq": 5,
+      "kind": "assessed",
+      "id": "bug-20261103-02",
+      "at": "2026-11-04T14:58:37+08:00",
+      "verdict": "true",
+      "severity_line": "function_broken_repro",
+      "by_role": "test"
+    },
+    {
+      "seq": 6,
+      "kind": "disposed",
+      "id": "bug-20261103-02",
+      "at": "2026-11-10T16:20:23+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "**冻结为历史（台账整理那一批，无到期日）**：这条属于 **bundle 路线改造之前**（profile 层挂载 / 旧看板行 / 旧回执口径）那一批世界；它描述的载体大多已不存在，继续挂着只会让红清单失去分辨力。**冻结 ≠ 作废**：① 同类现象在 11-07 之后的代码里再现 ⇒ 按当时那条重开一张新票，并在这条上写「复活于 <新 id>」；② 需要回看原始现场 ⇒ 条目正文与证据都还在台账里，`bug-read` 可直接取。⚠️ 本理由**故意不写日期**：冻结不是到期日，写了日期会让「按到期日读」的人把它数成待办。",
+        "by": "leader",
+        "at": "2026-11-10T16:20:23+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 7,
+      "kind": "registered",
+      "id": "bug-20261103-03",
+      "at": "2026-11-03T21:19:20+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "第五轮评审的三条 P3 条件是同一个形状：一个量/一个判据只有一个载体认。① .tools/tree-at-commit.mjs 里「52 份」出现 9 次（含 --help 的运行期文案）；② 份数对账的独立那一侧靠环境变量 AGENIA_STAGING_MANIFEST，而 run-all.mjs 从不设它 ⇒ 由人记得派工卡里写，漏了就是 pinned:null 而 judged.all_ok 仍读 true；③ check-notes 在纯树副本上分母从 128 静默缩到 123（5 条不判，其中一条是真判定）。三条都不改任何测试结果，所以按第五轮判词记为条件，不重开六张票。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "carrier",
+        "count",
+        "denominator"
+      ]
+    },
+    {
+      "seq": 8,
+      "kind": "assessed",
+      "id": "bug-20261103-03",
+      "at": "2026-11-04T14:58:37+08:00",
+      "verdict": "true",
+      "severity_line": "reading_lies",
+      "by_role": "test"
+    },
+    {
+      "seq": 9,
+      "kind": "disposed",
+      "id": "bug-20261103-03",
+      "at": "2026-11-10T16:20:23+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "**冻结为历史（台账整理那一批，无到期日）**：这条属于 **bundle 路线改造之前**（profile 层挂载 / 旧看板行 / 旧回执口径）那一批世界；它描述的载体大多已不存在，继续挂着只会让红清单失去分辨力。**冻结 ≠ 作废**：① 同类现象在 11-07 之后的代码里再现 ⇒ 按当时那条重开一张新票，并在这条上写「复活于 <新 id>」；② 需要回看原始现场 ⇒ 条目正文与证据都还在台账里，`bug-read` 可直接取。⚠️ 本理由**故意不写日期**：冻结不是到期日，写了日期会让「按到期日读」的人把它数成待办。",
+        "by": "leader",
+        "at": "2026-11-10T16:20:23+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 10,
+      "kind": "registered",
+      "id": "bug-20261103-04",
+      "at": "2026-11-03T21:24:42+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "票的 source 只认 technical-review:<64hex>#<finding id> 一种形状 ⇒ 老板/组长插的票没有合法入口（今晚 21:2x 老板插的那一票就是撞在这上面）。后果：这一类票只能记在日期抽屉里，路线账本上不出现、卡上也数不到。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "route",
+        "ticket",
+        "source"
+      ]
+    },
+    {
+      "seq": 11,
+      "kind": "assessed",
+      "id": "bug-20261103-04",
+      "at": "2026-11-04T14:58:37+08:00",
+      "verdict": "true",
+      "severity_line": "function_broken_repro",
+      "by_role": "test"
+    },
+    {
+      "seq": 12,
+      "kind": "disposed",
+      "id": "bug-20261103-04",
+      "at": "2026-11-10T16:20:23+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "**冻结为历史（台账整理那一批，无到期日）**：这条属于 **bundle 路线改造之前**（profile 层挂载 / 旧看板行 / 旧回执口径）那一批世界；它描述的载体大多已不存在，继续挂着只会让红清单失去分辨力。**冻结 ≠ 作废**：① 同类现象在 11-07 之后的代码里再现 ⇒ 按当时那条重开一张新票，并在这条上写「复活于 <新 id>」；② 需要回看原始现场 ⇒ 条目正文与证据都还在台账里，`bug-read` 可直接取。⚠️ 本理由**故意不写日期**：冻结不是到期日，写了日期会让「按到期日读」的人把它数成待办。",
+        "by": "leader",
+        "at": "2026-11-10T16:20:23+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 13,
+      "kind": "registered",
+      "id": "bug-20261103-05",
+      "at": "2026-11-03T21:37:49+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "DOC-01 的阶段账把「提到『当前阶段』四个字的一行」当成阶段声明：组长 2026-11-03 21:24 重写 .team/leader/now.md 时，第 30 行讲的是看板 UI 口径（「在忙什么」与「当前阶段」合成一行），既没有阶段关键词也不该被当成声明 ⇒ stageClaims() 判成 no-stage ⇒ STAGE-MISSING 红。同页第 10 行「- 当前阶段：执行一」是对的。",
+      "reporter": "marta（测试岗）",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "test-suite",
+        "DOC-01",
+        "criterion-fragility"
+      ]
+    },
+    {
+      "seq": 14,
+      "kind": "assessed",
+      "id": "bug-20261103-05",
+      "at": "2026-11-04T15:10:07+08:00",
+      "verdict": "true",
+      "severity_line": "reading_lies",
+      "by_role": "test"
+    },
+    {
+      "seq": 15,
+      "kind": "disposed",
+      "id": "bug-20261103-05",
+      "at": "2026-11-10T16:20:23+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "**冻结为历史（台账整理那一批，无到期日）**：这条属于 **bundle 路线改造之前**（profile 层挂载 / 旧看板行 / 旧回执口径）那一批世界；它描述的载体大多已不存在，继续挂着只会让红清单失去分辨力。**冻结 ≠ 作废**：① 同类现象在 11-07 之后的代码里再现 ⇒ 按当时那条重开一张新票，并在这条上写「复活于 <新 id>」；② 需要回看原始现场 ⇒ 条目正文与证据都还在台账里，`bug-read` 可直接取。⚠️ 本理由**故意不写日期**：冻结不是到期日，写了日期会让「按到期日读」的人把它数成待办。",
+        "by": "leader",
+        "at": "2026-11-10T16:20:23+08:00"
+      },
+      "历史": "deferred"
+    }
+  ]
+}

@@ -324,3 +324,4 @@ export function openAdoptedTicketIds(tickets) {
     .filter((t) => typeof t.source === 'string' && t.source.startsWith(REVIEW_SOURCE_PREFIX))
     .map((t) => String(t.id))
 }
+// 依据: 0009

@@ -284,3 +284,4 @@ export function buildHealthCard(spec = {}) {
     ...(report === null ? {} : { report_day: report.day ?? null }),
   }
 }
+// 依据: 0009

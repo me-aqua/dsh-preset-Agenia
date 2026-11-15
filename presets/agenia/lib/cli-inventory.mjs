@@ -159,3 +159,4 @@ export function inventoryDiffOf(opLists = {}) {
   const extra = [...actual].filter((key) => !wanted.has(key)).sort()
   return { ok: missing.length === 0 && extra.length === 0, missing, extra, count: actual.size, want: wanted.size }
 }
+// 依据: 0009

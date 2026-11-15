@@ -85,3 +85,4 @@ export function parseArgs(argv, spec = {}) {
 }
 // @inline-end CLI 骨架正文（这一行与上面那条 begin 标记成对；缺一条 ⇒ 发布拒跑）
 export { emit } from './cli-guards.mjs'
+// 依据: 0009

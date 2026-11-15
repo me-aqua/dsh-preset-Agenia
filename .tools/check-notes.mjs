@@ -903,7 +903,7 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     if (at < 0) return []
     const out = []
     for (const line of block.slice(at + 1).split('\n').slice(1)) {
-      const hit = /^ {6}- ([a-z0-9:-]+)\s*(?:#.*)?$/.exec(line)
+      const hit = /^ {6}- ([^\s#]+)\s*(?:#.*)?$/.exec(line)
       if (hit !== null) { out.push(hit[1]); continue }
       if (line.trim().length === 0) continue
       break
@@ -924,8 +924,11 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   //    `leader` 与 `work-guidelines` **各出现两次** —— 开头一遍（先立规矩）、记忆之后一遍（贴近输出）。
   //    📌 2026-10-18（F-94）：`board` 拿掉了（板子改走 ⑤ 尾巴那条路，**内容变了才贴**）⇒ 名单是 **7 元组**。
   //    这条断言不是删掉，是跟着事实改：它现在同时钉着"`board` 不许回来"（回来 = 板子又住进 100 KB 快照）。
-  yes('preset', 'leaderOrder 是 leader → work-guidelines → memory → leader → work-guidelines → persona → style',
-    leader.join(',') === 'leader,work-guidelines,memory,leader,work-guidelines,persona,style', leader.join(' → '))
+  //    📌 2026-11-15（构案 0012）：名单里多了 `决策账本`（三册账本的制度文档，§②-5）——
+  //    它排在第 5 位（第二次 `work-guidelines` 之后、`persona` 之前）：先给"现在这个工区的账本住哪"，
+  //    再给"她是谁"。`persona` / `style` 仍然压在最后两位。
+  yes('preset', 'leaderOrder 是 leader → work-guidelines → memory → leader → work-guidelines → 决策账本 → persona → style',
+    leader.join(',') === 'leader,work-guidelines,memory,leader,work-guidelines,决策账本,persona,style', leader.join(' → '))
   // persona（她是谁）与 style（她怎么说话）排最后：越靠后离请求末尾越近，权重越高。
   // ⚠️ style **同时**是 inject.js 第 ⑤ 件事读的那个文件 —— 快照这条路和尾巴那条路读同一个文件，
   //    所以永远不会分叉（2026-09-24 老板定：不再分"开头注入的"和"每 n 步注入的"两份）。
@@ -1920,10 +1923,11 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     //    组长认它做项目设计档案：三件已上线东西的行为契约 + 注入触发点现在是三个、不许再加第四个）。
     //    判据同上面那条：白名单管"它在根上合不合规"—— 它合规，因为项目级决定本该有一份落点。
     'CONTRACT.md',
-    // 🆕 2026-11-12 加：**决议账本**（构案 0001「决议账本三册制」的落点）。
+    // 🆕 2026-11-12 加（2026-11-15 改名）：**账本**（构案 0001「决议账本三册制」→ 构案 0012「三册账本」的落点）。
     //    定形 §三.1 要它住仓库顶层并**进 git** —— 决定是项目资产，而 `.team/` 不进 git ⇒ 构案不能落那儿。
+    //    2026-11-15 由 `决议/` 改名成 `账本/`（产品 / 缺陷 / 构案 三册同级，构案 0012 §②-1）。
     //    判据同上面几条：白名单管"它在根上合不合规"—— 它合规，因为项目级决定必须有家。
-    '决议',
+    '账本',
     // 🆕 2026-11-15 加：**临时根**（共享记忆 `cand-20261114-0517` 定的口径：派工给下级的临时根永远是
     //    `E:\Harness\_tmp\<用途>-<日期>`，不许写盘根）。2026-11-15 实测：隔壁 RealisticAccessories 的 agenia
     //    按这条规矩在这里建了 `_tmp/techreview-2026-11-14/`，本脚本当场判红 —— 那是**规矩打架**，不是脏文件。

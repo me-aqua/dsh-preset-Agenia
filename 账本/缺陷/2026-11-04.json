@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "day": "2026-11-04",
+  "events": [
+    {
+      "seq": 1,
+      "kind": "registered",
+      "id": "bug-20261104-01",
+      "at": "2026-11-04T14:45:03+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "「当天的评审落在哪个抽屉」有四处载体、已经分叉：作业书（job-briefs/*.md）说 retro/；派工卡与产物实际落 technical-review/ / conversation-review/ / memory-review/；daily-cards.py 的读者看 3 个抽屉（文件头注释还写 1 个）；check-notes.mjs 的读者看 4 个。今天只放宽了读者，唯一的写者（作业书）没动 ⇒ 下一轮又会按作业书写回 retro/。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "carrier",
+        "review",
+        "drawer"
+      ]
+    },
+    {
+      "seq": 2,
+      "kind": "assessed",
+      "id": "bug-20261104-01",
+      "at": "2026-11-04T14:59:48+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 3,
+      "kind": "disposed",
+      "id": "bug-20261104-01",
+      "at": "2026-11-10T16:20:23+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "**冻结为历史（台账整理那一批，无到期日）**：这条属于 **bundle 路线改造之前**（profile 层挂载 / 旧看板行 / 旧回执口径）那一批世界；它描述的载体大多已不存在，继续挂着只会让红清单失去分辨力。**冻结 ≠ 作废**：① 同类现象在 11-07 之后的代码里再现 ⇒ 按当时那条重开一张新票，并在这条上写「复活于 <新 id>」；② 需要回看原始现场 ⇒ 条目正文与证据都还在台账里，`bug-read` 可直接取。⚠️ 本理由**故意不写日期**：冻结不是到期日，写了日期会让「按到期日读」的人把它数成待办。",
+        "by": "leader",
+        "at": "2026-11-10T16:20:23+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 4,
+      "kind": "registered",
+      "id": "bug-20261104-02",
+      "at": "2026-11-04T23:56:55+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "我把「看板」的 GUI 清单交给老板时，面板从来没挂进他正在用的客户端：接线行写在「预设层」（preset-agenia 的 plugins 里），而浏览器只收**宿主装载层**里声明了 dsh.client 的包 ⇒ 界面上什么都没有，而我在盘上量到的 view.json / 146 条全绿都不受影响。第二层错：我给的动作是「关掉客户端」—— 那正是我自己运行的地方。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "dashboard",
+        "mount",
+        "host-level"
+      ]
+    },
+    {
+      "seq": 5,
+      "kind": "assessed",
+      "id": "bug-20261104-02",
+      "at": "2026-11-05T20:23:26+08:00",
+      "verdict": "true",
+      "severity_line": "reading_lies",
+      "by_role": "test"
+    },
+    {
+      "seq": 6,
+      "kind": "disposed",
+      "id": "bug-20261104-02",
+      "at": "2026-11-10T16:20:23+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "**冻结为历史（台账整理那一批，无到期日）**：这条属于 **bundle 路线改造之前**（profile 层挂载 / 旧看板行 / 旧回执口径）那一批世界；它描述的载体大多已不存在，继续挂着只会让红清单失去分辨力。**冻结 ≠ 作废**：① 同类现象在 11-07 之后的代码里再现 ⇒ 按当时那条重开一张新票，并在这条上写「复活于 <新 id>」；② 需要回看原始现场 ⇒ 条目正文与证据都还在台账里，`bug-read` 可直接取。⚠️ 本理由**故意不写日期**：冻结不是到期日，写了日期会让「按到期日读」的人把它数成待办。",
+        "by": "leader",
+        "at": "2026-11-10T16:20:23+08:00"
+      },
+      "历史": "deferred"
+    }
+  ]
+}

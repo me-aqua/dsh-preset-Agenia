@@ -826,3 +826,4 @@ export function localSummary(state) {
   }
   return out
 }
+// 依据: 0008

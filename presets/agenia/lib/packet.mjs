@@ -1692,3 +1692,4 @@ export function validateSessionPacket(packetDir) {
 
   return { ok: true, code: null, manifest: man, problems: [], content_sha256: contentSha }
 }
+// 依据: 0009

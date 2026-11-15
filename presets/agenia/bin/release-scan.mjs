@@ -666,3 +666,4 @@ function main(argv) {
 }
 
 process.exitCode = main(process.argv.slice(2))
+// 依据: 0009

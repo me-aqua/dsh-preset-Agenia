@@ -238,3 +238,4 @@ export const CODES = Object.freeze({
   E_MAINTENANCE_DUPLICATE: { exit: 5, zh: '同一段草稿内容已经提过（判重键 = sha256(stableStringify(draft))，跨 kind、跨天）' },
   E_MAINTENANCE_IO: { exit: 4, zh: '维护案写不进去（池子锁争用到超时 / 草稿或池行的原子写失败 / 池子读不出来），报文带底层码' },
 })
+// 依据: 0009

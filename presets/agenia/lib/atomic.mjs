@@ -631,3 +631,4 @@ export function releaseLock(lockPath, options = {}) {
     return ioError(`放锁失败（${err?.code ?? 'UNKNOWN'}）：${err?.message}`, { path: target })
   }
 }
+// 依据: 0006

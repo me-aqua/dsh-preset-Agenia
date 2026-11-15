@@ -1,0 +1,311 @@
+{
+  "schema": 1,
+  "day": "2026-11-11",
+  "events": [
+    {
+      "seq": 1,
+      "kind": "registered",
+      "id": "bug-20261111-01",
+      "at": "2026-11-11T12:34:28+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`PWL-01` 两条静默假绿：①「池子只能由 `writePoolRowLocked` 写」靠写调用与 `pool.path` **同处一行**才咬 —— 把实参折行/用别名变量即可逃过；② `maskComments` 不认正则字面量分支，`/['\"]/` 会被静默吞掉而**没有任何读数变化**。（11-10 技术评审 F2，P2）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "criteria",
+        "static-scan"
+      ]
+    },
+    {
+      "seq": 2,
+      "kind": "assessed",
+      "id": "bug-20261111-01",
+      "at": "2026-11-12T21:23:46+08:00",
+      "verdict": "duplicate",
+      "by_role": "test"
+    },
+    {
+      "seq": 3,
+      "kind": "disposed",
+      "id": "bug-20261111-01",
+      "at": "2026-11-11T15:13:48+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "`2d5d99c`：PWL-01 扫描器改按结构（折行/别名逃不掉）+ maskComments 补正则字面量分支；K 刀各咬各的。第 4 关两轮复核通过。",
+        "by": "leader",
+        "at": "2026-11-11T15:13:48+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 4,
+      "kind": "registered",
+      "id": "bug-20261111-02",
+      "at": "2026-11-11T12:34:28+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`--check` 用 `catch { current = '' }` 把「补丁读不出来」（EACCES/EBUSY/被换成目录）折成「补丁不是派生物」—— 一次失败归到错的机制；而 `UMH-04` 的 no-op 第二道签字就靠它。读不出 ≠ 不相等，两个要分开报码。（11-10 技术评审 F4，P3）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tool",
+        "readout"
+      ]
+    },
+    {
+      "seq": 5,
+      "kind": "assessed",
+      "id": "bug-20261111-02",
+      "at": "2026-11-12T21:23:49+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 6,
+      "kind": "disposed",
+      "id": "bug-20261111-02",
+      "at": "2026-11-11T15:13:48+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "`2fc5cc0`：`--check` 失败三态分开（相等 / NOT_DERIVED / UNREADABLE），读不出归读不出；`unreadable-patch` 腿 + K15。第 4 关两轮复核通过。",
+        "by": "leader",
+        "at": "2026-11-11T15:13:48+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 7,
+      "kind": "registered",
+      "id": "bug-20261111-03",
+      "at": "2026-11-11T12:34:28+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "镜像骨架两处该描述符化：① `editComposition` 的 apply/restore 是同一骨架的镜像，加第三种载体要再抄一遍两个循环；② `withPoolRow` 与 `withPoolRowSync` 重复骨架，只有拿锁那一行不同。（11-10 技术评审 F6+F7，P3；`cand-20261108-0240` 族）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "quality",
+        "descriptorize"
+      ]
+    },
+    {
+      "seq": 8,
+      "kind": "assessed",
+      "id": "bug-20261111-03",
+      "at": "2026-11-12T21:23:49+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 9,
+      "kind": "disposed",
+      "id": "bug-20261111-03",
+      "at": "2026-11-11T15:13:48+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "`2fc5cc0`：editComposition 表驱动（第三载体只加 1 行描述符）+ withPoolRow/Sync 合一；探针 `added_outside_table: []`。第 4 关两轮复核通过。",
+        "by": "leader",
+        "at": "2026-11-11T15:13:48+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 10,
+      "kind": "registered",
+      "id": "bug-20261111-04",
+      "at": "2026-11-11T12:34:28+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`.tools/tree-at-commit.mjs` 的副本指纹与活树基线都**不记生成时刻**（export.json 无 generated_at；live-baseline.json 无），两份基线对不上时分不出「旧基线」还是「量具口径变了」。（11-10 技术评审 F8，P3；`cand-20261105-0098` 族）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tool",
+        "fingerprint"
+      ]
+    },
+    {
+      "seq": 11,
+      "kind": "assessed",
+      "id": "bug-20261111-04",
+      "at": "2026-11-12T21:23:50+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 12,
+      "kind": "disposed",
+      "id": "bug-20261111-04",
+      "at": "2026-11-11T15:13:48+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "`2fc5cc0`：export.json / live-baseline.json 都带 `generated_at`（写时现量 ISO）；`baseline-time` 腿四合成翻转。第 4 关两轮复核通过。",
+        "by": "leader",
+        "at": "2026-11-11T15:13:48+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 13,
+      "kind": "registered",
+      "id": "bug-20261111-05",
+      "at": "2026-11-11T15:13:48+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "第 4 关 r2 的非阻塞残留：① 「旧格式旁证（无 `list_items`）⇒ tail+出声」这一支**代码有、行为已实测**（副本上退出 0、stderr/stdout 都点名），但**没有任何判据腿造过它**（验收探针不算腿）；② 卡面「没有源码刀」的**理由句不成立**——一刀 `return ('test','测试岗')` 会打红 DRIFT×2 + OWNER-TABLE，理由该写「一刀会同时翻两个码、分不开这一面」，现理由写的是「只能删表读、会红两个码分不开」—— 两个说法不是同一把刀；③ `hidden-green` 合成卡一次翻 3 条码，说「六张各翻一码」不实，HIDDEN 缺单独样本；④ `ENOTDIR` 仍只在注释里，没有断言钉 errno。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "criteria",
+        "followup"
+      ]
+    },
+    {
+      "seq": 14,
+      "kind": "assessed",
+      "id": "bug-20261111-05",
+      "at": "2026-11-12T21:23:52+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 15,
+      "kind": "disposed",
+      "id": "bug-20261111-05",
+      "at": "2026-11-11T16:52:42+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "`33216e9`：旧格式旁证腿（`position-tail-old-sidecar`）· §3.7.1-B 刀理由句按真刀重写（DRIFT×2+OWNER-TABLE）· `hidden-only` 单码样本 · `state-step` 钉 ENOTDIR。附带边界声明：`REASON` 无单码样本；`EXR-01` 单跑不 preflight 记为已知（全量时别的文件写）。",
+        "by": "leader",
+        "at": "2026-11-11T16:52:42+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 16,
+      "kind": "registered",
+      "id": "bug-20261111-06",
+      "at": "2026-11-11T15:41:19+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`agenia-local.mjs:426-433` 的返回信封把 `state.technical.*` 写死：`receipt_path` / `receipt_version` / `versions` 全从 technical 段取 ⇒ 用 `node: conversation` 登记回执时，返回的仍是**技术评审**那一段的路径/版本。（测试岗批评估时读码发现，未擅自登记 —— 我核了代码，属实。）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "readout",
+        "receipt"
+      ]
+    },
+    {
+      "seq": 17,
+      "kind": "assessed",
+      "id": "bug-20261111-06",
+      "at": "2026-11-12T21:23:52+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 18,
+      "kind": "disposed",
+      "id": "bug-20261111-06",
+      "at": "2026-11-11T15:41:19+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-14 · 实现岗：返回信封按 op 的实际段取（conversation 段 / technical 段），加一条读回腿：conversation 登记后返回的 receipt_path 属于 conversation 段。",
+        "by": "leader",
+        "at": "2026-11-11T15:41:19+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 19,
+      "kind": "registered",
+      "id": "bug-20261111-07",
+      "at": "2026-11-11T15:41:19+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`bug-20261107-11` ③ 写着「另开一条」，但那一条**不存在**（`canonicalOut` 的 catch 静默回落：路径规整失败时静默用原串，没报警、没计数；还有 `.git` 守卫仍是词法比较）。欠账清点发现「引用指向不存在的票」= 悬空引用，读的人会当它已有人管。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "readout",
+        "dangling-ref"
+      ]
+    },
+    {
+      "seq": 20,
+      "kind": "assessed",
+      "id": "bug-20261111-07",
+      "at": "2026-11-12T21:23:52+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 21,
+      "kind": "disposed",
+      "id": "bug-20261111-07",
+      "at": "2026-11-12T21:25:24+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-14 · 实现岗：`canonicalOut` 静默回落 + `.git` 词法守卫（悬空引用那一半已闭 —— 本票就是那条）。🔴 **证据路径更正（2026-11-12 评估发现我登记时编了个不存在的文件）**：`tests/agenia-upgrade/integration/mcr03-copy-provenance.test.mjs` **不存在、也从没在 git 里出现过**；真载体是 `mcr01-copy-inside-audited.test.mjs:66`（自述缺口）+ `registry.mjs` MCR-01 尾。以后引证据路径先 `Test-Path`/`git log` 核一次。",
+        "by": "leader",
+        "at": "2026-11-12T21:25:24+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 22,
+      "kind": "registered",
+      "id": "bug-20261111-08",
+      "at": "2026-11-11T15:57:13+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`lib/health.mjs` 与 `receipt-check` 的**默认回执落点**写死 `leader/<day>/技术复盘回执.json`，而 2026-11-09 起组长实际写的文件名是 `leader/<day>/技术评审回执.json`（11-10 抽屉里那份就是）：**没登记 `receipt_path` 的那一天**，两扇读者去找一个不存在的名字 ⇒ 回执明明在盘上也判「不在」（health 的 `E_RECEIPT_MISSING` / `receipt-check` 的 `E_DATA_MISSING`）。⇒ 「文件的默认名字」与「人实际给的名字」是两个真源，改一处不改另一处就静默判错。",
+      "reporter": "实现岗",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "receipt",
+        "tool-contract",
+        "default"
+      ]
+    },
+    {
+      "seq": 23,
+      "kind": "assessed",
+      "id": "bug-20261111-08",
+      "at": "2026-11-12T21:23:52+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 24,
+      "kind": "disposed",
+      "id": "bug-20261111-08",
+      "at": "2026-11-11T16:11:46+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-14 · 测试岗/实现岗：`receipt-check` 的默认回执名仍是 `技术复盘回执.json`，抽屉里现在叫 `技术评审回执.json` ⇒ 未登记的日子被误判「回执不在」。统一成一处（改名或改默认），判据补一条「默认名与抽屉名一致」的腿。",
+        "by": "leader",
+        "at": "2026-11-11T16:11:46+08:00"
+      },
+      "历史": "deferred"
+    }
+  ]
+}

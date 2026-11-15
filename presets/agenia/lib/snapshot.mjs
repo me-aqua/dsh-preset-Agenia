@@ -468,3 +468,4 @@ export function readReport(root, day) {
 export function reportFileExists(root, day) {
   return existsSync(path.join(reportsDir(root), `${day}.json`))
 }
+// 依据: 0009

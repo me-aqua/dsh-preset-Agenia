@@ -618,3 +618,4 @@ export function writeCommonSenseText(root, text) {
 }
 
 export { brainError }
+// 依据: 0009

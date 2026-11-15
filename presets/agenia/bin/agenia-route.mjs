@@ -1325,6 +1325,23 @@ function readBugLedger(ctx, { required = true } = {}) {
   const file = ctx.paths.ledger
   if (!existsSync(file)) {
     if (!required) return null
+    /**
+     * 三册账本落地之后（构案 0012）：缺陷的**长期住处**是 `账本/缺陷/<YYYY-MM-DD>.json` 事件流，
+     * 现状靠 `lib/缺陷折叠.mjs` 折出来；`.team/bug/ledger.json` 只剩"活的登记簿"这一层。
+     * 登记簿不在、而账本在 ⇒ 用折叠出来的那一本**只读**顶上（`folded: true`），
+     * 让 `bug-read` 这类读面不至于在迁移窗口里直接报"台账还没建"。
+     * 🔴 写面仍然只认 `ledger.json`：折叠是有损的（证据 / 配方 / 批次不在事件流里），
+     *    拿它回写等于把台账洗成半本。
+     * ⚠️ 工作区根从**台账落点**反推（`<root>/.team/bug/ledger.json` 往上三层），
+     *    不依赖调用方传 `ctx.root` —— 少一个必填参数就是多一条"忘传 ⇒ E_INTERNAL"的路。
+     */
+    const workspaceRoot = path.dirname(path.dirname(path.dirname(file)))
+    if (B.bugBookPresent({ root: workspaceRoot })) {
+      const folded = B.ledgerFromBugBook({ root: workspaceRoot })
+      if (folded.entries.length > 0) {
+        return { ...folded, folded: true, folded_from: '账本/缺陷' }
+      }
+    }
     throw cliError(
       'E_DATA_MISSING',
       `bug 台账还没建（${file} 不在）—— 缺 ≠ 空：它由第一次登记创建（--op bug-register）；读面不许把它读成"0 条干净账"`,
@@ -1858,3 +1875,4 @@ function main(argv) {
 }
 
 process.exitCode = main(process.argv.slice(2))
+// 依据: 0009

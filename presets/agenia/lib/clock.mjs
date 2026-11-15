@@ -59,3 +59,4 @@ export function now(env = process.env) {
   if (Number.isNaN(at.getTime())) throw clockError(`可注入时钟文件里的时间解析不了：${JSON.stringify(line)}`, { file })
   return at
 }
+// 依据: 0009

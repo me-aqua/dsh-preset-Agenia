@@ -1,12 +1,16 @@
 # 构案 0008 · install-rollback-公共-helper
 
-状态: 生效
+层级: 构案
 主题: install-rollback 公共 helper
 日期: 2026-11-13
 拍板人: 组长
 原话: 「since now我们有构案系统了，是不是可以把整个agenia preset项目都重新审查一遍，我估计这几个月下来一定已经积攒了无数的史山和自己造的轮子，需要彻底打扫一遍屋子」
+状态: 生效
 supersedes: —
 superseded_by: —
+父: 0001
+依据P: 0001
+依据bug: —
 
 ## ① 背景（现量）
 

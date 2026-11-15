@@ -140,3 +140,4 @@ export function rotationBlockOf({ snapshot, project, cursor = 0, cursorGeneral, 
     picked: picked.length, general: pool.general.length, project: pool.project.length, note: 'ok',
   }
 }
+// 依据: 0009

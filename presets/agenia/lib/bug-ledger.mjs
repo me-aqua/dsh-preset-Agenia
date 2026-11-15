@@ -19,8 +19,11 @@
  *   ④ **判不了不许猜**：分流表判不了就拒；严重线判不了 ⇒ `escalate:true` + 卡红（不是静默保留 open）。
  *
  * ⚠️ 本文件**不认识 CLI**，也不认识 `.team/` 的路径：落点与读写全在 `bin/agenia-route.mjs` 那九个 op 里。
+ *   （唯一的例外是 `ledgerFromBugBook` / `bugBookPresent`：三册账本的折叠是**纯读**，
+ *     它由 `lib/缺陷折叠.mjs` 一处实现，这里只把折出来的现状转成台账的形状给读面用。构案 0012。）
  */
 import { FIVE_GATES, TASK_STATUSES, dayDigitsOf } from './route.mjs'
+import { bugBookPresent, foldBugBook } from './缺陷折叠.mjs'
 
 /** bug 台账的 schema 版本（契约 §2.2 冻结）。 */
 export const BUG_LEDGER_SCHEMA = 1
@@ -522,8 +525,7 @@ export function bugLedgerShapeVerdict(ledger) {
 }
 
 /** 一份空台账（**由第一次登记创建**；定形 §2.3：bug 台账由第一次登记创建，登记不需要路线）。 */
-export function newBugLedger({ at = null } = {}) {
-  return {
+export function newBugLedger({ at = null } = {}) {  return {
     schema: BUG_LEDGER_SCHEMA,
     entries: [],
     tasks: [],
@@ -535,3 +537,41 @@ export function newBugLedger({ at = null } = {}) {
     updated_at: at,
   }
 }
+
+// ── 三册账本那一边的读面（构案 0012）────────────────────────────────────────
+/**
+ * 缺陷册在不在（`账本/缺陷/`）。三册落地之后缺陷的**长期住处**是事件流，
+ * `.team/bug/ledger.json` 只剩"活的登记簿"这一层 —— 两个都要能回答"有没有"。
+ */
+export { bugBookPresent }
+
+/**
+ * 从 `账本/缺陷/*.json` 的事件流折出一本**只读**台账（折叠的实现只有 `lib/缺陷折叠.mjs` 一份）。
+ *
+ * ⚠️ **有损**：事件流只记 `registered / assessed / disposed` 的形状，`how_seen` / `evidence` /
+ * `recipe` / `batch` / `tasks` / 严重线样本集都不在里面。所以这本台账**只给读面用**
+ * （`bug-read` 一类），写面仍然只认 `.team/bug/ledger.json` —— 拿它回写等于把台账洗成半本。
+ */
+export function ledgerFromBugBook({ root, at = null } = {}) {
+  const folded = foldBugBook({ root })
+  const ledger = newBugLedger({ at })
+  ledger.entries = folded.states.map((s) => ({
+    id: s.id,
+    kind: s.entry_kind ?? BUG_KINDS[0],
+    phenomenon: s.phenomenon ?? '',
+    how_seen: '',
+    evidence: [],
+    recipe: null,
+    reporter: null,
+    author: 'leader',
+    source: null,
+    tags: [],
+    registered_at: s.registered_at ?? null,
+    finding_refs: [],
+    assessment: s.assessed,
+    disposition: s.disposition,
+    folded: true,
+  }))
+  return ledger
+}
+// 依据: 0009

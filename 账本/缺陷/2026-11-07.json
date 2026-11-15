@@ -1,0 +1,424 @@
+{
+  "schema": 1,
+  "day": "2026-11-07",
+  "events": [
+    {
+      "seq": 1,
+      "kind": "registered",
+      "id": "bug-20261106-20",
+      "at": "2026-11-07T00:46:04+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`DR-01` 用的是 `realRootContent()`（内容哈希）去打真实脑根 —— 与 `DR-02` 修掉的是**同一个病**：`.runtime` 的内容会**合法地**变（本会话写手 / 别的 workspace / `bg-notify` 投递），所以「内容变了」不等于「这次测试写了」。它的窗口比 `DR-02` 短，但因为短所以更难复现、更容易被当成偶发。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "rulers",
+        "false-attribution"
+      ]
+    },
+    {
+      "seq": 2,
+      "kind": "assessed",
+      "id": "bug-20261106-20",
+      "at": "2026-11-11T15:34:29+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 3,
+      "kind": "disposed",
+      "id": "bug-20261106-20",
+      "at": "2026-11-10T16:20:26+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "**冻结为历史（台账整理那一批，无到期日）**：这条属于 **bundle 路线改造之前**（profile 层挂载 / 旧看板行 / 旧回执口径）那一批世界；它描述的载体大多已不存在，继续挂着只会让红清单失去分辨力。**冻结 ≠ 作废**：① 同类现象在 11-07 之后的代码里再现 ⇒ 按当时那条重开一张新票，并在这条上写「复活于 <新 id>」；② 需要回看原始现场 ⇒ 条目正文与证据都还在台账里，`bug-read` 可直接取。⚠️ 本理由**故意不写日期**：冻结不是到期日，写了日期会让「按到期日读」的人把它数成待办。",
+        "by": "leader",
+        "at": "2026-11-10T16:20:26+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 4,
+      "kind": "registered",
+      "id": "bug-20261107-01",
+      "at": "2026-11-07T11:01:59+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`findings-map.json` 形状不对时不是「印错」，是**整张卡生不出来**：`{\"map\":\"oops\"}` 或某个落点不是对象 ⇒ `AttributeError` ⇒ 没有 xlsx、`E_INTERNAL`。另有第三种被折叠的状态：某个落点登记成 `null`，印出来跟「没登记」同一句话。（与 `bug-20261106-18` 同族，但更严重：一个是不说，一个是不出。）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "cards",
+        "crash"
+      ]
+    },
+    {
+      "seq": 5,
+      "kind": "assessed",
+      "id": "bug-20261107-01",
+      "at": "2026-11-11T15:34:29+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 6,
+      "kind": "disposed",
+      "id": "bug-20261107-01",
+      "at": "2026-11-10T16:20:45+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-13 · 重新排期（原写 11-08/11-09，已过期；过期日期让人误以为该做而没做）：这条属于看板/回执那一族，排在本周知识库与看板批次里；判据要能翻面（原票里有触发路径）。",
+        "by": "leader",
+        "at": "2026-11-10T16:20:45+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 7,
+      "kind": "registered",
+      "id": "bug-20261107-02",
+      "at": "2026-11-07T11:01:59+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`walkTree` 与 `stagedVsLiveDrift` 对**深度规则**已经一致（都在 `depth===0` 用 `dataSegments`），但**对失败不一致**：`walkTree` 遇到读不了的子树/单文件**静默丢掉**，`stagedVsLiveDrift` 会抛。⇒ 注释里承诺的 `missing_*` 计数报不出枚举阶段已经丢掉的东西 —— 「读不到」与「没有」长得一样。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "rulers",
+        "silent-drop"
+      ]
+    },
+    {
+      "seq": 8,
+      "kind": "assessed",
+      "id": "bug-20261107-02",
+      "at": "2026-11-11T15:34:29+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 9,
+      "kind": "disposed",
+      "id": "bug-20261107-02",
+      "at": "2026-11-08T00:23:41+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 8，提交 469be46；全量 168 · RED 0/GREEN 166）：两个树读者现在**点名**读不到的子树（`MCR-05`）——「读失败」与「没有」不再长得一样。",
+        "by": "leader",
+        "at": "2026-11-08T00:23:41+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 10,
+      "kind": "registered",
+      "id": "bug-20261107-03",
+      "at": "2026-11-07T11:01:59+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`equal: true` 只覆盖 **CODE 集里的**字节：往副本里放一个**新文件**（实测 `.pyc` 写进 `__pycache__`），两份 CODE 指纹照样一模一样 ⇒ 「副本还是不是派工那一刻那份」这句话，对**多出来的文件**是瞎的。（评审自己探针写进去一个 106,941 B 的 `.pyc`，两次指纹都还是 `c52e3f5b…`；它已删掉并复量 196 份 / 23 目录。）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "freeze",
+        "equal-hole"
+      ]
+    },
+    {
+      "seq": 11,
+      "kind": "assessed",
+      "id": "bug-20261107-03",
+      "at": "2026-11-11T15:34:29+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 12,
+      "kind": "disposed",
+      "id": "bug-20261107-03",
+      "at": "2026-11-08T00:23:41+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 8，提交 469be46；全量 168 · RED 0/GREEN 166）：补了一格喂「副本里多一个文件」（`MCR-06`）+ 退化刀；前提已更正为「`--verify` 本来就会抓，缺的是一格」。",
+        "by": "leader",
+        "at": "2026-11-08T00:23:41+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 13,
+      "kind": "registered",
+      "id": "bug-20261107-04",
+      "at": "2026-11-07T11:02:00+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "面板**重开时不清 `view`**：上一次的读数留在状态里，之后一次失败/缺席的读盘会把**上一版数字**留在提示条底下继续显示 ⇒ 读者会把旧数字当新数字。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "dashboard",
+        "stale-view"
+      ]
+    },
+    {
+      "seq": 14,
+      "kind": "assessed",
+      "id": "bug-20261107-04",
+      "at": "2026-11-11T15:34:29+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 15,
+      "kind": "disposed",
+      "id": "bug-20261107-04",
+      "at": "2026-11-10T16:20:45+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-13 · 重新排期（原写 11-08/11-09，已过期；过期日期让人误以为该做而没做）：这条属于看板/回执那一族，排在本周知识库与看板批次里；判据要能翻面（原票里有触发路径）。",
+        "by": "leader",
+        "at": "2026-11-10T16:20:45+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 16,
+      "kind": "registered",
+      "id": "bug-20261107-05",
+      "at": "2026-11-07T11:26:33+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`DR-02` 里那条临时件扫描把目录**写死**成 `.team/test/2026-10-14/_runs` ⇒ 跑 2026-11-07 的 run 时它只扫**旧目录 + 活体预设**，今天自己那个 run-root 的 `tmp` 根本不看 ⇒ `TEMP-LEFTOVER` 对今天的 run 是**假绿**。（不是这一批引入的，是复审顺手看出来的。）",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "rulers",
+        "false-green"
+      ]
+    },
+    {
+      "seq": 17,
+      "kind": "assessed",
+      "id": "bug-20261107-05",
+      "at": "2026-11-11T15:34:29+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 18,
+      "kind": "disposed",
+      "id": "bug-20261107-05",
+      "at": "2026-11-08T17:47:01+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 11，提交 67a4779，两轮复审通过；全量 179 · RED 0）：临时件扫描抽成 `support/temp-scan.mjs`：空/缺目录 ⇒ HOLD `TEMP-SCAN-NO-SAMPLE`，有样本 ⇒ 绿且带 `scanned` 份数，扫描目标从运行根环境算（不再写死日期）。",
+        "by": "leader",
+        "at": "2026-11-08T17:47:01+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 19,
+      "kind": "registered",
+      "id": "bug-20261107-06",
+      "at": "2026-11-07T12:07:40+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "结算那一行「真实根前后：before=… · 差异=…」**不是**从 DR-02 的读数来的：它的来源是 `_preflight/real-roots.{before,after}.json`（`run-all:225`）+ `settle()` 里另一份 `content_uncovered` **字面量**（`evidence.mjs:903-909`）。⇒ DR-02 的 `rec.readings.real_roots` **文件外没有读者**；把 DR-02 的见证整段删掉，结算行**照旧印「差异=无」**（MF-5 刀 E 的 `settlement.real_roots.diff=[]` 就是证据）。另 `content_uncovered` 有两份手维护副本（一处改、两处不一致不会有人知道）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "settlement",
+        "two-truths"
+      ]
+    },
+    {
+      "seq": 20,
+      "kind": "assessed",
+      "id": "bug-20261107-06",
+      "at": "2026-11-11T15:34:29+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 21,
+      "kind": "disposed",
+      "id": "bug-20261107-06",
+      "at": "2026-11-08T17:47:01+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 11，提交 67a4779，两轮复审通过；全量 179 · RED 0）：结算行读 `DR-02/result.json`（`dr02WitnessReading()` → `settlementRealRoots()`），退出码也依赖它；行只从读数印内容字段（`support/coverage-line.mjs`），`SECURITY-VIOLATION` 回来了。",
+        "by": "leader",
+        "at": "2026-11-08T17:47:01+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 22,
+      "kind": "registered",
+      "id": "bug-20261107-07",
+      "at": "2026-11-07T12:07:40+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`DR02-WITNESS-READINGS-UNGUARDED` 是 DR-02 见证的**最后一层**：把它和整段 §④ 一起删掉（刀 G）⇒ 实测 **0 红**。⇒ 「删掉见证会红」这句话的前提是**那一格自己活着**；它不是第二载体，是最后一层。这不是能靠再加一格的循环（任何最后一层都能被删），需要的是**文件外**的读者 —— 见同批登记的另一条（结算行与 DR-02 读数没连接）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "rulers",
+        "known-limit"
+      ]
+    },
+    {
+      "seq": 23,
+      "kind": "assessed",
+      "id": "bug-20261107-07",
+      "at": "2026-11-11T15:34:29+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 24,
+      "kind": "disposed",
+      "id": "bug-20261107-07",
+      "at": "2026-11-08T17:47:01+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 11，提交 67a4779，两轮复审通过；全量 179 · RED 0）：文件外读者：结算断言 DR-02 既写 `real_roots` 又写守卫读数 `dr02_witness_outside` ⇒ 只删被守段 / 只删守卫 各红一次（两把源码删除刀）。",
+        "by": "leader",
+        "at": "2026-11-08T17:47:01+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 25,
+      "kind": "registered",
+      "id": "bug-20261107-08",
+      "at": "2026-11-07T13:26:12+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "看板读盘**没有请求代号**：快速关掉再打开时，前一次 `readSnapshot` 的 Promise 仍可能落定并把**旧看板**画回来（面板已经重开、状态已清，但迟到的结果照样 `setView`）。⇒ 症状与 M2 同族（旧数据压在提示上），成因不同：M2 是**没清**旧视图，这一条是**迟到的结果把旧视图写回来**。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "dashboard",
+        "race"
+      ]
+    },
+    {
+      "seq": 26,
+      "kind": "assessed",
+      "id": "bug-20261107-08",
+      "at": "2026-11-11T15:36:13+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 27,
+      "kind": "disposed",
+      "id": "bug-20261107-08",
+      "at": "2026-11-10T16:20:45+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-13 · 重新排期（原写 11-08/11-09，已过期；过期日期让人误以为该做而没做）：这条属于看板/回执那一族，排在本周知识库与看板批次里；判据要能翻面（原票里有触发路径）。",
+        "by": "leader",
+        "at": "2026-11-10T16:20:45+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 28,
+      "kind": "registered",
+      "id": "bug-20261107-09",
+      "at": "2026-11-07T14:15:39+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "batch 12 第 5 轮复审的三条非阻断，同族（都在 emission-catalogue 这把尺子上）：① `dash07:1156` 的报文还写「没有任何一条路径吐得出来」（应写「没有一处**码位**写着它」）；② `declared` 在别名值不是 `alias: 'RDW-…'` 字面量时会**静默少算一条**（只有零别名才报）；③ `stripComments` **不跳正则字面量**（`dash07:310` 那里会失步）—— 今天没有任何被注释掉的码位带真别名（实测 0 处），所以它不会制造假绿，只可能因变量码位造成假红（已披露方向）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "rulers",
+        "emission-catalogue"
+      ]
+    },
+    {
+      "seq": 29,
+      "kind": "assessed",
+      "id": "bug-20261107-09",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 30,
+      "kind": "disposed",
+      "id": "bug-20261107-09",
+      "at": "2026-11-08T18:30:10+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 13，提交 `3502a19` / `0f29993`；全量 179 · RED 0 / GREEN 177 / HOLD 2）：尺子三条 —— 报文改成「没有一处码位写着它」；`codeTable` 现在数**顶层键 + `RDW-` 字面量**并点名没解析出码名的键；`stripComments` 认正则字面量（整行注释被当代码 16→0，`problem(` 行集两侧都是 36 ⇒ 发射点未移动），带刀。",
+        "by": "leader",
+        "at": "2026-11-08T18:30:10+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 31,
+      "kind": "registered",
+      "id": "bug-20261107-10",
+      "at": "2026-11-07T19:36:01+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "放行时**没有持久读数**留下\"这次写的是哪棵树\"：`office_root` 只是 `officeBoundVerdict` 的读数字段，只有调用方传 `readings` 才落；而 gate 只在 `OFFICE_TREE_DIFFERS`（两棵树的 office 不同）时打一行日志。⇒ **相对路径落进会话头自己那棵树**这种情形下两个 office 相等、warning 恒不触发，于是\"写错树\"在盘上**一点痕迹都没有**（这正是 F3 的另一半）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "guard",
+        "observability"
+      ]
+    },
+    {
+      "seq": 32,
+      "kind": "assessed",
+      "id": "bug-20261107-10",
+      "at": "2026-11-11T15:36:14+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 33,
+      "kind": "disposed",
+      "id": "bug-20261107-10",
+      "at": "2026-11-08T22:21:12+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（batch 15 · 提交 8c7cdce + 8614989 · gate-4 三轮，第 3 轮 🟡 通过零 must-fix；全量 185 · RED 0 / GREEN 183 / HOLD 2）：放行的 write/edit 现在在 `<header_office>/state/office-landings.jsonl` 追加一行七键（无正文、字节追加）；`OFFICE_TREE_DIFFERS` 改为从账上读（`cross_tree > 0`），同树相对路径那一半终于能说出来；账写不进去 ⇒ 拒这次写（`E_GUARD_OFFICE_LEDGER`，fail-closed）；`tree_differs` 只留一个实现（`officeReadings.differs`）。验收措辞（评审给的，原样）：面等价 + 计数继承 + `HOLD 2` 不是绿。",
+        "by": "leader",
+        "at": "2026-11-08T22:21:12+08:00"
+      },
+      "历史": "adopted"
+    }
+  ]
+}

@@ -1,0 +1,383 @@
+{
+  "schema": 1,
+  "day": "2026-11-09",
+  "events": [
+    {
+      "seq": 1,
+      "kind": "registered",
+      "id": "bug-20261109-01",
+      "at": "2026-11-09T12:05:53+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "维护案入池后的 id 是 `MR-<YYYYMMDD>-<seq:04>`（契约 §4.4 冻结），而 `judge-commit` 按 `maintenance-` 前缀认维护案 ⇒ 冻结清单里那份 `MR-…` 会被当成**普通提案**：① 只要它不在 `payload.accepted` 里，已判索引就记 `rejected`（哪怕它已经被 `maintenance_decisions` 处置、快照也照它变了）；② 「既不在 accepted、维护裁决里也没有一条指向它」那道 `E_ARG_SCHEMA` 守门对它**不生效**（那一支只在 `isMaintenanceCase` 为真时抛）。",
+      "reporter": "佐西亚（实现岗）",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "maintenance-file",
+        "judge-commit",
+        "id-shape"
+      ]
+    },
+    {
+      "seq": 2,
+      "kind": "assessed",
+      "id": "bug-20261109-01",
+      "at": "2026-11-11T15:37:45+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 3,
+      "kind": "disposed",
+      "id": "bug-20261109-01",
+      "at": "2026-11-09T13:56:33+08:00",
+      "disposition": {
+        "value": "adopted",
+        "reason": "已修（提交 7ea32b9）：判官改为**按池子那一行的 kind** 认维护案，maintenance- / MR- 前缀只作兜底；池子读不到时 catch 返回空集合（fail-open）已由测试岗补判据（694b1d5d）。来历：maintenance_file 写 MR-<day>-<seq>，而判官只认 maintenance- 前缀 ⇒ 冻结的维护案会走候选判路。",
+        "by": "leader",
+        "at": "2026-11-09T13:56:33+08:00"
+      },
+      "历史": "adopted"
+    },
+    {
+      "seq": 4,
+      "kind": "registered",
+      "id": "bug-20261109-02",
+      "at": "2026-11-09T13:57:10+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "「400 字」上限长出**第三个载体**，而且单位是 UTF-16：真库里有 5 条合法条目被裁，`slice` 还可能把代理对切开（技术评审 F8）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review"
+      ]
+    },
+    {
+      "seq": 5,
+      "kind": "assessed",
+      "id": "bug-20261109-02",
+      "at": "2026-11-11T15:37:45+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 6,
+      "kind": "disposed",
+      "id": "bug-20261109-02",
+      "at": "2026-11-09T13:57:21+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-11 · batch-16（400 字尺子统一到一处 + 按码点裁，别切代理对）",
+        "by": "leader",
+        "at": "2026-11-09T13:57:21+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 7,
+      "kind": "registered",
+      "id": "bug-20261109-03",
+      "at": "2026-11-09T13:57:10+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "控制字符闸的标题比实现宽：只覆盖 C0，`U+007F` 与 C1（含 `U+0085` NEL）放行（技术评审 F14）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review"
+      ]
+    },
+    {
+      "seq": 8,
+      "kind": "assessed",
+      "id": "bug-20261109-03",
+      "at": "2026-11-11T15:37:45+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 9,
+      "kind": "disposed",
+      "id": "bug-20261109-03",
+      "at": "2026-11-09T13:57:21+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-10 · batch-16（要么收窄标题到 C0，要么扩实现覆盖 DEL/C1 —— 二选一写进契约）",
+        "by": "leader",
+        "at": "2026-11-09T13:57:21+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 10,
+      "kind": "registered",
+      "id": "bug-20261109-04",
+      "at": "2026-11-09T13:57:10+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "死接口：`rotationBlockOf` 的 `cursor` 形参没人传、`nextCursor` 没人读（技术评审 F15）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review"
+      ]
+    },
+    {
+      "seq": 11,
+      "kind": "assessed",
+      "id": "bug-20261109-04",
+      "at": "2026-11-11T15:37:45+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 12,
+      "kind": "disposed",
+      "id": "bug-20261109-04",
+      "at": "2026-11-09T13:57:21+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-10 · 与 R2 同一批（删形参或让它有调用点，别留死接口）",
+        "by": "leader",
+        "at": "2026-11-09T13:57:21+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 13,
+      "kind": "registered",
+      "id": "bug-20261109-05",
+      "at": "2026-11-09T13:57:10+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`projectNameOf` 是 `path.basename` 的手写版（技术评审 F16）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review"
+      ]
+    },
+    {
+      "seq": 14,
+      "kind": "assessed",
+      "id": "bug-20261109-05",
+      "at": "2026-11-11T15:37:45+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 15,
+      "kind": "disposed",
+      "id": "bug-20261109-05",
+      "at": "2026-11-09T13:57:22+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-10 · 一行替换成 path.basename（顺手带上 win32 语义的对照）",
+        "by": "leader",
+        "at": "2026-11-09T13:57:22+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 16,
+      "kind": "registered",
+      "id": "bug-20261109-06",
+      "at": "2026-11-09T13:57:10+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "一份产物两个名字：派工卡要 `findings.md` / `report.md`，作业书与体检要 `技术评审.md` / `.findings.json`（技术评审 F19）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review"
+      ]
+    },
+    {
+      "seq": 17,
+      "kind": "assessed",
+      "id": "bug-20261109-06",
+      "at": "2026-11-11T15:37:45+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 18,
+      "kind": "disposed",
+      "id": "bug-20261109-06",
+      "at": "2026-11-09T13:57:22+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-10 · 与测试岗同批：产物名以体检为准，派工卡改口，不写两份",
+        "by": "leader",
+        "at": "2026-11-09T13:57:22+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 19,
+      "kind": "registered",
+      "id": "bug-20261109-07",
+      "at": "2026-11-09T15:07:23+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "office 账本「合法行」有两把尺子且口径不同：产品侧 `OFFICE_LEDGER_ROW_VERDICT` 是**形状+类型**检查器，判据侧 `lineProblems` 还判**值是否合理**。实测分歧输入：`landing: '.team/review/x.md'`（相对路径）⇒ 产品放过、判据报 `OFL-LINE-VALUES`，而契约 §1.2 说该拒。另：评审指出产品 32/32 与判据「一致」是**构造性同号**（探针把 want 钉成那行合法值），结构上不可能分歧。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "tech-review",
+        "criteria",
+        "product-vs-criteria"
+      ]
+    },
+    {
+      "seq": 20,
+      "kind": "assessed",
+      "id": "bug-20261109-07",
+      "at": "2026-11-11T15:37:45+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 21,
+      "kind": "disposed",
+      "id": "bug-20261109-07",
+      "at": "2026-11-09T15:07:23+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "adopted（已采纳，已排期）：owner = 测试岗 + 实现岗 · 到期 2026-11-11 · 先由测试岗把「一行合法的定义」写成契约里的**一张值表**（相对路径 / 空串 / 超长 / 类型错各一行），实现岗再按那张表收紧 `OFFICE_LEDGER_ROW_VERDICT`；两边共用一个真值表，不再各写一把尺子。",
+        "by": "leader",
+        "at": "2026-11-09T15:07:23+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 22,
+      "kind": "registered",
+      "id": "bug-20261109-08",
+      "at": "2026-11-09T15:58:45+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`judgement.txt` 里**没有提交号** ⇒ 一跑无法绑定到某个提交。第 4 关 r4 原文：「我无法把这一跑绑定到 `cafcd9c` —— `judgement.txt` 里不带 commit id；我只能给出稳定的测试树指纹、57/57 staging、以及两个基线里相同的 `inject.js` 哈希。」⇒ 与 F1/F2 同族：读数的**来历**不在读数里。后果是「这份全绿属于哪个提交」只能靠人记。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "provenance",
+        "readout"
+      ]
+    },
+    {
+      "seq": 23,
+      "kind": "assessed",
+      "id": "bug-20261109-08",
+      "at": "2026-11-11T15:37:45+08:00",
+      "verdict": "false",
+      "by_role": "test"
+    },
+    {
+      "seq": 24,
+      "kind": "disposed",
+      "id": "bug-20261109-08",
+      "at": "2026-11-09T15:58:46+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "adopted（已采纳，已排期）：owner = 测试岗 · 到期 2026-11-11 · `judgement.txt` 增一行 `[锚] 提交 <40hex>`（活树 HEAD 或副本显式来历），并在 `F57-SETTLE` 那行同句带上；与 F1/F2 同一族（读数必须自带来历）。",
+        "by": "leader",
+        "at": "2026-11-09T15:58:46+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 25,
+      "kind": "registered",
+      "id": "bug-20261109-09",
+      "at": "2026-11-09T17:21:41+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "指纹口径分叉：**活树把 `.tools/mount-test/**`（50 份）与 `asar-header.json` 算进 CODE**，而 `tree-at-commit` 导出的副本不算 ⇒ 同一棵代码树两边差 54 份里 51 份由此而来（第 4 关 r5 实测）。⇒ 「副本 226 份 vs 活树 N 份」这类读数必须先说明白这 51 份是**口径差**还是**真差**。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "fingerprint",
+        "tooling"
+      ]
+    },
+    {
+      "seq": 26,
+      "kind": "assessed",
+      "id": "bug-20261109-09",
+      "at": "2026-11-11T15:37:45+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 27,
+      "kind": "disposed",
+      "id": "bug-20261109-09",
+      "at": "2026-11-09T17:21:41+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "adopted（已采纳，已排期）：owner = 测试岗 · 到期 2026-11-11 · 先把「CODE 集包含哪些路径」写成**一处**判据（`.tools/fingerprint.mjs` 的排除表是唯一来源），再让副本导出与活树计数共用它；在那之前，任何「份数不同」的读数必须标「口径差待辨」。",
+        "by": "leader",
+        "at": "2026-11-09T17:21:41+08:00"
+      },
+      "历史": "deferred"
+    },
+    {
+      "seq": 28,
+      "kind": "registered",
+      "id": "bug-20261109-10",
+      "at": "2026-11-09T18:05:59+08:00",
+      "entry_kind": "bug",
+      "phenomenon": "`OFFICE_LEDGER_ROW_VERDICT` 的规则**顺序**成了隐式前提：测试岗 K-V5 刀（关掉 V5 的类型检查）跑出 `V5→THREW` —— `role: 42` / `landing: 0` / `office_root: {}` / `header_office: []` 四行不是被拒而是**抛异常**，因为 V3 对这些键做 `.trim()` 而它们不是字符串。今天顺序恰好让 V5 先跑，线上没事；一旦重排规则或加一条早退，就会从「拒」变成「抛」，而调用点会把抛当程序 bug。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "office-ledger",
+        "robustness"
+      ]
+    },
+    {
+      "seq": 29,
+      "kind": "assessed",
+      "id": "bug-20261109-10",
+      "at": "2026-11-11T15:37:45+08:00",
+      "verdict": "true",
+      "by_role": "test"
+    },
+    {
+      "seq": 30,
+      "kind": "disposed",
+      "id": "bug-20261109-10",
+      "at": "2026-11-09T18:17:56+08:00",
+      "disposition": {
+        "value": "deferred",
+        "reason": "adopted（已采纳，已排期 **并按第 4 关 r6 更正了修法**）：owner = 实现岗 · 到期 2026-11-10 · **不是**「把类型检查提到 SHAPE」（它们本来就在值规则之前，那是个空操作），真正要补的是**每条规则自带 typeof guard**：V3 的 .trim() 与 V1 的 isAbsolute 各自都要先判类型（isAbsolute(0) 同样会抛）。判据侧已有读法（officeLedgerRowRule(...).rule），修完应稳定报 V5/V1 而不是抛。",
+        "by": "leader",
+        "at": "2026-11-09T18:17:56+08:00"
+      },
+      "历史": "deferred"
+    }
+  ]
+}
