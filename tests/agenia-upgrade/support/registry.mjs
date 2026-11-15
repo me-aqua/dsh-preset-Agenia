@@ -1071,6 +1071,32 @@ export const BATCH_AV = ['DUP-01']
 export const BATCH_AW = ['ATM-01']
 
 /**
+ * 批次 AX（2026-11-15 · Gate 2）—— **三册账本**（`LDG-01`…`LDG-09`，构案 0012）。
+ *
+ * 契约：`.team/test/2026-11-15/CONTRACT-0012.md`（结构 / 头字段 / 事件流 / 折叠对账 / 三条链 /
+ * 豁免 / 卡片闸 / 注入配置腿 / 码表 / 刀表 / **分母为什么从 218 变 227** 的唯一出处）。
+ * 派工卡：`.team/leader/2026-11-15/cards/173731-test.md`。
+ * 量具：`support/three-books.mjs`（三册夹具 / 缺陷事件流 / 折叠 oracle / 依据面 / 注入读数）。
+ *
+ * 九格 = 卡上七条判据拆成的九个可翻面的对象（一条一格，红的时候一眼看得出是哪一层）：
+ *   `LDG-01` 三册结构 + 三张派生页（手改三种各一刀）· `LDG-02` 产品→构案 ·
+ *   `LDG-03` 缺陷→构案 · `LDG-04` 构案→文件（依据）· `LDG-05` **折叠对账 153/153** ·
+ *   `LDG-06` 缺账本必红 + `--op init` · `LDG-07` 卡片闸新词表 · `LDG-08` 豁免清单 ·
+ *   `LDG-09` 注入（配置侧腿，读数自报"判配置非注入结果"）。
+ *
+ * 🔴 **分母 218 → 227（+9），这是本票唯一动过的数**。三条理由（契约 §0）：
+ *   ① 0012 的验收表自己写着「218 不破（腿并入已有格**或说明分母变化**）」；
+ *   ② 没有可并的格子 —— 三册结构 / 缺陷事件流的折叠对账 / 三条链 / 缺账本 / 卡片闸 / 豁免 / 注入
+ *      都是**新对象**，塞进 `DEC-05`（census 口径）或 `DEC-06`（拒接闸）会让一格判两件事；
+ *   ③ `218` 是构案 0007 §七 冻的数，0012 比它晚且显式允许改 —— 下一票要回去先改 0012 的验收表。
+ *   ⚠️ `DEC-01`…`DEC-09` **本批不动**（它们今天判的还是单册对象）；它们的重指与这一批同批交付条件
+ *   写在契约 §12 —— Gate 3 之后这一跑应读成 `227 · RED 0 / GREEN 225 / HOLD 2`。
+ *
+ * ⚠️ 不进 `FROZEN_IDS`（后加批次各自以显式清单存在）。
+ */
+export const BATCH_AX = ['LDG-01', 'LDG-02', 'LDG-03', 'LDG-04', 'LDG-05', 'LDG-06', 'LDG-07', 'LDG-08', 'LDG-09']
+
+/**
  * 已落笔的批次（A–AV）。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -1096,7 +1122,7 @@ export const BATCH_AW = ['ATM-01']
  * 批次 AV 是**史山清查 A1**（`DUP-01`，2026-11-12 第 2 关）：`.tools/*.mjs` 不许有 `bin/*.mjs` 的第二份拷贝
  * （旧名 `agenia-` 归一；逐字节相同与已分叉两种都红）。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP, AQ: BATCH_AQ, AR: BATCH_AR, AS: BATCH_AS, AT: BATCH_AT, AU: BATCH_AU, AV: BATCH_AV, AW: BATCH_AW }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP, AQ: BATCH_AQ, AR: BATCH_AR, AS: BATCH_AS, AT: BATCH_AT, AU: BATCH_AU, AV: BATCH_AV, AW: BATCH_AW, AX: BATCH_AX }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -1135,7 +1161,7 @@ const BATCH_OF = (id) =>
                                                                       : BATCH_AJ.includes(id) ? 'AJ'
                                                                         : BATCH_AK.includes(id) ? 'AK'
                                                                           : BATCH_AL.includes(id) ? 'AL'
-                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP' : BATCH_AQ.includes(id) ? 'AQ' : BATCH_AR.includes(id) ? 'AR' : BATCH_AS.includes(id) ? 'AS' : BATCH_AT.includes(id) ? 'AT' : BATCH_AU.includes(id) ? 'AU' : BATCH_AV.includes(id) ? 'AV' : BATCH_AW.includes(id) ? 'AW'
+                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP' : BATCH_AQ.includes(id) ? 'AQ' : BATCH_AR.includes(id) ? 'AR' : BATCH_AS.includes(id) ? 'AS' : BATCH_AT.includes(id) ? 'AT' : BATCH_AU.includes(id) ? 'AU' : BATCH_AV.includes(id) ? 'AV' : BATCH_AW.includes(id) ? 'AW' : BATCH_AX.includes(id) ? 'AX'
                                                                   : null
 
 const F = {
@@ -1367,6 +1393,14 @@ const F = {
    *  这一格判"同一功能的实现有几份、并集有没有缺一角"（真树 + 一份 scratch 副本 + 刀架）。
    *  量具 `support/atomic-writers.mjs`（计数 / 落点 / 重试码 / 调用点 / 刀只有那一份）。 */
   atm: 'integration/atm01-atomic-unify.test.mjs',
+  /** 批次 AX（2026-11-15 · Gate 2）：**三册账本**（`LDG-01`…`LDG-09`，构案 0012）。
+   *  量具 `support/three-books.mjs`（三册夹具 / 事件流 / 折叠 oracle / 依据面 / 注入读数 只有那一份）。 */
+  ldg1: 'integration/ldg01-three-books.test.mjs',
+  ldg4: 'integration/ldg04-file-basis.test.mjs',
+  ldg5: 'integration/ldg05-fold-reconcile.test.mjs',
+  ldg6: 'integration/ldg06-ledger-init.test.mjs',
+  ldg7: 'integration/ldg07-card-gate.test.mjs',
+  ldg9: 'static/ldg09-injection.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1754,6 +1788,23 @@ const ROWS = [
   ['ATM-01', 'atomic-write', F.atm, '**原子写只剩一份实现，而且那一份是并集**：`presets/**` 里 `function writeFileAtomic` **恰好 1 处**（`presets/agenia/lib/atomic.mjs`），两份 CLI 副本（`bin/install.mjs` / `bin/rollback.mjs`）为 0；并集四条各一把刀 —— **a fsync**（桩住 `fsyncSync`：成功写必须出现，且次序 `writeSync` → `fsyncSync` → `renameSync`、fd 同一个；刀 = 删掉它 ⇒ 红）· **b `wx`**（临时件 flags 含 `wx`、不用 `writeFileSync` 建、与目标同目录；刀 = `wx`→`w` ⇒ 红）· **c allowedRoot 删除闸**（写失败后闸拒绝清临时件 ⇒ 临时件还在 · 目标没被写 · 出声或具名码 · `cleanup_refused.delete_gate` 在；反面控制 = 闸放行时必须真删；默认不给 allowedRoot 时清残渣的旧行为不变；两把刀 = 把闸放宽到临时件目录 / 把拒绝分支写成 `if (false)`）· **d 重试码**（`EPERM`/`EBUSY`/`EACCES` 各重试一次都要成、`ENOENT` 一次就放弃；结构面 = 重试码只剩 `RETRYABLE_RENAME` 一份，声明外没有内联数组；两把刀 = 把 `EACCES` 改名 / 追加一份内联码集）。**e 信封**：成功 `{ok:true, code:null, message, path, bytes, attempts}`、失败 `{ok:false, code, message, path}`，两个调用点必须 import 共享件 + 真调 + 不读 `.tmp`；刀 = 换成旧 CLI 形状的桩（`{ok,tmp}`）⇒ 红。**f 既有行为不破**：本格**点名**它依赖的既有格（`INS-01`/`INS-02`/`INS-03`/`ENV-02`/`STAT-01`）并核对它们还在，绿不绿由同一跑的入口结算证明。⚠️ 并集 d 的"两套码"在成员上是恒等操作（两套都是 `EPERM/EBUSY/EACCES`）⇒ 判覆盖与"只剩一份"，判不了"两套都留"。**g 出厂件（裁决之后加的）**：出厂件 `bin/rollback.mjs` 零静态 import 且含并集正文指纹（`fsyncSync`/`RETRYABLE_RENAME`/`wx`）；`<staging>/target-lag.json` 点名 `bin/rollback.mjs` 且理由说得出"发布时内联"；两棵树的差异由 `targetReport` 判成 `declared`（与入口 / `STAT-01` 同一份口径）。控制 = 内联形状夹具绿 + 准确声明 `state=declared`；刀 = 剥内联（`SHIP-ROLLBACK-NO-INLINE` + `TARGET-LAG-UNDECLARED`）· 内联在而声明不在（`SHIP-DECL-MISSING` + `TARGET-LAG-UNDECLARED`）· 静态 import 规则在"一行 import"上必须认出。🔴 **Gate 2 时红得对**（3 处定义 · 两个调用点各自留着一份 · 共享件没有删除闸 · 成功信封没 `message` · 出厂件没内联 · 没有声明）；Gate 3 之后应为绿 —— 裁决 0006 第三方案（decision commit `8af3094`）：repo 两份都 import 共享件、`publish-staged` 发布时内联、同批写 `target-lag.json`，三张卡（`INS-02 ①` / `ENV-02 ROLLBACK-IMPORT` / `STAT-01`）的判据对象 = 出厂件（staged）；裁决与两个被否的替代（保留拷贝 / `await import` 绕字面）见契约 §0.5 与读数 `ruling_0006`。**round-1 补（评审 M-1 / M-2）**：腿 8 = **重试预算**（`CLI_WRITE_MAX_ATTEMPTS` 只剩一份且 = 6 · 两处**重写盘**调用点传常量、不许手抄 · 共享件默认 5 · 出厂件也读 6；行为面：默认 5 次 / 传 6 则 6 次）；腿 9 = **出厂件文件头**（头里 0 个 `import` 词 · 发布器段落 11 行逐字在 · 无 repo 自述 · 并集指纹在）。刀架：六把文本刀 + 一把"repo 当出厂件"刀，各自单独会红。', '批次 AW'],
 ]
 
+/**
+ * 批次 AX（2026-11-15 · Gate 2）—— **三册账本**的九格（构案 0012）。
+ * 契约 `.team/test/2026-11-15/CONTRACT-0012.md`（§1–§13；**分母 218 → 227 的理由在 §0**）。
+ * 量具 `support/three-books.mjs`。逐格的腿与刀只写在契约里，这里只登记落点与一句话。
+ */
+ROWS.push(
+  ['LDG-01', 'three-books', F.ldg1, '**三册结构 + 三张派生页**（契约 §1/§2/§9.3）：真树三册在、`决议/` 不在；夹具 `good` 绿 + 九把"只改一处"的刀 —— `book-missing`（删 缺陷/）· `stray-md`（缺陷册里放 md）· `two-per-md`（一份 md 两条决议）· `product-parent`（产品有父）· `scheme-parent-missing` / `scheme-no-basis` / `scheme-parent-inconsistent` · `old-tree`（决议/ 还在）；派生页三把刀 K1 删标记 / K2 加一行 / K3 改一格 + 两个正样本（`--op index` 一跑复原 / 跑完 index 再落一条产品 ⇒ 页缺行）。每格断言**码集精确相等**并点名', '批次 AX'],
+  ['LDG-02', 'three-books', F.ldg1, '**产品→构案**（契约 §5.1）：每条生效产品至少一条生效构案在 `依据P` 里记着它；刀 K4 = 删掉某产品的全部子构案 ⇒ 恰好 `CHAIN-PRODUCT-NO-CHILD` 且点名那个产品（且不许点名有子的那条）；另三格 —— 已废构案不算子 · 编号写在 `依据bug` 里 ⇒ 头自洽与链**两条各自成立**（不互相吞）· 真树 `chain.product.unresolved === 0`', '批次 AX'],
+  ['LDG-03', 'three-books', F.ldg1, '**缺陷→构案**（契约 §3.2/§5.2）：每条关上的缺陷三种记账之一（`构案` / `判假` / `历史`）；刀 K5 = 删掉一条非历史缺陷的 `构案` 格 ⇒ 恰好 `CHAIN-BUG-NO-SCHEME` 且点名它（**不许**先红 `BUG-EVENT-SHAPE`：形状不判"必须有一格"，那是链的事）；另四格 —— 悬空构案号（点名两边）· 构案没在 `依据bug` 里反向记着它 · 同一缺陷两个 disposed 无重开 ⇒ `BUG-FOLD-CONFLICT` · 真树 `legacy_disposed === 153` + `chain.bug.unresolved === 0`', '批次 AX'],
+  ['LDG-04', 'three-books', F.ldg4, '**构案→文件**（契约 §5.3）：面 = `presets/agenia/{bin,lib}/*.mjs` + `inject.js` + `team/*.md` + `job-briefs/*.md` + `说明.md`（机器枚举，新文件自动进面）；每份写 `依据: <构案号>` 且只许指生效构案。夹具：`good`（两份各带依据 ⇒ `chain.file.checked === 2`）· 缺依据 · 刀 K6 悬空号 · 刀 K7 已废号 · 指到产品号（活着但不是构案）· 面在而空 ⇒ `CHAIN-FILE-EMPTY-SURFACE`（空集合不许恒真）；真树 `chain.file.checked` **等于测试自己数出来的面长**、面 ≥ 45 份、本族 0 码', '批次 AX'],
+  ['LDG-05', 'three-books', F.ldg5, '**折叠对账 153/153**（契约 §3/§4；本票最承重的一格）：`lib/缺陷折叠.mjs` 是唯一实现；`--op fold` 与 `--op reconcile --archive` 两条读数，**外加测试自己的 oracle**（两边不一致 ⇒ `FOLD-ORACLE-DISAGREES`，不许让被审方自报单独成立）。夹具三格：逐条对上（工具 + oracle 都绿）· 刀 K8 改一条处置值 ⇒ 恰好 `FOLD-DIFF` 点名那个 id · 刀 K9 删一条缺陷的事件 ⇒ `FOLD-TOTAL-MISMATCH` **点名丢的那条**（"少 1 条"不算）。唯一实现三条静态腿（全仓 `function foldBugBook` 恰 1 处 / 检查器 import 共享库且本地 0 处 / 9 个历史读方接上 ≥ 2 个）+ 一份"写了两处"的假仓库做阴性对照；真树 153/153 + 归档在 `.team/_archive/`', '批次 AX'],
+  ['LDG-06', 'three-books', F.ldg6, '**缺账本必红**（契约 §1.1/§10.1；RA 那件事的根治）：夹具工区有 `.team/`、无 `账本/` ⇒ 恰好 `LEDGER-NOT-INITIALISED`，报文点名 `账本` 与那个根；`--op init` 把三册 + 三张派生页六个落点建出来、建完当场绿；再 init 一次**幂等**（exit 0 + 树哈希不变，骨架已在该什么都不做）', '批次 AX'],
+  ['LDG-07', 'three-books', F.ldg7, '**卡片闸新口径**（契约 §7）：`票类: 产品 | 构案`（+ `数据` 的具名豁免不扩不缩；旧 `新机制` fail-closed 且报文列出认得的词）；产品卡要生效产品号（缺 / 悬空 / 不是产品三个码分开）；构案卡要生效构案号 + `依据:` 落在该构案头的来源列表里（缺 `依据` / 依据不一致两个码分开；悬空号 / 已废号沿用旧码）；`card-land` 先落盘再过闸 —— 被拒的卡照样在盘上**逐字节相同**，同一秒第二次落卡不许静默覆盖', '批次 AX'],
+  ['LDG-08', 'three-books', F.ldg4, '**豁免清单**（契约 §6）：`now.md` / `log.md`（basename）· `账本/` · `.team/**` 不要求依据，其余（面上那 45 份）一份不许少。三个样本一棵树一把变量 —— 豁免形状摆在**面上**四份不写依据 ⇒ 绿；加一份非豁免的不写依据 ⇒ 恰好一条并点名它（且不许点名 now/log）；刀 K10 = 拷检查器、把 `BASIS_EXEMPT_NAMES` 清空 ⇒ 同一棵树必须当场红那两份名字（未切的那一份绿 = 阳性对照）', '批次 AX'],
+  ['LDG-09', 'three-books', F.ldg9, '**注入（配置侧腿）**（契约 §8）：`presets/agenia/决策账本.md` 在且非空壳（≥200 字符）+ 同时出现在 `agent.cordis.yml` 的 `leaderOrder`、`inject.js` 的 `DEFAULT_LEADER_ORDER` 与 `@roster` 声明里；三个载体的四处缺一处各红一处（假仓库逐处一刀，真树控）；读数 `scope_line` **必须自报**"判配置 / 不是注入结果"（缺 ⇒ `INJECTION-SCOPE-NOT-DECLARED`）—— 真会话那一格是第 5 关由人在 GUI 点一次', '批次 AX'],
+)
+
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
 export const REGISTRY = ROWS.map(([id, group, file, title, batchNote, notes]) => ({
   id,
@@ -1970,6 +2021,12 @@ export const GROUP_COUNTS = {
    *  B2（构案 0007）**不新增格**：按形状数的普查腿并进 `DEC-05`（census 的计数口径那一格）、
    *  注入器同源腿并进 `ATM-01` 的腿 10 —— 0007 §七 冻的是「218 不破」。 */
   'atomic-write': 1,
+  /** 批次 AX（2026-11-15 · Gate 2）—— **三册账本**（`LDG-01`…`LDG-09`，构案 0012）。单开一组而不是并进
+   *  `decision-ledger`：那一族判**单册**决议树（七键头 / supersede / 指针 / 派生页 / census / 拒接闸），
+   *  这一组判**三册**（产品/缺陷/构案）+ 缺陷事件流的**折叠对账** + 三条链 + 缺账本 + 卡片闸新词 + 豁免 + 注入。
+   *  红的时候一眼看得出是"哪一册/哪一条链没建"，而不是"检查器坏了"。
+   *  ⚠️ 分母因此 218 → 227（+9）；理由三条写在 `BATCH_AX` 的头注释与契约 §0（0012 验收表显式允许）。 */
+  'three-books': 9,
 }
 
 /**
@@ -1989,9 +2046,9 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U 起的每一个后加批次（U…AV）都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV, ...BATCH_AW]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV, ...BATCH_AW, ...BATCH_AX]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
-  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO/AP/AQ/AR/AS/AT/AU/AV 之外的 ${nonFrozen} 条（清单与表分家了）`)
+  if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO/AP/AQ/AR/AS/AT/AU/AV/AW/AX 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
   if (BATCH_B.length !== 6) problems.push(`批次 B 的 ID 数 ${BATCH_B.length} ≠ 6`)
   const overlap = BATCH_A.filter((id) => BATCH_B.includes(id))
@@ -2018,7 +2075,7 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV, ...BATCH_AW]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV, ...BATCH_AW, ...BATCH_AX]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
 
