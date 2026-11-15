@@ -11,10 +11,11 @@
  * 每一格的刀都是**同一棵 `good` 树上只改一个变量**，并且断言**码集精确相等**：
  * 只证明"红因里有它"不算判据（`cand-20261016-promise-without-assertion-01`）。
  */
-import { appendFileSync, existsSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { before, test } from 'node:test'
-import { PATHS } from '../support/env.mjs'
+import { FROZEN, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, runId, runRoot } from '../support/evidence.mjs'
 import { ensureMarkedDir } from '../support/root-guard.mjs'
 import { runRoute } from '../support/sut.mjs'
@@ -93,6 +94,48 @@ function dayEventsOf(root) {
   const file = path.join(root, LEDGER_REL, '缺陷', '2026-11-15.json')
   const read = readJson(file)
   return read.ok && Array.isArray(read.json?.events) ? read.json.events : null
+}
+
+/**
+ * **整棵 `账本/缺陷/` 的字节快照**（rel → sha256，含 `INDEX.md` 与子目录）。
+ *
+ * 零写入刀只量一个日文件时，「别的日文件被写」与「什么都没写」同形（第 4 关 r5 · N-11）；
+ * 这里量的是整棵树 —— 被拒的那一次只要动了任何一份，快照就不同。
+ */
+function bugBookSnapshot(root) {
+  const dir = path.join(root, LEDGER_REL, '缺陷')
+  const files = {}
+  const walk = (abs, prefix) => {
+    if (!existsSync(abs)) return
+    for (const name of readdirSync(abs).sort()) {
+      const child = path.join(abs, name)
+      const rel = prefix === '' ? name : `${prefix}/${name}`
+      if (statSync(child).isDirectory()) walk(child, rel)
+      else files[rel] = createHash('sha256').update(readFileSync(child)).digest('hex')
+    }
+  }
+  walk(dir, '')
+  return files
+}
+const sameSnapshot = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+
+/** 把真树的 `账本/` 逐文件拷进一棵夹具根（对照刀要在**真数据的形状**上跑，而不写活树）。 */
+function copyRealBook(caseId, tag) {
+  const scene = buildScene({ caseId, tag, team: true })
+  const copyDir = (src, dst) => {
+    mkdirSync(dst, { recursive: true })
+    for (const name of readdirSync(src).sort()) {
+      const from = path.join(src, name)
+      const to = path.join(dst, name)
+      if (statSync(from).isDirectory()) copyDir(from, to)
+      else copyFileSync(from, to)
+    }
+  }
+  copyDir(path.join(PATHS.repo, LEDGER_REL), path.join(scene.root, LEDGER_REL))
+  ensureMarkedDir(scene.root, { runRoot: runRoot(), runId: runId(), kind: 'agenia-test-root' })
+  const nowFile = path.join(scene.root, '.team-now.txt')
+  writeFileSync(nowFile, '2026-11-16T09:00:00+08:00\n', 'utf8')
+  return { scene, env: { ...process.env, AGENIA_NOW_FILE: nowFile } }
 }
 
 /** 一条「有落地计划的暂缓」（重开刀与 reopen-without-dispose 的起点）。 */
@@ -745,6 +788,95 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
       }
       if (read.json?.counts?.bug_open !== 1) {
         push('KNIFE-NO-BITE', `[LDG-03/reopen-without-dispose] bug-read 的 counts.bug_open 实得 ${JSON.stringify(read.json?.counts?.bug_open ?? null)}，期望 1`)
+      }
+    }
+    // ⑤'''''' 刀（r7）：**迁移 legacy 票重开必须被写入口拒**（具名码 + 整棵 `账本/缺陷/` 零写入）；
+    // 对照 = 迁移后的 `-06` 照旧能重开、再处置。判定跑在抢锁前 ⇒ 连锁文件都不该出现。
+    {
+      const legacyOnly = {
+        days: [{
+          day: '2026-11-15',
+          events: [
+            eventRegistered({ seq: 1, id: bugA, at: '2026-11-15T09:00:00+08:00' }),
+            eventAssessed({ seq: 2, id: bugA, at: '2026-11-15T10:00:00+08:00', verdict: 'true' }),
+            eventDisposed({ seq: 3, id: bugA, at: '2026-11-15T11:00:00+08:00', value: 'adopted', extra: { 历史: 'adopted' } }),
+          ],
+        }],
+      }
+      const { scene, env } = bookCliScene('LDG-03', 'legacy-reopen', goodLedger({ schemes: schemeKillsA, ...legacyOnly }))
+      runIndex(scene.root)
+      const before = bugBookSnapshot(scene.root)
+      const beforeCheck = runCheck(scene.root, ['--today=2026-11-15'])
+      const res = await runRoute('LDG-03', 'bug-reopen', {
+        id: bugA, reason: '夹具：legacy 票重开必须被拒', by_role: 'leader',
+      }, { workspace: scene.root, env })
+      const after = bugBookSnapshot(scene.root)
+      const code = res?.json?.error?.code ?? null
+      const lock = path.join(scene.root, '.team', 'bug', '.bug.lock')
+      rec.readings.legacy_reopen = {
+        root: scene.root,
+        book_files: Object.keys(before).length,
+        check: { exit: beforeCheck.exit, codes: codesOf(beforeCheck.json), legacy_disposed: beforeCheck.json?.legacy_disposed ?? null },
+        exit: res?.exit_code ?? null,
+        code,
+        events_unchanged: sameSnapshot(before, after),
+        lock_left: existsSync(lock),
+        error_head: messagesOf(res?.json ?? {}).map((m) => m.slice(0, 240)),
+      }
+      if (Object.keys(before).length === 0) push('KNIFE-NO-BITE', '[LDG-03/legacy-reopen] 量具没读到任何事件流文件 —— 这把刀什么都没量')
+      if (beforeCheck.json?.legacy_disposed !== 1) {
+        push('LEGACY-COUNT-DRIFT', `[LDG-03/legacy-reopen] 夹具的 legacy_disposed 实得 ${JSON.stringify(beforeCheck.json?.legacy_disposed ?? null)}，期望 1（刀要站在一条真的 legacy 票上）`)
+      }
+      if (res?.exit_code !== FROZEN.exitCodes.E_BUG_REOPEN_LEGACY || code !== 'E_BUG_REOPEN_LEGACY') {
+        push('KNIFE-NO-BITE', `[LDG-03/legacy-reopen] legacy 票重开必须被拒（exit ${FROZEN.exitCodes.E_BUG_REOPEN_LEGACY} / E_BUG_REOPEN_LEGACY），实得 exit=${res?.exit_code} / ${JSON.stringify(code)} / ${JSON.stringify(messagesOf(res?.json ?? {}).slice(0, 2))}`)
+      }
+      if (!sameSnapshot(before, after)) {
+        push('KNIFE-WROTE', `[LDG-03/legacy-reopen] 被拒的重开改写了 \`账本/缺陷/\` —— 零写入是这条拒的卖点（改动 ${JSON.stringify(Object.keys(after).filter((k) => before[k] !== after[k]).slice(0, 6))}）`)
+      }
+      if (existsSync(lock)) push('KNIFE-WROTE', '[LDG-03/legacy-reopen] 被拒的重开留下了 `.team/bug/.bug.lock` —— 判定必须在抢锁之前')
+      // 量具自检：**别的日文件**被改必须让快照变（只量一个日文件时这一格是死的）。
+      {
+        const probe = buildScene({
+          caseId: 'LDG-03', tag: 'zero-write-scope-probe',
+          days: [
+            { day: '2026-11-14', events: [eventRegistered({ seq: 1, id: 'bug-20261114-01', at: '2026-11-14T09:00:00+08:00' })] },
+            { day: '2026-11-15', events: [eventRegistered({ seq: 1, id: bugA, at: '2026-11-15T09:00:00+08:00' })] },
+          ],
+        })
+        const p0 = bugBookSnapshot(probe.root)
+        appendFileSync(path.join(probe.root, LEDGER_REL, '缺陷', '2026-11-14.json'), '\n')
+        const p1 = bugBookSnapshot(probe.root)
+        rec.readings.zero_write_scope = { files: Object.keys(p0).length, caught_other_day: !sameSnapshot(p0, p1) }
+        if (Object.keys(p0).length < 2) push('KNIFE-NO-BITE', `[LDG-03/legacy-reopen] 零写入量具只覆盖 ${Object.keys(p0).length} 份文件，量不到「别的日文件」`)
+        if (sameSnapshot(p0, p1)) push('KNIFE-NO-BITE', '[LDG-03/legacy-reopen] 改掉另一天的事件流后快照没变 —— 零写入量具只盯着一个日文件')
+      }
+    }
+    // 对照（r7）：真书副本里 `bug-20261115-06`（迁移后）照旧能重开、再处置，check 绿。
+    {
+      const { scene, env } = copyRealBook('LDG-03', 'legacy-reopen-control-06')
+      const reopened = await runRoute('LDG-03', 'bug-reopen', {
+        id: 'bug-20261115-06', reason: '夹具：迁移后的票照旧可重开（对照）', by_role: 'leader',
+      }, { workspace: scene.root, env })
+      const disposed = await runRoute('LDG-03', 'bug-dispose', {
+        id: 'bug-20261115-06', disposition: 'deferred', reason: '夹具：对照重开后的再处置', by_role: 'leader',
+        due_at: '2026-11-18', owner: '实现岗', next_step: '夹具：对照的下一步',
+      }, { workspace: scene.root, env })
+      runIndex(scene.root)
+      const run = runCheck(scene.root, ['--today=2026-11-16'])
+      rec.readings.legacy_reopen_control = {
+        root: scene.root,
+        reopen: { exit: reopened?.exit_code ?? null, event_seq: reopened?.json?.event_seq ?? null },
+        dispose: { exit: disposed?.exit_code ?? null, event_seq: disposed?.json?.event_seq ?? null },
+        check: { exit: run.exit, codes: codesOf(run.json), legacy_disposed: run.json?.legacy_disposed ?? null, chain_bug: run.json?.chain?.bug ?? null },
+      }
+      if (reopened?.exit_code !== 0) {
+        push('KNIFE-NO-BITE', `[LDG-03/legacy-reopen-control-06] 迁移后的 \`-06\` 必须照旧能重开，实得 exit=${reopened?.exit_code} / ${JSON.stringify(messagesOf(reopened?.json ?? {}).slice(0, 2))}`)
+      }
+      if (disposed?.exit_code !== 0) {
+        push('KNIFE-NO-BITE', `[LDG-03/legacy-reopen-control-06] 重开后必须能再处置，实得 exit=${disposed?.exit_code} / ${JSON.stringify(messagesOf(disposed?.json ?? {}).slice(0, 2))}`)
+      }
+      if (run.exit !== 0) {
+        push('KNIFE-NO-BITE', `[LDG-03/legacy-reopen-control-06] 对照树在重开+再处置之后必须仍绿，实得 exit=${run.exit} / ${JSON.stringify(codesOf(run.json))}`)
       }
     }
     // ⑤''' 刀（r5）：`due_at` 已过且之后没人动 ⇒ 恰好 `CHAIN-BUG-DEFERRED-OVERDUE`，点名 id + due_at

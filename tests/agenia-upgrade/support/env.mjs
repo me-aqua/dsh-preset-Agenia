@@ -707,6 +707,8 @@ export const FROZEN = {
     E_BUG_SEVERITY_THIRD_LINE_UNGROUNDED: 5,
     E_BUG_SEVERITY_ESCALATE_MISSING: 5,
     E_BUG_WRITER_ROLE: 5,
+    /** 构案 0012 §3.1（r7）：迁移 legacy 票不许重开（重开只对迁移后的票生效）。 */
+    E_BUG_REOPEN_LEGACY: 5,
     E_BUG_SAMPLE_LATE: 5,
     E_BUG_SAMPLE_REJUDGE: 5,
 

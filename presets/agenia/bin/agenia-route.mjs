@@ -1792,6 +1792,11 @@ function opBugDispose(ctx) {
  *
  * 重开 = 旧处置与旧落地计划一起作废：折叠收到这条 `registered` 后清空 `disposition` /
  * `disposed_payload`（`due_at` 随之不再有效）。之后才允许再 `bug-dispose`。
+ *
+ * 🔴 **只对迁移后的票生效**（契约 §3.1 / §5.2.1）：153 条迁移票的处置带 `历史`，是旧账的现状。
+ * 重开它们会清掉 `disposition` ⇒ `legacy_disposed` / `legacy_closed` / `deferred_open` 各少一条，
+ * 对账还会把这次合法动作报成「归档整族丢了 / 缺三个重开键 / `at` 变了」—— 读数方向反了。
+ * 要继续处理一条 legacy 票 ⇒ **新开一张票**（`bug-register`），在 `finding_refs` 里引用旧 id。
  */
 function opBugReopen(ctx) {
   const p = ctx.payload ?? {}
@@ -1801,6 +1806,21 @@ function opBugReopen(ctx) {
   if (typeof p.id !== 'string' || p.id.trim() === '') throw cliError('E_ARG_SCHEMA', 'id 必填（要重开哪一条）')
   if (typeof p.reason !== 'string' || p.reason.trim() === '') {
     throw cliError('E_ARG_SCHEMA', '重开必须带理由（reason 非空）—— 没有理由的翻面读的人没法复核')
+  }
+  /**
+   * 迁移票的拒写**跑在抢锁之前**（只读折叠）：被拒时事件流 / 锁文件 / 外壳零写入。
+   * `chain.kind === 'legacy'` 是折叠从最后一条 `disposed` 的 `历史` 派生的 —— 与读面同一份口径。
+   */
+  {
+    const state = foldBugBook({ root: bugBookRoot(ctx) }).states.find((s) => s?.id === p.id)
+    if (state?.chain?.kind === 'legacy') {
+      throw cliError(
+        'E_BUG_REOPEN_LEGACY',
+        `条目 ${p.id} 是迁移 legacy 票（处置带 \`历史\`）—— \`bug-reopen\` 只对迁移后的票生效；`
+        + '重开它会清掉旧处置，打掉 `legacy_disposed` 的现状计数、让对账把这次合法动作报成归档缺字段（契约 §3.1 / §5.2.1）。'
+        + `要继续处理这条历史 ⇒ 新开一张票并在 \`finding_refs\` 里引用 ${JSON.stringify(p.id)}。`,
+      )
+    }
   }
   return withBugLock(ctx, () => {
     if (!bugBookMode(ctx)) {
