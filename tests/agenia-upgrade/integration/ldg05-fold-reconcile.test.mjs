@@ -2,7 +2,7 @@
  * `LDG-05` —— **折叠对账：按 kind 的键宇宙，一个键都不许丢**（构案 0012 · 本票最承重的一条）。
  *
  * 契约：`.team/test/2026-11-15/CONTRACT-0012.md`（§3 事件流 · §4 折叠与对账 · §4.3 唯一实现 ·
- * §9.3 级联 · §11 刀表 K8/K8b/K9/K8c）。
+ * §9.3 级联 · §11 刀表 K8/K8b/K8c/K8d/K8e/K8f/K8g/K8h/K9）。
  *
  * 两条独立的读者，**两边都要成立**：
  *   ① 产品的 `--op reconcile`（被审方自报的那一份）；
@@ -13,15 +13,21 @@
  * 🔴 为什么不是"七格"（Gate 3 r4 · 2026-11-15）：手写字段表连续两轮比数据窄 ——
  *    r3 漏 `registered` 的四个字段，r4 漏 `assessed` 的 `fix_sketch` / `cost`。
  *    这一版比的是**数据自己的键宇宙**；K8c 逐键删，任何一个键被删都必须红。
+ * 🔴 r5 补的是**同一句话的四条腿**（第 4 关 r3 · M-2）：`disposed` 的事件键原先在折叠那一刻就被丢掉
+ *    （产品视图与 oracle 同时看不见 ⇒ 加一个 `note` 是绿的）；`assessment === null` 时条目级
+ *    `line_decision` 被分类却不进视图；`bookkeeping` 是个自由槽（现在钉成 `['author']` 并进比对面）；
+ *    两个新码原先**没有刀**（删掉代码套件仍绿）。
  */
+import { copyFileSync, mkdirSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { before, test } from 'node:test'
 import { PATHS } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
+import { caseFail, preflight, problem, runCase, runId, runRoot } from '../support/evidence.mjs'
+import { ensureMarkedDir } from '../support/root-guard.mjs'
 import {
   CHECK, FOLD_LIB, archiveEntry, archiveText, buildScene, checkToolFoldWiring, codesOf, eventAssessed,
   eventDisposed, eventRegistered, expectCodes, findArchive, foldImplementationReading, kindTableDiff,
-  messagesOf, namedIn, readJson, readOldLedger, readerWiring, reconcileOracle, runFold, runReconcile,
+  messagesOf, namedIn, readJson, readOldLedger, readerWiring, reconcileOracle, runBugRead, runFold, runReconcile,
   toolPresent, withoutEventKey,
 } from '../support/three-books.mjs'
 
@@ -95,14 +101,19 @@ const ARCHIVE_ENTRIES = BUGS.map((bug) => archiveEntry({
     line_decision: null,
     escalated_at: null,
     card_red: false,
+    // 兜底那一族（bookkeeping）的 `author`：旧账 153 条每条都有它，读面按写者身份写死 `'leader'`。
+    // 夹具**显式**写出来（不用构造器的默认值）—— 否则 K8h 删它的刀会被便利默认值关掉。
+    author: 'leader',
   },
 }))
 
 /**
  * 事件流（actual 侧）。`drop` 删一整天；`change` 换一条处置；`registeredFields` 换 A 的登记字段；
- * `dropKey` = 刀 K8c：从某条事件的 `{kind,key}` 删**一个**键。
+ * `dropKey` = 刀 K8c：从某条事件的 `{kind,key}` 删**一个**键；
+ * `dropEvent` = 刀 K8f：把某条的某一整族事件（`{id,kind}`）删掉；`disposedExtra` = 刀 K8d：往 A 的
+ * `disposed` 事件加一个键（r5 的比对面必须看得见它）。
  */
-function migratedDay({ drop = [], change = {}, registeredFields = {}, dropKey = null } = {}) {
+function migratedDay({ drop = [], change = {}, registeredFields = {}, dropKey = null, dropEvent = null, disposedExtra = {} } = {}) {
   const events = []
   for (const bug of BUGS) {
     if (drop.includes(bug.id)) continue
@@ -118,22 +129,39 @@ function migratedDay({ drop = [], change = {}, registeredFields = {}, dropKey = 
       }),
       eventDisposed({
         seq: bug.seq + 2, id: bug.id, at: disposedAt(bug.seq), value: disposition.value, reason: disposition.reason,
-        extra: { 历史: disposition.value },
+        extra: { 历史: disposition.value, ...(bug.id === BUG_A ? disposedExtra : {}) },
       }),
     )
   }
-  const sliced = dropKey === null ? events : withoutEventKey(events, dropKey)
+  const kept = dropEvent === null ? events : events.filter((e) => !(e.id === dropEvent.id && e.kind === dropEvent.kind))
+  const sliced = dropKey === null ? kept : withoutEventKey(kept, dropKey)
   return { day: '2026-11-15', events: sliced }
 }
 
+/**
+ * 刀 K8h：旧台账里 A 那一条**删一个键**（书签族的 `author` 只能在旧账侧删 —— 事件载荷里本来就没有它）。
+ * 其余两条不动：切宽了会同时红别的东西，归因就糊了。
+ */
+function archiveWithDroppedKey(keys) {
+  return ARCHIVE_ENTRIES.map((entry) => {
+    if (entry.id !== BUG_A) return entry
+    const copy = { ...entry }
+    for (const k of keys) delete copy[k]
+    return copy
+  })
+}
+
 /** 造一棵"已迁移"的树 + 一份旧台账（对账的两侧都是夹具自己写的）。 */
-function migratedScene(caseId, tag, { drop = [], change = {}, archive = true, registeredFields = {}, dropKey = null } = {}) {
+function migratedScene(caseId, tag, {
+  drop = [], change = {}, archive = true, registeredFields = {}, dropKey = null, dropEvent = null,
+  disposedExtra = {}, archiveEntries = null,
+} = {}) {
   const scene = buildScene({
     caseId, tag,
     products: [{ id: '0001', title: '产品口径样张' }],
     schemes: [{ id: '0012', title: '三册账本', parent: '0001', basisP: ['0001'], basisBug: [BUG_A, BUG_B, BUG_C] }],
-    days: [migratedDay({ drop, change, registeredFields, dropKey })],
-    files: archive ? [{ rel: '_fixture/ledger.json', text: archiveText(ARCHIVE_ENTRIES) }] : [],
+    days: [migratedDay({ drop, change, registeredFields, dropKey, dropEvent, disposedExtra })],
+    files: archive ? [{ rel: '_fixture/ledger.json', text: archiveText(archiveEntries ?? ARCHIVE_ENTRIES) }] : [],
     team: true,
   })
   return { scene, archiveFile: path.join(scene.root, '_fixture', 'ledger.json') }
@@ -192,10 +220,16 @@ test('LDG-05 折叠对账：按 kind 的键宇宙（registered/assessed/disposed
         if (rec0.json?.compared !== 3) push('FOLD-TOTAL-MISMATCH', `[LDG-05/good] reconcile.compared 实得 ${JSON.stringify(rec0.json?.compared)}，期望 3`)
         const drift = kindTableDiff(rec0.json?.kinds, oracle.kinds)
         if (drift.length > 0) push('FOLD-ORACLE-DISAGREES', `[LDG-05/good] 工具与 oracle 的 kinds 不是同一张表：${JSON.stringify(drift.slice(0, 6))}（契约 §4.2-4）`)
-        // 三族各自的记录数（旧台账侧）：3 / 3 / 3
-        for (const kind of ['registered', 'assessed', 'disposed']) {
+        // 四族各自的记录数（旧台账侧）：3 / 3 / 3 / 3（兜底那一族也是 3）
+        for (const kind of ['registered', 'assessed', 'disposed', 'bookkeeping']) {
           const n = rec0.json?.kinds?.[kind]?.compared ?? null
           if (n !== 3) push('FOLD-TOTAL-MISMATCH', `[LDG-05/good] kinds.${kind}.compared 实得 ${JSON.stringify(n)}，期望 3`)
+        }
+        // 分类表：`bookkeeping` 必须是钉死的一格（不是自由槽）——把兜底族印出来，读的人不用猜
+        const partition = rec0.json?.archive_key_partition ?? null
+        rec.readings.good.partition = partition
+        if (JSON.stringify(partition?.bookkeeping) !== JSON.stringify(['author'])) {
+          push('FOLD-ARCHIVE-KEY-UNCLASSIFIED', `[LDG-05/good] 旧账分类表的 bookkeeping 实得 ${JSON.stringify(partition?.bookkeeping ?? null)}，期望 ["author"] —— 它是自由槽的话，新键塞进去就不在比对面里了`)
         }
       }
     }
@@ -267,6 +301,114 @@ test('LDG-05 折叠对账：按 kind 的键宇宙（registered/assessed/disposed
         push('NOT-NAMED', `[LDG-05/k8c ${kind}.${key}] 报文点名了没动过的 B/C —— 刀切宽了`)
       }
     }
+    // ── ②''' 刀 K8d（r5）：往 `disposed` 事件加一个键 ⇒ 比对面必须看得见它 ─────────────
+    // 这条腿钉的是 2026-11-15 第 4 关 r3 · M-2：折叠只留 `disposition` 四格 + `chain` 时，事件的其它键
+    // 在产品视图与测试 oracle 里**同时**消失 —— 那时这一格是绿的（"比数据窄"的原样复发）。
+    {
+      const { scene, archiveFile } = migratedScene('LDG-05', 'k8d-disposed-extra', { disposedExtra: { note: '刀：这一格不许在折叠时丢掉' } })
+      const fold = runFold(scene.root)
+      const recD = runReconcile(scene.root, { archive: archiveFile })
+      const oracle = reconcileOracle({ entries: ARCHIVE_ENTRIES, states: fold.json?.states ?? [] })
+      rec.readings['k8d-disposed-extra'] = {
+        fold: { exit: fold.exit, codes: codesOf(fold.json) },
+        reconcile: { exit: recD.exit, codes: codesOf(recD.json), messages: messagesOf(recD.json).map((m) => m.slice(0, 240)) },
+        oracle: { ok: oracle.ok, missing_keys: oracle.missing_keys },
+      }
+      if (expectCodes(problems, recD, ['FOLD-FIELD-MISSING'], push, { label: 'LDG-05/k8d-disposed-extra' })) {
+        const namedField = (recD.json?.problems ?? []).some((p) => p.code === 'FOLD-FIELD-MISSING'
+          && p.field === 'note' && p.kind === 'disposed' && String(p.id) === BUG_A)
+        if (!namedField) push('NOT-NAMED', `[LDG-05/k8d-disposed-extra] 红了但不是 \`FOLD-FIELD-MISSING\` 点名 ${BUG_A}/disposed.note：${JSON.stringify(codesOf(recD.json))}`)
+        if (namedIn(recD.json, BUG_B) || namedIn(recD.json, BUG_C)) push('NOT-NAMED', '[LDG-05/k8d-disposed-extra] 报文点名了没动过的 B/C —— 刀切宽了')
+        if (!oracle.missing_keys.some((k) => k.id === BUG_A && k.field === 'note' && k.kind === 'disposed')) {
+          push('FOLD-ORACLE-DISAGREES', `[LDG-05/k8d-disposed-extra] 测试自己的 oracle 没看见 disposed 少了一个键：${JSON.stringify(oracle.missing_keys)}`)
+        }
+      }
+    }
+    // ── ②'''' 刀 K8e（r5）：旧台账出现一个**没分类**的键 ⇒ 恰好 `FOLD-ARCHIVE-KEY-UNCLASSIFIED` ──
+    // 两个样本：`foo`（随便一个新键）与 `author_note`（往**书签那个槽**里塞 —— 槽被钉死成 `['author']`，
+    // 所以它照样是"没分类"，不许因为长得像 bookkeeping 就静默进兜底）。
+    rec.readings['k8e-unclassified'] = {}
+    for (const extraKey of ['foo', 'author_note']) {
+      const altered = ARCHIVE_ENTRIES.map((entry) => (entry.id === BUG_A ? { ...entry, [extraKey]: '刀：这个键没分类' } : entry))
+      const { scene, archiveFile } = migratedScene('LDG-05', `k8e-${extraKey}`, { archiveEntries: altered })
+      const recE = runReconcile(scene.root, { archive: archiveFile })
+      rec.readings['k8e-unclassified'][extraKey] = {
+        exit: recE.exit, codes: codesOf(recE.json), messages: messagesOf(recE.json).map((m) => m.slice(0, 200)),
+      }
+      if (expectCodes(problems, recE, ['FOLD-ARCHIVE-KEY-UNCLASSIFIED'], push, { label: `LDG-05/k8e-${extraKey}` })) {
+        const namedKey = (recE.json?.problems ?? []).some((p) => p.code === 'FOLD-ARCHIVE-KEY-UNCLASSIFIED' && p.field === extraKey)
+        if (!namedKey) push('NOT-NAMED', `[LDG-05/k8e-${extraKey}] 报文没有点名没分类的那个键 ${extraKey}`)
+        if (!namedIn(recE.json, BUG_A)) push('NOT-NAMED', `[LDG-05/k8e-${extraKey}] 报文没有点名带这个键的那条 ${BUG_A}`)
+      }
+    }
+    // ── ②''''' 刀 K8f（r5）：删掉 A 的**一整族**（`assessed` 事件）⇒ 恰好 `FOLD-KIND-MISSING` ───
+    // 整族丢不是"某个键丢"：`FOLD-TOTAL-MISMATCH` 不许跟着红（记录还在，族没了）。
+    {
+      const { scene, archiveFile } = migratedScene('LDG-05', 'k8f-missing-assessed', { dropEvent: { id: BUG_A, kind: 'assessed' } })
+      const recF = runReconcile(scene.root, { archive: archiveFile })
+      rec.readings['k8f-missing-assessed'] = {
+        exit: recF.exit, codes: codesOf(recF.json), messages: messagesOf(recF.json).map((m) => m.slice(0, 240)),
+      }
+      if (expectCodes(problems, recF, ['FOLD-KIND-MISSING'], push, { label: 'LDG-05/k8f-missing-assessed' })) {
+        const namedKind = (recF.json?.problems ?? []).some((p) => p.code === 'FOLD-KIND-MISSING'
+          && p.kind === 'assessed' && String(p.id) === BUG_A)
+        if (!namedKind) push('NOT-NAMED', `[LDG-05/k8f-missing-assessed] 报文没有点名 ${BUG_A}/assessed（"少了一族"不算）`)
+        if (namedIn(recF.json, BUG_B) || namedIn(recF.json, BUG_C)) push('NOT-NAMED', '[LDG-05/k8f-missing-assessed] 报文点名了没动过的 B/C —— 刀切宽了')
+      }
+    }
+    // ── ②'''''' 刀 K8g（r5）：`assessment: null` + 条目级 `line_decision` ⇒ 那一格**在比对面里** ──
+    // 旧实现在 `assessment === null` 时提前 return：条目级 `line_decision` 被分类却永远看不到
+    // ⇒ 这一格当时是绿的。现在它必须在（`assessed` 视图存在、事件流没有这一族 ⇒ `FOLD-KIND-MISSING`）。
+    {
+      const entry = archiveEntry({
+        id: BUG_A, phenomenon: '夹具现象甲', value: 'adopted', reason: '甲已落地', at: disposedAt(1),
+        extra: {
+          registered_at: registeredAt(1),
+          assessment: null,
+          line_decision: { value: null, by_role: 'leader', at: '2026-11-15T12:00:00+08:00' },
+          escalated_at: null,
+          card_red: false,
+          author: 'leader',
+        },
+      })
+      const scene = buildScene({
+        caseId: 'LDG-05', tag: 'k8g-null-assessment',
+        days: [{
+          day: '2026-11-15',
+          events: [
+            eventRegistered({ seq: 1, id: BUG_A, phenomenon: '夹具现象甲', at: registeredAt(1) }),
+            eventDisposed({ seq: 2, id: BUG_A, at: disposedAt(1), value: 'adopted', reason: '甲已落地', extra: { 历史: 'adopted' } }),
+          ],
+        }],
+        files: [{ rel: '_fixture/ledger.json', text: archiveText([entry]) }],
+        team: true,
+      })
+      const archiveFile = path.join(scene.root, '_fixture', 'ledger.json')
+      const recG = runReconcile(scene.root, { archive: archiveFile })
+      rec.readings['k8g-null-assessment'] = {
+        root: scene.root, exit: recG.exit, codes: codesOf(recG.json), messages: messagesOf(recG.json).map((m) => m.slice(0, 240)),
+      }
+      if (expectCodes(problems, recG, ['FOLD-KIND-MISSING'], push, { label: 'LDG-05/k8g-null-assessment' })) {
+        const namedKind = (recG.json?.problems ?? []).some((p) => p.code === 'FOLD-KIND-MISSING'
+          && p.kind === 'assessed' && String(p.id) === BUG_A)
+        if (!namedKind) push('NOT-NAMED', `[LDG-05/k8g-null-assessment] 条目级 line_decision 没有进比对面（报文：${JSON.stringify(messagesOf(recG.json).slice(0, 4))}）`)
+      }
+    }
+    // ── ②''''''' 刀 K8h（r5）：旧账删掉书签族的 `author` ⇒ `FOLD-FIELD-MISSING` 点名 bookkeeping.author ──
+    // 兜底那一族进了比对面，删它必须红 —— 否则它只是换了个名字的自由槽。
+    {
+      const { scene, archiveFile } = migratedScene('LDG-05', 'k8h-bookkeeping-author', { archiveEntries: archiveWithDroppedKey(['author']) })
+      const recH = runReconcile(scene.root, { archive: archiveFile })
+      rec.readings['k8h-bookkeeping-author'] = {
+        exit: recH.exit, codes: codesOf(recH.json), messages: messagesOf(recH.json).map((m) => m.slice(0, 240)),
+      }
+      if (expectCodes(problems, recH, ['FOLD-FIELD-MISSING'], push, { label: 'LDG-05/k8h-bookkeeping-author' })) {
+        const namedField = (recH.json?.problems ?? []).some((p) => p.code === 'FOLD-FIELD-MISSING'
+          && p.kind === 'bookkeeping' && p.field === 'author' && String(p.id) === BUG_A)
+        if (!namedField) push('NOT-NAMED', `[LDG-05/k8h-bookkeeping-author] 红了但不是 \`FOLD-FIELD-MISSING\` 点名 ${BUG_A}/bookkeeping.author：${JSON.stringify(codesOf(recH.json))}`)
+        if (namedIn(recH.json, BUG_B) || namedIn(recH.json, BUG_C)) push('NOT-NAMED', '[LDG-05/k8h-bookkeeping-author] 报文点名了没动过的 B/C —— 刀切宽了')
+      }
+    }
     // ── ③ 刀 K9：删掉一条缺陷的整天事件 ⇒ 对账必须点名"少了哪一条"（不许只报少 1 条）──────
     {
       const { scene, archiveFile } = migratedScene('LDG-05', 'k9-lost', { drop: [BUG_C] })
@@ -311,6 +453,69 @@ test('LDG-05 折叠对账：按 kind 的键宇宙（registered/assessed/disposed
       const dup = foldImplementationReading({ repo: fake.root })
       rec.readings.dup_impl = dup
       if (dup.hits.length !== 2) push('KNIFE-NO-BITE', `[LDG-05/dup-impl] 假仓库里放了两处定义，判据实得 ${dup.hits.length} 处 —— 这条静态腿不咬（契约 §4.3-a）`)
+    }
+    // ── ④' `bug-read` 的**读回腿**（r5）：真 CLI → 折叠 → `assessed_payload`，三条抽样非空 ──────────
+    // 为什么走真 CLI：`cost` / `fix_sketch` 之前只被静态核过（`ledgerFromBugBook:580-588` 从
+    // `assessed_payload` 取），盘上三份 `_tmp/bug-read-real*.json` 快照里那两格还是 `null`
+    // —— "数据里有键"与"读面真返回"是两件事（2026-11-15 第 4 关 r3 · N-2）。
+    // 为什么把真账本拷进夹具根：`bug-read` 在测试模式里只认带 marker 的根（根守卫），而它又是
+    // **零写入**的只读入口 —— 拷一份 12 个事件流文件进运行根，跑的仍是真 CLI + 真折叠 + 真数据。
+    {
+      const samples = ['bug-20261103-01', 'bug-20261103-02', 'bug-20261103-03']
+      const scene = buildScene({ caseId: 'LDG-05', tag: 'bug-read', team: true })
+      ensureMarkedDir(scene.root, { runRoot: runRoot(), runId: runId(), kind: 'agenia-test-root' })
+      const srcDir = path.join(PATHS.repo, '账本', '缺陷')
+      const dstDir = path.join(scene.root, '账本', '缺陷')
+      mkdirSync(dstDir, { recursive: true })
+      const copied = []
+      for (const name of readdirSync(srcDir).sort()) {
+        if (!name.endsWith('.json')) continue
+        copyFileSync(path.join(srcDir, name), path.join(dstDir, name))
+        copied.push(name)
+      }
+      const run = runBugRead(scene.root)
+      const entries = Array.isArray(run.json?.ledger?.entries) ? run.json.ledger.entries : null
+      rec.readings.bug_read = {
+        root: scene.root,
+        copied_days: copied.length,
+        exit: run.exit,
+        json_error: run.json_error,
+        stdout_head: run.stdout_head,
+        entries: entries === null ? null : entries.length,
+        samples: entries === null ? null : samples.map((id) => {
+          const e = entries.find((x) => x.id === id)
+          return {
+            id,
+            found: e !== undefined,
+            cost: e?.assessment?.cost === null || e?.assessment?.cost === undefined ? null : 'non-null',
+            fix_sketch: e?.assessment?.fix_sketch === null || e?.assessment?.fix_sketch === undefined ? null : 'non-null',
+            how_seen: typeof e?.how_seen === 'string' && e.how_seen.trim() !== '',
+            evidence: Array.isArray(e?.evidence) && e.evidence.length > 0,
+          }
+        }),
+      }
+      if (run.json === null) {
+        push('JSON-UNPARSEABLE', `[LDG-05/bug-read] 真 CLI 的 \`--op bug-read\` 输出解析不了（${run.json_error}）· stderr=${JSON.stringify(run.stderr_head)}`)
+      } else if (entries === null) {
+        push('FOLD-TOTAL-MISMATCH', `[LDG-05/bug-read] 输出里没有 \`ledger.entries\`（${JSON.stringify(run.stdout_head)}）—— 读面没有走折叠（契约 §4.3）`)
+      } else {
+        for (const id of samples) {
+          const e = entries.find((x) => x.id === id)
+          if (e === undefined) {
+            push('FOLD-TOTAL-MISMATCH', `[LDG-05/bug-read] 抽样 ${id} 不在读面的 ${entries.length} 条里 —— 记录丢了`)
+            continue
+          }
+          const assessment = e.assessment ?? null
+          if (assessment === null) {
+            push('FOLD-FIELD-MISSING', `[LDG-05/bug-read] ${id} 的 \`assessment\` 是 null —— assessed 那一族没进读面`)
+            continue
+          }
+          if (assessment.cost === null || assessment.cost === undefined) push('FOLD-FIELD-MISSING', `[LDG-05/bug-read] ${id} 的 \`assessment.cost\` 是 null —— 122 条逐字回填没到读面`)
+          if (assessment.fix_sketch === null || assessment.fix_sketch === undefined) push('FOLD-FIELD-MISSING', `[LDG-05/bug-read] ${id} 的 \`assessment.fix_sketch\` 是 null —— 122 条逐字回填没到读面`)
+          if (typeof e.how_seen !== 'string' || e.how_seen.trim() === '') push('FOLD-FIELD-MISSING', `[LDG-05/bug-read] ${id} 的 \`how_seen\` 读回来是空的`)
+          if (!Array.isArray(e.evidence) || e.evidence.length === 0) push('FOLD-FIELD-MISSING', `[LDG-05/bug-read] ${id} 的 \`evidence\` 读回来是空的`)
+        }
+      }
     }
     // ── ⑤ 真树：153 条逐条对上（工具 + oracle 两边）+ 三族全键 + 归档在盘上 ──────────────
     {
@@ -365,8 +570,8 @@ test('LDG-05 折叠对账：按 kind 的键宇宙（registered/assessed/disposed
             if (rec4.json?.compared !== 153) push('FOLD-TOTAL-MISMATCH', `[真树] reconcile.compared 实得 ${JSON.stringify(rec4.json?.compared)}，期望 153`)
             if ((rec4.json?.diffs ?? []).length !== 0) push('FOLD-DIFF', `[真树] reconcile.diffs 非空：${JSON.stringify((rec4.json.diffs ?? []).slice(0, 10))}`)
             if (rec4.json?.legacy_disposed !== 153) push('LEGACY-COUNT-DRIFT', `[真树] legacy_disposed 实得 ${JSON.stringify(rec4.json?.legacy_disposed)}，期望 153`)
-            // 三族的旧台账侧计数（归档是回滚点，计数不随事件流增长而变）
-            const need = { registered: 153, assessed: 122, disposed: 153 }
+            // 四族的旧台账侧计数（归档是回滚点，计数不随事件流增长而变）
+            const need = { registered: 153, assessed: 122, disposed: 153, bookkeeping: 153 }
             for (const [kind, count] of Object.entries(need)) {
               const got = rec4.json?.kinds?.[kind]?.archive_records ?? null
               if (got !== count) push('FOLD-TOTAL-MISMATCH', `[真树] kinds.${kind}.archive_records 实得 ${JSON.stringify(got)}，期望 ${count}`)

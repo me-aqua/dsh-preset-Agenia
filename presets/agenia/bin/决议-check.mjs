@@ -127,14 +127,24 @@ export function runFold({ root }) {
 }
 
 /**
- * 对账的三族（= 缺陷事件的三个 kind，契约 §3.1）。
+ * 对账的**四族**：缺陷事件的三个 kind（`registered` / `assessed` / `disposed`）+ **兜底那一族**
+ * `bookkeeping`（旧台账的册级书签）。
  *
  * 🔴 **比对面不手写**：按 kind 取「旧台账视图 ∪ 事件载荷」的**键宇宙**，逐键比。
  * 为什么（2026-11-15 第 4 关 r2 · M-5/M-6）：手写的七字段表已经两次比数据窄 ——
  * 上一轮漏 `registered` 的四个字段，这一轮漏 `assessed` 的 `fix_sketch` / `cost`。
  * 手写表只要有人加字段就再漏一次；键宇宙是从数据自己长出来的（契约 §4.2）。
+ *
+ * 🔴 `bookkeeping` 为什么也进比对面（2026-11-15 第 4 关 r3 · M-2）：它是唯一一个**旧台账有、事件里没有**
+ * 的族（读面按写者身份写死 `'leader'`）。不把它变成一族，它就是一个自由槽：把新键往这里一塞，
+ * `FOLD-ARCHIVE-KEY-UNCLASSIFIED` 就绿了，而键不在比对面 —— 同一个病换门口。现在这一族的期望侧是
+ * 「旧账的 `author`」，实际侧是「读面会写死的那个常量」：153 条里有一条不是 `'leader'`，折叠就把它
+ * 静默替换掉了 ⇒ 那一格当场红（`FOLD-DIFF`），不是绿。
  */
-export const RECONCILE_KINDS = Object.freeze(['registered', 'assessed', 'disposed'])
+export const RECONCILE_KINDS = Object.freeze(['registered', 'assessed', 'disposed', 'bookkeeping'])
+
+/** 读面给每条缺陷写死的书签值（`ledgerFromBugBook` 的 `author: 'leader'`）——兜底那一族的实际侧。 */
+export const BOOKKEEPING_AUTHOR = 'leader'
 
 /** 事件信封：`seq` / `kind` 是流的结构，不是记录字段（形状由折叠判 `BUG-EVENT-SHAPE`）。 */
 export const EVENT_ENVELOPE_KEYS = Object.freeze(['seq', 'kind'])
@@ -158,7 +168,9 @@ const REGISTERED_KEYS = Object.freeze({
  *   · `assessed`   —— 评估那一族：嵌套的 `assessment.*` + **条目级**的 `line_decision` /
  *                     `escalated_at` / `card_red`（读面 `ledgerFromBugBook` 从 `assessed_payload` 取它们）；
  *   · `disposed`   —— 处置那一族：`disposition.*`；
- *   · `bookkeeping`—— `author`：读面按写者身份写死 `'leader'`，不在事件载荷里（旧台账每条都有）。
+ *   · `bookkeeping`—— **钉死**成 `['author']`：读面按写者身份写死 `'leader'`，它不在事件载荷里。
+ *     这一格不许当自由槽：往这里塞一个新键，`FOLD-ARCHIVE-KEY-UNCLASSIFIED` 就绿了，而它**不在**比对面
+ *     —— 那正是"比对面比数据窄"换一个门口复发（2026-11-15 第 4 关 r3 · M-2）。
  * 分类表**不是比对面**：比的是每一族视图里**实际出现的键的并集**。分类只保证"旧台账新加一个键，
  * 要么进某一族、要么当场红"，不让它静默落在比较面之外。
  */
@@ -192,6 +204,14 @@ export function canonicalJson(value) {
  *   · `assessment.*` / `disposition.*` 摊平 / 整体搬（嵌套载荷）；
  *   · `历史: disposition.value` —— 旧台账里的每条处置都是**迁移前**写的，
  *     所以它在事件里必然带 `历史`（契约 §3.2）；这是本对账唯一一处补值。
+ *   · `disposition.at` → `at`（改名）：`disposed` 事件的顶层 `at` 就是处置那一刻，
+ *     旧台账把同一个值记在 `disposition.at` 里 —— 与 `registered_at → at` 同一条规则。
+ *
+ * `assessed` 这一族的**存在条件**（2026-11-15 第 4 关 r3 · M-2）：`assessment` 非空，**或**条目级三格
+ * 里有一个带信息（`line_decision` 在 / `escalated_at` 非空 / `card_red === true`）。为什么不是
+ * "`assessment` 非空"一条：旧台账每条都有 `escalated_at` / `card_red` 两个键（31 条没有评估的记成
+ * `null` / `false`），那是**行默认值**不是数据 —— 拿它当"这一族存在"会把 31 条读成"事件流丢了整族"。
+ * 反过来，`line_decision` 是"没有正式评估也落了决定"的唯一载体：它在这一族里，就必须能被看见。
  */
 export function archiveKindView(entry, kind) {
   const view = {}
@@ -203,48 +223,58 @@ export function archiveKindView(entry, kind) {
     return view
   }
   if (kind === 'assessed') {
-    // 旧台账 31 条没有 `assessment`（`null`）—— 那一族对它们**不存在**（不是"空视图"）。
-    if (!hasOwn(entry, 'assessment') || entry.assessment === null) return view
+    const hasAssessment = hasOwn(entry, 'assessment') && entry.assessment !== null
+    const extras = ['line_decision', 'escalated_at', 'card_red']
+      .filter((k) => hasOwn(entry, k) && !(entry[k] === null || entry[k] === false))
+    // 旧台账 31 条没有 `assessment`（`null`）且条目级三格全是行默认值 ⇒ 那一族对它们**不存在**（不是"空视图"）。
+    if (!hasAssessment && extras.length === 0) return view
     if (hasOwn(entry, 'id')) view.id = entry.id
-    for (const [k, v] of Object.entries(entry.assessment)) view[k] = v
+    if (hasAssessment) for (const [k, v] of Object.entries(entry.assessment)) view[k] = v
     for (const k of ['line_decision', 'escalated_at', 'card_red']) {
       if (hasOwn(entry, k)) view[k] = entry[k]
     }
     return view
   }
   // disposed
-  if (hasOwn(entry, 'id')) view.id = entry.id
-  if (hasOwn(entry, 'disposition')) {
-    view.disposition = entry.disposition
-    if (entry.disposition !== null && hasOwn(entry.disposition, 'value')) view['历史'] = entry.disposition.value
+  if (kind === 'disposed') {
+    if (hasOwn(entry, 'id')) view.id = entry.id
+    if (hasOwn(entry, 'disposition')) {
+      view.disposition = entry.disposition
+      if (entry.disposition !== null && hasOwn(entry.disposition, 'value')) view['历史'] = entry.disposition.value
+      if (entry.disposition !== null && hasOwn(entry.disposition, 'at')) view.at = entry.disposition.at
+    }
+    return view
   }
+  // bookkeeping（兜底那一族）：旧账的册级书签，**只搬 `author`**（分类表钉死的一个键）
+  if (hasOwn(entry, 'id')) view.id = entry.id
+  if (hasOwn(entry, 'author')) view.author = entry.author
   return view
 }
 
 /**
  * 折叠出来的现状在某个 kind 下的**视图**（actual 侧）。
- * `registered` / `assessed` 的载荷原件就在 state 上（`registered_payload` / `assessed_payload`，
- * 折叠逐字带出来）；`disposed` 没有载荷原件 —— 折叠留下的是**解析过的** `disposition` 与 `chain`，
- * 视图从这两处还原（`历史` / `构案` / `判假` 由 `chain.kind` 选择），不再回写事件。
+ * 三族都读折叠带出来的**载荷原件**（`registered_payload` / `assessed_payload` / `disposed_payload`）：
+ * 事件里有几个键，视图里就有几个键，只剔除信封的 `seq` / `kind`。**不许**在这里按字段名挑拣 ——
+ * 挑掉一个键，产品视图与测试 oracle 就同时看不见它（2026-11-15 第 4 关 r3 · M-2）。
  */
 export function eventKindView(state, kind) {
   if (state === null || typeof state !== 'object') return null
-  if (kind === 'registered' || kind === 'assessed') {
-    const payload = kind === 'registered' ? state.registered_payload : state.assessed_payload
-    if (payload === null || typeof payload !== 'object') return null
-    const view = {}
-    for (const [k, v] of Object.entries(payload)) {
-      if (EVENT_ENVELOPE_KEYS.includes(k)) continue
-      view[k] = v
-    }
-    return view
+  if (kind === 'bookkeeping') {
+    // 兜底那一族：事件载荷里**没有**这一格；读面给每条记录写死 `author: 'leader'`。
+    // 实际侧就是读面会写出来的那个值 —— 旧账里有一条不是它，这里就红（数据会在折叠时被静默替换掉）。
+    if (state.registered_payload === null || typeof state.registered_payload !== 'object') return null
+    return { id: state.id, author: BOOKKEEPING_AUTHOR }
   }
-  if (state.disposition === null || state.disposition === undefined) return null
-  const view = { id: state.id, disposition: state.disposition }
-  const chain = state.chain ?? { kind: null }
-  if (chain.kind === 'legacy') view['历史'] = chain.ref
-  if (chain.kind === 'scheme') view['构案'] = chain.ref
-  if (chain.kind === 'judged_false') view['判假'] = chain.ref
+  const payload = kind === 'registered' ? state.registered_payload
+    : kind === 'assessed' ? state.assessed_payload
+      : kind === 'disposed' ? state.disposed_payload
+        : null
+  if (payload === null || typeof payload !== 'object') return null
+  const view = {}
+  for (const [k, v] of Object.entries(payload)) {
+    if (EVENT_ENVELOPE_KEYS.includes(k)) continue
+    view[k] = v
+  }
   return view
 }
 
@@ -352,6 +382,8 @@ export function runReconcile({ root, archive }) {
     ok: false, root: path.resolve(root), op: 'reconcile', archive: archive ?? null,
     archive_entries: 0, folded_states: 0, compared: 0, legacy_disposed: 0,
     kinds: {}, post_migration: [], diffs: [], problems: [],
+    /** 分类表本身也印出来：`bookkeeping` 是不是被钉死、哪一族收哪些旧账键，读的人不用猜。 */
+    archive_key_partition: Object.fromEntries(Object.entries(ARCHIVE_KEY_PARTITION).map(([k, v]) => [k, [...v]])),
   }
   if (typeof archive !== 'string' || archive === '' || !existsSync(archive)) {
     out.problems.push(problem('FOLD-ARCHIVE-MISSING', `对账的旧台账读不出来：${JSON.stringify(archive ?? null)} —— `
@@ -829,9 +861,22 @@ export function runSupersede({ root, oldRef, byRef, dryRun = false }) {
 }
 
 // ── op: check ──────────────────────────────────────────────────────────────
-/** 三册现状 + 六族判词。读数里链的四段（`parent` + 三条链）与 `legacy_disposed` **必须在**（契约 §10.1）。 */
-export function runCheck({ root }) {
-  const scan = scanLedger(root)
+/** 缺陷链的**五组**读数（契约 §10.1）：`closed 52 / deferred 104` 那种混桶读数在这里被拆开。 */
+function chainBugLine(bug) {
+  if (bug === null || bug === undefined) return '链·缺陷：（读数缺失）'
+  return `链·缺陷：closed_by_scheme ${bug.closed_by_scheme ?? '—'} · closed_judged_false ${bug.closed_judged_false ?? '—'} · `
+    + `legacy_closed ${bug.legacy_closed ?? '—'} · deferred_open ${bug.deferred_open ?? '—'} · legacy_frozen ${bug.legacy_frozen ?? '—'}`
+    + `（合计 closed ${bug.closed ?? '—'} = 前三组 / deferred ${bug.deferred ?? '—'} = 后两组；`
+    + `其中结构化 due_at 的暂缓 ${bug.deferred_open_structured ?? '—'} 条）`
+}
+
+/**
+ * 三册现状 + 六族判词。读数里链的四段（`parent` + 三条链）与 `legacy_disposed` **必须在**（契约 §10.1）；
+ * `chain.bug` 按五组印（`closed_by_scheme` / `closed_judged_false` / `legacy_closed` / `deferred_open` /
+ * `legacy_frozen`），`--today` 是那条「暂缓过期」判据的注入时钟（缺省 = 本机今天）。
+ */
+export function runCheck({ root, today = undefined }) {
+  const scan = today === undefined || today === null ? scanLedger(root) : scanLedger(root, { today })
   return {
     ok: scan.ok,
     root: scan.root,
@@ -854,7 +899,10 @@ export function runCheck({ root }) {
 
 // ── 命令行 ─────────────────────────────────────────────────────────────────
 export const ARG_SPEC = {
-  value: { '--op': 'op', '--root': 'root', '--card': 'card', '--by': 'by', '--day': 'day', '--role': 'role', '--build': 'build', '--archive': 'archive' },
+  value: {
+    '--op': 'op', '--root': 'root', '--card': 'card', '--by': 'by', '--day': 'day', '--role': 'role',
+    '--build': 'build', '--archive': 'archive', '--today': 'today',
+  },
   flag: { '--json': 'json', '--dry-run': 'dryRun' },
   defaults: { op: 'check' },
   positional: true,
@@ -878,6 +926,8 @@ export function main(argv = process.argv.slice(2)) {
     process.exit(3)
   }
   if (!OPS.has(args.op)) usage(`--op ${JSON.stringify(args.op)} 不认识（只认 ${[...OPS].join(' / ')}）`)
+  // `--today` 是「暂缓过期」那条判据的注入时钟：形状与真实存在都要判（`2026-02-30` 不是一天）。
+  if (args.today !== null && !dayShapeOk(args.today)) usage(`--today ${JSON.stringify(args.today)} 不是一个真日期（要 YYYY-MM-DD）`)
   const root = args.root === null ? REPO_ROOT : path.resolve(args.root)
   let rootOk = true
   try {
@@ -930,7 +980,7 @@ export function main(argv = process.argv.slice(2)) {
           return runReconcile({ root: p.root, archive: args.archive })
         }
           : runCheck
-  const out = runner({ root })
+  const out = runner({ root, today: args.today })
   if (args.json) {
     process.stdout.write(`${JSON.stringify(out, null, 2)}\n`)
   } else if (out.ok) {
@@ -941,9 +991,12 @@ export function main(argv = process.argv.slice(2)) {
     else {
       process.stdout.write(`决议-check OK · 产品 ${out.books.产品.entries} 条 · 缺陷 ${out.books.缺陷.entries} 条 · 构案 ${out.books.构案.entries} 条 · `
         + `legacy_disposed ${out.legacy_disposed}\n`)
+      process.stdout.write(`${chainBugLine(out.chain?.bug)}\n`)
     }
   } else {
     for (const p of out.problems) process.stdout.write(`${p.code}${p.file ? ` ${p.file}` : ''}: ${p.message}\n`)
+    // 红了也要印链读数：判据红的时候，读的人第一件事是问"哪一组变了"。
+    if (args.op === 'check') process.stdout.write(`${chainBugLine(out.chain?.bug)}\n`)
     process.stdout.write(`决议-check ${out.problems.length} 处未成立\n`)
   }
   process.exit(out.ok ? 0 : 1)

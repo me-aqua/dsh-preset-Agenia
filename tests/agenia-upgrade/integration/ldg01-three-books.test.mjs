@@ -51,10 +51,10 @@ function goodLedger(over = {}) {
 }
 
 /** 造树 → 跑 `--op index`（派生三张页）→ 跑 `--op check`；读数收进 `rec.readings[tag]`。 */
-function checkScene(problems, rec, { caseId, tag, spec }) {
+function checkScene(problems, rec, { caseId, tag, spec, checkArgs = [] }) {
   const scene = buildScene({ caseId, tag, ...spec })
   const idx = runIndex(scene.root)
-  const run = runCheck(scene.root)
+  const run = runCheck(scene.root, checkArgs)
   rec.readings[tag] = {
     root: scene.root,
     index: { exit: idx.exit, codes: codesOf(idx.json), json_error: idx.json_error },
@@ -492,7 +492,8 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
       }
     }
     // ⑤' `deferred`（暂缓）是**未结**：没有 `构案` / `判假` / `历史` 也不许红。
-    // 这是"开票先记下、以后再做"的正常路径；把暂缓判成链断掉，会让每张新票都红（2026-11-15 实测）。
+    // 但一张暂缓必须是**可执行的延期**（结构化 `due_at` + `owner` + `next_step`）。
+    // 时钟注入：`--today=2026-11-15` 钉住「过期」判据的输入，不然这条夹具在 11-21 之后会自己变红。
     {
       const deferredOnly = {
         days: [{
@@ -500,16 +501,106 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
           events: [
             eventRegistered({ seq: 1, id: bugA }),
             eventAssessed({ seq: 2, id: bugA, verdict: 'true' }),
-            eventDisposed({ seq: 3, id: bugA, value: 'deferred', reason: '到期 2026-11-20 · 暂缓，还没有落点' }),
+            eventDisposed({
+              seq: 3, id: bugA, value: 'deferred', reason: '到期 2026-11-20 · 暂缓，落点见结构字段',
+              extra: { due_at: '2026-11-20', owner: '实现岗', next_step: '先给契约加一行，再实现' },
+            }),
           ],
         }],
       }
-      const { run } = checkScene(problems, rec, { caseId: 'LDG-03', tag: 'deferred-open', spec: goodLedger({ schemes: schemeKillsA, ...deferredOnly }) })
+      const { run } = checkScene(problems, rec, {
+        caseId: 'LDG-03', tag: 'deferred-open', spec: goodLedger({ schemes: schemeKillsA, ...deferredOnly }),
+        checkArgs: ['--today=2026-11-15'],
+      })
       if (expectCodes(problems, run, [], push, { label: 'LDG-03/deferred-open' })) {
         const chain = run.json?.chain?.bug ?? null
         rec.readings.deferred_open = chain
         if (chain?.deferred !== 1) push('CHAIN-READING-MISSING', `[LDG-03/deferred-open] chain.bug.deferred 实得 ${JSON.stringify(chain?.deferred)}，期望 1（暂缓单独数，不算关上了）`)
         if (chain?.closed !== 0) push('CHAIN-READING-MISSING', `[LDG-03/deferred-open] chain.bug.closed 实得 ${JSON.stringify(chain?.closed)}，期望 0（deferred 不是结论）`)
+        // 五组读数（契约 §10.1 r5）：这一棵树只有一条暂缓、没有结论
+        const want = { closed_by_scheme: 0, closed_judged_false: 0, legacy_closed: 0, deferred_open: 1, legacy_frozen: 0 }
+        for (const [k, v] of Object.entries(want)) {
+          if (chain?.[k] !== v) push('CHAIN-READING-MISSING', `[LDG-03/deferred-open] chain.bug.${k} 实得 ${JSON.stringify(chain?.[k] ?? null)}，期望 ${v}`)
+        }
+        if (chain?.deferred_open_structured !== 1) push('CHAIN-READING-MISSING', `[LDG-03/deferred-open] chain.bug.deferred_open_structured 实得 ${JSON.stringify(chain?.deferred_open_structured ?? null)}，期望 1`)
+      }
+    }
+    // ⑤'' 刀（r5）：暂缓缺 `owner` ⇒ 恰好 `DEFERRED-NO-LANDING-PLAN`（不许静默通过）
+    {
+      const spec = {
+        days: [{
+          day: '2026-11-15',
+          events: [
+            eventRegistered({ seq: 1, id: bugA }),
+            eventAssessed({ seq: 2, id: bugA, verdict: 'true' }),
+            eventDisposed({
+              seq: 3, id: bugA, value: 'deferred', reason: '到期 2026-11-20 · 暂缓',
+              extra: { due_at: '2026-11-20', next_step: '先给契约加一行，再实现' },
+            }),
+          ],
+        }],
+      }
+      const { run } = checkScene(problems, rec, {
+        caseId: 'LDG-03', tag: 'deferred-no-owner', spec: goodLedger({ schemes: schemeKillsA, ...spec }),
+        checkArgs: ['--today=2026-11-15'],
+      })
+      rec.readings.deferred_no_owner = { exit: run.exit, codes: codesOf(run.json), messages: messagesOf(run.json).map((m) => m.slice(0, 240)) }
+      if (expectCodes(problems, run, ['DEFERRED-NO-LANDING-PLAN'], push, { label: 'LDG-03/deferred-no-owner' })) {
+        if (!namedIn(run.json, bugA)) push('NOT-NAMED', '[LDG-03/deferred-no-owner] 报文必须点名缺 owner 的那条缺陷')
+        const p = (run.json?.problems ?? []).find((x) => x.code === 'DEFERRED-NO-LANDING-PLAN')
+        if (JSON.stringify(p?.missing) !== JSON.stringify(['owner'])) push('NOT-NAMED', `[LDG-03/deferred-no-owner] 报文要点名缺的那一格 owner，实得 ${JSON.stringify(p?.missing ?? null)}`)
+      }
+    }
+    // ⑤''' 刀（r5）：`due_at` 已过且之后没人动 ⇒ 恰好 `CHAIN-BUG-DEFERRED-OVERDUE`，点名 id + due_at
+    {
+      const overdue = {
+        days: [{
+          day: '2026-11-10',
+          events: [
+            eventRegistered({ seq: 1, id: bugA, at: '2026-11-10T09:00:00+08:00' }),
+            eventAssessed({ seq: 2, id: bugA, at: '2026-11-10T10:00:00+08:00', verdict: 'true' }),
+            eventDisposed({
+              seq: 3, id: bugA, at: '2026-11-10T11:00:00+08:00', value: 'deferred', reason: '到期 2026-11-12 · 暂缓',
+              extra: { due_at: '2026-11-12', owner: '实现岗', next_step: '先给契约加一行，再实现' },
+            }),
+          ],
+        }],
+      }
+      const { run } = checkScene(problems, rec, {
+        caseId: 'LDG-03', tag: 'deferred-overdue', spec: goodLedger({ schemes: schemeKillsA, ...overdue }),
+        checkArgs: ['--today=2026-11-15'],
+      })
+      rec.readings.deferred_overdue = { exit: run.exit, codes: codesOf(run.json), chain_bug: run.json?.chain?.bug ?? null }
+      if (expectCodes(problems, run, ['CHAIN-BUG-DEFERRED-OVERDUE'], push, { label: 'LDG-03/deferred-overdue' })) {
+        const p = (run.json?.problems ?? []).find((x) => x.code === 'CHAIN-BUG-DEFERRED-OVERDUE')
+        if (!namedIn(run.json, bugA)) push('NOT-NAMED', '[LDG-03/deferred-overdue] 报文必须点名过期的那条缺陷')
+        if (p?.due_at !== '2026-11-12') push('NOT-NAMED', `[LDG-03/deferred-overdue] 报文要点名 due_at 2026-11-12，实得 ${JSON.stringify(p?.due_at ?? null)}`)
+      }
+    }
+    // ⑤'''' 阳性格（r5）：同一棵树把今天拨回到到期日之前 ⇒ 不许红（刀不许永远红）
+    {
+      const overdue = {
+        days: [{
+          day: '2026-11-10',
+          events: [
+            eventRegistered({ seq: 1, id: bugA, at: '2026-11-10T09:00:00+08:00' }),
+            eventAssessed({ seq: 2, id: bugA, at: '2026-11-10T10:00:00+08:00', verdict: 'true' }),
+            eventDisposed({
+              seq: 3, id: bugA, at: '2026-11-10T11:00:00+08:00', value: 'deferred', reason: '到期 2026-11-12 · 暂缓',
+              extra: { due_at: '2026-11-12', owner: '实现岗', next_step: '先给契约加一行，再实现' },
+            }),
+          ],
+        }],
+      }
+      const { run } = checkScene(problems, rec, {
+        caseId: 'LDG-03', tag: 'deferred-not-yet-due', spec: goodLedger({ schemes: schemeKillsA, ...overdue }),
+        checkArgs: ['--today=2026-11-12'],
+      })
+      rec.readings.deferred_not_yet_due = { exit: run.exit, codes: codesOf(run.json) }
+      if (expectCodes(problems, run, [], push, { label: 'LDG-03/deferred-not-yet-due' })) {
+        // 到期的**当天**不算过期（日期比较是 `<`），过期那一天起才红
+        const chain = run.json?.chain?.bug ?? null
+        if (chain?.deferred_open !== 1) push('CHAIN-READING-MISSING', `[LDG-03/deferred-not-yet-due] chain.bug.deferred_open 实得 ${JSON.stringify(chain?.deferred_open ?? null)}，期望 1`)
       }
     }
     // ⑥ 真树：legacy_disposed = 153（旧台账的每一条处置都显式标成历史）+ 本族 0 码
@@ -526,6 +617,26 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
         const chain = run.json?.chain?.bug ?? null
         if (chain === null) push('CHAIN-READING-MISSING', '[真树] check 的读数里没有 chain.bug')
         else if (chain.unresolved !== 0) push('CHAIN-BUG-NO-SCHEME', `[真树] chain.bug.unresolved = ${JSON.stringify(chain.unresolved)}（实得 ${JSON.stringify(chain)}）`)
+        // 五组真树读数（契约 §10.1 r5）：156 = 52 结论（全是 legacy）+ 104 暂缓（3 新 + 43 冻结 + 58 legacy 散文）
+        if (chain !== null) {
+          const want = {
+            closed_by_scheme: 0, closed_judged_false: 0, legacy_closed: 52,
+            deferred_open: 61, legacy_frozen: 43, deferred_open_structured: 3,
+          }
+          for (const [k, v] of Object.entries(want)) {
+            if (chain[k] !== v) push('CHAIN-READING-MISSING', `[真树] chain.bug.${k} 实得 ${JSON.stringify(chain[k] ?? null)}，期望 ${v}`)
+          }
+          // 算术闭合：closed = 前三组；deferred = 后两组；两数和 = 有处置的条数
+          if (chain.closed !== chain.closed_by_scheme + chain.closed_judged_false + chain.legacy_closed) {
+            push('CHAIN-READING-MISSING', `[真树] chain.bug.closed ${JSON.stringify(chain.closed)} ≠ 三组之和 ${chain.closed_by_scheme + chain.closed_judged_false + chain.legacy_closed}`)
+          }
+          if (chain.deferred !== chain.deferred_open + chain.legacy_frozen) {
+            push('CHAIN-READING-MISSING', `[真树] chain.bug.deferred ${JSON.stringify(chain.deferred)} ≠ deferred_open + legacy_frozen ${chain.deferred_open + chain.legacy_frozen}`)
+          }
+          if (chain.closed + chain.deferred !== 156) {
+            push('CHAIN-READING-MISSING', `[真树] closed ${chain.closed} + deferred ${chain.deferred} 实得 ${chain.closed + chain.deferred}，期望 156（每一条处置都在某一组里）`)
+          }
+        }
       }
     }
 

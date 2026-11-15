@@ -39,6 +39,7 @@ export const GEN_MARKER = '<!-- 生成物 · 由 node presets/agenia/bin/决议-
 /** 检查器 / 折叠库 / 制度文档（契约 §0 / §8）。 */
 export const CHECK = path.join(PATHS.repo, 'presets', 'agenia', 'bin', '决议-check.mjs')
 export const CENSUS = path.join(PATHS.repo, 'presets', 'agenia', 'bin', 'census.mjs')
+export const ROUTE = path.join(PATHS.repo, 'presets', 'agenia', 'bin', 'agenia-route.mjs')
 export const FOLD_LIB = path.join(PATHS.repo, 'presets', 'agenia', 'lib', '缺陷折叠.mjs')
 export const ROSTER_DOC = path.join(PATHS.repo, 'presets', 'agenia', '决策账本.md')
 export const CORDIS = path.join(PATHS.repo, 'presets', 'agenia', 'agent.cordis.yml')
@@ -78,15 +79,21 @@ export const LEDGER_READERS = Object.freeze([
 ])
 
 /**
- * 对账的**三族**（= 缺陷事件的三个 kind，契约 §3.1/§4.2）。
+ * 对账的**四族**（= 缺陷事件的三个 kind + 兜底的书签族，契约 §3.1/§4.2）。
  *
  * 🔴 比对面**不手写字段表**（Gate 3 r4 · 2026-11-15）：按 kind 取「旧台账视图 ∪ 事件视图」的
  * **键宇宙**，逐键比 identical / missing / differing。上一版手写的七字段表已经两次比数据窄
  * （漏 `registered` 四字段、漏 `assessed` 的 fix_sketch / cost）。
  * 测试侧这份是**同一规则的手写实现**（不 import 产品那份）：产品那份把比对面改窄时，
  * 两边的 `kinds.*.keys` 键集合会对不上 ⇒ `FOLD-ORACLE-DISAGREES`（一把刀切"规则"，不切"值"）。
+ *
+ * `bookkeeping`（r5）是兜底那一族：旧账的册级书签 `author`，事件载荷里没有它 —— 读面按写者身份
+ * 写死 `BOOKKEEPING_AUTHOR`。期望侧 = 旧账的 `author`；实际侧 = 读面会写出来的那个常量。
  */
-export const ORACLE_KINDS = Object.freeze(['registered', 'assessed', 'disposed'])
+export const ORACLE_KINDS = Object.freeze(['registered', 'assessed', 'disposed', 'bookkeeping'])
+
+/** 读面给每条缺陷写死的书签值（测试侧手写；与产品侧那个常量各自独立）。 */
+export const BOOKKEEPING_AUTHOR = 'leader'
 
 /** 旧台账键 → 本族键（改名表；与产品侧同一张，但这里是期望侧手写的）。 */
 export const ORACLE_ARCHIVE_RENAMES = Object.freeze({
@@ -421,6 +428,16 @@ export function runCardLand(root, { card, day = '2026-11-15', role = 'test', ext
     'card-land',
   )
 }
+/**
+ * `agenia-route.mjs --op bug-read --workspace=<root>`（**真 CLI**，只读）。
+ *
+ * 为什么要走真入口而不是只读源代码（2026-11-15 第 4 关 r3 · N-2）：`bug-read` 的
+ * `cost` / `fix_sketch` 只被静态核过，盘上三份 `_tmp/bug-read-real*.json` 快照里那两格还是 `null`。
+ * 这条腿断言的是**活路径**：真 CLI → `ledgerFromBugBook` → `assessed_payload`。
+ */
+export function runBugRead(root) {
+  return summarize(runNode([ROUTE, '--op', 'bug-read', `--workspace=${root}`]), `bug-read --workspace=${root}`)
+}
 
 // ── 读数小工具（与 `decision-ledger.mjs` 同形；那边是单册的出口，这里不 import 它以免两处漂）──
 
@@ -561,39 +578,49 @@ function oracleArchiveView(entry, kind) {
     return view
   }
   if (kind === 'assessed') {
-    if (!hasOwnKey(entry, 'assessment') || entry.assessment === null) return view
+    // 与产品侧同一条存在条件：`assessment` 非空，或条目级三格里有一个**带信息**。
+    // 旧账每条都有 `escalated_at: null` / `card_red: false` 两个行默认值 —— 那不是数据。
+    const hasAssessment = hasOwnKey(entry, 'assessment') && entry.assessment !== null
+    const extras = ['line_decision', 'escalated_at', 'card_red']
+      .filter((k) => hasOwnKey(entry, k) && !(entry[k] === null || entry[k] === false))
+    if (!hasAssessment && extras.length === 0) return view
     if (hasOwnKey(entry, 'id')) view.id = entry.id
-    for (const [k, v] of Object.entries(entry.assessment)) view[k] = v
+    if (hasAssessment) for (const [k, v] of Object.entries(entry.assessment)) view[k] = v
     for (const k of ['line_decision', 'escalated_at', 'card_red']) if (hasOwnKey(entry, k)) view[k] = entry[k]
     return view
   }
-  if (hasOwnKey(entry, 'id')) view.id = entry.id
-  if (hasOwnKey(entry, 'disposition')) {
-    view.disposition = entry.disposition
-    if (entry.disposition !== null && hasOwnKey(entry.disposition, 'value')) view['历史'] = entry.disposition.value
-  }
-  return view
-}
-
-/** 折叠状态在某个 kind 下的视图（载荷原件在 state 上；disposed 由 disposition + chain 还原）。 */
-function oracleEventView(state, kind) {
-  if (state === null || typeof state !== 'object') return null
-  if (kind === 'registered' || kind === 'assessed') {
-    const payload = kind === 'registered' ? state.registered_payload : state.assessed_payload
-    if (payload === null || typeof payload !== 'object') return null
-    const view = {}
-    for (const [k, v] of Object.entries(payload)) {
-      if (k === 'seq' || k === 'kind') continue
-      view[k] = v
+  if (kind === 'disposed') {
+    if (hasOwnKey(entry, 'id')) view.id = entry.id
+    if (hasOwnKey(entry, 'disposition')) {
+      view.disposition = entry.disposition
+      if (entry.disposition !== null && hasOwnKey(entry.disposition, 'value')) view['历史'] = entry.disposition.value
+      if (entry.disposition !== null && hasOwnKey(entry.disposition, 'at')) view.at = entry.disposition.at
     }
     return view
   }
-  if (state.disposition === null || state.disposition === undefined) return null
-  const view = { id: state.id, disposition: state.disposition }
-  const chain = state.chain ?? { kind: null }
-  if (chain.kind === 'legacy') view['历史'] = chain.ref
-  if (chain.kind === 'scheme') view['构案'] = chain.ref
-  if (chain.kind === 'judged_false') view['判假'] = chain.ref
+  // bookkeeping（兜底）：只搬 `author`
+  if (hasOwnKey(entry, 'id')) view.id = entry.id
+  if (hasOwnKey(entry, 'author')) view.author = entry.author
+  return view
+}
+
+/** 折叠状态在某个 kind 下的视图（三族都读折叠带出来的**载荷原件**；兜底读面写死的常量）。 */
+function oracleEventView(state, kind) {
+  if (state === null || typeof state !== 'object') return null
+  if (kind === 'bookkeeping') {
+    if (state.registered_payload === null || typeof state.registered_payload !== 'object') return null
+    return { id: state.id, author: BOOKKEEPING_AUTHOR }
+  }
+  const payload = kind === 'registered' ? state.registered_payload
+    : kind === 'assessed' ? state.assessed_payload
+      : kind === 'disposed' ? state.disposed_payload
+        : null
+  if (payload === null || typeof payload !== 'object') return null
+  const view = {}
+  for (const [k, v] of Object.entries(payload)) {
+    if (k === 'seq' || k === 'kind') continue
+    view[k] = v
+  }
   return view
 }
 

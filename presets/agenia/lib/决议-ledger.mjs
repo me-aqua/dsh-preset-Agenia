@@ -1683,13 +1683,61 @@ export function judgeProductChain(decisions, problems) {
   return { resolved: decisions.filter((d) => d.book === '产品' && d.status === '生效').length - unresolved, unresolved }
 }
 
-/** §5.2 缺陷 → 构案。三种记账之一即可；悬空 / 不对称各自成码。
- *
- * `deferred`（暂缓）是**未结**，不是结论：它的落点就是延迟本身（`disposition.reason` 里写到期与负责人），
- * 不要求 `构案` / `判假` / `历史`。只有 `adopted` / `rejected` 是结论、必须有着落 ——
- * 否则「今天先记下、下周再做」这条正常的开票路径会被判成链断了（2026-11-15 实测：三张 deferred 票红三条）。
+/** 非空字符串（`null` / `undefined` / 空串 / 全空白都不算）。 */
+const filledValue = (v) => typeof v === 'string' && v.trim() !== ''
+
+/** 今天的**本地日期**（`YYYY-MM-DD`）——注入时钟的缺省值；判据要能换成夹具那一天。 */
+export function todayLocal(now = new Date()) {
+  const p = (n) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`
+}
+
+/**
+ * 迁移那一批给「冻结为历史」写的**声明字面量**。它不是日期判据（不从理由里抠日期，那是第二套真相），
+ * 只认这一个声明词：写了它 = 这条处置自己说它是终态、没有到期日。
  */
-export function judgeBugChain(decisions, states, problems) {
+const LEGACY_FROZEN_MARKER = '无到期日'
+
+/** 一条 legacy 的 `deferred` 有没有声明自己是终态冻结。 */
+function isFrozenMarked(state) {
+  return String(state?.disposition?.reason ?? '').includes(LEGACY_FROZEN_MARKER)
+}
+
+/**
+ * 这条暂缓**过期了吗**：`due_at` 的日期部分早于 `today`，且之后没有重开（`registered_at`）或再处置
+ * （`disposition.at`）。返回过期的那个日期（`YYYY-MM-DD`）或 `null`。
+ *
+ * 边界：legacy 的暂缓**不参与**（迁移前写的，没有结构化 `due_at` 可补）；`due_at` 读不成真日期 ⇒ 判不了
+ * （那是折叠的 `DEFERRED-NO-LANDING-PLAN` 的事，不在这一条里叠报）。
+ */
+function overdueDayOf(state, today) {
+  if (state?.chain?.kind === 'legacy') return null
+  const due = state?.disposed_payload?.due_at
+  if (!filledValue(due)) return null
+  const dueDay = due.slice(0, 10)
+  if (!isRealDate(dueDay) || !isRealDate(today)) return null
+  if (!(dueDay < today)) return null
+  const lastDay = [state.registered_at, state.disposition?.at]
+    .map((v) => (typeof v === 'string' ? v.slice(0, 10) : ''))
+    .sort()
+    .pop()
+  if (typeof lastDay === 'string' && isRealDate(lastDay) && lastDay > dueDay) return null
+  return dueDay
+}
+
+/** 一条缺陷的三种记账之一即可；悬空 / 不对称各自成码。
+ *
+ * `deferred`（暂缓）是**未结**，不是结论：它的落点就是延迟本身，但延迟必须**可执行** ——
+ * 结构化 `due_at` / `owner` / `next_step` 由折叠判（`DEFERRED-NO-LANDING-PLAN`），这里判**过期**：
+ * `due_at` 的日期部分早于今天、且之后没有重开 / 再处置过 ⇒ `CHAIN-BUG-DEFERRED-OVERDUE`。
+ * 迁移那一批（`历史: deferred`）没有结构化 `due_at`，不在这条规则的射程里，也不进 `deferred_open`
+ * （2026-11-15 第 4 关 r3 · M-1）。
+ *
+ * 读数按**五组**印（`closed_by_scheme` / `closed_judged_false` / `legacy_closed` / `deferred_open` /
+ * `legacy_frozen`）：`closed 52 / deferred 104` 那一版把「历史冻结」和「新开的待办」混成一个数，
+ * 让「还有多少条开着」永远读不准。`closed` / `deferred` 保留为两组之和，算术可核对。
+ */
+export function judgeBugChain(decisions, states, problems, { today = todayLocal() } = {}) {
   let unresolved = 0
   const liveSchemes = decisions.filter((d) => d.book === '构案' && d.status === '生效')
   for (const s of states) {
@@ -1713,18 +1761,40 @@ export function judgeBugChain(decisions, states, problems) {
       }
       continue
     }
-    // 暂缓 = 未结：延迟本身就是它的落点（到期与负责人在 reason 里）。结论才要求有着落。
-    if (s.disposition.value === 'deferred') continue
+    // 暂缓 = 未结：延迟本身就是它的落点（到期 / 归属 / 下一步是结构化的三格）。结论才要求有着落。
+    if (s.disposition.value === 'deferred') {
+      const overdue = overdueDayOf(s, today)
+      if (overdue !== null) {
+        problems.push(problem('CHAIN-BUG-DEFERRED-OVERDUE', `缺陷 ${s.id} 的暂缓到期日 ${overdue} 已经过去、之后没有重开或再处置 —— `
+          + '到期没动就不是延期的完成态，要么做、要么重新定一个到期日（契约 §5.2）', { id: s.id, due_at: overdue }))
+      }
+      continue
+    }
     unresolved += 1
     problems.push(problem('CHAIN-BUG-NO-SCHEME', `缺陷 ${s.id} 已经处置（${s.disposition.value}），但既不指向构案、也不判假、也不标历史 —— `
       + '关上的缺陷必须有一个着落（契约 §5.2）', { ref: s.id, id: s.id }))
   }
-  // `closed` = **有结论**的条数（adopted / rejected）；`deferred` 是未结，单独数 ——
-  // 把暂缓算进"关上了"会让"还有多少条开着"这个读数永远偏低（2026-11-15 立）。
-  const concluded = states.filter((s) => s.disposition !== null && s.disposition !== undefined && s.disposition.value !== 'deferred')
-  const deferred = states.filter((s) => s.disposition !== null && s.disposition !== undefined && s.disposition.value === 'deferred')
-  const closed = concluded.length
-  return { resolved: closed - unresolved, unresolved, closed, deferred: deferred.length }
+  const withDisposition = states.filter((s) => s.disposition !== null && s.disposition !== undefined)
+  const concluded = withDisposition.filter((s) => s.disposition.value !== 'deferred')
+  const deferredStates = withDisposition.filter((s) => s.disposition.value === 'deferred')
+  const closedByScheme = concluded.filter((s) => s.chain.kind === 'scheme').length
+  const closedJudgedFalse = concluded.filter((s) => s.chain.kind === 'judged_false').length
+  const legacyClosed = concluded.filter((s) => s.chain.kind === 'legacy').length
+  const legacyFrozen = deferredStates.filter((s) => s.chain.kind === 'legacy' && isFrozenMarked(s)).length
+  const deferredOpen = deferredStates.length - legacyFrozen
+  return {
+    resolved: closedByScheme + closedJudgedFalse + legacyClosed,
+    unresolved,
+    closed: closedByScheme + closedJudgedFalse + legacyClosed,
+    deferred: deferredStates.length,
+    closed_by_scheme: closedByScheme,
+    closed_judged_false: closedJudgedFalse,
+    legacy_closed: legacyClosed,
+    deferred_open: deferredOpen,
+    legacy_frozen: legacyFrozen,
+    /** `deferred_open` 里带**结构化** `due_at` 的条数（过期判据只够得着这些；其余是 legacy 的散文到期日）。 */
+    deferred_open_structured: deferredStates.filter((s) => s.chain.kind !== 'legacy' && filledValue(s.disposed_payload?.due_at)).length,
+  }
 }
 
 // ── 文件级 `依据:`（§5.3 / §6 / §10.2）──────────────────────────────────────
@@ -1824,7 +1894,7 @@ export function judgeFileBasis(root, decisions, problems) {
  * @returns {{ok, root, ledger_present, old_tree_present, books, decisions, states, problems,
  *            chain, legacy_disposed, concepts, table}}
  */
-export function scanLedger(root) {
+export function scanLedger(root, { today = todayLocal() } = {}) {
   const problems = []
   const ledgerDir = path.join(root, LEDGER_REL)
   const ledgerPresent = isDir(ledgerDir)
@@ -1838,7 +1908,7 @@ export function scanLedger(root) {
     }
     return {
       ok: problems.length === 0, root: path.resolve(root), ledger_present: false, old_tree_present: oldTree,
-      books: empty, decisions: [], states: [], problems, chain: { parent: { checked: 0, unresolved: 0 }, product: { resolved: 0, unresolved: 0 }, bug: { resolved: 0, unresolved: 0, closed: 0 }, file: { checked: 0, unresolved: 0 } },
+      books: empty, decisions: [], states: [], problems, chain: { parent: { checked: 0, unresolved: 0 }, product: { resolved: 0, unresolved: 0 }, bug: { resolved: 0, unresolved: 0, closed: 0, deferred: 0, closed_by_scheme: 0, closed_judged_false: 0, legacy_closed: 0, deferred_open: 0, legacy_frozen: 0, deferred_open_structured: 0 }, file: { checked: 0, unresolved: 0 } },
       legacy_disposed: 0, concepts: [], table: { present: false, rows: [], problems: [] },
     }
   }
@@ -1857,9 +1927,9 @@ export function scanLedger(root) {
     productIdsOnDisk: new Set(read.产品.ids_on_disk),
     schemeIdsOnDisk: new Set(read.构案.ids_on_disk),
   })
-  const chain = { parent: parentChain, product: { resolved: 0, unresolved: 0 }, bug: { resolved: 0, unresolved: 0, closed: 0 }, file: { checked: 0, unresolved: 0 } }
+  const chain = { parent: parentChain, product: { resolved: 0, unresolved: 0 }, bug: { resolved: 0, unresolved: 0, closed: 0, deferred: 0, closed_by_scheme: 0, closed_judged_false: 0, legacy_closed: 0, deferred_open: 0, legacy_frozen: 0, deferred_open_structured: 0 }, file: { checked: 0, unresolved: 0 } }
   chain.product = judgeProductChain(decisions, problems)
-  chain.bug = judgeBugChain(decisions, read.缺陷.states, problems)
+  chain.bug = judgeBugChain(decisions, read.缺陷.states, problems, { today })
   chain.file = judgeFileBasis(root, decisions, problems)
   // 概念普查（概念表在 `账本/概念表.md`；它坏了也不影响三册结构，所以只印读数）
   const { table, rows } = conceptRows(root, decisions)

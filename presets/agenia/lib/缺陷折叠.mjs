@@ -13,11 +13,16 @@
  *   · `phenomenon` / `entry_kind` / `registered_at` 取**最后一条** `registered`（重开一次就换新现象）；
  *   · `assessed` 取**最后一条** `assessed`（`verdict` 许 `null`：那是"这一格没记"，不是 `unknown`）；
  *   · `disposition` 取**最后一条** `disposed` 的原件（`.reason` 逐字 —— 读者不许自己解释它）；
+ *   · `disposed_payload` = 那条 `disposed` 事件的**原件**（与 `registered_payload` / `assessed_payload` 同形）：
+ *     对账的「事件视图」从它逐字展开 —— 折叠只负责带出来，**不许**在折叠这一步就把事件的键筛掉
+ *     （2026-11-15 第 4 关 r3 · M-2：筛掉的键在产品视图与测试 oracle 里同时消失，比对面就比数据窄）；
  *   · `chain` 由那条 `disposed` 的三格派生：`构案` → `scheme` · `判假` → `judged_false` · `历史` → `legacy`；
  *   · **只追加**机器判得了的那一半：同一条票两个 `disposed` 而中间没有新的 `registered` ⇒ `BUG-FOLD-CONFLICT`。
  *     「昨天那份文件今天有没有被改过」没有历史可比，本库**不假装**判得了（契约 §3.1 末条）。
  *
- * 判词码（契约 §9.1）：`BUG-EVENT-SHAPE`（点名文件 + seq + 哪一格）· `BUG-FOLD-CONFLICT`（id + 两个 seq）。
+ * 判词码（契约 §9.1）：`BUG-EVENT-SHAPE`（点名文件 + seq + 哪一格）· `BUG-FOLD-CONFLICT`（id + 两个 seq）·
+ * `DEFERRED-NO-LANDING-PLAN`（非 `历史` 的 `deferred` 缺 `due_at` / `owner` / `next_step` 之一 —— 这样的处置
+ * 是「以后再说」，不是一张可执行的延期；2026-11-15 第 4 关 r3 · M-1）。
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
@@ -42,6 +47,18 @@ const filled = (v) => typeof v === 'string' && v.trim() !== ''
 /** `at` 能不能解析（ISO 8601；`Date.parse` 认不出来的就是"没记"）。 */
 function atOk(value) {
   return typeof value === 'string' && value.trim() !== '' && Number.isFinite(Date.parse(value))
+}
+
+/** 一个 ISO 值的**日期部分**（`YYYY-MM-DD`；读不出来就是空串）。 */
+const dayOf = (value) => (typeof value === 'string' ? value.slice(0, 10) : '')
+
+/** `due_at` 能不能当**到期日**用：有真实存在的日期部分（`2026-11-17` 或带时间的 ISO 都收）。 */
+function dueOk(value) {
+  if (typeof value !== 'string') return false
+  const day = dayOf(value)
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(day)) return false
+  const t = Date.parse(`${day}T00:00:00Z`)
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === day
 }
 
 function listDir(dir) {
@@ -143,6 +160,7 @@ export function foldBugBook({ root }) {
            */
           registered_payload: null,
           assessed_payload: null,
+          disposed_payload: null,
         }
         byId.set(id, state)
       }
@@ -189,11 +207,28 @@ export function foldBugBook({ root }) {
         continue
       }
       if (!shapeOk) continue
+      // 暂缓（`deferred`）不是结论，但必须是**一张可执行的延期**：到期日 + 负责人 + 下一步。
+      // 迁移那一批（带 `历史`）不在这条规则的射程里 —— 它们写于三册之前，没有结构化字段可补，
+      // 也不该被读成"今天开的待办"（2026-11-15 第 4 关 r3 · M-1）。
+      const legacyRef = filled(event['历史']) ? event['历史'] : null
+      if (d.value === 'deferred' && legacyRef === null) {
+        const missing = []
+        if (!dueOk(event.due_at)) missing.push('due_at')
+        if (!filled(event.owner)) missing.push('owner')
+        if (!filled(event.next_step)) missing.push('next_step')
+        if (missing.length > 0) {
+          // 处置本身是事实（照收），但它不是一张可执行的延期 ⇒ 单独一个码，不从状态里抹掉。
+          problems.push(problem('DEFERRED-NO-LANDING-PLAN', `${id} 的 ${where} 写着 \`disposition.value = deferred\` 却缺 ${missing.join(' / ')} —— `
+            + '暂缓要写结构化 `due_at`（可解析日期）+ `owner`（非空）+ `next_step`（非空）：没有这三格它是一条'
+            + '「永远不落地」的通道，不是延期（契约 §5.2）', { file, seq, id, missing }))
+        }
+      }
       state.disposition = { value: d.value, reason: d.reason, by: d.by, at: d.at }
+      state.disposed_payload = { ...event }
       state.last_disposed_seq = seq
       const scheme = filled(event['构案']) ? event['构案'] : null
       const judgedFalse = filled(event['判假']) ? event['判假'] : null
-      const legacy = filled(event['历史']) ? event['历史'] : null
+      const legacy = legacyRef
       state.chain = scheme !== null ? { kind: 'scheme', ref: scheme }
         : judgedFalse !== null ? { kind: 'judged_false', ref: judgedFalse }
           : legacy !== null ? { kind: 'legacy', ref: legacy }
