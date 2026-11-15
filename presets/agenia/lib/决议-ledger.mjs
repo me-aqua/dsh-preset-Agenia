@@ -48,6 +48,15 @@ export const PRODUCT_KEYS = Object.freeze(['层级', '主题', '日期', '拍板
 export const SCHEME_KEYS = Object.freeze([...PRODUCT_KEYS, '父', '依据P', '依据bug'])
 /** 产品与构案共有的那七个键（旧单册口径，`parseDecisionText` 的缺省值）。 */
 export const DECISION_KEYS = Object.freeze(['状态', '主题', '日期', '拍板人', '原话', 'supersedes', 'superseded_by'])
+/**
+ * 构案正文的七节（**只判在不在**，次序不判；产品正文是自由散文，不判这七节 —— 0012 §②-2）。
+ * 节名与旧单册同名同义（0012 §③「复用什么」把这条正文形态留了下来）。
+ */
+export const BODY_SECTIONS = Object.freeze(['背景', '决定', '复用什么', '不复用什么', '新增什么', '公共化时点', '反悔条件'])
+/** ⑦ 反悔条件那张表的四列（逐字、次序逐字；0012 §③ 复用）。 */
+export const REVERSAL_COLUMNS = Object.freeze(['编号', '条件', '触发时动作', '状态'])
+/** 动作列必须说得出这三种处置之一（否则"触发时做什么"读不出来）。 */
+export const REVERSAL_ACTION_WORDS = /(supersede|重开|打回)/u
 /** 缺陷 id 的形状（契约 §2.2 的 `依据bug` 元素）。 */
 export const BUG_ID = /^bug-\d{8}-\d{2,}$/
 /** 缺陷册的文件名形状（一天一个 JSON，契约 §1.2）。 */
@@ -1039,6 +1048,110 @@ export function parseDecisionText(text, { relFile, book, id, nameTitle, keys = D
   return out
 }
 
+// ── 构案正文形态（0012 §③：七节 + ⑦ 四列表）────────────────────────────────
+/**
+ * `## ⑤ 新增什么` ⇒ `新增什么`（去掉编号前缀；节名要**包含**七节名之一）。
+ *
+ * 只认 `##` 二级标题（`###` / 围栏代码块里的 `##` 不算正文节）。
+ */
+function sectionHeading(line) {
+  const m = /^\s{0,3}##\s+(.*)$/u.exec(line)
+  if (m === null) return null
+  return m[1].replace(/^[①-⑦⑧⑨⑩]+\s*/u, '').replace(/^\d+[.、)]\s*/u, '').trim()
+}
+
+/** 这一节的标题是否就是 `name` 那一节（`不复用什么` 不许被当成 `复用什么`）。 */
+function headingIs(heading, name) {
+  let probe = heading
+  for (const other of BODY_SECTIONS) {
+    if (other !== name && other !== '复用什么' && probe.includes(other)) return false
+  }
+  if (name === '复用什么') probe = probe.replace(/不复用什么/u, '')
+  return probe.includes(name)
+}
+
+/**
+ * 构案正文的形态（0012 §③ 那一族的**唯一**实现；`readDecisionFile` 只调这一处）。
+ *
+ * 判两件：
+ *   ① 七节 `## ① …`…`## ⑦ …` 各在不在 —— 缺一节一条 `BODY-SECTION-MISSING`；
+ *   ② ⑦ 那一节下是一张 **4 列**表（列名逐字 `编号 / 条件 / 触发时动作 / 状态`），且
+ *      「触发时动作」那格含 `supersede` / `重开` / `打回` 之一 —— 表不在 ⇒ `REVERSAL-TABLE-MISSING`，
+ *      列/行不合形状 ⇒ `REVERSAL-ROW-SHAPE`。
+ *
+ * 级联（契约 §9.3 同一口径）：**⑦ 那一节不在** ⇒ 只报 `BODY-SECTION-MISSING`，不补"表缺"。
+ * 产品册**不要求**这两节（0012 §②-2：产品 = 原话 + 影响面，不是七节模板）。
+ *
+ * @returns {{sections:string[], reversalRows:Array<object>, problems:Array<object>}}
+ */
+export function parseBodyShape(book, bodyLines, relFile) {
+  const problems = []
+  const found = []
+  const spans = []
+  let fenced = false
+  for (let k = 0; k < bodyLines.length; k += 1) {
+    const line = bodyLines[k]
+    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue }
+    if (fenced) continue
+    const heading = sectionHeading(line)
+    if (heading === null) continue
+    const hit = BODY_SECTIONS.find((name) => headingIs(heading, name))
+    if (hit !== undefined && !found.includes(hit)) {
+      found.push(hit)
+      spans.push({ name: hit, from: k })
+    }
+  }
+  const sections = BODY_SECTIONS.filter((name) => found.includes(name))
+  if (book !== '构案') return { sections, reversalRows: [], problems }
+  const missing = BODY_SECTIONS.filter((name) => !found.includes(name))
+  for (const name of missing) {
+    problems.push(problem('BODY-SECTION-MISSING', `${relFile} 的正文缺 \`## ${name}\` 这一节 —— `
+      + '构案的正文是这七节（0012 §③；只判在不在，次序不判）', { file: relFile }))
+  }
+  const reversal = spans.find((s) => s.name === '反悔条件')
+  if (reversal === undefined) return { sections, reversalRows: [], problems }
+  const after = spans.filter((s) => s.from > reversal.from).map((s) => s.from)
+  const end = after.length === 0 ? bodyLines.length : Math.min(...after)
+  const slice = bodyLines.slice(reversal.from + 1, end)
+  const table = firstTable(slice, 0)
+  if (table === null) {
+    problems.push(problem('REVERSAL-TABLE-MISSING', `${relFile} 的 ⑦ 反悔条件下没有表 —— 这一节必须是 `
+      + `\`| 编号 | 条件 | 触发时动作 | 状态 |\` 四列表（0012 §③）`, { file: relFile }))
+    return { sections, reversalRows: [], problems }
+  }
+  if (table.columns.length !== REVERSAL_COLUMNS.length || table.columns.some((c, i) => c !== REVERSAL_COLUMNS[i])) {
+    problems.push(problem('REVERSAL-ROW-SHAPE', `${relFile} 的 ⑦ 表列名不是 ${JSON.stringify(REVERSAL_COLUMNS)}`
+      + `（实得 ${JSON.stringify(table.columns)}）—— 四列逐字、次序也逐字（0012 §③）`, { file: relFile }))
+    return { sections, reversalRows: [], problems }
+  }
+  const reversalRows = []
+  const ids = new Set()
+  table.rows.forEach((cells) => {
+    if (cells.length !== REVERSAL_COLUMNS.length) {
+      problems.push(problem('REVERSAL-ROW-SHAPE', `${relFile} 的 ⑦ 表有一行是 ${cells.length} 格，应当是 4 格`
+        + `（${JSON.stringify(cells)}）—— 缺格会让「状态」静默变成空`, { file: relFile }))
+      return
+    }
+    const [idCell, condition, action, status] = cells
+    const why = []
+    if (!/^RC-\d+$/.test(idCell)) why.push(`「编号」${JSON.stringify(idCell)} 不是 \`RC-<正整数>\``)
+    else if (ids.has(idCell)) why.push(`「编号」${JSON.stringify(idCell)} 在本文件里重复`)
+    else ids.add(idCell)
+    if (condition === '') why.push('「条件」是空的')
+    if (action === '') why.push('「触发时动作」是空的')
+    else if (!REVERSAL_ACTION_WORDS.test(action)) why.push(`「触发时动作」${JSON.stringify(action)} 里没有 \`supersede\` / \`重开\` / \`打回\``)
+    const state = status.trim()
+    if (state !== '未触发' && state !== '已触发') why.push(`「状态」${JSON.stringify(status)} 只能是 \`未触发\` / \`已触发\``)
+    if (why.length > 0) {
+      problems.push(problem('REVERSAL-ROW-SHAPE', `${relFile} 的 ⑦ 表有一行不合形状（${idCell || '?'}）：${why.join(' · ')}（0012 §③）`,
+        { file: relFile, row: idCell }))
+      return
+    }
+    reversalRows.push({ id: idCell, condition, action, status: state })
+  })
+  return { sections, reversalRows, problems }
+}
+
 // ── 三册：读 ───────────────────────────────────────────────────────────────
 function bookDir(root, book) {
   return path.join(root, LEDGER_REL, book)
@@ -1117,7 +1230,26 @@ function readDecisionFile(root, book, name, problems) {
       }
     }
   }
+  /**
+   * 正文形态（0012 §③）只判**构案**；产品是自由散文。
+   * 🔴 这一族**不进 `entry.clean`**：它不影响派生页怎么渲染（页只读头与链），
+   *    所以"正文缺一节"不该让整册的 `INDEX-*` 判据被跳过（契约 §9.3 的级联只认头块）。
+   * 头块整体不成立（`DEC-HEADER-MISSING`）时正文从哪开始都无从谈起 —— 只报上游那一条。
+   */
+  entry.body_sections = []
+  entry.reversal_rows = []
+  entry.body_clean = true
+  entry.body_problems = []
   entry.clean = problems.length === before
+  const headerBroken = parsed.problems.some((p) => p.code === 'DEC-HEADER-MISSING')
+  if (book === '构案' && parsed.bodyStartLine !== null && !headerBroken) {
+    const body = parseBodyShape(book, parsed.bodyLines, relFile)
+    entry.body_sections = body.sections
+    entry.reversal_rows = body.reversalRows
+    entry.body_clean = body.problems.length === 0
+    // 正文形态**不在这里进总表**：`readBook` 先按头/链算 `clean`（页要不要判），再把这一族补进去。
+    entry.body_problems = body.problems
+  }
   return entry
 }
 
@@ -1160,7 +1292,13 @@ export function readBook(root, book, problems) {
     entries.push(entry)
   }
   entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-  return { present: true, entries, states: [], clean: problems.length === before }
+  /** `clean` 只认头/链（决定派生页要不要判）；正文形态在它之后补进总表。 */
+  const clean = problems.length === before
+  for (const entry of entries) {
+    if (Array.isArray(entry.body_problems) && entry.body_problems.length > 0) problems.push(...entry.body_problems)
+    delete entry.body_problems
+  }
+  return { present: true, entries, states: [], clean }
 }
 
 /** 一条引用解析到哪一条决议（`null` = 解析不到）。裸编号先本册、再另一册（唯一时）。 */
@@ -1174,6 +1312,37 @@ export function resolveRef(decisions, fromBook, ref) {
     if (others.length === 1) return others[0]
   }
   return null
+}
+
+/**
+ * **同一册里同一主题只许一条 `生效`**（0012 §②-2 的不变式；旧单册检查器也叫 `DUPLICATE-LIVE-TOPIC`）。
+ *
+ * 三条口径：
+ *   · **按册各判**：`产品` 与 `构案` 各一组 —— 产品 0001 与构案 0012 同主题是**合法**的
+ *     （构案就是为那条产品写的），跨册不许判红；
+ *   · **两条都要点名**：报文里写出 `产品/0001` 与 `产品/0002` 两个 id（只报"有重复"不算）；
+ *   · 已废的那一条不参与（换掉旧的决定 = 旧文翻成 `已废` + 双向指针，见 `judgePointers`）。
+ *
+ * 级联：头块坏了的条目不参与（`topic` 读不出来时会天然跳过）；主题为空也不参与。
+ */
+export function judgeDuplicateTopics(decisions, problems) {
+  const groups = new Map()
+  for (const d of decisions) {
+    if (d.status !== '生效' || d.topic === '') continue
+    const key = `${d.book}\u0000${d.topic}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(d)
+  }
+  const duplicated = []
+  for (const [, list] of groups) {
+    if (list.length < 2) continue
+    const names = list.map((d) => `${d.book}/${d.id}`)
+    duplicated.push({ book: list[0].book, topic: list[0].topic, ids: list.map((d) => d.id) })
+    problems.push(problem('DUPLICATE-LIVE-TOPIC', `同一册里主题 \`${list[0].topic}\` 有 ${list.length} 条 \`生效\`：${names.join(' / ')}`
+      + ` —— 一个主题只许一条生效；换掉旧的要把它翻成 \`已废\` 并写双向 \`superseded_by\`（0012 §②-2）`,
+    { book: list[0].book, concept: list[0].topic, ids: list.map((d) => d.id) }))
+  }
+  return duplicated
 }
 
 /** 指针判据（悬空 / 自称 / 双向对称 / 状态与指针自洽）。 */
@@ -1582,6 +1751,7 @@ export function scanLedger(root) {
   }
   const decisions = [...read.产品.entries, ...read.构案.entries]
   problems.push(...judgePointers(decisions))
+  judgeDuplicateTopics(decisions, problems)
   const chain = { product: { resolved: 0, unresolved: 0 }, bug: { resolved: 0, unresolved: 0, closed: 0 }, file: { checked: 0, unresolved: 0 } }
   chain.product = judgeProductChain(decisions, problems)
   chain.bug = judgeBugChain(decisions, read.缺陷.states, problems)

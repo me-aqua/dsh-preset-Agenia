@@ -266,7 +266,7 @@ export function officialClient({ extract = true, asar = null, inner = null, tool
  */
 export const LIVE_DATA_ROOTS = {
   route: PATHS.realRouteRoot,
-  bug: path.join(PATHS.repo, '.team', 'bug'),
+  bug: path.join(PATHS.repo, '账本', '缺陷'),
   local: path.join(PATHS.repo, '.team', 'state', 'local'),
   update: path.join(PATHS.repo, 'presets', 'agenia', '.runtime', 'state', 'update'),
 }
@@ -451,7 +451,8 @@ export function latestDaySources() {
   }
   return {
     route: { file: path.join(PATHS.realRouteRoot, 'current.json') },
-    bug: { file: path.join(PATHS.repo, '.team', 'bug', 'ledger.json') },
+    // 缺陷源是一本册（每日事件流），不是旧 `ledger.json`；旧登记簿只作迁移窗口的只读回落。
+    bug: { file: path.join(PATHS.repo, '账本', '缺陷') },
     local: pick(path.join(PATHS.repo, '.team', 'state', 'local')),
     update: pick(path.join(PATHS.repo, 'presets', 'agenia', '.runtime', 'state', 'update')),
   }

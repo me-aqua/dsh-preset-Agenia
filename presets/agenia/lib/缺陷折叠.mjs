@@ -133,7 +133,17 @@ export function foldBugBook({ root }) {
       if (!atOk(event.at)) { shape('at', `解析不了（实得 ${JSON.stringify(event.at)}）`); continue }
       let state = byId.get(id)
       if (state === undefined) {
-        state = { id, day, phenomenon: null, entry_kind: null, registered_at: null, assessed: null, disposition: null, chain: { kind: null }, events: 0, last_disposed_seq: null, seqs: [] }
+        state = {
+          id, day, phenomenon: null, entry_kind: null, registered_at: null, assessed: null, disposition: null,
+          chain: { kind: null }, events: 0, last_disposed_seq: null, seqs: [],
+          /**
+           * `registered` / `assessed` 的**原件**（0022 §②-3 的写面把 `how_seen` / `evidence` /
+           * `recipe` / `batch` 等字段放进 `registered` 事件的 payload；折叠只负责把它逐字带出来，
+           * 读面 `ledgerFromBugBook` 从这一份还原条目 —— 不许在别处再按事件筛一遍）。
+           */
+          registered_payload: null,
+          assessed_payload: null,
+        }
         byId.set(id, state)
       }
       state.events += 1
@@ -145,6 +155,7 @@ export function foldBugBook({ root }) {
         state.entry_kind = ENTRY_KINDS.includes(event.entry_kind) ? event.entry_kind : state.entry_kind
         state.registered_at = event.at
         state.day = day
+        state.registered_payload = { ...event }
         // 重开：上一次的 disposed 被一条新的 registered 截断，之后还能再处置一次（契约 §3.1）
         state.last_disposed_seq = null
         continue
@@ -158,6 +169,7 @@ export function foldBugBook({ root }) {
           by_role: filled(event.by_role) ? event.by_role : null,
           at: event.at,
         }
+        state.assessed_payload = { ...event }
         continue
       }
       // disposed

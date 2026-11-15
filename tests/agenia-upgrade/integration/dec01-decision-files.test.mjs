@@ -4,10 +4,12 @@
  * 契约：`.team/test/2026-11-15/CONTRACT-0012.md`（§2 两套头 · §5 三条链 · §9 码表 · §12 Gate 3 交接单）。
  *
  * 🔴 **0012 把单册 `决议/` 换成三册 `账本/{产品,构案,缺陷}`**（Gate 3 实现 `0b36253`）：
- *   本文件的对象、路径、码表全部按三册重指；`DEC-02` 不再判"同主题两条生效"
- *   （0012 的检查器没有这条判词 —— 见 §12 的交接口径），它判的是 **supersede 的边界：旧文真的翻了**；
- *   `DEC-08` 不再判正文七节 / 反悔表（0012 §2 只判头；正文由第 4/5 关的人读那一格），
- *   它判 0012 §2.2 的三条跨字段自洽（产品无父 · 构案有父 · 父在来源列表里）。
+ *   本文件的对象、路径、码表全部按三册重指；`DEC-02` 判 **supersede 的边界：旧文真的翻了**。
+ *   Gate 3 r2（`194709-dev`）恢复了 **`DUPLICATE-LIVE-TOPIC`**（同一册同一主题两条 `生效` ⇒ 红，点名两号）——
+ *   所以 `half` / `live-with-successor` 这两格**同时**有"两条同主题生效"这一条：期望码集里两条都在
+ *   （只报指针那条 = 恢复后的不变式又掉了；只报重复那条 = 指针那条没人管）。
+ *   `DEC-08` 判 0012 §2.2 的三条跨字段自洽（产品无父 · 构案有父 · 父在来源列表里）；
+ *   正文七节 / 反悔表在 Gate 3 r2 归**检查器**（构案册）—— 本文件的真树读数仍逐份量它。
  *
  * 每一格的刀都是**同一棵 `good` 树上只改一个变量**，并且断言**码集精确相等**：
  * 只证明"红因里有它"不算判据（`cand-20261016-promise-without-assertion-01`）。
@@ -238,7 +240,7 @@ test('DEC-02 supersede 边界：旧文没翻 ⇒ 红（指针不对称 / 状态�
         caseId: 'DEC-02', tag: 'half',
         spec: { decisions: [product, goodDecision0001(), second({ supersedes: '0001' })] },
       })
-      if (expectCodes(problems, run, ['POINTER-ASYMMETRIC'], push, { label: 'DEC-02/half' })) {
+      if (expectCodes(problems, run, ['DUPLICATE-LIVE-TOPIC', 'POINTER-ASYMMETRIC'], push, { label: 'DEC-02/half' })) {
         const msg = messagesOf(run.json).join(' ')
         if (!(msg.includes('0001') && msg.includes('0002'))) {
           push('NOT-NAMED', `[DEC-02/half] 报文必须同时点名 0001 与 0002（旧文没翻的那一对），实得 ${JSON.stringify(msg.slice(0, 200))}`)
@@ -252,7 +254,7 @@ test('DEC-02 supersede 边界：旧文没翻 ⇒ 红（指针不对称 / 状态�
         caseId: 'DEC-02', tag: 'live-with-successor',
         spec: { decisions: [product, goodDecision0001({ superseded_by: '0002' }), second({ supersedes: '0001' })] },
       })
-      if (expectCodes(problems, run, ['LIVE-WITH-SUCCESSOR'], push, { label: 'DEC-02/live-with-successor' })) {
+      if (expectCodes(problems, run, ['DUPLICATE-LIVE-TOPIC', 'LIVE-WITH-SUCCESSOR'], push, { label: 'DEC-02/live-with-successor' })) {
         if (!messagesOf(run.json).some((m) => m.includes('0001'))) push('NOT-NAMED', '[DEC-02/live-with-successor] 报文要点名 0001')
       }
     }

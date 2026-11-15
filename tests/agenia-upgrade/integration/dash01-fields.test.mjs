@@ -19,7 +19,7 @@
  * 为什么这三格红：`presets/agenia/lib/dashboard.mjs` 今天不在盘上（第一关刚定形，第三关才写）。
  */
 import { before, test } from 'node:test'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { caseFail, caseHold, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 import { PATHS } from '../support/env.mjs'
@@ -62,7 +62,7 @@ const REQUIRED_FIELDS = [
 /** 契约 §2 钉死的四个文件（`<day>` 是占位符，运行期由调用方填）。 */
 const REQUIRED_FILES = {
   route: '.team/route/current.json',
-  bug: '.team/bug/ledger.json',
+  bug: '账本/缺陷',
   local: '.team/state/local/<day>.json',
   update: 'presets/agenia/.runtime/state/update/<day>.json',
 }
@@ -182,7 +182,7 @@ test('DASH-01 字段映射表：13 行逐条指到活树上那四份真源（指
     if (!liveRoot.present) {
       caseHold(rec, 'DASH-LIVE-DATA-ABSENT', `四份真源根一个都不在盘上（${liveRoot.verdict}）：${liveRoot.roots.join(' · ')}`
         + ' ⇒ "字段指得到真源"这一格判不了；'
-        + '缺的：.team/route/current.json · .team/bug/ledger.json · .team/state/local/<day>.json · presets/agenia/.runtime/state/update/<day>.json')
+        + '缺的：.team/route/current.json · 账本/缺陷 · .team/state/local/<day>.json · presets/agenia/.runtime/state/update/<day>.json')
       caseFail(problems)
       return
     }
@@ -196,9 +196,17 @@ test('DASH-01 字段映射表：13 行逐条指到活树上那四份真源（指
       update: live.update?.file ?? null,
     }
     const day = live.local?.day ?? live.update?.day ?? null
+    /**
+     * 缺陷那一份真源是一本**册**（`账本/缺陷/` 的每日事件流）—— 用被测模块自己的读源面
+     * 把它折成台账形状（`readDashboardSources` 的 `bug` 分支）；旧工区那份 JSON 仍走原路。
+     */
+    const bugIsBook = existsSync(live.bug.file) && statSync(live.bug.file).isDirectory()
+    const bugValue = bugIsBook
+      ? (mod.mod.readDashboardSources({ bugFile: live.bug.file }).input.bug.value ?? null)
+      : (existsSync(live.bug.file) ? JSON.parse(readFileSync(live.bug.file, 'utf8')) : null)
     const values = {
       route: existsSync(live.route.file) ? JSON.parse(readFileSync(live.route.file, 'utf8')) : null,
-      bug: existsSync(live.bug.file) ? JSON.parse(readFileSync(live.bug.file, 'utf8')) : null,
+      bug: bugValue,
       local: live.local !== null && existsSync(live.local.file) ? JSON.parse(readFileSync(live.local.file, 'utf8')) : null,
       update: live.update !== null && existsSync(live.update.file) ? JSON.parse(readFileSync(live.update.file, 'utf8')) : null,
     }
@@ -296,7 +304,7 @@ test('DASH-02 两条负控：指向不存在的键必须红；四种读源状态
     if (!liveRoot.present) {
       caseHold(rec, 'DASH-LIVE-DATA-ABSENT', `四份真源根一个都不在盘上（${liveRoot.verdict}）：${liveRoot.roots.join(' · ')}`
         + ' ⇒ "真表 + 真源"的阳性/阴性对照判不了；'
-        + '缺的：.team/route/current.json · .team/bug/ledger.json · .team/state/local/<day>.json · presets/agenia/.runtime/state/update/<day>.json')
+        + '缺的：.team/route/current.json · 账本/缺陷 · .team/state/local/<day>.json · presets/agenia/.runtime/state/update/<day>.json')
     } else if (liveFiles.local === undefined || liveFiles.update === undefined) {
       problems.push(problem('DASH-LIVE-SOURCE-MISSING', '活树上缺按天的那两份源（local / update）⇒ 这一格今天判不了真表'))
     } else {

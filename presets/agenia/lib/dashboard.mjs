@@ -22,11 +22,11 @@
  * 换进去的正文按**本模块作用域**取这两个名字。删掉 ⇒ 那两把刀以 `ReferenceError` 收场（不是判据变严，是判据跑不动）。
  * 同理这一行不能加行尾注释：那把"外来写手"刀的锚点是一条整行 `import { … } from 'node:fs'` 的正则。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { writeFileAtomic as writeSharedAtomic } from './atomic.mjs'
 import { FIVE_GATES, headlineOf, ticketStatusOf } from './route.mjs'
-import { openCounts } from './bug-ledger.mjs'
+import { ledgerFromBugBook, openCounts } from './bug-ledger.mjs'
 import { NODE_STATES } from './local-state.mjs'
 import { PHASES } from './state.mjs'
 
@@ -90,7 +90,7 @@ export const DASHBOARD_FIELDS = Object.freeze([
   Object.freeze({ id: 'empty.notice', cell: 'empty', source: 'route', file: '.team/route/current.json', pointer: '/current_task_id', compute: 'empty_notice' }),
   Object.freeze({ id: 'badge.phase', cell: 'badge', source: 'update', file: 'presets/agenia/.runtime/state/update/<day>.json', pointer: '/phase', compute: 'phase' }),
   Object.freeze({ id: 'debt.tickets', cell: 'debt', source: 'route', file: '.team/route/current.json', pointer: '/tickets', compute: 'ticket_open' }),
-  Object.freeze({ id: 'debt.bugs', cell: 'debt', source: 'bug', file: '.team/bug/ledger.json', pointer: '/entries', compute: 'bug_open' }),
+  Object.freeze({ id: 'debt.bugs', cell: 'debt', source: 'bug', file: '账本/缺陷', pointer: '/entries', compute: 'bug_open' }),
   Object.freeze({ id: 'debt.receipts', cell: 'debt', source: 'local', file: '.team/state/local/<day>.json', pointer: '/technical/state', compute: 'receipt_missing' }),
   Object.freeze({ id: 'static.trigger', cell: 'static', source: 'static', file: null, pointer: null, compute: 'literal', text: '看板' }),
   Object.freeze({ id: 'static.group', cell: 'static', source: 'static', file: null, pointer: null, compute: 'literal', text: '欠着的东西' }),
@@ -131,6 +131,19 @@ function readSource(key, file) {
   const at = typeof file === 'string' && file !== '' ? file : null
   if (at === null) return { key, file: null, ok: false, reason: 'missing', value: null }
   if (!existsSync(at)) return { key, file: at, ok: false, reason: 'missing', value: null }
+  /**
+   * 缺陷那一份源现在是**一本册**（`账本/缺陷/`，一天一个事件流），不是一份 JSON 文件。
+   * 目录 ⇒ 走唯一的折叠实现（`lib/缺陷折叠.mjs`，经 `ledgerFromBugBook` 还原成台账形状），
+   * 与 `bug-read` 读到的是同一份现状；文件 ⇒ 旧工区的只读登记簿，行为不变。
+   */
+  try {
+    if (key === 'bug' && statSync(at).isDirectory()) {
+      const root = path.dirname(path.dirname(at))
+      return { key, file: at, ok: true, reason: 'ok', value: ledgerFromBugBook({ root }) }
+    }
+  } catch {
+    return { key, file: at, ok: false, reason: 'unreadable', value: null }
+  }
   let text
   try {
     text = readFileSync(at, 'utf8')
@@ -458,7 +471,8 @@ export function dashboardSourcePaths(root, day) {
   const at = (...parts) => path.join(root, ...parts)
   return {
     routeFile: at('.team', 'route', 'current.json'),
-    bugFile: at('.team', 'bug', 'ledger.json'),
+    // 缺陷那一份源是**一本册**（`账本/缺陷/` 的每日事件流，现状靠折叠）—— 不是旧 `ledger.json`。
+    bugFile: at('账本', '缺陷'),
     localFile: at('.team', 'state', 'local', `${day}.json`),
     updateFile: at('presets', 'agenia', '.runtime', 'state', 'update', `${day}.json`),
   }

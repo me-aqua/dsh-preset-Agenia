@@ -548,30 +548,50 @@ export { bugBookPresent }
 /**
  * 从 `账本/缺陷/*.json` 的事件流折出一本**只读**台账（折叠的实现只有 `lib/缺陷折叠.mjs` 一份）。
  *
- * ⚠️ **有损**：事件流只记 `registered / assessed / disposed` 的形状，`how_seen` / `evidence` /
- * `recipe` / `batch` / `tasks` / 严重线样本集都不在里面。所以这本台账**只给读面用**
- * （`bug-read` 一类），写面仍然只认 `.team/bug/ledger.json` —— 拿它回写等于把台账洗成半本。
+ * 写面（构案 0012 r2）：`bug-register` / `bug-assess` / `bug-dispose` 只追加事件，
+ * 条目字段的落点是 `registered` 事件的 payload（`how_seen` / `evidence` / `recipe` / `batch` /
+ * `reporter` / `source` / `tags` / `finding_refs`）；本函数从折叠出来的
+ * `registered_payload` / `assessed_payload` 还原成一本书的形状 —— **只给读面用**，
+ * 拿它回写等于把事件流洗成第二本账（写面另有唯一的追加入口）。
  */
 export function ledgerFromBugBook({ root, at = null } = {}) {
   const folded = foldBugBook({ root })
   const ledger = newBugLedger({ at })
-  ledger.entries = folded.states.map((s) => ({
-    id: s.id,
-    kind: s.entry_kind ?? BUG_KINDS[0],
-    phenomenon: s.phenomenon ?? '',
-    how_seen: '',
-    evidence: [],
-    recipe: null,
-    reporter: null,
-    author: 'leader',
-    source: null,
-    tags: [],
-    registered_at: s.registered_at ?? null,
-    finding_refs: [],
-    assessment: s.assessed,
-    disposition: s.disposition,
-    folded: true,
-  }))
+  ledger.entries = folded.states.map((s) => {
+    const reg = isObject(s.registered_payload) ? s.registered_payload : {}
+    const ass = isObject(s.assessed_payload) ? s.assessed_payload : null
+    return {
+      id: s.id,
+      kind: s.entry_kind ?? (BUG_KINDS.includes(reg.entry_kind) ? reg.entry_kind : BUG_KINDS[0]),
+      phenomenon: s.phenomenon ?? '',
+      how_seen: typeof reg.how_seen === 'string' ? reg.how_seen : (reg.how_seen === null ? null : null),
+      evidence: Array.isArray(reg.evidence) ? reg.evidence : [],
+      recipe: reg.recipe === undefined ? null : reg.recipe,
+      reporter: filled(reg.reporter) ? reg.reporter : null,
+      author: 'leader',
+      source: isObject(reg.source) ? reg.source : null,
+      tags: Array.isArray(reg.tags) ? reg.tags : [],
+      registered_at: s.registered_at ?? null,
+      finding_refs: Array.isArray(reg.finding_refs) ? reg.finding_refs : [],
+      batch: reg.batch === undefined ? null : reg.batch,
+      assessment: s.assessed === null ? null : {
+        verdict: s.assessed.verdict,
+        severity_line: s.assessed.severity_line,
+        severity_confidence: ass?.severity_confidence ?? null,
+        cost: ass?.cost ?? null,
+        fix_sketch: ass?.fix_sketch ?? null,
+        by_role: s.assessed.by_role,
+        at: s.assessed.at,
+        sample_version: ass?.sample_version ?? null,
+        ...(ass?.hides === undefined ? {} : { hides: ass.hides }),
+      },
+      line_decision: ass?.line_decision ?? null,
+      disposition: s.disposition,
+      escalated_at: ass?.escalated_at ?? null,
+      card_red: ass?.card_red === true,
+      folded: true,
+    }
+  })
   return ledger
 }
 // 依据: 0009

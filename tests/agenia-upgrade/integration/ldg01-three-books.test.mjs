@@ -347,7 +347,7 @@ test('LDG-02 产品→构案：生效产品必须有生效子构案（刀：删�
       { id: '0001', title: '产品一' },
       { id: '0002', title: '产品二' },
     ]
-    const childFor = (product, { id = '0012', over = {} } = {}) => ({ id, title: '落产品一的方案', parent: product, basisP: [product], ...over })
+    const childFor = (product, { id = '0012', over = {} } = {}) => ({ id, title: `落产品${product}的方案`, parent: product, basisP: [product], ...over })
 
     // ① 两个产品各有子 ⇒ 绿
     {

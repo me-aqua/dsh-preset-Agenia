@@ -44,6 +44,7 @@ import { validateBossEvidence, spentEvidenceRecord } from '../lib/evidence.mjs'
 import * as R from '../lib/route.mjs'
 import * as T from '../lib/tickets.mjs'
 import * as B from '../lib/bug-ledger.mjs'
+import { dayFileOf, readDayFiles } from '../lib/缺陷折叠.mjs'
 
 const CLI_NAME = 'agenia-route.mjs'
 
@@ -1295,7 +1296,14 @@ function bugPaths(routePathSet) {
     workspace: routePathSet.workspace,
     teamDir: routePathSet.teamDir,
     bugDir: path.join(routePathSet.teamDir, BUG_DIR_NAME),
+    /** 缺省（两本账时代的）登记簿：现在只在**没有三册账本**的旧工区里当写面用。 */
     ledger: path.join(routePathSet.teamDir, BUG_DIR_NAME, BUG_LEDGER_FILE),
+    /**
+     * 三册账本那一侧的**账本外壳**（tasks / batches / severity_samples / archived）：
+     * 与缺陷**条目**分开 —— 条目只住 `账本/缺陷/<day>.json` 事件流，外壳里一格 `entries` 都没有。
+     * 旧 `ledger.json` 从此是只读归档；本 op 不碰它（只是迁移窗口里读它拿旧元数据）。
+     */
+    control: path.join(routePathSet.teamDir, BUG_DIR_NAME, 'control.json'),
     lock: path.join(routePathSet.teamDir, BUG_DIR_NAME, BUG_LOCK_FILE),
     /** 分流 log：**不进** `.team/bug/`，也不进路线账本（两本账都不是它的家）。 */
     routing: path.join(routePathSet.teamDir, ROUTING_FILE),
@@ -1303,6 +1311,51 @@ function bugPaths(routePathSet) {
     /** 模式 (`uninitialized`) 的唯一来源：路线账本在不在。 */
     routeCurrent: routePathSet.current,
   }
+}
+
+/** 这个工区是不是已经有三册账本（`账本/缺陷/`）—— 它决定写面走事件流还是旧登记簿。 */
+function bugBookMode(ctx) {
+  return B.bugBookPresent({ root: ctx.paths.workspace })
+}
+
+/** 三册模式下的事件流根（`<workspace>/账本/缺陷`）。 */
+function bugBookRoot(ctx) {
+  return ctx.paths.workspace
+}
+
+/** 一份空的外壳（三册模式下 `control.json` 的缺省值）。 */
+function emptyBugControl() {
+  return {
+    schema: 1,
+    tasks: [],
+    batches: [],
+    severity_samples: { version: 0, registered_at: null, registered_by: null, samples: [], history: [] },
+    archived: [],
+  }
+}
+
+/**
+ * 读三册模式下的**账本外壳**（tasks / batches / samples / archived）。
+ *
+ * 迁移窗口里允许从旧 `ledger.json` 里读这几个段 —— 那是只读兼容，不是第二本条目账：
+ * `entries` 段一个字节都不读（条目的唯一来源是事件流）。
+ */
+function readBugControl(ctx) {
+  for (const file of [ctx.paths.control, ctx.paths.ledger]) {
+    if (!existsSync(file)) continue
+    const read = readJsonFile(file)
+    if (!read.ok) continue
+    const value = read.value
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue
+    return {
+      schema: B.BUG_LEDGER_SCHEMA,
+      tasks: Array.isArray(value.tasks) ? value.tasks : [],
+      batches: Array.isArray(value.batches) ? value.batches : [],
+      severity_samples: value.severity_samples ?? emptyBugControl().severity_samples,
+      archived: Array.isArray(value.archived) ? value.archived : [],
+    }
+  }
+  return emptyBugControl()
 }
 
 /** 持 bug 锁跑一段读-改-写（锁在 `.team/bug/.bug.lock`，**不是**路线那把）。 */
@@ -1320,28 +1373,46 @@ function withBugLock(ctx, fn) {
   }
 }
 
-/** 读 bug 台账：**缺**（`E_DATA_MISSING`）与**坏**（`E_DATA_CORRUPT`）分得开。 */
+/**
+ * 读 bug 登记簿：**缺**（`E_DATA_MISSING`）与**坏**（`E_DATA_CORRUPT`）分得开。
+ *
+ * 两种模式（写面与读面共用同一处判定）：
+ *   · **三册模式**（`账本/缺陷/` 在）：条目 = `lib/缺陷折叠.mjs` 折出来的现状
+ *     （`registered_payload` 里的 `how_seen` / `evidence` / `recipe` / `batch` 一并还原）；
+ *     外壳（tasks / batches / samples / archived）从 `control.json`（迁移窗口回落旧 `ledger.json`）读。
+ *     **旧 `ledger.json` 的 `entries` 段不读** —— 它只是归档。
+ *   · **旧工区**（没有 `账本/缺陷/`）：仍读 `.team/bug/ledger.json` —— 迁移没做完的工区还能干活，
+ *     但一旦 `账本/缺陷/` 建好，写面就只追事件流（见 `appendBugEvent`）。
+ */
 function readBugLedger(ctx, { required = true } = {}) {
   const file = ctx.paths.ledger
-  if (!existsSync(file)) {
-    if (!required) return null
-    /**
-     * 三册账本落地之后（构案 0012）：缺陷的**长期住处**是 `账本/缺陷/<YYYY-MM-DD>.json` 事件流，
-     * 现状靠 `lib/缺陷折叠.mjs` 折出来；`.team/bug/ledger.json` 只剩"活的登记簿"这一层。
-     * 登记簿不在、而账本在 ⇒ 用折叠出来的那一本**只读**顶上（`folded: true`），
-     * 让 `bug-read` 这类读面不至于在迁移窗口里直接报"台账还没建"。
-     * 🔴 写面仍然只认 `ledger.json`：折叠是有损的（证据 / 配方 / 批次不在事件流里），
-     *    拿它回写等于把台账洗成半本。
-     * ⚠️ 工作区根从**台账落点**反推（`<root>/.team/bug/ledger.json` 往上三层），
-     *    不依赖调用方传 `ctx.root` —— 少一个必填参数就是多一条"忘传 ⇒ E_INTERNAL"的路。
-     */
-    const workspaceRoot = path.dirname(path.dirname(path.dirname(file)))
-    if (B.bugBookPresent({ root: workspaceRoot })) {
-      const folded = B.ledgerFromBugBook({ root: workspaceRoot })
-      if (folded.entries.length > 0) {
-        return { ...folded, folded: true, folded_from: '账本/缺陷' }
+  if (bugBookMode(ctx)) {
+    const folded = B.ledgerFromBugBook({ root: bugBookRoot(ctx) })
+    const control = readBugControl(ctx)
+    const archivedIds = new Set(control.archived.map((e) => e?.id).filter((id) => typeof id === 'string' && id !== ''))
+    const entries = folded.entries.filter((e) => !archivedIds.has(e.id))
+    if (entries.length > 0 || !existsSync(file)) {
+      if (entries.length === 0 && !existsSync(file) && required) {
+        throw cliError(
+          'E_DATA_MISSING',
+          `缺陷册还没有一条事件（${path.join(bugBookRoot(ctx), '账本', '缺陷')} 是空的）—— 缺 ≠ 空：它由第一次登记创建（--op bug-register）；读面不许把它读成"0 条干净账"`,
+          { path: path.join(bugBookRoot(ctx), '账本', '缺陷') },
+        )
+      }
+      return {
+        ...folded,
+        entries,
+        tasks: control.tasks,
+        batches: control.batches,
+        severity_samples: control.severity_samples,
+        archived: control.archived,
+        book_mode: true,
       }
     }
+    // 事件流还是空的、而旧登记簿在 ⇒ 迁移窗口里读旧账（只读；写下一条时会先写事件）
+  }
+  if (!existsSync(file)) {
+    if (!required) return null
     throw cliError(
       'E_DATA_MISSING',
       `bug 台账还没建（${file} 不在）—— 缺 ≠ 空：它由第一次登记创建（--op bug-register）；读面不许把它读成"0 条干净账"`,
@@ -1355,16 +1426,56 @@ function readBugLedger(ctx, { required = true } = {}) {
   return read.value
 }
 
-/** 落盘：`version` 每次写 +1（CAS 的输入）；原子写同 `lib/atomic.mjs` 的口径。 */
+/**
+ * 落盘。三册模式：只写**外壳** `control.json`（条目绝不回写 —— 那是第二条真相）；
+ * 旧工区：照旧写 `ledger.json`（迁移桥，不是本票的新口径）。
+ */
 function commitBugLedger(ctx, ledger) {
   const next = {
     ...ledger,
     version: (Number.isInteger(ledger?.version) ? ledger.version : 0) + 1,
     updated_at: ctx.at,
   }
+  if (bugBookMode(ctx)) {
+    const control = {
+      schema: B.BUG_LEDGER_SCHEMA,
+      tasks: Array.isArray(next.tasks) ? next.tasks : [],
+      batches: Array.isArray(next.batches) ? next.batches : [],
+      severity_samples: next.severity_samples ?? emptyBugControl().severity_samples,
+      archived: Array.isArray(next.archived) ? next.archived : [],
+      version: next.version,
+      updated_at: next.updated_at,
+    }
+    const written = writeJsonAtomic(ctx.paths.control, control)
+    if (!written.ok) throw cliError(written.code, `bug 外壳写入失败：${written.message}`, { path: ctx.paths.control })
+    return next
+  }
   const written = writeJsonAtomic(ctx.paths.ledger, next)
   if (!written.ok) throw cliError(written.code, `bug 台账写入失败：${written.message}`, { path: ctx.paths.ledger })
   return next
+}
+
+/**
+ * **三册模式的唯一写入口**：往 `账本/缺陷/<day>.json` 追加一个事件。
+ *
+ * `seq` 册内每天各自从 1 严格递增；`day` = `at` 的本地日期（与文件名同一个词）。
+ * 事件流只追加（旧事件逐字不动），写盘走共享原子写。
+ */
+function appendBugEvent(ctx, event) {
+  const root = bugBookRoot(ctx)
+  const day = String(ctx.at).slice(0, 10)
+  const read = readDayFiles({ root })
+  const existing = read.dayEvents.find((d) => d.day === day)?.events ?? []
+  let max = 0
+  for (const e of existing) {
+    if (Number.isInteger(e?.seq) && e.seq > max) max = e.seq
+  }
+  const row = { seq: max + 1, ...event, at: ctx.at }
+  const file = dayFileOf(root, day)
+  mkdirSync(path.dirname(file), { recursive: true })
+  const written = writeJsonAtomic(file, { schema: 1, day, events: [...existing, row] })
+  if (!written.ok) throw cliError(written.code, `缺陷事件写不进去：${written.message}`, { path: file })
+  return row
 }
 
 /** `report_ref` 的落点：**工作区相对**（`.team/retro/…` 与 `retro/…` 两种写法都落对），越界 ⇒ 拒。 */
@@ -1405,6 +1516,7 @@ function isLaterThan(a, b) {
  *    （见 `lib/bug-ledger.mjs::composeBugEntry`）。这是刻意的，不是漏判 —— 别读成"author 可被覆盖"。
  */
 function opBugRegister(ctx) {
+  const bookMode = bugBookMode(ctx)
   const preview = readBugLedger(ctx, { required: false }) ?? B.newBugLedger({ at: ctx.at })
   const candidate = B.composeBugEntry(ctx.payload, { at: ctx.at, ledger: preview })
   const verdict = B.entryVerdict(candidate)
@@ -1417,6 +1529,29 @@ function opBugRegister(ctx) {
     // 台账内 id 唯一（契约 §3.1）：显式给 id 的调用方也不许撞现存的（含已归档的）。
     const taken = [...ledger.entries, ...ledger.archived].some((e) => e?.id === entry.id)
     if (taken) throw cliError('E_ARG_SCHEMA', `条目 id ${JSON.stringify(entry.id)} 已经在台账里（live 或 archived）—— id 必须台账内唯一`, { id: entry.id })
+    if (bookMode) {
+      /**
+       * 三册模式：**只**追加 `registered` 事件。条目字段里事件流装得下的进 payload
+       * （`how_seen` / `evidence` / `recipe` / `batch`，外加报告人 / 来源 / 标签）。
+       * 不写 `.team/bug/ledger.json` —— 旧登记簿从此是只读归档。
+       */
+      const event = appendBugEvent(ctx, {
+        kind: 'registered',
+        id: entry.id,
+        entry_kind: entry.kind,
+        phenomenon: entry.phenomenon,
+        reporter: entry.reporter,
+        source: entry.source,
+        tags: entry.tags,
+        how_seen: entry.how_seen,
+        evidence: entry.evidence,
+        recipe: entry.recipe,
+        batch: entry.batch,
+        finding_refs: entry.finding_refs,
+      })
+      const after = readBugLedger(ctx)
+      return { entry, entry_id: entry.id, event_seq: event.seq, book_mode: true, counts: B.openCounts(after) }
+    }
     const next = commitBugLedger(ctx, { ...ledger, entries: [...ledger.entries, entry] })
     return { entry, entry_id: entry.id, ledger_version: next.version, counts: B.openCounts(next) }
   })
@@ -1464,6 +1599,7 @@ function opBugAssess(ctx) {
   }
   if (typeof p.id !== 'string' || p.id.trim() === '') throw cliError('E_ARG_SCHEMA', 'id 必填（要评估哪一条）')
   return withBugLock(ctx, () => {
+    const bookMode = bugBookMode(ctx)
     const ledger = readBugLedger(ctx)
     const idx = ledger.entries.findIndex((e) => e?.id === p.id)
     if (idx < 0) {
@@ -1513,6 +1649,31 @@ function opBugAssess(ctx) {
     }
     const entries = [...ledger.entries]
     entries[idx] = updated
+    if (bookMode) {
+      /**
+       * 三册模式：追加 `assessed` 事件。事件里带的是**评估后的整份现状**
+       * （评估岗与组长各写一格，后一条事件不吞前一条 —— 事件流只追加，折叠取最后一条）。
+       */
+      const ass = updated.assessment ?? null
+      const event = {
+        kind: 'assessed',
+        id: updated.id,
+        verdict: ass?.verdict ?? null,
+        severity_line: ass?.severity_line ?? null,
+        severity_confidence: ass?.severity_confidence ?? null,
+        cost: ass?.cost ?? null,
+        fix_sketch: ass?.fix_sketch ?? null,
+        by_role: ass?.by_role ?? 'test',
+        sample_version: ass?.sample_version ?? null,
+        line_decision: updated.line_decision ?? null,
+        escalated_at: updated.escalated_at ?? null,
+        card_red: updated.card_red === true,
+      }
+      if (ass?.hides !== undefined) event.hides = ass.hides
+      appendBugEvent(ctx, event)
+      const after = readBugLedger(ctx)
+      return { entry: updated, entry_id: updated.id, book_mode: true, counts: B.openCounts(after) }
+    }
     const next = commitBugLedger(ctx, { ...ledger, entries })
     return { entry: updated, entry_id: updated.id, ledger_version: next.version, counts: B.openCounts(next) }
   })
@@ -1533,6 +1694,7 @@ function opBugDispose(ctx) {
   }
   if (typeof p.id !== 'string' || p.id.trim() === '') throw cliError('E_ARG_SCHEMA', 'id 必填（要处置哪一条）')
   return withBugLock(ctx, () => {
+    const bookMode = bugBookMode(ctx)
     const ledger = readBugLedger(ctx)
     const idx = ledger.entries.findIndex((e) => e?.id === p.id)
     if (idx < 0) {
@@ -1541,6 +1703,20 @@ function opBugDispose(ctx) {
     const updated = {
       ...ledger.entries[idx],
       disposition: { value: p.disposition, reason: p.reason, by: 'leader', at: ctx.at },
+    }
+    if (bookMode) {
+      // 三册模式：`disposed` 事件带处置原件；链那三格（构案 / 判假 / 历史）由调用方给就给。
+      const event = {
+        kind: 'disposed',
+        id: updated.id,
+        disposition: updated.disposition,
+      }
+      for (const key of ['构案', '判假', '历史']) {
+        if (typeof p[key] === 'string' && p[key].trim() !== '') event[key] = p[key].trim()
+      }
+      appendBugEvent(ctx, event)
+      const after = readBugLedger(ctx)
+      return { entry: updated, entry_id: updated.id, book_mode: true, counts: B.openCounts(after) }
     }
     const entries = [...ledger.entries]
     entries[idx] = updated
@@ -1612,6 +1788,7 @@ function opBugArchive(ctx) {
     throw cliError('E_ARG_SCHEMA', `entry_ids 必须是 ≥1 条非空 id 的数组（归档哪几条），实得 ${JSON.stringify(ids)}`)
   }
   return withBugLock(ctx, () => {
+    const bookMode = bugBookMode(ctx)
     const ledger = readBugLedger(ctx)
     const byId = new Map(ledger.entries.map((e) => [e?.id, e]))
     const missing = ids.filter((id) => !byId.has(id))
@@ -1625,10 +1802,17 @@ function opBugArchive(ctx) {
         `归档只搬**带结论**的条目：${open.join(' / ')} 还没有 disposition（定形 §3.1 第 6 条：簿上 live 段只留没结论的）—— 零写入`,
       )
     }
-    const moved = ids.map((id) => ({ ...byId.get(id), archived_at: ctx.at }))
+    /**
+     * 三册模式：归档只记 **id + 时刻**（条目本体仍在事件流里；control 里再存一份完整条目就是第二本账）。
+     * 旧工区：照旧把条目逐字搬进 `archived[]`。
+     */
+    const moved = bookMode
+      ? ids.map((id) => ({ id, archived_at: ctx.at }))
+      : ids.map((id) => ({ ...byId.get(id), archived_at: ctx.at }))
     const remain = ledger.entries.filter((e) => !ids.includes(e?.id))
     const next = commitBugLedger(ctx, { ...ledger, entries: remain, archived: [...ledger.archived, ...moved] })
-    return { archived: moved.map((e) => e.id), ledger_version: next.version, counts: B.openCounts(next) }
+    const archived = bookMode ? ids : moved.map((e) => e.id)
+    return { archived, ledger_version: next.version, counts: B.openCounts({ ...next, entries: remain, archived: [...ledger.archived, ...moved] }) }
   })
 }
 
