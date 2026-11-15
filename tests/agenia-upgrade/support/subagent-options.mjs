@@ -12,7 +12,10 @@
  * **不是**子会话记录（`session.header`）。要拿到那一份得真起一个子会话 = 一次真 LLM 往返；
  * 这一层跑在套件里，做不到。所以量的是**它前一层**：
  *   ① 真 `dsh-tool-subagent/lib/index.js`（从装好的 `resources/app.asar` 里逐字节读出）的
- *      `execute()` 交给 `ctx.subagents.startActivation()` 的 `request.agentOptions`；
+ *      `execute()` 交给 `ctx.subagents.startActivation()` 的 **`spec.agentOptions`**（`0.2.2-rc.3`
+ *      起信封是**扁平**的：`{provider, label, prompt, parent, agentPreset?, agentOptions?, maxDepth?, …}`）；
+ *      旧平台（rc.1 / rc.2）的嵌套信封 `request.agentOptions` **只作有记录的回落** —— 哪一份供数
+ *      写进 `envelope`（`flat` / `nested(request)` / `none`），`null` 不再冒充"配置没落"；
  *   ② 再用真 `dsh-subagent` 的 `resolveChildAgentOptions(parent, requested, depth)`（从同一份 asar
  *      里按函数名切出来）算出**子 Agent 的 options**（它的文档说这就是传给 `ctx.agents.create()` 的那一份）。
  * 读数是这两层；`measured_layer` 字段逐字写着这句话。
@@ -29,7 +32,7 @@
  *     `ReasoningEffortId`（`dsh-llm`）+ 它用的 `brandString`（`dsh-brand`）——
  *     锚点找不到 ⇒ `CHILD-MODEL-HARNESS`（红），**不静默换一份手抄实现**；
  *   · **假的是服务边界**：`ctx`（tools / subagents / systemPrompt / sessionProjections / logger）、
- *     `llm.resolveCallConfig`（只记路由）、`startActivation`（只记请求 + 回一个 childId）、
+ *     `llm.resolveCallConfig`（只记路由）、`startActivation`（只记请求 + 回 `{name, childId}`）、
  *     以及三个 schema 包（`schemastery` / `zod` / `dsh-tools.defineTool`）—— 它们只用于模块加载期的
  *     配置形状声明，不参与这一格的计算。
  *
@@ -188,10 +191,34 @@ function makeCtx() {
       registerProvider: (provider) => providers.set(provider.name, provider),
       getProvider: (name) => providers.get(name),
       resolveMaxDepth: (value) => (value === 'provider-managed' ? undefined : value),
-      startActivation: async (input) => { captured.starts.push(input); return { childId: 'fake-child-1' } },
+      startActivation: async (input) => { captured.starts.push(input); return { name: 'fake-child-1', childId: 'fake-child-1' } },
     },
   }
   return { ctx, captured }
+}
+
+/**
+ * 从 `startActivation` 收到的那个对象上读 `agentOptions` —— **新契约（扁平信封）先读**，
+ * 旧契约（`request.agentOptions`，rc.1 / rc.2）只作**有记录的回落**。
+ *
+ * 为什么要记 `envelope`：这一格以前直接读 `start.request.agentOptions`。宿主把信封拍平之后，
+ * 同一个读法得到 `null` —— 一个**看起来像"产品没把配置落到子会话"**的读数（`bug-20261115-01`）。
+ * 信封名与被读的那个对象一起记，`null` 才不会再冒充"配置没生效"。
+ *
+ * `none` 只在**根本没捕获到 activation** 时出现；信封在、只是里面没有 `agentOptions`（例如刀切掉了
+ * 那一行）时，`envelope` 仍报它真实的形状，`agentOptions` 单独为 `null`。
+ *
+ * @param {object|null} start `ctx.subagents.startActivation` 收到的对象
+ * @returns {{envelope: 'flat'|'nested(request)'|'none', spec: object|null, agentOptions: object|null}}
+ */
+function readActivationEnvelope(start) {
+  if (start === null || start === undefined) return { envelope: 'none', spec: null, agentOptions: null }
+  if (start.agentOptions !== undefined) return { envelope: 'flat', spec: start, agentOptions: start.agentOptions }
+  if (start.request?.agentOptions !== undefined) {
+    return { envelope: 'nested(request)', spec: start.request, agentOptions: start.request.agentOptions }
+  }
+  const nested = start.request !== undefined && start.request !== null
+  return { envelope: nested ? 'nested(request)' : 'flat', spec: nested ? start.request : start, agentOptions: null }
 }
 
 /** 假父 Agent：**路由故意不是**被写死的那个 model（见文件头）；形状照真 `dsh-subagent` 读的两处。 */
@@ -269,7 +296,7 @@ export async function childModelReadings({
     pin: { ...CHILD_MODEL_PIN },
     display_name: CHILD_MODEL_DISPLAY_NAME,
     parent_route: { ...parentRoute },
-    measured_layer: 'startActivation.request.agentOptions + dsh-subagent.resolveChildAgentOptions（**不是**子会话记录）',
+    measured_layer: 'startActivation 的扁平信封（`spec.agentOptions`；旧版 `request.agentOptions` 只作有记录的回落）+ dsh-subagent.resolveChildAgentOptions（**不是**子会话记录）',
     child_session_record: false,
     rows: [],
     profile: null,
@@ -377,9 +404,9 @@ export async function childModelReadings({
     const exec = { agent: parent, signal: { throwIfAborted() {} } }
     const call = await definition.execute({ description: 'PRS-05 量具 · 一次派工', prompt: 'PRS-05：这一格只为读子会话的 agentOptions，不发真任务。' }, exec)
     const start = captured.starts[0] ?? null
-    const requested = start?.request?.agentOptions ?? null
+    const { envelope, spec, agentOptions: requested } = readActivationEnvelope(start)
     const resolved = helperModule.resolveChildAgentOptions(parent, requested ?? undefined, 1)
-    return { call, start, requested, resolved, preflight: captured.preflight[0] ?? null }
+    return { call, start, envelope, spec, requested, resolved, preflight: captured.preflight[0] ?? null }
   }
 
   // ── 主判据：九行逐行过 ─────────────────────────────────────────────────────
@@ -393,13 +420,21 @@ export async function childModelReadings({
     try {
       const got = await drive(config)
       rowReading.call = got.call
-      rowReading.start = got.start === null ? null : { provider: got.start.provider, label: got.start.label, agentPreset: got.start.request?.agentPreset ?? null, maxDepth: got.start.request?.maxDepth ?? null, agentOptions: got.requested, extra_keys: Object.keys(got.start.request ?? {}) }
+      rowReading.start = got.start === null ? null : {
+        provider: got.start.provider,
+        label: got.start.label,
+        envelope: got.envelope,
+        agentPreset: got.spec?.agentPreset ?? null,
+        maxDepth: got.spec?.maxDepth ?? null,
+        agentOptions: got.requested,
+        extra_keys: Object.keys(got.spec ?? {}),
+      }
       rowReading.requested = got.requested
       rowReading.resolved = got.resolved
       rowReading.preflight = got.preflight
       const requested = got.requested
       if (requested === null || requested === undefined) {
-        push('CHILD-MODEL-OPTIONS-MISSING', `${name}：插件交给 \`startActivation\` 的请求里没有 \`agentOptions\`（配置读到了却没落到子会话上）`)
+        push('CHILD-MODEL-OPTIONS-MISSING', `${name}：\`startActivation\` 收到的信封（${got.envelope}）里没有 \`agentOptions\`（配置读到了却没落到子会话上）`)
       } else {
         if (requested.provider !== CHILD_MODEL_PIN.provider || requested.model !== CHILD_MODEL_PIN.model) {
           push('CHILD-MODEL-DRIFT', `${name}：子会话拿到的 agentOptions 是 ${JSON.stringify({ provider: requested.provider, model: requested.model })}，写死的是 ${JSON.stringify(CHILD_MODEL_PIN)}`
@@ -467,6 +502,8 @@ export async function childModelReadings({
       row: first.name,
       removed: 'agentOptions',
       parent_model: CHILD_PARENT_ROUTE.model,
+      envelope: got.envelope,
+      start_keys: got.start === null ? null : Object.keys(got.start),
       requested, resolved,
       fell_back_to_parent: fellBack,
     }

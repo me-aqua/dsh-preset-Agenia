@@ -28,7 +28,9 @@ import { platformReading } from '../support/platform.mjs'
 import {
   DASH_CLIENT,
   DASH_CLIENT_PKG,
+  OFFICIAL_INNER_LEGACY,
   allKeys,
+  countMatches,
   extractCss,
   elementByClassToken,
   linesWith,
@@ -94,16 +96,63 @@ test('DASH-05 主行 = 一行（标题 + 五关同一个 taskTitle）+ 插件身
   await runCase('DASH-05', async (rec) => {
     noteSutOverride(rec)
     const problems = []
+    const platform = platformReading()
     const official = officialClient({ extract: true })
-    rec.readings.official = { ok: official.ok, path: official.path, bytes: official.bytes, sha256: official.sha256, origin: official.origin, tried: official.tried }
-    if (!official.ok) {
-      caseHold(rec, official.code ?? 'DASH-OFFICIAL-ABSENT', `官方像素层没找到（${official.reason}）—— 这一格的行形状判不了宽窄，但下面的判据仍跑`)
+    rec.readings.official = { ok: official.ok, path: official.path, bytes: official.bytes, sha256: official.sha256, origin: official.origin, package: official.package, inner: official.inner, tried: official.tried }
+    // 现役官方（asar 里的那一份）：读数里必须点名它 —— 行形状尺子用的那一份可能不是同一个包（见下）。
+    const installed = platform.asar === null ? null : officialClient({ extract: true, asar: platform.asar })
+    rec.readings.installed_official = installed === null ? null : {
+      ok: installed.ok, path: installed.path, bytes: installed.bytes, sha256: installed.sha256,
+      origin: installed.origin, package: installed.package, inner: installed.inner,
+      code: installed.code, failure: installed.failure,
+    }
+    /**
+     * 「插件身份对得上官方」这一句的锚点现状 —— **两份官方并排记**。
+     *
+     * 2026-11-15 宿主 0.2.2-rc.3 把官方看板换成了 `TeamBoard`：`taskTitle` / `taskState` 0 命中，
+     * 槽位与触发器文案也换了。本格的判据（行形状 / 槽位 / 触发器 / 13 个类名格）**不改**——
+     * 重新锚定是产品决定（第 2 关重开）；这里只把"这一句过期了"以及"重新锚定要拍什么"写进读数。
+     */
+    const shapeFromPrimary = official.ok ? taskTitleShape(official.source) : null
+    const shapeOracle = shapeFromPrimary?.found === true ? official : officialClient({ extract: true, inner: OFFICIAL_INNER_LEGACY })
+    const anchorCensus = (source) => ({
+      taskTitle: countMatches(stripCommentLines(source), '\\btaskTitle\\b'),
+      taskState: countMatches(stripCommentLines(source), '\\btaskState\\b'),
+      roster: countMatches(stripCommentLines(source), '\\broster\\b'),
+      slot_header_actions: /conversation\.session\.header\.actions\b/.test(source),
+      slot_subagent_footer: /conversation\.session\.header\.actions\.subagent\.footer/.test(source),
+      trigger_task_board: /trigger\s*:\s*["'`]任务板["'`]/.test(source),
+      trigger_kanban: /trigger\s*:\s*["'`]看板["'`]/.test(source),
+    })
+    const installedAnchor = installed?.ok === true ? anchorCensus(installed.source) : null
+    const oracleAnchor = shapeOracle.ok === true ? anchorCensus(shapeOracle.source) : null
+    const stale = installedAnchor === null || oracleAnchor === null
+      ? null
+      : installed.package !== shapeOracle.package && installedAnchor.taskTitle === 0
+    rec.readings.official_anchor = {
+      sentence: '「插件身份对得上官方」（DASH-05 标题；行形状 / 槽位 / 触发器 / 13 个类名格都按它判）',
+      stale,
+      installed_official: installed?.ok === true
+        ? { package: installed.package, origin: installed.origin, inner: installed.inner, sha256: installed.sha256, bytes: installed.bytes, anchors: installedAnchor }
+        : { ok: false, code: installed?.code ?? null, failure: installed?.failure ?? null, reason: installed?.reason ?? '平台 asar 读不到' },
+      shape_oracle: shapeOracle.ok === true
+        ? { package: shapeOracle.package, origin: shapeOracle.origin, inner: shapeOracle.inner, sha256: shapeOracle.sha256, bytes: shapeOracle.bytes, anchors: oracleAnchor }
+        : { ok: false, code: shapeOracle.code, failure: shapeOracle.failure, reason: shapeOracle.reason },
+      why: stale === true
+        ? '0.2.2-rc.3 的官方 client.js 里 `taskTitle` / `taskState` 都是 0 命中 —— 官方把看板换成了 TeamBoard（`li.task > button.taskRow[span.glyph, span.subject, span.chevron]`；槽位 `conversation.session.header.actions.subagent.footer`；触发器 `任务板`）。本格仍按 2026-11-04 的契约量，所以「对得上官方」这一句在现役官方上**已经过期**：行形状的尺子自证只在那份旧官方副本上成立（package / sha256 / bytes 见上）。'
+        : stale === false
+          ? '现役官方与行形状尺子同一份包 —— 这一句没有过期。'
+          : '现役官方读不到（见 installed_official）⇒ 这一句是不是过期，这一跑判不了。',
+      would_reanchor: '要重新锚定，须由产品先拍一次对照表改版：把 E25 的行形状锚从 `div.taskTitle[strong, span.taskState]` 换成 rc.3 `TeamBoard` 的 `li.task > button.taskRow[span.glyph, span.subject, span.chevron]`，同批重判槽位（`conversation.session.header.actions.subagent.footer`）、触发器文案（`任务板`）与那 13 个类名格 —— 那是 DASH-05 契约的第 2 关重开，探针不自己换锚。',
+    }
+    if (!shapeOracle.ok) {
+      caseHold(rec, shapeOracle.code ?? 'DASH-OFFICIAL-ABSENT', `行形状的尺子自证没有可比对的官方件（${shapeOracle.reason}）—— 「对得上官方」已是过期锚点，这一格判不了宽窄，但下面的判据仍跑`)
     } else {
       // ① 尺子自证：同一套提取器读官方那一段，必须读出 div[strong, span.taskState]
-      const officialShape = taskTitleShape(official.source)
+      const officialShape = taskTitleShape(shapeOracle.source)
       rec.readings.official_shape = officialShape
       if (!isOneRowShape(officialShape)) {
-        problems.push(problem('DASH-RULER-BROKEN', `提取器在官方 client.js 上读出的形状不是 div[strong, span.taskState]：${JSON.stringify(officialShape).slice(0, 400)} —— 尺子坏了，下面的红不算数`))
+        problems.push(problem('DASH-RULER-BROKEN', `提取器在形状尺子的官方件（${shapeOracle.origin} · ${shapeOracle.bytes} B）上读出的形状不是 div[strong, span.taskState]：${JSON.stringify(officialShape).slice(0, 400)} —— 尺子坏了，下面的红不算数`))
       }
     }
     // ①′ 取件兜底的自证（`F5`）：四种失败各有各的码；位置参数对齐之后**真能解出官方件**。
@@ -116,13 +165,19 @@ test('DASH-05 主行 = 一行（标题 + 五关同一个 taskTitle）+ 插件身
       mkdirSync(path.dirname(bogusAsar), { recursive: true })
       writeFileSync(bogusAsar, 'not an asar', 'utf8')
       const badCall = officialClient({ extract: true, asar: bogusAsar })
-      const platform = platformReading()
-      const extracted = platform.asar === null ? null : officialClient({ extract: true, asar: platform.asar })
+      // 平台里有 asar ⇒ 取件必须走通（`call-failed` = 我们的调用形状又错了；`target-missing` = 内层路径错）。
+      // 2026-11-15：包名从 `dsh-experimental-client-ui-agent-team` 换成 `dsh-client-ui-agent-team`，
+      // 取件按新→旧两个包名逐个试；读数里点名用的是哪一个（`origin` / `package` / `sha256` / `bytes`）。
+      const extracted = installed
       rec.readings.extractor_failure_modes = {
         tool_missing: { code: missingTool.code, ok: missingTool.ok, reason: missingTool.reason },
         call_failed: { code: badCall.code, ok: badCall.ok, reason: badCall.reason },
         platform_asar: platform.asar,
-        extracted: extracted === null ? null : { ok: extracted.ok, code: extracted.code, failure: extracted.failure, bytes: extracted.bytes },
+        extracted: extracted === null ? null : {
+          ok: extracted.ok, code: extracted.code, failure: extracted.failure,
+          bytes: extracted.bytes, sha256: extracted.sha256, origin: extracted.origin,
+          package: extracted.package, inner: extracted.inner,
+        },
       }
       if (missingTool.ok || badCall.ok) {
         problems.push(problem('DASH-RULER-BROKEN', '取件的两个坏样本居然都"成功"了 —— 失败分型是死的，HOLD 报文仍会把错因说错'))

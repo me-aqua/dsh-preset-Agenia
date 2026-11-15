@@ -59,16 +59,32 @@ export const DASH_CLIENT_PKG = SUT_OVERRIDE.client_pkg ?? path.join(PATHS.repo, 
  * `dsh/node_modules/@deepseek-ai/dsh/package.json`）。设计抽屉里那两份只读副本是从 asar 的
  * `dsh/` 这一层解出来的 —— 所以 `extract.mjs` 的内层路径**必须带这个前缀**：
  * 少了它，工具会打印 `MISS: …` 并 exit 0（`F5` 修参数形状时顺手抓到的第二个错）。
+ *
+ * 🔴 **官方件的包名有两个，新的在前**（`0.2.2-rc.3` 把 `experimental` 从包名里拿掉了）：
+ *   · `@deepseek-ai/dsh-client-ui-agent-team`              —— rc.3 起（`lib/client.js` = 45,490 B）；
+ *   · `@deepseek-ai/dsh-experimental-client-ui-agent-team` —— rc.1 / rc.2（25,399 B；设计抽屉里那份副本）。
+ * 取件按这个次序逐个试，**哪一份被用上写进 `origin`**（`design-drawer-copy:<pkg>` / `asar-extracted:<pkg>`），
+ * `package` / `inner` / `bytes` / `sha256` 同批记 —— 旧的那份只许当**看得见的回落**，不许冒充现役官方。
  */
 const ASAR_PLATFORM_ROOT = 'dsh'
-const OFFICIAL_PACKAGE = path.join('node_modules', '@deepseek-ai', 'dsh-experimental-client-ui-agent-team', 'lib', 'client.js')
-/** asar 内的完整路径（`extract.mjs` 的位置参数 / 只读副本的相对路径都用它）。 */
-const OFFICIAL_INNER = path.join(ASAR_PLATFORM_ROOT, OFFICIAL_PACKAGE)
+export const OFFICIAL_PACKAGES = Object.freeze([
+  '@deepseek-ai/dsh-client-ui-agent-team',
+  '@deepseek-ai/dsh-experimental-client-ui-agent-team',
+])
+const officialInnerOf = (pkg) => path.join(ASAR_PLATFORM_ROOT, 'node_modules', ...pkg.split('/'), 'lib', 'client.js')
+const packageOfInner = (inner) => OFFICIAL_PACKAGES.find((pkg) => officialInnerOf(pkg) === inner) ?? null
+/** asar 内的完整路径（`extract.mjs` 的位置参数 / 只读副本的相对路径都用它），**新的在前**。 */
+export const OFFICIAL_INNERS = OFFICIAL_PACKAGES.map(officialInnerOf)
+export const OFFICIAL_INNER = OFFICIAL_INNERS[0]
+export const OFFICIAL_INNER_LEGACY = OFFICIAL_INNERS[1]
 /** 设计岗 2026-11-04 用 asar-cli 解出来的只读副本（`.team/` 不进 git，所以它不是唯一来源）。 */
-export const OFFICIAL_COPY_CANDIDATES = [
-  path.join(PATHS.repo, '.team', 'design', '2026-11-04', 'extracted', OFFICIAL_INNER),
-  path.join(PATHS.repo, '.team', 'design', '2026-11-04', 'panel-ref', OFFICIAL_INNER),
+const OFFICIAL_COPY_ROOTS = [
+  path.join(PATHS.repo, '.team', 'design', '2026-11-04', 'extracted'),
+  path.join(PATHS.repo, '.team', 'design', '2026-11-04', 'panel-ref'),
 ]
+export const OFFICIAL_COPY_CANDIDATES = OFFICIAL_COPY_ROOTS.flatMap((root) => OFFICIAL_INNERS.map((inner) => path.join(root, inner)))
+/** `origin` 的两截：从哪儿取到 + 哪一个包 —— 少了后一截，旧官方就会冒充现役。 */
+const originOf = (carrier, inner) => `${carrier}:${packageOfInner(inner) ?? '(injected)'}`
 
 const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex').toUpperCase()
 
@@ -93,64 +109,73 @@ export const OFFICIAL_FAIL = {
 /**
  * 官方 `client.js` 的取件（**只读**）。
  *
- * @param {{ extract?: boolean, asar?: string|null, inner?: string, toolPath?: string|null }} [options]
+ * 包里有两份官方（见上），**新的先试、旧的只当回落**；结果里 `origin` 写成
+ * `<carrier>:<package>`（`design-drawer-copy:@deepseek-ai/dsh-experimental-client-ui-agent-team` /
+ * `asar-extracted:@deepseek-ai/dsh-client-ui-agent-team`），并同批给出 `package` / `inner` /
+ * `bytes` / `sha256` —— 读的人能当场分清"量的是哪一份官方"，不会让旧官方冒充现役。
+ *
+ * @param {{ extract?: boolean, asar?: string|null, inner?: string|null, toolPath?: string|null }} [options]
  *   `extract: true` ⇒ 副本都不在时从 `.tools/asar-cli/extract.mjs` 解到 `<run-root>/fixtures/dash-official/`。
- *   `asar` / `inner` / `toolPath` 只为**尺子的自证与刀**留的注入口（默认走 `platformReading()` +
- *   仓库里那份工具 + 官方包路径）—— 生产调用方一个都不传。
+ *   `asar` / `toolPath` = **尺子的自证与刀**的注入口：给了就跳过只读副本（生产调用方一个都不传）。
+ *   `inner` = 只认这一条包路径（仍然副本优先；给旧包路径就能显式取旧官方）。
  * @returns {{ok:boolean, path:string|null, source:string|null, bytes:number|null, sha256:string|null,
- *            origin:string|null, tried:string[], reason:string|null,
+ *            origin:string|null, package:string|null, inner:string|null, tried:string[], reason:string|null,
  *            code:string|null, failure:string|null, platform:object|null}}
  */
-export function officialClient({ extract = true, asar = null, inner = OFFICIAL_INNER, toolPath = null } = {}) {
+export function officialClient({ extract = true, asar = null, inner = null, toolPath = null } = {}) {
   const tried = []
-  // 显式注入了 asar / 内层路径 / 工具 ⇒ 这是**尺子的自证与刀**（`F5` 的分型必须能各走各的），
-  // 跳过只读副本；生产调用方一个都不传 ⇒ 照旧"抽屉优先、asar 兜底"。
-  const forced = asar !== null || toolPath !== null || inner !== OFFICIAL_INNER
+  const inners = inner === null ? OFFICIAL_INNERS : [inner]
+  const base = {
+    path: null, source: null, bytes: null, sha256: null, origin: null, package: null, inner: null,
+    tried, reason: null, code: null, failure: null, platform: null,
+  }
+  const ok = (file, carrier, innerPath, platform = null) => ({
+    ...base,
+    ok: true,
+    path: file,
+    source: readFileSync(file, 'utf8'),
+    bytes: statSync(file).size,
+    sha256: sha256(file),
+    origin: originOf(carrier, innerPath),
+    package: packageOfInner(innerPath),
+    inner: innerPath,
+    platform,
+  })
+  // 显式注入了 asar / 工具 ⇒ 这是**尺子的自证与刀**（`F5` 的分型必须能各走各的），跳过只读副本；
+  // 生产调用方一个都不传 ⇒ 照旧"抽屉优先、asar 兜底"。`inner` 只收窄候选，不跳过副本。
+  const forced = asar !== null || toolPath !== null
   if (!forced) {
-    for (const candidate of OFFICIAL_COPY_CANDIDATES) {
-      tried.push(candidate)
-      if (existsSync(candidate)) {
-        return {
-          ok: true,
-          path: candidate,
-          source: readFileSync(candidate, 'utf8'),
-          bytes: statSync(candidate).size,
-          sha256: sha256(candidate),
-          origin: 'design-drawer-copy',
-          tried,
-          reason: null,
-          code: null,
-          failure: null,
-          platform: null,
-        }
+    for (const root of OFFICIAL_COPY_ROOTS) {
+      for (const innerPath of inners) {
+        const candidate = path.join(root, innerPath)
+        tried.push(candidate)
+        if (existsSync(candidate)) return ok(candidate, 'design-drawer-copy', innerPath)
       }
     }
   }
   if (!extract) {
     return {
-      ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
+      ...base,
+      ok: false,
       code: OFFICIAL_FAIL.notAttempted,
       failure: 'not-attempted',
-      reason: '调用方没有允许 asar 取件，而设计抽屉的两处只读副本都不在',
-      platform: null,
+      reason: '调用方没有允许 asar 取件，而设计抽屉的只读副本都不在（新包、旧包的副本都试过）',
     }
   }
   const tool = toolPath ?? path.join(PATHS.repo, '.tools', 'asar-cli', 'extract.mjs')
   // 平台读数（`platform.mjs`）是 asar 路径的**唯一来源**（四级候选；④ 会自报"是猜的"）。
   const platform = asar === null ? platformReading() : null
   const asarFile = asar ?? platform?.asar ?? null
-  const innerPath = inner.split(path.sep).join('/')
   // 注入口走**单独的 out 目录**，且每次都真调一次：否则"先跑过一次好取件"会让后面的坏样本
   // 看到缓存目标就短路成 ok（`F5` 的分型自证必须各走各的，不能共享缓存）。
   const outDir = path.join(runRoot(), 'fixtures', forced ? 'dash-official-probe' : 'dash-official')
-  const target = path.join(outDir, ...inner.split('/'))
-  tried.push(`asar-cli extract → ${target}（asar=${asarFile ?? '(无)'} · inner=${innerPath}）`)
   if (asarFile === null || !existsSync(asarFile)) {
     const why = asar !== null
       ? `给的 asar 不在盘上：${asarFile}`
       : `这台机器上找不到 app.asar（platformReading 的四级候选全不在盘：${(platform?.tried ?? []).join(' · ') || '—'}）`
     return {
-      ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
+      ...base,
+      ok: false,
       code: OFFICIAL_FAIL.noAsar,
       failure: 'no-asar',
       reason: `${why} —— 官方件没有可比对的对象`,
@@ -159,73 +184,69 @@ export function officialClient({ extract = true, asar = null, inner = OFFICIAL_I
   }
   if (!existsSync(tool)) {
     return {
-      ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
+      ...base,
+      ok: false,
       code: OFFICIAL_FAIL.toolMissing,
       failure: 'tool-missing',
       reason: `取件工具不在盘上：${tool}（仓库里的 .tools/asar-cli/extract.mjs 应当随代码一起在）—— 不是"这台机器上没有官方包"`,
       platform,
     }
   }
-  if (!existsSync(target) || forced) {
-    // 解包器自己是一次外部调用；失败就照实记（不吞）。它只读 asar。
-    try {
-      mkdirSync(path.dirname(target), { recursive: true })
-      // 🔴 **位置参数**：`node extract.mjs <asar> <outDir> <innerPath…>`（不是 `--out=` / `--path=`）。
-      //    2026-11-04 的调用写成两个 flag ⇒ 工具打印用法并 exit 2，却被报成"这台机器上没有"（`F5`）。
-      const r = spawnSync(process.execPath, [tool, asarFile, outDir, innerPath], {
-        cwd: PATHS.repo,
-        encoding: 'utf8',
-      })
-      const status = r.status ?? 1
-      // "工具说的那句"要能读：优先挑带诊断信息的那一行（用法 / MISS / Error / ENOENT），
-      // 否则 stderr 的第一行常常只是 `<anonymous_script>:1` 这种栈头，读的人看不出错因。
-      const firstLine = (text) => {
-        const lines = String(text ?? '').split('\n').map((s) => s.trim()).filter((s) => s !== '')
-        return lines.find((s) => /用法|MISS|Error|error|Unexpected|invalid|ENOENT|EACCES/.test(s)) ?? lines[0] ?? ''
-      }
-      if (status !== 0) {
-        const said = firstLine(r.stderr) || firstLine(r.stdout) || '(工具没有输出)'
+  // "工具说的那句"要能读：优先挑带诊断信息的那一行（用法 / MISS / Error / ENOENT），
+  // 否则 stderr 的第一行常常只是 `<anonymous_script>:1` 这种栈头，读的人看不出错因。
+  const firstLine = (text) => {
+    const lines = String(text ?? '').split('\n').map((s) => s.trim()).filter((s) => s !== '')
+    return lines.find((s) => /用法|MISS|Error|error|Unexpected|invalid|ENOENT|EACCES/.test(s)) ?? lines[0] ?? ''
+  }
+  for (const innerPath of inners) {
+    const innerPosix = innerPath.split(path.sep).join('/')
+    const target = path.join(outDir, innerPath)
+    tried.push(`asar-cli extract → ${target}（asar=${asarFile} · inner=${innerPosix}）`)
+    if (!existsSync(target) || forced) {
+      // 解包器自己是一次外部调用；失败就照实记（不吞）。它只读 asar。
+      try {
+        mkdirSync(path.dirname(target), { recursive: true })
+        // 🔴 **位置参数**：`node extract.mjs <asar> <outDir> <innerPath…>`（不是 `--out=` / `--path=`）。
+        //    2026-11-04 的调用写成两个 flag ⇒ 工具打印用法并 exit 2，却被报成"这台机器上没有"（`F5`）。
+        const r = spawnSync(process.execPath, [tool, asarFile, outDir, innerPosix], {
+          cwd: PATHS.repo,
+          encoding: 'utf8',
+        })
+        const status = r.status ?? 1
+        if (status !== 0) {
+          const said = firstLine(r.stderr) || firstLine(r.stdout) || '(工具没有输出)'
+          return {
+            ...base,
+            ok: false,
+            code: OFFICIAL_FAIL.callFailed,
+            failure: 'call-failed',
+            reason: `官方 client.js 取件**调用失败**（不是"这台机器上没有"）：${path.basename(tool)} exit ${status}：${said}`
+              + `（asar=${asarFile} · inner=${innerPosix}${platform === null ? '' : ` · 平台读数：asar 取自 ${platform.source ?? '—'}`}）`,
+            platform,
+          }
+        }
+        const okLine = firstLine(r.stdout)
+        if (okLine !== '') tried.push(`asar-cli exit 0：${okLine}`)
+      } catch (err) {
         return {
-          ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
+          ...base,
+          ok: false,
           code: OFFICIAL_FAIL.callFailed,
           failure: 'call-failed',
-          reason: `官方 client.js 取件**调用失败**（不是"这台机器上没有"）：${path.basename(tool)} exit ${status}：${said}`
-            + `（asar=${asarFile} · inner=${innerPath}${platform === null ? '' : ` · 平台读数：asar 取自 ${platform.source ?? '—'}`}）`,
+          reason: `官方 client.js 取件**调用抛错**（不是"这台机器上没有"）：${String(err?.message ?? err)}`,
           platform,
         }
       }
-      const okLine = firstLine(r.stdout)
-      if (okLine !== '') tried.push(`asar-cli exit 0：${okLine}`)
-    } catch (err) {
-      return {
-        ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
-        code: OFFICIAL_FAIL.callFailed,
-        failure: 'call-failed',
-        reason: `官方 client.js 取件**调用抛错**（不是"这台机器上没有"）：${String(err?.message ?? err)}`,
-        platform,
-      }
     }
-  }
-  if (existsSync(target)) {
-    return {
-      ok: true,
-      path: target,
-      source: readFileSync(target, 'utf8'),
-      bytes: statSync(target).size,
-      sha256: sha256(target),
-      origin: 'asar-extracted',
-      tried,
-      reason: null,
-      code: null,
-      failure: null,
-      platform,
-    }
+    // 这一条解出来就收（新的在前）；解不出来才轮到下一条包名。
+    if (existsSync(target)) return ok(target, 'asar-extracted', innerPath, platform)
   }
   return {
-    ok: false, path: null, source: null, bytes: null, sha256: null, origin: null, tried,
+    ...base,
+    ok: false,
     code: OFFICIAL_FAIL.targetMissing,
     failure: 'target-missing',
-    reason: `取件工具跑完了（exit 0），但没有解出 ${innerPath} —— asar 里没有这个包，或内层路径写错（tried=${tried.join(' · ')}）`,
+    reason: `取件工具跑完了（exit 0），但两个包名都没解出官方 client.js（tried=${tried.join(' · ')}）—— asar 里没有这些包，或内层路径写错`,
     platform,
   }
 }
