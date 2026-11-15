@@ -15,11 +15,13 @@ import { appendFileSync, existsSync, readdirSync, statSync, writeFileSync } from
 import path from 'node:path'
 import { before, test } from 'node:test'
 import { PATHS } from '../support/env.mjs'
-import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
+import { caseFail, preflight, problem, runCase, runId, runRoot } from '../support/evidence.mjs'
+import { ensureMarkedDir } from '../support/root-guard.mjs'
+import { runRoute } from '../support/sut.mjs'
 import {
   BOOKS, CHECK, LEDGER_REL, buildScene, codesOf, eventAssessed, eventDisposed, eventRegistered,
-  expectCodes, indexMarkerReading, messagesOf, namedIn, productText, readText, runCheck, runIndex,
-  schemeText, toolPresent,
+  expectCodes, indexMarkerReading, messagesOf, namedIn, productText, readJson, readText, runBugRead, runCheck, runFold,
+  runIndex, schemeText, toolPresent,
 } from '../support/three-books.mjs'
 
 before(() => {
@@ -69,6 +71,54 @@ function checkScene(problems, rec, { caseId, tag, spec, checkArgs = [] }) {
     },
   }
   return { scene, idx, run }
+}
+
+/** 真 CLI 的夹具时钟：`registered` / `disposed` 的 `at` 全钉在同一天（过期判据另给 `--today`）。 */
+const CLI_NOW = '2026-11-15T12:00:00+08:00'
+
+/**
+ * 给 `agenia-route.mjs` 的夹具根补 marker + 注入时钟。
+ * 真 CLI 在测试模式里只认带 marker 的根（根守卫）；时钟文件让 `at` / `registered_at` 可复现。
+ */
+function bookCliScene(caseId, tag, spec) {
+  const scene = buildScene({ caseId, tag, ...spec })
+  ensureMarkedDir(scene.root, { runRoot: runRoot(), runId: runId(), kind: 'agenia-test-root' })
+  const nowFile = path.join(scene.root, '.team-now.txt')
+  writeFileSync(nowFile, `${CLI_NOW}\n`, 'utf8')
+  return { scene, nowFile, env: { ...process.env, AGENIA_NOW_FILE: nowFile } }
+}
+
+/** 一天的原始事件（读不出来 ⇒ `null`，刀会当场红）。 */
+function dayEventsOf(root) {
+  const file = path.join(root, LEDGER_REL, '缺陷', '2026-11-15.json')
+  const read = readJson(file)
+  return read.ok && Array.isArray(read.json?.events) ? read.json.events : null
+}
+
+/** 一条「有落地计划的暂缓」（重开刀与 reopen-without-dispose 的起点）。 */
+function plannedDeferred({ due = '2026-11-20', id = BUG } = {}) {
+  return {
+    days: [{
+      day: '2026-11-15',
+      events: [
+        eventRegistered({
+          seq: 1, id, at: '2026-11-15T09:00:00+08:00',
+          extra: {
+            reporter: '组长',
+            source: { carrier: 'leader', ref: 'fixture/reg' },
+            tags: ['ledger'],
+            how_seen: '夹具：怎么撞见的',
+            evidence: [{ kind: 'file', ref: 'fixture/evidence.log' }],
+          },
+        }),
+        eventAssessed({ seq: 2, id, at: '2026-11-15T10:00:00+08:00', verdict: 'true' }),
+        eventDisposed({
+          seq: 3, id, at: '2026-11-15T11:00:00+08:00', value: 'deferred', reason: '夹具：暂缓（有落地计划）',
+          extra: { due_at: due, owner: '实现岗', next_step: '先给契约加一行，再实现' },
+        }),
+      ],
+    }],
+  }
 }
 
 /** 真树读数（`账本/` 在不在 · 三册在不在 · `决议/` 还在不在）。 */
@@ -533,30 +583,168 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
         if (chain?.deferred_open_structured !== 1) push('CHAIN-READING-MISSING', `[LDG-03/deferred-open] chain.bug.deferred_open_structured 实得 ${JSON.stringify(chain?.deferred_open_structured ?? null)}，期望 1`)
       }
     }
-    // ⑤'' 刀（r5）：暂缓缺 `owner` ⇒ 恰好 `DEFERRED-NO-LANDING-PLAN`（不许静默通过）
-    {
+    // ⑤'' 刀（r5/r6）：新 `deferred` 缺 `due_at` / `owner` / `next_step` 任一格 ⇒ 折叠红
+    // （三条腿都要；只测一格会让"漏另一格"静默绿 —— `cand-20261107-0222` 的负控口径）
+    const PLAN = { due_at: '2026-11-20', owner: '实现岗', next_step: '先给契约加一行，再实现' }
+    rec.readings.deferred_missing = {}
+    for (const missingKey of ['due_at', 'owner', 'next_step']) {
+      const extra = { ...PLAN }
+      delete extra[missingKey]
       const spec = {
         days: [{
           day: '2026-11-15',
           events: [
             eventRegistered({ seq: 1, id: bugA }),
             eventAssessed({ seq: 2, id: bugA, verdict: 'true' }),
-            eventDisposed({
-              seq: 3, id: bugA, value: 'deferred', reason: '到期 2026-11-20 · 暂缓',
-              extra: { due_at: '2026-11-20', next_step: '先给契约加一行，再实现' },
-            }),
+            eventDisposed({ seq: 3, id: bugA, value: 'deferred', reason: '到期 2026-11-20 · 暂缓', extra }),
           ],
         }],
       }
+      const tag = `deferred-missing-${missingKey}`
       const { run } = checkScene(problems, rec, {
-        caseId: 'LDG-03', tag: 'deferred-no-owner', spec: goodLedger({ schemes: schemeKillsA, ...spec }),
+        caseId: 'LDG-03', tag, spec: goodLedger({ schemes: schemeKillsA, ...spec }),
         checkArgs: ['--today=2026-11-15'],
       })
-      rec.readings.deferred_no_owner = { exit: run.exit, codes: codesOf(run.json), messages: messagesOf(run.json).map((m) => m.slice(0, 240)) }
-      if (expectCodes(problems, run, ['DEFERRED-NO-LANDING-PLAN'], push, { label: 'LDG-03/deferred-no-owner' })) {
-        if (!namedIn(run.json, bugA)) push('NOT-NAMED', '[LDG-03/deferred-no-owner] 报文必须点名缺 owner 的那条缺陷')
+      rec.readings.deferred_missing[missingKey] = {
+        exit: run.exit, codes: codesOf(run.json), messages: messagesOf(run.json).map((m) => m.slice(0, 240)),
+      }
+      if (expectCodes(problems, run, ['DEFERRED-NO-LANDING-PLAN'], push, { label: `LDG-03/${tag}` })) {
+        if (!namedIn(run.json, bugA)) push('NOT-NAMED', `[LDG-03/${tag}] 报文必须点名缺 ${missingKey} 的那条缺陷`)
         const p = (run.json?.problems ?? []).find((x) => x.code === 'DEFERRED-NO-LANDING-PLAN')
-        if (JSON.stringify(p?.missing) !== JSON.stringify(['owner'])) push('NOT-NAMED', `[LDG-03/deferred-no-owner] 报文要点名缺的那一格 owner，实得 ${JSON.stringify(p?.missing ?? null)}`)
+        if (JSON.stringify(p?.missing) !== JSON.stringify([missingKey])) {
+          push('NOT-NAMED', `[LDG-03/${tag}] 报文要点名缺的那一格 ${missingKey}，实得 ${JSON.stringify(p?.missing ?? null)}`)
+        }
+      }
+    }
+    // ⑤''' 刀（r6·写入口）：同一件事走真 CLI —— 缺任一格 ⇒ `E_ARG_SCHEMA` + **零写入**。
+    // 只判校验器那一半不够：写入口放行时，人写得出一个必然红的 deferred（规则与工具互相打脸）。
+    rec.readings.dispose_missing_cli = {}
+    for (const missingKey of ['due_at', 'owner', 'next_step']) {
+      const tag = `cli-deferred-missing-${missingKey}`
+      const { scene, env } = bookCliScene('LDG-03', tag, goodLedger({
+        days: [{
+          day: '2026-11-15',
+          events: [
+            eventRegistered({ seq: 1, id: bugA, at: '2026-11-15T09:00:00+08:00' }),
+            eventAssessed({ seq: 2, id: bugA, at: '2026-11-15T10:00:00+08:00', verdict: 'true' }),
+          ],
+        }],
+      }))
+      const dayFile = path.join(scene.root, LEDGER_REL, '缺陷', '2026-11-15.json')
+      const before = readText(dayFile)
+      const payload = { id: bugA, disposition: 'deferred', reason: '夹具：暂缓', by_role: 'leader', ...PLAN }
+      delete payload[missingKey]
+      const res = await runRoute('LDG-03', 'bug-dispose', payload, { workspace: scene.root, env })
+      const after = readText(dayFile)
+      const code = res?.json?.error?.code ?? null
+      rec.readings.dispose_missing_cli[missingKey] = {
+        exit: res?.exit_code ?? null, code, event_written: before !== after,
+        events: dayEventsOf(scene.root)?.length ?? null,
+      }
+      if (res?.exit_code !== 2 || code !== 'E_ARG_SCHEMA') {
+        push('KNIFE-NO-BITE', `[LDG-03/${tag}] 新 deferred 缺 ${missingKey} 时 CLI 必须拒（exit 2 / E_ARG_SCHEMA），实得 exit=${res?.exit_code} / ${JSON.stringify(code)} / ${JSON.stringify(messagesOf(res?.json ?? {}).slice(0, 2))}`)
+      }
+      if (before !== after) {
+        push('KNIFE-WROTE', `[LDG-03/${tag}] 被拒的那一次改写了事件流 —— fail-closed 要求零写入（${dayFile}）`)
+      }
+    }
+    // ⑤'''' 刀（r6）：重开再处置 —— `bug-reopen` 追加 `registered`，之后 `bug-dispose` 才允许；
+    // 折叠不报 `BUG-FOLD-CONFLICT`，新 disposed 带齐落地计划三格。
+    {
+      const { scene, env } = bookCliScene('LDG-03', 'reopen-then-dispose', goodLedger({ schemes: schemeKillsA, ...plannedDeferred() }))
+      runIndex(scene.root)
+      const before = dayEventsOf(scene.root) ?? []
+      // 重开之前直接再处置 ⇒ 写入口先挡（不写一条必然冲突的流）
+      const blocked = await runRoute('LDG-03', 'bug-dispose', {
+        id: bugA, disposition: 'deferred', reason: '夹具：没重开就再处置', by_role: 'leader',
+        due_at: '2026-11-21', owner: '实现岗', next_step: '不该写进去',
+      }, { workspace: scene.root, env })
+      const blockedCode = blocked?.json?.error?.code ?? null
+      const afterBlocked = dayEventsOf(scene.root) ?? []
+      const reopened = await runRoute('LDG-03', 'bug-reopen', {
+        id: bugA, reason: '夹具：重开后重新规划落地', by_role: 'leader',
+      }, { workspace: scene.root, env })
+      const disposed = await runRoute('LDG-03', 'bug-dispose', {
+        id: bugA, disposition: 'deferred', reason: '夹具：重开后的新落地计划', by_role: 'leader',
+        due_at: '2026-11-21', owner: '实现岗', next_step: '重开后再做一次',
+      }, { workspace: scene.root, env })
+      const run = runCheck(scene.root, ['--today=2026-11-15'])
+      const events = dayEventsOf(scene.root) ?? []
+      const seqReopen = events.find((e) => e.seq === 4)
+      const seqDispose = events.find((e) => e.seq === 5)
+      rec.readings.reopen_then_dispose = {
+        root: scene.root,
+        blocked: { exit: blocked?.exit_code ?? null, code: blockedCode, events_unchanged: JSON.stringify(before) === JSON.stringify(afterBlocked) },
+        reopen: { exit: reopened?.exit_code ?? null, ok: reopened?.json?.ok ?? null, event_seq: reopened?.json?.event_seq ?? null, voided_due_at: reopened?.json?.voided_due_at ?? null },
+        dispose: { exit: disposed?.exit_code ?? null, ok: disposed?.json?.ok ?? null },
+        check: { exit: run.exit, codes: codesOf(run.json), chain: run.json?.chain?.bug ?? null },
+        seq4: seqReopen === undefined ? null : { kind: seqReopen.kind, reopened: seqReopen.reopened, phenomenon: seqReopen.phenomenon, reopen_reason: seqReopen.reopen_reason },
+        seq5: seqDispose === undefined ? null : { kind: seqDispose.kind, due_at: seqDispose.due_at, owner: seqDispose.owner, next_step: seqDispose.next_step },
+      }
+      if (blocked?.exit_code !== 2 || blockedCode !== 'E_ARG_SCHEMA') {
+        push('KNIFE-NO-BITE', `[LDG-03/reopen-then-dispose] 没重开就再处置必须被写入口拒（exit 2 / E_ARG_SCHEMA），实得 exit=${blocked?.exit_code} / ${JSON.stringify(blockedCode)}`)
+      }
+      if (JSON.stringify(before) !== JSON.stringify(afterBlocked)) {
+        push('KNIFE-WROTE', '[LDG-03/reopen-then-dispose] 被拒的第二次处置改写了事件流 —— 应零写入')
+      }
+      if (reopened?.exit_code !== 0 || reopened?.json?.event_seq !== 4) {
+        push('KNIFE-NO-BITE', `[LDG-03/reopen-then-dispose] bug-reopen 必须成功并落 seq 4，实得 exit=${reopened?.exit_code} / event_seq=${JSON.stringify(reopened?.json?.event_seq ?? null)} / ${JSON.stringify(reopened?.json ?? null)?.slice(0, 240)}`)
+      } else if (reopened?.json?.voided_due_at !== '2026-11-20') {
+        push('KNIFE-NO-BITE', `[LDG-03/reopen-then-dispose] 重开要报出被作废的旧 due_at 2026-11-20，实得 ${JSON.stringify(reopened?.json?.voided_due_at ?? null)}`)
+      }
+      if (disposed?.exit_code !== 0) {
+        push('KNIFE-NO-BITE', `[LDG-03/reopen-then-dispose] 重开之后 bug-dispose 必须成功，实得 exit=${disposed?.exit_code} / ${JSON.stringify(disposed?.json ?? null)?.slice(0, 240)}`)
+      }
+      if (seqReopen === undefined || seqReopen.kind !== 'registered' || seqReopen.reopened !== true) {
+        push('KNIFE-NO-BITE', `[LDG-03/reopen-then-dispose] 重开事件必须是 registered 且 reopened:true，实得 ${JSON.stringify(seqReopen ?? null)}`)
+      } else {
+        // 原 phenomenon 逐字带过来（重开不许改写现象）
+        if (seqReopen.phenomenon !== '夹具现象') push('NOT-NAMED', `[LDG-03/reopen-then-dispose] 重开事件的 phenomenon 必须逐字带原值「夹具现象」，实得 ${JSON.stringify(seqReopen.phenomenon)}`)
+        if (typeof seqReopen.reopen_reason !== 'string' || seqReopen.reopen_reason.trim() === '') push('NOT-NAMED', '[LDG-03/reopen-then-dispose] 重开事件缺 reopen_reason')
+      }
+      if (seqDispose === undefined || seqDispose.kind !== 'disposed' || seqDispose.due_at !== '2026-11-21' || seqDispose.owner !== '实现岗' || seqDispose.next_step !== '重开后再做一次') {
+        push('KNIFE-NO-BITE', `[LDG-03/reopen-then-dispose] 重开后的 disposed 必须把三格写进事件顶层，实得 ${JSON.stringify(seqDispose ?? null)}`)
+      }
+      if (expectCodes(problems, run, [], push, { label: 'LDG-03/reopen-then-dispose' })) {
+        if (run.json?.chain?.bug?.deferred !== 1) push('CHAIN-READING-MISSING', `[LDG-03/reopen-then-dispose] chain.bug.deferred 实得 ${JSON.stringify(run.json?.chain?.bug?.deferred ?? null)}，期望 1`)
+      }
+    }
+    // ⑤''''' 刀（r6）：重开但不处置 ⇒ 读数如实（不是关着）：折叠 disposition=null、链不计暂缓、读面 open。
+    {
+      const { scene, env } = bookCliScene('LDG-03', 'reopen-without-dispose', goodLedger({ schemes: schemeKillsA, ...plannedDeferred() }))
+      runIndex(scene.root)
+      const reopened = await runRoute('LDG-03', 'bug-reopen', { id: bugA, reason: '夹具：只重开、不处置', by_role: 'leader' }, { workspace: scene.root, env })
+      runIndex(scene.root) // 派生页必须跟着新现状走（重开之后页上不能还印着旧处置）
+      const fold = runFold(scene.root)
+      const run = runCheck(scene.root, ['--today=2026-11-15'])
+      const read = runBugRead(scene.root)
+      const state = Array.isArray(fold.json?.states) ? fold.json.states.find((s) => s.id === bugA) : undefined
+      const entry = Array.isArray(read.json?.ledger?.entries) ? read.json.ledger.entries.find((e) => e.id === bugA) : undefined
+      rec.readings.reopen_without_dispose = {
+        root: scene.root,
+        reopen: { exit: reopened?.exit_code ?? null, ok: reopened?.json?.ok ?? null, event_seq: reopened?.json?.event_seq ?? null },
+        fold: {
+          exit: fold.exit, codes: codesOf(fold.json),
+          disposition: state?.disposition ?? null, disposed_payload: state?.disposed_payload ?? null, chain: state?.chain ?? null,
+        },
+        check: { exit: run.exit, codes: codesOf(run.json), chain: run.json?.chain?.bug ?? null },
+        read: { exit: read.exit, counts: read.json?.counts ?? null, disposition: entry?.disposition ?? null, how_seen: entry?.how_seen ?? null },
+      }
+      if (reopened?.exit_code !== 0 || reopened?.json?.event_seq !== 4) {
+        push('KNIFE-NO-BITE', `[LDG-03/reopen-without-dispose] bug-reopen 必须成功并落 seq 4，实得 exit=${reopened?.exit_code} / event_seq=${JSON.stringify(reopened?.json?.event_seq ?? null)}`)
+      }
+      if (state === undefined || state.disposition !== null || state.disposed_payload !== null || state.chain?.kind !== null) {
+        push('KNIFE-NO-BITE', `[LDG-03/reopen-without-dispose] 重开不处置时折叠必须把旧处置清空（disposition=null / disposed_payload=null / chain.kind=null），实得 ${JSON.stringify({ disposition: state?.disposition ?? null, disposed_payload: state?.disposed_payload ?? null, chain: state?.chain ?? null })}`)
+      }
+      if (expectCodes(problems, run, [], push, { label: 'LDG-03/reopen-without-dispose' })) {
+        if (run.json?.chain?.bug?.deferred !== 0) push('CHAIN-READING-MISSING', `[LDG-03/reopen-without-dispose] 重开不处置时 chain.bug.deferred 实得 ${JSON.stringify(run.json?.chain?.bug?.deferred ?? null)}，期望 0（不许假装关着）`)
+        if (run.json?.chain?.bug?.closed !== 0) push('CHAIN-READING-MISSING', `[LDG-03/reopen-without-dispose] chain.bug.closed 实得 ${JSON.stringify(run.json?.chain?.bug?.closed ?? null)}，期望 0`)
+      }
+      if (entry === undefined || entry.disposition !== null || (entry?.how_seen ?? '') === '') {
+        push('KNIFE-NO-BITE', `[LDG-03/reopen-without-dispose] 读面必须把重开的票读成 open（disposition=null）且保留登记字段，实得 ${JSON.stringify({ disposition: entry?.disposition ?? null, how_seen: entry?.how_seen ?? null })}`)
+      }
+      if (read.json?.counts?.bug_open !== 1) {
+        push('KNIFE-NO-BITE', `[LDG-03/reopen-without-dispose] bug-read 的 counts.bug_open 实得 ${JSON.stringify(read.json?.counts?.bug_open ?? null)}，期望 1`)
       }
     }
     // ⑤''' 刀（r5）：`due_at` 已过且之后没人动 ⇒ 恰好 `CHAIN-BUG-DEFERRED-OVERDUE`，点名 id + due_at
@@ -625,11 +813,12 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
         const chain = run.json?.chain?.bug ?? null
         if (chain === null) push('CHAIN-READING-MISSING', '[真树] check 的读数里没有 chain.bug')
         else if (chain.unresolved !== 0) push('CHAIN-BUG-NO-SCHEME', `[真树] chain.bug.unresolved = ${JSON.stringify(chain.unresolved)}（实得 ${JSON.stringify(chain)}）`)
-        // 五组真树读数（契约 §10.1 r5）：156 = 52 结论（全是 legacy）+ 104 暂缓（3 新 + 43 冻结 + 58 legacy 散文）
+        // 五组真树读数（契约 §10.1 r5/r6）：157 = 52 结论（全是 legacy）+ 105 暂缓
+        // （4 新票带结构化字段 + 43 冻结 + 58 legacy 散文到期日）
         if (chain !== null) {
           const want = {
             closed_by_scheme: 0, closed_judged_false: 0, legacy_closed: 52,
-            deferred_open: 61, legacy_frozen: 43, deferred_open_structured: 3,
+            deferred_open: 62, legacy_frozen: 43, deferred_open_structured: 4,
           }
           for (const [k, v] of Object.entries(want)) {
             if (chain[k] !== v) push('CHAIN-READING-MISSING', `[真树] chain.bug.${k} 实得 ${JSON.stringify(chain[k] ?? null)}，期望 ${v}`)
@@ -641,8 +830,8 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
           if (chain.deferred !== chain.deferred_open + chain.legacy_frozen) {
             push('CHAIN-READING-MISSING', `[真树] chain.bug.deferred ${JSON.stringify(chain.deferred)} ≠ deferred_open + legacy_frozen ${chain.deferred_open + chain.legacy_frozen}`)
           }
-          if (chain.closed + chain.deferred !== 156) {
-            push('CHAIN-READING-MISSING', `[真树] closed ${chain.closed} + deferred ${chain.deferred} 实得 ${chain.closed + chain.deferred}，期望 156（每一条处置都在某一组里）`)
+          if (chain.closed + chain.deferred !== 157) {
+            push('CHAIN-READING-MISSING', `[真树] closed ${chain.closed} + deferred ${chain.deferred} 实得 ${chain.closed + chain.deferred}，期望 157（每一条处置都在某一组里）`)
           }
         }
       }

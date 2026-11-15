@@ -23,6 +23,10 @@
  * 判词码（契约 §9.1）：`BUG-EVENT-SHAPE`（点名文件 + seq + 哪一格）· `BUG-FOLD-CONFLICT`（id + 两个 seq）·
  * `DEFERRED-NO-LANDING-PLAN`（非 `历史` 的 `deferred` 缺 `due_at` / `owner` / `next_step` 之一 —— 这样的处置
  * 是「以后再说」，不是一张可执行的延期；2026-11-15 第 4 关 r3 · M-1）。
+ *
+ * 重开（契约 §3.1）：一条新的 `registered` 就是「上一次处置作废」的唯一机器判据 —— 它把现状的
+ * `disposition` / `disposed_payload` / `chain` 一起清空（旧落地计划随之作废）。只清 `last_disposed_seq`
+ * 不够：那会让读面继续把旧处置当现状（重开之后读起来仍像关着）。
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
@@ -53,7 +57,7 @@ function atOk(value) {
 const dayOf = (value) => (typeof value === 'string' ? value.slice(0, 10) : '')
 
 /** `due_at` 能不能当**到期日**用：有真实存在的日期部分（`2026-11-17` 或带时间的 ISO 都收）。 */
-function dueOk(value) {
+export function dueOk(value) {
   if (typeof value !== 'string') return false
   const day = dayOf(value)
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(day)) return false
@@ -130,6 +134,12 @@ export function readDayFiles({ root }) {
 export function foldBugBook({ root }) {
   const read = readDayFiles({ root })
   const problems = [...read.problems]
+  /**
+   * 「暂缓缺落地计划」先记账、**折叠完再报**：重开（后面的一条 `registered`）会让这条处置作废，
+   * 事件那一刻就报会把一条已经不算现状的旧处置印成问题（重开之后 `DEFERRED-NO-LANDING-PLAN`
+   * 仍挂在旧 seq 上 —— 那正是"作废"没有落到读数里）。
+   */
+  const landingProblems = []
   /** id → 累积状态 */
   const byId = new Map()
   for (const { day, file, events } of read.dayEvents) {
@@ -169,12 +179,25 @@ export function foldBugBook({ root }) {
       if (kind === 'registered') {
         if (!ENTRY_KINDS.includes(event.entry_kind)) shape('entry_kind', `只能是 ${ENTRY_KINDS.join(' / ')}，实得 ${JSON.stringify(event.entry_kind)}`)
         if (!filled(event.phenomenon)) shape('phenomenon', '不能是空的')
+        if (event.reopened !== undefined && typeof event.reopened !== 'boolean') {
+          shape('reopened', `写出来就必须是布尔（true = 这是一次重开），实得 ${JSON.stringify(event.reopened)}`)
+        }
+        if (event.reopened === true && !filled(event.reopen_reason)) {
+          shape('reopen_reason', '重开的 `registered` 必须带非空理由（谁都不能无理由把票翻回 open）')
+        }
         state.phenomenon = filled(event.phenomenon) ? event.phenomenon : state.phenomenon
         state.entry_kind = ENTRY_KINDS.includes(event.entry_kind) ? event.entry_kind : state.entry_kind
         state.registered_at = event.at
         state.day = day
         state.registered_payload = { ...event }
-        // 重开：上一次的 disposed 被一条新的 registered 截断，之后还能再处置一次（契约 §3.1）
+        /**
+         * 重开：上一次的 `disposed` 被一条新的 `registered` 截断 —— 它不再是**现状**。
+         * 清 `disposition` / `disposed_payload` 两格是"旧处置与旧落地计划一起作废"的落点；
+         * 只清 `last_disposed_seq` 会让 `bug-read` / `chain.bug` 继续把旧处置读成关着。
+         */
+        state.disposition = null
+        state.disposed_payload = null
+        state.chain = { kind: null }
         state.last_disposed_seq = null
         continue
       }
@@ -218,9 +241,8 @@ export function foldBugBook({ root }) {
         if (!filled(event.next_step)) missing.push('next_step')
         if (missing.length > 0) {
           // 处置本身是事实（照收），但它不是一张可执行的延期 ⇒ 单独一个码，不从状态里抹掉。
-          problems.push(problem('DEFERRED-NO-LANDING-PLAN', `${id} 的 ${where} 写着 \`disposition.value = deferred\` 却缺 ${missing.join(' / ')} —— `
-            + '暂缓要写结构化 `due_at`（可解析日期）+ `owner`（非空）+ `next_step`（非空）：没有这三格它是一条'
-            + '「永远不落地」的通道，不是延期（契约 §5.2）', { file, seq, id, missing }))
+          // 只在折叠结束时、这条 disposed 仍是现状时才报（重开会把它作废）。
+          landingProblems.push({ state, file, seq, id, missing, where })
         }
       }
       state.disposition = { value: d.value, reason: d.reason, by: d.by, at: d.at }
@@ -234,6 +256,17 @@ export function foldBugBook({ root }) {
           : legacy !== null ? { kind: 'legacy', ref: legacy }
             : { kind: null }
     }
+  }
+  /**
+   * 折叠结束：只有**仍是现状**的那条 `deferred` 才报缺落地计划。
+   * 判据是 `disposed_payload.seq`（重开会把它清空，后面再处置会换成新 seq）。
+   */
+  for (const { state, file, seq, id, missing, where } of landingProblems) {
+    if (state.disposition?.value !== 'deferred') continue
+    if (state.disposed_payload?.seq !== seq) continue
+    problems.push(problem('DEFERRED-NO-LANDING-PLAN', `${id} 的 ${where} 写着 \`disposition.value = deferred\` 却缺 ${missing.join(' / ')} —— `
+      + '暂缓要写结构化 `due_at`（可解析日期）+ `owner`（非空）+ `next_step`（非空）：没有这三格它是一条'
+      + '「永远不落地」的通道，不是延期（契约 §5.2）', { file, seq, id, missing }))
   }
   const states = [...byId.values()]
     .map(({ last_disposed_seq: _drop, ...rest }) => rest)

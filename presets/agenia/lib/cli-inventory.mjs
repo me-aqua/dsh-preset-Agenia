@@ -85,13 +85,16 @@ const ROUTE_OPS = Object.freeze([
   // 九个 bug op 落在**同一支 CLI**（契约 `.team/test/CONTRACT-B.md` §9.1 的裁定：不新造
   // `agenia-bug.mjs` —— 新 CLI 会连带 `install.mjs` / `release-scan` / `binFiles` /
   // `surfaceInventory` 四张清单同批动）。它们写的是**另一本账**（`.team/bug/ledger.json`
-  // 与 `.team/routing.jsonl`，两本账不互串）—— 但"改的是权威状态"这一条不变 ⇒ `writes: true`；
+  // 与 `.team/routing.jsonl`，两本账不互串；三册模式下条目追加到 `账本/缺陷/<day>.json`）——
+  // 但"改的是权威状态"这一条不变 ⇒ `writes: true`；
   // `bug-read` 是唯一只读的一条（零写入、不建目录），所以它 `writes: false`。
-  // 🔴 **同批**：测试侧 `support/env.mjs::FROZEN.ops['agenia-route.mjs']` 必须同批补这九条
+  // 🔴 **同批**：测试侧 `support/env.mjs::FROZEN.ops['agenia-route.mjs']` 必须同批补这些
   //    （少一处 ⇒ `DR-01` 的 `CLI-INVENTORY` 常驻红）。`writes` 的取值以本表为准。
   { op: 'bug-register', writes: true },
   { op: 'bug-assess', writes: true },
   { op: 'bug-dispose', writes: true },
+  // 构案 0012 §3.1：折叠只认「重开 = 新的 registered」；`bug-reopen` 是这条规则的写入口。
+  { op: 'bug-reopen', writes: true },
   { op: 'bug-batch-freeze', writes: true },
   { op: 'bug-samples-register', writes: true },
   { op: 'bug-archive', writes: true },

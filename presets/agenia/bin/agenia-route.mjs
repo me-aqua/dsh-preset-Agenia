@@ -44,17 +44,19 @@ import { validateBossEvidence, spentEvidenceRecord } from '../lib/evidence.mjs'
 import * as R from '../lib/route.mjs'
 import * as T from '../lib/tickets.mjs'
 import * as B from '../lib/bug-ledger.mjs'
-import { dayFileOf, readDayFiles } from '../lib/缺陷折叠.mjs'
+import { dayFileOf, dueOk, foldBugBook, readDayFiles } from '../lib/缺陷折叠.mjs'
 
 const CLI_NAME = 'agenia-route.mjs'
 
 /**
  * op 清单（顺序即 `--op help` 的打字顺序；与提案 §B1.4 那张表逐条一致）。
  *
- * 2026-11-01（任务 B · 契约 `.team/test/CONTRACT-B.md` §9.1）：**bug 系统九个 op 落在这一支 CLI 上**，
+ * 2026-11-01（任务 B · 契约 `.team/test/CONTRACT-B.md` §9.1）：**bug 系统的 op 落在这一支 CLI 上**，
  * 不新造 `agenia-bug.mjs` —— 新 CLI 会连带 `install.mjs` / `release-scan` / `FROZEN.binFiles` /
  * `surfaceInventory` 四张清单同批动；而"登记不需要路线"用**写面边界**就能钉住
- * （bug op 只写 `.team/bug/` 与 `.team/routing.jsonl`，`bug-register` 之后 `.team/route/` 必须不存在）。
+ * （bug op 只写 `.team/bug/` / `.team/routing.jsonl` / 三册模式的 `账本/缺陷/`，
+ * `bug-register` 之后 `.team/route/` 必须不存在）。`bug-reopen` 是构案 0012 加的第十个
+ * （折叠要求「重开必须先新增 registered」，写入口必须有同一件事的 op）。
  *
  * 2026-11-01（任务 C1 · 契约 `.team/test/CONTRACT-C1.md` §9.1）：**三个新 op 落在同一支 CLI 上** ——
  * `bootstrap`（C1a 建账 + 迁移）· `route-mark`（C1d 暂停 / 恢复）· `headline-set`（C1b 补齐第一行）。
@@ -66,7 +68,7 @@ const OP_NAMES = Object.freeze([
   'bootstrap', 'route-mark', 'headline-set',
   'ticket-open', 'ticket-update', 'ticket-close', 'ticket-void',
   'read', 'verify', 'summarize',
-  'bug-register', 'bug-assess', 'bug-dispose', 'bug-batch-freeze', 'bug-samples-register',
+  'bug-register', 'bug-assess', 'bug-dispose', 'bug-reopen', 'bug-batch-freeze', 'bug-samples-register',
   'bug-archive', 'bug-task-set', 'bug-route', 'bug-read',
   'help',
 ])
@@ -85,7 +87,7 @@ const USED_KEYS_FILE = 'used-keys.json'
 /**
  * bug 台账的落点（契约 §9.4）：**另一本账**，与 `.team/route/` 各一个目录。
  * 两本账不互串：bug op 只写 `.team/bug/`（`bug-route` 只写 `.team/routing.jsonl`），
- * `bug-read` 一个字节都不写（连目录都不建）。
+ * 三册模式下的条目只追加到 `账本/缺陷/<day>.json`；`bug-read` 一个字节都不写（连目录都不建）。
  */
 const BUG_DIR_NAME = 'bug'
 const BUG_LEDGER_FILE = 'ledger.json'
@@ -1276,11 +1278,12 @@ function opSummarize(ctx) {
 
 // ── bug 台账（任务 B）──────────────────────────────────────────────────────
 /**
- * 九个 bug op（契约 `.team/test/CONTRACT-B.md` §9.1）—— 落点是**这一支 CLI**。
+ * 十个 bug op（契约 `.team/test/CONTRACT-B.md` §9.1 + 构案 0012 §3.1 的 `bug-reopen`）—— 落点是**这一支 CLI**。
  *
  * 三条硬口径（与路线侧共用同一套写法，但**两本账不互串**）：
- *   ① **写面只有两个落点**：`.team/bug/ledger.json`（条目 / 任务 / 批次 / 样本 / 归档）与
- *      `.team/routing.jsonl`（分流记录 —— 它住在两本账**之外**，定形 §2.3 的原话）；
+ *   ① **写面只有这几个落点**：`.team/bug/ledger.json`（旧工区条目 / 任务 / 批次 / 样本 / 归档）、
+ *      三册模式的 `账本/缺陷/<day>.json`（条目事件流）、`.team/routing.jsonl`（分流记录 ——
+ *      它住在两本账**之外**，定形 §2.3 的原话）；
  *   ② **`bug-read` 零写入**：不持锁、不建目录、连 `.team/bug/` 都不建（缺台账 ⇒ `E_DATA_MISSING` exit 7，
  *      **缺 ≠ 空**：静默返回 0 条会把"没建账"读成"干净"）；
  *   ③ **`bug-register` 不许建 `.team/route/`**：登记**不需要**路线（定形 §2.3）——
@@ -1680,6 +1683,43 @@ function opBugAssess(ctx) {
 }
 
 // ── op：bug-dispose ────────────────────────────────────────────────────────
+/** 落地计划三字段（契约 §5.2.1）：只对非 `历史` 的 `deferred` 必填。 */
+const LANDING_PLAN_KEYS = Object.freeze(['due_at', 'owner', 'next_step'])
+
+/**
+ * 读并校验 `due_at` / `owner` / `next_step`（写入口与折叠同一条口径）。
+ *
+ * 判定跑在抢锁**之前**（被拒 ⇒ 零写入）：
+ *   · `deferred`：三格缺任一格 / 空串 / 空白 ⇒ `E_ARG_SCHEMA`（fail-closed，绝不写半条）；
+ *   · 其它处置：可以缺；给了就必须是字符串（`due_at` 还必须是可解析日期）。
+ */
+function landingPlanOf(payload) {
+  const plan = {}
+  const missing = []
+  for (const key of LANDING_PLAN_KEYS) {
+    const raw = payload[key]
+    if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) {
+      if (payload.disposition === 'deferred') missing.push(key)
+      continue
+    }
+    if (typeof raw !== 'string') throw cliError('E_ARG_SCHEMA', `${key} 必须是字符串，实得 ${JSON.stringify(raw)}`)
+    const value = raw.trim()
+    if (key === 'due_at' && !dueOk(value)) {
+      throw cliError('E_ARG_SCHEMA', `due_at 必须是可解析的日期（YYYY-MM-DD 或带时间的 ISO），实得 ${JSON.stringify(value)} —— 判不了到期日的暂缓不是一张可执行的延期（契约 §5.2.1）`)
+    }
+    plan[key] = value
+  }
+  if (missing.length > 0) {
+    throw cliError(
+      'E_ARG_SCHEMA',
+      `disposition=deferred 必须带落地的三格：缺 ${missing.join(' / ')} —— `
+      + '到期日 `due_at`（可解析日期）+ 负责人 `owner`（非空）+ 下一步 `next_step`（非空）缺一不可；'
+      + '写半条记录比拒掉更坏（契约 §5.2.1）',
+    )
+  }
+  return plan
+}
+
 /** 组长处置（disposition + 理由）—— `open = 无 disposition`，这一下之后封顶读数才减一。 */
 function opBugDispose(ctx) {
   const p = ctx.payload ?? {}
@@ -1693,6 +1733,7 @@ function opBugDispose(ctx) {
     throw cliError('E_ARG_SCHEMA', '处置必须带理由（reason 非空）—— 没有理由的处置读的人没法复核')
   }
   if (typeof p.id !== 'string' || p.id.trim() === '') throw cliError('E_ARG_SCHEMA', 'id 必填（要处置哪一条）')
+  const landing = landingPlanOf(p)
   return withBugLock(ctx, () => {
     const bookMode = bugBookMode(ctx)
     const ledger = readBugLedger(ctx)
@@ -1700,16 +1741,31 @@ function opBugDispose(ctx) {
     if (idx < 0) {
       throw cliError('E_DATA_MISSING', `条目 ${p.id} 不在 live 段（现有：${ledger.entries.map((e) => e?.id).join(' / ') || '（没有条目）'}）`)
     }
+    /**
+     * 三册模式下，一条已经处置过的票不许直接再处置：事件流只追加，两个 `disposed` 中间没有新的
+     * `registered` ⇒ 折叠报 `BUG-FOLD-CONFLICT`。重开的唯一写入口是 `bug-reopen`（它追加一条
+     * `registered`，折叠随即把旧处置清空）—— 写面在这里先挡一次，别把一条必然冲突的流写下去。
+     */
+    if (bookMode && ledger.entries[idx].disposition !== null) {
+      throw cliError(
+        'E_ARG_SCHEMA',
+        `条目 ${p.id} 已经处置过（${ledger.entries[idx].disposition.value}）；再处置要先 --op bug-reopen —— `
+        + '事件流只追加，两个 disposed 中间没有新的 registered 就是 BUG-FOLD-CONFLICT（契约 §3.1）',
+      )
+    }
     const updated = {
       ...ledger.entries[idx],
       disposition: { value: p.disposition, reason: p.reason, by: 'leader', at: ctx.at },
     }
+    // 旧工区没有事件流：三格落在条目顶层（加性键允许；读面不解释它们）。
+    if (!bookMode) Object.assign(updated, landing)
     if (bookMode) {
       // 三册模式：`disposed` 事件带处置原件；链那三格（构案 / 判假 / 历史）由调用方给就给。
       const event = {
         kind: 'disposed',
         id: updated.id,
         disposition: updated.disposition,
+        ...landing,
       }
       for (const key of ['构案', '判假', '历史']) {
         if (typeof p[key] === 'string' && p[key].trim() !== '') event[key] = p[key].trim()
@@ -1722,6 +1778,76 @@ function opBugDispose(ctx) {
     entries[idx] = updated
     const next = commitBugLedger(ctx, { ...ledger, entries })
     return { entry: updated, entry_id: updated.id, ledger_version: next.version, counts: B.openCounts(next) }
+  })
+}
+
+// ── op：bug-reopen ─────────────────────────────────────────────────────────
+/**
+ * 重开一条**已处置**的缺陷：追加一条 `registered`（`reopened: true` + `reopen_reason`），
+ * 原 `phenomenon` / `entry_kind` / 登记字段逐字带过来。
+ *
+ * 为什么要有这个 op：折叠只认「两个 `disposed` 之间夹了一条新的 `registered`」为合法重开
+ * （契约 §3.1）；没有这条写入口，重开在合法路径上**做不到**，人就会去手改事件流或直接追加
+ * 第二条 `disposed` —— 后者必然 `BUG-FOLD-CONFLICT`。
+ *
+ * 重开 = 旧处置与旧落地计划一起作废：折叠收到这条 `registered` 后清空 `disposition` /
+ * `disposed_payload`（`due_at` 随之不再有效）。之后才允许再 `bug-dispose`。
+ */
+function opBugReopen(ctx) {
+  const p = ctx.payload ?? {}
+  if (p.by_role !== 'leader') {
+    throw cliError('E_BUG_WRITER_ROLE', `重开（reopen）的写者是**组长**（处置的写者同一人），实得 by_role=${JSON.stringify(p.by_role)}`)
+  }
+  if (typeof p.id !== 'string' || p.id.trim() === '') throw cliError('E_ARG_SCHEMA', 'id 必填（要重开哪一条）')
+  if (typeof p.reason !== 'string' || p.reason.trim() === '') {
+    throw cliError('E_ARG_SCHEMA', '重开必须带理由（reason 非空）—— 没有理由的翻面读的人没法复核')
+  }
+  return withBugLock(ctx, () => {
+    if (!bugBookMode(ctx)) {
+      throw cliError(
+        'E_DATA_MISSING',
+        `bug-reopen 只对三册账本生效（${path.join(bugBookRoot(ctx), '账本', '缺陷')} 不在）—— `
+        + '重开 = 追加一条 registered 事件；旧工区的登记簿没有事件流',
+      )
+    }
+    const ledger = readBugLedger(ctx)
+    const entry = ledger.entries.find((e) => e?.id === p.id)
+    if (entry === undefined) {
+      throw cliError('E_DATA_MISSING', `条目 ${p.id} 不在 live 段（现有：${ledger.entries.map((e) => e?.id).join(' / ') || '（没有条目）'}）`)
+    }
+    if (entry.disposition === null) {
+      throw cliError('E_ARG_SCHEMA', `条目 ${p.id} 现在是 open（最后一条不是 disposed）—— 没有旧处置可重开`)
+    }
+    const folded = foldBugBook({ root: bugBookRoot(ctx) })
+    const state = folded.states.find((s) => s?.id === p.id)
+    if (state === undefined) {
+      throw cliError('E_DATA_CORRUPT', `条目 ${p.id} 在台账里却折不出状态 —— 事件流与读面不一致`)
+    }
+    // 原登记字段逐字带过来（只剔事件信封与上一次重开自己的三格，避免重开累积）。
+    const carried = {}
+    for (const [key, value] of Object.entries(state.registered_payload ?? {})) {
+      if (['seq', 'kind', 'at', 'reopened', 'reopen_reason', 'reopen_by'].includes(key)) continue
+      carried[key] = value
+    }
+    const event = appendBugEvent(ctx, {
+      kind: 'registered',
+      ...carried,
+      id: p.id,
+      entry_kind: carried.entry_kind ?? entry.kind,
+      phenomenon: carried.phenomenon ?? entry.phenomenon,
+      reopened: true,
+      reopen_reason: p.reason.trim(),
+      reopen_by: 'leader',
+    })
+    return {
+      entry_id: p.id,
+      book_mode: true,
+      reopened: true,
+      event_seq: event.seq,
+      voided_disposition: entry.disposition.value,
+      voided_due_at: state.disposed_payload?.due_at ?? null,
+      phenomenon: event.phenomenon,
+    }
   })
 }
 
@@ -1973,8 +2099,9 @@ function opBugRead(ctx) {
  * bug 那一族 op 的分派表（与路线侧分开写：两本账不互串，分派也不混）。
  *
  * 🔴 **锁在哪一把由 op 自己决定**（不在 `main()` 里统一包）：
- *    · `bug-register` / `bug-assess` / `bug-dispose` / `bug-batch-freeze` / `bug-samples-register` /
- *      `bug-archive` / `bug-task-set` 在**判定之后**才抢 `.team/bug/.bug.lock`（被拒 ⇒ 零写入）；
+ *    · `bug-register` / `bug-assess` / `bug-dispose` / `bug-reopen` / `bug-batch-freeze` /
+ *      `bug-samples-register` / `bug-archive` / `bug-task-set` 在**判定之后**才抢 `.team/bug/.bug.lock`
+ *      （被拒 ⇒ 零写入）；
  *    · `bug-read` 不持锁、不建目录（零写入）；
  *    · `bug-route` 只 append 一行到 `.team/routing.jsonl`，**不持两本账的锁**（定形 §2.3）。
  */
@@ -1982,6 +2109,7 @@ const BUG_OPS = Object.freeze({
   'bug-register': opBugRegister,
   'bug-assess': opBugAssess,
   'bug-dispose': opBugDispose,
+  'bug-reopen': opBugReopen,
   'bug-batch-freeze': opBugBatchFreeze,
   'bug-samples-register': opBugSamplesRegister,
   'bug-archive': opBugArchive,

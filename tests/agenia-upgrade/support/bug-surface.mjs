@@ -43,7 +43,7 @@ export const BUG_PATHS = Object.freeze({
  * 而"登记不需要路线"这件事**用写面边界**就能钉住（bug op 只写 `.team/bug/`，`bug-register` 之后
  * `.team/route/` 必须**不存在**）。
  *
- * ⚠️ 实现落地时**同批**要把这九个 op 加进 `support/env.mjs::FROZEN.ops['agenia-route.mjs']`
+ * ⚠️ 实现落地时**同批**要把这些 op 加进 `support/env.mjs::FROZEN.ops['agenia-route.mjs']`
  *   与 `presets/agenia/lib/cli-inventory.mjs::ROUTE_OPS`，否则 `DR-01` 的 `CLI-INVENTORY` 会红
  *   （"新增 op 必须同批进冻结表与清单"是既有口径，见 `support/env.mjs` 那段 🔴）。
  */
@@ -51,6 +51,8 @@ export const BUG_OPS = Object.freeze([
   'bug-register',
   'bug-assess',
   'bug-dispose',
+  // 构案 0012 §3.1：重开是折叠那条「新的 registered」规则的唯一写入口。
+  'bug-reopen',
   'bug-batch-freeze',
   'bug-samples-register',
   'bug-archive',
@@ -257,7 +259,7 @@ export function missingOpProblem(op, res) {
   return {
     code: 'BUG-OP-MISSING',
     message: `\`agenia-route.mjs\` 没有 \`--op ${op}\`（exit=${res?.exit_code ?? '?'} · `
-      + `code=${res?.json?.error?.code ?? '(无)'}）—— 契约 §9.1 的九个 bug op 一个都还没有；`
+      + `code=${res?.json?.error?.code ?? '(无)'}）—— bug op 的面（契约 §9.1 + 构案 0012 §3.1 的 bug-reopen）里还没有它；`
       + `这一格判的是"功能没做"，不是"这条输入被拒"`,
     detail: { op, exit_code: res?.exit_code ?? null, stderr: String(res?.stderr ?? '').slice(0, 300) },
   }

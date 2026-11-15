@@ -810,7 +810,7 @@ export const FROZEN = {
       { op: 'ticket-close', writes: true }, { op: 'ticket-void', writes: true },
       { op: 'read', writes: false }, { op: 'verify', writes: false },
       { op: 'summarize', writes: false },
-      // 任务 B · bug 系统（2026-11-01）：九个 bug op 落在**这支** CLI（契约 `.team/test/CONTRACT-B.md`
+      // 任务 B · bug 系统（2026-11-01）：bug op 落在**这支** CLI（契约 `.team/test/CONTRACT-B.md`
       // §9.1 的裁定 —— 不新造 `agenia-bug.mjs`：新 CLI 会连带 install / release-scan / binFiles /
       // surfaceInventory 四张清单同批动；"登记不需要路线"用写面边界钉）。
       // 🔴 `writes` 必须与 `presets/agenia/lib/cli-inventory.mjs::ROUTE_OPS` 逐条相同 —— DR-01 两个方向
@@ -818,7 +818,10 @@ export const FROZEN = {
       // ⚠️ `needsDataRoot` 不用写：`FROZEN_COMMANDS` 按 `cli === 'agenia-brain.mjs'` 派生 ⇒ 这一支恒 false，
       //    与清单一致；也正因为 false，这九条**不进** DR-01 那张「非法根 × 写命令」矩阵（那矩阵只跑写命令）。
       { op: 'bug-register', writes: true }, { op: 'bug-assess', writes: true },
-      { op: 'bug-dispose', writes: true }, { op: 'bug-batch-freeze', writes: true },
+      { op: 'bug-dispose', writes: true },
+      // 构案 0012 §3.1（r6）：重开 = 追加一条 `registered`；写面是 `账本/缺陷/<day>.json` ⇒ `writes: true`。
+      { op: 'bug-reopen', writes: true },
+      { op: 'bug-batch-freeze', writes: true },
       { op: 'bug-samples-register', writes: true }, { op: 'bug-archive', writes: true },
       { op: 'bug-task-set', writes: true }, { op: 'bug-route', writes: true },
       { op: 'bug-read', writes: false },

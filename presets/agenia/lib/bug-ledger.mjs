@@ -548,7 +548,7 @@ export { bugBookPresent }
 /**
  * 从 `账本/缺陷/*.json` 的事件流折出一本**只读**台账（折叠的实现只有 `lib/缺陷折叠.mjs` 一份）。
  *
- * 写面（构案 0012 r2）：`bug-register` / `bug-assess` / `bug-dispose` 只追加事件，
+ * 写面（构案 0012）：`bug-register` / `bug-assess` / `bug-dispose` / `bug-reopen` 只追加事件，
  * 条目字段的落点是 `registered` 事件的 payload（`how_seen` / `evidence` / `recipe` / `batch` /
  * `reporter` / `source` / `tags` / `finding_refs`）；本函数从折叠出来的
  * `registered_payload` / `assessed_payload` 还原成一本书的形状 —— **只给读面用**，
