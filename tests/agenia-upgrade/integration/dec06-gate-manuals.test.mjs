@@ -1,16 +1,13 @@
 /**
- * `DEC-06` / `DEC-07` —— **第 2 关那道硬门**（新机制票无构案编号 ⇒ 拒）与它的**人读载体**
+ * `DEC-06` / `DEC-07` —— **第 2 关那道硬门**（0012 §7.1 的新词表）与它的**人读载体**
  * （三份岗位说明书各一行）。
  *
- * 契约：`.team/test/2026-11-12/CONTRACT-构案.md`（§6 拒接闸 · §0.3-`D5` 为什么必须做成命令级 ·
- * §8.1 的七个卡片样本与三份说明书的期望）。
+ * 契约：`.team/test/2026-11-15/CONTRACT-0012.md`（§7.1 票类 `产品 | 构案 | 数据` · §12-1 重指）。
  *
- * 🔴 这一格判的是**会响的闸**，不是散文：
- *   · `DEC-06` 打 `决议-check.mjs --op gate2-card`，七张卡（无号 / 缺行 / 有号 / 数据票 / 废号 / 悬空号 / 缺票类），
- *     拒的 exit 1 且码对、过的 exit 0 且 `problems: []` —— 闸若"永远拒"或"永远过"，两边都有样本咬住；
- *   · `DEC-07` 判三份说明书里**那一行**在不在（纯函数，三份各一条红因），外加**方案岗不动**。
- *   ⚠️ 若 Gate 3 把闸挪进派工路径（真拒接），契约 §0.3-`D5` 要求保留同一个命令入口 ——
- *      判据的指向那时可以改，但**同一张票里**改，不许让这一格变成"读不到就跳过"。
+ * 🔴 0012 Gate 3 的重指：旧词表 `新机制` **不再收**（fail-closed）；构案卡多了 `依据` 一格
+ * （必须落在该构案头的 `依据P`/`依据bug` 里）；产品卡改指 `产品:` 那一册。
+ * 这一格判的是**会响的闸**，不是散文：拒的 exit 1 且码对、过的 exit 0 且 `problems: []` ——
+ * 闸若"永远拒"或"永远过"，两边都有样本咬住。
  */
 import path from 'node:path'
 import { before, test } from 'node:test'
@@ -18,42 +15,43 @@ import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
 import { PATHS } from '../support/env.mjs'
 import {
   CHECK, DESIGN_FILE, ROLE_CLAUSES, buildScene, clauseProblems, codesOf, designProblems, expectCodes,
-  goodDecision0001, goodDecisionProduct0001, goodLedger, messagesOf, readText, runCheck, toolPresent,
+  goodProduct, goodScheme, messagesOf, readText, runCheck, toolPresent,
 } from '../support/decision-ledger.mjs'
 
 before(() => {
   preflight()
 })
 
-test('DEC-06 新机制票无构案编号 ⇒ 拒（exit 1 + GATE2-NO-DECISION）；有号且生效 ⇒ 过；数据票无号 ⇒ 过', async () => {
+test('DEC-06 卡片闸：票类 产品|构案|数据；构案的 依据 必须与头一致；旧词表 新机制 必须拒', async () => {
   await runCase('DEC-06', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
-    if (!toolPresent(problems, CHECK, '契约 §6.2 的拒接闸（`--op gate2-card`）')) {
+    if (!toolPresent(problems, CHECK, '契约 §7.1 的拒接闸（`--op gate2-card`）')) {
       caseFail(problems)
       return
     }
 
-    /** 造一棵只够闸用的树（只判卡 + 卡上那个编号指向的决议）。 */
-    const gateScene = (tag, { decisions, card, concepts = null, index = null }) => {
-      const scene = buildScene({ caseId: 'DEC-06', tag, decisions, concepts, impls: [], index, card })
+    /** 造一棵只够闸用的树（只判卡 + 卡上那个编号指向的那一条）。 */
+    const gateScene = (tag, { decisions, card }) => {
+      const scene = buildScene({ caseId: 'DEC-06', tag, decisions, concepts: null, impls: [], index: null, card })
       const cardFile = path.join(scene.root, 'card.md')
       const run = runCheck(scene.root, ['--op=gate2-card', `--card=${cardFile}`])
       rec.readings[tag] = {
         root: scene.root, exit: run.exit, ok: run.json?.ok ?? null,
         verdict: run.json?.verdict ?? null, code: run.json?.code ?? null,
-        ticket_kind: run.json?.ticket_kind ?? null,
+        ticket_kind: run.json?.ticket_kind ?? null, product: run.json?.product ?? null,
+        decision: run.json?.decision ?? null, basis: run.json?.basis ?? null,
         codes: codesOf(run.json),
         messages: messagesOf(run.json).map((m) => m.slice(0, 200)),
         stderr_head: run.stderr_head,
       }
       return { run, entry: rec.readings[tag] }
     }
-    const live = [goodDecision0001(), goodDecisionProduct0001()]
-    const retired = [
-      goodDecision0001({ 状态: '已废', superseded_by: '0002' }),
-      { series: '构案', id: '0002', title: '决议账本三册制', header: { 主题: '决议账本三册制', supersedes: '0001' } },
-      goodDecisionProduct0001(),
+    const live = [
+      goodProduct('0001', '决议账本三册制'),
+      goodScheme('0002', '三册账本的落地方案'),
+      goodProduct('0003', '已废产品', { 状态: '已废' }),
+      goodScheme('0003', '已废构案', { 状态: '已废' }),
     ]
 
     const refusal = (tag, spec, wantCode, mustName = null) => {
@@ -73,51 +71,39 @@ test('DEC-06 新机制票无构案编号 ⇒ 拒（exit 1 + GATE2-NO-DECISION）
       if (run.json.code !== null && run.json.code !== undefined) push('GATE-CODE', `[DEC-06/${tag}] 过的时候 code 必须是 null，实得 ${JSON.stringify(run.json.code)}`)
     }
 
-    // 拒：新机制票、编号那一格是 —
-    refusal('no-number', { decisions: live, card: { ticket_kind: '新机制', decision: '—' } }, 'GATE2-NO-DECISION')
-    // 拒：新机制票、整行缺（漏写一格不许绕过闸）
-    refusal('no-number-line', { decisions: live, card: { ticket_kind: '新机制' } }, 'GATE2-NO-DECISION')
-    // 过：编号指向一条 生效 的构案
-    pass('with-number', { decisions: live, card: { ticket_kind: '新机制', decision: '0001' } })
-    // 过：数据票（定形 §一·五：纯数据票不竞标、不写构案）
+    // ── 构案卡：生效构案 + 依据落在来源列表里 ⇒ 过 ───────────────────────────────
+    pass('scheme-pass', { decisions: live, card: { ticket_kind: '构案', decision: '0002', basis: '0001' } })
+    // 拒：旧词表（0012 §7.1：fail-closed，认得的只有 产品/构案/数据）
+    refusal('old-kind', { decisions: live, card: { ticket_kind: '新机制', decision: '0002', basis: '0001' } }, 'GATE2-TICKET-KIND-MISSING', '构案')
+    // 拒：缺 票类（fail-closed）
+    refusal('kind-missing', { decisions: live, card: { ticket_kind: null, decision: '0002', basis: '0001' } }, 'GATE2-TICKET-KIND-MISSING')
+    // 拒：构案卡缺 构案 那一格
+    refusal('scheme-no-decision', { decisions: live, card: { ticket_kind: '构案', basis: '0001' } }, 'GATE2-NO-DECISION')
+    // 拒：构案号悬空
+    refusal('scheme-dangling', { decisions: live, card: { ticket_kind: '构案', decision: '0009', basis: '0001' } }, 'GATE2-DANGLING-DECISION', '0009')
+    // 拒：构案号已废
+    refusal('scheme-retired', { decisions: live, card: { ticket_kind: '构案', decision: '0003', basis: '0001' } }, 'GATE2-DECISION-NOT-LIVE', '0003')
+    // 拒：构案卡缺 依据
+    refusal('scheme-no-basis', { decisions: live, card: { ticket_kind: '构案', decision: '0002' } }, 'GATE2-BASIS-MISSING')
+    // 拒：依据 不在构案头的来源列表里
+    refusal('scheme-basis-mismatch', { decisions: live, card: { ticket_kind: '构案', decision: '0002', basis: '0009' } }, 'GATE2-BASIS-MISMATCH', '0009')
+    // 拒：头块里两行 票类 / 两行 构案 —— 谁也不知道按哪一条走
+    refusal('kind-ambiguous', { decisions: live, card: { headerLines: ['票类: 构案', '票类: 数据', '构案: 0002', '依据: 0001'] } }, 'GATE2-TICKET-KIND-AMBIGUOUS')
+    refusal('decision-ambiguous', { decisions: live, card: { headerLines: ['票类: 构案', '构案: 0002', '构案: 0002', '依据: 0001'] } }, 'GATE2-DECISION-AMBIGUOUS')
+    // 拒：票类只写在正文里（头块里没有）
+    refusal('kind-not-structured', { decisions: live, card: { headerLines: ['构案: 0002', '依据: 0001'], body: '票类: 构案' } }, 'GATE2-TICKET-KIND-NOT-STRUCTURED')
+
+    // ── 产品卡：生效产品 ⇒ 过；缺 / 悬空 / 指向构案册 / 已废 各一条码 ──────────────────
+    pass('product-pass', { decisions: live, card: { ticket_kind: '产品', product: '0001' } })
+    refusal('product-missing', { decisions: live, card: { ticket_kind: '产品' } }, 'GATE2-PRODUCT-MISSING')
+    refusal('product-dangling', { decisions: live, card: { ticket_kind: '产品', product: '0009' } }, 'GATE2-PRODUCT-DANGLING', '0009')
+    refusal('product-in-scheme-book', { decisions: live, card: { ticket_kind: '产品', product: '0002' } }, 'GATE2-PRODUCT-NOT-LIVE', '0002')
+    refusal('product-retired', { decisions: live, card: { ticket_kind: '产品', product: '0003' } }, 'GATE2-PRODUCT-NOT-LIVE', '0003')
+
+    // ── 数据票的具名豁免：写出 `构案: —` 才成立；改动面落在机制代码面 ⇒ 自相矛盾 ──────
     pass('data-ticket', { decisions: live, card: { ticket_kind: '数据', decision: '—' } })
-    // 拒：编号指向一条 已废 的构案
-    refusal('retired-number', { decisions: retired, card: { ticket_kind: '新机制', decision: '0001' } }, 'GATE2-DECISION-NOT-LIVE', '0001')
-    // 拒：编号解析不到
-    refusal('dangling-number', { decisions: live, card: { ticket_kind: '新机制', decision: '0009' } }, 'GATE2-DANGLING-DECISION', '0009')
-    // 拒：票类缺（fail-closed）
-    refusal('kind-missing', { decisions: live, card: { ticket_kind: null, decision: '0001' } }, 'GATE2-TICKET-KIND-MISSING')
-    // ── M3 的五种"豁免不许自封"形状（每个一份卡、一个码；契约 §6.2 的五码）────────────────
-    // 拒：票类只写在正文里（头块里没有）—— 正文里的一句不许替闸做主
-    refusal('kind-not-structured', {
-      decisions: live,
-      card: { headerLines: ['构案: 0001'], body: '票类: 新机制' },
-    }, 'GATE2-TICKET-KIND-NOT-STRUCTURED')
-    // 拒：头块里两行 `票类` —— 谁也不知道按哪一条走
-    refusal('kind-ambiguous', {
-      decisions: live,
-      card: { headerLines: ['票类: 新机制', '票类: 数据', '构案: 0001'] },
-    }, 'GATE2-TICKET-KIND-AMBIGUOUS')
-    // 拒：头块里两行 `构案` —— 一张卡两个编号
-    refusal('decision-ambiguous', {
-      decisions: live,
-      card: { headerLines: ['票类: 新机制', '构案: 0001', '构案: 0001'] },
-    }, 'GATE2-DECISION-AMBIGUOUS')
-    // 拒：数据票缺 `构案` 那一行（缺行 ≠ 零个编号：豁免要写出来）
-    refusal('exemption-not-explicit', {
-      decisions: live,
-      card: { headerLines: ['票类: 数据'] },
-    }, 'GATE2-EXEMPTION-NOT-EXPLICIT')
-    // 拒：数据票却声明要改机制代码面（自相矛盾）
-    refusal('exemption-contradicted', {
-      decisions: live,
-      card: { headerLines: ['票类: 数据', '构案: —', '改动面: presets/agenia/lib/memory.mjs'] },
-    }, 'GATE2-EXEMPTION-CONTRADICTED')
-    // 过：数据票 + 改动面全在数据面上（豁免成立，且读数带名字）—— 证明上一条不是"数据票一律拒"
-    pass('exemption-data-surface', {
-      decisions: live,
-      card: { headerLines: ['票类: 数据', '构案: —', '改动面: .team/数据/x.json'] },
-    })
+    refusal('exemption-not-explicit', { decisions: live, card: { headerLines: ['票类: 数据'] } }, 'GATE2-EXEMPTION-NOT-EXPLICIT')
+    refusal('exemption-contradicted', { decisions: live, card: { headerLines: ['票类: 数据', '构案: —', '改动面: presets/agenia/lib/memory.mjs'] } }, 'GATE2-EXEMPTION-CONTRADICTED')
 
     caseFail(problems)
   })

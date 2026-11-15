@@ -368,14 +368,18 @@ export const FROZEN = {
      * ⚠️ 与上面 `liveWitness.disabledLiteralRows`（活体读数、零读者）是**同一个数**：改一处 = 没改。
      */
     disabledLiteralRows: 5,
-    /** 进提示词的 .md 类数：persona/style/leader/work-guidelines + 9 角色 = **13**。
+    /** 进提示词的 .md 类数：persona/style/leader/work-guidelines + 9 角色 + `决策账本` = **14**。
      *  🔴 2026-10-19（`F-109`）：**14 → 13**。`me-aqua.md` 是老板 2026-10-17 决定归档的
      *     （归档落在**仓库根**的 `.team/_archive/me-aqua.md-20261017/me-aqua.md` —— 不是预设目录下的
      *     `.team/`，那个不存在；"关于老板的事实"搬进了共享记忆库的 `boss` 类）
      *     ⇒ 组合的 `leaderOrder`/`memberOrder` 里已经没有它。
      *     **裁定：改冻结表，不补文件**（老板 2026-10-19 拍板：决定变了，判据跟着走）。
-     *     ⚠️ 这条只改**期望**，没动判别逻辑：名单少一份照样红（见下面 `injectedMarkdownFiles`）。 */
-    injectedMarkdownClasses: 13,
+     *  🔴 2026-11-15（0012 §⑧）：**13 → 14**。`presets/agenia/决策账本.md` 进了 `leaderOrder`
+     *     （0012 的三册账本规矩要注入到组长手里）；成员侧 `memberOrder` 不动。
+     *     这条冻结期望的**载体是这份 FROZEN.staged 表**（`static/composition.test.mjs::STAT-03` 读它）；
+     *     `check-notes` 的 `EXPECTED_ONLY_AGENIA` 数的是能力行，不是 .md 文件 —— 别拿那一格来改这个数。
+     *     ⚠️ 这条只改**期望**，没动判别逻辑：名单少一份/多一份照样红（见下面 `injectedMarkdownFiles`）。 */
+    injectedMarkdownClasses: 14,
     /**
      * 🔴 **「会被注入的 `.md` 文件」的名单**（相对内容根，按路径去重）—— 与上面那个**计数**成对。
      *
@@ -397,7 +401,7 @@ export const FROZEN = {
      *    ⚠️ 只钉个数会被"一进一出"骗过去（`officeBound` 那次的教训：同数不同集合）。
      */
     injectedMarkdownFiles: [
-      'leader.md', 'work-guidelines.md', 'persona.md', 'style.md',
+      'leader.md', 'work-guidelines.md', 'persona.md', 'style.md', '决策账本.md',
       'team/design.md', 'team/dev.md', 'team/test.md', 'team/review.md', 'team/hire.md',
       'team/memory-judge.md', 'team/memory-review.md', 'team/conversation-review.md', 'team/technical-review.md',
     ],

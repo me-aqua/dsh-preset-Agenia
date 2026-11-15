@@ -1,20 +1,26 @@
 /**
- * `DEC-09` —— **supersede 的写手**（`决议-check.mjs --op supersede`，契约 §5.6 / §0.3-`D4`）。
+ * `DEC-09` —— **supersede 的写手**（`决议-check.mjs --op supersede`，0012 §10.1）。
  *
  * 为什么单开一格（而不是并进 `DEC-02`）：`DEC-02` 判的是**检查器**的接受/拒绝边界（只读），
- * 这一格判的是**唯一会写盘的那条路**（原子写 / 只翻两个字段 / 五条拒做）。两处坏法完全不同：
+ * 这一格判的是**唯一会写盘的那条路**（原子写 / 只翻两个字段 / 拒做清单）。两处坏法完全不同：
  * 检查器坏 = "坏账没被看见"；写手坏 = "它亲手把坏账写下去"。放在同一格里，结算行就说不清是哪一处坏了。
+ *
+ * 🔴 0012 Gate 3 的重指（契约 §12-1）：
+ *   · 对象从单册 `决议/构案/0001-*.md` 换成 `账本/构案/0001-*.md`；写手从 `.tools/决议-check.mjs`
+ *     搬进 `presets/agenia/bin/决议-check.mjs`；
+ *   · **同一册里才能 supersede**（产品替产品、构案替构案）—— 跨册 ⇒ `SUPERSEDE-CROSS-BOOK`；
+ *   · 写完**派生页不会自动重写**（`--op index` 是唯一写页的人）⇒ 写手收尾的绿要先重跑 `--op index`。
  *
  * 🔴 判据的两条纪律（组长 2026-11-12 的分工，T1）：
  *   ① **正文 sha256 由夹具自己量** —— 不信工具的 `body_sha256` 自报（工具自报可以是"算完就写"的结果）。
  *      `supersedeFlipReading()` 比的是"翻之前 / 翻之后"两份盘上字节：只许两行不同（`状态` / `superseded_by`），
- *      其余每一行逐字相同；`superseded_by` 之后的正文 sha256 必须相同。
- *   ② **每一条拒做一个样本** —— already-retired / same-file / old-missing / new-missing / no-reciprocal
- *      各一个码；拒的时候**一个字节都不许写**。
+ *      其余每一行逐字相同；头块之后的正文 sha256 必须相同。
+ *   ② **每一条拒做一个样本** —— already-retired / same-file / old-missing / new-missing / no-reciprocal /
+ *      cross-book / other-successor 各一个码；拒的时候**一个字节都不许写**。
  *
  * 刀：把写手复制到运行根里、**把"翻旧文状态"那一行改回去**（K1）⇒ 这一格必须红；再把正文闸摘掉、
  * 写的时候少一个换行（K2）⇒ 夹具量到的正文 sha 变了（而工具自报仍是"没变"）。
- * 副本刀不碰生产文件；副本树自带模块闭包（加载期不向仓库要文件）；刀锚点不在 / 闭包不闭合 ⇒ `DEC09-KNIFE-ANCHOR`。
+ * 副本刀不碰生产文件；副本树自带**模块闭包**（加载期不向仓库要文件）；刀锚点不在 / 闭包不闭合 ⇒ `DEC09-KNIFE-ANCHOR`。
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -22,37 +28,23 @@ import { before, test } from 'node:test'
 import { caseFail, preflight, problem, runCase, sha256Text } from '../support/evidence.mjs'
 import { PATHS } from '../support/env.mjs'
 import {
-  CHECK, buildScene, codesOf, expectCodes, goodDecision0001, goodDecisionProduct0001, goodLedger,
-  readText, runCheck, runNode, runSupersede, sceneRoot, summarize, supersedeFlipReading, toolPresent,
+  CHECK, codesOf, expectCodes, goodScheme, goodDecisionProduct0001, goodLedger,
+  readText, runCheck, runIndex, runNode, runSupersede, sceneRoot, summarize, supersedeFlipReading, toolPresent,
 } from '../support/decision-ledger.mjs'
 
 before(() => {
   preflight()
 })
 
-const TOPIC = '决议账本三册制'
-const OLD_FILE = '决议/构案/0001-决议账本三册制.md'
+const OLD_FILE = '账本/构案/0002-决议账本三册制.md'
 
-/** `0002` 替 `0001` 的那一对（同一主题；INDEX 指向 0002）。 */
-function pair({ oldRetired = false, reciprocal = true } = {}) {
-  const second = {
-    series: '构案',
-    id: '0002',
-    title: TOPIC,
-    header: { 主题: TOPIC, ...(reciprocal ? { supersedes: '0001' } : {}) },
-  }
+/** `0003` 替 `0002` 的那一对（同一册；派生页由夹具生成）。 */
+function pair({ oldRetired = false, reciprocal = true, extraSchemes = [] } = {}) {
+  const second = goodScheme('0003', '决议账本三册制', reciprocal ? { supersedes: '0002' } : {})
   const first = oldRetired
-    ? goodDecision0001({ 状态: '已废', superseded_by: '0002' })
-    : goodDecision0001()
-  return {
-    decisions: [first, second, goodDecisionProduct0001()],
-    index: {
-      rows: [
-        { concept: TOPIC, owner: '组长', census: 2, decision: '0002' },
-        { concept: '双写者', owner: '实现岗', census: 1, decision: '—' },
-      ],
-    },
-  }
+    ? goodScheme('0002', '决议账本三册制', { 状态: '已废', superseded_by: '0003' })
+    : goodScheme('0002', '决议账本三册制')
+  return { decisions: [goodDecisionProduct0001(), first, second, ...extraSchemes] }
 }
 
 /** 一份夹具 + 一次 supersede 调用；拒绝样本用它。 */
@@ -77,25 +69,25 @@ function refusalSample(problems, rec, push, { tag, spec, old, by, wantCode }) {
   if (!entry.bytes_unchanged) push('SUPERSEDE-WROTE-ON-REFUSAL', `[DEC-09/${tag}] 拒的时候旧文**一个字节都不许变**（${OLD_FILE} 变了）`)
 }
 
-test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；五条拒做各一码且零写入；两把副本刀', async () => {
+test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；拒做各一码且零写入；两把副本刀', async () => {
   await runCase('DEC-09', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
     const refuse = (args) => { refusalSample(problems, rec, push, args) }
-    if (!toolPresent(problems, CHECK, '契约 §5.6 的写手（`--op supersede`）')) {
+    if (!toolPresent(problems, CHECK, '契约 §10.1 的写手（`--op supersede`）')) {
       caseFail(problems)
       return
     }
 
-    // ── ① 正面：一对 0001 → 0002，翻完旧文两个字段变了、其余逐字不变 ─────────────
+    // ── ① 正面：一对 0002 → 0003，翻完旧文两个字段变了、其余逐字不变 ─────────────
     {
       const scene = goodLedger({ caseId: 'DEC-09', tag: 'flip', ...pair() })
       const file = path.join(scene.root, OLD_FILE)
       const beforeText = readText(file)
       const beforeSha = sha256Text(beforeText ?? '')
-      const run = runSupersede(scene.root, { old: '0001', by: '0002' })
+      const run = runSupersede(scene.root, { old: '0002', by: '0003' })
       const afterText = readText(file)
-      const reading = supersedeFlipReading(beforeText, afterText, '0002')
+      const reading = supersedeFlipReading(beforeText, afterText, '0003')
       rec.readings.flip = {
         exit: run.exit, ok: run.json?.ok ?? null, verdict: run.json?.verdict ?? null,
         written: run.json?.written ?? null, codes: codesOf(run.json),
@@ -118,28 +110,34 @@ test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；�
         if (reading.status_line === null || !/^状态\s*[:：]\s*已废\s*$/u.test(reading.status_line)) {
           push('SUPERSEDE-FIELDS', `[DEC-09/flip] \`状态\` 必须翻成 \`已废\`，实得 ${JSON.stringify(reading.status_line)}`)
         }
-        if (reading.superseded_by_value !== '0002') {
-          push('SUPERSEDE-FIELDS', `[DEC-09/flip] \`superseded_by\` 必须翻成 \`0002\`，实得 ${JSON.stringify(reading.superseded_by_value)}`)
+        if (reading.superseded_by_value !== '0003') {
+          push('SUPERSEDE-FIELDS', `[DEC-09/flip] \`superseded_by\` 必须翻成 \`0003\`，实得 ${JSON.stringify(reading.superseded_by_value)}`)
         }
         if (reading.body_sha256.before === null || reading.body_sha256.before !== reading.body_sha256.after) {
           push('SUPERSEDE-BODY-SHA', `[DEC-09/flip] 正文 sha256 变了（${String(reading.body_sha256.before).slice(0, 12)} → `
-            + `${String(reading.body_sha256.after).slice(0, 12)}）—— supersede 只许动头块两个字段（契约 §0.3-D3 / §5.6）`)
+            + `${String(reading.body_sha256.after).slice(0, 12)}）—— supersede 只许动头块两个字段（契约 §10.1）`)
         }
         // 工具自报与夹具测量必须同值（**断言的是夹具那一侧**；这里只是把自报摆在同一行读数里对照）
         const self = run.json.body_sha256 ?? {}
         if (self.before !== reading.body_sha256.before || self.after !== reading.body_sha256.after) {
           push('SUPERSEDE-SELF-REPORT', `[DEC-09/flip] 工具自报的正文 sha 与夹具量到的不同（自报 ${JSON.stringify(self)} / 夹具 ${JSON.stringify(reading.body_sha256)}）`)
         }
-        // 翻完这棵树必须是**一致的**（写手收尾不留坏账）
-        const check = runCheck(scene.root)
-        rec.readings.flip.check = { exit: check.exit, codes: codesOf(check.json), ok: check.json?.ok ?? null }
-        expectCodes(problems, check, [], push, { label: 'DEC-09/flip-check' })
+        // 翻完这棵树必须是**一致的**：先重跑 `--op index`（派生页的唯一写手），再 check 绿
+        const reindex = runIndex(scene.root)
+        rec.readings.flip.reindex = { exit: reindex.exit, codes: codesOf(reindex.json), ok: reindex.json?.ok ?? null }
+        if (!expectCodes(problems, reindex, [], push, { label: 'DEC-09/flip-index' })) {
+          // 页重写失败已经记红；不再往下判 check
+        } else {
+          const check = runCheck(scene.root)
+          rec.readings.flip.check = { exit: check.exit, codes: codesOf(check.json), ok: check.json?.ok ?? null }
+          expectCodes(problems, check, [], push, { label: 'DEC-09/flip-check' })
+        }
       }
       // `--dry-run`：不许落盘（同一对、另一份夹具）
       const dryScene = goodLedger({ caseId: 'DEC-09', tag: 'dry-run', ...pair() })
       const dryFile = path.join(dryScene.root, OLD_FILE)
       const dryBefore = readText(dryFile)
-      const dry = runSupersede(dryScene.root, { old: '0001', by: '0002', extra: ['--dry-run'] })
+      const dry = runSupersede(dryScene.root, { old: '0002', by: '0003', extra: ['--dry-run'] })
       const dryAfter = readText(dryFile)
       rec.readings.dry_run = { exit: dry.exit, verdict: dry.json?.verdict ?? null, written: dry.json?.written ?? null, bytes_unchanged: dryBefore === dryAfter }
       if (dry.exit !== 0 || dry.json?.verdict !== 'dry-run' || dry.json?.written !== false) {
@@ -149,24 +147,35 @@ test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；�
       if (dryBefore !== dryAfter) push('SUPERSEDE-DRY-RUN', '[DEC-09/dry-run] `--dry-run` 居然写了盘 —— 演练不是执行')
     }
 
-    // ── ② 五条拒做，每一条一个样本（契约 §5.6 的拒码表）──────────────────────────
-    refuse({ tag: 'refuse-already-retired', spec: pair({ oldRetired: true }), old: '0001', by: '0002', wantCode: 'SUPERSEDE-ALREADY-RETIRED' })
-    refuse({ tag: 'refuse-same-file', spec: pair(), old: '0001', by: '0001', wantCode: 'SUPERSEDE-SAME-FILE' })
-    refuse({ tag: 'refuse-old-missing', spec: pair(), old: '0009', by: '0002', wantCode: 'SUPERSEDE-OLD-MISSING' })
-    refuse({ tag: 'refuse-new-missing', spec: pair(), old: '0001', by: '0009', wantCode: 'SUPERSEDE-NEW-MISSING' })
-    refuse({ tag: 'refuse-no-reciprocal', spec: pair({ reciprocal: false }), old: '0001', by: '0002', wantCode: 'SUPERSEDE-NO-RECIPROCAL' })
+    // ── ② 拒做清单（0012 §10.1 的拒码；每条一个样本、零写入）──────────────────────
+    refuse({ tag: 'refuse-already-retired', spec: pair({ oldRetired: true }), old: '0002', by: '0003', wantCode: 'SUPERSEDE-ALREADY-RETIRED' })
+    refuse({ tag: 'refuse-same-file', spec: pair(), old: '0002', by: '0002', wantCode: 'SUPERSEDE-SAME-FILE' })
+    refuse({ tag: 'refuse-old-missing', spec: pair(), old: '0009', by: '0003', wantCode: 'SUPERSEDE-OLD-MISSING' })
+    refuse({ tag: 'refuse-new-missing', spec: pair(), old: '0002', by: '0009', wantCode: 'SUPERSEDE-NEW-MISSING' })
+    refuse({ tag: 'refuse-no-reciprocal', spec: pair({ reciprocal: false }), old: '0002', by: '0003', wantCode: 'SUPERSEDE-NO-RECIPROCAL' })
+    // 跨册：构案 0002 → 产品 0001（`parseOne` 先按 id 找到产品 0001）⇒ 只在同一册里做
+    refuse({ tag: 'refuse-cross-book', spec: pair(), old: '0002', by: '0001', wantCode: 'SUPERSEDE-CROSS-BOOK' })
+    // 旧文已经写着另一个继任者（0003）⇒ 不许覆盖那一行
+    refuse({
+      tag: 'refuse-other-successor',
+      spec: { decisions: [goodDecisionProduct0001(), goodScheme('0002', '决议账本三册制', { superseded_by: '0004' }), goodScheme('0003', '决议账本三册制', { supersedes: '0002' }), goodScheme('0004', '另一个继任者', { supersedes: '0002' })] },
+      old: '0002', by: '0003', wantCode: 'SUPERSEDE-OLD-HAS-OTHER-SUCCESSOR',
+    })
 
     // ── ③ 两把副本刀（不碰生产文件）──────────────────────────────────────────────
-    /** 副本树的**模块闭包** —— 入口（`.tools/决议-check.mjs`）在**模块加载时**静态 import 的每一份，
-     *  除入口自己（它由 patches 版代替）：
-     *    · `.tools/lib/决议-ledger.mjs` —— 头块切分 / `INDEX` 派生那一份解析面；
-     *    · `presets/agenia/lib/atomic.mjs` —— 写盘走共享原子写（`writeFileAtomic`；`MF-1` 接走之后新增的这一份）；
-     *    · `presets/agenia/lib/cli-harness.mjs` —— 入口骨架（构案 0009 · B4：`parseArgs` / `cliError` / `emit`）；
+    /** 副本树的**模块闭包** —— 入口（`presets/agenia/bin/决议-check.mjs`）在**模块加载时**静态 import 的每一份：
+     *    · `presets/agenia/lib/决议-ledger.mjs` —— 三册读面 / 头块切分 / 派生页；
+     *    · `presets/agenia/lib/缺陷折叠.mjs` —— 缺陷册折叠（0012 新增；入口与读面都要它）；
+     *    · `presets/agenia/lib/atomic.mjs` —— 写盘走共享原子写；
+     *    · `presets/agenia/lib/cli-harness.mjs` —— 入口骨架（构案 0009 · B4）；
      *    · `presets/agenia/lib/cli-guards.mjs` —— `emit` 的唯一定义处（骨架共享件只转出它）。
-     *  四份都只 import `node:*`（`fs` / `path` / `url` / `crypto`）或彼此 ⇒ **闭包到这里为止**；
-     *  这条结论由 `assertSandboxClosed()` 每次现量，不靠这句话自证。
-     *  ⚠️ 少铺一份 = 副本子进程 `ERR_MODULE_NOT_FOUND` —— 那是"刀没跑起来"，读数却与"刀没咬住"同形。 */
-    const SANDBOX_MODULES = ['.tools/lib/决议-ledger.mjs', 'presets/agenia/lib/atomic.mjs', 'presets/agenia/lib/cli-harness.mjs', 'presets/agenia/lib/cli-guards.mjs']
+     *  五份 + 入口都只 import `node:*` 或彼此 ⇒ **闭包到这里为止**；
+     *  这条结论由 `assertSandboxClosed()` 每次现量，不靠这句话自证。 */
+    const ENTRY_REL = 'presets/agenia/bin/决议-check.mjs'
+    const SANDBOX_MODULES = [
+      'presets/agenia/lib/决议-ledger.mjs', 'presets/agenia/lib/缺陷折叠.mjs', 'presets/agenia/lib/atomic.mjs',
+      'presets/agenia/lib/cli-harness.mjs', 'presets/agenia/lib/cli-guards.mjs',
+    ]
 
     /**
      * 现量一棵副本树的闭包：从副本入口走一遍 `from '<相对路径>'`，**每一份**都必须落在副本树里，
@@ -177,9 +186,8 @@ test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；�
      * @returns {string[]} 走到的相对路径（排序；进 `readings`，刀的证据里要能看见闭包是什么）
      */
     const assertSandboxClosed = (dir) => {
-      const entry = '.tools/决议-check.mjs'
       const seen = new Set()
-      const queue = [entry]
+      const queue = [ENTRY_REL]
       while (queue.length > 0) {
         const rel = queue.shift()
         if (seen.has(rel)) continue
@@ -195,7 +203,7 @@ test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；�
           queue.push(path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1])))
         }
       }
-      const expected = new Set([entry, ...SANDBOX_MODULES])
+      const expected = new Set([ENTRY_REL, ...SANDBOX_MODULES])
       const missing = [...expected].filter((rel) => !seen.has(rel))
       const extra = [...seen].filter((rel) => !expected.has(rel))
       if (missing.length > 0 || extra.length > 0) {
@@ -207,37 +215,37 @@ test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；�
     }
 
     /** 把写手复制到运行根里、按 patches 改一行；返回副本入口路径。
-     *  ⚠️ 副本必须保持 `.tools/决议-check.mjs` 的形状：入口只在
-     *  `process.argv[1] === <repo>/.tools/决议-check.mjs` 时才跑 `main()`（与生产同一份判法）。
+     *  ⚠️ 副本保持 `presets/agenia/bin/决议-check.mjs` 的形状：入口只在
+     *  `process.argv[1] === <repo>/presets/agenia/bin/决议-check.mjs` 时才跑 `main()`（与生产同一份判法）。
      *  其余模块按 `SANDBOX_MODULES` 逐份铺进来 —— 副本树**自足**，加载期一个字节都不向仓库要。 */
     const copyWriter = (tag, patches) => {
       const dir = sceneRoot('DEC-09', `knife-${tag}`)
-      const toolsDir = path.join(dir, '.tools')
-      mkdirSync(path.join(toolsDir, 'lib'), { recursive: true })
+      const binDir = path.join(dir, 'presets', 'agenia', 'bin')
+      mkdirSync(binDir, { recursive: true })
       let text = readFileSync(CHECK, 'utf8')
       for (const [from, to] of patches) {
         const hits = text.split(from).length - 1
         if (hits !== 1) throw new Error(`DEC09-KNIFE-ANCHOR：锚点在 ${CHECK} 里出现 ${hits} 次（要恰好 1 次）：${from.slice(0, 80)}`)
         text = text.replace(from, to)
       }
-      writeFileSync(path.join(toolsDir, '决议-check.mjs'), text, 'utf8')
+      writeFileSync(path.join(dir, ...ENTRY_REL.split('/')), text, 'utf8')
       for (const rel of SANDBOX_MODULES) {
-        const dst = path.join(dir, rel)
+        const dst = path.join(dir, ...rel.split('/'))
         mkdirSync(path.dirname(dst), { recursive: true })
-        writeFileSync(dst, readFileSync(path.join(PATHS.repo, rel), 'utf8'), 'utf8')
+        writeFileSync(dst, readFileSync(path.join(PATHS.repo, ...rel.split('/')), 'utf8'), 'utf8')
       }
       rec.readings[`knife_${tag}_closure`] = assertSandboxClosed(dir)
-      return path.join(toolsDir, '决议-check.mjs')
+      return path.join(dir, ...ENTRY_REL.split('/'))
     }
     try {
       // K1：把"翻状态"那一行改回去（写手照样 exit 0）⇒ 夹具必须看见 status 没翻
-      const k1 = copyWriter('k1', [['next[statusAt] = withEol(`状态: 已废`)', 'next[statusAt] = withEol(`状态: 生效`)']])
+      const k1 = copyWriter('k1', [['next[statusAt] = withEol(\'状态: 已废\')', 'next[statusAt] = withEol(\'状态: 生效\')']])
       const k1Scene = goodLedger({ caseId: 'DEC-09', tag: 'knife-k1-run', ...pair() })
-      const k1File = path.join(k1Scene.root, OLD_FILE)
+      const k1File = path.join(k1Scene.root, ...OLD_FILE.split('/'))
       const k1Before = readText(k1File)
-      const k1Run = summarize(runNode([k1, `--root=${k1Scene.root}`, '--json', '--op=supersede', '0001', '--by=0002']), 'DEC-09/knife-k1')
+      const k1Run = summarize(runNode([k1, `--root=${k1Scene.root}`, '--json', '--op=supersede', '0002', '--by=0003']), 'DEC-09/knife-k1')
       const k1After = readText(k1File)
-      const k1Reading = supersedeFlipReading(k1Before, k1After, '0002')
+      const k1Reading = supersedeFlipReading(k1Before, k1After, '0003')
       rec.readings.knife_k1 = { exit: k1Run.exit, written: k1Run.json?.written ?? null, reading: k1Reading }
       if (k1Run.exit !== 0 || k1Run.json?.written !== true) {
         push('DEC09-KNIFE-DEAD', `[刀 K1] 把"翻状态"改回去之后写手没有 exit 0/written —— 刀没咬住（实得 exit=${k1Run.exit} written=${JSON.stringify(k1Run.json?.written)}）`)
@@ -245,19 +253,16 @@ test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；�
         push('DEC09-KNIFE-DEAD', `[刀 K1] 写手少了"翻状态"这一步，夹具却仍读到 \`${k1Reading.status_line}\` —— 那这一格判不出"只翻两个字段"`)
       }
       // K2：摘掉正文闸 + 写的时候少一个换行 ⇒ 工具自报"正文没变"，夹具量到变了
-      //     锚点是**共享写手那一行** `writeFileAtomic(target, nextText)`（写盘从手搓 `writeFileSync(tmp, …)`
-      //     接走之后就是这一行）。判据侧不钉在别人会改的函数字节上：那一行改形，这把刀**同批**跟着改
-      //     （`cand-20261106-0140`）。锚点出现次数不是 1 ⇒ `copyWriter` 当场 `DEC09-KNIFE-ANCHOR`。
       const k2 = copyWriter('k2', [
         ['if (out.body_sha256.before !== out.body_sha256.after) {', 'if (false) {'],
         ['writeFileAtomic(target, nextText)', "writeFileAtomic(target, nextText.replace(/\\n$/, ''))"],
       ])
       const k2Scene = goodLedger({ caseId: 'DEC-09', tag: 'knife-k2-run', ...pair() })
-      const k2File = path.join(k2Scene.root, OLD_FILE)
+      const k2File = path.join(k2Scene.root, ...OLD_FILE.split('/'))
       const k2Before = readText(k2File)
-      const k2Run = summarize(runNode([k2, `--root=${k2Scene.root}`, '--json', '--op=supersede', '0001', '--by=0002']), 'DEC-09/knife-k2')
+      const k2Run = summarize(runNode([k2, `--root=${k2Scene.root}`, '--json', '--op=supersede', '0002', '--by=0003']), 'DEC-09/knife-k2')
       const k2After = readText(k2File)
-      const k2Reading = supersedeFlipReading(k2Before, k2After, '0002')
+      const k2Reading = supersedeFlipReading(k2Before, k2After, '0003')
       rec.readings.knife_k2 = {
         exit: k2Run.exit, written: k2Run.json?.written ?? null,
         tool_self_report: k2Run.json?.body_sha256 ?? null,
@@ -277,3 +282,4 @@ test('DEC-09 supersede 写手：只翻头块两个字段、正文 sha 不变；�
     caseFail(problems)
   })
 })
+

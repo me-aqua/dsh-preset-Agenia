@@ -1236,7 +1236,7 @@ export function patchStructuralProblems(compositionText, patchText) {
  * 值是组长块字节的一部分。「整块 sha256 = 升级前基线」与 ③ **字面互斥**（满足 ③ 就必须改那九行；
  * 满足旧口径就等于发一份九行指向已删除预设 id 的配置 ⇒ 每一行 never started）。所以这里量两条腿：
  *
- *   ⑤′-a **功能字段**逐格等于基线 —— 人格 `prefix`/`suffix` · 注入次序 `leaderOrder`/`memberOrder` ·
+ *   ⑤′-a **功能字段**逐格等于基线 —— 人格 `prefix`/`suffix` · 注入次序 'leaderOrder'/`memberOrder` ·
  *        `officeBound` · `delegationTools` · 预设 `id`/`order` · `contentDir`；
  *   ⑤′-b **值行**（非注释、非空行）里，除了九条 `agentPreset`，**逐行逐字等于基线**；
  *        且那九条的唯一去向是：旧九个 per-role id → **同一份**通用组员预设。
@@ -1292,13 +1292,50 @@ export function leaderBlockProblems({
   }
   const baseFields = functional(baseText)
   const nowFields = functional(nowText)
-  const fieldDrift = Object.keys(baseFields).filter((k) => JSON.stringify(baseFields[k]) !== JSON.stringify(nowFields[k]))
+  /**
+   * 🔴 'leaderOrder' 是**唯一**一个期望会迁移的功能字段：0012 §⑧ 要求把 '决策账本' 加进组长
+   * 注入名单（三册账本的规矩要交到组长手里）。所以这一格不再要求"与基线逐字相同"，而是：
+   * **旧序列 + 恰好一个 '决策账本'** —— 去掉那一个之后必须与基线逐项相同。
+   * 刀：漏掉 ⇒ 红；写两次 ⇒ 红；挪了旧项的顺序 ⇒ 红。其余功能字段仍一格不许动。
+   */
+  const BOOK_ENTRY = '决策账本'
+  const fieldDrift = Object.keys(baseFields).filter((k) => k !== 'leaderOrder' && JSON.stringify(baseFields[k]) !== JSON.stringify(nowFields[k]))
   readings.functional_fields = { base: baseFields, now: nowFields, drift: fieldDrift }
   if (fieldDrift.length > 0) {
     push('LEADER-CLOBBERED', `组长块的功能字段动了：${JSON.stringify(fieldDrift)}`
       + `（基线 ${JSON.stringify(fieldDrift.map((k) => baseFields[k]))?.slice(0, 300)}`
       + ` / 现 ${JSON.stringify(fieldDrift.map((k) => nowFields[k]))?.slice(0, 300)}）`
       + ' —— 任务 A 只并员，组长的人设 / 次序 / 边界 / 路径 / 预设属性一格都不许动')
+  }
+  {
+    const baseOrder = Array.isArray(baseFields.leaderOrder) ? baseFields.leaderOrder : null
+    const nowOrder = Array.isArray(nowFields.leaderOrder) ? nowFields.leaderOrder : null
+    const bookCount = nowOrder === null ? 0 : nowOrder.filter((x) => x === BOOK_ENTRY).length
+    const firstAt = nowOrder === null ? -1 : nowOrder.indexOf(BOOK_ENTRY)
+    const stripped = nowOrder === null || firstAt < 0
+      ? nowOrder
+      : [...nowOrder.slice(0, firstAt), ...nowOrder.slice(firstAt + 1)]
+    const sequenceOk = baseOrder !== null && stripped !== null && JSON.stringify(stripped) === JSON.stringify(baseOrder)
+    readings.leader_order = {
+      book_entry: BOOK_ENTRY,
+      base: baseOrder,
+      now: nowOrder,
+      book_entry_count: bookCount,
+      book_entry_index: firstAt,
+      after_removing_one_entry: stripped,
+      sequence_matches_base: sequenceOk,
+      expected: baseOrder === null ? null : 'base sequence + exactly one 决策账本（位置由组合声明，删掉它必须还原成 baseline）',
+    }
+    if (bookCount === 0) {
+      push('LEADER-CLOBBERED', `组长块的 'leaderOrder' 少了 ${BOOK_ENTRY} —— 0012 §⑧ 要求把决策账本加进注入名单`
+        + `（基线 ${JSON.stringify(baseOrder)} / 现 ${JSON.stringify(nowOrder)}）`)
+    } else if (bookCount > 1) {
+      push('LEADER-CLOBBERED', `组长块的 'leaderOrder' 里 ${BOOK_ENTRY} 出现了 ${bookCount} 次（要恰好 1 次）—— `
+        + `现 ${JSON.stringify(nowOrder)}`)
+    } else if (!sequenceOk) {
+      push('LEADER-CLOBBERED', `组长块的 'leaderOrder' 不是"旧序列 + 恰好一个 ${BOOK_ENTRY}"：`
+        + `去掉那一个之后 ${JSON.stringify(stripped)} 与基线 ${JSON.stringify(baseOrder)} 不同 —— 挪别项的顺序也算改了次序`)
+    }
   }
 
   /** 值行 = 非注释、非空行（`agentPreset:` 单独挑出来看去向）。唯一实现带行号（`valueLineEntries()`）。 */
@@ -1445,8 +1482,10 @@ export function leaderBlockProblems({
     pendingDropIdx = drop
   }
   /** 摘掉 pending 那几行的**值行条目**（按行号摘，不按内容摘 —— `config:` 这种行别处也有）。 */
+  /** 0012 §⑧ 新增的那一行值行（`- 决策账本`）不算"改了值"—— 它由上面 `leader_order` 那一格单独判。 */
+  const isBookEntryLine = (line) => /^\s*-\s*决策账本/u.test(line)
   const nowEntries = valueLineEntries(nowText)
-    .filter((o) => !isPresetLine(o.line) && !pendingDropIdx.has(o.i))
+    .filter((o) => !isPresetLine(o.line) && !pendingDropIdx.has(o.i) && !isBookEntryLine(o.line))
   const nowWithoutDr = allowedDr
     ? dropFirst(nowEntries, (o) => DEFAULT_ROLE_ALLOWED.test(o.line))
     : nowEntries

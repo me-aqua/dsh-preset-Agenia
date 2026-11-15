@@ -1380,6 +1380,30 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
         writeFileSync(file, source, 'utf8')
         return import(new URL(`file:///${file.replace(/\\/g, '/')}?t=${Date.now()}-${Math.random().toString(16).slice(2)}`).href)
       }
+      /**
+       * 🔴 **依赖闭包拷贝**（0012 Gate 3 · CARD-05 的刀）。
+       * `bug-ledger.mjs` 现在静态 import `./route.mjs` 与 `./缺陷折叠.mjs`；只拷入口 =
+       * 副本子进程 `ERR_MODULE_NOT_FOUND`，读数与"刀没咬住"同形。
+       * 这里从**入口源码**出发按 `from './x.mjs'` 逐层铺（同目录、相对路径原样保留），
+       * 并把走到的闭包**逐份记进读数** —— 不把折叠实现内联进副本（那会造出第二份折叠）。
+       */
+      const copyModuleClosure = (dir, entryName, entrySource) => {
+        mkdirSync(dir, { recursive: true })
+        const copied = new Map()
+        const queue = [{ name: entryName, source: entrySource }]
+        while (queue.length > 0) {
+          const item = queue.shift()
+          if (copied.has(item.name)) continue
+          const source = item.source ?? readFileSync(livePath(path.join('lib', item.name)), 'utf8')
+          copied.set(item.name, source)
+          for (const m of source.matchAll(/from\s+['"](\.\/[^'"]+)['"]/gu)) {
+            const dep = path.posix.basename(m[1])
+            if (!copied.has(dep)) queue.push({ name: dep, source: null })
+          }
+        }
+        for (const [name, source] of copied) writeFileSync(path.join(dir, name), source, 'utf8')
+        return [...copied.keys()].sort()
+      }
       readings.knives = {}
 
       // ── 刀 1（F-01）──────────────────────────────────────────────────────
@@ -1400,9 +1424,9 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
           `刀 1（F-01）：\`bug-ledger.mjs\` 里找不到那一行 \`${f01Needle}\` —— 刀没切下去，`
           + '"判不了照样超期"这条判据的翻面证据**没量到**（实现换写法了就把这条刀同批挪过去）')
       } else {
-        await importCopy(path.join(knifeDir, 'bug-ledger'), 'route.mjs', liveRouteSrc)
+        const closure = copyModuleClosure(path.join(knifeDir, 'bug-ledger'), 'bug-ledger.mjs', f01Mutant)
+        readings.knives.f01.closure = closure
         const mutantFile = path.join(knifeDir, 'bug-ledger', 'bug-ledger.mjs')
-        writeFileSync(mutantFile, f01Mutant, 'utf8')
         const mutantMod = await import(new URL(`file:///${mutantFile.replace(/\\/g, '/')}?t=${Date.now()}`).href)
         const mutantOver = mutantMod.slaVerdict?.(knifeLedger, { cycle: DAY })?.over ?? null
         readings.knives.f01.mutant_over = mutantOver

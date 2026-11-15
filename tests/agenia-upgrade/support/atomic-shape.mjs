@@ -373,7 +373,7 @@ export function shapeScene({ caseId = 'DEC-05', tag, files = [], allowlist = nul
     mkdirSync(path.dirname(file), { recursive: true })
     writeFileSync(file, text, 'utf8')
   }
-  write('决议/概念表.md', conceptTableText(concept, allowlist))
+  write('账本/概念表.md', conceptTableText(concept, allowlist))
   for (const f of files) write(f.rel, f.text)
   return { root, files: files.map((f) => f.rel), allowlist }
 }

@@ -382,6 +382,52 @@ describe('static · presets-two (任务 A)', () => {
             rec.readings.leader_block_base = leaderBase.sha256
             rec.readings.leader_block_now = leaderNow.sha256
             rec.readings.leader_block = verdict.readings
+            /**
+             * 🔴 **0012 §⑧ 的刀**：`leaderOrder` 的期望从"逐字等于基线"迁移成
+             * "旧序列 + 恰好一个 `决策账本`"。这三把刀只改 `nowText` 里的那一行/两项：
+             *   · 丢 / 写两次 `决策账本` ⇒ `LEADER-CLOBBERED`（读数 book_entry_count = 0 / 2）；
+             *   · 把旧序列两项对调 ⇒ `LEADER-CLOBBERED`（sequence_matches_base = false）。
+             * 证明这一格不是"永远绿"的空话。
+             */
+            {
+              const bookLine = leaderNow.full_text.split(/\r?\n/u).find((l) => /^\s*-\s*决策账本/u.test(l)) ?? null
+              const make = (nowText) => leaderBlockProblems({
+                baseText: leaderBase.full_text, nowText, leaderPresetId: LEADER_PRESET_ID,
+                memberPresetId, oldMemberIds, compositionText: ymlText,
+              })
+              const knives = []
+              if (bookLine === null) {
+                push('LEADER-ORDER-KNIFE', '组长块里找不到 `- 决策账本` 那一行 —— 三把刀建不起来')
+              } else {
+                const once = leaderNow.full_text.replace(bookLine, '@@BOOK@@')
+                const variants = [
+                  { id: 'drop', text: once.replace('@@BOOK@@\n', ''), wantCount: 0 },
+                  { id: 'duplicate', text: once.replace('@@BOOK@@', `${bookLine}\n${bookLine}`), wantCount: 2 },
+                ]
+                for (const v of variants) {
+                  const got = make(v.text)
+                  const codes = got.problems.map((p) => p.code)
+                  knives.push({ id: v.id, codes, book_entry_count: got.readings.leader_order?.book_entry_count ?? null })
+                  if (!codes.includes('LEADER-CLOBBERED') || (got.readings.leader_order?.book_entry_count ?? null) !== v.wantCount) {
+                    push('LEADER-ORDER-KNIFE', `[刀 leaderOrder/${v.id}] 必须红 \`LEADER-CLOBBERED\` 且 book_entry_count=${v.wantCount}，实得 ${JSON.stringify({ codes, count: got.readings.leader_order?.book_entry_count ?? null })}`)
+                  }
+                }
+                const persona = leaderNow.full_text.split(/\r?\n/u).find((l) => /^\s*-\s*persona(\s|$)/u.test(l)) ?? null
+                const style = leaderNow.full_text.split(/\r?\n/u).find((l) => /^\s*-\s*style(\s|$)/u.test(l)) ?? null
+                if (persona === null || style === null) {
+                  push('LEADER-ORDER-KNIFE', '组长块里找不到 persona / style 两行 —— 对调那一刀建不起来')
+                } else {
+                  const swapped = leaderNow.full_text.replace(persona, '@@P@@').replace(style, persona).replace('@@P@@', style)
+                  const got = make(swapped)
+                  const codes = got.problems.map((p) => p.code)
+                  knives.push({ id: 'swap', codes, sequence_matches_base: got.readings.leader_order?.sequence_matches_base ?? null })
+                  if (!codes.includes('LEADER-CLOBBERED') || got.readings.leader_order?.sequence_matches_base !== false) {
+                    push('LEADER-ORDER-KNIFE', `[刀 leaderOrder/swap] 把旧序列两项对调必须红 \`LEADER-CLOBBERED\` 且 sequence_matches_base=false，实得 ${JSON.stringify({ codes, sequence: got.readings.leader_order?.sequence_matches_base ?? null })}`)
+                  }
+                }
+              }
+              rec.readings.leader_order_knives = knives
+            }
             rec.readings.host_level = {
               marks: markVerdict.readings.marks,
               host_level_ids: markVerdict.readings.host_level_ids,

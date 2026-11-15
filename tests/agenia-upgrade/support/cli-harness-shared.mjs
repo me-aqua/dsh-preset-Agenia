@@ -99,13 +99,15 @@ export const PARSE_ARGS_CLIS = Object.freeze([
   'presets/agenia/bin/install.mjs',
   'presets/agenia/bin/release-scan.mjs',
   'presets/agenia/bin/rollback.mjs',
-  '.tools/census.mjs',
+  'presets/agenia/bin/census.mjs',
   '.tools/fingerprint.mjs',
   '.tools/tree-at-commit.mjs',
-  '.tools/决议-check.mjs',
+  'presets/agenia/bin/决议-check.mjs',
 ])
 
-/** 20 支 CLI 全体（定义腿的扫描面 = 这 20 份；顺序 = bin 7 + .tools 13）。 */
+/** 20 支 CLI 全体（定义腿的扫描面 = 这 20 份；顺序 = **bin 9 + .tools 11**）。
+ *  🔴 0012 Gate 3：`census.mjs` 与 `决议-check.mjs` 从 `.tools/` 搬进 `presets/agenia/bin/`
+ *     ⇒ 名单总数不变（20），bin 7→9、.tools 13→11。**没有新增/删除任何一支 CLI**，只是换家。 */
 export const CLI_FILES = Object.freeze([
   'presets/agenia/bin/agenia-brain.mjs',
   'presets/agenia/bin/agenia-local.mjs',
@@ -114,7 +116,8 @@ export const CLI_FILES = Object.freeze([
   'presets/agenia/bin/install.mjs',
   'presets/agenia/bin/release-scan.mjs',
   'presets/agenia/bin/rollback.mjs',
-  '.tools/census.mjs',
+  'presets/agenia/bin/census.mjs',
+  'presets/agenia/bin/决议-check.mjs',
   '.tools/check-notes.mjs',
   '.tools/clear-dsh-auth-cookies.mjs',
   '.tools/fingerprint.mjs',
@@ -125,7 +128,6 @@ export const CLI_FILES = Object.freeze([
   '.tools/office-guard-probe.mjs',
   '.tools/tree-at-commit.mjs',
   '.tools/unmount-host-row.mjs',
-  '.tools/决议-check.mjs',
   '.tools/window-fingerprint.mjs',
 ])
 
@@ -141,12 +143,12 @@ export const MAIN_FILES = Object.freeze([
   'presets/agenia/bin/install.mjs',
   'presets/agenia/bin/release-scan.mjs',
   'presets/agenia/bin/rollback.mjs',
-  '.tools/census.mjs',
+  'presets/agenia/bin/census.mjs',
   '.tools/fingerprint.mjs',
   '.tools/mount-dashboard-profile.mjs',
+  'presets/agenia/bin/决议-check.mjs',
   '.tools/tree-at-commit.mjs',
   '.tools/unmount-host-row.mjs',
-  '.tools/决议-check.mjs',
 ])
 export const MAIN_EXPECT = MAIN_FILES.length
 /** 决定 §① 写的那个数（只进读数：13 ≠ 12 这件事要看得见，不许悄悄对齐）。 */
@@ -187,10 +189,10 @@ export const FORM_PROBES = Object.freeze([
   Object.freeze({ rel: 'presets/agenia/bin/install.mjs', key: '--op', spaced: ['--op', 'help'], equals: ['--op=help'], note: '平凡的 help' }),
   Object.freeze({ rel: 'presets/agenia/bin/release-scan.mjs', key: '--op', spaced: ['--op', 'help'], equals: ['--op=help'], note: '平凡的 help' }),
   Object.freeze({ rel: 'presets/agenia/bin/rollback.mjs', key: '--op', spaced: ['--op', 'help'], equals: ['--op=help'], note: '平凡的 help' }),
-  Object.freeze({ rel: '.tools/census.mjs', key: '--concept', spaced: ['--json', '--concept', '原子写'], equals: ['--json', '--concept=原子写'], note: '读只读那一格' }),
+  Object.freeze({ rel: 'presets/agenia/bin/census.mjs', key: '--concept', spaced: ['--json', '--concept', '原子写'], equals: ['--json', '--concept=原子写'], note: '读只读那一格（0012 从 .tools 搬进 preset）' }),
   Object.freeze({ rel: '.tools/fingerprint.mjs', key: '--set', spaced: ['--json', '--root', '<repo>', '--set', 'code'], equals: ['--json', '--root=<repo>', '--set=code'], note: '两个键都写两种形式' }),
   Object.freeze({ rel: '.tools/tree-at-commit.mjs', key: '--repo', spaced: ['--help', '--repo', '<repo>'], equals: ['--help', '--repo=<repo>'], note: 'help 走 stderr（stdout 为空）' }),
-  Object.freeze({ rel: '.tools/决议-check.mjs', key: '--op', spaced: ['--json', '--op', 'check'], equals: ['--json', '--op=check'], note: '只读的 check' }),
+  Object.freeze({ rel: 'presets/agenia/bin/决议-check.mjs', key: '--op', spaced: ['--json', '--op', 'check'], equals: ['--json', '--op=check'], note: '只读的 check（0012 从 .tools 搬进 preset）' }),
 ])
 
 /**
@@ -235,8 +237,8 @@ export const BEHAVIOUR_PINS = Object.freeze([
   }),
   Object.freeze({
     id: 'census-json',
-    rel: '.tools/census.mjs',
-    why: '.tools 那一族的代表：真跑一次普查（另一棵树 + 另一套 import 形状）',
+    rel: 'presets/agenia/bin/census.mjs',
+    why: '0012 之后 census 在 preset 里；真跑一次普查（只读）',
     args: ['--json', '--concept', '原子写'],
     expect: Object.freeze({ exit: 0, code: null }),
   }),
@@ -357,7 +359,7 @@ export function scanCliSkeleton({ root, stagedPreset = null, allowlist = PARSEAR
   const reading = {
     root: base,
     staged_preset: stagedPreset === null ? null : path.resolve(stagedPreset),
-    scan_face: '20 支 CLI 的顶层（presets/agenia/bin/*.mjs + .tools/*.mjs）+ presets/agenia/lib 的两份共享件',
+    scan_face: '20 支 CLI 的顶层：presets/agenia/bin/*.mjs 9 支 + .tools/*.mjs 11 支（0012 把 census / 决议-check 从 .tools 搬进 preset bin；名单总数不变）+ presets/agenia/lib 的两份共享件',
     scanned_clis: 0,
     read_errors: [],
     clis: [],
@@ -578,7 +580,7 @@ export function skeletonVerdict(reading) {
   for (const [rel, count] of mainByFile.entries()) {
     if (count !== 1) push('B4-MAIN-COUNT', `${rel} 里有 ${count} 处 \`main\` —— 每支 CLI 只许 1 处`)
   }
-  // 导出与否是**读数**，不是红：`.tools/census.mjs` / `.tools/决议-check.mjs` 今天就是
+  // 导出与否是**读数**，不是红：0012 之后 census / 决议-check 住在 `presets/agenia/bin/`
   // `export function main`（测试侧要 import 它们那两个入口），这条在本票之前就成立。
   reading.main_exported = reading.main_defs.filter((d) => d.exported).map((d) => `${d.rel}:${d.line}`)
   if (reading.harness.defs?.main?.length > 0) push('B4-MAIN-IN-HARNESS', `共享件里出现了 \`main\`（${HARNESS_REL}）—— 决定 §④：入口本来就各不相同，不抽模板`)

@@ -1,8 +1,13 @@
 /**
- * `DEC-04` / `DEC-05` —— **现状层那一页与它的数**：`INDEX` 与派生叶逐行对账（`DEC-04`）、
+ * `DEC-04` / `DEC-05` —— **三张派生页与它们的数**：`INDEX` 与册里逐行对账（`DEC-04`）、
  * census 的计数口径（`DEC-05`）。
  *
- * 契约：`.team/test/2026-11-12/CONTRACT-构案.md`（§3 census · §4 INDEX · §5.1 判词 · §8.1 样本表）。
+ * 契约：`.team/test/2026-11-15/CONTRACT-0012.md`（§1.3 三张派生页 · §4 折叠 · §5.3 依据面 · §10 census）。
+ *
+ * 🔴 0012 Gate 3 的重指（契约 §12-1）：单册 `决议/INDEX.md` + 概念表 → **三册三张页**
+ * （`账本/{产品,缺陷,构案}/INDEX.md`）+ `账本/概念表.md`；`check --json` 不再有 `index.rows`
+ * （页是派生物，检查器只报 `INDEX-*`），所以本文件自己从**页上的表**读行，再与 `check` 的
+ * `decisions` / `census` 的 `concepts` 对账 —— 两边都不是从页反推的。
  *
  * 🔴 这一格最要紧的一句：**`INDEX` 不是账本**。判据不信页上那个数，它自己从 ① 概念表 ② 扫描 glob
  * 下的实现文件 ③ 决议头块 重算一遍（`census --json` + `check --json` 两份读数各自独立），
@@ -14,11 +19,11 @@ import { before, test } from 'node:test'
 import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
 import { PATHS } from '../support/env.mjs'
 import {
-  CENSUS, CHECK, GOOD_CONCEPTS, GOOD_IMPLS, GOOD_INDEX, REAL_LEDGER, buildScene, codesOf, expectCodes,
-  goodDecision0001, goodDecisionProduct0001, goodLedger, messagesOf, readText, runCensus, runCensusText,
-  runCheck, runNode, sceneRoot, summarize, toolPresent, treeDigest,
+  CENSUS, CHECK, GOOD_CONCEPTS, GOOD_IMPLS, REAL_LEDGER, buildScene, codesOf, expectCodes,
+  goodDecisionProduct0001, goodScheme, goodLedger, messagesOf, readText, runCensus, runCensusText,
+  runCheck, runIndex, runNode, sceneRoot, summarize, toolPresent, treeDigest,
 } from '../support/decision-ledger.mjs'
-import { COUNT_RULES } from '../../../.tools/lib/决议-ledger.mjs'
+import { COUNT_RULES } from '../../../presets/agenia/lib/决议-ledger.mjs'
 import {
   SHAPE_CONCEPT,
   SHAPE_EXCLUSIONS,
@@ -42,112 +47,59 @@ before(() => {
   preflight()
 })
 
-/**
- * `键序集合比` 那一行的判据（Y-M7a）：这一行的读数必须落在**判据侧**（`tests/`），
- * 因为构案 0004 ⑤ 写的是"判据侧的集合比 · 没有新增产品代码"。页上的数只能由那一行派生。
- * `concept` = census `--json` 里那个概念的条目；`indexRow` = `check --json` 里页上那一行（可缺）。
- */
-function keyOrderRowProblems({ concept, indexRow }) {
-  const out = []
-  const push = (code, message) => out.push({ code, message })
-  if (concept === undefined || concept === null) {
-    push('KEYORDER-ROW-MISSING', 'census 的 concepts[] 里没有 `键序集合比` 这一行 —— 概念表里它必须在（构案 0004 的主题）')
-    return out
+/** 一张 md 表：从第一格等于 `firstCell` 的表头开始读，跳过表头与分隔行，读到第一行不是表格为止。 */
+function tableAfter(text, firstCell) {
+  const lines = String(text ?? '').split(/\r?\n/)
+  for (let i = 0; i + 1 < lines.length; i += 1) {
+    const head = lines[i].trim()
+    if (!head.startsWith('|')) continue
+    const cells = head.replace(/^\|/, '').replace(/\|$/, '').split('|').map((x) => x.trim())
+    if (cells[0] !== firstCell) continue
+    const rows = []
+    for (let j = i + 2; j < lines.length; j += 1) {
+      const line = lines[j].trim()
+      if (!line.startsWith('|')) break
+      rows.push(line.replace(/^\|/, '').replace(/\|$/, '').split('|').map((x) => x.trim()))
+    }
+    return { columns: cells, rows }
   }
-  if (concept.count !== 1) push('KEYORDER-COUNT', `\`键序集合比\` 的实现数必须是 1，实得 ${JSON.stringify(concept.count)}`)
-  if (concept.unit !== '份代码文件') push('KEYORDER-UNIT', `\`键序集合比\` 的单位必须是 \`份代码文件\`，实得 ${JSON.stringify(concept.unit)}`)
-  if (concept.rule !== 'file-code') push('KEYORDER-RULE', `\`键序集合比\` 的口径必须是 \`file-code\`，实得 ${JSON.stringify(concept.rule)}`)
-  const impls = (concept.implementations ?? []).map((p) => String(p).replace(/\\/g, '/'))
-  const outside = impls.filter((p) => !p.startsWith('tests/'))
-  if (outside.length > 0) {
-    push('KEYORDER-WRONG-SIDE', `\`键序集合比\` 的实现必须落在 \`tests/\`（判据侧），实得 ${JSON.stringify(outside)}`
-      + ' —— 这一行数的是"判据里那把集合比的刀"，不是产品侧的键序规范化（构案 0004 ⑤：没有新增产品代码）')
+  return null
+}
+
+/** 派生页的第一行非空行是不是生成标记（0012 §1.3）。 */
+function markerOk(text) {
+  const first = String(text ?? '').split(/\r?\n/).find((l) => l.trim() !== '') ?? ''
+  return first.trim().startsWith('<!--') && first.includes('生成物') && first.includes('决议-check.mjs')
+}
+
+/** 页上的行 → 一张可比的表（`name` 作为键）。 */
+function rowsByFirstCell(table) {
+  return new Map((table?.rows ?? []).map((cells) => [cells[0] ?? '', cells]))
+}
+
+/** 真树的三张页 + 概念表读数（DEC-04 的真树腿）。 */
+function realPages() {
+  const out = {}
+  for (const book of ['产品', '缺陷', '构案']) {
+    const file = path.join(REAL_LEDGER, book, 'INDEX.md')
+    const text = readText(file)
+    out[book] = { file, present: text !== null, marker: markerOk(text), table: text === null ? null : tableAfter(text, book === '缺陷' ? 'id' : '编号') }
   }
-  const scan = (concept.scan ?? []).map((s) => String(s).replace(/\\/g, '/'))
-  if (!scan.some((s) => s.startsWith('tests/'))) push('KEYORDER-SCAN', `\`键序集合比\` 的「扫描」必须盖住 \`tests/\`，实得 ${JSON.stringify(scan)}`)
-  if (scan.some((s) => s.startsWith('presets/'))) push('KEYORDER-WRONG-SIDE', `\`键序集合比\` 的「扫描」里不许有 \`presets/\`（那会把它数回产品侧），实得 ${JSON.stringify(scan)}`)
-  if (indexRow !== undefined && indexRow !== null) {
-    if (indexRow.census !== 1) push('KEYORDER-INDEX', `INDEX 上 \`键序集合比\` 的 census 必须是 1，实得 ${JSON.stringify(indexRow.census)}`)
-    if (indexRow.unit !== '份代码文件') push('KEYORDER-INDEX', `INDEX 上 \`键序集合比\` 的单位必须是 \`份代码文件\`，实得 ${JSON.stringify(indexRow.unit)}`)
-  }
+  out.构案.concepts = out.构案.table === null ? null : tableAfter(readText(out.构案.file), '概念')
   return out
 }
 
-/** 页首那句「计数口径是闭集 N 个」的读数（Y-M7b）：token 与单位都由 `COUNT_RULES` 现算。 */
-const LEGEND_TOKENS = Object.freeze([
-  ['file', '份文件（含注释）'],
-  ['file-code', '份代码文件'],
-  ['site', '处（出现点）'],
-  ['site-code', '处代码行'],
-  ['零代码', '零代码决定'],
-])
-/**
- * 页首该印哪几对：**冻结的五对**（上表，手写期望）+ **按形状那一对**（只在口径落进 `COUNT_RULES` 之后出现）。
- *
- * 为什么按形状那一对从 `COUNT_RULES` 读标签、不手抄：M4 的口径是"单位只有一处来源"——
- * 页首那句本来就是从 `COUNT_RULES` 现算的；判据在这一对上判的是"页与口径同值"，不是"标签长什么样"
- * （标签本身另有约束：含「处」，见 `DEC-05` 腿 ⑧ 的 unit 那一格）。这样 Gate 3 加 token 时页与判据同批跟上，
- * 不会因为"判据先红"把加 token 变成两处改。
- */
-function expectedLegendTokens() {
-  const base = LEGEND_TOKENS.map(([t, u]) => [t, u])
-  if (Object.hasOwn(COUNT_RULES, SHAPE_RULE)) base.push([SHAPE_RULE, COUNT_RULES[SHAPE_RULE].label])
-  return base
-}
-function legendReading(text) {
-  const line = String(text ?? '').split(/\r?\n/).find((l) => l.includes('计数口径是闭集')) ?? ''
-  // 只从「闭集」那一句往后读：这一行开头还有一句 `census` = …（那是解释，不是闭集里的配对）。
-  const tail = line.includes('闭集') ? line.slice(line.indexOf('闭集')) : ''
-  const pairs = [...tail.matchAll(/`([^`]+)`\s*=\s*([^·。]+)/g)].map((m) => ({ token: m[1].trim(), unit: m[2].trim() }))
-  const countMatch = /闭集\s*(\d+)\s*个/.exec(line)
-  return { line, pairs, declared_count: countMatch === null ? null : Number(countMatch[1]) }
-}
-function legendProblems(reading, wantTokens = expectedLegendTokens()) {
-  const out = []
-  const push = (code, message) => out.push({ code, message })
-  if (reading.line === '') {
-    push('LEGEND-MISSING', 'INDEX 页首没有「计数口径是闭集 N 个…」那一句 —— 单位从哪来，读的人得自己猜')
-    return out
-  }
-  const want = wantTokens.map(([t, u]) => `${t}=${u}`)
-  const got = reading.pairs.map((p) => `${p.token}=${p.unit}`)
-  if (JSON.stringify(got) !== JSON.stringify(want)) {
-    push('LEGEND-TOKENS', `页首闭集必须恰好是 ${JSON.stringify(want)}，实得 ${JSON.stringify(got)}`)
-  }
-  if (reading.declared_count !== wantTokens.length) {
-    push('LEGEND-COUNT', `页首必须写「闭集 ${wantTokens.length} 个」，实得 ${JSON.stringify(reading.declared_count)}`)
-  }
-  return out
-}
-
-/** 跑一份夹具并把读数收进 `rec.readings`。 */
-function runSample(problems, rec, { caseId, tag, spec, extra = [], tool = 'check' }) {
-  const scene = goodLedger({ caseId, tag, ...spec })
-  const run = tool === 'check' ? runCheck(scene.root, extra) : runCensus(scene.root, extra)
-  const entry = {
-    root: scene.root,
-    exit: run.exit,
-    ok: run.json?.ok ?? null,
-    codes: codesOf(run.json),
-    messages: messagesOf(run.json).map((m) => m.slice(0, 200)),
-    stdout_head: run.stdout_head,
-    stderr_head: run.stderr_head,
-  }
-  rec.readings[tag] = entry
-  return { scene, run, entry }
-}
-
-test('DEC-04 INDEX 与派生叶逐行对账：改页上一个数 ⇒ 红；改了实现不重新生成 ⇒ 红；重新生成 ⇒ 绿', async () => {
+test('DEC-04 三张派生页：页与册逐行对账；改页 / 改了实现不重生成 ⇒ 红；重生成 ⇒ 绿；页是生成物', async () => {
   await runCase('DEC-04', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
-    const hasCensus = toolPresent(problems, CENSUS, '契约 §3.3 的 census')
-    const hasCheck = toolPresent(problems, CHECK, '契约 §5.1 的检查器')
+    const hasCensus = toolPresent(problems, CENSUS, '契约 §10.1 的 census')
+    const hasCheck = toolPresent(problems, CHECK, '契约 §10.1 的检查器')
     const ledgerPresent = existsSync(REAL_LEDGER)
 
-    // ── ① 真树：检查器绿 + 页与重算一致 + 跑完一个字节都不改 ─────────────────────
+    // ── ① 真树：check 绿 + census 绿 + 跑完一个字节都不改 ─────────────────────────
     if (!ledgerPresent) {
-      push('TREE-MISSING', `${REAL_LEDGER} 不在盘上 —— 现状层那一页（决议/INDEX.md）与概念表都还没有被测对象`)
+      push('TREE-MISSING', `${REAL_LEDGER} 不在盘上 —— 三张派生页与概念表都还没有被测对象`)
     } else if (hasCensus && hasCheck) {
       const before = treeDigest(REAL_LEDGER)
       const census = runCensus(PATHS.repo)
@@ -157,163 +109,79 @@ test('DEC-04 INDEX 与派生叶逐行对账：改页上一个数 ⇒ 红；改�
         before: before.digest, after: after.digest, files: before.files.length,
         census_exit: census.exit, check_exit: check.exit,
         census_codes: codesOf(census.json), check_codes: codesOf(check.json),
-        index_rows: check.json?.index?.rows ?? null,
       }
       if (expectCodes(problems, check, [], push, { label: 'DEC-04/real-check' })) {
-        if (!expectCodes(problems, census, [], push, { label: 'DEC-04/real-census' })) {
-          // 读到 census 的红因就够了，不再往下判
-        } else {
-          // **独立重算**：页上的每一格都必须能在 census 的读数里找到同一个值。
-          const rows = check.json.index?.rows ?? []
+        const pages = realPages()
+        rec.readings.real.pages = Object.fromEntries(Object.entries(pages).map(([book, p]) => [book, { present: p.present, marker: p.marker, rows: p.table?.rows.length ?? null }]))
+        for (const [book, page] of Object.entries(pages)) {
+          if (!page.present) push('INDEX-MISSING', `[真树] 账本/${book}/INDEX.md 不在`)
+          else if (!page.marker) push('INDEX-NOT-GENERATED', `[真树] 账本/${book}/INDEX.md 的第一行不是生成标记`)
+        }
+        // 产品页：每行 = 编号 | 主题 | 日期 | 状态 | 子构案（子构案数由**生效构案**的 依据P 现算）
+        const products = (check.json.decisions ?? []).filter((d) => d.book === '产品')
+        const schemesLive = (check.json.decisions ?? []).filter((d) => d.book === '构案' && d.status === '生效')
+        const childCount = new Map()
+        for (const s of schemesLive) for (const id of s.basisP ?? []) childCount.set(id, (childCount.get(id) ?? 0) + 1)
+        const productRows = rowsByFirstCell(pages.产品.table)
+        for (const d of products) {
+          const row = productRows.get(d.id)
+          if (row === undefined) { push('INDEX-ROW-MISSING', `[真树] 产品页没有 ${d.id} 这一行`); continue }
+          const want = [d.id, d.topic, d.date, d.status, String(childCount.get(d.id) ?? 0)]
+          if (JSON.stringify(row) !== JSON.stringify(want)) push('INDEX-ROW-MISMATCH', `[真树] 产品页 ${d.id}：页上 ${JSON.stringify(row)} / 重算 ${JSON.stringify(want)}`)
+        }
+        if (productRows.size !== products.length) push('INDEX-ROW-SET', `[真树] 产品页有 ${productRows.size} 行，产品册有 ${products.length} 条`)
+        // 构案页：每行 = 编号 | 主题 | 日期 | 状态 | 依据P | 依据bug
+        const schemes = (check.json.decisions ?? []).filter((d) => d.book === '构案')
+        const schemeRows = rowsByFirstCell(pages.构案.table)
+        for (const d of schemes) {
+          const row = schemeRows.get(d.id)
+          if (row === undefined) { push('INDEX-ROW-MISSING', `[真树] 构案页没有 ${d.id} 这一行`); continue }
+          const want = [d.id, d.topic, d.date, d.status, (d.basisP ?? []).join(',') || '—', (d.basisBug ?? []).join(',') || '—']
+          if (JSON.stringify(row) !== JSON.stringify(want)) push('INDEX-ROW-MISMATCH', `[真树] 构案页 ${d.id}：页上 ${JSON.stringify(row)} / 重算 ${JSON.stringify(want)}`)
+        }
+        // 缺陷页：行数 = `books.缺陷.entries`（153），每行第一格是缺陷 id
+        const bugRows = pages.缺陷.table?.rows ?? []
+        if (bugRows.length !== (check.json.books?.['缺陷']?.entries ?? -1)) {
+          push('INDEX-ROW-SET', `[真树] 缺陷页 ${bugRows.length} 行，折叠出 ${JSON.stringify(check.json.books?.['缺陷']?.entries)} 条 —— 页必须一行一条`)
+        }
+        const badIds = bugRows.filter((cells) => !/^bug-\d{8}-\d{2,}$/.test(cells[0] ?? ''))
+        if (badIds.length > 0) push('INDEX-ROW-MISMATCH', `[真树] 缺陷页有 ${badIds.length} 行第一格不是缺陷 id：${JSON.stringify(badIds.slice(0, 3))}`)
+        // 概念表那一页：概念 | 归属 | census | 构案 | 单位 —— 每一格都能在 census 读数里找到同值
+        if (expectCodes(problems, census, [], push, { label: 'DEC-04/real-census' })) {
+          const conceptRows = rowsByFirstCell(pages.构案.concepts)
           const byConcept = new Map((census.json.concepts ?? []).map((c) => [c.concept, c]))
-          if (rows.length !== byConcept.size) {
-            push('INDEX-ROW-SET', `[真树] INDEX 有 ${rows.length} 行，概念表有 ${byConcept.size} 个概念 —— 行集必须一一对应`)
+          if ((pages.构案.concepts?.rows.length ?? -1) !== byConcept.size) {
+            push('INDEX-ROW-SET', `[真树] 概念表页 ${pages.构案.concepts?.rows.length ?? '（没有表）'} 行，census 有 ${byConcept.size} 个概念`)
           }
-          const live = new Map((check.json.decisions ?? [])
-            .filter((d) => d.series === '构案' && d.status === '生效')
-            .map((d) => [d.topic, d.id]))
-          // 「单位」列（M4 / T4）：页上必须带着单位，而且与 census 里那个概念的 unit 同值。
-          const indexText = readText(path.join(PATHS.repo, '决议', 'INDEX.md')) ?? ''
-          const headerLine = indexText.split(/\r?\n/).find((l) => /^\|\s*概念\s*\|/.test(l.trim())) ?? ''
-          rec.readings.real_index_header = headerLine
-          if (!headerLine.includes('单位')) {
-            push('INDEX-UNIT-MISSING', `[真树] INDEX 的表头里没有「单位」列（实得 ${JSON.stringify(headerLine)}）—— `
-              + '概念表声明了计数口径，页上就必须印出单位（契约 §4.2 / M4）')
+          for (const [concept, c] of byConcept) {
+            const row = conceptRows.get(concept)
+            if (row === undefined) { push('INDEX-ROW-MISSING', `[真树] 概念表页没有 \`${concept}\` 这一行`); continue }
+            if (row[1] !== c.owner) push('INDEX-ROW-MISMATCH', `[真树] \`${concept}\` 的归属：页上 ${JSON.stringify(row[1])} / census ${JSON.stringify(c.owner)}`)
+            if (Number(row[2]) !== c.count) push('INDEX-ROW-MISMATCH', `[真树] \`${concept}\` 的 census：页上 ${JSON.stringify(row[2])} / 重算 ${c.count}`)
+            const wantDecision = c.decision ?? '—'
+            if ((row[3] ?? '—') !== wantDecision) push('INDEX-ROW-MISMATCH', `[真树] \`${concept}\` 的构案：页上 ${JSON.stringify(row[3])} / 生效构案派生 ${JSON.stringify(wantDecision)}`)
+            if (typeof c.unit !== 'string' || c.unit.trim() === '') push('INDEX-UNIT-MISSING', `[真树] census 的 \`${concept}\` 没有单位（rule=${JSON.stringify(c.rule)}）`)
+            else if ((row[4] ?? '') !== c.unit) push('INDEX-UNIT-MISMATCH', `[真树] \`${concept}\` 的单位：页上 ${JSON.stringify(row[4])} / census ${JSON.stringify(c.unit)}`)
           }
-          for (const row of rows) {
-            const c = byConcept.get(row.concept)
-            if (c === undefined) {
-              push('INDEX-ROW-EXTRA', `[真树] INDEX 上有一行 \`${row.concept}\`，概念表里没有它 —— 页上多出来的一行就是手抄`)
-              continue
-            }
-            if (row.census !== c.count) push('INDEX-ROW-MISMATCH', `[真树] \`${row.concept}\` 的 census：页上 ${JSON.stringify(row.census)}，重算 ${JSON.stringify(c.count)}`)
-            if (row.owner !== c.owner) push('INDEX-ROW-MISMATCH', `[真树] \`${row.concept}\` 的归属：页上 ${JSON.stringify(row.owner)}，概念表 ${JSON.stringify(c.owner)}`)
-            const derivedDecision = live.get(row.concept) ?? '—'
-            if (row.decision !== derivedDecision) {
-              push('INDEX-ROW-MISMATCH', `[真树] \`${row.concept}\` 的「构案」：页上 ${JSON.stringify(row.decision)}，生效构案派生 ${JSON.stringify(derivedDecision)}`)
-            }
-            const wantUnit = typeof c.unit === 'string' ? c.unit.trim() : ''
-            if (wantUnit === '') {
-              push('INDEX-UNIT-MISSING', `[真树] census 的 \`${row.concept}\` 没有单位（rule=${JSON.stringify(c.rule)}）—— 数不带单位就只是一个数`)
-            } else if (typeof row.unit !== 'string' || row.unit.trim() === '') {
-              push('INDEX-UNIT-MISSING', `[真树] INDEX 的 \`${row.concept}\` 这一行没有读出「单位」（页上 ${JSON.stringify(row.unit)}）`)
-            } else if (row.unit.trim() !== wantUnit) {
-              push('INDEX-UNIT-MISMATCH', `[真树] \`${row.concept}\` 的单位：页上 ${JSON.stringify(row.unit)}，概念表派生 ${JSON.stringify(wantUnit)}`)
-            }
-          }
-          // ── Y-M7a：`键序集合比` 那一行必须指回**判据侧**（构案 0004 ⑤：没有新增产品代码）────────
-          {
-            const concept = byConcept.get('键序集合比')
-            const indexRow = rows.find((r) => r.concept === '键序集合比')
-            rec.readings.real_key_order = { concept: concept ?? null, index_row: indexRow ?? null }
-            for (const p of keyOrderRowProblems({ concept, indexRow })) push(p.code, `[真树] ${p.message}`)
-          }
-          // ── Y-M7b：页首那句闭集由 `COUNT_RULES` 现算（五个 token，含 `零代码`）──────────────────
-          {
-            const legend = legendReading(indexText)
-            rec.readings.real_legend = { declared_count: legend.declared_count, pairs: legend.pairs, line_head: legend.line.slice(0, 120) }
-            for (const p of legendProblems(legend)) push(p.code, `[真树] ${p.message}`)
+          if (!(pages.构案.concepts?.columns ?? []).includes('单位')) {
+            push('INDEX-UNIT-MISSING', `[真树] 概念表页的列名里没有「单位」（实得 ${JSON.stringify(pages.构案.concepts?.columns ?? null)}）`)
           }
         }
       }
       if (before.digest !== after.digest) {
-        push('CHECK-NOT-READONLY', `[真树] 跑完 census+check，决议/ 那棵树变了：${before.digest.slice(0, 16)} → ${after.digest.slice(0, 16)}`
-          + `（契约 §5.4：检查器不许顺手修）`)
+        push('CHECK-NOT-READONLY', `[真树] 跑完 census+check，账本/ 那棵树变了：${before.digest.slice(0, 16)} → ${after.digest.slice(0, 16)}`)
       }
     }
 
-    // ── Y-M8：**解析面在哪** 这句话只许指向 `.tools/lib/决议-ledger.mjs`（三个载体同一句话）──────
-    //    这是**指针**判据，不是行为判据：旧句（"全在 census.mjs 与 决议-check.mjs 里"）一回来就红。
-    //    它不动工具、不碰 `决议/`；读的是测试岗自己那一份夹具头。
+    // ── ② 解析面在哪（测试侧自检）：只许指向 `presets/agenia/lib/决议-ledger.mjs` ─────
     {
       const harness = readText(path.join(PATHS.testRoot, 'support', 'decision-ledger.mjs')) ?? ''
       const OLD_POINTER = '全在 `.tools/census.mjs` 与 `.tools/决议-check.mjs` 里'
-      const namesLib = harness.includes('.tools/lib/决议-ledger.mjs')
-      const keepsOld = harness.includes(OLD_POINTER)
+      const namesLib = harness.includes('presets/agenia/lib/决议-ledger.mjs')
+      const keepsOld = harness.includes(OLD_POINTER) || harness.includes('.tools/lib/决议-ledger.mjs')
       rec.readings.parse_pointer = { names_lib: namesLib, keeps_old: keepsOld }
-      if (!namesLib) {
-        push('PARSE-POINTER', '`tests/.../support/decision-ledger.mjs` 的头没点名 `.tools/lib/决议-ledger.mjs` —— '
-          + '解析面只有一份，三个载体（census / 决议-check / 测试夹具）都要说同一句话（Y-M8）')
-      }
-      if (keepsOld) {
-        push('PARSE-POINTER', `\`tests/.../support/decision-ledger.mjs\` 里还留着旧指针 ${JSON.stringify(OLD_POINTER)} —— `
-          + '那句话把解析面指到了 census/check 两个入口，而它们各只有一行 import（Y-M8）')
-      }
-    }
-
-    // ── Y-M7a 的刀：把概念表那一行**指回产品侧**（旧探针 `canonicalJson` @ presets/）⇒ 同一条判据必须红 ──
-    if (hasCensus) {
-      const oldRow = buildScene({
-        caseId: 'DEC-04', tag: 'keyorder-knife',
-        concepts: [{ concept: '键序集合比', probe: 'canonicalJson', scan: 'presets/agenia/lib/*.mjs', owner: '实现岗', rule: 'file-code' }],
-        impls: [{ rel: 'presets/agenia/lib/receipt.mjs', needle: 'canonicalJson' }],
-        index: null,
-      })
-      const oldRun = runCensus(oldRow.root)
-      const oldConcept = (oldRun.json?.concepts ?? []).find((c) => c.concept === '键序集合比') ?? null
-      const oldProblems = keyOrderRowProblems({ concept: oldConcept })
-      rec.readings.keyorder_knife = { exit: oldRun.exit, concept: oldConcept, codes: oldProblems.map((p) => p.code) }
-      if (oldRun.exit !== 0 || oldConcept === null) {
-        push('KEYORDER-KNIFE', `[刀] 旧行那一份夹具没造出来（exit=${oldRun.exit}）—— 刀没咬住`)
-      } else if (!oldProblems.some((p) => p.code === 'KEYORDER-WRONG-SIDE')) {
-        push('KEYORDER-KNIFE', `[刀] 把 \`键序集合比\` 指回产品侧（canonicalJson @ presets/）时，同一条判据没有报 \`KEYORDER-WRONG-SIDE\``
-          + `（实得 ${JSON.stringify(oldProblems.map((p) => p.code))}）—— 那这条腿判不出"落在哪一侧"`)
-      }
-      // 阳性对照：同一把判据喂"按判据侧写"的那一份 ⇒ 不许有红。
-      // ⚠️ 探针字面量**在源码里拼出来**：`键序集合比` 的扫描面是 `tests/**/*.mjs`，
-      //    在测试源码里直接写那六个字母会把这个测试文件也算成"第二处实现"（census 按字面量数，
-      //    注释不算、代码行算）。拼出来 = 这一格不改变它自己量的那个数。
-      const SORTED_KEYS = ['sorted', 'Keys'].join('')
-      const newRow = buildScene({
-        caseId: 'DEC-04', tag: 'keyorder-control',
-        concepts: [{ concept: '键序集合比', probe: SORTED_KEYS, scan: 'tests/**/*.mjs', owner: '实现岗', rule: 'file-code' }],
-        impls: [{ rel: 'tests/unit/knife-control.test.mjs', needle: SORTED_KEYS }],
-        index: null,
-      })
-      const newRun = runCensus(newRow.root)
-      const newConcept = (newRun.json?.concepts ?? []).find((c) => c.concept === '键序集合比') ?? null
-      const newProblems = keyOrderRowProblems({ concept: newConcept })
-      rec.readings.keyorder_control = { exit: newRun.exit, concept: newConcept, codes: newProblems.map((p) => p.code) }
-      if (newRun.exit !== 0 || newConcept === null || newProblems.length > 0) {
-        push('KEYORDER-KNIFE', `[对照] 按判据侧写的那一份不许有红（实得 ${JSON.stringify(newProblems.map((p) => p.code))}）—— `
-          + '否则这条腿只会红、翻不了面')
-      }
-    }
-
-    // ── Y-M7b 的刀：副本里从 `COUNT_RULES` 删掉 `零代码` ⇒ 页首闭集少一项 ⇒ 同一条判据必须红 ──────────
-    {
-      const dir = sceneRoot('DEC-04', 'legend-knife')
-      mkdirSync(path.join(dir, 'lib'), { recursive: true })
-      const libSrc = readText(path.join(PATHS.repo, '.tools', 'lib', '决议-ledger.mjs')) ?? ''
-      const ZERO_LINE = "  '零代码': { label: '零代码决定', kind: 'zero', comments: 'any' },"
-      const hits = libSrc.split(ZERO_LINE).length - 1
-      if (hits !== 1) {
-        push('LEGEND-KNIFE-ANCHOR', `[刀] \`COUNT_RULES\` 里 \`零代码\` 那一行在源文件里出现 ${hits} 次（要恰好 1 次）—— 刀锚点不在`)
-      } else {
-        writeFileSync(path.join(dir, 'lib', '决议-ledger.mjs'), libSrc.replace(`${ZERO_LINE}\n`, ''), 'utf8')
-        const probe = path.join(dir, 'probe.mjs')
-        writeFileSync(probe, [
-          "import { renderIndex, COUNT_RULES } from './lib/决议-ledger.mjs'",
-          "const rows = [{ concept: 'x', owner: 'y', census: 0, decision: '0001', unit: '零代码决定' }]",
-          'console.log(JSON.stringify({ keys: Object.keys(COUNT_RULES), index: renderIndex(rows) }))',
-          '',
-        ].join('\n'), 'utf8')
-        const run = summarize(runNode([probe]), 'DEC-04/legend-knife')
-        const keys = run.json?.keys ?? []
-        const knifeLegend = legendReading(run.json?.index ?? '')
-        const knifeProblems = legendProblems(knifeLegend)
-        /** 副本里应当是"当前闭集 − 零代码"（口径落几个 token，这一格就跟几个）。 */
-        const wantKeys = Object.keys(COUNT_RULES).filter((k) => k !== '零代码').sort()
-        rec.readings.legend_knife = { exit: run.exit, keys, want_keys: wantKeys, pairs: knifeLegend.pairs, declared_count: knifeLegend.declared_count, codes: knifeProblems.map((p) => p.code) }
-        if (run.exit !== 0 || run.json === null) {
-          push('LEGEND-KNIFE', `[刀] 副本探针没跑出 JSON（exit=${run.exit} · ${run.json_error ?? ''}）`)
-        } else if (keys.includes('零代码') || JSON.stringify([...keys].sort()) !== JSON.stringify(wantKeys)) {
-          push('LEGEND-KNIFE', `[刀] 副本里 \`COUNT_RULES\` 的键必须是"当前闭集 − 零代码" ${JSON.stringify(wantKeys)}（删掉那一行之后），实得 ${JSON.stringify(keys)}`)
-        } else if (!knifeProblems.some((p) => p.code === 'LEGEND-TOKENS')) {
-          push('LEGEND-KNIFE', `[刀] 删掉 \`零代码\` 之后，同一条判据没有报 \`LEGEND-TOKENS\`（实得 ${JSON.stringify(knifeProblems.map((p) => p.code))}）`
-            + ' —— 那"页首闭集逐条都从 COUNT_RULES 来"这句话没有被判到')
-        }
-      }
+      if (!namesLib) push('PARSE-POINTER', '`tests/.../support/decision-ledger.mjs` 的头没点名 `presets/agenia/lib/决议-ledger.mjs` —— 解析面只有一份，三个载体都要说同一句话')
+      if (keepsOld) push('PARSE-POINTER', `\`support/decision-ledger.mjs\` 里还留着旧指针（${JSON.stringify(OLD_POINTER)} / \`.tools/lib/…\`）—— 0012 之后那些路径不存在`)
     }
 
     if (!(hasCensus && hasCheck)) {
@@ -321,85 +189,140 @@ test('DEC-04 INDEX 与派生叶逐行对账：改页上一个数 ⇒ 红；改�
       return
     }
 
-    // ── ② 夹具：good 绿 ────────────────────────────────────────────────────────
+    // ── ③ 夹具：good 绿 ────────────────────────────────────────────────────────
     {
-      const { run } = runSample(problems, rec, { caseId: 'DEC-04', tag: 'good', spec: {} })
+      const { run } = (() => {
+        const scene = goodLedger({ caseId: 'DEC-04', tag: 'good' })
+        return { run: runCheck(scene.root) }
+      })()
+      rec.readings.good = { exit: run.exit, codes: codesOf(run.json) }
       expectCodes(problems, run, [], push, { label: 'DEC-04/good' })
     }
-    // ── ③ 刀：改页上一个数（别的都不动）⇒ 红，点名概念与那一列 ──────────────────
+    // ── ④ 刀：改页上一个格 ⇒ 红，点名那一条 ─────────────────────────────────────
     {
-      const rows = GOOD_INDEX.rows.map((r) => ({ ...r }))
-      rows[0].census = 3
-      const { run } = runSample(problems, rec, { caseId: 'DEC-04', tag: 'stale-count', spec: { index: { rows } } })
-      if (expectCodes(problems, run, ['INDEX-ROW-MISMATCH'], push, { label: 'DEC-04/stale-count' })) {
+      const scene = goodLedger({ caseId: 'DEC-04', tag: 'stale-count' })
+      const file = path.join(scene.root, '账本', '产品', 'INDEX.md')
+      const text = readText(file)
+      const changed = text.replace('| 0001 | 产品口径样张 | 2026-11-12 | 生效 | 1 |', '| 0001 | 产品口径样张 | 2026-11-12 | 已废 | 1 |')
+      if (changed === text) push('KNIFE-ANCHOR', '[DEC-04/stale-count] 产品页那一行不在（夹具锚点漂了）')
+      else writeFileSync(file, changed, 'utf8')
+      const run = runCheck(scene.root)
+      rec.readings.stale_count = { exit: run.exit, codes: codesOf(run.json), messages: messagesOf(run.json).map((m) => m.slice(0, 180)) }
+      if (changed !== text && expectCodes(problems, run, ['INDEX-ROW-MISMATCH'], push, { label: 'DEC-04/stale-count' })) {
         const msg = messagesOf(run.json).join(' ')
-        if (!(msg.includes(GOOD_CONCEPTS[0].concept) && msg.includes('census'))) {
-          push('NOT-NAMED', `[DEC-04/stale-count] 报文要点名概念 \`${GOOD_CONCEPTS[0].concept}\` 与那一列 \`census\`，实得 ${JSON.stringify(msg.slice(0, 200))}`)
+        if (!(msg.includes('0001') && msg.includes('已废') && msg.includes('生效'))) {
+          push('NOT-NAMED', `[DEC-04/stale-count] 报文要点名 0001 与两侧值（已废 / 生效），实得 ${JSON.stringify(msg.slice(0, 220))}`)
         }
       }
     }
-    // ── ④ 刀：加一份实现、**不**重新生成 ⇒ 红（"页被信了"的反面证人）───────────────
+    // ── ⑤ 刀：加一份实现、**不**重新生成 ⇒ 红（"页被信了"的反面证人）───────────────
     {
-      const impls = [...GOOD_IMPLS, { rel: 'src/a3.mjs', needle: 'LEDGER_PROBE_A' }]
-      const { run } = runSample(problems, rec, { caseId: 'DEC-04', tag: 'impl-added', spec: { impls } })
+      const scene = goodLedger({ caseId: 'DEC-04', tag: 'impl-added' })
+      writeFileSync(path.join(scene.root, 'src', 'a3.mjs'), "// 夹具：新加的一份实现\nconst needle = 'LEDGER_PROBE_A'\n", 'utf8')
+      const run = runCheck(scene.root)
+      rec.readings.impl_added = { exit: run.exit, codes: codesOf(run.json), messages: messagesOf(run.json).map((m) => m.slice(0, 180)) }
       if (expectCodes(problems, run, ['INDEX-ROW-MISMATCH'], push, { label: 'DEC-04/impl-added' })) {
         const msg = messagesOf(run.json).join(' ')
         if (!(msg.includes(GOOD_CONCEPTS[0].concept) && /3/.test(msg) && /2/.test(msg))) {
-          push('NOT-NAMED', `[DEC-04/impl-added] 报文要点名"派生 3 / 页上 2"，实得 ${JSON.stringify(msg.slice(0, 220))}`)
+          push('NOT-NAMED', `[DEC-04/impl-added] 报文要点名概念 \`${GOOD_CONCEPTS[0].concept}\` 与"派生 3 / 页上 2"，实得 ${JSON.stringify(msg.slice(0, 240))}`)
         }
       }
-      // ── ⑤ 重新生成（`census --write-index`）⇒ 绿，且页上真的变成 3 ──────────────
-      const scene = goodLedger({ caseId: 'DEC-04', tag: 'regenerated', impls })
-      const write = runCensus(scene.root, ['--write-index'])
-      rec.readings.regenerated_write = { exit: write.exit, ok: write.json?.ok ?? null, codes: codesOf(write.json) }
-      const checkAfter = runCheck(scene.root)
+      // ── ⑥ 重新生成（`--op index`，唯一写页的人）⇒ 绿，且页上真的变成 3 ──────────────
+      const impls = [...GOOD_IMPLS, { rel: 'src/a3.mjs', needle: 'LEDGER_PROBE_A' }]
+      const regenerated = goodLedger({ caseId: 'DEC-04', tag: 'regenerated', impls })
+      const write = runIndex(regenerated.root)
+      rec.readings.regenerated_write = { exit: write.exit, ok: write.json?.ok ?? null, codes: codesOf(write.json), written: write.json?.written ?? null }
+      const checkAfter = runCheck(regenerated.root)
       rec.readings.regenerated = { exit: checkAfter.exit, codes: codesOf(checkAfter.json), ok: checkAfter.json?.ok ?? null }
-      if (expectCodes(problems, checkAfter, [], push, { label: 'DEC-04/regenerated' })) {
-        const text = readText(path.join(scene.root, '决议', 'INDEX.md')) ?? ''
-        const wantRow = `| ${GOOD_CONCEPTS[0].concept} | ${GOOD_CONCEPTS[0].owner} | 3 | 0001 |`
-        if (!text.includes(wantRow)) {
-          push('INDEX-NOT-REGENERATED', `[DEC-04/regenerated] \`census --write-index\` 之后 INDEX 里应当有这一行：${JSON.stringify(wantRow)}`)
-        }
-        if (!text.split(/\r?\n/).some((l) => l.includes('生成物') && l.includes('census.mjs'))) {
-          push('INDEX-NOT-GENERATED', '[DEC-04/regenerated] 生成出来的 INDEX 第一行必须带生成标记（契约 §4.1）')
+      if (expectCodes(problems, write, [], push, { label: 'DEC-04/regenerated-index' })
+        && expectCodes(problems, checkAfter, [], push, { label: 'DEC-04/regenerated' })) {
+        const page = tableAfter(readText(path.join(regenerated.root, '账本', '构案', 'INDEX.md')), '概念')
+        const row = rowsByFirstCell(page).get(GOOD_CONCEPTS[0].concept)
+        if (row === undefined || Number(row[2]) !== 3 || row[4] !== '份文件（含注释）') {
+          push('INDEX-NOT-REGENERATED', `[DEC-04/regenerated] \`--op index\` 之后构案页的概念行应当是 \`${GOOD_CONCEPTS[0].concept} … 3 … 份文件（含注释）\`，实得 ${JSON.stringify(row)}`)
         }
       }
     }
-    // ── ⑥ 标记行删掉 ⇒ 红（"这一页是生成的"必须自己说得出来）───────────────────
+    // ── ⑦ 标记行删掉 ⇒ 红（"这一页是生成的"必须自己说得出来）───────────────────
     {
-      const { run } = runSample(problems, rec, { caseId: 'DEC-04', tag: 'not-generated', spec: { index: { rows: GOOD_INDEX.rows, marker: false } } })
+      const scene = goodLedger({ caseId: 'DEC-04', tag: 'not-generated' })
+      const file = path.join(scene.root, '账本', '产品', 'INDEX.md')
+      writeFileSync(file, readText(file).replace(/^<!--[^\n]*-->\n\n/u, ''), 'utf8')
+      const run = runCheck(scene.root)
+      rec.readings.not_generated = { exit: run.exit, codes: codesOf(run.json) }
       expectCodes(problems, run, ['INDEX-NOT-GENERATED'], push, { label: 'DEC-04/not-generated' })
     }
-    // ── ⑦ 行集 / 次序 / `.team/` 第二份 INDEX ─────────────────────────────────
+    // ── ⑧ 行集：缺一行 / 多一行 / 次序变了 / 册里混进别的文件 ─────────────────────
     {
-      const { run } = runSample(problems, rec, {
-        caseId: 'DEC-04', tag: 'missing-row',
-        spec: { index: { rows: [GOOD_INDEX.rows[0]] } },
-      })
+      const scene = goodLedger({ caseId: 'DEC-04', tag: 'missing-row' })
+      const file = path.join(scene.root, '账本', '产品', 'INDEX.md')
+      const text = readText(file)
+      writeFileSync(file, text.replace('| 0001 | 产品口径样张 | 2026-11-12 | 生效 | 1 |\n', ''), 'utf8')
+      const run = runCheck(scene.root)
+      rec.readings.missing_row = { exit: run.exit, codes: codesOf(run.json) }
       expectCodes(problems, run, ['INDEX-ROW-MISSING'], push, { label: 'DEC-04/missing-row' })
     }
     {
-      const rows = [...GOOD_INDEX.rows.map((r) => ({ ...r })), { concept: '不存在的东西', owner: '组长', census: 0, decision: '—' }]
-      const { run } = runSample(problems, rec, { caseId: 'DEC-04', tag: 'extra-row', spec: { index: { rows } } })
+      const scene = goodLedger({ caseId: 'DEC-04', tag: 'extra-row' })
+      const file = path.join(scene.root, '账本', '产品', 'INDEX.md')
+      writeFileSync(file, readText(file).replace(/\n+$/u, '\n| 9999 | 手改 | 2026-11-12 | 生效 | 0 |\n'), 'utf8')
+      const run = runCheck(scene.root)
+      rec.readings.extra_row = { exit: run.exit, codes: codesOf(run.json) }
       expectCodes(problems, run, ['INDEX-ROW-EXTRA'], push, { label: 'DEC-04/extra-row' })
     }
     {
-      const rows = [GOOD_INDEX.rows[1], GOOD_INDEX.rows[0]].map((r) => ({ ...r }))
-      const { run } = runSample(problems, rec, { caseId: 'DEC-04', tag: 'order', spec: { index: { rows } } })
-      expectCodes(problems, run, ['INDEX-ORDER'], push, { label: 'DEC-04/order' })
+      // 两条产品、两行对调：行集相同，但页的字节与重算不是同一份 ⇒ `INDEX-ROW-MISMATCH`
+      const decisions = [
+        goodDecisionProduct0001(),
+        { ...goodDecisionProduct0001({ 主题: '第二件产品' }), id: '0002', title: '第二件产品' },
+        goodScheme('0002', '子构案'),
+        goodScheme('0003', '第二件产品的落地方案', { 父: '0002', 依据P: '0002' }),
+      ]
+      const scene = goodLedger({ caseId: 'DEC-04', tag: 'order', decisions })
+      const file = path.join(scene.root, '账本', '产品', 'INDEX.md')
+      const text = readText(file)
+      const a = '| 0001 | 产品口径样张 | 2026-11-12 | 生效 | 1 |'
+      const b = '| 0002 | 第二件产品 | 2026-11-12 | 生效 | 1 |'
+      if (!text.includes(a) || !text.includes(b)) push('KNIFE-ANCHOR', '[DEC-04/order] 两行锚点不在')
+      else writeFileSync(file, text.replace(a, '@@A@@').replace(b, a).replace('@@A@@', b), 'utf8')
+      const run = runCheck(scene.root)
+      rec.readings.order = { exit: run.exit, codes: codesOf(run.json) }
+      expectCodes(problems, run, ['INDEX-ROW-MISMATCH'], push, { label: 'DEC-04/order' })
     }
     {
-      const { run } = runSample(problems, rec, {
-        caseId: 'DEC-04', tag: 'second-copy',
-        spec: { extraFiles: [{ rel: '.team/INDEX.md', text: '# 构案录\n\n（第二份）\n' }] },
-      })
-      expectCodes(problems, run, ['INDEX-SECOND-COPY'], push, { label: 'DEC-04/second-copy' })
+      const scene = goodLedger({ caseId: 'DEC-04', tag: 'stray-file' })
+      writeFileSync(path.join(scene.root, '账本', '产品', 'notes.md'), '# 手写的旁注\n', 'utf8')
+      const run = runCheck(scene.root)
+      rec.readings.stray_file = { exit: run.exit, codes: codesOf(run.json), messages: messagesOf(run.json).map((m) => m.slice(0, 160)) }
+      if (expectCodes(problems, run, ['BOOK-STRAY-FILE'], push, { label: 'DEC-04/stray-file' })) {
+        if (!messagesOf(run.json).some((m) => m.includes('notes.md'))) push('NOT-NAMED', '[DEC-04/stray-file] 报文要点名 notes.md')
+      }
+    }
+    // ── ⑨ 单位那一列：改一个单位 ⇒ 红，点名概念（M4 的翻面）───────────────────────
+    {
+      const scene = goodLedger({ caseId: 'DEC-04', tag: 'unit-mismatch' })
+      const file = path.join(scene.root, '账本', '构案', 'INDEX.md')
+      const text = readText(file)
+      const before = `| ${GOOD_CONCEPTS[0].concept} | ${GOOD_CONCEPTS[0].owner} | 2 | 0001 | 份文件（含注释） |`
+      const after = `| ${GOOD_CONCEPTS[0].concept} | ${GOOD_CONCEPTS[0].owner} | 2 | 0001 | 份 |`
+      if (!text.includes(before)) push('KNIFE-ANCHOR', '[DEC-04/unit-mismatch] 概念行锚点不在')
+      else writeFileSync(file, text.replace(before, after), 'utf8')
+      const run = runCheck(scene.root)
+      rec.readings.unit_mismatch = { exit: run.exit, codes: codesOf(run.json), messages: messagesOf(run.json).map((m) => m.slice(0, 180)) }
+      if (expectCodes(problems, run, ['INDEX-ROW-MISMATCH'], push, { label: 'DEC-04/unit-mismatch' })) {
+        if (!messagesOf(run.json).some((m) => m.includes(GOOD_CONCEPTS[0].concept))) {
+          push('NOT-NAMED', `[DEC-04/unit-mismatch] 报文要点名概念 \`${GOOD_CONCEPTS[0].concept}\``)
+        }
+      }
     }
 
     caseFail(problems)
   })
 })
 
+// ═══════════════════════════════════════════════════════════════════════════
+// DEC-05 · census 的计数口径（0012 的重指：概念表在 `账本/概念表.md`；工具在 preset）
+// ═══════════════════════════════════════════════════════════════════════════
 test('DEC-05 census：一个概念两处实现 ⇒ 2；一处 ⇒ 1；零处 ⇒ 0；同文件两处仍 1；glob 之外不算', async () => {
   await runCase('DEC-05', async (rec) => {
     const problems = []
@@ -459,7 +382,7 @@ test('DEC-05 census：一个概念两处实现 ⇒ 2；一处 ⇒ 1；零处 ⇒
       impls: [{ rel: 'src/a1.mjs', needle: 'LEDGER_PROBE_A' }, { rel: 'src/a2.mjs', needle: 'LEDGER_PROBE_A' }],
       want: 2,
       wantFiles: ['src/a1.mjs', 'src/a2.mjs'],
-      note: '两处；若把 `决议/` 下的概念表也算进来会变成 3（自吞）',
+      note: '两处；若把 `账本/` 下的概念表也算进来会变成 3（自吞）',
     })
     // ② 一处 ⇒ 1
     scene({
@@ -597,7 +520,7 @@ test('DEC-05 census：一个概念两处实现 ⇒ 2；一处 ⇒ 1；零处 ⇒
           for (const glob of SHAPE_SURFACE) {
             if (!scan.includes(glob)) {
               push('DEC05-SHAPE-SCAN', `扫描面缺 ${JSON.stringify(glob)}（实得 ${JSON.stringify(scan)}）—— 这一行的名字是「${SHAPE_CONCEPT}」，`
-                + '所以它的面必须是**全库代码面**：只写 `presets/**` 时那个 0 只是"presets 里的 0"（今天 `.tools/` 还活着 3 处，其中一处就住在印出这个 0 的工具里）')
+                + '所以它的面必须是**全库代码面**：只写 `presets/**` 时那个 0 只是"presets 里的 0"（0012 把 census / 决议-check 搬进 preset 之后，`.tools/` 不再是这两支工具的家）')
             }
           }
           if (concept.scan_empty === true) push('DEC05-SHAPE-SCAN', '`scan_empty: true` —— 扫描面一份文件都没扫到，"0 处"是真空真，不是绿')
@@ -829,23 +752,11 @@ test('DEC-05 census：一个概念两处实现 ⇒ 2；一处 ⇒ 1；零处 ⇒
           tag: 'allowlist-hides-a',
           files: [F('handrolled.mjs', SHAPE_FIXTURES.handrolledTmp)],
           allowlist: [{ file: 'presets/agenia/lib/handrolled.mjs', line: aLine, kind: 'non-atomic-rename', why: '整目录换名：文件先写进临时目录，最后整目录 rename（这一条是借口，用来试清单能不能藏住 A 族）' }],
-          wantCodes: ['SHAPE-ALLOWLIST-HIDES-HANDROLLED'],
         })
         check('allowlist-hides-a', r, (r.concept?.count === 1 ? [] : [problem('DEC05-SHAPE-SCENE-COUNT', `被 A 族点名的条目不许改变计数：count 必须是 1，实得 ${JSON.stringify(r.concept?.count)}`)]))
-        r = shapeCase({
-          tag: 'allowlist-stale',
-          files: [F('clean.mjs', SHAPE_FIXTURES.renameOnly)],
-          allowlist: [{ file: 'presets/agenia/lib/clean.mjs', line: 2, kind: 'non-atomic-rename', why: '整目录换名（但这一份文件里没有临时名）' }],
-          wantCodes: ['SHAPE-ALLOWLIST-STALE'],
-        })
-        check('allowlist-stale', r, [])
-        r = shapeCase({
-          tag: 'allowlist-no-reason',
-          files: [F('temp-rename.mjs', SHAPE_FIXTURES.tempRenameOnly)],
-          allowlist: [{ file: 'presets/agenia/lib/temp-rename.mjs', line: bLine, kind: 'non-atomic-rename', why: '—' }],
-          wantCodes: ['SHAPE-ALLOWLIST-SHAPE'],
-        })
-        check('allowlist-no-reason', r, [])
+        // 🔴 0012 的重指：新的 `census` 不再把允许清单的 `SHAPE-ALLOWLIST-STALE` /
+        //    `SHAPE-ALLOWLIST-SHAPE` 放进 `problems[]`（只记在读数里）—— 那两条旧腿随旧工具退役，
+        //    证据面仍由 `allowlistEntryProblems()` 在下面逐条判（那是判据侧自己的量具）。
         // ── 允许清单的**证据面**（判据侧核；工具只记"这条盖住了哪一处"）──────────────────
         const sharedLine = SHAPE_FIXTURES.sharedBody.split(/\r?\n/).findIndex((l) => l.includes('renameSync(tmp, file)')) + 1
         r = shapeCase({
@@ -881,8 +792,8 @@ test('DEC-05 census：一个概念两处实现 ⇒ 2；一处 ⇒ 1；零处 ⇒
           surface: 'presets/**/*.mjs · presets/**/*.js · .tools/**/*.mjs（排除：presets/agenia/.runtime · .tools/_scratch · _staging · _backup · mount-test · __pycache__）',
           floor: `派生：${shapeScanFloorText(realFloor)}（今天真树：presets ${realFloor.presets_only} + .tools ${realFloor.tools_only} = ${realFloor.disk} 份代码）`,
           /** 扩面之后 **转换前** 的诚实读数（探针 `_probe/surface-widened.mjs` 量的，2026-11-13）：3 处 A 族在 `.tools`。 */
-          before_conversion: 'count 3 · 三处全在 .tools：census.mjs:93 · mount-dashboard-profile.mjs:197 · 决议-check.mjs:605（A 族，写临时名那一行）',
-          after_conversion: 'count 0 · scanned_files 57（presets 34 + .tools 23）· allowlist 3 条（三条 B 族）',
+          before_conversion: '0012 迁移前：census.mjs 与 决议-check.mjs 还在 .tools（A 族，写临时名那一行）',
+          after_conversion: '0012 迁移后：两支工具进 preset；真树 count 0（读数见 shape_real）',
           knife: '留一处未接共享件 ⇒ DEC05-SHAPE-COUNT-ZERO 点名那一处；A 族条目被允许清单点名 ⇒ SHAPE-ALLOWLIST-HIDES-HANDROLLED 且仍计数；B 族条目 ⇒ 放行但不消失',
         }
       }

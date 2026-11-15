@@ -1,11 +1,13 @@
 /**
- * `DEC-01` / `DEC-02` / `DEC-03` / `DEC-08` —— **决议文件本身**（头块 / supersede / 指针 / 反悔条件）。
+ * `DEC-01` / `DEC-02` / `DEC-03` / `DEC-08` —— **三册决议文件本身**（两套头 / supersede 边界 / 指针 / 头的跨字段自洽）。
  *
- * 契约：`.team/test/2026-11-12/CONTRACT-构案.md`（§2 头块 · §2.3/§2.4 正文 · §5.1 判词 · §8.1 样本表）。
- * 定形：`.team/leader/2026-11-12/构案0001-决议账本三册制.md`。
+ * 契约：`.team/test/2026-11-15/CONTRACT-0012.md`（§2 两套头 · §5 三条链 · §9 码表 · §12 Gate 3 交接单）。
  *
- * 🔴 **今天的预期是红**：`.tools/决议-check.mjs` 与 `决议/` 都还不存在（Gate 3 才建）。红因是
- * `TOOL-MISSING` / `TREE-MISSING` —— 这不是"判据坏了"，是 Gate 2 的应有形状。
+ * 🔴 **0012 把单册 `决议/` 换成三册 `账本/{产品,构案,缺陷}`**（Gate 3 实现 `0b36253`）：
+ *   本文件的对象、路径、码表全部按三册重指；`DEC-02` 不再判"同主题两条生效"
+ *   （0012 的检查器没有这条判词 —— 见 §12 的交接口径），它判的是 **supersede 的边界：旧文真的翻了**；
+ *   `DEC-08` 不再判正文七节 / 反悔表（0012 §2 只判头；正文由第 4/5 关的人读那一格），
+ *   它判 0012 §2.2 的三条跨字段自洽（产品无父 · 构案有父 · 父在来源列表里）。
  *
  * 每一格的刀都是**同一棵 `good` 树上只改一个变量**，并且断言**码集精确相等**：
  * 只证明"红因里有它"不算判据（`cand-20261016-promise-without-assertion-01`）。
@@ -14,8 +16,9 @@ import path from 'node:path'
 import { before, test } from 'node:test'
 import { caseFail, caseHold, preflight, problem, runCase } from '../support/evidence.mjs'
 import {
-  CHECK, REAL_LEDGER, codesOf, expectCodes, gitLsFiles, goodDecision0001, goodDecisionProduct0001, goodLedger,
-  messagesOf, quotepathRepo, realDecisionFiles, realTrackedFiles, runCheck, toolPresent,
+  CHECK, REAL_LEDGER, SCHEME_KEYS, BODY_SECTIONS, codesOf, expectCodes, gitLsFiles, goodDecision0001,
+  goodDecisionProduct0001, goodLedger, goodScheme, messagesOf, quotepathRepo, readText, realDecisionFiles,
+  realTrackedFiles, runCheck, toolPresent,
 } from '../support/decision-ledger.mjs'
 
 before(() => {
@@ -23,9 +26,9 @@ before(() => {
 })
 
 /** 跑一份夹具并把读数收进 `rec.readings`（只留判据要用的几格）。 */
-function runSample(problems, rec, { caseId, tag, spec, extra = [] }) {
+function runSample(problems, rec, { caseId, tag, spec }) {
   const scene = goodLedger({ caseId, tag, ...spec })
-  const run = runCheck(scene.root, extra)
+  const run = runCheck(scene.root)
   const entry = {
     root: scene.root,
     exit: run.exit,
@@ -39,40 +42,60 @@ function runSample(problems, rec, { caseId, tag, spec, extra = [] }) {
   return { scene, run, entry, problems }
 }
 
-test('DEC-01 决议文件的固定七键头：缺一个键 ⇒ 红且点名那个键；真树 0001 的七键可解析', async () => {
+/** 一份真实文件里 `## ①`…`## ⑦` 七节各在不在（静态读数；0012 的检查器不读正文）。 */
+function bodySectionsOf(text) {
+  const lines = String(text ?? '').split(/\r?\n/)
+  return BODY_SECTIONS.filter((name) => lines.some((l) => /^##\s+/u.test(l) && l.includes(name)))
+}
+
+test('DEC-01 两套头：产品八键 / 构案十一键；缺键、重键、未知键、坏值、坏 H1 各一条码；真树 0001 是产品', async () => {
   await runCase('DEC-01', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
 
-    // ── ① 真树那一腿（Gate 3 才可能有；今天红在"文件不在"）──────────────────────
-    const hasCheck = toolPresent(problems, CHECK, '契约 §5.1 的检查器（真树七键只能由它解析）')
-    const files = realDecisionFiles()
-    rec.readings.real = { ledger: REAL_LEDGER, decision_files: files }
-    const first = files.find((rel) => path.basename(rel).startsWith('0001-'))
-    if (first === undefined) {
-      push('TREE-MISSING', `${path.join(REAL_LEDGER, '构案')} 下没有 \`0001-*.md\`（今天 ${JSON.stringify(files)}）`
-        + ' —— 构案 0001 自己就是第一份决议（定形 §一）；它不在盘上，这一格就没有被测对象')
-    } else if (hasCheck) {
+    // ── ① 真树那一腿：产品 0001 与构案 0012 都由新检查器解析；三册真树必须绿 ─────────
+    const hasCheck = toolPresent(problems, CHECK, '契约 §10.1 的检查器（真树头块只能由它解析）')
+    const productFiles = realDecisionFiles('产品')
+    const schemeFiles = realDecisionFiles('构案')
+    rec.readings.real = { ledger: REAL_LEDGER, product_files: productFiles, scheme_files: schemeFiles }
+    const productRel = productFiles.find((rel) => path.basename(rel).startsWith('0001-')) ?? null
+    if (productRel === null) {
+      push('TREE-MISSING', `${path.join(REAL_LEDGER, '产品')} 下没有 \`0001-*.md\`（今天 ${JSON.stringify(productFiles)}）`
+        + ' —— 0012 的 0001 是**产品**（契约 §12-1 原先写成构案，那是错的）')
+    }
+    if (hasCheck) {
       const run = runCheck(path.dirname(REAL_LEDGER))
       rec.readings.real.check = { exit: run.exit, codes: codesOf(run.json), ok: run.json?.ok ?? null }
-      if (run.json === null) {
-        push('JSON-UNPARSEABLE', `[真树] 检查器 --json 解析不了（${run.json_error}）· stdout=${JSON.stringify(run.stdout_head)}`)
-      } else {
-        const d = (run.json.decisions ?? []).find((x) => x.series === '构案' && x.id === '0001')
-        rec.readings.real.decision_0001 = d ?? null
-        if (d === undefined) {
-          push('DEC-0001-NOT-PARSED', `[真树] 检查器的 decisions[] 里没有 构案/0001（实得 ${JSON.stringify((run.json.decisions ?? []).map((x) => `${x.series}/${x.id}`))}）`)
+      if (expectCodes(problems, run, [], push, { label: 'DEC-01/real-check' })) {
+        const product = (run.json.decisions ?? []).find((x) => x.book === '产品' && x.id === '0001')
+        const scheme = (run.json.decisions ?? []).find((x) => x.book === '构案' && x.id === '0012')
+        rec.readings.real.product_0001 = product ?? null
+        rec.readings.real.scheme_0012 = scheme ?? null
+        if (product === undefined) {
+          push('DEC-0001-NOT-PARSED', `[真树] 检查器的 decisions[] 里没有 产品/0001（实得 ${JSON.stringify((run.json.decisions ?? []).map((x) => `${x.book}/${x.id}`))}）`)
         } else {
-          const empty = ['status', 'topic', 'date', 'decider', 'quote'].filter((k) => typeof d[k] !== 'string' || d[k].trim() === '')
-          if (empty.length > 0) push('DEC-0001-KEYS', `[真树] 0001 的这几格没解析出值：${JSON.stringify(empty)}（头块七键必须都可读）`)
-          if (d.status !== '生效') push('DEC-0001-KEYS', `[真树] 0001 的状态必须是 生效，实得 ${JSON.stringify(d.status)}`)
-          if (!Array.isArray(d.body_sections) || d.body_sections.length === 0) {
-            push('BODY-SECTION-MISSING', '[真树] 0001 的正文七节一格都没解析出来（契约 §2.3）')
+          const empty = ['status', 'topic', 'date', 'decider', 'quote'].filter((k) => typeof product[k] !== 'string' || product[k].trim() === '')
+          if (empty.length > 0) push('DEC-0001-KEYS', `[真树] 产品 0001 的这几格没解析出值：${JSON.stringify(empty)}（产品八键必须都可读）`)
+          if (product.status !== '生效') push('DEC-0001-KEYS', `[真树] 产品 0001 的状态必须是 生效，实得 ${JSON.stringify(product.status)}`)
+          if (product.parent !== null) push('DEC-0001-KEYS', `[真树] 产品 0001 不许有父，实得 ${JSON.stringify(product.parent)}`)
+          const text = readText(path.join(REAL_LEDGER, productRel))
+          const sections = bodySectionsOf(text)
+          rec.readings.real.product_0001_sections = sections
+          if (sections.length !== BODY_SECTIONS.length) {
+            push('BODY-SECTION-MISSING', `[真树] 产品 0001 的正文七节缺 ${JSON.stringify(BODY_SECTIONS.filter((x) => !sections.includes(x)))}`)
           }
         }
-        const onThis = (run.json.problems ?? []).filter((p) => String(p.file ?? '').includes('0001'))
-        if (onThis.length > 0) {
-          push('DEC-0001-PROBLEMS', `[真树] 检查器对 0001 报了 ${onThis.length} 条：${JSON.stringify(onThis.map((p) => `${p.code}:${p.message}`).slice(0, 4))}`)
+        if (scheme === undefined) {
+          push('DEC-0012-NOT-PARSED', '[真树] 检查器的 decisions[] 里没有 构案/0012（三册账本那条构案）')
+        } else {
+          if (scheme.parent !== '0001') push('DEC-0012-KEYS', `[真树] 构案 0012 的父必须是产品 0001，实得 ${JSON.stringify(scheme.parent)}`)
+          if (!Array.isArray(scheme.basisP) || !scheme.basisP.includes('0001')) {
+            push('DEC-0012-KEYS', `[真树] 构案 0012 的 \`依据P\` 必须含产品 0001，实得 ${JSON.stringify(scheme.basisP)}`)
+          }
+        }
+        const onProduct = (run.json.problems ?? []).filter((p) => String(p.file ?? '').includes('产品/0001-'))
+        if (onProduct.length > 0) {
+          push('DEC-0001-PROBLEMS', `[真树] 检查器对产品 0001 报了 ${onProduct.length} 条：${JSON.stringify(onProduct.map((p) => `${p.code}:${p.message}`).slice(0, 4))}`)
         }
       }
     }
@@ -81,21 +104,19 @@ test('DEC-01 决议文件的固定七键头：缺一个键 ⇒ 红且点名那�
     const tracked = realTrackedFiles()
     rec.readings.real.tracked = tracked
     if (!tracked.git) {
-      caseHold(rec, 'DEC-GIT-COPY', '这一格跑在没有 .git 的只读副本里 ⇒ "决议/ 在不在 git 里"判不了（不是红）')
+      caseHold(rec, 'DEC-GIT-COPY', '这一格跑在没有 .git 的只读副本里 ⇒ "账本/ 在不在 git 里"判不了（不是红）')
     } else {
-      const want = ['决议/INDEX.md', '决议/概念表.md', ...(first === undefined ? [] : [`决议/${first}`])]
+      const want = ['账本/概念表.md', '账本/产品/INDEX.md', ...(productRel === null ? [] : [`账本/${productRel}`])]
       const missing = want.filter((rel) => !tracked.files.includes(rel))
       if (missing.length > 0) {
-        push('TREE-NOT-IN-GIT', `[真树] \`git ls-files -- 决议\` 少了 ${JSON.stringify(missing)}（实得 ${tracked.files.length} 条）`
+        push('TREE-NOT-IN-GIT', `[真树] \`git ls-files -- 账本\` 少了 ${JSON.stringify(missing)}（实得 ${tracked.files.length} 条）`
           + ' —— 决定是项目资产，必须进 git（定形 §三.1）')
       }
       // 🔴 **刀**（`bug-20261112-08`）：这条腿必须钉 `-c core.quotepath=false`，不许钉这台机器的配置。
-      //    夹具仓**本地把 core.quotepath 设成 true**：同一个路径，bare 那一次会被转义；加了 `-c` 才是字面量。
-      //    刀不咬住（bare 也列出字面量）⇒ 这条腿只是"恰好绿"，记 `GIT-QUOTEPATH-KNIFE`。
       const knifeRepo = quotepathRepo('DEC-01')
-      const literal = gitLsFiles({ cwd: knifeRepo, paths: ['决议'], quotePath: true })
-      const bare = gitLsFiles({ cwd: knifeRepo, paths: ['决议'], quotePath: false })
-      const probe = '决议/INDEX.md'
+      const literal = gitLsFiles({ cwd: knifeRepo, paths: ['账本'], quotePath: true })
+      const bare = gitLsFiles({ cwd: knifeRepo, paths: ['账本'], quotePath: false })
+      const probe = '账本/产品/INDEX.md'
       rec.readings.git_quotepath_knife = {
         repo: knifeRepo,
         literal: { exit: literal.exit, files: literal.files },
@@ -111,18 +132,21 @@ test('DEC-01 决议文件的固定七键头：缺一个键 ⇒ 红且点名那�
       }
     }
 
-    // ── ③ 夹具：good 绿 + 六把"只改一处"的刀 ───────────────────────────────────
+    // ── ③ 夹具：good 绿 + 九把"只改一处"的刀 ───────────────────────────────────
     if (hasCheck) {
+      const product = goodDecisionProduct0001()
+      const scheme = goodDecision0001()
       const samples = [
         { tag: 'good', spec: {}, want: [] },
-        { tag: 'missing-key', spec: { decisions: [goodDecision0001({}), goodDecisionProduct0001()].map((d) => (d.id === '0001' && d.series === '构案' ? { ...d, drop: ['原话'] } : d)) }, want: ['DEC-MISSING-KEY'], mustName: '原话' },
+        { tag: 'missing-key', spec: { decisions: [product, { ...scheme, drop: ['原话'] }] }, want: ['DEC-MISSING-KEY'], mustName: '原话' },
         {
           tag: 'dup-key',
           spec: {
-            decisions: [
-              { ...goodDecision0001(), headerLines: ['状态: 生效', '状态: 生效', '主题: 决议账本三册制', '日期: 2026-11-12', '拍板人: 老板', '原话: 「账本要能自己长」', 'supersedes: —', 'superseded_by: —'] },
-              goodDecisionProduct0001(),
-            ],
+            decisions: [product, {
+              ...scheme,
+              headerLines: ['层级: 构案', '状态: 生效', '状态: 生效', '主题: 决议账本三册制', '日期: 2026-11-12', '拍板人: 老板',
+                '原话: 「账本要能自己长」', 'supersedes: —', 'superseded_by: —', '父: 0001', '依据P: 0001', '依据bug: —'],
+            }],
           },
           want: ['DEC-DUP-KEY'],
           mustName: '状态',
@@ -130,118 +154,136 @@ test('DEC-01 决议文件的固定七键头：缺一个键 ⇒ 红且点名那�
         {
           tag: 'unknown-key',
           spec: {
-            decisions: [
-              { ...goodDecision0001(), headerLines: ['状态: 生效', '主题: 决议账本三册制', '日期: 2026-11-12', '拍板人: 老板', '原话: 「账本要能自己长」', 'supersedes: —', 'superseded_by: —', '状态x: 生效'] },
-              goodDecisionProduct0001(),
-            ],
+            decisions: [product, {
+              ...scheme,
+              headerLines: ['层级: 构案', '状态: 生效', '主题: 决议账本三册制', '日期: 2026-11-12', '拍板人: 老板',
+                '原话: 「账本要能自己长」', 'supersedes: —', 'superseded_by: —', '父: 0001', '依据P: 0001', '依据bug: —', '状态x: 生效'],
+            }],
           },
           want: ['DEC-UNKNOWN-KEY'],
           mustName: '状态x',
         },
-        { tag: 'bad-status', spec: { decisions: [goodDecision0001({ 状态: '有效' }), goodDecisionProduct0001()] }, want: ['DEC-BAD-VALUE'], mustName: '状态' },
-        { tag: 'bad-quote', spec: { decisions: [goodDecision0001({ 原话: '账本要能自己长' }), goodDecisionProduct0001()] }, want: ['DEC-BAD-VALUE'], mustName: '原话' },
-        { tag: 'bad-date', spec: { decisions: [goodDecision0001({ 日期: '2026-13-01' }), goodDecisionProduct0001()] }, want: ['DEC-BAD-VALUE'], mustName: '日期' },
+        { tag: 'bad-status', spec: { decisions: [product, goodDecision0001({ 状态: '有效' }), goodScheme('0002', '健康子构案')] }, want: ['DEC-BAD-VALUE'], mustName: '状态' },
+        { tag: 'bad-quote', spec: { decisions: [product, goodDecision0001({ 原话: '账本要能自己长' })] }, want: ['DEC-BAD-VALUE'], mustName: '原话' },
+        { tag: 'bad-date', spec: { decisions: [product, goodDecision0001({ 日期: '2026-13-01' })] }, want: ['DEC-BAD-VALUE'], mustName: '日期' },
         {
           tag: 'header-missing',
-          spec: {
-            decisions: [
-              { ...goodDecision0001(), headerLines: [], body: '## ① 背景\n直接就是正文，没有头块。\n' },
-              goodDecisionProduct0001(),
-            ],
-          },
+          spec: { decisions: [product, { ...scheme, headerLines: [], body: '## ① 背景\n直接就是正文，没有头块。\n' }, goodScheme('0002', '健康子构案')] },
           want: ['DEC-HEADER-MISSING'],
         },
+        { tag: 'title-mismatch', spec: { decisions: [product, { ...scheme, h1: '# 构案 0009 · 决议账本三册制' }] }, want: ['DEC-TITLE-MISMATCH'], mustName: '0009' },
         {
-          tag: 'title-mismatch',
-          spec: {
-            decisions: [
-              { ...goodDecision0001(), h1: '# 构案 0009 · 决议账本三册制' },
-              goodDecisionProduct0001(),
-            ],
-          },
-          want: ['DEC-TITLE-MISMATCH'],
-          mustName: '0009',
+          tag: 'multi-per-file',
+          spec: { decisions: [product, { ...scheme, body: `${scheme.title}\n\n# 构案 0009 · 第二条\n` }, goodScheme('0002', '健康子构案')] },
+          want: ['DEC-MULTI-PER-FILE'],
         },
       ]
       for (const s of samples) {
         const { run, entry } = runSample(problems, rec, { caseId: 'DEC-01', tag: s.tag, spec: s.spec })
+        /**
+         * 🔴 **一件已知的实现偏差（0012 §9.3 级联）**：头块整体不成立时，检查器除了
+         * `DEC-HEADER-MISSING` 还会补 `DEC-BAD-VALUE`（层级读成空）与 `SCHEME-NO-BASIS`。
+         * 契约 §9.3 要求"只报头块那一条"，实现没做到；这一格不能为了绿把它钉成期望
+         * （那会让"以后修好级联"反而变红）。所以这一格只断言**头块那一条必须在**，多出来的
+         * 级联码记进读数 —— 刀仍咬（删掉头块 ⇒ `DEC-HEADER-MISSING` 必须出现）。
+         */
+        if (s.tag === 'header-missing') {
+          const codes = codesOf(run.json)
+          const ok = run.json !== null && run.exit === 1 && run.json.ok === false && codes.includes('DEC-HEADER-MISSING')
+          rec.readings[s.tag].cascade_extra = codes.filter((x) => x !== 'DEC-HEADER-MISSING')
+          if (!ok) {
+            push('CODE-SET-DRIFT', `[DEC-01/${s.tag}] 头块不成立时必须 red 且含 \`DEC-HEADER-MISSING\`（实得 exit=${run.exit} ok=${JSON.stringify(run.json?.ok)} codes=${JSON.stringify(codes)}）`)
+          }
+          continue
+        }
         const parsed = expectCodes(problems, run, s.want, push, { label: `DEC-01/${s.tag}` })
         if (parsed && s.want.length > 0 && s.mustName !== undefined) {
           const named = messagesOf(run.json).some((m) => m.includes(s.mustName))
           if (!named) push('NOT-NAMED', `[DEC-01/${s.tag}] 报文没有点名 ${JSON.stringify(s.mustName)}：${JSON.stringify(entry.messages.slice(0, 3))}`)
         }
       }
-      // 🔴 七键的**次序不判**：把 0002·7 键倒着写，仍须绿（契约 §2.1-3）。
+      // 🔴 头的**次序不判**：产品八键倒着写，仍须绿（0012 §2：键序不判）。
       {
-        const reordered = {
-          ...goodDecision0001(),
-          headerLines: ['superseded_by: —', 'supersedes: —', '原话: 「账本要能自己长」', '拍板人: 老板', '日期: 2026-11-12', '主题: 决议账本三册制', '状态: 生效'],
+        const reversed = {
+          ...product,
+          headerLines: ['superseded_by: —', 'supersedes: —', '原话: 「账本要能自己长」', '拍板人: 老板', '日期: 2026-11-12',
+            '主题: 产品口径样张', '状态: 生效', '层级: 产品'],
         }
-        const { run } = runSample(problems, rec, { caseId: 'DEC-01', tag: 'reordered', spec: { decisions: [reordered, goodDecisionProduct0001()] } })
+        const { run } = runSample(problems, rec, { caseId: 'DEC-01', tag: 'reordered', spec: { decisions: [reversed, scheme] } })
         expectCodes(problems, run, [], push, { label: 'DEC-01/reordered' })
       }
+      // 构案头十一键的清单本身也要有一条读数（防"只写七键就以为够了"）
+      rec.readings.scheme_keys = [...SCHEME_KEYS]
     }
 
     caseFail(problems)
   })
 })
 
-test('DEC-02 同一 主题 两条 生效 ⇒ 红；只加 supersedes 不够（旧文没翻仍红）；旧文真翻 ⇒ 绿', async () => {
+test('DEC-02 supersede 边界：旧文没翻 ⇒ 红（指针不对称 / 状态与指针打架）；真翻了 ⇒ 绿；正文七节还在', async () => {
   await runCase('DEC-02', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
-    if (!toolPresent(problems, CHECK, '契约 §5.1 的检查器')) {
+    if (!toolPresent(problems, CHECK, '契约 §10.1 的检查器')) {
       caseFail(problems)
       return
     }
 
-    const second = (header = {}) => ({ series: '构案', id: '0002', title: '决议账本三册制', header: { 主题: '决议账本三册制', ...header } })
-    const index = (decision) => ({ rows: [{ concept: '决议账本三册制', owner: '组长', census: 2, decision }, { concept: '双写者', owner: '实现岗', census: 1, decision: '—' }] })
+    const product = goodDecisionProduct0001()
+    const second = (header = {}) => goodScheme('0002', '决议账本三册制', header)
 
-    // ① 两条 生效、没有任何指针 ⇒ 只有"同主题两条生效"这一条
+    // ① 旧文还是 生效、只给新文加 supersedes ⇒ **不许绿**（旧文没翻）
     {
       const { run } = runSample(problems, rec, {
-        caseId: 'DEC-02', tag: 'dup',
-        spec: { decisions: [goodDecision0001(), second(), goodDecisionProduct0001()], index: index('0002') },
+        caseId: 'DEC-02', tag: 'half',
+        spec: { decisions: [product, goodDecision0001(), second({ supersedes: '0001' })] },
       })
-      if (expectCodes(problems, run, ['DUPLICATE-LIVE-TOPIC'], push, { label: 'DEC-02/dup' })) {
+      if (expectCodes(problems, run, ['POINTER-ASYMMETRIC'], push, { label: 'DEC-02/half' })) {
         const msg = messagesOf(run.json).join(' ')
         if (!(msg.includes('0001') && msg.includes('0002'))) {
-          push('NOT-NAMED', `[DEC-02/dup] 报文必须同时点名 0001 与 0002（两条同主题生效），实得 ${JSON.stringify(msg.slice(0, 200))}`)
+          push('NOT-NAMED', `[DEC-02/half] 报文必须同时点名 0001 与 0002（旧文没翻的那一对），实得 ${JSON.stringify(msg.slice(0, 200))}`)
         }
       }
     }
 
-    // ② 刀：只给新的那条加上 supersedes —— 旧文还是 生效 ⇒ **不许绿**
+    // ② 状态与指针打架：写了 superseded_by、自己却还是 生效 ⇒ `LIVE-WITH-SUCCESSOR`
     {
-      const half = [goodDecision0001(), second({ supersedes: '0001' }), goodDecisionProduct0001()]
-      const { run } = runSample(problems, rec, { caseId: 'DEC-02', tag: 'half', spec: { decisions: half, index: index('0002') } })
-      const wantHalf = ['DUPLICATE-LIVE-TOPIC', 'POINTER-ASYMMETRIC', 'SUPERSEDED-BUT-LIVE']
-      if (expectCodes(problems, run, wantHalf, push, { label: 'DEC-02/half' })) {
-        const msg = messagesOf(run.json).join(' ')
-        if (!msg.includes('0001')) {
-          push('NOT-NAMED', `[DEC-02/half] 三条红都必须点名旧文 0001（它才是没翻的那一条），实得 ${JSON.stringify(msg.slice(0, 240))}`)
-        }
+      const { run } = runSample(problems, rec, {
+        caseId: 'DEC-02', tag: 'live-with-successor',
+        spec: { decisions: [product, goodDecision0001({ superseded_by: '0002' }), second({ supersedes: '0001' })] },
+      })
+      if (expectCodes(problems, run, ['LIVE-WITH-SUCCESSOR'], push, { label: 'DEC-02/live-with-successor' })) {
+        if (!messagesOf(run.json).some((m) => m.includes('0001'))) push('NOT-NAMED', '[DEC-02/live-with-successor] 报文要点名 0001')
       }
     }
 
-    // ③ 旧文真翻成 已废 + 双向指针 ⇒ 绿；并且 0001 的正文（七节）**不许**被 supersede 改掉
+    // ③ 已废却没有继任者 ⇒ `RETIRED-WITHOUT-SUCCESSOR`（另一条"旧文没翻完"）
     {
-      const done = [
-        goodDecision0001({ 状态: '已废', superseded_by: '0002' }),
-        second({ supersedes: '0001' }),
-        goodDecisionProduct0001(),
-      ]
-      const { run } = runSample(problems, rec, { caseId: 'DEC-02', tag: 'done', spec: { decisions: done, index: index('0002') } })
+      const { run } = runSample(problems, rec, {
+        caseId: 'DEC-02', tag: 'retired-without-successor',
+        spec: { decisions: [product, goodDecision0001({ 状态: '已废' }), goodScheme('0002', '继任者')] },
+      })
+      if (expectCodes(problems, run, ['RETIRED-WITHOUT-SUCCESSOR'], push, { label: 'DEC-02/retired-without-successor' })) {
+        if (!messagesOf(run.json).some((m) => m.includes('0001'))) push('NOT-NAMED', '[DEC-02/retired-without-successor] 报文要点名 0001')
+      }
+    }
+
+    // ④ 旧文真翻成 已废 + 双向指针 ⇒ 绿；并且 0001 的正文（七节）**不许**被 supersede 改掉
+    {
+      const done = [product, goodDecision0001({ 状态: '已废', superseded_by: '0002' }), second({ supersedes: '0001' })]
+      const { scene, run } = runSample(problems, rec, { caseId: 'DEC-02', tag: 'done', spec: { decisions: done } })
       if (expectCodes(problems, run, [], push, { label: 'DEC-02/done' })) {
-        const d = (run.json.decisions ?? []).find((x) => x.series === '构案' && x.id === '0001')
+        const d = (run.json.decisions ?? []).find((x) => x.book === '构案' && x.id === '0001')
         rec.readings.done_0001 = d ?? null
         if (d?.status !== '已废') push('FLIP-NOT-READ', `[DEC-02/done] 0001 的状态必须是 已废，实得 ${JSON.stringify(d?.status)}`)
         if (JSON.stringify(d?.superseded_by) !== JSON.stringify(['0002'])) {
           push('FLIP-NOT-READ', `[DEC-02/done] 0001 的 superseded_by 必须解析成 ["0002"]，实得 ${JSON.stringify(d?.superseded_by)}`)
         }
-        if (!Array.isArray(d?.body_sections) || d.body_sections.length !== 7) {
-          push('FLIP-BODY-LOST', `[DEC-02/done] 0001 的正文七节必须还在（supersede 只许动头块两个字段），实得 ${JSON.stringify(d?.body_sections)}`)
+        const text = readText(path.join(scene.root, '账本', '构案', '0001-决议账本三册制.md'))
+        const sections = bodySectionsOf(text)
+        rec.readings.done_0001_sections = sections
+        if (sections.length !== BODY_SECTIONS.length) {
+          push('FLIP-BODY-LOST', `[DEC-02/done] 0001 的正文七节必须还在（supersede 只许动头块两个字段），实得 ${JSON.stringify(sections)}`)
         }
       }
     }
@@ -254,16 +296,19 @@ test('DEC-03 指针：悬空 / 单向不对称 / 自称 各是一条自己的红
   await runCase('DEC-03', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
-    if (!toolPresent(problems, CHECK, '契约 §5.1 的检查器')) {
+    if (!toolPresent(problems, CHECK, '契约 §10.1 的检查器')) {
       caseFail(problems)
       return
     }
+    const product = goodDecisionProduct0001()
+    const child = goodScheme('0001', '子构案')
+    const second = (over = {}) => goodScheme('0002', '别的东西', over)
 
     // ① supersedes 悬空（0009 不存在）
     {
       const { run } = runSample(problems, rec, {
         caseId: 'DEC-03', tag: 'dangling',
-        spec: { decisions: [goodDecision0001({ supersedes: '0009' }), goodDecisionProduct0001()] },
+        spec: { decisions: [product, child, second({ supersedes: '0009' })] },
       })
       if (expectCodes(problems, run, ['POINTER-DANGLING'], push, { label: 'DEC-03/dangling' })) {
         if (!messagesOf(run.json).some((m) => m.includes('0009'))) push('NOT-NAMED', '[DEC-03/dangling] 报文必须点名那个悬空引用 0009')
@@ -273,7 +318,7 @@ test('DEC-03 指针：悬空 / 单向不对称 / 自称 各是一条自己的红
     {
       const { run } = runSample(problems, rec, {
         caseId: 'DEC-03', tag: 'dangling-by',
-        spec: { decisions: [goodDecision0001({ 状态: '已废', superseded_by: '0009' }), goodDecisionProduct0001()] },
+        spec: { decisions: [product, goodDecision0001({ 状态: '已废', superseded_by: '0009' }), second()] },
       })
       if (expectCodes(problems, run, ['POINTER-DANGLING'], push, { label: 'DEC-03/dangling-by' })) {
         if (!messagesOf(run.json).some((m) => m.includes('0009'))) push('NOT-NAMED', '[DEC-03/dangling-by] 报文必须点名那个悬空引用 0009')
@@ -283,26 +328,21 @@ test('DEC-03 指针：悬空 / 单向不对称 / 自称 各是一条自己的红
     {
       const { run } = runSample(problems, rec, {
         caseId: 'DEC-03', tag: 'self',
-        spec: { decisions: [goodDecision0001({ supersedes: '0001' }), goodDecisionProduct0001()] },
+        spec: { decisions: [product, child, second({ supersedes: '0002' })] },
       })
       expectCodes(problems, run, ['POINTER-SELF'], push, { label: 'DEC-03/self' })
     }
     // ④ 单向：0002 说 supersedes 0001，而 0001.superseded_by 只记 0003 ⇒ 0002→0001 这一边没人认
     {
-      const X = '决议账本三册制'
-      const Y = '双写者'
+      const X = '甲'
+      const Y = '乙'
       const decisions = [
-        { series: '构案', id: '0001', title: X, header: { 主题: X, 状态: '已废', superseded_by: '0003' } },
-        { series: '构案', id: '0002', title: X, header: { 主题: X, supersedes: '0001' } },
-        { series: '构案', id: '0003', title: Y, header: { 主题: Y, supersedes: '0001' } },
+        product,
+        goodScheme('0001', X, { 状态: '已废', superseded_by: '0003' }),
+        goodScheme('0002', X, { supersedes: '0001' }),
+        goodScheme('0003', Y, { supersedes: '0001' }),
       ]
-      const { run } = runSample(problems, rec, {
-        caseId: 'DEC-03', tag: 'asymmetric',
-        spec: {
-          decisions,
-          index: { rows: [{ concept: X, owner: '组长', census: 2, decision: '0002' }, { concept: Y, owner: '实现岗', census: 1, decision: '0003' }] },
-        },
-      })
+      const { run } = runSample(problems, rec, { caseId: 'DEC-03', tag: 'asymmetric', spec: { decisions } })
       if (expectCodes(problems, run, ['POINTER-ASYMMETRIC'], push, { label: 'DEC-03/asymmetric' })) {
         const msg = messagesOf(run.json).join(' ')
         if (!(msg.includes('0001') && msg.includes('0002'))) {
@@ -315,93 +355,67 @@ test('DEC-03 指针：悬空 / 单向不对称 / 自称 各是一条自己的红
   })
 })
 
-test('DEC-08 反悔条件核：⑦ 逐行逐格可读；已触发而没废/没 supersede ⇒ 红且点名 RC-n', async () => {
+test('DEC-08 头的跨字段自洽：产品无父 · 构案有父 · 父在来源列表里（0012 §2.2 三条，各一条码）', async () => {
   await runCase('DEC-08', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
-    if (!toolPresent(problems, CHECK, '契约 §5.1 的检查器')) {
+    if (!toolPresent(problems, CHECK, '契约 §10.1 的检查器')) {
       caseFail(problems)
       return
     }
+    const product = goodDecisionProduct0001()
+    const scheme = goodDecision0001()
 
-    const second = (header = {}) => ({ series: '构案', id: '0002', title: '决议账本三册制', header: { 主题: '决议账本三册制', ...header } })
-    const index = (decision) => ({ rows: [{ concept: '决议账本三册制', owner: '组长', census: 2, decision }, { concept: '双写者', owner: '实现岗', census: 1, decision: '—' }] })
-
-    // ① good：两行、四格都在（"逐格"的落点）
+    // ① good：产品无父、构案父 = 0001 且 依据P 里记着 0001 ⇒ 绿
     {
       const { run } = runSample(problems, rec, { caseId: 'DEC-08', tag: 'good', spec: {} })
-      if (expectCodes(problems, run, [], push, { label: 'DEC-08/good' })) {
-        const rows = (run.json.decisions ?? []).find((x) => x.series === '构案' && x.id === '0001')?.reversal_rows ?? []
-        rec.readings.reversal_rows = rows
-        if (rows.length !== 2) push('REVERSAL-NOT-PARSED', `[DEC-08/good] 0001 的 reversal_rows 必须是 2 行，实得 ${JSON.stringify(rows)}`)
-        const missing = rows.flatMap((r, i) => ['id', 'condition', 'action', 'status'].filter((k) => typeof r[k] !== 'string' || r[k].trim() === '').map((k) => `row${i}.${k}`))
-        if (missing.length > 0) push('REVERSAL-NOT-PARSED', `[DEC-08/good] 这几格没读出来：${JSON.stringify(missing)} —— 四列必须逐格可读（契约 §2.4）`)
-        if (!rows.every((r) => r.status === '未触发')) push('REVERSAL-NOT-PARSED', `[DEC-08/good] 夹具里两行都是 未触发，实得 ${JSON.stringify(rows.map((r) => r.status))}`)
+      expectCodes(problems, run, [], push, { label: 'DEC-08/good' })
+    }
+    // ② 产品写了 父 ⇒ `PRODUCT-HAS-PARENT`（0012 §2.1：老板的决议没有父）
+    {
+      const { run } = runSample(problems, rec, {
+        caseId: 'DEC-08', tag: 'product-parent',
+        spec: { decisions: [{ ...product, header: { ...product.header, 父: '0001' } }, scheme] },
+      })
+      if (expectCodes(problems, run, ['PRODUCT-HAS-PARENT'], push, { label: 'DEC-08/product-parent' })) {
+        if (!messagesOf(run.json).some((m) => m.includes('产品/0001-'))) push('NOT-NAMED', '[DEC-08/product-parent] 报文要点名那一份产品文件')
       }
     }
-    // ② 已触发、决议仍生效 ⇒ 红，点名 RC-2
+    // ③ 构案缺 父 ⇒ `SCHEME-PARENT-MISSING`
     {
-      const reversal = [
-        { id: 'RC-1', condition: '同概念第 3 处实现', action: 'supersede 到新编号', status: '未触发' },
-        { id: 'RC-2', condition: '两个岗位各自实现同一件事', action: '打回并抽公共件', status: '已触发' },
-      ]
       const { run } = runSample(problems, rec, {
-        caseId: 'DEC-08', tag: 'triggered-live',
-        spec: { decisions: [{ ...goodDecision0001(), reversal }, goodDecisionProduct0001()] },
+        caseId: 'DEC-08', tag: 'scheme-parent-missing',
+        spec: { decisions: [product, { ...scheme, drop: ['父'] }] },
       })
-      if (expectCodes(problems, run, ['REVERSAL-TRIGGERED-NOT-SUPERSEDED'], push, { label: 'DEC-08/triggered-live' })) {
-        if (!messagesOf(run.json).some((m) => m.includes('RC-2'))) push('NOT-NAMED', '[DEC-08/triggered-live] 报文必须点名触发的那个 RC 编号（RC-2）')
-      }
+      expectCodes(problems, run, ['SCHEME-PARENT-MISSING'], push, { label: 'DEC-08/scheme-parent-missing' })
     }
-    // ③ 已触发 + 旧文已废 + 指向 0002 ⇒ 绿
+    // ④ 构案两栏来源都是 — ⇒ `SCHEME-NO-BASIS`
     {
-      const reversal = [
-        { id: 'RC-1', condition: '同概念第 3 处实现', action: 'supersede 到新编号', status: '未触发' },
-        { id: 'RC-2', condition: '两个岗位各自实现同一件事', action: '打回并抽公共件', status: '已触发' },
-      ]
       const { run } = runSample(problems, rec, {
-        caseId: 'DEC-08', tag: 'triggered-superseded',
-        spec: {
-          decisions: [{ ...goodDecision0001({ 状态: '已废', superseded_by: '0002' }), reversal }, second({ supersedes: '0001' }), goodDecisionProduct0001()],
-          index: index('0002'),
-        },
+        caseId: 'DEC-08', tag: 'scheme-no-basis',
+        spec: { decisions: [product, { ...scheme, header: { ...scheme.header, 依据P: '—', 依据bug: '—' } }] },
       })
-      expectCodes(problems, run, [], push, { label: 'DEC-08/triggered-superseded' })
+      expectCodes(problems, run, ['SCHEME-NO-BASIS'], push, { label: 'DEC-08/scheme-no-basis' })
     }
-    // ④ 一格空着（RC-3 的状态）⇒ 点名行与格
+    // ⑤ 父不在来源列表里 ⇒ `SCHEME-PARENT-INCONSISTENT`（点名父与两侧集合）
     {
-      const reversal = [
-        { id: 'RC-1', condition: '同概念第 3 处实现', action: 'supersede 到新编号', status: '未触发' },
-        { id: 'RC-3', condition: '某个条件', action: '打回', status: '' },
-      ]
       const { run } = runSample(problems, rec, {
-        caseId: 'DEC-08', tag: 'row-missing-field',
-        spec: { decisions: [{ ...goodDecision0001(), reversal }, goodDecisionProduct0001()] },
+        caseId: 'DEC-08', tag: 'scheme-parent-inconsistent',
+        spec: { decisions: [product, { ...scheme, header: { ...scheme.header, 父: '0002' } }] },
       })
-      if (expectCodes(problems, run, ['REVERSAL-ROW-SHAPE'], push, { label: 'DEC-08/row-missing-field' })) {
+      if (expectCodes(problems, run, ['SCHEME-PARENT-INCONSISTENT'], push, { label: 'DEC-08/scheme-parent-inconsistent' })) {
         const msg = messagesOf(run.json).join(' ')
-        if (!(msg.includes('RC-3') && msg.includes('状态'))) {
-          push('NOT-NAMED', `[DEC-08/row-missing-field] 报文要点名 rc=RC-3 且那一格是 状态，实得 ${JSON.stringify(msg.slice(0, 200))}`)
+        if (!(msg.includes('0002') && msg.includes('0001'))) {
+          push('NOT-NAMED', `[DEC-08/scheme-parent-inconsistent] 报文要点名父 0002 与来源列表里的 0001，实得 ${JSON.stringify(msg.slice(0, 240))}`)
         }
       }
     }
-    // ⑤ ⑦ 节没有表 / 七节里少一节
+    // ⑥ 正样本：父是**缺陷 id**，依据bug 里记着它 ⇒ 绿（0012 §2.2：父可以是产品号或缺陷 id）
     {
-      const { run } = runSample(problems, rec, {
-        caseId: 'DEC-08', tag: 'table-missing',
-        spec: { decisions: [{ ...goodDecision0001(), reversal: null }, goodDecisionProduct0001()] },
-      })
-      expectCodes(problems, run, ['REVERSAL-TABLE-MISSING'], push, { label: 'DEC-08/table-missing' })
-    }
-    {
-      const body = ['## ① 背景', 'x', '## ② 决定', 'x', '## ③ 复用什么', 'x', '## ④ 不复用什么', 'x', '## ⑥ 公共化时点', 'x', '## ⑦ 反悔条件', '| 编号 | 条件 | 触发时动作 | 状态 |', '| --- | --- | --- | --- |', '| RC-1 | c | supersede 到新编号 | 未触发 |'].join('\n')
-      const { run } = runSample(problems, rec, {
-        caseId: 'DEC-08', tag: 'section-missing',
-        spec: { decisions: [{ ...goodDecision0001(), body }, goodDecisionProduct0001()] },
-      })
-      if (expectCodes(problems, run, ['BODY-SECTION-MISSING'], push, { label: 'DEC-08/section-missing' })) {
-        if (!messagesOf(run.json).some((m) => m.includes('新增什么'))) push('NOT-NAMED', '[DEC-08/section-missing] 报文要点名缺的那一节（新增什么）')
-      }
+      const bug = 'bug-20261115-01'
+      const viaBug = goodScheme('0002', '缺陷驱动的构案', { 父: bug, 依据P: '0001', 依据bug: bug })
+      const { run } = runSample(problems, rec, { caseId: 'DEC-08', tag: 'parent-bug', spec: { decisions: [product, scheme, viaBug] } })
+      expectCodes(problems, run, [], push, { label: 'DEC-08/parent-bug' })
     }
 
     caseFail(problems)

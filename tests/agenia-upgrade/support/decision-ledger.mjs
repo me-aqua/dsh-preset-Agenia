@@ -1,15 +1,17 @@
 /**
  * **决议账本夹具与量具**（`DEC-01`…`DEC-09` 共用）。
  *
- * 契约：`.team/test/2026-11-12/CONTRACT-构案.md`（下称「契约」）。**这里是测试侧唯一的夹具/量具出口**：
- * 每一格都从这同一份里造树、跑工具、读 JSON —— 九格各自的刀（只改一处）因此可以互相比对。
+ * 契约：`.team/test/2026-11-15/CONTRACT-0012.md`（下称「契约」）§12 的交接单 —— 0012 把单册
+ * `决议/` 换成三册 `账本/{产品,缺陷,构案}`，工具从 `.tools/` 搬进 `presets/agenia/{bin,lib}/`。
+ * **这里是测试侧唯一的夹具/量具出口**：每一格都从这同一份里造树、跑工具、读 JSON ——
+ * 九格各自的刀（只改一处）因此可以互相比对。
  *
  * 🔴 三条纪律：
  *   ① **不重复实现被测的判词**：本文件只负责"造树 / 跑命令 / 读 JSON / 比码集"。
- *      头块怎么解析、指针怎么查、INDEX 怎么派生，全在 **`.tools/lib/决议-ledger.mjs`** 里
+ *      头块怎么解析、指针怎么查、INDEX 怎么派生，全在 **`presets/agenia/lib/决议-ledger.mjs`** 里
  *      （`census.mjs` 与 `决议-check.mjs` 各只有一行 import）—— 测试侧再写一份解析器，
  *      两边一起错的时候谁也看不见。
- *   ② **夹具全部落在运行根里**（`<run-root>/decision-ledger/<case>-<tag>/`），**不碰** 仓库的 `决议/`。
+ *   ② **夹具全部落在运行根里**（`<run-root>/decision-ledger/<case>-<tag>/`），**不碰** 仓库的 `账本/`。
  *   ③ **期望值是手写的**（取自契约的码表与样本表），不从工具的输出去反推。
  */
 import { spawnSync } from 'node:child_process'
@@ -18,20 +20,30 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import path from 'node:path'
 import { PATHS } from './env.mjs'
 import { runRoot } from './evidence.mjs'
+import { renderIndexPage, scanLedger } from '../../../presets/agenia/lib/决议-ledger.mjs'
 
-/** 与契约 §2 逐字一致：七个键（次序即规范次序；解析口径不判次序）。 */
+/** 三册（逐字）。 */
+export const BOOKS = Object.freeze(['产品', '缺陷', '构案'])
+
+/** 产品与构案共有的七个键（次序即规范次序；解析口径不判次序）。 */
 export const DECISION_KEYS = Object.freeze(['状态', '主题', '日期', '拍板人', '原话', 'supersedes', 'superseded_by'])
 
-/** 契约 §2.3：构案正文的七节名（**只判在不在**）。 */
+/** 0012 §2：产品头的键（`层级` + 七个共有键；`父` 是**禁止**键）。 */
+export const PRODUCT_KEYS = Object.freeze(['层级', ...DECISION_KEYS])
+
+/** 0012 §2：构案头的键（产品那套 + 父 / 依据P / 依据bug）。 */
+export const SCHEME_KEYS = Object.freeze([...PRODUCT_KEYS, '父', '依据P', '依据bug'])
+
+/** 契约 §2.2：构案正文的七节名（**只判在不在**，静态读数用）。 */
 export const BODY_SECTIONS = Object.freeze(['背景', '决定', '复用什么', '不复用什么', '新增什么', '公共化时点', '反悔条件'])
 
-/** 契约 §4.1 的生成标记（判据只认这两个字面量，见 `INDEX-MARKER-NEEDLES`）。 */
-export const GEN_MARKER = '<!-- 生成物 · 由 node .tools/census.mjs --write-index 生成 · 手改由 node .tools/决议-check.mjs 对账 -->'
-export const INDEX_MARKER_NEEDLES = Object.freeze(['生成物', 'census.mjs'])
+/** 0012 §1.3 的生成标记（判据只认这两个字面量，见 `INDEX_MARKER_NEEDLES`）。 */
+export const GEN_MARKER = '<!-- 生成物 · 由 node presets/agenia/bin/决议-check.mjs --op index 生成 · 手改当场红 -->'
+export const INDEX_MARKER_NEEDLES = Object.freeze(['生成物', '决议-check.mjs'])
 
-/** 两个被测工具的落点（契约 §3.3 / §5.1）。 */
-export const CENSUS = path.join(PATHS.repo, '.tools', 'census.mjs')
-export const CHECK = path.join(PATHS.repo, '.tools', '决议-check.mjs')
+/** 两个被测工具的落点（0012 §⑤：搬进预设，任何工区都能跑）。 */
+export const CENSUS = path.join(PATHS.repo, 'presets', 'agenia', 'bin', 'census.mjs')
+export const CHECK = path.join(PATHS.repo, 'presets', 'agenia', 'bin', '决议-check.mjs')
 
 /** 三份岗位说明书要加的**那一行**（任务书 §5 的原话，逐字；`design.md` 不在此列 —— 方案岗搁置）。
  *  🔴 评审那一行是 2026-11-12 T2 重定的：评审岗**没有命令行**，所以它不"跑 census"，
@@ -47,30 +59,53 @@ export const DESIGN_FORBIDDEN = Object.freeze(['构案', '决议', 'census', 'su
 
 // ── 夹具正文 ────────────────────────────────────────────────────────────
 
+/** 一本决议的头块默认值（产品 / 构案各一套；0012 §2）。 */
+export function headerOf(spec) {
+  const book = spec.book ?? spec.series ?? '构案'
+  const title = spec.title ?? '未命名'
+  const common = {
+    '层级': book,
+    '状态': '生效',
+    '主题': title,
+    '日期': '2026-11-12',
+    '拍板人': '老板',
+    '原话': '「账本要能自己长」',
+    'supersedes': '—',
+    'superseded_by': '—',
+  }
+  const extra = book === '构案'
+    ? { '父': '0001', '依据P': '0001', '依据bug': '—' }
+    : {}
+  return { ...common, ...extra, ...(spec.header ?? {}) }
+}
+
 /**
  * 一份决议文件的正文。`header` 缺省给一份合法头块；`drop` 删掉某个键（造 `DEC-MISSING-KEY`）；
  * `headerLines` 直接给整段（造重复键 / 未知键 / 坏行）。
  */
-export function decisionText({ series = '构案', id, title, header = {}, drop = [], headerLines = null, body = null, reversal = undefined, h1 = null }) {
+export function decisionText({ series = '构案', book = null, id, title, header = {}, drop = [], headerLines = null, body = null, h1 = null, reversal = undefined }) {
+  const bookName = book ?? series
   const lines = []
   if (headerLines !== null) lines.push(...headerLines)
   else {
-    const merged = {
-      '状态': '生效',
-      '主题': title,
-      '日期': '2026-11-12',
-      '拍板人': '老板',
-      '原话': '「账本要能自己长」',
-      'supersedes': '—',
-      'superseded_by': '—',
-      ...header,
-    }
-    for (const key of DECISION_KEYS) {
+    const merged = headerOf({ book: bookName, title, header })
+    const keys = bookName === '构案' ? SCHEME_KEYS : PRODUCT_KEYS
+    for (const key of keys) {
       if (drop.includes(key)) continue
       lines.push(`${key}: ${merged[key]}`)
     }
+    /**
+     * 🔴 **夹具修复（0012 Gate 3 · 已批准例外）**：头里多出来的键也要落盘。
+     * 不写这一句，`{ header: { 父: '0001' } }` 在产品册上只是内存里的一个字段 ——
+     * `PRODUCT-HAS-PARENT` 那一格的刀**从来没有对象**（FIXTURE-BROKEN：夹具把自己要测的东西建丢了）。
+     * `three-books.mjs` 的 `productText` 在同一天被实现岗修过同一处（组长 2026-11-15 19:1x 记的例外）。
+     */
+    for (const key of Object.keys(header)) {
+      if (keys.includes(key) || drop.includes(key)) continue
+      lines.push(`${key}: ${header[key]}`)
+    }
   }
-  return [`${h1 ?? `# ${series} ${id} · ${title}`}`, '', ...lines, '', body ?? (series === '构案' ? defaultBody(reversal) : '（正文）'), ''].join('\n')
+  return [`${h1 ?? `# ${bookName} ${id} · ${title}`}`, '', ...lines, '', body ?? (bookName === '构案' ? defaultBody(reversal) : defaultProductBody()), ''].join('\n')
 }
 
 /** 构案正文：七节 + ⑦ 表（四列，逐字；契约 §2.4）。`reversal === null` ⇒ 不写表。 */
@@ -87,6 +122,11 @@ export function defaultBody(reversal) {
     for (const r of rows) out.push(`| ${r.id} | ${r.condition} | ${r.action} | ${r.status} |`)
   }
   return out.join('\n')
+}
+
+/** 产品正文（自由散文；只判头块）。正文里带七节名，真实 0001 就是这么写的。 */
+export function defaultProductBody() {
+  return BODY_SECTIONS.map((name, i) => `## ${['①', '②', '③', '④', '⑤', '⑥', '⑦'][i]} ${name}\n\n这一节是夹具。`).join('\n\n')
 }
 
 /** 概念表（一张表；契约 §3.1）。`rows = [{concept, probe, scan, owner, rule?}]`。
@@ -112,30 +152,18 @@ export function conceptTableText(rows) {
   ].join('\n')
 }
 
-/** INDEX 页（契约 §4.2）。`rows = [{concept, owner, census, decision}]`；`marker: false` ⇒ 删掉生成标记。 */
-export function indexText(rows, { marker = true } = {}) {
-  const head = marker ? [GEN_MARKER, ''] : []
-  return [
-    ...head,
-    '# 构案录（现状层）',
-    '',
-    '| 概念 | 归属 | census | 构案 |',
-    '| --- | --- | --- | --- |',
-    ...rows.map((r) => `| ${r.concept} | ${r.owner} | ${r.census} | ${r.decision} |`),
-    '',
-  ].join('\n')
-}
-
 /**
- * 派工卡（契约 §6.1）。`ticket_kind === null` ⇒ 不写 `票类` 那一行；
+ * 派工卡（契约 §7.1）。`ticket_kind === null` ⇒ 不写 `票类` 那一行；
  * `headerLines` 直接给整段头块（造重复键 / 缺行 / 歧义）；`body` 给正文（造"票类只写在正文里"）。
  */
-export function cardText({ ticket_kind, decision, headerLines = null, extraHeaderLines = [], body = null }) {
+export function cardText({ ticket_kind, decision, product, basis, headerLines = null, extraHeaderLines = [], body = null }) {
   const lines = ['# 派工卡 · 测试岗', '']
   if (headerLines !== null) lines.push(...headerLines)
   else {
     if (ticket_kind !== null) lines.push(`票类: ${ticket_kind}`)
     if (decision !== undefined) lines.push(`构案: ${decision}`)
+    if (product !== undefined) lines.push(`产品: ${product}`)
+    if (basis !== undefined) lines.push(`依据: ${basis}`)
     lines.push(...extraHeaderLines)
   }
   if (body !== null) lines.push('', body)
@@ -154,28 +182,40 @@ export const GOOD_IMPLS = Object.freeze([
   { rel: 'src/a2.mjs', needle: 'LEDGER_PROBE_A' },
   { rel: 'src/b1.mjs', needle: 'LEDGER_PROBE_B' },
 ])
-export const GOOD_INDEX = Object.freeze({
-  rows: [
-    { concept: '决议账本三册制', owner: '组长', census: 2, decision: '0001' },
-    { concept: '双写者', owner: '实现岗', census: 1, decision: '—' },
-  ],
-})
-/** `good` 树的 0001（生效构案）；`over` 覆盖头块字段。 */
+
+/** 一条生效构案 `0001`（主父 = 产品 `0001`）；`over` 覆盖头块字段。 */
 export function goodDecision0001(over = {}) {
-  return { series: '构案', id: '0001', title: '决议账本三册制', header: { 主题: '决议账本三册制', ...over } }
+  return { book: '构案', id: '0001', title: '决议账本三册制', header: { 主题: '决议账本三册制', ...over } }
 }
 /** `good` 树的产品决议（正文自由，只判头块）。 */
 export function goodDecisionProduct0001(over = {}) {
-  return { series: '产品', id: '0001', title: '产品口径样张', header: { 主题: '产品口径样张', ...over } }
+  return { book: '产品', id: '0001', title: '产品口径样张', header: { 主题: '产品口径样张', ...over } }
 }
-/** 造一棵带缺省 `good` 内容的树（`decisions` 给了就**整个替换**，不合并 —— 刀必须只改一处）。 */
+/** 任意一条构案（缺省挂产品 0001）。 */
+export function goodScheme(id, title, over = {}) {
+  return { book: '构案', id, title, header: { 主题: title, ...over } }
+}
+/** 任意一条产品。 */
+export function goodProduct(id, title, over = {}) {
+  return { book: '产品', id, title, header: { 主题: title, ...over } }
+}
+
+/**
+ * 造一棵带缺省 `good` 内容的树（`decisions` 给了就**整个替换**，不合并 —— 刀必须只改一处）。
+ *
+ * `index`：
+ *   · 缺省 / `true` ⇒ 由**同一份派生页渲染器**写三张正确的 `INDEX.md`（夹具基线）；
+ *   · `null` ⇒ 不写页（`DEC-05` 只量 census，不需要页）；
+ *   · `{rows}` / `{marker:false}` 是旧单册夹具的传参形状 —— 新夹具不再按行渲染页，
+ *     传进来只在 `index === null` 时才表示"不写页"，其余一律按三册真身生成（见文件头纪律 ①）。
+ */
 export function goodLedger(spec = {}) {
   const {
-    caseId, tag, decisions = [goodDecision0001(), goodDecisionProduct0001()],
-    concepts = [...GOOD_CONCEPTS], impls = [...GOOD_IMPLS], index = { rows: GOOD_INDEX.rows.map((r) => ({ ...r })) },
-    card = null, extraFiles = [],
+    caseId, tag, decisions = [goodDecisionProduct0001(), goodDecision0001()],
+    concepts = [...GOOD_CONCEPTS], impls = [...GOOD_IMPLS], index = true,
+    card = null, extraFiles = [], bugs = null,
   } = spec
-  return buildScene({ caseId, tag, decisions, concepts, impls, index, card, extraFiles })
+  return buildScene({ caseId, tag, decisions, concepts, impls, index, card, extraFiles, bugs })
 }
 
 /**
@@ -205,14 +245,14 @@ export function sceneRoot(caseId, tag) {
 }
 
 /**
- * 造一棵决议树。
+ * 造一棵三册账本。
  *
  * @param {{caseId: string, tag: string, decisions?: Array<object>, concepts?: Array<object>|null,
  *          impls?: Array<{rel: string, needle: string, times?: number}>,
- *          index?: {rows: Array<object>, marker?: boolean}|null,
- *          card?: {ticket_kind: string|null, decision?: string}|null}} spec
+ *          index?: boolean|null, card?: object|null, extraFiles?: Array<{rel:string,text:string}>,
+ *          bugs?: Array<object>|null}} spec
  */
-export function buildScene({ caseId, tag, decisions = [], concepts = [], impls = [], index = null, card = null, extraFiles = [] }) {
+export function buildScene({ caseId, tag, decisions = [], concepts = [], impls = [], index = true, card = null, extraFiles = [], bugs = null }) {
   const root = sceneRoot(caseId, tag)
   const writes = []
   const write = (rel, text) => {
@@ -222,19 +262,39 @@ export function buildScene({ caseId, tag, decisions = [], concepts = [], impls =
     writes.push(rel.replace(/\\/g, '/'))
     return file
   }
-  if (concepts !== null) write('决议/概念表.md', conceptTableText(concepts))
+  if (concepts !== null) write('账本/概念表.md', conceptTableText(concepts))
   for (const d of decisions) {
-    const file = `${d.series ?? '构案'}/${d.id}-${d.title}.md`
-    write(`决议/${file}`, decisionText(d))
+    const book = d.book ?? d.series ?? '构案'
+    write(`账本/${book}/${d.id}-${d.title}.md`, decisionText(d))
   }
   for (const impl of impls) {
     const times = impl.times ?? 1
     const text = `${(impl.prefix ?? '// 夹具：这一份是实现\n')}${Array.from({ length: times }, () => `const needle = '${impl.needle}'\n`).join('')}`
     write(impl.rel, text)
   }
-  if (index !== null) write('决议/INDEX.md', indexText(index.rows, index))
   if (card !== null) write('card.md', cardText(card))
   for (const extra of extraFiles) write(extra.rel, extra.text)
+  if (index !== null) {
+    // 派生页由**产品自己的读面**生成（与 `--op index` 同一份 scanLedger + renderIndexPage）：
+    // 头块不成立时，页也必须按"解析不到那一条"来渲染 —— 否则夹具页会替实现兜底。
+    const scan = scanLedger(root)
+    for (const book of BOOKS) {
+      const file = path.join(root, '账本', book, 'INDEX.md')
+      mkdirSync(path.dirname(file), { recursive: true })
+      writeFileSync(file, renderIndexPage(book, {
+        decisions: scan.decisions,
+        states: scan.states,
+        conceptRows: book === '构案' ? scan.concepts : [],
+      }), 'utf8')
+      writes.push(`账本/${book}/INDEX.md`)
+    }
+    if (index && index.marker === false) {
+      for (const book of BOOKS) {
+        const file = path.join(root, '账本', book, 'INDEX.md')
+        writeFileSync(file, readFileSync(file, 'utf8').replace(/^<!--[^\n]*-->\n\n/u, ''), 'utf8')
+      }
+    }
+  }
   return { root, writes, files: writes.map((rel) => path.join(root, rel)) }
 }
 
@@ -276,7 +336,12 @@ export function runCheck(root, extra = []) {
   return summarize(runNode([CHECK, `--root=${root}`, '--json', ...extra]), `check ${extra.join(' ')}`.trim())
 }
 
-/** 跑 `决议-check --op supersede <旧编号> --by <新编号>`（写手；契约 §5.6）。 */
+/** 跑 `决议-check --op index`（三张派生页的**唯一**写手）。 */
+export function runIndex(root) {
+  return summarize(runNode([CHECK, `--root=${root}`, '--json', '--op=index']), 'index')
+}
+
+/** 跑 `决议-check --op supersede <旧编号> --by <新编号>`（写手；契约 §10.1）。 */
 export function runSupersede(root, { old, by, extra = [] }) {
   return summarize(
     runNode([CHECK, `--root=${root}`, '--json', '--op=supersede', String(old), `--by=${by}`, ...extra]),
@@ -284,21 +349,30 @@ export function runSupersede(root, { old, by, extra = [] }) {
   )
 }
 
+/** 头块结束处（H1 + 空行 + 到第一条空行）；返回正文起始下标。 */
+function bodyStartOf(lines) {
+  let i = 0
+  while (i < lines.length && lines[i].trim() === '') i += 1
+  if (i >= lines.length || !/^#\s+/u.test(lines[i])) return null
+  let j = i + 2
+  while (j < lines.length && lines[j].trim() !== '') j += 1
+  return j
+}
+
 /**
- * **supersede 之后那两份字节的读数 —— 由夹具自己量，不信工具的 `body_sha256` 自报**（契约 §5.6）。
+ * **supersede 之后那两份字节的读数 —— 由夹具自己量，不信工具的 `body_sha256` 自报**（契约 §10.1）。
  *
- * 判据（契约 §0.3-`D4` / §5.6）：旧文件的头块两个字段翻面（`状态: 已废`、`superseded_by: 新编号`），
- * **其余每一行逐字不动**（正文因此逐字节不动）。`body_sha256` 从 `superseded_by` 那一行之后切 ——
- * 夹具的头块顺序是固定的（`DECISION_KEYS` 次序），切点因此可复现。
+ * 判据：旧文件的头块两个字段翻面（`状态: 已废`、`superseded_by: 新编号`），**其余每一行逐字不动**。
+ * `body_sha256` 从**头块结束那条空行之后**切（与工具的 `splitHeaderBlock` 同一口径，所以两边的 sha 可比）。
  */
 export function supersedeFlipReading(textBefore, textAfter, newId) {
   const before = String(textBefore).split('\n')
   const after = String(textAfter).split('\n')
-  const byBefore = before.findIndex((l) => /^superseded_by\s*[:：]/u.test(l))
   const byAfter = after.findIndex((l) => /^superseded_by\s*[:：]/u.test(l))
-  const bodySha = (lines, at) => (at < 0
-    ? null
-    : createHash('sha256').update(lines.slice(at + 1).join('\n'), 'utf8').digest('hex'))
+  const bodySha = (lines) => {
+    const at = bodyStartOf(lines)
+    return at === null ? null : createHash('sha256').update(lines.slice(at).join('\n'), 'utf8').digest('hex')
+  }
   const diffs = []
   if (before.length === after.length) {
     for (let i = 0; i < before.length; i += 1) if (before[i] !== after[i]) diffs.push(i + 1)
@@ -315,7 +389,7 @@ export function supersedeFlipReading(textBefore, textAfter, newId) {
     superseded_by_line: byLine,
     superseded_by_value: byLine === null ? null : byLine.replace(/^[^:：]*[:：]\s*/u, '').trim(),
     new_id: String(newId),
-    body_sha256: { before: bodySha(before, byBefore), after: bodySha(after, byAfter) },
+    body_sha256: { before: bodySha(before), after: bodySha(after) },
   }
 }
 
@@ -361,7 +435,7 @@ export function messagesOf(json) {
 export function expectCodes(problems, run, want, push, { label } = {}) {
   const tag = label ?? run.label
   if (run.spawn_error !== null) {
-    push('TOOL-MISSING', `[${tag}] 跑不起来（${run.spawn_error}）—— 契约 §3.3/§5.1 的两个入口不在盘上或不可执行`)
+    push('TOOL-MISSING', `[${tag}] 跑不起来（${run.spawn_error}）—— 契约 §10.1 的入口不在盘上或不可执行`)
     return false
   }
   if (run.json === null) {
@@ -375,14 +449,15 @@ export function expectCodes(problems, run, want, push, { label } = {}) {
       + `（报文：${JSON.stringify(messagesOf(run.json).slice(0, 6))}）—— 多报/少报都算没判准`)
     return false
   }
+  const problemsSeen = (run.json.problems ?? []).length
   const wantOk = expected.length === 0
   if (Boolean(run.json.ok) !== wantOk) {
-    push('OK-DRIFT', `[${tag}] \`ok\` 实得 ${JSON.stringify(run.json.ok)}，期望 ${JSON.stringify(wantOk)}（码集=${JSON.stringify(got)}）`)
+    push('OK-DRIFT', `[${tag}] \`ok\` 实得 ${JSON.stringify(run.json.ok)}，期望 ${JSON.stringify(wantOk)}（码集=${JSON.stringify(got)} · problems=${problemsSeen}）`)
     return false
   }
   const wantExit = wantOk ? 0 : 1
   if (run.exit !== wantExit) {
-    push('EXIT-DRIFT', `[${tag}] 退出码实得 ${JSON.stringify(run.exit)}，期望 ${wantExit}（契约 §5.5：有 problems ⇒ 1）`)
+    push('EXIT-DRIFT', `[${tag}] 退出码实得 ${JSON.stringify(run.exit)}，期望 ${wantExit}（契约 §10.1：有 problems ⇒ 1）`)
     return false
   }
   return true
@@ -393,7 +468,7 @@ export function toolPresent(problems, file, note) {
   if (existsSync(file)) return true
   problems.push({
     code: 'TOOL-MISSING',
-    message: `${file} 不在盘上 —— ${note}（契约 §3.3 / §5.1；Gate 3 之前这一格**必须**红）`,
+    message: `${file} 不在盘上 —— ${note}（契约 §10.1；Gate 3 之前这一格**必须**红）`,
     detail: { tool: file },
   })
   return false
@@ -437,7 +512,7 @@ export function readText(file) {
 // ── 第 2 关拒接闸 / 岗位说明书的纯判据（`DEC-06` / `DEC-07` 用）──────────────
 
 /**
- * **拒接闸的判据面**（契约 §6.2 的六行表）。工具缺席时返回 `null`（由调用方记 `TOOL-MISSING`）；
+ * **拒接闸的判据面**（0012 §7.1 的六行表）。工具缺席时返回 `null`（由调用方记 `TOOL-MISSING`）；
  * 这里只判"读回来的 JSON 与该表一致"。
  */
 export function gateVerdict(run) {
@@ -484,14 +559,17 @@ export function designProblems(text) {
 
 // ── 真树读数（`DEC-01` / `DEC-04` / `DEC-05` 的"真树那一腿"）──────────────────
 
-/** 真树的 `决议/` 路径。 */
-export const REAL_LEDGER = path.join(PATHS.repo, '决议')
+/** 真树的账本根（0012：`账本/` 是三册唯一住处）。 */
+export const REAL_LEDGER = path.join(PATHS.repo, '账本')
 
-/** 真树 `决议/构案/` 下的决议文件（相对 `决议/` 的 posix 路径，升序）。 */
-export function realDecisionFiles() {
-  const dir = path.join(REAL_LEDGER, '构案')
+/** 真树某一册里的决议文件（相对 `账本/` 的 posix 路径，升序；`INDEX.md` 不算）。 */
+export function realDecisionFiles(book = '产品') {
+  const dir = path.join(REAL_LEDGER, book)
   if (!existsSync(dir)) return []
-  return readdirSync(dir).filter((n) => n.endsWith('.md')).sort().map((n) => `构案/${n}`)
+  return readdirSync(dir)
+    .filter((n) => n.endsWith('.md') && n !== 'INDEX.md')
+    .sort()
+    .map((n) => `${book}/${n}`)
 }
 
 /**
@@ -528,8 +606,8 @@ export function gitRun(cwd, args) {
  */
 export function quotepathRepo(caseId) {
   const root = path.join(runRoot(), 'git-quotepath', String(caseId).toLowerCase())
-  mkdirSync(path.join(root, '决议'), { recursive: true })
-  writeFileSync(path.join(root, '决议', 'INDEX.md'), '# 构案录（夹具）\n', 'utf8')
+  mkdirSync(path.join(root, '账本', '产品'), { recursive: true })
+  writeFileSync(path.join(root, '账本', '产品', 'INDEX.md'), '# 产品册（夹具）\n', 'utf8')
   const id = ['-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid']
   if (!existsSync(path.join(root, '.git'))) {
     gitRun(root, ['init', '-q'])
@@ -540,11 +618,11 @@ export function quotepathRepo(caseId) {
   return root
 }
 
-/** 真树的 `git ls-files -- 决议`（没有 `.git` 的副本 ⇒ `{git: false}`）。 */
+/** 真树的 `git ls-files -- 账本`（没有 `.git` 的副本 ⇒ `{git: false}`）。 */
 export function realTrackedFiles() {
   if (!existsSync(path.join(PATHS.repo, '.git'))) return { git: false, files: [], exit: null, stderr: '' }
-  const literal = gitLsFiles({ cwd: PATHS.repo, paths: ['决议'], quotePath: true })
-  const bare = gitLsFiles({ cwd: PATHS.repo, paths: ['决议'], quotePath: false })
+  const literal = gitLsFiles({ cwd: PATHS.repo, paths: ['账本'], quotePath: true })
+  const bare = gitLsFiles({ cwd: PATHS.repo, paths: ['账本'], quotePath: false })
   return {
     git: true,
     exit: literal.exit,
