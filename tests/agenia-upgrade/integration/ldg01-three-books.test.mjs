@@ -478,7 +478,8 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
         rec.readings.dangling = chain
         if (chain?.closed_by_scheme !== 0) push('CHAIN-READING-MISSING', `[LDG-03/dangling] chain.bug.closed_by_scheme 实得 ${JSON.stringify(chain?.closed_by_scheme ?? null)}，期望 0（悬空不算关上了）`)
         if (chain?.unresolved !== 1) push('CHAIN-READING-MISSING', `[LDG-03/dangling] chain.bug.unresolved 实得 ${JSON.stringify(chain?.unresolved ?? null)}，期望 1`)
-        if (chain?.closed !== 0) push('CHAIN-READING-MISSING', `[LDG-03/dangling] chain.bug.closed 实得 ${JSON.stringify(chain?.closed ?? null)}，期望 0`)
+        // 这棵树三条结论：A 悬空 / B 判假 / C 历史 ⇒ closed 只数 B、C 两条
+        if (chain?.closed !== 2) push('CHAIN-READING-MISSING', `[LDG-03/dangling] chain.bug.closed 实得 ${JSON.stringify(chain?.closed ?? null)}，期望 2（B 判假 + C 历史；A 悬空进 unresolved）`)
       }
     }
     // ④ 构案没在 依据bug 里反向记着它 ⇒ NOT-RECIPROCAL，点名两边
