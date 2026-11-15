@@ -1739,6 +1739,8 @@ function overdueDayOf(state, today) {
  */
 export function judgeBugChain(decisions, states, problems, { today = todayLocal() } = {}) {
   let unresolved = 0
+  /** 被计进 `unresolved` 的那些 id：它们在下面的分组里**不算关上了**（悬空 / 不互认不是"有着落"）。 */
+  const unresolvedIds = new Set()
   const liveSchemes = decisions.filter((d) => d.book === '构案' && d.status === '生效')
   for (const s of states) {
     if (s.disposition === null || s.disposition === undefined) continue
@@ -1749,12 +1751,14 @@ export function judgeBugChain(decisions, states, problems, { today = todayLocal(
       const target = liveSchemes.find((d) => d.id === s.chain.ref)
       if (target === undefined) {
         unresolved += 1
+        unresolvedIds.add(s.id)
         problems.push(problem('CHAIN-BUG-SCHEME-DANGLING', `缺陷 ${s.id} 的处置记着 \`构案: ${s.chain.ref}\`，而账本里没有这条**生效构案** —— `
           + '关掉一条缺陷必须指得到那条方案（契约 §5.2）', { ref: `${s.id}/${s.chain.ref}`, id: s.id }))
         continue
       }
       if (!target.basisBug.some((r) => r.id === s.id)) {
         unresolved += 1
+        unresolvedIds.add(s.id)
         problems.push(problem('CHAIN-BUG-SCHEME-NOT-RECIPROCAL', `缺陷 ${s.id} 说它由构案 ${target.id} 关掉，`
           + `而 ${target.id} 的 \`依据bug\` 里没有 ${s.id} —— 这条链必须双向（契约 §5.2）`,
         { ref: `${s.id}/${target.id}`, id: s.id }))
@@ -1771,15 +1775,18 @@ export function judgeBugChain(decisions, states, problems, { today = todayLocal(
       continue
     }
     unresolved += 1
+    unresolvedIds.add(s.id)
     problems.push(problem('CHAIN-BUG-NO-SCHEME', `缺陷 ${s.id} 已经处置（${s.disposition.value}），但既不指向构案、也不判假、也不标历史 —— `
       + '关上的缺陷必须有一个着落（契约 §5.2）', { ref: s.id, id: s.id }))
   }
   const withDisposition = states.filter((s) => s.disposition !== null && s.disposition !== undefined)
   const concluded = withDisposition.filter((s) => s.disposition.value !== 'deferred')
   const deferredStates = withDisposition.filter((s) => s.disposition.value === 'deferred')
-  const closedByScheme = concluded.filter((s) => s.chain.kind === 'scheme').length
-  const closedJudgedFalse = concluded.filter((s) => s.chain.kind === 'judged_false').length
-  const legacyClosed = concluded.filter((s) => s.chain.kind === 'legacy').length
+  /** 有结论**且**有着落（不在 `unresolvedIds` 里）——三组的和就是 `closed`。 */
+  const landed = concluded.filter((s) => !unresolvedIds.has(s.id))
+  const closedByScheme = landed.filter((s) => s.chain.kind === 'scheme').length
+  const closedJudgedFalse = landed.filter((s) => s.chain.kind === 'judged_false').length
+  const legacyClosed = landed.filter((s) => s.chain.kind === 'legacy').length
   const legacyFrozen = deferredStates.filter((s) => s.chain.kind === 'legacy' && isFrozenMarked(s)).length
   const deferredOpen = deferredStates.length - legacyFrozen
   return {

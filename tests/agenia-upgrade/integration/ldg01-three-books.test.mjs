@@ -466,12 +466,19 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
       }
     }
     // ③ `构案` 指向不存在的编号 ⇒ DANGLING，点名两边
+    // 同批：悬空的"结论"**不算关上了** —— `closed_by_scheme` 必须 0、`unresolved` 必须 1
+    // （五组读数里把悬空算进 closed，等于让"关上了多少"比实际高）。
     {
       const spec = goodLedger({ schemes: schemeKillsA, ...threeBugs() })
       spec.days[0].events[2] = eventDisposed({ seq: 3, id: bugA, value: 'adopted', extra: { 构案: '9999' } })
       const { run } = checkScene(problems, rec, { caseId: 'LDG-03', tag: 'dangling', spec })
       if (expectCodes(problems, run, ['CHAIN-BUG-SCHEME-DANGLING'], push, { label: 'LDG-03/dangling' })) {
         if (!(namedIn(run.json, bugA) && namedIn(run.json, '9999'))) push('NOT-NAMED', '[LDG-03/dangling] 报文必须点名缺陷 A 与那个悬空编号 9999')
+        const chain = run.json?.chain?.bug ?? null
+        rec.readings.dangling = chain
+        if (chain?.closed_by_scheme !== 0) push('CHAIN-READING-MISSING', `[LDG-03/dangling] chain.bug.closed_by_scheme 实得 ${JSON.stringify(chain?.closed_by_scheme ?? null)}，期望 0（悬空不算关上了）`)
+        if (chain?.unresolved !== 1) push('CHAIN-READING-MISSING', `[LDG-03/dangling] chain.bug.unresolved 实得 ${JSON.stringify(chain?.unresolved ?? null)}，期望 1`)
+        if (chain?.closed !== 0) push('CHAIN-READING-MISSING', `[LDG-03/dangling] chain.bug.closed 实得 ${JSON.stringify(chain?.closed ?? null)}，期望 0`)
       }
     }
     // ④ 构案没在 依据bug 里反向记着它 ⇒ NOT-RECIPROCAL，点名两边
