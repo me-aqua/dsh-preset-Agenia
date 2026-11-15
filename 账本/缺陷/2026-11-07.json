@@ -17,7 +17,18 @@
       "tags": [
         "rulers",
         "false-attribution"
-      ]
+      ],
+      "how_seen": "2026-11-07 00:3x 测试岗交付 batch 7 MF-1 时点名（`判据补丁-batch7-MF1-brain见证.md` §7）：`data-root.test.mjs:277 → :1033`；本轮 `real_brain.diff` 为空，但它没动（我的决定书只圈了 DR-02）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-07/判据补丁-batch7-MF1-brain见证.md",
+          "note": "§7"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 2,
@@ -55,7 +66,18 @@
       "tags": [
         "cards",
         "crash"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审 F2 实测：两种输入都 `AttributeError`；它同时复核了 `bug-20261106-18` 的结论正确。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-06/技术评审.md",
+          "note": "F2"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 5,
@@ -93,7 +115,18 @@
       "tags": [
         "rulers",
         "silent-drop"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审 F4（读代码）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-06/技术评审.md",
+          "note": "F4"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 8,
@@ -131,7 +164,18 @@
       "tags": [
         "freeze",
         "equal-hole"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审 F5（实测 + 已还原）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-06/技术评审.md",
+          "note": "F5"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 11,
@@ -169,7 +213,18 @@
       "tags": [
         "dashboard",
         "stale-view"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审 F6（**读代码，未跑** —— 那套 harness 每个场景只开一次）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-06/技术评审.md",
+          "note": "F6"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 14,
@@ -207,7 +262,18 @@
       "tags": [
         "rulers",
         "false-green"
-      ]
+      ],
+      "how_seen": "2026-11-07 batch 7 第 3 轮复审 §七「顺带（登记请求）」：`data-root.test.mjs` 的临时件扫描写死旧日期目录。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-07/评审报告-batch7-r3.md",
+          "note": "§七 登记请求"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 17,
@@ -245,7 +311,18 @@
       "tags": [
         "settlement",
         "two-truths"
-      ]
+      ],
+      "how_seen": "2026-11-07 batch 7 MF-4/MF-5 交付时纠正我的口径（我原以为 `evidence.mjs:892/969/971` 读的是 DR-02 的 `rec.real_roots`，实际不是）；报告 §六.2 有现象/证据/影响/复现。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-07/判据补丁-batch7-MF4-MF5-判决自守与段外兜底.md",
+          "note": "§六.2"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 20,
@@ -283,7 +360,18 @@
       "tags": [
         "rulers",
         "known-limit"
-      ]
+      ],
+      "how_seen": "2026-11-07 batch 7 MF-4/MF-5 交付时如实披露（刀 G 实测 0 红）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-07/判据补丁-batch7-MF4-MF5-判决自守与段外兜底.md",
+          "note": "一句话结论"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 23,
@@ -321,7 +409,18 @@
       "tags": [
         "dashboard",
         "race"
-      ]
+      ],
+      "how_seen": "2026-11-07 batch 12 复审第 2 轮的非阻塞观察（读代码）：`client.js` 的 `useEffect` 里没有 request token / 代数戳。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-07/评审报告-batch12-复审.md",
+          "note": "非阻塞 · 产品竞态"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 26,
@@ -359,7 +458,18 @@
       "tags": [
         "rulers",
         "emission-catalogue"
-      ]
+      ],
+      "how_seen": "2026-11-07 batch 12 第 5 轮复审报告的非阻断段（对象 `63c0306`）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-07/评审报告-batch12-r5.md",
+          "note": "非阻断三条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 29,
@@ -397,7 +507,18 @@
       "tags": [
         "guard",
         "observability"
-      ]
+      ],
+      "how_seen": "2026-11-07 batch 14 第 4 关 MF-3（`评审报告-batch14.md`）；我在定形 §六 里把这一半明确划出本票范围。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-07/评审报告-batch14.md",
+          "note": "MF-3"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 32,

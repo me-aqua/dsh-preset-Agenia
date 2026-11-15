@@ -20,7 +20,51 @@
         "fixture",
         "gate-3",
         "unfixable-by-impl"
-      ]
+      ],
+      "how_seen": "Gate 3 第一次真发布后跑 ATM-01 单格：14 条腿全 GREEN，唯一红因 `SHIP-KNIFE-DEAD`（`ship_knives[1].knife-strip-inlining.status = dead`，`got.artifact = []`，`detail.line` 显示那份夹具 47574 B、指纹 fsyncSync×2 / RETRYABLE_RENAME×2 / wx×2 —— 就是出厂件本身）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/atm01-atomic-unify.test.mjs:247",
+          "note": "`const stagedText = inlined ? … : shipped` —— inlined:false 那一支没有剥掉任何东西，就是出厂件原文"
+        },
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/atm01-atomic-unify.test.mjs:835",
+          "note": "`shippedPair('ship-stripped', { inlined: false })` —— 刀 1 的输入"
+        },
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/atm01-atomic-unify.test.mjs:848",
+          "note": "这一刀要求 artifactVerdict 报 `SHIP-ROLLBACK-NO-INLINE`（= 指纹缺），与同一格 782 行 `ship_artifact`（= 指纹在）互斥"
+        },
+        {
+          "kind": "file",
+          "ref": ".tools/_staging/agenia-upgrade/preset/bin/rollback.mjs",
+          "note": "真发布之后的出厂件：47574 B · 静态 import 0 行 · 指纹 fsyncSync×2 RETRYABLE_RENAME×2 wx×2 —— 它就是被当成『剥掉内联』的那份夹具"
+        },
+        {
+          "kind": "log",
+          "ref": ".team/test/2026-11-12/_evidence/atm01-g3-cell1/ATM-01/result.json",
+          "note": "ship_knives[1].status=dead；legs 全 GREEN；problems 只有 SHIP-KNIFE-DEAD"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node tests/agenia-upgrade/run-all.mjs --run-root=E:\\Harness\\.team\\test\\2026-11-12\\_runs\\atm01-g3-cell1 --glob=tests/agenia-upgrade/integration/atm01-atomic-unify.test.mjs",
+          "note": "exit=1 · RED ATM-01 SHIP-KNIFE-DEAD（单格 1/218）"
+        }
+      ],
+      "recipe": {
+        "steps": [
+          "把 repo 那一份 bin/rollback.mjs 发成出厂件（node presets/agenia/bin/install.mjs --op publish-staged --staged E:\\Harness\\.tools\\_staging\\agenia-upgrade\\preset）",
+          "跑 ATM-01 单格：node tests/agenia-upgrade/run-all.mjs --run-root=<E 盘运行根> --glob=tests/agenia-upgrade/integration/atm01-atomic-unify.test.mjs",
+          "读 _evidence/<RUN_ID>/ATM-01/result.json 的 ship_knives[1]（knife-strip-inlining）"
+        ],
+        "expected": "刀 1 咬到 SHIP-ROLLBACK-NO-INLINE + TARGET-LAG-UNDECLARED（夹具里**没有**并集指纹）",
+        "actual": "status=dead；artifact=[]（一份红因都没有）—— 夹具里三个指纹都在，因为夹具就是出厂件本身"
+      },
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 2,
@@ -59,7 +103,18 @@
       "tags": [
         "decisions",
         "silent-green"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/lib/决议-ledger.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 5,
@@ -89,7 +144,18 @@
       "tags": [
         "decisions",
         "pointer"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/决议-check.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 7,
@@ -119,7 +185,18 @@
       "tags": [
         "decisions",
         "inline"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/install.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 9,
@@ -149,7 +226,18 @@
       "tags": [
         "decisions",
         "gate"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/决议-check.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 11,
@@ -179,7 +267,18 @@
       "tags": [
         "criteria",
         "duplicate"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/support/duplicate-tools.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 13,
@@ -209,7 +308,18 @@
       "tags": [
         "decisions",
         "unit"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "决议/INDEX.md",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 15,
@@ -239,7 +349,18 @@
       "tags": [
         "decisions",
         "supersede"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/决议-check.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 17,
@@ -269,7 +390,18 @@
       "tags": [
         "docs",
         "pointer"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/clear-dsh-auth-cookies.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 19,
@@ -299,7 +431,18 @@
       "tags": [
         "decisions",
         "silent-green"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/lib/决议-ledger.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 21,
@@ -329,7 +472,18 @@
       "tags": [
         "decisions",
         "pointer"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/决议-check.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 23,
@@ -359,7 +513,18 @@
       "tags": [
         "decisions",
         "inline"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/install.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 25,
@@ -389,7 +554,18 @@
       "tags": [
         "decisions",
         "gate"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/决议-check.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 27,
@@ -419,7 +595,18 @@
       "tags": [
         "criteria",
         "duplicate"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/support/duplicate-tools.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 29,
@@ -449,7 +636,18 @@
       "tags": [
         "decisions",
         "unit"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "决议/INDEX.md",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 31,
@@ -479,7 +677,18 @@
       "tags": [
         "decisions",
         "supersede"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/决议-check.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 33,
@@ -509,7 +718,18 @@
       "tags": [
         "docs",
         "pointer"
-      ]
+      ],
+      "how_seen": "2026-11-13 技术评审（评 11-12）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/clear-dsh-auth-cookies.mjs",
+          "note": "11-12 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 35,
@@ -542,7 +762,33 @@
         "fixture",
         "b2",
         "atm-01"
-      ]
+      ],
+      "how_seen": "2026-11-13 落地补丁前先量前提：blockOf(presets/agenia/lib/atomic.mjs) = 72…401（328 行），extractFunctionText 在同一份源码里 = :349 起 52 行 ⇒ normalize(fn) ≠ normalize(block)。再逐条对照 §0.7 的刀表与 §3.4 的断言，确认两处都动不了读数：若照抄，控制 c 会以 ATM-DEF-KNIFE-CONTROL 红（作用域修正的阳性对照死了），刀 b 会以 ATM-DEF-KNIFE-DEAD 红。落地时按补丁**自己声明的语义**改这两处构造（① primary_hits = 非 derived_inline（含 mismatch）；② 标记块正文取 blockOf(共享件).text），其余逐字照抄。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-13/PATCH-B2-gate3-腿0作用域.md",
+          "note": "§2.3 primary_hits 过滤 · §3.4 的两把夹具"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-13/CONTRACT-史山清查-B2.md",
+          "note": "§0.7 刀 b：count = 2 ⇒ ATM-DEF-COUNT + ATM-DEF-DERIVED-MISMATCH；控制 c：count = 1 无红"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .team/test/2026-11-13/_runs/_probe-block.mjs",
+          "note": "shared block 72-401 lines 328 · fn line 349 lines 52 · normalize(fn)==normalize(block): false"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .team/test/2026-11-13/_runs/_probe-knives.mjs",
+          "note": "独立三棵树读数：A count 2 [COUNT, CLI-COPY 点名两边] · B count 2 [COUNT, DERIVED-MISMATCH] · C count 1 codes [] derived inject.js:1…330 · D 别处标记块 count 2（不豁免）"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 37,
@@ -573,7 +819,18 @@
         "criteria",
         "boot",
         "owner"
-      ]
+      ],
+      "how_seen": "2026-11-13 老板原话（对话）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/boot01-restart.test.mjs",
+          "note": "样本 = restart 后新建的顶层会话"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 39,
@@ -603,7 +860,18 @@
       "tags": [
         "cli",
         "silent-fallback"
-      ]
+      ],
+      "how_seen": "2026-11-13 B2 第 4 关修（实现岗交活自报）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/mount-dashboard-profile.mjs",
+          "note": "参数解析只认空格形式"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 41,
@@ -633,7 +901,18 @@
       "tags": [
         "criteria",
         "wording"
-      ]
+      ],
+      "how_seen": "2026-11-13 B2 第 4 关 r2（评审报告-B2-原子写剩余三处-r2.md）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/support/atomic-shape.mjs",
+          "note": ":473 shapeSummary 措辞"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 43,
@@ -665,7 +944,34 @@
         "knife-dead",
         "gate-3",
         "b3"
-      ]
+      ],
+      "how_seen": "2026-11-13 B3 第 3 关（实现岗自跑全量）：`_runs/b3-gate3-ins` = `218 · RED 1 / GREEN 215 / HOLD 0`（scope 3/218），唯一红因 `CG-KNIFE-ANCHOR`；同案内 `CG-DEF-*` 全绿、腿④（staged 对装→回一轮）绿。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/install-rollback.test.mjs",
+          "note": ":328 `const fn = extractFunctionText(pairFiles.rollback, 'pathVerdict')` —— 锚在 Gate 3 要删掉的那一段上"
+        },
+        {
+          "kind": "cmd",
+          "ref": ".team/dev/2026-11-13/_probe/b3-knife-anchor.mjs",
+          "note": "复现 + 最小修法：从 repo rollback 抠 ⇒ null；改从 `lib/cli-guards.mjs` 那一块正文抠 ⇒ 1117 字符，抄回 install 之后 `CG-DEF-PAIR-COPY` 咬住且点名两边，控制树 GREEN"
+        },
+        {
+          "kind": "log",
+          "ref": ".team/test/2026-11-13/_runs/b3-gate3-ins/judgement.txt",
+          "note": "`RED INS-02 CG-KNIFE-ANCHOR`（全案唯一红因）"
+        }
+      ],
+      "recipe": {
+        "steps": [
+          "node tests/agenia-upgrade/run-all.mjs --run-root=E:\\Harness\\.team\\test\\2026-11-13\\_runs\\<id> --glob=\"tests/agenia-upgrade/integration/install-rollback.test.mjs\""
+        ],
+        "expected": "Gate 3 落地之后 INS-02 绿（三个定义腿 + 6 把刀 + 腿④）",
+        "actual": "RED 1 / GREEN 2（唯一红因 CG-KNIFE-ANCHOR：刀 ① 的锚点随实现一起没了）"
+      },
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 45,
@@ -696,7 +1002,23 @@
         "proposal",
         "two-writers",
         "wording"
-      ]
+      ],
+      "how_seen": "2026-11-13 老板提问 + 实测（池子 105 条、台账搜索 0 命中）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-route.mjs",
+          "note": "proposal-import 的哈希核算"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/.runtime/proposals/pool.jsonl",
+          "note": "工具写入的条目形状"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 47,
@@ -728,7 +1050,23 @@
         "staging",
         "two-writers",
         "measuring-instrument"
-      ]
+      ],
+      "how_seen": "2026-11-13 B4 第 3 关（实现岗交活自报）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/install.mjs",
+          "note": "publish-staged 的拷贝表"
+        },
+        {
+          "kind": "file",
+          "ref": ".tools/_staging/agenia-upgrade/target-lag.json",
+          "note": "对比只按声明条目"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 49,
@@ -758,7 +1096,23 @@
       "tags": [
         "cli",
         "silent-fallback"
-      ]
+      ],
+      "how_seen": "2026-11-13 B4 第 4 关评审（P2-8）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/census.mjs",
+          "note": ":130"
+        },
+        {
+          "kind": "file",
+          "ref": ".tools/决议-check.mjs",
+          "note": ":646"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 51,
@@ -788,7 +1142,18 @@
       "tags": [
         "ledger",
         "record"
-      ]
+      ],
+      "how_seen": "2026-11-13 B4 第 4 关 r2（评审报告-B4-r2.md）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-route.mjs",
+          "note": ":1526 bug-dispose 只写 disposition"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 53,
@@ -819,7 +1184,18 @@
         "append-only",
         "destructive-ops",
         "guard"
-      ]
+      ],
+      "how_seen": "2026-11-13 实现岗交活时自报 + 我核残存证据",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/dev/2026-11-13/log.md",
+          "note": "现只剩 §11 事故块 + §12"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 55,
@@ -850,7 +1226,33 @@
         "flaky-case",
         "measuring-instrument",
         "dr-02"
-      ]
+      ],
+      "how_seen": "2026-11-13 构案 0010 · 第 4 关 r1 的 F7 实现岗交活时全量跑了三次（一红两绿，红的落点不在我的改动面上）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-13/_runs/dev-0010-f7/judgement.txt",
+          "note": "锚 `77293be` · RED 2 = `DR-02 DR02-BRAIN-WINDOWS-UNGUARDED` + 派生 `STM-01 STM-SETUP` · cliCalls=28 / 窗口 27"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-13/_runs/dev-0010-f7-dr02a/judgement.txt",
+          "note": "同一份用例文件单跑（`--glob=…/data-root.test.mjs`）⇒ RED 0 / GREEN 5 / HOLD 0"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-13/_runs/dev-0010-f7-r2/judgement.txt",
+          "note": "锚 `340fc92` · 全量再跑 ⇒ 218 · RED 0 / GREEN 216 / HOLD 2 · 测试树 `1beab987043a9e79`"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-13/_runs/test-0010-r1fix-full1/judgement.txt",
+          "note": "测试岗 13:54 自己在锚 `1c0d7d3` 上的全量 ⇒ RED 0 / GREEN 216 / HOLD 2 · 同一测试树"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 57,

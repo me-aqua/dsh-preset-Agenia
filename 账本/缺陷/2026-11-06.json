@@ -18,7 +18,43 @@
         "injection",
         "role-swap",
         "parallel-dispatch"
-      ]
+      ],
+      "how_seen": "2026-11-06 01:14 老板的轻量任务「测试组员功能可用性」：四个岗位并派，作业书要求各自逐字抄回自己上岗拿到的那份说明书首行、并列出当前实际能调的工具清单，各写一个文件到自己的抽屉。01:15 再单派一个 team_dev 作对照。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/design/2026-11-06/availability.md",
+          "note": "四并派之一：spec_first_line = 「# 莉薇（Liv）· 设计与美工」（对）"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/dev/2026-11-06/availability.md",
+          "note": "四并派之二：spec_first_line = 「# 伊莫金（Imogen）· 独立评审」（错）· tools_i_have 里没有 pwsh"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-06/availability.md",
+          "note": "四并派之三：spec_first_line = 「# 佐西亚（Zofia）· 实现」（错）· pwsh 在"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-06/availability.md",
+          "note": "四并派之四：spec_first_line = 「# 玛尔塔（Marta）· 测试与流水线」（错）· pwsh 在"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/dev/2026-11-06/availability-single.md",
+          "note": "单派对照（同时只有这一个子会话在跑）：spec_first_line = 「# 佐西亚（Zofia）· 实现」，pwsh 在 ⇒ 单派是对的"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/inject.js:589-597",
+          "note": "bridgeTakeClaim 只有两条出口：childPrompt 非空 ⇒ 只按完整相等取（对不上就不取、落 row 5）；childPrompt 为空串 ⇒ fresh.shift() 取队首。既然拿到的是别人的名字而不是「无角色」，当时那四个子会话的 childPrompt 都是空串 ⇒ 配对实际走的是队首顺序，而子会话启动先后不定"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 2,
@@ -55,7 +91,18 @@
       },
       "tags": [
         "technical-review-1105"
-      ]
+      ],
+      "how_seen": "2026-11-05 技术评审 F1（P2，「读自代码」）；对象 commit b3c9797 / 副本 tree-at-b3c9797",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-05/技术评审.findings.json",
+          "note": "01"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 5,
@@ -92,7 +139,18 @@
       },
       "tags": [
         "technical-review-1105"
-      ]
+      ],
+      "how_seen": "2026-11-05 技术评审 F2（P2）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-05/技术评审.findings.json",
+          "note": "02"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 8,
@@ -129,7 +187,18 @@
       },
       "tags": [
         "technical-review-1105"
-      ]
+      ],
+      "how_seen": "2026-11-05 技术评审 F3（P3）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-05/技术评审.findings.json",
+          "note": "03"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 11,
@@ -166,7 +235,18 @@
       },
       "tags": [
         "technical-review-1105"
-      ]
+      ],
+      "how_seen": "2026-11-05 技术评审 F4（P2）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-05/技术评审.findings.json",
+          "note": "04"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 14,
@@ -203,7 +283,18 @@
       },
       "tags": [
         "technical-review-1105"
-      ]
+      ],
+      "how_seen": "2026-11-05 技术评审 F5（P2）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-05/技术评审.findings.json",
+          "note": "05"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 17,
@@ -240,7 +331,18 @@
       },
       "tags": [
         "technical-review-1105"
-      ]
+      ],
+      "how_seen": "2026-11-05 技术评审 F6（P2）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-05/技术评审.findings.json",
+          "note": "06"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 20,
@@ -278,7 +380,18 @@
       },
       "tags": [
         "technical-review-1105"
-      ]
+      ],
+      "how_seen": "2026-11-05 技术评审 F10（P3）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-05/技术评审.findings.json",
+          "note": "07"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 23,
@@ -315,7 +428,18 @@
       },
       "tags": [
         "technical-review-1105"
-      ]
+      ],
+      "how_seen": "2026-11-05 技术评审 F11（P3）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-05/技术评审.findings.json",
+          "note": "08"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 26,
@@ -353,7 +477,23 @@
       "tags": [
         "memory-tooling",
         "caliber"
-      ]
+      ],
+      "how_seen": "2026-11-06 记忆复核岗（memory-review）交回的 §3「两处账目对不上」第②条；它按 fast-check 逐条复算过。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/memory-review/2026-11-06/记忆复核.md",
+          "note": "§3 第②条"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/.runtime/reports/memory-update/2026-11-06.json",
+          "note": "landed 读数"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 29,
@@ -391,7 +531,28 @@
       "tags": [
         "dashboard",
         "guard-structure"
-      ]
+      ],
+      "how_seen": "2026-11-06 15:32 测试岗全量（`_runs/dash11-migrate-full-r2-1536`）实测：mtime 15:33:15 → 15:33:30；15:35 复跑时窗口里没落 tick ⇒ 绿。两次读数同一棵树、同一套判据。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-06/读盘新契约-两腿迁移与缺席腿.md",
+          "note": "§4 第 2 条"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-06/_runs/dash11-migrate-full-r2-1536",
+          "note": "红读数"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-06/_runs/post-dash11-153546",
+          "note": "同树复跑=绿"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 32,
@@ -428,7 +589,18 @@
       },
       "tags": [
         "from-gate4-review"
-      ]
+      ],
+      "how_seen": "2026-11-06 第 4 关独立评审读代码指出（`84bdddb` 的副本）；我复核：`treeHash` 无排除 + 快照在树内 + 15 秒一拍。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-06/评审报告.md",
+          "note": "-10 的续：DR-02 也哈希整棵预设树"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 35,
@@ -465,7 +637,18 @@
       },
       "tags": [
         "from-gate4-review"
-      ]
+      ],
+      "how_seen": "2026-11-06 第 4 关评审 §4.4 / §9-2（读代码 `daily-cards.py:1396-1397`）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-06/评审报告.md",
+          "note": "回执卡的「处置」列由字符串有无推出"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 38,
@@ -502,7 +685,18 @@
       },
       "tags": [
         "from-gate4-review"
-      ]
+      ],
+      "how_seen": "2026-11-06 第 4 关评审 §2.2 / §9-3（读代码 `client.js:168` 只验 schema）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-06/评审报告.md",
+          "note": "快照形状不对时槽位被拆"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 41,
@@ -539,7 +733,18 @@
       },
       "tags": [
         "from-gate4-review"
-      ]
+      ],
+      "how_seen": "2026-11-06 第 4 关评审 §9-4；我复核时真的量到了（写手一拍之后 mtime 变）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-06/评审报告.md",
+          "note": "fingerprint 的 CODE 读数被时钟驱动"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 44,
@@ -577,7 +782,18 @@
       "tags": [
         "dashboard",
         "slot-teardown"
-      ]
+      ],
+      "how_seen": "2026-11-06 测试岗按复审 E3 补十种形状夹具时**逐个形状实测**：六种守住、四种抛；红基线是 `84bdddb` 的真字节（十种全翻）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-06/判据补丁-复审E1E4.md",
+          "note": "§2 逐形状表"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 47,
@@ -615,7 +831,18 @@
       "tags": [
         "cards",
         "from-gate4-review"
-      ]
+      ],
+      "how_seen": "2026-11-06 复审第 3 轮（`a06804c2`）Q4 逐条给的输入；我复核 `disposition_of()` 与键回退那两段代码，确认三条都成立。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-06/评审报告-复审2.md",
+          "note": "Q4 / E6"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 50,
@@ -653,7 +880,18 @@
       "tags": [
         "dashboard",
         "from-gate4-review"
-      ]
+      ],
+      "how_seen": "2026-11-06 复审第 3 轮 Q4（E11 后半）指出；测试岗也把它列进「故意留着」并写明需要产品侧一个 tick + 可推进的假时钟。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-06/评审报告-复审2.md",
+          "note": "Q4 / E11 半"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 53,
@@ -691,7 +929,18 @@
       "tags": [
         "cards",
         "reading-lies"
-      ]
+      ],
+      "how_seen": "2026-11-06 测试岗交付 batch 6 时报告（`判据补丁-复审E5E6.md` 的「两条产品事实」第 2 条）；我当晚试补三次，每次都把 `CARD-08` 的刀弄坏（刀锚在 `e7bdbbe^` 的旧真字节、整段替换函数体），最终回退产品、把这一条留成票 —— **谁改函数谁改刀**。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-06/评审报告-batch6.md",
+          "note": "Q4 第 2 条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 56,
@@ -729,7 +978,18 @@
       "tags": [
         "cards",
         "criteria-gap"
-      ]
+      ],
+      "how_seen": "2026-11-06 batch 6 终审（`评审报告-batch6-终审.md`）在「可延但披露漏一条」里点名；它同时说明：CARD-07 那一侧的多行已经被页级行数兜住，漏的是 CARD-08 与两条未配刀的布局分支。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-06/评审报告-batch6-终审.md",
+          "note": "末节"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 59,

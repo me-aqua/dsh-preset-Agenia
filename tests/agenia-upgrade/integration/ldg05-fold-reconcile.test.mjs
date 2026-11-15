@@ -2,7 +2,7 @@
  * `LDG-05` —— **折叠对账：153/153，一条都不许丢**（构案 0012 · 本票最承重的一条）。
  *
  * 契约：`.team/test/2026-11-15/CONTRACT-0012.md`（§3 事件流 · §4 折叠与对账 · §4.3 唯一实现 ·
- * §9.3 级联 · §11 刀表 K8/K9）。
+ * §9.3 级联 · §11 刀表 K8/K8b/K9）。
  *
  * 两条独立的读者，**两边都要成立**：
  *   ① 产品的 `--op reconcile`（被审方自报的那一份）；
@@ -29,21 +29,34 @@ const BUG_A = 'bug-20261115-01'
 const BUG_B = 'bug-20261115-02'
 const BUG_C = 'bug-20261115-03'
 
-/** 旧台账（expected 侧）：三条，三种处置各一条。 */
+/**
+ * 旧台账（expected 侧）：三条，三种处置各一条。
+ * A 那条**带全后四格**（`how_seen` / `evidence` / `recipe` / `batch`）—— 七格对账要有一个"真的有值"的对象，
+ * 否则 `evidence` 那一格永远比的是 `null === null`（`cand-20261113-0487`：两边都空 = 没在判）。
+ */
+const A_FIELDS = {
+  how_seen: '夹具：怎么撞见的甲（迁移来源）',
+  evidence: [{ kind: 'file', ref: 'fixture/evidence-a.log', note: '夹具证据甲' }],
+  recipe: null,
+  batch: null,
+}
 const ARCHIVE_ENTRIES = [
-  archiveEntry({ id: BUG_A, phenomenon: '夹具现象甲', value: 'adopted', reason: '甲已落地' }),
+  archiveEntry({ id: BUG_A, phenomenon: '夹具现象甲', value: 'adopted', reason: '甲已落地', extra: A_FIELDS }),
   archiveEntry({ id: BUG_B, phenomenon: '夹具现象乙', value: 'rejected', reason: '乙不是缺陷' }),
   archiveEntry({ id: BUG_C, phenomenon: '夹具现象丙', value: 'deferred', reason: '丙冻结为历史' }),
 ]
 
-/** 事件流（actual 侧）：三条都按"迁移"的形状写 —— disposed 带 `历史`，处置值逐字保留。 */
-function migratedDay({ drop = [], change = {} } = {}) {
+/**
+ * 事件流（actual 侧）：三条都按"迁移"的形状写 —— disposed 带 `历史`，处置值逐字保留。
+ * `registered` 给 `registeredFields[id]`（A 那条带后四格；改一条事件 = 只动这里一处）。
+ */
+function migratedDay({ drop = [], change = {}, registeredFields = {} } = {}) {
   const ev = (id, seq, phenomenon, value, reason) => {
     const key = `${id}`
     if (drop.includes(key)) return []
     const disposition = change[key] ?? { value, reason }
     return [
-      eventRegistered({ seq, id, phenomenon, at: `2026-11-15T09:0${seq}:00+08:00` }),
+      eventRegistered({ seq, id, phenomenon, at: `2026-11-15T09:0${seq}:00+08:00`, extra: registeredFields[id] ?? {} }),
       eventAssessed({ seq: seq + 1, id, verdict: 'true', at: `2026-11-15T10:0${seq}:00+08:00` }),
       eventDisposed({
         seq: seq + 2, id, value: disposition.value, reason: disposition.reason,
@@ -57,12 +70,12 @@ function migratedDay({ drop = [], change = {} } = {}) {
 }
 
 /** 造一棵"已迁移"的树 + 一份旧台账（对账的两侧都是夹具自己写的）。 */
-function migratedScene(caseId, tag, { drop = [], change = {}, archive = true } = {}) {
+function migratedScene(caseId, tag, { drop = [], change = {}, archive = true, registeredFields = {} } = {}) {
   const scene = buildScene({
     caseId, tag,
     products: [{ id: '0001', title: '产品口径样张' }],
     schemes: [{ id: '0012', title: '三册账本', parent: '0001', basisP: ['0001'], basisBug: [BUG_A, BUG_B, BUG_C] }],
-    days: [migratedDay({ drop, change })],
+    days: [migratedDay({ drop, change, registeredFields: { [BUG_A]: A_FIELDS, ...registeredFields } })],
     files: archive ? [{ rel: '_fixture/ledger.json', text: archiveText(ARCHIVE_ENTRIES) }] : [],
     team: true,
   })
@@ -70,7 +83,7 @@ function migratedScene(caseId, tag, { drop = [], change = {}, archive = true } =
 }
 
 // ── LDG-05 ──────────────────────────────────────────────────────────────
-test('LDG-05 折叠对账：与旧 ledger.json 逐条对（id + 现象 + 处置）153/153；改一条事件值 ⇒ 点名', async () => {
+test('LDG-05 折叠对账：与旧 ledger.json 逐条对（七格：id/现象/处置 + how_seen/evidence/recipe/batch）153/153；改一条事件值 ⇒ 点名', async () => {
   await runCase('LDG-05', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -90,7 +103,7 @@ test('LDG-05 折叠对账：与旧 ledger.json 逐条对（id + 现象 + 处置�
       return
     }
 
-    // ── ① 夹具：三格逐条对上 ⇒ 工具与 oracle 都绿 ──────────────────────────────
+    // ── ① 夹具：七格逐条对上（A 那条带全后四格）⇒ 工具与 oracle 都绿 ─────────────
     {
       const { scene, archiveFile } = migratedScene('LDG-05', 'good')
       const fold = runFold(scene.root)
@@ -130,6 +143,26 @@ test('LDG-05 折叠对账：与旧 ledger.json 逐条对（id + 现象 + 处置�
         if (namedIn(rec1.json, BUG_A) || namedIn(rec1.json, BUG_C)) push('NOT-NAMED', '[LDG-05/k8-value] 报文点名了没动过的 A/C —— 刀切宽了')
         const hit = oracle.diffs.find((d) => d.id === BUG_B && d.field === 'disposition')
         if (hit === undefined) push('FOLD-ORACLE-DISAGREES', `[LDG-05/k8-value] 测试自己的 oracle 没看见处置值被动：${JSON.stringify(oracle.diffs)}`)
+      }
+    }
+    // ── ②' 刀 K8b（r3）：改一条事件的 `evidence` ⇒ 恰好 `FOLD-DIFF`，点名那个 id ─────────
+    // 对账从三格扩到七格，这把刀是扩面的证人：只改后四格之一，旧的三格仍全对。
+    {
+      const altered = { ...A_FIELDS, evidence: [{ kind: 'file', ref: 'fixture/evidence-a.log', note: '被改过的证据' }] }
+      const { scene, archiveFile } = migratedScene('LDG-05', 'k8b-evidence', { registeredFields: { [BUG_A]: altered } })
+      const fold = runFold(scene.root)
+      const recEv = runReconcile(scene.root, { archive: archiveFile })
+      const oracle = reconcileOracle({ entries: ARCHIVE_ENTRIES, states: fold.json?.states ?? [] })
+      rec.readings['k8b-evidence'] = {
+        fold: { exit: fold.exit, codes: codesOf(fold.json) },
+        reconcile: { exit: recEv.exit, codes: codesOf(recEv.json), diffs: recEv.json?.diffs ?? null, messages: messagesOf(recEv.json).map((m) => m.slice(0, 240)) },
+        oracle,
+      }
+      if (expectCodes(problems, recEv, ['FOLD-DIFF'], push, { label: 'LDG-05/k8b-evidence' })) {
+        if (!namedIn(recEv.json, BUG_A)) push('NOT-NAMED', `[LDG-05/k8b-evidence] FOLD-DIFF 必须点名被改的那条 ${BUG_A}`)
+        if (namedIn(recEv.json, BUG_B) || namedIn(recEv.json, BUG_C)) push('NOT-NAMED', '[LDG-05/k8b-evidence] 报文点名了没动过的 B/C —— 刀切宽了')
+        const hit = oracle.diffs.find((d) => d.id === BUG_A && d.field === 'evidence')
+        if (hit === undefined) push('FOLD-ORACLE-DISAGREES', `[LDG-05/k8b-evidence] 测试自己的 oracle 没看见 evidence 被动：${JSON.stringify(oracle.diffs)}`)
       }
     }
     // ── ③ 刀 K9：删掉一条缺陷的整天事件 ⇒ 对账必须点名"少了哪一条"（不许只报少 1 条）──────

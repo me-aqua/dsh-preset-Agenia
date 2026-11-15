@@ -18,7 +18,18 @@
         "carrier",
         "review",
         "drawer"
-      ]
+      ],
+      "how_seen": "2026-11-04 技术评审 F2（P2）：四处载体逐处点出 file:line，并在同一棵树上 A/B 了两个读者",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-04/技术评审.findings.json",
+          "note": "F2 的原文与 file:line"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 2,
@@ -57,7 +68,18 @@
         "dashboard",
         "mount",
         "host-level"
-      ]
+      ],
+      "how_seen": "2026-11-04 23:5x 老板「我在客户端里点哪，i see nothing」；查 profiles/desktop/package.json（link:E:/Harness/presets/agenia）+ 生成的 cordis.patch.yml:611（行在 preset-agenia.plugins 内）+ 官方 profile 的装法（顶层 - insert: 里 ui-agent-team 一行）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/cordis.patch.yml",
+          "note": ":611 那一行在 preset-agenia 的 plugins 里"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 5,

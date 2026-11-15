@@ -18,7 +18,18 @@
         "catalogue",
         "prose",
         "residual"
-      ]
+      ],
+      "how_seen": "2026-11-07 batch 8 第 3 轮复审 §四（非阻塞）；组长收口时登记。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-07/评审报告-batch8-r3.md",
+          "note": "§四 非阻塞四条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 2,
@@ -55,7 +66,18 @@
       },
       "tags": [
         "tech-review-1107"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审（`.team/technical-review/2026-11-07/技术评审.md` 的 F1，证据与行号见该报告）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-07/技术评审.md",
+          "note": "F1"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 5,
@@ -92,7 +114,18 @@
       },
       "tags": [
         "tech-review-1107"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审（`.team/technical-review/2026-11-07/技术评审.md` 的 F2，证据与行号见该报告）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-07/技术评审.md",
+          "note": "F2"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 8,
@@ -129,7 +162,18 @@
       },
       "tags": [
         "tech-review-1107"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审（`.team/technical-review/2026-11-07/技术评审.md` 的 F3，证据与行号见该报告）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-07/技术评审.md",
+          "note": "F3"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 11,
@@ -166,7 +210,18 @@
       },
       "tags": [
         "tech-review-1107"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审（`.team/technical-review/2026-11-07/技术评审.md` 的 F4，证据与行号见该报告）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-07/技术评审.md",
+          "note": "F4"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 14,
@@ -203,7 +258,18 @@
       },
       "tags": [
         "tech-review-1107"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审（`.team/technical-review/2026-11-07/技术评审.md` 的 F6，证据与行号见该报告）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-07/技术评审.md",
+          "note": "F6"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 17,
@@ -240,7 +306,18 @@
       },
       "tags": [
         "tech-review-1107"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审（`.team/technical-review/2026-11-07/技术评审.md` 的 F7，证据与行号见该报告）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-07/技术评审.md",
+          "note": "F7"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 20,
@@ -277,7 +354,18 @@
       },
       "tags": [
         "tech-review-1107"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审（`.team/technical-review/2026-11-07/技术评审.md` 的 F8，证据与行号见该报告）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-07/技术评审.md",
+          "note": "F8"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 23,
@@ -314,7 +402,18 @@
       },
       "tags": [
         "tech-review-1107"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审（`.team/technical-review/2026-11-07/技术评审.md` 的 F9，证据与行号见该报告）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-07/技术评审.md",
+          "note": "F9"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 26,
@@ -351,7 +450,18 @@
       },
       "tags": [
         "tech-review-1107"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审（`.team/technical-review/2026-11-07/技术评审.md` 的 F10，证据与行号见该报告）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-07/技术评审.md",
+          "note": "F10"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 29,
@@ -388,7 +498,18 @@
       },
       "tags": [
         "tech-review-1107"
-      ]
+      ],
+      "how_seen": "2026-11-07 技术评审（`.team/technical-review/2026-11-07/技术评审.md` 的 F11，证据与行号见该报告）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-07/技术评审.md",
+          "note": "F11"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 32,
@@ -428,6 +549,46 @@
         "copy-family",
         "exporter",
         "with-staging"
+      ],
+      "how_seen": "batch 16 的验收跑：在 `.team/test/2026-11-08/_copies/tree-at-121ae748`（真副本）里跑全量，`CPY-01` 红 `CPY-EXPORT-STAGING`；同一天在活树里跑 `--glob=integration/cpy01-review-copy-inplace.test.mjs` 是 GREEN。随后用三条 `git ls-tree` 探针把成因钉住。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/tree-at-commit.mjs",
+          "note": "121ae74 新增的闸：`git(['ls-tree', '-r', '--name-only', resolved.sha, '--', 'presets/agenia'], { cwd: repo })` —— 与同仓 `lsTreeBlobs()` 的写法相比少了 `--full-tree`（那边文件头写着这一课：不带它，`git ls-tree` 只列 cwd 前缀下的条目）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "cd <副本>; git ls-tree -r --name-only 121ae748fd22 -- presets/agenia | Measure-Object -Line ⇒ 0 行",
+          "note": "副本里（cwd ≠ git 顶层：`git rev-parse --show-toplevel` = `E:/Harness`）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "cd <副本>; git ls-tree -r --full-tree --name-only 121ae748fd22 -- presets/agenia | Measure-Object -Line ⇒ 55 行",
+          "note": "同一棵树、同一个提交，只加 `--full-tree` ⇒ 55 行（正确值）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "cd E:\\Harness; git ls-tree -r --name-only 121ae748fd22 -- presets/agenia | Measure-Object -Line ⇒ 55 行",
+          "note": "活树里（cwd = 仓根）不带 `--full-tree` 也对 ⇒ 所以活树那一跑是绿的，红只在副本里"
+        },
+        {
+          "kind": "log",
+          "ref": ".team/test/2026-11-08/_copies/tree-at-121ae748/.team/test/2026-11-08/_evidence/full-16/CPY-01/result.json",
+          "note": "RED / CPY-EXPORT-STAGING：`E_STAGING_TIME_MISMATCH`「只在提交里 0 份 · 只在 staging 里 55 份 · 内容不同 0 份」——「只在提交里 0 份」就是这条 bug 的指纹"
+        }
+      ],
+      "recipe": {
+        "steps": [
+          "在任意一棵**不是 git 顶层**的目录里（例如一份评审副本）跑 `git ls-tree -r --name-only <sha> -- presets/agenia`，再把同一句加上 `--full-tree` 跑一次",
+          "或者直接：在副本里跑 `node tests/agenia-upgrade/run-all.mjs --glob=tests/agenia-upgrade/integration/cpy01-review-copy-inplace.test.mjs`"
+        ],
+        "expected": "两种写法得到同一份清单（55 份）；`--with-staging` 在提交与 staging 一致时导出成功",
+        "actual": "不带 `--full-tree` 时 0 份 ⇒ `--with-staging` 报 `E_STAGING_TIME_MISMATCH`、拒绝导出 ⇒ 副本里 `CPY-01` 红"
+      },
+      "batch": null,
+      "finding_refs": [
+        "F3"
       ]
     },
     {
@@ -468,7 +629,40 @@
         "copy-family",
         "brd",
         "fixture-position"
-      ]
+      ],
+      "how_seen": "batch 16 的验收跑：在真副本里跑全量，`BRD-01` 红（5 条腿，报文全是「实得告警：空串」）；同一天在活树里跑全量是 GREEN。技术评审 2026-11-07 §四 也把它列为「判不了的：没追到根因」——这一次追到了。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/brd01-board-states.test.mjs:122",
+          "note": "`WRITE_TARGET_PATH = path.join(PATHS.repo, 'tests', 'agenia-upgrade', '_brd01-fixture-never-written.mjs')` —— 那五条输入喂给 `tools/result` 的 `file_path` 全在 `PATHS.repo` 下"
+        },
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/brd01-board-states.test.mjs:287",
+          "note": "`openBoardSession({ id, cwd: PATHS.repo })` —— 会话头 cwd 也是 `PATHS.repo`"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/inject.js:2629",
+          "note": "`if (officeLandingVerdict(target, call.agent).allow) return` —— 落在 `.team/` 里的写不算项目文件动了；副本住在 `.team/...` 底下时，`<副本>/tests/...` 就在**外层那棵 `.team`** 里"
+        },
+        {
+          "kind": "log",
+          "ref": ".team/test/2026-11-08/_copies/tree-at-121ae748/.team/test/2026-11-08/_evidence/full-16/BRD-01/result.json",
+          "note": "RED / BRD-NEVER-TESTED-FILES-MOVED ×2 · BRD-FORBIDDEN · BRD-TEST-THEN-MOVED · BRD-REVIEW-UNREVIEWED-MISSING —— 五条腿的「实得告警」都是空串，正是「那几笔写没进账本」的形状"
+        }
+      ],
+      "recipe": {
+        "steps": [
+          "在一份真副本里跑 `node <副本>/tests/agenia-upgrade/run-all.mjs --glob=tests/agenia-upgrade/integration/brd01-board-states.test.mjs`（副本要住在 `.team/…` 底下，那就是评审布局）",
+          "对照：在活树里跑同一条 `--glob`"
+        ],
+        "expected": "两棵树里同一句话（副本里跑不出「项目文件动过」这件事，是**夹具位置**造成的，不是产品的板子坏了）",
+        "actual": "副本里 RED（5 腿空告警）；活树里 GREEN。成因：`PATHS.repo` 在副本里落在 `.team` 之下 ⇒ `officeLandingVerdict` 把那些写判成「组内本子」⇒ 账本不计"
+      },
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 38,
@@ -507,7 +701,18 @@
         "local-state",
         "receipt",
         "card"
-      ]
+      ],
+      "how_seen": "2026-11-08 13:0x 组长给两张卡补回执节点时实测（4 次尝试：缺字段报 E_ARG_SCHEMA、node 被忽略、版本号被占）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-local.mjs",
+          "note": "opLocalReceiptSet 写死 technical"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 41,
@@ -546,7 +751,18 @@
         "receipt",
         "local-state",
         "card"
-      ]
+      ],
+      "how_seen": "2026-11-08 13:1x 组长给卡补技术回执节点时，六次尝试的真实错码序列（project / receipt_version / receipt_path / node 被静默忽略 / field / E_ARG_HASH / E_DATA_CORRUPT）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/leader/2026-11-08/log.md",
+          "note": "§九 9.2"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 44,
@@ -585,7 +801,28 @@
         "maintenance-cap",
         "control-chars",
         "criterion-conflict"
-      ]
+      ],
+      "how_seen": "2026-11-08 15:0x：在副本 `_copies/b9-sim-gate` 里按契约 §1.1 给四条入库路径装闸（live + staged 同批），再跑全量套件 `b9-sim-gate-01` ⇒ `RED 7 / GREEN 161 / HOLD 8`；其中 `MTC-01` / `MTC-03` 两条红就是它（`MTC-ENTRY-400-REJECTED` / `MTC-CAND-400-REJECTED`，报文点名 `payload.entry.text` 第 301 个字符 U+000D）。`CTL-01…04` 在同一跑里全绿。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/maintenance-cap.test.mjs",
+          "note": "MTC-01:340 `cell('entry_crlf400', CRLF400, 'accept')`；MTC-03:657 `verify('cand_crlf400', CRLF400, 'accept')`；样本定义在 :284/:616"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-08/_copies/b9-sim-gate/.team/test/2026-11-08/_evidence/b9-sim-gate-01/MTC-01/result.json",
+          "note": "MTC-ENTRY-400-REJECTED + E_PROPOSAL_CONTROL_CHAR（第 301 个字符 U+000D）"
+        },
+        {
+          "kind": "log",
+          "ref": ".team/test/2026-11-08/log.md",
+          "note": "§三十一 · 第 3/10 节（模拟装闸那一跑）"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 47,
@@ -623,7 +860,18 @@
       "tags": [
         "tech-review",
         "polish"
-      ]
+      ],
+      "how_seen": "2026-11-08 batch 9 第 3 轮复审 §非阻塞（评审报告-batch9-r3.md）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-08/评审报告-batch9-r3.md",
+          "note": "N1–N4"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 50,
@@ -661,7 +909,18 @@
       "tags": [
         "polish",
         "single-source"
-      ]
+      ],
+      "how_seen": "2026-11-08 batch 11 第 2 轮复审（评审报告-batch11-复审.md · MF-1 那一节）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-08/评审报告-batch11-复审.md",
+          "note": "MF-1 五串搜索"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 53,
@@ -699,7 +958,18 @@
       "tags": [
         "tech-review",
         "criteria"
-      ]
+      ],
+      "how_seen": "2026-11-08 batch 15 第 3 轮复审（评审报告-batch15-r3.md · 判词那一节）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-08/评审报告-batch15-r3.md",
+          "note": "FLIP-01 变窄那一节"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 56,

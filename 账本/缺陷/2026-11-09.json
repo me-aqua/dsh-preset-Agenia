@@ -18,7 +18,33 @@
         "maintenance-file",
         "judge-commit",
         "id-shape"
-      ]
+      ],
+      "how_seen": "读代码（没有跑 judge-commit 那一格：这一票的六条用例只到 judge-pending / candidates-freeze）。`MR-` 这个形状是契约 §4.4 冻结的，所以这不是实现偏差，是**判决侧还没跟着认这个前缀**。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-brain.mjs:925",
+          "note": "MAINTENANCE_CASE_PREFIX = 'maintenance-'"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-brain.mjs:985-1001",
+          "note": "isMaintenanceCase = importedId.startsWith(前缀) ⇒ disposition 不查、verdict = acceptedIds.has(id) ? 'accepted' : 'rejected'"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/proposals.mjs:appendMaintenanceDraftDeduped",
+          "note": "池行 imported_id = MR-<YYYYMMDD>-<seq:04>（与 draft_id 同一个号）"
+        },
+        {
+          "kind": "log",
+          "ref": ".team/test/2026-11-09/_evidence/mnf-g3-02/MNF-05/result.json",
+          "note": "读数：frozen = ['MR-20261109-0001'] —— 这一条就是会进 judgedRowSpecsOf 的那个 id"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 2,
@@ -55,7 +81,18 @@
       },
       "tags": [
         "tech-review"
-      ]
+      ],
+      "how_seen": "2026-11-08 每日技术评审（.team/technical-review/2026-11-08/技术评审.findings.json）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-08/技术评审.md",
+          "note": "同 id 那一条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 5,
@@ -92,7 +129,18 @@
       },
       "tags": [
         "tech-review"
-      ]
+      ],
+      "how_seen": "2026-11-08 每日技术评审（.team/technical-review/2026-11-08/技术评审.findings.json）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-08/技术评审.md",
+          "note": "同 id 那一条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 8,
@@ -129,7 +177,18 @@
       },
       "tags": [
         "tech-review"
-      ]
+      ],
+      "how_seen": "2026-11-08 每日技术评审（.team/technical-review/2026-11-08/技术评审.findings.json）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-08/技术评审.md",
+          "note": "同 id 那一条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 11,
@@ -166,7 +225,18 @@
       },
       "tags": [
         "tech-review"
-      ]
+      ],
+      "how_seen": "2026-11-08 每日技术评审（.team/technical-review/2026-11-08/技术评审.findings.json）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-08/技术评审.md",
+          "note": "同 id 那一条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 14,
@@ -203,7 +273,18 @@
       },
       "tags": [
         "tech-review"
-      ]
+      ],
+      "how_seen": "2026-11-08 每日技术评审（.team/technical-review/2026-11-08/技术评审.findings.json）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-08/技术评审.md",
+          "note": "同 id 那一条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 17,
@@ -242,7 +323,18 @@
         "tech-review",
         "criteria",
         "product-vs-criteria"
-      ]
+      ],
+      "how_seen": "2026-11-09 第 4 关 r3 复审（评审报告-今日修复-r3.md，问题 1）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-09/评审报告-今日修复-r3.md",
+          "note": "问题 1 与「新料」"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 20,
@@ -280,7 +372,18 @@
       "tags": [
         "provenance",
         "readout"
-      ]
+      ],
+      "how_seen": "2026-11-09 第 4 关 r4（评审报告-今日修复-r4.md，suite claim 那一节）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-09/评审报告-今日修复-r4.md",
+          "note": "suite claim"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 23,
@@ -318,7 +421,18 @@
       "tags": [
         "fingerprint",
         "tooling"
-      ]
+      ],
+      "how_seen": "2026-11-09 第 4 关 r5（评审报告-值表-r5.md · suite 那一节）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-09/评审报告-值表-r5.md",
+          "note": "51 of 54 explained"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 26,
@@ -356,7 +470,18 @@
       "tags": [
         "office-ledger",
         "robustness"
-      ]
+      ],
+      "how_seen": "2026-11-09 测试岗按规则刀实测（full-an-05 · OFL-09 的 K-V5 向量）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-09/log.md",
+          "note": "K-V5 → V5→THREW"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 29,

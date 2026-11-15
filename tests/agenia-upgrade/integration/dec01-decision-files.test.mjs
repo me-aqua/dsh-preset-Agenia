@@ -19,7 +19,7 @@ import { before, test } from 'node:test'
 import { caseFail, caseHold, preflight, problem, runCase } from '../support/evidence.mjs'
 import {
   CHECK, REAL_LEDGER, SCHEME_KEYS, BODY_SECTIONS, codesOf, expectCodes, gitLsFiles, goodDecision0001,
-  goodDecisionProduct0001, goodLedger, goodScheme, messagesOf, quotepathRepo, readText, realDecisionFiles,
+  goodDecisionProduct0001, goodLedger, goodProduct, goodScheme, messagesOf, quotepathRepo, readText, realDecisionFiles,
   realTrackedFiles, runCheck, toolPresent,
 } from '../support/decision-ledger.mjs'
 
@@ -44,10 +44,52 @@ function runSample(problems, rec, { caseId, tag, spec }) {
   return { scene, run, entry, problems }
 }
 
-/** 一份真实文件里 `## ①`…`## ⑦` 七节各在不在（静态读数；0012 的检查器不读正文）。 */
+/** 一份真实文件里 `## ①`…`## ⑦` 七节各在不在（**真树静态读数**：这一条不经过检查器；
+ *  检查器那一族由下面 DEC-08 的 `body_shape` 夹具读数单独证）。 */
 function bodySectionsOf(text) {
   const lines = String(text ?? '').split(/\r?\n/)
   return BODY_SECTIONS.filter((name) => lines.some((l) => /^##\s+/u.test(l) && l.includes(name)))
+}
+
+/** 七节的序号（夹具正文用；组名与检查器同一份 `BODY_SECTIONS`）。 */
+const BODY_NUMBERS = ['①', '②', '③', '④', '⑤', '⑥', '⑦']
+
+/**
+ * 构案正文（七节模板）。带三格变量：
+ *   · `drop` —— 删掉某一节（造 `BODY-SECTION-MISSING`）；
+ *   · `reversalTable` —— 直接给 ⑦ 的表行；`null` = 这一节没有表（造 `REVERSAL-TABLE-MISSING`）；
+ *   · 缺省 = 合法的四列表（动作格含 `supersede`）。
+ */
+function schemeBody({ drop = null, reversalTable = undefined } = {}) {
+  const out = []
+  BODY_SECTIONS.forEach((name, i) => {
+    if (name === drop) return
+    out.push(`## ${BODY_NUMBERS[i]} ${name}`, '')
+    if (name !== '反悔条件') {
+      out.push('这一节是夹具。', '')
+      return
+    }
+    if (reversalTable === null) return
+    const table = reversalTable ?? [
+      '| 编号 | 条件 | 触发时动作 | 状态 |',
+      '| --- | --- | --- | --- |',
+      '| RC-1 | 同概念第 3 处实现 | supersede 到新编号 | 未触发 |',
+    ]
+    out.push(...table, '')
+  })
+  return out.join('\n')
+}
+
+/** 一份缺陷日文件（`父` 指缺陷 id 的正样本要有一条**真的**缺陷记录）。 */
+function bugDayFile(id) {
+  return {
+    rel: '账本/缺陷/2026-11-15.json',
+    text: `${JSON.stringify({
+      schema: 1,
+      day: '2026-11-15',
+      events: [{ seq: 1, kind: 'registered', id, at: '2026-11-15T09:00:00+08:00', entry_kind: 'bug', phenomenon: '夹具缺陷（DEC-08 的父）' }],
+    }, null, 2)}\n`,
+  }
 }
 
 test('DEC-01 两套头：产品八键 / 构案十一键；缺键、重键、未知键、坏值、坏 H1 各一条码；真树 0001 是产品', async () => {
@@ -357,7 +399,7 @@ test('DEC-03 指针：悬空 / 单向不对称 / 自称 各是一条自己的红
   })
 })
 
-test('DEC-08 头的跨字段自洽：产品无父 · 构案有父 · 父在来源列表里（0012 §2.2 三条，各一条码）', async () => {
+test('DEC-08 头的跨字段自洽 + 构案正文形态：产品无父 · 构案有父 · 父在来源列表里 · 父解析得到且生效（三码）· 七节 / 反悔表（五把刀，各只红一个码）', async () => {
   await runCase('DEC-08', async (rec) => {
     const problems = []
     const push = (code, msg, detail) => problems.push(problem(code, msg, detail))
@@ -400,10 +442,14 @@ test('DEC-08 头的跨字段自洽：产品无父 · 构案有父 · 父在来�
       expectCodes(problems, run, ['SCHEME-NO-BASIS'], push, { label: 'DEC-08/scheme-no-basis' })
     }
     // ⑤ 父不在来源列表里 ⇒ `SCHEME-PARENT-INCONSISTENT`（点名父与两侧集合）
+    // 父必须**指得到一条生效产品**，否则会同时红 `SCHEME-PARENT-DANGLING` —— 这一格的变量只有一个：
+    // "父活着但不在来源列表里"。所以给 0002 一个真产品，并给它一条子构案（否则产品链跟着红）。
     {
+      const otherProduct = goodProduct('0002', '另一个产品')
+      const otherChild = goodScheme('0002', '另一个产品的方案', { 父: '0002', 依据P: '0002' })
       const { run } = runSample(problems, rec, {
         caseId: 'DEC-08', tag: 'scheme-parent-inconsistent',
-        spec: { decisions: [product, { ...scheme, header: { ...scheme.header, 父: '0002' } }] },
+        spec: { decisions: [product, otherProduct, scheme, otherChild, { ...scheme, id: '0003', title: '指错父的构案', header: { ...scheme.header, 主题: '指错父的构案', 父: '0002' } }] },
       })
       if (expectCodes(problems, run, ['SCHEME-PARENT-INCONSISTENT'], push, { label: 'DEC-08/scheme-parent-inconsistent' })) {
         const msg = messagesOf(run.json).join(' ')
@@ -416,8 +462,93 @@ test('DEC-08 头的跨字段自洽：产品无父 · 构案有父 · 父在来�
     {
       const bug = 'bug-20261115-01'
       const viaBug = goodScheme('0002', '缺陷驱动的构案', { 父: bug, 依据P: '0001', 依据bug: bug })
-      const { run } = runSample(problems, rec, { caseId: 'DEC-08', tag: 'parent-bug', spec: { decisions: [product, scheme, viaBug] } })
+      const { run } = runSample(problems, rec, {
+        caseId: 'DEC-08', tag: 'parent-bug',
+        spec: { decisions: [product, scheme, viaBug], extraFiles: [bugDayFile(bug)] },
+      })
       expectCodes(problems, run, [], push, { label: 'DEC-08/parent-bug' })
+    }
+    // ⑦ 父解析不到（产品册 / 缺陷册都没有 0099）⇒ `SCHEME-PARENT-DANGLING` 且点名 0099。
+    // 0099 同时写在 依据P 里 ⇒ 主父仍是来源列表成员，**不**叠加 `SCHEME-PARENT-INCONSISTENT`（刀只切一处）。
+    {
+      const ghost = goodScheme('0002', '悬空父的构案', { 父: '0099', 依据P: '0099' })
+      const { run } = runSample(problems, rec, {
+        caseId: 'DEC-08', tag: 'parent-dangling',
+        spec: { decisions: [product, scheme, ghost] },
+      })
+      if (expectCodes(problems, run, ['SCHEME-PARENT-DANGLING'], push, { label: 'DEC-08/parent-dangling' })) {
+        if (!messagesOf(run.json).some((m) => m.includes('0099'))) push('NOT-NAMED', '[DEC-08/parent-dangling] 报文必须点名那个解析不到的父 0099')
+      }
+    }
+    // ⑧ 父指到**已废**产品 ⇒ 自己的码 `SCHEME-PARENT-RETIRED`（与"解析不到"分开）
+    {
+      const retiredProduct = goodProduct('0002', '旧产品', { 状态: '已废', superseded_by: '0001' })
+      const successorProduct = { ...product, header: { ...product.header, supersedes: '0002' } }
+      const childOfRetired = goodScheme('0002', '指废父的构案', { 父: '0002', 依据P: '0002' })
+      const { run } = runSample(problems, rec, {
+        caseId: 'DEC-08', tag: 'parent-retired',
+        spec: { decisions: [successorProduct, retiredProduct, scheme, childOfRetired] },
+      })
+      if (expectCodes(problems, run, ['SCHEME-PARENT-RETIRED'], push, { label: 'DEC-08/parent-retired' })) {
+        if (!messagesOf(run.json).some((m) => m.includes('0002'))) push('NOT-NAMED', '[DEC-08/parent-retired] 报文必须点名那个已废产品 0002')
+      }
+    }
+    // ⑨ 父指到**构案**（存在且生效，但不是产品 / 缺陷）⇒ `SCHEME-PARENT-NOT-PRODUCT`（契约 §2.2 的父只认两种形状）
+    {
+      const liveScheme = goodScheme('0002', '活着但被当成父的构案')
+      const childOfScheme = goodScheme('0003', '指构案当父的构案', { 父: '0002', 依据P: '0002' })
+      const { run } = runSample(problems, rec, {
+        caseId: 'DEC-08', tag: 'parent-not-product',
+        spec: { decisions: [product, scheme, liveScheme, childOfScheme] },
+      })
+      if (expectCodes(problems, run, ['SCHEME-PARENT-NOT-PRODUCT'], push, { label: 'DEC-08/parent-not-product' })) {
+        if (!messagesOf(run.json).some((m) => m.includes('0002'))) push('NOT-NAMED', '[DEC-08/parent-not-product] 报文必须点名那个构案编号 0002')
+      }
+    }
+
+    // ⑩ 正文形态（0012 §③）—— **每一格都走检查器**（`决定-text` 的 `body` 只改正文一处）；
+    //    真树那一条静态读数留在 `DEC-01`（`rec.readings.real.product_0001_sections`），与这里分开印。
+    const bodyRows = (action = 'supersede 到新编号', idCell = 'RC-1') => [
+      '| 编号 | 条件 | 触发时动作 | 状态 |',
+      '| --- | --- | --- | --- |',
+      `| ${idCell} | 同概念第 3 处实现 | ${action} | 未触发 |`,
+    ]
+    const bodySamples = [
+      { tag: 'body-good', body: schemeBody(), want: [] },
+      { tag: 'body-missing-7', body: schemeBody({ drop: '反悔条件' }), want: ['BODY-SECTION-MISSING'], mustName: '反悔条件' },
+      { tag: 'body-missing-5', body: schemeBody({ drop: '新增什么' }), want: ['BODY-SECTION-MISSING'], mustName: '新增什么' },
+      { tag: 'reversal-table-missing', body: schemeBody({ reversalTable: null }), want: ['REVERSAL-TABLE-MISSING'] },
+      {
+        tag: 'reversal-3col',
+        body: schemeBody({ reversalTable: ['| 编号 | 条件 | 触发时动作 |', '| --- | --- | --- |', '| RC-1 | 同概念第 3 处实现 | supersede 到新编号 |'] }),
+        want: ['REVERSAL-ROW-SHAPE'],
+        mustName: '触发时动作',
+      },
+      {
+        tag: 'reversal-action-word',
+        body: schemeBody({ reversalTable: bodyRows('按上面的说法办') }),
+        want: ['REVERSAL-ROW-SHAPE'],
+        mustName: 'RC-1',
+      },
+      { tag: 'reversal-words', body: schemeBody({ reversalTable: bodyRows('重开一张新票') }), want: [] },
+    ]
+    rec.readings.body_shape = {}
+    for (const s of bodySamples) {
+      const { run, entry } = runSample(problems, rec, {
+        caseId: 'DEC-08', tag: s.tag,
+        spec: { decisions: [product, { ...scheme, body: s.body }] },
+      })
+      rec.readings.body_shape[s.tag] = {
+        root: entry.root,
+        exit: entry.exit,
+        ok: entry.ok,
+        codes: entry.codes,
+        messages: entry.messages.slice(0, 3),
+      }
+      const parsed = expectCodes(problems, run, s.want, push, { label: `DEC-08/${s.tag}` })
+      if (parsed && s.mustName !== undefined && !messagesOf(run.json).some((m) => m.includes(s.mustName))) {
+        push('NOT-NAMED', `[DEC-08/${s.tag}] 报文必须点名 ${JSON.stringify(s.mustName)}：${JSON.stringify(entry.messages.slice(0, 3))}`)
+      }
     }
 
     caseFail(problems)

@@ -17,7 +17,18 @@
       "tags": [
         "injection",
         "job-brief"
-      ]
+      ],
+      "how_seen": "2026-11-12 会话评审交活自报（报告-2026-11-11 头部）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/conversation-review/2026-11-11/report.md",
+          "note": "头部「本票注入的说明书」"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 2,
@@ -54,7 +65,18 @@
       },
       "tags": [
         "tech-review-1111"
-      ]
+      ],
+      "how_seen": "2026-11-12 技术评审（11-11）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/support/pool-writer-shape.mjs",
+          "note": "11-11 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 5,
@@ -91,7 +113,18 @@
       },
       "tags": [
         "tech-review-1111"
-      ]
+      ],
+      "how_seen": "2026-11-12 技术评审（11-11）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/support/boot-readings.mjs",
+          "note": "11-11 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 8,
@@ -128,7 +161,18 @@
       },
       "tags": [
         "tech-review-1111"
-      ]
+      ],
+      "how_seen": "2026-11-12 技术评审（11-11）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/proposals.mjs",
+          "note": "11-11 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 11,
@@ -165,7 +209,18 @@
       },
       "tags": [
         "tech-review-1111"
-      ]
+      ],
+      "how_seen": "2026-11-12 技术评审（11-11）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/support/boot-readings.mjs",
+          "note": "11-11 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 14,
@@ -202,7 +257,18 @@
       },
       "tags": [
         "tech-review-1111"
-      ]
+      ],
+      "how_seen": "2026-11-12 技术评审（11-11）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/unmount-host-row.mjs",
+          "note": "11-11 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 17,
@@ -239,7 +305,18 @@
       },
       "tags": [
         "tech-review-1111"
-      ]
+      ],
+      "how_seen": "2026-11-12 技术评审（11-11）F8",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/daily-cards.py",
+          "note": "ASSESSED_VERDICTS 硬编码"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 20,
@@ -277,7 +354,18 @@
       "tags": [
         "criteria",
         "machine-dependent"
-      ]
+      ],
+      "how_seen": "2026-11-12 第 4 关（评审报告-构案系统.md · M5）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/support/decision-ledger.mjs",
+          "note": ":436 裸 git ls-files"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 23,
@@ -315,7 +403,18 @@
       "tags": [
         "decisions",
         "wiring"
-      ]
+      ],
+      "how_seen": "2026-11-12 第 4 关 r1（评审报告-构案系统.md §6-🅲）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/决议-check.mjs",
+          "note": "CLI 存在；presets/** grep 0 调用点"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 26,
@@ -353,7 +452,18 @@
       "tags": [
         "decisions",
         "design"
-      ]
+      ],
+      "how_seen": "2026-11-12 第 4 关 r2（评审报告-构案系统-r2.md §6-🅲 拆分）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-12/CONTRACT-构案.md",
+          "note": "§0.3-D4"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 29,
@@ -383,7 +493,18 @@
       "tags": [
         "decisions",
         "design"
-      ]
+      ],
+      "how_seen": "2026-11-12 第 4 关 r2（评审报告-构案系统-r2.md §6-🅲 拆分）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-12/CONTRACT-构案.md",
+          "note": "§0.3-D4"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 31,
@@ -413,7 +534,18 @@
       "tags": [
         "decisions",
         "drift"
-      ]
+      ],
+      "how_seen": "2026-11-12 第 4 关 r3（评审报告-构案系统-r3.md 非阻塞 A）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/lib/决议-ledger.mjs",
+          "note": ":21/:66 四个 token"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 33,
@@ -451,7 +583,18 @@
       "tags": [
         "criteria",
         "coverage"
-      ]
+      ],
+      "how_seen": "2026-11-12 第 4 关 r3（评审报告-构案系统-r3.md 非阻塞 C）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/dec04-index-census.test.mjs",
+          "note": "PARSE-POINTER 单载体"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 36,
@@ -489,7 +632,18 @@
       "tags": [
         "paths",
         "defaults"
-      ]
+      ],
+      "how_seen": "2026-11-12 第 4 关 r1（评审报告-A1-死拷贝.md · out-of-ticket）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/install.mjs",
+          "note": ":65 REPO 推导 / :103 默认值"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 39,
@@ -527,7 +681,18 @@
       "tags": [
         "docs",
         "drift"
-      ]
+      ],
+      "how_seen": "2026-11-12 A1 第 4 关 r2（评审报告-A1-死拷贝-r2.md）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/install.mjs",
+          "note": ":51 / :198 / :429"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 42,

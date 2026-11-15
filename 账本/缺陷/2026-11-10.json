@@ -16,7 +16,18 @@
       },
       "tags": [
         "tech-review"
-      ]
+      ],
+      "how_seen": "2026-11-09 每日技术评审（.team/technical-review/2026-11-09/技术评审.findings.json）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-09/技术评审.md",
+          "note": "同 id 那条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 2,
@@ -53,7 +64,18 @@
       },
       "tags": [
         "tech-review"
-      ]
+      ],
+      "how_seen": "2026-11-09 每日技术评审（.team/technical-review/2026-11-09/技术评审.findings.json）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-09/技术评审.md",
+          "note": "同 id 那条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 5,
@@ -90,7 +112,18 @@
       },
       "tags": [
         "tech-review"
-      ]
+      ],
+      "how_seen": "2026-11-09 每日技术评审（.team/technical-review/2026-11-09/技术评审.findings.json）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-09/技术评审.md",
+          "note": "同 id 那条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 8,
@@ -127,7 +160,18 @@
       },
       "tags": [
         "tech-review"
-      ]
+      ],
+      "how_seen": "2026-11-09 每日技术评审（.team/technical-review/2026-11-09/技术评审.findings.json）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-09/技术评审.md",
+          "note": "同 id 那条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 11,
@@ -165,7 +209,18 @@
       "tags": [
         "readout",
         "settle"
-      ]
+      ],
+      "how_seen": "2026-11-10 组长答老板问时实测（三处翻不到 HOLD 的 id）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-09/_runs/rosterrow-182544/judgement.txt",
+          "note": "只有计数，没有 id"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 14,
@@ -203,7 +258,18 @@
       "tags": [
         "boot",
         "no-human-in-the-loop"
-      ]
+      ],
+      "how_seen": "2026-11-10 老板问「这两个挂起我要做什么」时实测（量了 T、会话头、CLI 口径、GUI 401）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/boot01-restart.test.mjs",
+          "note": "① 身份那一段：createdAt >= T 且顶层"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 17,
@@ -241,7 +307,23 @@
       "tags": [
         "boot",
         "criteria-anchor"
-      ]
+      ],
+      "how_seen": "2026-11-10 老板反问「不可能，我建了，你仔细找」之后实测（投影缓存 + 会话流 + 截图）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "C:\\Users\\DAVID\\.dsh\\storages\\session_projcache\\sessions\\session-41f0e8d7-59a1-4b94-a238-c714bb2b1356.json",
+          "note": "turnOutline/title 有今天那轮；identity.createdAt = 11-06"
+        },
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/boot01-restart.test.mjs",
+          "note": "① 身份那段：createdAt >= T"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 20,
@@ -279,7 +361,23 @@
       "tags": [
         "receipt",
         "tool-contract"
-      ]
+      ],
+      "how_seen": "2026-11-10 11:2x 六种载荷实测（逐个贴了原始报文）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/local-state.mjs",
+          "note": "46-57 行：回执锚点的形状（文档）"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/receipt.mjs",
+          "note": "6-12 行：E_RECEIPT_OVERWRITE 唯一产生面"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 23,
@@ -317,7 +415,18 @@
       "tags": [
         "health",
         "role-split"
-      ]
+      ],
+      "how_seen": "2026-11-10 12:1x 台账整理后实测（无处置=0，SLA 红仍在）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/bug-ledger.mjs",
+          "note": "isAssessed() 只认 assessment"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 26,
@@ -355,7 +464,18 @@
       "tags": [
         "lock",
         "write-path"
-      ]
+      ],
+      "how_seen": "2026-11-10 实现岗 F3 交付说明（观察项，未修）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/proposals.mjs",
+          "note": ":146 appendJudgedRows 的 mkdirSync 在锁外"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 29,
@@ -393,7 +513,18 @@
       "tags": [
         "readout",
         "message"
-      ]
+      ],
+      "how_seen": "2026-11-10 实现岗 gate3 报告 §6（中途那次红）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/dev/2026-11-10/报告-gate3-PWL-01-修复.md",
+          "note": "§6 中途那次红"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 32,
@@ -431,7 +562,18 @@
       "tags": [
         "carriers",
         "comment-lies"
-      ]
+      ],
+      "how_seen": "2026-11-10 第 4 关 r1（评审报告-今日批次.md · N1）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-10/评审报告-今日批次.md",
+          "note": "N1"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 35,
@@ -469,7 +611,18 @@
       "tags": [
         "criteria",
         "ordering"
-      ]
+      ],
+      "how_seen": "2026-11-10 第 4 关 r1（评审报告-今日批次.md · 判词第三节）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-10/评审报告-今日批次.md",
+          "note": "JUD-01 三条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 38,
@@ -507,7 +660,23 @@
       "tags": [
         "boot",
         "tool-missing"
-      ]
+      ],
+      "how_seen": "2026-11-10 13:33 实跑（删标记 → 重跑生成器 → E_BUNDLE_HOST_UNMARKED）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/make-bundle-patch.mjs",
+          "note": ":513 E_BUNDLE_HOST_UNMARKED；HOST_LEVEL_IDS 是第二份名单"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/leader/2026-11-10/_r5/receipt-draft.json",
+          "note": "这一次练习的中间读数与恢复凭据"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 41,
@@ -546,7 +715,23 @@
         "boot",
         "token",
         "route"
-      ]
+      ],
+      "how_seen": "2026-11-10 17:3x 实测（401 ×3 姿势 + 404 ×4 路由变体）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-10/_evidence/rca-170313/BOOT-02/result.json",
+          "note": "legA/legB 的原始读数"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/cordis.patch.yml",
+          "note": "挂载行在盘（71,940 B），不是没挂上"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 44,
@@ -584,7 +769,23 @@
       "tags": [
         "tool",
         "order"
-      ]
+      ],
+      "how_seen": "2026-11-10 实现岗交付说明（自述的已知限制）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/unmount-host-row.mjs",
+          "note": "文件头的已知限制"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/dev/2026-11-10/报告-gate3-UMH-实现.md",
+          "note": "§已知限制"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 47,
@@ -623,7 +824,23 @@
         "boot",
         "receipt",
         "criteria"
-      ]
+      ],
+      "how_seen": "2026-11-10 第 4 关（评审报告-撤挂载工具.md · 对「disabled 是否夹带」的裁定）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/support/boot-readings.mjs",
+          "note": ":968 / :996 回滚定义里没有 disabled；全文 0 次"
+        },
+        {
+          "kind": "file",
+          "ref": ".tools/make-bundle-patch.mjs",
+          "note": ":449-453 生成器硬要求"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 50,
@@ -662,7 +879,18 @@
         "boot",
         "receipt",
         "env"
-      ]
+      ],
+      "how_seen": "2026-11-10 19:4x 读判据源码时发现（正要安排老板两次重启之前）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/support/boot-readings.mjs",
+          "note": ":1027 / :1112 readRollbackExercise 只认 env"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 53,

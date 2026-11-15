@@ -17,7 +17,23 @@
       "tags": [
         "host-drift",
         "composition"
-      ]
+      ],
+      "how_seen": "2026-11-15 开工全量（`_runs/opening-131918`，锚 `56b893d`）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/inject.js",
+          "note": "startActivation 调用处"
+        },
+        {
+          "kind": "cmd",
+          "ref": "~/.dsh/dsh-runtimes/dsh-primary-runtime",
+          "note": "mtime 2026-11-14 14:17"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 2,
@@ -47,7 +63,18 @@
       "tags": [
         "criteria",
         "duplicate"
-      ]
+      ],
+      "how_seen": "2026-11-15 0011 第 4 关 r1",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/static/presets-two.test.mjs",
+          "note": ":730 / :798 / :844"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 4,

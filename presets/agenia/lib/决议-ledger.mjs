@@ -4,8 +4,8 @@
  *
  * 规格：`.team/test/2026-11-15/CONTRACT-0012.md`（下称「契约」）· 构案 `账本/构案/0012-三册账本.md`。
  *
- * 这一份里装的是**结构**：书怎么读（`账本/产品` · `账本/缺陷` · `账本/构案`）、头怎么拆、三条链怎么算、
- * 派生页怎么渲染、文件级 `依据:` 怎么核。装在别处的两件事：
+ * 这一份里装的是**结构**：书怎么读（`账本/产品` · `账本/缺陷` · `账本/构案`）、头怎么拆、三条链怎么算
+ * （外加构案 `父` 的向上解析）、派生页怎么渲染、文件级 `依据:` 怎么核。装在别处的两件事：
  *   · 缺陷事件流怎么折成现状 —— `lib/缺陷折叠.mjs`（唯一实现，本文件只调它）；
  *   · 概念怎么数 —— 就是本文件（`readConceptTable` / `countConcept` / `COUNT_RULES`）。
  *
@@ -1256,13 +1256,13 @@ function readDecisionFile(root, book, name, problems) {
 /**
  * 读一册。产品 / 构案：一条一 md；缺陷：一天一个 JSON（折叠走 `缺陷折叠.mjs`）。
  *
- * @returns {{present:boolean, entries:Array, states:Array, clean:boolean}}
+ * @returns {{present:boolean, entries:Array, states:Array, clean:boolean, ids_on_disk:string[]}}
  */
 export function readBook(root, book, problems) {
   const dir = bookDir(root, book)
   if (!isDir(dir)) {
     problems.push(problem('BOOK-MISSING', `${LEDGER_REL}/${book}/ 不在 —— 三册同级，缺一册就是这一条（契约 §1.1）`, { file: `${LEDGER_REL}/${book}` }))
-    return { present: false, entries: [], states: [], clean: false }
+    return { present: false, entries: [], states: [], clean: false, ids_on_disk: [] }
   }
   if (book === '缺陷') {
     const names = listDir(dir)
@@ -1274,13 +1274,20 @@ export function readBook(root, book, problems) {
     }
     const folded = foldBugBook({ root })
     problems.push(...folded.problems)
-    return { present: true, entries: [], states: folded.states, clean: folded.problems.length === 0 }
+    return { present: true, entries: [], states: folded.states, clean: folded.problems.length === 0, ids_on_disk: folded.states.map((s) => s.id) }
   }
   const before = problems.length
   const entries = []
   const seen = new Map()
+  /**
+   * 盘上**有这个编号的文件**（哪怕那一份头块坏了、`readDecisionFile` 返回 `null`）。
+   * 父解析用它分开两种"解析不到"：**没有这条记录**（悬空）vs **有那份文件、读不出来**（上游已报）。
+   */
+  const idsOnDisk = []
   for (const name of listDir(dir)) {
     if (BOOK_EXTRA_FILES.includes(name)) continue
+    const identity = DECISION_FILE.exec(name)
+    if (identity !== null) idsOnDisk.push(identity[1])
     const entry = readDecisionFile(root, book, name, problems)
     if (entry === null) continue
     const key = `${book}/${entry.id}`
@@ -1298,7 +1305,7 @@ export function readBook(root, book, problems) {
     if (Array.isArray(entry.body_problems) && entry.body_problems.length > 0) problems.push(...entry.body_problems)
     delete entry.body_problems
   }
-  return { present: true, entries, states: [], clean }
+  return { present: true, entries, states: [], clean, ids_on_disk: idsOnDisk }
 }
 
 /** 一条引用解析到哪一条决议（`null` = 解析不到）。裸编号先本册、再另一册（唯一时）。 */
@@ -1396,6 +1403,77 @@ export function judgePointers(decisions) {
   }
   for (const d of decisions) if (d.pointer_clean === undefined) d.pointer_clean = true
   return problems
+}
+
+/**
+ * **构案头的 `父` 必须解析到一条存在且生效的记录**（契约 §2.2：`父` 是一个产品号或缺陷 id）。
+ *
+ * 为什么单开一条：`SCHEME-PARENT-INCONSISTENT` 只判"主父是不是来源列表的成员"，两侧都是**没解析过的引用**；
+ * `judgeProductChain` 只数向下的子。于是 `父: 0099`（不存在）+ `依据P: 0099` 全绿 ——
+ * 链的**最上面那一段**没有判据（2026-11-15 第 4 关 M-2）。
+ *
+ * 三个码分开（三种事实，报文各自点名 `父` 的原值）：
+ *   · `SCHEME-PARENT-DANGLING` —— 解析不到（产品册 / 缺陷册都没有这个号）；
+ *   · `SCHEME-PARENT-RETIRED` —— 解析到了，但那条产品是 `已废`（要的是**生效**记录）；
+ *   · `SCHEME-PARENT-NOT-PRODUCT` —— 解析到的是**构案**（`父` 只许写产品号或缺陷 id）。
+ *
+ * 边界：缺陷册的事件流**没有 `状态` 字段**（`registered` / `assessed` / `disposed` 三段，契约 §3.1），
+ * 所以缺陷父的"生效"只有一种机器判得了的读法 —— **它在折叠出来的现状里存在**；已判假（`判假`）
+ * 是"这条缺陷不成立"的处置，不是"记录被废"，不折进 `SCHEME-PARENT-RETIRED`。
+ * `父` 缺 / 空 / 形状坏（`SCHEME-PARENT-MISSING` / `DEC-BAD-VALUE`）时不进这一族 —— 上游已经报了。
+ * 产品册 / 缺陷册**不在**时也不判「悬空」：那是 `BOOK-MISSING` 的读数，判不了 ≠ 不存在。
+ * 盘上**有那份文件、但头块坏了**（`DEC-MULTI-PER-FILE` 等）时同样不叠「悬空」——那一份的病上游已经报了。
+ */
+export function judgeParentRefs(decisions, states, problems, {
+  productBookPresent = true, defectBookPresent = true, productIdsOnDisk = null, schemeIdsOnDisk = null,
+} = {}) {
+  const bugIds = new Set(states.map((s) => s.id))
+  const hasEntry = (book, id) => decisions.some((x) => x.book === book && x.id === id)
+  const brokenProduct = (id) => productIdsOnDisk !== null && productIdsOnDisk.has(id) && !hasEntry('产品', id)
+  const brokenScheme = (id) => schemeIdsOnDisk !== null && schemeIdsOnDisk.has(id) && !hasEntry('构案', id)
+  let checked = 0
+  let unresolved = 0
+  for (const d of decisions) {
+    if (d.book !== '构案' || d.parent_ref === null) continue
+    checked += 1
+    const ref = d.parent_ref
+    const name = `\`父: ${d.parent}\``
+    if (ref.bug === true) {
+      // 缺陷册不在 ⇒ "解析不到"这一句话今天判不了（`BOOK-MISSING` 已经报了，别把它读成悬空）。
+      if (!defectBookPresent) continue
+      if (bugIds.has(ref.id)) continue
+      unresolved += 1
+      problems.push(problem('SCHEME-PARENT-DANGLING', `${d.file} 的 ${name} 在缺陷册里解析不到（缺陷册里没有 ${ref.id}）—— `
+        + '构案的父必须指得到一条真的记录（契约 §2.2）', { file: d.file, ref: d.parent }))
+      continue
+    }
+    // 产品册不在 ⇒ 同上：判不了不等于悬空。
+    if (!productBookPresent) continue
+    const product = decisions.find((x) => x.book === '产品' && x.id === ref.id)
+    if (product !== undefined) {
+      if (product.status === '生效') continue
+      // `状态` 读不出来是上游 `DEC-BAD-VALUE` 的病；这里不把它读成"已废"。
+      if (product.status !== '已废') continue
+      unresolved += 1
+      problems.push(problem('SCHEME-PARENT-RETIRED', `${d.file} 的 ${name} 指到已废产品 ${product.id}`
+        + `（状态 \`${product.raw_status ?? DASH}\`）—— 父必须是**生效**记录（契约 §2.2）`, { file: d.file, ref: d.parent }))
+      continue
+    }
+    // 盘上有这个 id 的文件、但那一份的**头块坏了**（`DEC-HEADER-MISSING` / `DEC-MULTI-PER-FILE` 等）⇒
+    // 上游已经报了那一份的病；这里不把"读不出"叠成"悬空"（`cand-20261021-0092`：不知道 ≠ 没有）。
+    if (brokenProduct(ref.id) || brokenScheme(ref.id)) continue
+    const existing = decisions.find((x) => x.id === ref.id)
+    if (existing === undefined) {
+      unresolved += 1
+      problems.push(problem('SCHEME-PARENT-DANGLING', `${d.file} 的 ${name} 在产品册与缺陷册里都解析不到 —— `
+        + '构案的父必须指得到一条真的记录（契约 §2.2）', { file: d.file, ref: d.parent }))
+      continue
+    }
+    unresolved += 1
+    problems.push(problem('SCHEME-PARENT-NOT-PRODUCT', `${d.file} 的 ${name} 指到的是构案 ${existing.id}`
+      + ' —— `父` 只许写产品号（`NNNN`）或缺陷 id（`bug-YYYYMMDD-NN`）（契约 §2.2）', { file: d.file, ref: d.parent }))
+  }
+  return { checked, unresolved }
 }
 
 // ── 派生页：渲染（`--op index` 与 `check` 共用这一份）──────────────────────
@@ -1740,7 +1818,7 @@ export function scanLedger(root) {
     }
     return {
       ok: problems.length === 0, root: path.resolve(root), ledger_present: false, old_tree_present: oldTree,
-      books: empty, decisions: [], states: [], problems, chain: { product: { resolved: 0, unresolved: 0 }, bug: { resolved: 0, unresolved: 0, closed: 0 }, file: { checked: 0, unresolved: 0 } },
+      books: empty, decisions: [], states: [], problems, chain: { parent: { checked: 0, unresolved: 0 }, product: { resolved: 0, unresolved: 0 }, bug: { resolved: 0, unresolved: 0, closed: 0 }, file: { checked: 0, unresolved: 0 } },
       legacy_disposed: 0, concepts: [], table: { present: false, rows: [], problems: [] },
     }
   }
@@ -1752,7 +1830,14 @@ export function scanLedger(root) {
   const decisions = [...read.产品.entries, ...read.构案.entries]
   problems.push(...judgePointers(decisions))
   judgeDuplicateTopics(decisions, problems)
-  const chain = { product: { resolved: 0, unresolved: 0 }, bug: { resolved: 0, unresolved: 0, closed: 0 }, file: { checked: 0, unresolved: 0 } }
+  /** 向上的那一段（契约 §2.2）：`父` 必须解析到存在且生效的产品 / 缺陷。 */
+  const parentChain = judgeParentRefs(decisions, read.缺陷.states, problems, {
+    productBookPresent: read.产品.present,
+    defectBookPresent: read.缺陷.present,
+    productIdsOnDisk: new Set(read.产品.ids_on_disk),
+    schemeIdsOnDisk: new Set(read.构案.ids_on_disk),
+  })
+  const chain = { parent: parentChain, product: { resolved: 0, unresolved: 0 }, bug: { resolved: 0, unresolved: 0, closed: 0 }, file: { checked: 0, unresolved: 0 } }
   chain.product = judgeProductChain(decisions, problems)
   chain.bug = judgeBugChain(decisions, read.缺陷.states, problems)
   chain.file = judgeFileBasis(root, decisions, problems)

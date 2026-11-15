@@ -77,8 +77,12 @@ export const LEDGER_READERS = Object.freeze([
   'presets/agenia/lib/cli-inventory.mjs',
 ])
 
-/** 旧台账里那三格（对账只比这三格，契约 §4.2-2）。 */
-export const RECONCILE_FIELDS = Object.freeze(['id', 'phenomenon', 'disposition'])
+/**
+ * 旧台账里对账要比的**七格**（契约 §4.2；Gate 3 r3 从三格扩到七格 ——
+ * 迁移丢的正是后四格：`how_seen` / `evidence` / `recipe` / `batch`）。
+ * 测试侧这份是**手写的期望**（与工具那份同值但不是 import 来的）：刀要看的是"两边各自成立"。
+ */
+export const RECONCILE_FIELDS = Object.freeze(['id', 'phenomenon', 'disposition', 'how_seen', 'evidence', 'recipe', 'batch'])
 
 // ── 夹具正文 ────────────────────────────────────────────────────────────
 
@@ -175,9 +179,9 @@ export function archiveText(entries) {
   }, null, 2)}\n`
 }
 
-/** 旧台账的一条（对账只认 `id` / `phenomenon` / `disposition.value`）。 */
-export function archiveEntry({ id, phenomenon = '夹具现象', value = 'adopted', reason = '夹具处置理由', at = '2026-11-15T11:00:00+08:00' }) {
-  return { id, kind: 'bug', phenomenon, disposition: { value, reason, by: 'leader', at } }
+/** 旧台账的一条（对账要七格：`id` / 现象 / 处置 + `how_seen` / `evidence` / `recipe` / `batch`）。 */
+export function archiveEntry({ id, phenomenon = '夹具现象', value = 'adopted', reason = '夹具处置理由', at = '2026-11-15T11:00:00+08:00', extra = {} }) {
+  return { id, kind: 'bug', phenomenon, disposition: { value, reason, by: 'leader', at }, ...extra }
 }
 
 /** 派工卡正文（契约 §7；H1 → 空行 → 头块 → 空行 → 正文）。 */
@@ -479,28 +483,53 @@ export function indexMarkerReading(text) {
 }
 
 // ── 折叠对账的**测试侧 oracle**（`LDG-05`）──────────────────────────────────
+/** 一条记录七格的规范形（对象 / 数组按键排序；`undefined` 与 `null` 同义）。 */
+function canonicalFieldValue(value) {
+  if (value === undefined || value === null) return 'null'
+  if (Array.isArray(value)) return `[${value.map(canonicalFieldValue).join(',')}]`
+  if (typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonicalFieldValue(value[k])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+/** 旧台账那一条的七格（后四格就在条目自己身上）。 */
+function archiveFieldsOf(entry) {
+  return {
+    id: String(entry.id),
+    phenomenon: String(entry.phenomenon ?? ''),
+    disposition: String(entry?.disposition?.value ?? ''),
+    how_seen: entry.how_seen,
+    evidence: entry.evidence,
+    recipe: entry.recipe,
+    batch: entry.batch,
+  }
+}
+
+/** 折叠出来的现状的七格（后四格在 `registered_payload` 里 —— 那是事件的载荷原件）。 */
+function foldedFieldsOf(state) {
+  const reg = state?.registered_payload ?? {}
+  return {
+    id: String(state.id),
+    phenomenon: String(state.phenomenon ?? ''),
+    disposition: String(state?.disposition?.value ?? ''),
+    how_seen: reg.how_seen,
+    evidence: reg.evidence,
+    recipe: reg.recipe,
+    batch: reg.batch,
+  }
+}
+
 /**
- * 独立于工具的一份对账：拿旧台账（expected）与 `--op fold` 出来的 states（actual）逐条比三格。
+ * 独立于工具的一份对账：拿旧台账（expected）与 `--op fold` 出来的 states（actual）逐条比七格。
  * 🔴 为什么测试要自己算一遍：工具的 `ok` 是**被审方自报**（`cand-20261022-0151`）；
  *    两侧不一致时这一格必须红 `FOLD-ORACLE-DISAGREES`，而不是让"工具说绿"单独成立。
  */
 export function reconcileOracle({ entries, states }) {
   const expected = new Map()
-  for (const e of entries) {
-    expected.set(String(e.id), {
-      id: String(e.id),
-      phenomenon: String(e.phenomenon ?? ''),
-      disposition: String(e?.disposition?.value ?? ''),
-    })
-  }
+  for (const e of entries) expected.set(String(e.id), archiveFieldsOf(e))
   const actual = new Map()
-  for (const s of states) {
-    actual.set(String(s.id), {
-      id: String(s.id),
-      phenomenon: String(s.phenomenon ?? ''),
-      disposition: String(s?.disposition?.value ?? ''),
-    })
-  }
+  for (const s of states) actual.set(String(s.id), foldedFieldsOf(s))
   const missing = [...expected.keys()].filter((id) => !actual.has(id)).sort()
   const extra = [...actual.keys()].filter((id) => !expected.has(id)).sort()
   const diffs = []
@@ -508,7 +537,9 @@ export function reconcileOracle({ entries, states }) {
     const got = actual.get(id)
     if (got === undefined) continue
     for (const field of RECONCILE_FIELDS) {
-      if (want[field] !== got[field]) diffs.push({ id, field, expected: want[field], actual: got[field] })
+      if (canonicalFieldValue(want[field]) !== canonicalFieldValue(got[field])) {
+        diffs.push({ id, field, expected: canonicalFieldValue(want[field]), actual: canonicalFieldValue(got[field]) })
+      }
     }
   }
   return {

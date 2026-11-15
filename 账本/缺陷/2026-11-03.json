@@ -17,7 +17,23 @@
       "tags": [
         "process",
         "review-order"
-      ]
+      ],
+      "how_seen": "老板 2026-11-03 09:10 点破：判决回来的通知还没到，两份每日评审已经在跑；当场停掉两份",
+      "evidence": [
+        {
+          "kind": "log",
+          "ref": ".team/leader/2026-11-02/log.md",
+          "note": "昨天同一形状"
+        },
+        {
+          "kind": "cmd",
+          "ref": "interrupt_agent df44fbc4 / 4e8cab79",
+          "note": "两份评审已停，未交活"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 2,
@@ -57,7 +73,23 @@
         "route",
         "ledger",
         "tamper"
-      ]
+      ],
+      "how_seen": "ticket-update 报 E_ROUTE_TAMPERED（盘上 3912ab00… / 链上 e8803250…）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/leader/2026-11-03/route-repair/audit.jsonl.before",
+          "note": "修复前的审计链（11 条）"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/leader/2026-11-03/route-repair/current.json.before",
+          "note": "修复前的账本（version 11）"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 5,
@@ -97,7 +129,18 @@
         "carrier",
         "count",
         "denominator"
-      ]
+      ],
+      "how_seen": "第五轮技术评审（361e6998/f2f9c21d）逐条量出来的",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/technical-review/2026-11-03/技术评审.r5.findings.json",
+          "note": "3 条 P3 conditions"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 8,
@@ -137,7 +180,18 @@
         "route",
         "ticket",
         "source"
-      ]
+      ],
+      "how_seen": "ticket-open 报 E_TICKET_SOURCE_BAD：要能指到报告（64 hex）与 finding（#F1 这样的 id）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/leader/2026-11-03/定形-提案不许当bug报告.md",
+          "note": "老板插票的定形（原话逐字在内）"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 11,
@@ -177,7 +231,28 @@
         "test-suite",
         "DOC-01",
         "criterion-fragility"
-      ]
+      ],
+      "how_seen": "2026-11-03 21:29 跑全量（.team/test/2026-11-03/_runs/mj1-full，HEAD 1cc8d3f）：F57-SETTLE RED 2，其中一条是 DOC-01（另一条是 MJUDGE-01 的首跑红）。DOC-01 自己的读数 leader_now_stage_lines 点名 10:[keyword]=执行一 / 30:[no-stage]=null。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/2026-11-03/_evidence/mj1-full/DOC-01/result.json",
+          "note": "result.json：problems=[STAGE-MISSING] + readings.leader_now_stage_lines 两行"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/leader/now.md",
+          "note": "第 30 行原文（mtime 2026-11-03 21:24:51）"
+        },
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/static/docs.test.mjs",
+          "note": "stageClaims() 的匹配式 = /当前(项目)?阶段|当前大阶段/，不区分\"在讲阶段\"与\"在讲这四个字\""
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 14,

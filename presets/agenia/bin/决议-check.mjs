@@ -7,12 +7,14 @@
  * 八个 op（`--op=<x>` 与 `--op <x>` 两种写法都收；`--root` 缺省 = `.`）：
  *
  *   · `check`（缺省）—— 只读，判六件事：① 三册在（缺册 / 旧树还在 / 册里混进别的文件）
- *       ② 头字段两套（产品**没有父** · 构案**必须有父**且主父在来源列表里）③ 三张派生页与重算逐字节相同
- *       ④ 产品→构案 ⑤ 缺陷→构案 ⑥ 构案→文件（`依据:`）。读数带三条链 + `legacy_disposed`。
+ *       ② 头字段两套（产品**没有父** · 构案**必须有父**、主父在来源列表里、**且父解析得到一条生效记录**）
+ *       ③ 三张派生页与重算逐字节相同 ④ 产品→构案 ⑤ 缺陷→构案 ⑥ 构案→文件（`依据:`）。
+ *       读数带**链的四段**（`parent` + 三条链）+ `legacy_disposed`。
  *   · `init` —— 建 `账本/{产品,缺陷,构案}/` + 三张派生页骨架。**幂等**：已建的一个字节都不动。
  *   · `index` —— **唯一**允许写派生页的 op（三张一起重写，跑两次字节相同）。
  *   · `fold` —— 折叠缺陷册（调 `lib/缺陷折叠.mjs`，自己不折）。
- *   · `reconcile --archive=<旧 ledger.json>` —— 与旧台账逐条对账（id + 现象 + 处置），差异逐条点名。
+ *   · `reconcile --archive=<旧 ledger.json>` —— 与旧台账逐条对账（**七格**：id / 现象 / 处置 /
+ *     how_seen / evidence / recipe / batch；后四格是 Gate 3 r3 补的），差异逐条点名。
  *   · `gate2-card --card=<路径>` —— 第 2 关拒接闸的新词表（`票类: 产品 | 构案`，+ `数据` 的具名豁免）。
  *   · `card-land --card=… --day=… --role=…` —— **先落盘、再过闸**：被拒的卡照样在盘上，逐字节相同。
  *   · `supersede <旧编号> --by <新编号>` —— 写手：只翻旧文头块两个字段，正文一个字节不动。
@@ -124,7 +126,52 @@ export function runFold({ root }) {
 }
 
 /**
- * 与旧台账逐条对账（契约 §4.2）：条数 · 逐条三格（`id` / `phenomenon` / `disposition.value`）· id 集合。
+ * 对账比的**七格**（契约 §4.2；Gate 3 r3 从三格扩到七格）。
+ *
+ * 为什么扩：迁移只带 `id` / `phenomenon` / `disposition` 三格就没人看得见
+ * `how_seen` / `evidence` / `recipe` / `batch` 全丢（2026-11-15 第 4 关 M-1）——
+ * `evidence` 还是登记准入的第二扇门。对账面不比它，损失就落在验收口径之外。
+ */
+export const RECONCILE_FIELDS = Object.freeze(['id', 'phenomenon', 'disposition', 'how_seen', 'evidence', 'recipe', 'batch'])
+
+/**
+ * 一个值的**规范形**（两条读数用同一份口径比）：
+ * `undefined` 与 `null` 同义（"字段不在"与"值为空"在这里是同一件事）；
+ * 对象 / 数组按键排序后序列化 —— `JSON.stringify` 的键序会让"同值不同序"假红。
+ */
+export function canonicalJson(value) {
+  if (value === undefined || value === null) return 'null'
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+/**
+ * 一条记录的七格。`registered` 是 `registered` 事件的载荷（折叠出来的 `registered_payload`）：
+ * 后四格（`how_seen` / `evidence` / `recipe` / `batch`）在**事件载荷**里，不在折叠后的现状上。
+ */
+function reconcileFieldsOf(entry, registered = entry) {
+  return {
+    id: String(entry?.id ?? ''),
+    phenomenon: String(entry?.phenomenon ?? ''),
+    disposition: String(entry?.disposition?.value ?? ''),
+    how_seen: registered?.how_seen,
+    evidence: registered?.evidence,
+    recipe: registered?.recipe,
+    batch: registered?.batch,
+  }
+}
+
+/** 报文里的一格值：规范形，太长就截断（全量留在 `diffs[]` 里）。 */
+function showFieldValue(value, max = 240) {
+  const text = canonicalJson(value)
+  return text.length > max ? `${text.slice(0, max)}…（共 ${text.length} 字符）` : text
+}
+
+/**
+ * 与旧台账逐条对账（契约 §4.2）：条数 · 逐条**七格** · id 集合。
  * 「少了 1 条」不算读数 —— 报文必须点名少了哪几条。
  */
 export function runReconcile({ root, archive }) {
@@ -154,16 +201,8 @@ export function runReconcile({ root, archive }) {
   out.archive_entries = entries.length
   out.folded_states = folded.states.length
   out.legacy_disposed = folded.states.filter((s) => s.disposition !== null && s.disposition !== undefined && s.chain.kind === 'legacy').length
-  const want = new Map(entries.map((e) => [String(e.id), {
-    id: String(e.id),
-    phenomenon: String(e.phenomenon ?? ''),
-    disposition: String(e?.disposition?.value ?? ''),
-  }]))
-  const got = new Map(folded.states.map((s) => [String(s.id), {
-    id: String(s.id),
-    phenomenon: String(s.phenomenon ?? ''),
-    disposition: String(s?.disposition?.value ?? ''),
-  }]))
+  const want = new Map(entries.map((e) => [String(e.id), reconcileFieldsOf(e)]))
+  const got = new Map(folded.states.map((s) => [String(s.id), reconcileFieldsOf(s, s.registered_payload)]))
   const missing = [...want.keys()].filter((id) => !got.has(id)).sort()
   const extra = [...got.keys()].filter((id) => !want.has(id)).sort()
   for (const id of missing) {
@@ -175,10 +214,12 @@ export function runReconcile({ root, archive }) {
   for (const [id, w] of want) {
     const g = got.get(id)
     if (g === undefined) continue
-    for (const field of ['id', 'phenomenon', 'disposition']) {
-      if (w[field] === g[field]) continue
-      out.diffs.push({ id, field, expected: w[field], actual: g[field] })
-      out.problems.push(problem('FOLD-DIFF', `${id} 的 \`${field}\` 对不上：旧台账 ${JSON.stringify(w[field])} / 折叠 ${JSON.stringify(g[field])}`
+    for (const field of RECONCILE_FIELDS) {
+      if (canonicalJson(w[field]) === canonicalJson(g[field])) continue
+      const expected = canonicalJson(w[field])
+      const actual = canonicalJson(g[field])
+      out.diffs.push({ id, field, expected, actual })
+      out.problems.push(problem('FOLD-DIFF', `${id} 的 \`${field}\` 对不上：旧台账 ${showFieldValue(w[field])} / 折叠 ${showFieldValue(g[field])}`
         + '（契约 §4.2-2）', { id, field }))
     }
   }
@@ -583,7 +624,7 @@ export function runSupersede({ root, oldRef, byRef, dryRun = false }) {
 }
 
 // ── op: check ──────────────────────────────────────────────────────────────
-/** 三册现状 + 六族判词。读数里三条链与 `legacy_disposed` **必须在**（契约 §10.1）。 */
+/** 三册现状 + 六族判词。读数里链的四段（`parent` + 三条链）与 `legacy_disposed` **必须在**（契约 §10.1）。 */
 export function runCheck({ root }) {
   const scan = scanLedger(root)
   return {

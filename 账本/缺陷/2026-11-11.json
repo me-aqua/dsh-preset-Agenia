@@ -17,7 +17,18 @@
       "tags": [
         "criteria",
         "static-scan"
-      ]
+      ],
+      "how_seen": "2026-11-11 技术评审",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/unit/pwl01-pool-writer-discipline.test.mjs",
+          "note": "11-10 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 2,
@@ -55,7 +66,18 @@
       "tags": [
         "tool",
         "readout"
-      ]
+      ],
+      "how_seen": "2026-11-11 技术评审",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/unmount-host-row.mjs",
+          "note": "11-10 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 5,
@@ -93,7 +115,18 @@
       "tags": [
         "quality",
         "descriptorize"
-      ]
+      ],
+      "how_seen": "2026-11-11 技术评审",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/proposals.mjs",
+          "note": "11-10 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 8,
@@ -131,7 +164,18 @@
       "tags": [
         "tool",
         "fingerprint"
-      ]
+      ],
+      "how_seen": "2026-11-11 技术评审",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/tree-at-commit.mjs",
+          "note": "11-10 技术评审"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 11,
@@ -169,7 +213,18 @@
       "tags": [
         "criteria",
         "followup"
-      ]
+      ],
+      "how_seen": "2026-11-11 第 4 关 r2（评审报告-五修批次-r2.md）+ 组长验收实测",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/review/2026-11-11/评审报告-五修批次-r2.md",
+          "note": "非阻塞三条"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 14,
@@ -207,7 +262,18 @@
       "tags": [
         "readout",
         "receipt"
-      ]
+      ],
+      "how_seen": "2026-11-11 SLA 批评估（报告-gate2-SLA-评估-70条.md · 批4）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-local.mjs",
+          "note": "SLA 批评估现场"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 17,
@@ -245,7 +311,18 @@
       "tags": [
         "readout",
         "dangling-ref"
-      ]
+      ],
+      "how_seen": "2026-11-11 SLA 批评估（报告-gate2-SLA-评估-70条.md · 批3）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/mcr03-copy-provenance.test.mjs",
+          "note": "SLA 批评估现场"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 20,
@@ -284,7 +361,28 @@
         "receipt",
         "tool-contract",
         "default"
-      ]
+      ],
+      "how_seen": "2026-11-11 收 `bug-20261110-08` 时现量：`lib/health.mjs:216` 的 `path.join('leader', day, '技术复盘回执.json')` 与 `bin/agenia-local.mjs` 的 `opReceiptCheck` 同一句默认；对照 `.team/leader/2026-11-10/技术评审回执.json`（实存）与 11-09 抽屉（无 JSON）。",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/health.mjs",
+          "note": ":216 默认名 技术复盘回执.json"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-local.mjs",
+          "note": "opReceiptCheck 的同一句默认"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/leader/2026-11-10/技术评审回执.json",
+          "note": "人实际写的名字"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": []
     },
     {
       "seq": 23,
