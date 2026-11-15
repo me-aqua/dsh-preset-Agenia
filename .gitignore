@@ -135,3 +135,4 @@ Desktop.ini
 # Python bytecode (must never enter the CODE fingerprint)
 __pycache__/
 *.pyc
+_tmp/

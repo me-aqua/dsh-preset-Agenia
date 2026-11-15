@@ -13,7 +13,7 @@
 
 import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
-import { join, dirname, resolve } from 'node:path'
+import { join, dirname, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 // 🔴 F-56 的判据本体住在 lib/ 里（**不 import 测试岗那一份**：它住在 `.team/`，那份目录不进 git，
@@ -1924,7 +1924,28 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     //    定形 §三.1 要它住仓库顶层并**进 git** —— 决定是项目资产，而 `.team/` 不进 git ⇒ 构案不能落那儿。
     //    判据同上面几条：白名单管"它在根上合不合规"—— 它合规，因为项目级决定必须有家。
     '决议',
+    // 🆕 2026-11-15 加：**临时根**（共享记忆 `cand-20261114-0517` 定的口径：派工给下级的临时根永远是
+    //    `E:\Harness\_tmp\<用途>-<日期>`，不许写盘根）。2026-11-15 实测：隔壁 RealisticAccessories 的 agenia
+    //    按这条规矩在这里建了 `_tmp/techreview-2026-11-14/`，本脚本当场判红 —— 那是**规矩打架**，不是脏文件。
+    //    ⇒ 白名单放行 `_tmp`，但**下面紧跟一条保鲜期**：超过 7 天的文件必须清，免得它变成垃圾桶。
+    '_tmp',
   ])
+  // 保鲜期：`_tmp/` 里不许留超过 7 天的东西（白名单放行 ≠ 允许长期囤积）。
+  let staleTmp = []
+  if (existsSync(join(REPO, '_tmp'))) {
+    const cutoff = Date.now() - 7 * 24 * 3600 * 1000
+    const walk = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name)
+        if (e.isDirectory()) walk(p)
+        else if (statSync(p).mtimeMs < cutoff) staleTmp.push(relative(REPO, p).replaceAll('\\', '/'))
+      }
+    }
+    walk(join(REPO, '_tmp'))
+  }
+  yes('repo', '_tmp/ 里没有超过 7 天的文件（临时根要保鲜）', staleTmp.length === 0,
+    staleTmp.length === 0 ? '保鲜期内的文件：' + (existsSync(join(REPO, '_tmp')) ? '有（未过期）' : '无')
+      : `过期文件 ${staleTmp.length} 个：${staleTmp.slice(0, 5).join(', ')} —— 清掉`)
   const stray = readdirSync(REPO).filter((n) => !allowed.has(n))
   yes('repo', '仓库根只许出现白名单里的条目（临时文件当场红）', stray.length === 0,
     stray.length === 0 ? `白名单 ${allowed.size} 项，干净` : `多出来：${stray.join(', ')} —— 删掉，或者加进 check-notes.mjs 的白名单`)
