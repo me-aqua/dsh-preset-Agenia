@@ -1719,7 +1719,12 @@ function landingPlanOf(payload) {
   return plan
 }
 
-/** 组长处置（disposition + 理由）—— `open = 无 disposition`，这一下之后封顶读数才减一。 */
+/**
+ * 组长处置（disposition + 理由）—— `open = 无 disposition`，这一下之后封顶读数才减一。
+ *
+ * payload 可写的「链」格只有两格：`构案:` / `判假:`；`历史` 一律拒（`E_BUG_HISTORY_CALLER_SET`）。
+ * 落地计划三格（`due_at` / `owner` / `next_step`）在 `deferred` 时必填，见 `landingPlanOf`。
+ */
 function opBugDispose(ctx) {
   const p = ctx.payload ?? {}
   if (p.by_role !== 'leader') {
@@ -1732,6 +1737,22 @@ function opBugDispose(ctx) {
     throw cliError('E_ARG_SCHEMA', '处置必须带理由（reason 非空）—— 没有理由的处置读的人没法复核')
   }
   if (typeof p.id !== 'string' || p.id.trim() === '') throw cliError('E_ARG_SCHEMA', 'id 必填（要处置哪一条）')
+  /**
+   * 🔴 **`历史` 没有调用方写入口**（契约 §3.1 / §5.2.1）：它只有一个合法来源 —— 迁移。
+   *
+   * 折叠按 `disposed` 事件里有没有 `历史` 派生 `chain.kind === 'legacy'`，而 legacy 是**免检**的
+   * （不要求落地计划三格、不追过期）。留一条调用方写入口，一张新票就能自己盖章成 legacy，
+   * 两道暂缓闸同时失效。写入口在这里**不认这一格**：显式给了（含 `null` / 空串）就拒，
+   * 具名码 `E_BUG_HISTORY_CALLER_SET`。判定跑在抢锁之前 ⇒ 被拒零写入（事件流 / 锁 / 派生页都不动）。
+   */
+  if (Object.prototype.hasOwnProperty.call(p, '历史') && p['历史'] !== undefined) {
+    throw cliError(
+      'E_BUG_HISTORY_CALLER_SET',
+      '`历史` 没有调用方可写的路径（唯一来源 = 迁移的 153 条处置；契约 §3.1 / §5.2.1）—— '
+      + '新票要落点写 `构案:` / `判假:`；要延期写 `deferred` + `due_at` / `owner` / `next_step`。'
+      + '调用方写 `历史` = 自封 legacy，会绕过 `DEFERRED-NO-LANDING-PLAN` 与 `CHAIN-BUG-DEFERRED-OVERDUE`。',
+    )
+  }
   const landing = landingPlanOf(p)
   return withBugLock(ctx, () => {
     const bookMode = bugBookMode(ctx)
@@ -1759,14 +1780,15 @@ function opBugDispose(ctx) {
     // 旧工区没有事件流：三格落在条目顶层（加性键允许；读面不解释它们）。
     if (!bookMode) Object.assign(updated, landing)
     if (bookMode) {
-      // 三册模式：`disposed` 事件带处置原件；链那三格（构案 / 判假 / 历史）由调用方给就给。
+      // 三册模式：`disposed` 事件带处置原件；链那两格（构案 / 判假）由调用方给就给。
+      // `历史` 不在这里 —— 它没有调用方写入口（上面已拒），只由迁移写进旧事件（契约 §3.1）。
       const event = {
         kind: 'disposed',
         id: updated.id,
         disposition: updated.disposition,
         ...landing,
       }
-      for (const key of ['构案', '判假', '历史']) {
+      for (const key of ['构案', '判假']) {
         if (typeof p[key] === 'string' && p[key].trim() !== '') event[key] = p[key].trim()
       }
       appendBugEvent(ctx, event)

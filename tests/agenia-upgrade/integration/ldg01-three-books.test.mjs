@@ -989,6 +989,90 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
         push('KNIFE-NO-BITE', `[LDG-03/legacy-reopen-control-06] 对照树在重开+再处置之后必须仍绿，实得 exit=${run.exit} / ${JSON.stringify(codesOf(run.json))}`)
       }
     }
+    // ⑤''''''' 刀（r8 · N-1）：`历史` **没有调用方的写入口** —— 一张**新**票 `bug-dispose` 带
+    // `历史: "deferred"` 必须被拒（具名码 `E_BUG_HISTORY_CALLER_SET`），判定在抢锁前 ⇒ 整棵
+    // `账本/缺陷/` 零写入、不留 `.bug.lock`。刀要咬穿**真 CLI**：只有折叠的形状判不算数。
+    // 对照三格（同一形状的另外三份拷贝）：普通 `deferred`（三格齐）/ `构案:` / `判假:` 照旧能写，
+    // 且写出来的 `disposed` 事件里**没有** `历史` 键（自封 legacy 的路必须真的关掉）。
+    {
+      const openTicket = () => goodLedger({
+        schemes: schemeKillsA,
+        days: [{
+          day: '2026-11-15',
+          events: [
+            eventRegistered({ seq: 1, id: bugA, at: '2026-11-15T09:00:00+08:00' }),
+            eventAssessed({ seq: 2, id: bugA, at: '2026-11-15T10:00:00+08:00', verdict: 'true' }),
+          ],
+        }],
+      })
+      const { scene, env } = bookCliScene('LDG-03', 'history-payload', openTicket())
+      runIndex(scene.root)
+      const before = bugBookSnapshot(scene.root)
+      const beforeCheck = runCheck(scene.root, ['--today=2026-11-15'])
+      const res = await runRoute('LDG-03', 'bug-dispose', {
+        id: bugA, disposition: 'deferred', reason: '夹具：调用方自封 legacy', by_role: 'leader',
+        历史: 'deferred',
+      }, { workspace: scene.root, env })
+      const after = bugBookSnapshot(scene.root)
+      const code = res?.json?.error?.code ?? null
+      const lock = path.join(scene.root, '.team', 'bug', '.bug.lock')
+      rec.readings.history_caller_set = {
+        root: scene.root,
+        book_files: Object.keys(before).length,
+        check: { exit: beforeCheck.exit, codes: codesOf(beforeCheck.json), legacy_disposed: beforeCheck.json?.legacy_disposed ?? null },
+        exit: res?.exit_code ?? null,
+        code,
+        events_unchanged: sameSnapshot(before, after),
+        lock_left: existsSync(lock),
+        error_head: res?.json?.error?.message == null ? [] : [String(res.json.error.message).slice(0, 240)],
+      }
+      if (Object.keys(before).length === 0) push('KNIFE-NO-BITE', '[LDG-03/history-payload] 量具没读到任何事件流文件 —— 这把刀什么都没量')
+      if (beforeCheck.exit !== 0) push('KNIFE-NO-BITE', `[LDG-03/history-payload] 夹具起点必须绿（这条票还没处置），实得 exit=${beforeCheck.exit} / ${JSON.stringify(codesOf(beforeCheck.json))}`)
+      if (res?.exit_code !== FROZEN.exitCodes.E_BUG_HISTORY_CALLER_SET || code !== 'E_BUG_HISTORY_CALLER_SET') {
+        push('KNIFE-NO-BITE', `[LDG-03/history-payload] 新票带 \`历史\` 必须被拒（exit ${FROZEN.exitCodes.E_BUG_HISTORY_CALLER_SET} / E_BUG_HISTORY_CALLER_SET），实得 exit=${res?.exit_code} / ${JSON.stringify(code)} / ${JSON.stringify(messagesOf(res?.json ?? {}).slice(0, 2))}`)
+      }
+      if (!sameSnapshot(before, after)) {
+        push('KNIFE-WROTE', `[LDG-03/history-payload] 被拒的处置改写了 \`账本/缺陷/\` —— 零写入是这条拒的卖点（改动 ${JSON.stringify(Object.keys(after).filter((k) => before[k] !== after[k]).slice(0, 6))}）`)
+      }
+      if (existsSync(lock)) push('KNIFE-WROTE', '[LDG-03/history-payload] 被拒的处置留下了 `.team/bug/.bug.lock` —— 判定必须在抢锁之前')
+    }
+    // 对照（r8）：三条**合法**记账照旧能落，事件里不带 `历史`。
+    rec.readings.history_controls = {}
+    for (const [tag, payload, key] of [
+      ['deferred', { disposition: 'deferred', reason: '夹具：普通暂缓', ...PLAN }, null],
+      ['scheme', { disposition: 'adopted', reason: '夹具：由构案关掉', 构案: '0012' }, '构案'],
+      ['judged-false', { disposition: 'rejected', reason: '夹具：显式判假', 判假: '夹具判假：不是缺陷' }, '判假'],
+    ]) {
+      const { scene, env } = bookCliScene('LDG-03', `history-control-${tag}`, goodLedger({
+        schemes: schemeKillsA,
+        days: [{
+          day: '2026-11-15',
+          events: [
+            eventRegistered({ seq: 1, id: bugA, at: '2026-11-15T09:00:00+08:00' }),
+            eventAssessed({ seq: 2, id: bugA, at: '2026-11-15T10:00:00+08:00', verdict: 'true' }),
+          ],
+        }],
+      }))
+      runIndex(scene.root)
+      const res = await runRoute('LDG-03', 'bug-dispose', { id: bugA, by_role: 'leader', ...payload }, { workspace: scene.root, env })
+      runIndex(scene.root) // 派生页必须跟着新现状走（写完再重生成，否则 check 会报 INDEX-ROW-MISMATCH）
+      const event = (dayEventsOf(scene.root) ?? []).find((e) => e.seq === 3) ?? null
+      const run = runCheck(scene.root, ['--today=2026-11-15'])
+      rec.readings.history_controls[tag] = {
+        exit: res?.exit_code ?? null,
+        code: res?.json?.error?.code ?? null,
+        event: event === null
+          ? null
+          : { kind: event.kind, has_history: Object.prototype.hasOwnProperty.call(event, '历史'), key_value: key === null ? null : event[key] ?? null },
+        check: { exit: run.exit, codes: codesOf(run.json) },
+      }
+      if (res?.exit_code !== 0) push('KNIFE-NO-BITE', `[LDG-03/history-control-${tag}] ${tag} 处置必须成功，实得 exit=${res?.exit_code} / ${JSON.stringify(messagesOf(res?.json ?? {}).slice(0, 2))}`)
+      if (event === null || Object.prototype.hasOwnProperty.call(event, '历史')) {
+        push('KNIFE-WROTE', `[LDG-03/history-control-${tag}] 写出来的 disposed 事件不许带 \`历史\`，实得 ${JSON.stringify(event)}`)
+      }
+      if (key !== null && event?.[key] === undefined) push('NOT-NAMED', `[LDG-03/history-control-${tag}] disposed 事件缺 \`${key}\` 格`)
+      if (run.exit !== 0) push('KNIFE-NO-BITE', `[LDG-03/history-control-${tag}] 合法记账之后 check 必须绿，实得 exit=${run.exit} / ${JSON.stringify(codesOf(run.json))}`)
+    }
     // ⑤''' 刀（r5）：`due_at` 已过且之后没人动 ⇒ 恰好 `CHAIN-BUG-DEFERRED-OVERDUE`，点名 id + due_at
     {
       const overdue = {
