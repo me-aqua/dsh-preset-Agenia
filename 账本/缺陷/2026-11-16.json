@@ -1440,6 +1440,140 @@
       "owner": "组长 + 实现岗",
       "next_step": "① **先判这条手续该不该有**：如果「处置即评估」是我们真在用的做法，那 SLA 该量 disposed 而不是 assessed（改判据）；如果评估该有，那就要补 32 条 assessed 并把「先 assess 再 dispose」写进 §五与派工卡；② 二选一不许两头空；③ 同批把「新票缺 assessed」在到期前清掉。",
       "at": "2026-11-16T13:55:01+08:00"
+    },
+    {
+      "seq": 63,
+      "kind": "registered",
+      "id": "bug-20261116-32",
+      "entry_kind": "bug",
+      "phenomenon": "**`check-notes` 里有第二份折叠实现，重开时与 `lib/缺陷折叠.mjs` 分叉 —— 而「唯一实现」判据看不见它**（0016 第 4 关 r2 的 N-2）：LDG-05 的「唯一实现」那条按 `function foldBugBook` 这个名字数，`check-notes` 里那份私有拷贝用的是别的名字 ⇒ 两处实现、判据仍绿。**重开**那条路径上两者的行为不同。",
+      "reporter": "评审岗",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P2",
+        "0016"
+      ],
+      "how_seen": "2026-11-16 0016 第 4 关 r2 评审（`.team/review/2026-11-16/评审报告-0016-r2.md`）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/check-notes.mjs",
+          "note": "私有折叠"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/缺陷折叠.mjs",
+          "note": "唯一实现"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T14:03:55+08:00"
+    },
+    {
+      "seq": 64,
+      "kind": "disposed",
+      "id": "bug-20261116-32",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P2 · 到期 2026-11-18",
+        "by": "leader",
+        "at": "2026-11-16T14:03:56+08:00"
+      },
+      "due_at": "2026-11-18",
+      "owner": "实现岗 + 测试岗",
+      "next_step": "① 让 `check-notes` 也 import `lib/缺陷折叠.mjs`（这是它该有的样子）；② 「唯一实现」判据从「数名字」改成「树上出现第二份 `disposed` 折叠逻辑就红」——按**行为形状**认，不按函数名认；③ 刀：把折叠逻辑复制一份到别处 ⇒ 红。",
+      "at": "2026-11-16T14:03:56+08:00"
+    },
+    {
+      "seq": 65,
+      "kind": "registered",
+      "id": "bug-20261116-33",
+      "entry_kind": "bug",
+      "phenomenon": "**0016 的 M-3 三条断言比我承诺的窄**（第 4 关 r2 实测三种改法都能通过而应当红）：① 只把两行上限（`code 800 / manual 300`）粘到 `presets/agenia/leader.md` 或 `README.md` —— 它们在 `capDocs` 之外；② **对调 `0016 §②` 两行的上限值** —— ④ 只比排序后的多重集，不比「类 ↔ 上限」的配对；③ 把一个 glob 抄进 §17.3 / §17.4 / §17.7 —— ③ 只切 §17.2。",
+      "reporter": "评审岗",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P2",
+        "0016"
+      ],
+      "how_seen": "2026-11-16 0016 第 4 关 r2 评审（`.team/review/2026-11-16/评审报告-0016-r2.md`）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/check-notes.mjs",
+          "note": ":2317-2367 四条断言"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T14:03:56+08:00"
+    },
+    {
+      "seq": 66,
+      "kind": "disposed",
+      "id": "bug-20261116-33",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P2 · 到期 2026-11-18",
+        "by": "leader",
+        "at": "2026-11-16T14:03:56+08:00"
+      },
+      "due_at": "2026-11-18",
+      "owner": "测试岗",
+      "next_step": "① ② 的根加 `README.md` + `presets/agenia/*.md`；② ④ 改成**按类的映射**（类 ↔ 上限逐对相等），不是排序多重集；③ ③ 的切片放宽到整个 §17。各配一把刀（三种改法各红一次）。",
+      "at": "2026-11-16T14:03:56+08:00"
+    },
+    {
+      "seq": 67,
+      "kind": "registered",
+      "id": "bug-20261116-34",
+      "entry_kind": "bug",
+      "phenomenon": "**一个没归因的计数**：盘上 `账本/缺陷/*.json` 有 **188 个 `registered` 事件**，而 `决议-check` 报 **186 张票** （第 4 关 r2 报的：`不是 none，是没归因`）。差 2 —— 可能是重开产生的 `registered`（`bug-reopen` 也写 registered），也可能是同名重复。**在没查清之前不许当成 0**。",
+      "reporter": "评审岗",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P3",
+        "0016"
+      ],
+      "how_seen": "2026-11-16 0016 第 4 关 r2 评审（`.team/review/2026-11-16/评审报告-0016-r2.md`）",
+      "evidence": [
+        {
+          "kind": "cmd",
+          "ref": "jq: registered 计数",
+          "note": "188 vs 186"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T14:03:56+08:00"
+    },
+    {
+      "seq": 68,
+      "kind": "disposed",
+      "id": "bug-20261116-34",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P3 · 到期 2026-11-19",
+        "by": "leader",
+        "at": "2026-11-16T14:03:56+08:00"
+      },
+      "due_at": "2026-11-19",
+      "owner": "实现岗",
+      "next_step": "查清那 2 个多出来的 `registered` 是谁（大概率是 `-06` 的重开 + 一次迁移重登），然后**让读数把这层说清**：`registered` 事件数 ≠ 票数，票数按 id 去重 —— 读数行同批印这两个数。",
+      "at": "2026-11-16T14:03:56+08:00"
     }
   ]
 }
