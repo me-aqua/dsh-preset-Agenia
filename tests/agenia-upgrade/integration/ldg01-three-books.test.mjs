@@ -1037,6 +1037,48 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
       }
       if (existsSync(lock)) push('KNIFE-WROTE', '[LDG-03/history-payload] 被拒的处置留下了 `.team/bug/.bug.lock` —— 判定必须在抢锁之前')
     }
+    // ⑤''''''''' 刀（r9 · bug-20261116-02）：**`deferred` 与「关上」互斥** —— `bug-dispose` 在
+    // `disposition: deferred` 时拒 `构案:` / `判假:`（具名码 `E_BUG_DEFERRED_WITH_CLOSER`，exit 5）。
+    // 两格各来一次（只测一格会让另一格静默放行）；判定必须在抢锁前 ⇒ 整棵 `账本/缺陷/` 零写入、不留锁。
+    // 这一格的卖点是**关掉"塞一个 `判假` / `构案` 就能让过期闸短路"的写入口** —— 折叠那一侧的
+    // 兜底另有两把刀（见下面 `deferred-overdue-ordering`）。
+    rec.readings.deferred_with_closer = {}
+    for (const [tag, closer] of [['scheme', { 构案: '0012' }], ['judged-false', { 判假: '夹具：暂缓不该带判假' }]]) {
+      const { scene, env } = bookCliScene('LDG-03', `deferred-with-${tag}`, goodLedger({
+        schemes: schemeKillsA,
+        days: [{
+          day: '2026-11-15',
+          events: [
+            eventRegistered({ seq: 1, id: bugA, at: '2026-11-15T09:00:00+08:00' }),
+            eventAssessed({ seq: 2, id: bugA, at: '2026-11-15T10:00:00+08:00', verdict: 'true' }),
+          ],
+        }],
+      }))
+      runIndex(scene.root)
+      const before = bugBookSnapshot(scene.root)
+      const res = await runRoute('LDG-03', 'bug-dispose', {
+        id: bugA, disposition: 'deferred', reason: '夹具：暂缓 + 关上的键', by_role: 'leader', ...PLAN, ...closer,
+      }, { workspace: scene.root, env })
+      const after = bugBookSnapshot(scene.root)
+      const code = res?.json?.error?.code ?? null
+      const lock = path.join(scene.root, '.team', 'bug', '.bug.lock')
+      rec.readings.deferred_with_closer[tag] = {
+        root: scene.root,
+        book_files: Object.keys(before).length,
+        exit: res?.exit_code ?? null,
+        code,
+        events_unchanged: sameSnapshot(before, after),
+        lock_left: existsSync(lock),
+        error_head: res?.json?.error?.message == null ? [] : [String(res.json.error.message).slice(0, 240)],
+      }
+      if (res?.exit_code !== FROZEN.exitCodes.E_BUG_DEFERRED_WITH_CLOSER || code !== 'E_BUG_DEFERRED_WITH_CLOSER') {
+        push('KNIFE-NO-BITE', `[LDG-03/deferred-with-${tag}] \`deferred\` 带 \`${Object.keys(closer)[0]}\` 必须被拒（exit ${FROZEN.exitCodes.E_BUG_DEFERRED_WITH_CLOSER} / E_BUG_DEFERRED_WITH_CLOSER），实得 exit=${res?.exit_code} / ${JSON.stringify(code)} / ${JSON.stringify(messagesOf(res?.json ?? {}).slice(0, 2))}`)
+      }
+      if (!sameSnapshot(before, after)) {
+        push('KNIFE-WROTE', `[LDG-03/deferred-with-${tag}] 被拒的处置改写了 \`账本/缺陷/\` —— 零写入是这条拒的卖点（改动 ${JSON.stringify(Object.keys(after).filter((k) => before[k] !== after[k]).slice(0, 6))}）`)
+      }
+      if (existsSync(lock)) push('KNIFE-WROTE', `[LDG-03/deferred-with-${tag}] 被拒的处置留下了 \`.team/bug/.bug.lock\` —— 判定必须在抢锁之前`)
+    }
     // 对照（r8）：三条**合法**记账照旧能落，事件里不带 `历史`。
     rec.readings.history_controls = {}
     for (const [tag, payload, key] of [
@@ -1124,6 +1166,70 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
         // 到期的**当天**不算过期（日期比较是 `<`），过期那一天起才红
         const chain = run.json?.chain?.bug ?? null
         if (chain?.deferred_open !== 1) push('CHAIN-READING-MISSING', `[LDG-03/deferred-not-yet-due] chain.bug.deferred_open 实得 ${JSON.stringify(chain?.deferred_open ?? null)}，期望 1`)
+      }
+    }
+    // ⑤''''' 刀（r9 · bug-20261116-02 · 技术评审 11-15 F1）：**过期判定先于 `chain.kind` 分支**。
+    // 同一棵「暂缓且已过期」的树，只改第三格里塞不塞一个「关上」的键：
+    //   ① `判假:` ② `构案:`（0012 生效、`依据bug` 反向记着 A）⇒ 两把刀都必须**恰好**红
+    //     `CHAIN-BUG-DEFERRED-OVERDUE` 并点名该票 + `due_at`。塞一个关上的键不许把过期闸短路。
+    // 另判读数：那个键不改变「这条仍是暂缓」—— `deferred_open` 仍是 1、`closed` 仍是 0。
+    rec.readings.deferred_overdue_ordering = {}
+    for (const [tag, closer] of [['judged-false', { 判假: '夹具：暂缓却写着判假' }], ['scheme', { 构案: '0012' }]]) {
+      const { run } = checkScene(problems, rec, {
+        caseId: 'LDG-03',
+        tag: `deferred-overdue-ordering-${tag}`,
+        spec: goodLedger({
+          schemes: schemeKillsA,
+          days: [{
+            day: '2026-11-10',
+            events: [
+              eventRegistered({ seq: 1, id: bugA, at: '2026-11-10T09:00:00+08:00' }),
+              eventAssessed({ seq: 2, id: bugA, at: '2026-11-10T10:00:00+08:00', verdict: 'true' }),
+              eventDisposed({
+                seq: 3, id: bugA, at: '2026-11-10T11:00:00+08:00', value: 'deferred', reason: '到期 2026-11-12 · 暂缓',
+                extra: { due_at: '2026-11-12', owner: '实现岗', next_step: '先给契约加一行，再实现', ...closer },
+              }),
+            ],
+          }],
+        }),
+        checkArgs: ['--today=2026-11-15'],
+      })
+      const label = `LDG-03/deferred-overdue-ordering-${tag}`
+      rec.readings.deferred_overdue_ordering[tag] = { exit: run.exit, codes: codesOf(run.json), chain_bug: run.json?.chain?.bug ?? null }
+      if (expectCodes(problems, run, ['CHAIN-BUG-DEFERRED-OVERDUE'], push, { label })) {
+        if (!namedIn(run.json, bugA)) push('NOT-NAMED', `[${label}] 报文必须点名过期的那条缺陷 A`)
+        const p = (run.json?.problems ?? []).find((x) => x.code === 'CHAIN-BUG-DEFERRED-OVERDUE')
+        if (p?.due_at !== '2026-11-12') push('NOT-NAMED', `[${label}] 报文要点名 due_at 2026-11-12，实得 ${JSON.stringify(p?.due_at ?? null)}`)
+        const chain = run.json?.chain?.bug ?? null
+        if (chain?.deferred_open !== 1) push('CHAIN-READING-MISSING', `[${label}] chain.bug.deferred_open 实得 ${JSON.stringify(chain?.deferred_open ?? null)}，期望 1（塞了关上的键也是暂缓）`)
+        if (chain?.closed !== 0) push('CHAIN-READING-MISSING', `[${label}] chain.bug.closed 实得 ${JSON.stringify(chain?.closed ?? null)}，期望 0（暂缓不是结论）`)
+      }
+    }
+    // 对照（r9）：同一份落地计划、到期日在未来 ⇒ 绿（刀不许永远红）
+    {
+      const { run } = checkScene(problems, rec, {
+        caseId: 'LDG-03', tag: 'deferred-overdue-control',
+        spec: goodLedger({
+          schemes: schemeKillsA,
+          days: [{
+            day: '2026-11-10',
+            events: [
+              eventRegistered({ seq: 1, id: bugA, at: '2026-11-10T09:00:00+08:00' }),
+              eventAssessed({ seq: 2, id: bugA, at: '2026-11-10T10:00:00+08:00', verdict: 'true' }),
+              eventDisposed({
+                seq: 3, id: bugA, at: '2026-11-10T11:00:00+08:00', value: 'deferred', reason: '到期 2026-11-20 · 暂缓',
+                extra: { due_at: '2026-11-20', owner: '实现岗', next_step: '先给契约加一行，再实现' },
+              }),
+            ],
+          }],
+        }),
+        checkArgs: ['--today=2026-11-15'],
+      })
+      rec.readings.deferred_overdue_control = { exit: run.exit, codes: codesOf(run.json), chain_bug: run.json?.chain?.bug ?? null }
+      if (expectCodes(problems, run, [], push, { label: 'LDG-03/deferred-overdue-control' })) {
+        const chain = run.json?.chain?.bug ?? null
+        if (chain?.deferred_open !== 1) push('CHAIN-READING-MISSING', `[LDG-03/deferred-overdue-control] chain.bug.deferred_open 实得 ${JSON.stringify(chain?.deferred_open ?? null)}，期望 1`)
+        if (chain?.closed !== 0) push('CHAIN-READING-MISSING', `[LDG-03/deferred-overdue-control] chain.bug.closed 实得 ${JSON.stringify(chain?.closed ?? null)}，期望 0`)
       }
     }
     // ⑥ 真树：三册条数 + 缺陷链五组 + legacy_disposed —— **全部走 `support/real-tree-pins.mjs`**

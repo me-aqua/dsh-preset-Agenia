@@ -1731,7 +1731,7 @@ function overdueDayOf(state, today) {
  * 结构化 `due_at` / `owner` / `next_step` 由折叠判（`DEFERRED-NO-LANDING-PLAN`），这里判**过期**：
  * `due_at` 的日期部分早于今天、且之后没有重开 / 再处置过 ⇒ `CHAIN-BUG-DEFERRED-OVERDUE`。
  * 迁移那一批（`历史: deferred`）没有结构化 `due_at`，不在这条规则的射程里，也不进 `deferred_open`
- * （2026-11-15 第 4 关 r3 · M-1）。
+ * （2026-11-15 第 4 关 r3 · M-1）。**判序**：过期判定跑在 `chain.kind` 分支**之前** —— 过期与这条票记着哪一格无关，`判假:` / `构案:` 短路不了它（缺陷 `-02`；写入口同批拒这一组合：`E_BUG_DEFERRED_WITH_CLOSER`）。
  *
  * 读数按**五组**印（`closed_by_scheme` / `closed_judged_false` / `legacy_closed` / `deferred_open` /
  * `legacy_frozen`）：`closed 52 / deferred 104` 那一版把「历史冻结」和「新开的待办」混成一个数，
@@ -1744,6 +1744,15 @@ export function judgeBugChain(decisions, states, problems, { today = todayLocal(
   const liveSchemes = decisions.filter((d) => d.book === '构案' && d.status === '生效')
   for (const s of states) {
     if (s.disposition === null || s.disposition === undefined) continue
+    // 暂缓 = 未结：过期判定先于 `chain.kind` 分支（`判假:` / `构案:` 派生出的两支不短路它，契约 §5.2.1「判序」）。
+    if (s.disposition.value === 'deferred') {
+      const overdue = overdueDayOf(s, today)
+      if (overdue !== null) {
+        problems.push(problem('CHAIN-BUG-DEFERRED-OVERDUE', `缺陷 ${s.id} 的暂缓到期日 ${overdue} 已经过去、之后没有重开或再处置 —— `
+          + '到期没动就不是延期的完成态，要么做、要么重新定一个到期日（契约 §5.2）', { id: s.id, due_at: overdue }))
+      }
+      continue
+    }
     const kind = s.chain.kind
     if (kind === 'legacy') continue
     if (kind === 'judged_false') continue
@@ -1762,15 +1771,6 @@ export function judgeBugChain(decisions, states, problems, { today = todayLocal(
         problems.push(problem('CHAIN-BUG-SCHEME-NOT-RECIPROCAL', `缺陷 ${s.id} 说它由构案 ${target.id} 关掉，`
           + `而 ${target.id} 的 \`依据bug\` 里没有 ${s.id} —— 这条链必须双向（契约 §5.2）`,
         { ref: `${s.id}/${target.id}`, id: s.id }))
-      }
-      continue
-    }
-    // 暂缓 = 未结：延迟本身就是它的落点（到期 / 归属 / 下一步是结构化的三格）。结论才要求有着落。
-    if (s.disposition.value === 'deferred') {
-      const overdue = overdueDayOf(s, today)
-      if (overdue !== null) {
-        problems.push(problem('CHAIN-BUG-DEFERRED-OVERDUE', `缺陷 ${s.id} 的暂缓到期日 ${overdue} 已经过去、之后没有重开或再处置 —— `
-          + '到期没动就不是延期的完成态，要么做、要么重新定一个到期日（契约 §5.2）', { id: s.id, due_at: overdue }))
       }
       continue
     }

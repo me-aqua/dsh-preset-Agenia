@@ -1738,20 +1738,20 @@ function opBugDispose(ctx) {
   }
   if (typeof p.id !== 'string' || p.id.trim() === '') throw cliError('E_ARG_SCHEMA', 'id 必填（要处置哪一条）')
   /**
-   * 🔴 **`历史` 没有调用方写入口**（契约 §3.1 / §5.2.1）：它只有一个合法来源 —— 迁移。
-   *
-   * 折叠按 `disposed` 事件里有没有 `历史` 派生 `chain.kind === 'legacy'`，而 legacy 是**免检**的
-   * （不要求落地计划三格、不追过期）。留一条调用方写入口，一张新票就能自己盖章成 legacy，
-   * 两道暂缓闸同时失效。写入口在这里**不认这一格**：显式给了（含 `null` / 空串）就拒，
-   * 具名码 `E_BUG_HISTORY_CALLER_SET`。判定跑在抢锁之前 ⇒ 被拒零写入（事件流 / 锁 / 派生页都不动）。
+   * 🔴 **两格写入口的拒**（都在抢锁之前 ⇒ 被拒零写入：事件流 / 锁 / 派生页都不动）：
+   *   · `历史`：唯一来源 = 迁移（折叠按它派生 `chain.kind === 'legacy'`，而 legacy 免检 ——
+   *     自封 legacy 会绕过 `DEFERRED-NO-LANDING-PLAN` 与 `CHAIN-BUG-DEFERRED-OVERDUE`）
+   *     ⇒ `E_BUG_HISTORY_CALLER_SET`（契约 §3.1 / §5.2.1）；
+   *   · `deferred` 上的 `构案:` / `判假:`：两者都意味着「这条已经关上」，与暂缓（未结）互斥；
+   *     折叠按它们派生 `chain.kind`，写入口不许造出这个组合 ⇒ `E_BUG_DEFERRED_WITH_CLOSER`
+   *     （缺陷 `-02`；契约 §3.2 / §5.2.1）。显式给了就算（含 `null` / 空串 —— 不给就不该有这个键）。
    */
   if (Object.prototype.hasOwnProperty.call(p, '历史') && p['历史'] !== undefined) {
-    throw cliError(
-      'E_BUG_HISTORY_CALLER_SET',
-      '`历史` 没有调用方可写的路径（唯一来源 = 迁移的 153 条处置；契约 §3.1 / §5.2.1）—— '
-      + '新票要落点写 `构案:` / `判假:`；要延期写 `deferred` + `due_at` / `owner` / `next_step`。'
-      + '调用方写 `历史` = 自封 legacy，会绕过 `DEFERRED-NO-LANDING-PLAN` 与 `CHAIN-BUG-DEFERRED-OVERDUE`。',
-    )
+    throw cliError('E_BUG_HISTORY_CALLER_SET', '`历史` 没有调用方可写的路径（唯一来源 = 迁移的 153 条处置；契约 §3.1 / §5.2.1）—— 新票要落点写 `构案:` / `判假:`；要延期写 `deferred` + `due_at` / `owner` / `next_step`。调用方写 `历史` = 自封 legacy，会绕过 `DEFERRED-NO-LANDING-PLAN` 与 `CHAIN-BUG-DEFERRED-OVERDUE`。')
+  }
+  const closers = ['构案', '判假'].filter((k) => p.disposition === 'deferred' && Object.prototype.hasOwnProperty.call(p, k) && p[k] !== undefined)
+  if (closers.length > 0) {
+    throw cliError('E_BUG_DEFERRED_WITH_CLOSER', `暂缓（deferred）不收 \`${closers.join('` / `')}\`：它们各自意味着「这条已经关上」（构案 = 由方案关掉 / 判假 = 判定不是缺陷），而 deferred 是**未结**。要延期 ⇒ due_at / owner / next_step；要关上 ⇒ 处置写 adopted / rejected（契约 §3.2 / §5.2.1）。`)
   }
   const landing = landingPlanOf(p)
   return withBugLock(ctx, () => {

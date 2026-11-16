@@ -711,6 +711,7 @@ export const FROZEN = {
     E_BUG_REOPEN_LEGACY: 5,
     /** 构案 0012 §3.1 / §5.2.1（r8 · N-1）：`历史` 没有调用方写入口（唯一来源 = 迁移）。 */
     E_BUG_HISTORY_CALLER_SET: 5,
+    E_BUG_DEFERRED_WITH_CLOSER: 5,
     E_BUG_SAMPLE_LATE: 5,
     E_BUG_SAMPLE_REJUDGE: 5,
 

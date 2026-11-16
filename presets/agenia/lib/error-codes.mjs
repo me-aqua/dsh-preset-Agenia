@@ -134,6 +134,7 @@ export const CODES = Object.freeze({
   E_BUG_WRITER_ROLE: { exit: 5, zh: '跨角色写（测试岗写线决定 / 组长写严重度 / 测试岗写处置 —— 两个作者各一个事实）' },
   E_BUG_REOPEN_LEGACY: { exit: 5, zh: '重开一条迁移 legacy 票（处置带 `历史`）—— 重开只对迁移后的票生效；要继续处理旧账 ⇒ 新开一张票并在 finding_refs 里引用它的 id' },
   E_BUG_HISTORY_CALLER_SET: { exit: 5, zh: '调用方给 `bug-dispose` 传 `历史` —— 这一格没有调用方写入口（唯一来源 = 迁移）；新票要落点写 `构案:` / `判假:`，要延期写 `deferred` + 三格（契约 §3.1 / §5.2.1）' },
+  E_BUG_DEFERRED_WITH_CLOSER: { exit: 5, zh: '`deferred` 的处置带了 `构案` / `判假` —— 两者都意味着「这条已经关上」，与暂缓（未结）互斥；要延期写 `due_at` / `owner` / `next_step`（契约 §3.2 / §5.2.1）' },
   E_BUG_SAMPLE_LATE: { exit: 5, zh: '样本的 registered_at 晚于它判的那次评估（样本必须事故前预注册）' },
   E_BUG_SAMPLE_REJUDGE: { exit: 5, zh: '换了样本版本再判同一条 entry（改样本 = 版本 + 旧样本留档；改后不许重判）' },
 
