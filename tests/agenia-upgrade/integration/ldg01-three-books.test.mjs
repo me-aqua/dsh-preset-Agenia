@@ -1160,12 +1160,13 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
           if (chain.deferred !== chain.deferred_open + chain.legacy_frozen) {
             push('CHAIN-READING-MISSING', `[真树] chain.bug.deferred ${JSON.stringify(chain.deferred)} ≠ deferred_open + legacy_frozen ${chain.deferred_open + chain.legacy_frozen}`)
           }
-          // ③ 每一条票都必须在某一组里 —— 分母取**同一次读数**的册条数（不是常量，所以永不重钉）
+          // ③ 处置数不许超过册里的票数（**子集关系**，不是等式：刚登记、还没处置的票在两组里都不到）。
+          //   等式那种写法会让"有人开了票但还没处置"读成代码坏 —— 那正是 `bug-20261116-17` 要杀的形状。
           const tickets = run.json?.books?.缺陷?.entries ?? null
           if (tickets === null) {
-            push('CHAIN-READING-MISSING', '[真树] 读数里没有 books.缺陷.entries —— 票总数这一格判不了')
-          } else if (chain.closed + chain.deferred !== tickets) {
-            push('CHAIN-READING-MISSING', `[真树] closed ${chain.closed} + deferred ${chain.deferred} 实得 ${chain.closed + chain.deferred}，册里有 ${tickets} 条 —— 每一条票都必须在某一组里`)
+            push('CHAIN-READING-MISSING', '[真树] 读数里没有 books.缺陷.entries —— 处置数这一格判不了')
+          } else if (chain.closed + chain.deferred > tickets) {
+            push('CHAIN-READING-MISSING', `[真树] closed ${chain.closed} + deferred ${chain.deferred} 实得 ${chain.closed + chain.deferred}，册里只有 ${tickets} 条 —— 同一条被算进了两组`)
           }
           // ④ 带落地计划的暂缓是本族暂缓的**子集**（数超了 ⇒ 折叠把别人也算进来了）
           if (chain.deferred_open_structured > chain.deferred_open) {

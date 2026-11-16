@@ -27,9 +27,10 @@
  */
 export const PIN_FROZEN = {
   day: '2026-11-16',
-  commit: 'df4f6a3892e480256574ec1f2e19490021d4dcdb',
-  commit_subject: '构案 0012 r8：bug-dispose 拒调用方写 历史（N-1 / bug-20261115-06）',
-  tree: '活树 = HEAD df4f6a3 + 当天未提交的账本写入（产品 0014 · 构案 0015 · 缺陷/2026-11-16.json）',
+  commit: 'e28ac49284e2bc8d803f3401bae26715637a1551',
+  commit_subject: 'docs(ledger): product 0014 (his 11-15 words) + 0015/0016 landings, cap policy in the shipped rule, and two instrument fixes',
+  tree: '提交 e28ac49 那棵树（当天的账本写入 —— 产品 0014 · 构案 0015/0016 · 缺陷/2026-11-16.json —— 已经进这个提交，所以这组数能从它复算出来）',
+  measured_at: '2026-11-16T12:02:05+08:00',
   measured_by: 'node presets/agenia/bin/决议-check.mjs --root=. --json',
 }
 
@@ -39,7 +40,7 @@ export const BOOK_PRODUCT_ENTRIES = 5
 /** 缺陷册条数 —— **票数**，不是日文件数（`books.缺陷.entries`）。 */
 export const BOOK_BUG_ENTRIES = 173
 /** 构案册条数（`books.构案.entries`）。 */
-export const BOOK_SCHEME_ENTRIES = 10
+export const BOOK_SCHEME_ENTRIES = 11
 
 // ── 二、缺陷链的五组读数（`chain.bug.*`）────────────────────────────────────
 /** 有结论、且由**生效构案**兜底的票数。 */
@@ -78,7 +79,7 @@ export const PIN_LEDGER = [
     key: 'books.构案.entries',
     what: '构案册条数',
     value: BOOK_SCHEME_ENTRIES,
-    moved_by: '9→10：新写一条构案 `账本/构案/0015-删掉历史写入口.md`',
+    moved_by: '10→11：新写一条构案 `账本/构案/0016-文件长度上限.md`（组长 11:52 落地，随 e28ac49 提交）',
   },
   {
     key: 'chain.bug.closed_by_scheme',
@@ -155,8 +156,9 @@ export function pinReadingsOf(json) {
  *
  * 🔴 第二句是这报文存在的理由：读的人第一反应必须是「有人在动账本」，
  *   不是「产品的链读数坏了」。**别把这句话删成"期望值不符"。**
+ *   这三类数据动作都会推它：**开票**（缺陷册 +1）· **落决定**（产品/构案册 +1）· **处置**（五组位移）。
  */
-export const PIN_DRIFT_ADVICE = '先看是不是有人开了票；是 ⇒ 同批重钉并记账（唯一改点：`support/real-tree-pins.mjs` 那一条 + 当天 `log.md`）'
+export const PIN_DRIFT_ADVICE = '先看是不是有人开了票 / 落了决定；是 ⇒ 同批重钉并记账（唯一改点：`support/real-tree-pins.mjs` 那一条 + 当天 `log.md`）'
 
 export function pinDriftMessage(pin, got) {
   return `[真树] \`${pin.key}\` 钉住 ${pin.value}（冻于 ${PIN_FROZEN.day} · 提交 ${PIN_FROZEN.commit.slice(0, 7)}`
