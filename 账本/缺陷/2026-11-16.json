@@ -1391,6 +1391,55 @@
       "owner": "组长",
       "next_step": "先答「这份文件该不该存在」：`说明.md` 是给**维护者**看的手写说明书（`presets/agenia/说明.md:1` 与尾段自己写明），`LDG-04` 的依据面也点名它 ⇒ 它该存在，问题变成「它该承载多少 / 哪一块该独立」。再答「哪一块该独立」：按读者分块 —— ①「这是什么 / 怎么装」②岗位与作业书目录 ③注入面与记忆的边界 ④给维护者的改写规矩。每块写清「读者是谁 · 它的判据在哪一格 · 搬出去之后会不会多出第二个真相」；答不出判据的块**不许动**，**不许**按行数切成 N 份，也**不许**把它挪进 `team/`（那是注入面，它刻意不进提示词）。",
       "at": "2026-11-16T13:22:26+08:00"
+    },
+    {
+      "seq": 61,
+      "kind": "registered",
+      "id": "bug-20261116-31",
+      "entry_kind": "bug",
+      "phenomenon": "**SLA 积压：32 条 bug 超一个开工周期仍未评估**（最老 3 天，`bug-20261113-01…` 那批）。根因是**我们的记法跳了一步**：登记之后直接 `bug-dispose`（写 disposed 事件），**从不写 `assessed`** ⇒ 折叠出来的票有处置、没有评估，而 SLA 那格量的正是「有没有评估」。今天（11-16）那批新票同样没写 assessed，只是还没到周期。⇒ 这不是读数坏，是**台账少了一道手续**。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "ledger",
+        "process",
+        "P1"
+      ],
+      "how_seen": "2026-11-16 出卡时 `SLA_OVER_CYCLE` 红（`记忆更新报告-2026-11-16.xlsx` 的 `card.reasons`）",
+      "evidence": [
+        {
+          "kind": "cmd",
+          "ref": "daily-cards.py 读数",
+          "note": "超期 32 条 · 最老 3 天 · owed_by=test"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-route.mjs",
+          "note": "bug-dispose 不写 assessed"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T13:55:01+08:00"
+    },
+    {
+      "seq": 62,
+      "kind": "disposed",
+      "id": "bug-20261116-31",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P1 · 到期 2026-11-17 · 卡上红条只剩这一条；它指出的要么是判据口径、要么是台账手续，两者必须选一个。",
+        "by": "leader",
+        "at": "2026-11-16T13:55:01+08:00"
+      },
+      "due_at": "2026-11-17",
+      "owner": "组长 + 实现岗",
+      "next_step": "① **先判这条手续该不该有**：如果「处置即评估」是我们真在用的做法，那 SLA 该量 disposed 而不是 assessed（改判据）；如果评估该有，那就要补 32 条 assessed 并把「先 assess 再 dispose」写进 §五与派工卡；② 二选一不许两头空；③ 同批把「新票缺 assessed」在到期前清掉。",
+      "at": "2026-11-16T13:55:01+08:00"
     }
   ]
 }
