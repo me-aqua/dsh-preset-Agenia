@@ -43,11 +43,11 @@ export const BOOK_PRODUCT_ENTRIES = 5
 /** 缺陷册条数 —— **票数**，不是日文件数（`books.缺陷.entries`）。 */
 export const BOOK_BUG_ENTRIES = 194
 /** 构案册条数（`books.构案.entries`）。 */
-export const BOOK_SCHEME_ENTRIES = 11
+export const BOOK_SCHEME_ENTRIES = 12
 
 // ── 二、缺陷链的五组读数（`chain.bug.*`）────────────────────────────────────
 /** 有结论、且由**生效构案**兜底的票数。 */
-export const BUG_CLOSED_BY_SCHEME = 1
+export const BUG_CLOSED_BY_SCHEME = 2
 /** 有结论、由**判假**兜底的票数。 */
 export const BUG_CLOSED_JUDGED_FALSE = 0
 /** 有结论、由 `历史`（只由迁移写）兜底的票数。 */
