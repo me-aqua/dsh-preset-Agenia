@@ -709,9 +709,10 @@ def read_bug_book(ws):
       · `册坏` —— 册在盘上、折叠报了 `problems` / 读器拒了 / 两个读器读数对不上 ⇒ `E_BUG_BOOK_UNREADABLE`；
       · `读器不在` —— CLI / node 找不到，或读器不认这个根 / 这个 op ⇒ `E_BUG_READER_MISSING`。
 
-    🔴 为什么还要问一次 `--op fold`：`bug-read` 今天的折叠不把 `problems` 抛出来（另一张票
-       `bug-20261116-04` 在修），坏一天会让它**静默少报**。卡不能等那张票：折叠健康这一问是
-       「册坏」的唯一读面，`states` 还顺手给了一条和 `bug-read` 对账的读数。
+    🔴 为什么还要问一次 `--op fold`：`bug-read` 自己现在也会在折叠报问题时整份拒
+       （`E_BUG_BOOK_BROKEN`，票 `bug-20261116-04`），但先问折叠有两件事是它给不了的：
+       ① 「册坏」的**第一读数**（坏的是哪个日文件、折叠的原话）；② `states` 拿来和 `bug-read`
+       的条目数对账。两个读器都走同一个 `lib/缺陷折叠`，所以它们不会各说各的。
     """
     book_dir = bug_book_dir(ws)
     if not os.path.isdir(book_dir):
@@ -777,6 +778,8 @@ def read_bug_book(ws):
             return _empty_book_ledger(ws), {"state": "ok", "label": BUG_BOOK_LABEL_OK, "mode": "empty",
                                            "dir": book_dir, "states": 0,
                                            "reader": read_cli, "fold": fold_cli}
+        # 其余一律「册坏」：`E_BUG_BOOK_BROKEN`（折叠报问题 ⇒ 读面整份拒）也落这一格，
+        # 不是另一个失败类；`read_detail` 里带着日文件与折叠的原话，照原样进卡面消息。
         raise CardFailure(
             "E_BUG_BOOK_UNREADABLE",
             "%s：%s 在盘上但 `--op bug-read` 读不出来（%s · %s）—— 卡上有两格的形状是数，印 0 就是撒谎"

@@ -170,6 +170,12 @@ export const CODES = Object.freeze({
   E_DATA_EXISTS: { exit: 7, zh: '数据已存在（init 只在空根成功）' },
   E_DATA_MISSING: { exit: 7, zh: '数据不存在（不许返回一个像样的空结果）' },
   E_DATA_CORRUPT: { exit: 7, zh: '数据损坏（半截 JSON、字段缺失）' },
+  /**
+   * 三册缺陷册**折不起来**（`bug-20261116-04`）：某一天的文件坏了 / 折叠冲突 / 暂缓缺落地计划。
+   * 与 `E_DATA_CORRUPT` 分开：这个码的读面**整份拒**，`details` 带日文件、折叠的原话与
+   * 折叠前后的计数 —— 少报一天（157→139）比"读不到"更难发现，所以它必须是一个能点名日文件的码。
+   */
+  E_BUG_BOOK_BROKEN: { exit: 7, zh: '缺陷册折不起来（坏日文件 / 折叠冲突 / 暂缺落地计划）：读面整份拒，details 带日文件、折叠问题与前后计数' },
   E_ROUTE_MISSING: { exit: 7, zh: '路线文件不存在' },
   E_ROUTE_TAMPERED: { exit: 7, zh: '路线被外部改写（current 的 SHA 对不上审计末条）' },
   E_ROUTE_HALF_WRITTEN: { exit: 7, zh: '路线文件半写（原子写没走完）' },

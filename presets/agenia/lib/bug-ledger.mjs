@@ -587,6 +587,15 @@ export { bugBookPresent }
  * `reporter` / `source` / `tags` / `finding_refs`）；本函数从折叠出来的
  * `registered_payload` / `assessed_payload` 还原成一本书的形状 —— **只给读面用**，
  * 拿它回写等于把事件流洗成第二本账（写面另有唯一的追加入口）。
+ *
+ * 🔴 **`problems` 必须跟着台账一起交出去**（`bug-20261116-04`）：折叠坏一天时 `states` 只是
+ *    "好日子折出来的那部分"，把它当全量就是**静默少报**。`problems` 非空 ⇒ 这本书**不是**
+ *    一本可读的账 —— 读面要整份拒（`readBugLedger` 的 `E_BUG_BOOK_BROKEN`），
+ *    不许把 `ledger` 单独拿走当读数。
+ *
+ * @returns {{ledger:object, problems:Array<object>,
+ *            reading:{day_files:number, days_folded:number, events_folded:number}}}
+ *   `ledger` 的形状与旧读面一致；`problems` / `reading` 来自同一次折叠（见 `foldBugBook`）。
  */
 export function ledgerFromBugBook({ root, at = null } = {}) {
   const folded = foldBugBook({ root })
@@ -626,6 +635,49 @@ export function ledgerFromBugBook({ root, at = null } = {}) {
       folded: true,
     }
   })
-  return ledger
+  return { ledger, problems: folded.problems, reading: folded.reading }
+}
+
+/**
+ * 读面要用的条目清单（`bin/agenia-route.mjs::readBugLedger` 那一行调用）。
+ *
+ * 🔴 折叠报问题时**一份条目都不返回**：坏一天时 `ledger.entries` 只是"好日子折出来的那部分"，
+ *    放行就是少报（实测 157→139 且 exit 0，票 `bug-20261116-04`）。拒绝码 `E_BUG_BOOK_BROKEN`，
+ *    `details` 带：哪个日文件、折叠的原话（完整 `problems`）、盘上/折进去的日文件数、
+ *    折叠出来的条目数与归档剔除后"本来会印"的条目数 —— **少报多少要看得见**。
+ *
+ * 为什么这一段住在库里而不是 CLI 里：`bin/agenia-route.mjs` 是存量超长件
+ * （`bug-20261116-19` 冻在 2231 行，存量只许缩），读面那一侧只留一行调用；
+ * "坏一天算什么"是这本书的口径，住在这里两个读面才不会各写一份。
+ *
+ * @param {{folded:{ledger:object, problems:Array<object>, reading:object},
+ *          archivedIds:Set<string>, bookDir:string}} input
+ * @returns {Array<object>} 可读的条目（已剔掉归档）
+ */
+export function bugEntriesForRead({ folded, archivedIds, bookDir }) {
+  const problems = Array.isArray(folded?.problems) ? folded.problems : []
+  const all = Array.isArray(folded?.ledger?.entries) ? folded.ledger.entries : []
+  const visible = all.filter((e) => !archivedIds.has(e?.id))
+  if (problems.length === 0) return visible
+  // "哪个日文件"：折叠的问题点名的那些（冲突类问题没有 file，它点名的是 id 与两个 seq）。
+  const files = [...new Set(problems.map((p) => (typeof p?.file === 'string' && p.file !== '' ? p.file : null)).filter((f) => f !== null))]
+  const reading = folded?.reading ?? {}
+  const dayFiles = Number.isInteger(reading.day_files) ? reading.day_files : null
+  const daysFolded = Number.isInteger(reading.days_folded) ? reading.days_folded : null
+  const lost = dayFiles !== null && daysFolded !== null ? dayFiles - daysFolded : null
+  const shown = problems.slice(0, 5).map((p) => `${p?.code ?? 'BUG-EVENT-SHAPE'}${p?.file ? ` ${p.file}` : ''}: ${p?.message ?? ''}`)
+  const more = problems.length > shown.length ? ` · …还有 ${problems.length - shown.length} 条（完整清单在 error.details.problems）` : ''
+  const err = new Error(
+    `缺陷册折不起来（${bookDir}）：盘上 ${dayFiles ?? '?'} 个日文件，折进去 ${daysFolded ?? '?'} 个`
+    + `（丢 ${lost ?? '?'} 个${files.length > 0 ? `：${files.join(' / ')}` : ''}）—— `
+    + `读面若放行只能看见 ${visible.length} 条，这不是全量（折叠 ${all.length} 条 · 归档剔掉 ${all.length - visible.length} 条）。`
+    + `折叠说：${shown.join(' · ')}${more}`,
+  )
+  err.code = 'E_BUG_BOOK_BROKEN'
+  err.details = {
+    book_dir: bookDir, day_files: dayFiles, days_folded: daysFolded, day_files_lost: lost, files,
+    entries_folded: all.length, entries_visible: visible.length, problems,
+  }
+  throw err
 }
 // 依据: 0009

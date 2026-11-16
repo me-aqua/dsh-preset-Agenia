@@ -154,7 +154,13 @@ export function readDayFiles({ root }) {
 /**
  * 折叠缺陷册（契约 §4.1）—— **唯一实现**。
  *
- * @returns {{ok:boolean, states:Array<object>, problems:Array<object>}}
+ * `states` = 折出来的现状；`problems` = 折叠发现的每一处问题（**坏一天也在这里**，不是跳过）。
+ * `reading` = 这一次读的**面**：盘上几个日文件、折进去几个、折进多少事件 —— 读面拒绝时要把
+ * 「丢了多少」印出来（`bug-20261116-04`）。它与 `states` 出自**同一次** `readDayFiles`：
+ * 拒绝的报文里另外再读一遍目录，同一个数就会有两个来源（两次读之间册还会变）。
+ *
+ * @returns {{ok:boolean, states:Array<object>, problems:Array<object>,
+ *            reading:{day_files:number, days_folded:number, events_folded:number}}}
  */
 export function foldBugBook({ root }) {
   const read = readDayFiles({ root })
@@ -298,7 +304,12 @@ export function foldBugBook({ root }) {
   const states = [...byId.values()]
     .map(({ last_disposed_seq: _drop, ...rest }) => rest)
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-  return { ok: problems.length === 0, states, problems }
+  return {
+    ok: problems.length === 0,
+    states,
+    problems,
+    reading: { day_files: read.files.length, days_folded: read.dayEvents.length, events_folded: read.events },
+  }
 }
 
 /** 有没有缺陷册（`账本/缺陷/` 在不在）—— 迁移没做完的工区靠它答。 */

@@ -112,11 +112,12 @@ function dayOfPath(file) {
 const REASON_SUFFIX = Object.freeze({ missing: 'MISSING', unreadable: 'UNREADABLE', schema: 'SCHEMA' })
 
 /** 一条源的诊断报警（`route` / `bug` / `local` / `update` 共用这一处）。 */
-function sourceAlert(source, reason) {
+function sourceAlert(source, reason, detail = null) {
   const suffix = REASON_SUFFIX[reason]
   if (suffix === undefined) return null
   const code = `DASH-SOURCE-${suffix}:${source}`
-  return Object.freeze({ code, message: `${source} 这一份源读不到（${reason}）` })
+  const tail = typeof detail === 'string' && detail !== '' ? ` —— ${detail}` : ''
+  return Object.freeze({ code, message: `${source} 这一份源读不到（${reason}）${tail}` })
 }
 
 // ── 读源（唯一一处读盘）───────────────────────────────────────────────────
@@ -125,7 +126,8 @@ function sourceAlert(source, reason) {
  *
  * @param {string} key   `route` / `bug` / `local` / `update`
  * @param {string|null|undefined} file
- * @returns {{key:string, file:string|null, ok:boolean, reason:string, value:object|null}}
+ * @returns {{key:string, file:string|null, ok:boolean, reason:string, value:object|null, detail?:string}}
+ *   `detail` 只在"源在盘上、但读不出全量"时给（缺陷册折叠报问题）：报警行把原因印出来。
  */
 function readSource(key, file) {
   const at = typeof file === 'string' && file !== '' ? file : null
@@ -135,11 +137,24 @@ function readSource(key, file) {
    * 缺陷那一份源现在是**一本册**（`账本/缺陷/`，一天一个事件流），不是一份 JSON 文件。
    * 目录 ⇒ 走唯一的折叠实现（`lib/缺陷折叠.mjs`，经 `ledgerFromBugBook` 还原成台账形状），
    * 与 `bug-read` 读到的是同一份现状；文件 ⇒ 旧工区的只读登记簿，行为不变。
+   *
+   * 🔴 折叠报问题时**这一格读不到**（`ok:false` + `unreadable`）：坏一天时折出来的条目只是
+   *    "好日子那部分"，拿它算 `bug_open` 就是少报（`bug-20261116-04`）。报警里点名日文件与
+   *    放行会看见的条目数 —— 读不到是一个诊断，不许印成一个看起来合理的数。
    */
   try {
     if (key === 'bug' && statSync(at).isDirectory()) {
       const root = path.dirname(path.dirname(at))
-      return { key, file: at, ok: true, reason: 'ok', value: ledgerFromBugBook({ root }) }
+      const folded = ledgerFromBugBook({ root })
+      if (folded.problems.length > 0) {
+        const files = [...new Set(folded.problems
+          .map((p) => (typeof p?.file === 'string' && p.file !== '' ? p.file : null))
+          .filter((f) => f !== null))]
+        const detail = `折叠报 ${folded.problems.length} 个问题${files.length > 0 ? `（${files.join(' / ')}）` : ''}`
+          + `：放行只能看见 ${folded.ledger.entries.length} 条，不是全量`
+        return { key, file: at, ok: false, reason: 'unreadable', value: null, detail }
+      }
+      return { key, file: at, ok: true, reason: 'ok', value: folded.ledger }
     }
   } catch {
     return { key, file: at, ok: false, reason: 'unreadable', value: null }
@@ -324,7 +339,7 @@ export function dashboardOf(input) {
   const ticketList = routeOk && Array.isArray(route.value.tickets) ? route.value.tickets : []
   const ticketOpen = routeOk ? ticketList.filter((ticket) => ticketStatusOf(ticket, tasks) === 'open').length : null
   const bugOpen = bugOk ? openCounts(bug.value).bug_open : null
-  if (!bugOk) push(sourceAlert('bug', bug.reason))
+  if (!bugOk) push(sourceAlert('bug', bug.reason, bug.detail ?? null))
   const receipts = localOk ? receiptsOf(local.value) : { missing: null, broken: [] }
   if (!localOk) push(sourceAlert('local', local.reason))
   else if (receipts.broken.length > 0) {

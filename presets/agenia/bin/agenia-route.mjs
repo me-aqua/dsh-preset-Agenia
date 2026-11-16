@@ -1377,13 +1377,13 @@ function withBugLock(ctx, fn) {
 }
 
 /**
- * 读 bug 登记簿：**缺**（`E_DATA_MISSING`）与**坏**（`E_DATA_CORRUPT`）分得开。
+ * 读 bug 登记簿：**缺**（`E_DATA_MISSING`）与**坏**（`E_BUG_BOOK_BROKEN` / `E_DATA_CORRUPT`）分得开。
  *
  * 两种模式（写面与读面共用同一处判定）：
  *   · **三册模式**（`账本/缺陷/` 在）：条目 = `lib/缺陷折叠.mjs` 折出来的现状
  *     （`registered_payload` 里的 `how_seen` / `evidence` / `recipe` / `batch` 一并还原）；
  *     外壳（tasks / batches / samples / archived）从 `control.json`（迁移窗口回落旧 `ledger.json`）读。
- *     **旧 `ledger.json` 的 `entries` 段不读** —— 它只是归档。
+ *     **旧 `ledger.json` 的 `entries` 段不读** —— 它只是归档；折叠报问题 ⇒ 条目整份拒（`B.bugEntriesForRead`）。
  *   · **旧工区**（没有 `账本/缺陷/`）：仍读 `.team/bug/ledger.json` —— 迁移没做完的工区还能干活，
  *     但一旦 `账本/缺陷/` 建好，写面就只追事件流（见 `appendBugEvent`）。
  */
@@ -1393,7 +1393,7 @@ function readBugLedger(ctx, { required = true } = {}) {
     const folded = B.ledgerFromBugBook({ root: bugBookRoot(ctx) })
     const control = readBugControl(ctx)
     const archivedIds = new Set(control.archived.map((e) => e?.id).filter((id) => typeof id === 'string' && id !== ''))
-    const entries = folded.entries.filter((e) => !archivedIds.has(e.id))
+    const entries = B.bugEntriesForRead({ folded, archivedIds, bookDir: path.join(bugBookRoot(ctx), '账本', '缺陷') })
     if (entries.length > 0 || !existsSync(file)) {
       if (entries.length === 0 && !existsSync(file) && required) {
         throw cliError(
@@ -1403,7 +1403,7 @@ function readBugLedger(ctx, { required = true } = {}) {
         )
       }
       return {
-        ...folded,
+        ...folded.ledger,
         entries,
         tasks: control.tasks,
         batches: control.batches,
