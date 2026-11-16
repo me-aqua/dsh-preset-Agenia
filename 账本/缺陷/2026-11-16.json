@@ -1574,6 +1574,34 @@
       "owner": "实现岗",
       "next_step": "查清那 2 个多出来的 `registered` 是谁（大概率是 `-06` 的重开 + 一次迁移重登），然后**让读数把这层说清**：`registered` 事件数 ≠ 票数，票数按 id 去重 —— 读数行同批印这两个数。",
       "at": "2026-11-16T14:03:56+08:00"
+    },
+    {
+      "seq": 69,
+      "kind": "registered",
+      "id": "bug-20261116-35",
+      "entry_kind": "bug",
+      "phenomenon": "**测试侧契约还写着旧口径，与新实现相反**（`-05` 修完之后没同批改契约）：`.team/test/CONTRACT-C2.md:256` 仍写「ledger 不在 ⇒ `bug.open=0`」，`:688` 仍写「卡读 bug 的 `ledger.json`」。新政策是「**空册 = 0（读出来的）/ 缺册 = 红（不生成卡）**」，而契约两处说的正好相反。⇒ 下一轮谁拿这份契约去判卡，会把「缺册必须红」判成「缺册就是 0」。",
+      "reporter": "实现岗",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "contract",
+        "P2"
+      ],
+      "how_seen": "2026-11-16 `-05` 实现岗自报（`.team/dev/2026-11-16/_evidence/bug05/README.md` · caveat 3）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/CONTRACT-C2.md",
+          "note": ":256 / :688"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T14:29:11+08:00"
     }
   ]
 }

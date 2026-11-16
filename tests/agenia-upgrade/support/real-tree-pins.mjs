@@ -40,7 +40,7 @@ export const PIN_FROZEN = {
 /** 产品册条数（`check --json` 的 `books.产品.entries`）。 */
 export const BOOK_PRODUCT_ENTRIES = 5
 /** 缺陷册条数 —— **票数**，不是日文件数（`books.缺陷.entries`）。 */
-export const BOOK_BUG_ENTRIES = 190
+export const BOOK_BUG_ENTRIES = 191
 /** 构案册条数（`books.构案.entries`）。 */
 export const BOOK_SCHEME_ENTRIES = 11
 
@@ -200,3 +200,5 @@ export function pinLedgerProblems() {
 // 2026-11-16 14:0x 组长重钉：+1 ug-20261116-31（SLA 积压 32 条，台账少了一道评估手续）
 
 // 2026-11-16 14:1x 组长重钉：+3（0016 r2 评审的 N-2 / M-3 收窄 / 188-186 计数）
+
+// 2026-11-16 14:3x 组长重钉：+1（-35 CONTRACT-C2 契约漂移）
