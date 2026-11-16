@@ -12,7 +12,7 @@
 //    已被新版替换。这一版盯的是新结构 —— 见 presets/agenia/ 与 README.md「文件」一节。
 
 import { createHash } from 'node:crypto'
-import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, statSync, lstatSync } from 'node:fs'
 import { join, dirname, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
@@ -1941,15 +1941,22 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     const walk = (dir) => {
       for (const e of readdirSync(dir, { withFileTypes: true })) {
         const p = join(dir, e.name)
-        if (e.isDirectory()) walk(p)
-        else if (statSync(p).mtimeMs < cutoff) staleTmp.push(relative(REPO, p).replaceAll('\\', '/'))
+        if (e.isDirectory()) { walk(p); continue }
+        if (e.isSymbolicLink()) continue // 断链 / 目录联接：不跟、也不算过期
+        let st
+        try { st = lstatSync(p) } catch { continue } // 被删 / 无权限：跳过，不许让整份体检崩
+        if (st.mtimeMs < cutoff) staleTmp.push(relative(REPO, p).replaceAll('\\', '/'))
       }
     }
     walk(join(REPO, '_tmp'))
   }
-  yes('repo', '_tmp/ 里没有超过 7 天的文件（临时根要保鲜）', staleTmp.length === 0,
-    staleTmp.length === 0 ? '保鲜期内的文件：' + (existsSync(join(REPO, '_tmp')) ? '有（未过期）' : '无')
-      : `过期文件 ${staleTmp.length} 个：${staleTmp.slice(0, 5).join(', ')} —— 清掉`)
+  // 🔴 2026-11-16：**退红腿、留读数**（技术评审 11-15 F6 / 票 bug-20261116-07）。
+  //    为什么不能判红：这一条按**文件 mtime** 说过期，而 mtime 会被「拷进来的夹具树」继承
+  //    （实测 `_tmp/g3r8-tree-…` 一次带进 1411 个「过期」文件，全是副本）⇒ 它分不清
+  //    「有人忘了清」和「拷进来的旧文件」，翻不了面。翻不了面的判据不配叫判据（mig-rules-11）。
+  //    保留的腿：**读数**（印最老几天 / 过期几个 / 谁在用）—— 人看见就知道该清哪个。
+  console.log(`  · repo / _tmp/ 保鲜读数（不判红）：过期 ${staleTmp.length} 个` +
+    (staleTmp.length > 0 ? ` · 最老的一批：${staleTmp.slice(0, 3).join(', ')}` : ' · 干净'))
   const stray = readdirSync(REPO).filter((n) => !allowed.has(n))
   yes('repo', '仓库根只许出现白名单里的条目（临时文件当场红）', stray.length === 0,
     stray.length === 0 ? `白名单 ${allowed.size} 项，干净` : `多出来：${stray.join(', ')} —— 删掉，或者加进 check-notes.mjs 的白名单`)

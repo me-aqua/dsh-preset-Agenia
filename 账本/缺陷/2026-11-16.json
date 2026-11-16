@@ -1,0 +1,760 @@
+{
+  "schema": 1,
+  "day": "2026-11-16",
+  "events": [
+    {
+      "seq": 1,
+      "kind": "registered",
+      "id": "bug-20261116-01",
+      "entry_kind": "bug",
+      "phenomenon": "**`candidates-freeze` 吃整池，而判决只该喂「未判的」**：2026-11-16 我按「池子里所有 id」冻结了 **184** 个候选，而 `judge-pending` 显示真正 pending 的只有 **36** —— 其余 148 个在 11-12…11-15 早已判过（132 收 / 16 拒），池子自 11-11 起没归档。若照 184 提交，会给 132 个**条目还活着**的候选写 `rejected` 行。判决岗发现并用受控 op 把冻结收窄到 36（generation CAS，real-mode audit seq 1932），没有重判那 148 个。⇒ 这是**流程层的假数据风险**：错不在池子没归档（那是独立问题），错在「谁该喂判决」没有从 `judge-pending` 派生。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "memory-chain",
+        "gate",
+        "P1"
+      ],
+      "how_seen": "2026-11-16 判决岗 2026-11-16-g1-a1 自报（`.team/memory-judge/2026-11-16/report.md`）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-brain.mjs",
+          "note": "candidates-freeze 只校验数组非空，不核 pending"
+        },
+        {
+          "kind": "cmd",
+          "ref": "judge-pending",
+          "note": "pending_ids 36 vs pool 184"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:00:07+08:00"
+    },
+    {
+      "seq": 2,
+      "kind": "disposed",
+      "id": "bug-20261116-01",
+      "disposition": {
+        "value": "deferred",
+        "reason": "到期 2026-11-17（P1）· 这是「闸吃错输入」的一族：读数会绿（36 判完了），但另外 148 个被静默卷进来。",
+        "by": "leader",
+        "at": "2026-11-16T11:00:07+08:00"
+      },
+      "due_at": "2026-11-17",
+      "owner": "实现岗 + 测试岗",
+      "next_step": "① `candidates-freeze` 接一个 `--pending-only`（或默认）从 `judge-pending` 的 `pending_ids` 派生，不再吃整池；② 冻结时**同批印**「池子 N / pending M / 冻结 M」三格读数，让两个数不再互相冒充；③ 加刀：喂一个含已判 id 的池子 ⇒ 拒或自动收窄，并点名被排除的 id；④ 顺带开一条独立票：池子按天归档（自 11-11 停了）。",
+      "at": "2026-11-16T11:00:07+08:00"
+    },
+    {
+      "seq": 3,
+      "kind": "registered",
+      "id": "bug-20261116-02",
+      "entry_kind": "bug",
+      "phenomenon": "**暂缓的过期闸被调用方给的链格整段短路**：`judgeBugChain` 先按派生出的 `chain.kind` 分支、legacy / judged_false / scheme 三种直接 `continue`，**根本走不到** deferred 过期规则（`决议-ledger.mjs:1740-1781`）；而 `bug-dispose` 对任何 disposition 都收 `构案`/`判假`/`历史`（`agenia-route.mjs:1762-1771`）。实测：新票 → `{deferred, due_at 2026-11-01, 判假}` exit 0；`决议-check --today=2030-01-01` **exit 0 / 0 problems**。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P1",
+        "F1"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F1 P1）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/决议-ledger.mjs",
+          "note": ":1740-1781"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-route.mjs",
+          "note": ":1762-1771"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:35+08:00"
+    },
+    {
+      "seq": 4,
+      "kind": "disposed",
+      "id": "bug-20261116-02",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P1 · 到期 2026-11-16 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:35+08:00"
+      },
+      "due_at": "2026-11-16",
+      "owner": "实现岗 + 测试岗",
+      "next_step": "① 判序改成**先判 deferred 过期、再看 chain.kind**（过期条件不许被任何一格短路）；② `bug-dispose` 只在**非 deferred** 的处置上收 `构案/判假/历史`（`历史` 那一半由 `-06` 删分支，本条只补 判假/构案 两格）；③ 两把刀：deferred+判假+超期 ⇒ 红；deferred+合法构案+超期 ⇒ 红。",
+      "at": "2026-11-16T11:17:35+08:00"
+    },
+    {
+      "seq": 5,
+      "kind": "registered",
+      "id": "bug-20261116-03",
+      "entry_kind": "bug",
+      "phenomenon": "**迁移票仍能被合法 `bug-assess`**：`opBugAssess` 既不拒 legacy 也不拒已处置（`agenia-route.mjs:1573-1611`）。实测（真 12 个日文件 + 真档案）：基线对账 `153/4/0/0`；对 `bug-20261103-01` 做一次合法 assess ⇒ 下一次对账 **exit 1**：`FOLD-DIFF assessed.at` + `FOLD-FIELD-MISSING assessed.line_decision`。`check` 照旧绿（它不跑对账）。⇒ 合法动作被误报成「档案丢字段」。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P1",
+        "F2"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F2 P1）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-route.mjs",
+          "note": ":1573-1611"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:35+08:00"
+    },
+    {
+      "seq": 6,
+      "kind": "disposed",
+      "id": "bug-20261116-03",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P1 · 到期 2026-11-17 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:35+08:00"
+      },
+      "due_at": "2026-11-17",
+      "owner": "实现岗 + 测试岗",
+      "next_step": "与 `bug-reopen` 同族：写入口对 `chain.kind==='legacy'` 拒，具名码 `E_BUG_ASSESS_LEGACY`（抢锁前判、零写入）；刀：legacy 票 assess ⇒ 拒；迁移后的票 assess ⇒ 成功且对账仍 `diffs 0`。",
+      "at": "2026-11-16T11:17:35+08:00"
+    },
+    {
+      "seq": 7,
+      "kind": "registered",
+      "id": "bug-20261116-04",
+      "entry_kind": "bug",
+      "phenomenon": "**读面把折叠的问题丢掉**：坏一天 ⇒ `bug-read` / 看板 / 卡片**静默少报**（实测 157→139，退出码 0）。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P2",
+        "F3"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F3 P2）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/bug-ledger.mjs",
+          "note": "ledgerFromBugBook"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:35+08:00"
+    },
+    {
+      "seq": 8,
+      "kind": "disposed",
+      "id": "bug-20261116-04",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P2 · 到期 2026-11-18 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:35+08:00"
+      },
+      "due_at": "2026-11-18",
+      "owner": "实现岗",
+      "next_step": "`ledgerFromBugBook` 返回 `problems`；`readBugLedger` 见非空即拒 `E_BUG_BOOK_BROKEN`；刀：坏一天 ⇒ 读面红而不是少报。",
+      "at": "2026-11-16T11:17:35+08:00"
+    },
+    {
+      "seq": 9,
+      "kind": "registered",
+      "id": "bug-20261116-05",
+      "entry_kind": "bug",
+      "phenomenon": "🔴 **每天给你的那张卡的第一读者还读着已经搬走的 `.team/bug/ledger.json`**：`daily-cards.py` 的 `absent` 分支**印 0 不报错**（而同一份文件里明明写着「印 0 是撒谎」）。⇒ 卡片会显示「0 条缺陷」，而真实是 157 条。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P1",
+        "F4"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F4 P1）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/daily-cards.py",
+          "note": "absent 分支"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:35+08:00"
+    },
+    {
+      "seq": 10,
+      "kind": "disposed",
+      "id": "bug-20261116-05",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P1 · 到期 2026-11-16 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:36+08:00"
+      },
+      "due_at": "2026-11-16",
+      "owner": "测试岗 + 实现岗",
+      "next_step": "改读三册（`--op bug-read` / `--op fold`）；读不到 ⇒ 红，不许印 0；卡片测试补一个「三册夹具」（现在没有任何卡测试会造册）。",
+      "at": "2026-11-16T11:17:36+08:00"
+    },
+    {
+      "seq": 11,
+      "kind": "registered",
+      "id": "bug-20261116-06",
+      "entry_kind": "bug",
+      "phenomenon": "**分发的规则文档里有两句假话**：`决策账本.md:58` 仍把 `.team/bug/ledger.json` 当写面；`:25` 的「只有 `--op index` 写页」被 `census --write-index` 反证；而 LDG-09 只钉「文件在且 ≥200 字」。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P2",
+        "F5"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F5 P2）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/决策账本.md",
+          "note": ":25 / :58"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:36+08:00"
+    },
+    {
+      "seq": 12,
+      "kind": "disposed",
+      "id": "bug-20261116-06",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P2 · 到期 2026-11-18 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:36+08:00"
+      },
+      "due_at": "2026-11-18",
+      "owner": "组长（文档）+ 测试岗",
+      "next_step": "改那两句 + 加一条内容腿：文档里 `.team/bug/ledger.json` 作为**写面**零命中、工具清单含 `census --write-index`。",
+      "at": "2026-11-16T11:17:36+08:00"
+    },
+    {
+      "seq": 13,
+      "kind": "registered",
+      "id": "bug-20261116-07",
+      "entry_kind": "bug",
+      "phenomenon": "🔴 **我自己加的 `_tmp` 保鲜期是一颗按别人的 mtime 引爆的定时红**：最老的 `_tmp` 是 2026-11-11 12:30 ⇒ **2026-11-18 12:30 它会自己红**，没人改代码。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P2",
+        "F6"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F6 P2）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".tools/check-notes.mjs",
+          "note": ":1937-1952"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:36+08:00"
+    },
+    {
+      "seq": 14,
+      "kind": "disposed",
+      "id": "bug-20261116-07",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P2 · 到期 2026-11-17 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:36+08:00"
+      },
+      "due_at": "2026-11-17",
+      "owner": "组长（量具）+ 测试岗",
+      "next_step": "二选一写清：**改成读数**（印「最老 N 天」，超期只出声不判红），或**按目录名 `_tmp/<用途>-<日期>` 判过期**（不按文件 mtime，别人拷进来的文件不会引爆）；同时把阈值与「谁清」写进 body。",
+      "at": "2026-11-16T11:17:36+08:00"
+    },
+    {
+      "seq": 15,
+      "kind": "registered",
+      "id": "bug-20261116-08",
+      "entry_kind": "bug",
+      "phenomenon": "**事件流的「一天」是本地日历日，不是全项目那个 04:00 切点**；00:00–04:00 之间没有刀。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P2",
+        "F7"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F7 P2）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-route.mjs",
+          "note": "日文件名"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:36+08:00"
+    },
+    {
+      "seq": 16,
+      "kind": "disposed",
+      "id": "bug-20261116-08",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P2 · 到期 2026-11-19 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:36+08:00"
+      },
+      "due_at": "2026-11-19",
+      "owner": "实现岗",
+      "next_step": "写入口用 `dayKeyOf(at)`（或契约写清「事件 at 与文件名日可不同」），并补一条 00:00–04:00 的边界刀。",
+      "at": "2026-11-16T11:17:36+08:00"
+    },
+    {
+      "seq": 17,
+      "kind": "registered",
+      "id": "bug-20261116-09",
+      "entry_kind": "bug",
+      "phenomenon": "**census 的允许清单 / 形状扫描问题是死输出**：工具输出里看不见，判据只在测试自己的副本里活着。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P3",
+        "F9"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F9 P3）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/census.mjs",
+          "note": "problems 无读者"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:36+08:00"
+    },
+    {
+      "seq": 18,
+      "kind": "disposed",
+      "id": "bug-20261116-09",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P3 · 到期 2026-11-19 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:36+08:00"
+      },
+      "due_at": "2026-11-19",
+      "owner": "实现岗",
+      "next_step": "census 行里带 `problems`，或把三类 append 进 `problems[]`；`check` 信封补一格。",
+      "at": "2026-11-16T11:17:36+08:00"
+    },
+    {
+      "seq": 19,
+      "kind": "registered",
+      "id": "bug-20261116-10",
+      "entry_kind": "bug",
+      "phenomenon": "**`card-land` 的读数写着一件代码不做的事**：「同名顺延 -2/-3」而代码是 `LAND-EXISTS` 拒。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P3",
+        "F10"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F10 P3）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/决议-check.mjs",
+          "note": ":741-745"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:36+08:00"
+    },
+    {
+      "seq": 20,
+      "kind": "disposed",
+      "id": "bug-20261116-10",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P3 · 到期 2026-11-19 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:37+08:00"
+      },
+      "due_at": "2026-11-19",
+      "owner": "实现岗",
+      "next_step": "两行读数串改成「冲突 ⇒ LAND-EXISTS，永不覆盖」。",
+      "at": "2026-11-16T11:17:37+08:00"
+    },
+    {
+      "seq": 21,
+      "kind": "registered",
+      "id": "bug-20261116-11",
+      "entry_kind": "bug",
+      "phenomenon": "**同一概念多份 / 死代码**：`dayShapeOk` 与 `isRealDate` 逐字同体、日期校验四份、`posix`/`listDir` 两份、死导出。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P3",
+        "F11"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F11 P3）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/决议-check.mjs",
+          "note": ":660-664"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:37+08:00"
+    },
+    {
+      "seq": 22,
+      "kind": "disposed",
+      "id": "bug-20261116-11",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P3 · 到期 2026-11-20 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:37+08:00"
+      },
+      "due_at": "2026-11-20",
+      "owner": "实现岗",
+      "next_step": "按评审给的逐项清单收成单一来源（改 import），删死导出；刀：加第二份同体函数 ⇒ 红。",
+      "at": "2026-11-16T11:17:37+08:00"
+    },
+    {
+      "seq": 23,
+      "kind": "registered",
+      "id": "bug-20261116-12",
+      "entry_kind": "bug",
+      "phenomenon": "**9 个读方的普查读数是假的**：名单里一条已删路径、dashboard 的 wired 是**注释**冒充 import。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P3",
+        "F12"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F12 P3）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/*.mjs",
+          "note": "读方普查"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:37+08:00"
+    },
+    {
+      "seq": 24,
+      "kind": "disposed",
+      "id": "bug-20261116-12",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P3 · 到期 2026-11-19 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:37+08:00"
+      },
+      "due_at": "2026-11-19",
+      "owner": "测试岗",
+      "next_step": "路径改到新家；`wired` 改成「剥注释后的 import」或 `--op fold`；present 的 8/3 重新量。",
+      "at": "2026-11-16T11:17:37+08:00"
+    },
+    {
+      "seq": 25,
+      "kind": "registered",
+      "id": "bug-20261116-13",
+      "entry_kind": "bug",
+      "phenomenon": "**迁移后的旧壳还留在运行时产物 / 注释里**：`install.mjs:761` 的 `approved_by` 指死路径；约 10 处注释指 `.tools` 与 `决议/`。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P3",
+        "F13"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F13 P3）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/install.mjs",
+          "note": ":761"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:37+08:00"
+    },
+    {
+      "seq": 26,
+      "kind": "disposed",
+      "id": "bug-20261116-13",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P3 · 到期 2026-11-20 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:37+08:00"
+      },
+      "due_at": "2026-11-20",
+      "owner": "实现岗",
+      "next_step": "注释按「只描述当下」删/改；`install.mjs:761` 一处字符串改成 `账本/构案/0006-原子写归一.md`。",
+      "at": "2026-11-16T11:17:37+08:00"
+    },
+    {
+      "seq": 27,
+      "kind": "registered",
+      "id": "bug-20261116-14",
+      "entry_kind": "bug",
+      "phenomenon": "**单文件三域**：`决议-ledger.mjs` 实测 **103,263 B / 1,972 行**（引用的「82 KB」是旧数）。",
+      "reporter": "技术评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P3",
+        "F14"
+      ],
+      "how_seen": "2026-11-16 技术评审 2026-11-15（`.team/technical-review/2026-11-15/技术评审.findings.json` · F14 P3）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/决议-ledger.mjs",
+          "note": "1972 行"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:17:37+08:00"
+    },
+    {
+      "seq": 28,
+      "kind": "disposed",
+      "id": "bug-20261116-14",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P3 · 到期 2026-11-20 · 处置：见 next_step。评审给的删除可行性已抄进票面。",
+        "by": "leader",
+        "at": "2026-11-16T11:17:37+08:00"
+      },
+      "due_at": "2026-11-20",
+      "owner": "实现岗",
+      "next_step": "下一票拆三域：`concept-census.mjs` / `decision-books.mjs` / `chain.mjs`；拆前先补「同概念只有一处」的形状刀。",
+      "at": "2026-11-16T11:17:37+08:00"
+    },
+    {
+      "seq": 29,
+      "kind": "registered",
+      "id": "bug-20261116-15",
+      "entry_kind": "bug",
+      "phenomenon": "**自我更正只活在 log 里，没进它的载体**：`131858-review.md:7` 仍写受审对象 `56b893d`（log 已更正是 `5626412`）；`182151-dev.md:37` 仍写「`tests/**` 零字节」；三份「窄对账面」的载体也没改。另：制度里「每个代码文件」被写窄成「生产 `.mjs` + 说明书」——`tests/**` 既不在要求面也不在豁免名单里。",
+      "reporter": "会话评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P2",
+        "CR-08+CR-09"
+      ],
+      "how_seen": "2026-11-16 会话评审 2026-11-15（`.team/conversation-review/2026-11-15/会话评审.md` · CR-08+CR-09）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/leader/2026-11-15/cards/131858-review.md",
+          "note": ":7"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/决策账本.md",
+          "note": ":37 / :39"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:19:08+08:00"
+    },
+    {
+      "seq": 30,
+      "kind": "disposed",
+      "id": "bug-20261116-15",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P2 · 到期 2026-11-17",
+        "by": "leader",
+        "at": "2026-11-16T11:19:08+08:00"
+      },
+      "due_at": "2026-11-17",
+      "owner": "组长（卡片载体）+ 测试岗",
+      "next_step": "① 卡是历史产物、不许改：改成在卡尾追加一行「更正：受审对象=5626412（见 11-15 log）」；② 制度里把 `tests/**` 明确写进「不要依据」或「要依据」二选一（我判：`tests/**` **要**，因为它也在守判据）；③ 三份窄对账面按实际改（今天已由 r4 的七字段 / 四类键取代）。",
+      "at": "2026-11-16T11:19:08+08:00"
+    },
+    {
+      "seq": 31,
+      "kind": "registered",
+      "id": "bug-20261116-16",
+      "entry_kind": "bug",
+      "phenomenon": "**旧壳还在引用与记录里**：旧的 `决议/` 树已不存在，而 `173731-test.md:6` 仍指 `决议/构案/0012-…`；**没有 `决议/→账本/` 的对照表**；另外会话包的排除记录只有散文 —— payload 里 `excluded_session_ids: []`、manifest `excluded: []`，而 22 条源全标了 `human: true`（派工卡也是 `source.kind==='user'`）⇒「只取人话」那个过滤器其实**不会**排除它们，19 行是手工点名一条源的结果。",
+      "reporter": "会话评审",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P3",
+        "CR-12+CR-06"
+      ],
+      "how_seen": "2026-11-16 会话评审 2026-11-15（`.team/conversation-review/2026-11-15/会话评审.md` · CR-12+CR-06）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/leader/2026-11-16/_packet_1115_main.json",
+          "note": "excluded 为空"
+        },
+        {
+          "kind": "file",
+          "ref": ".team/leader/2026-11-15/cards/173731-test.md",
+          "note": ":6"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T11:19:08+08:00"
+    },
+    {
+      "seq": 32,
+      "kind": "disposed",
+      "id": "bug-20261116-16",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P3 · 到期 2026-11-18",
+        "by": "leader",
+        "at": "2026-11-16T11:19:08+08:00"
+      },
+      "due_at": "2026-11-18",
+      "owner": "实现岗 + 测试岗",
+      "next_step": "① `session-packet` 的 payload 加机读的 `excluded: [{session_id, reason}]`（不许只靠 note）；② 出一份 `决议/→账本/` 对照表进 `账本/`（老卡片的指针能解析）；③ 老卡尾追加更正行（同上一票的形状）。",
+      "at": "2026-11-16T11:19:08+08:00"
+    },
+    {
+      "seq": 33,
+      "kind": "registered",
+      "id": "bug-20261115-06",
+      "entry_kind": "bug",
+      "phenomenon": "**`bug-dispose` 仍接受调用方传 `历史` ⇒ 新票可以自封 legacy，绕过刚加固的两道闸**：`agenia-route.mjs:1707-1716` 把调用方给的 `历史` 原样写进 disposed 事件；一条新 `deferred` + `历史: \"deferred\"` 会变成 `chain.kind='legacy'`，从而**跳过 `DEFERRED-NO-LANDING-PLAN`（缺 due_at/owner/next_step 也不红）与 `CHAIN-BUG-DEFERRED-OVERDUE`（过期不红）**，`check` 照样绿 —— 只有 Harness 测试的 `legacy_disposed === 153` 会响，而那是按条数、不是按语义。⇒ 我 23:1x 加固的「deferred 必须有落地计划」在**写入口**上是可绕过的。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "ledger",
+        "bypass",
+        "P1"
+      ],
+      "how_seen": "2026-11-15 第 4 关 r4 评审（`评审报告-0012-r4.md` · N-1，判「单点缺一个写入门」）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-route.mjs",
+          "note": ":1707-1716 历史 分支"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "reopened": true,
+      "reopen_reason": "修已落地（df4f6a3），走合法路径关票",
+      "reopen_by": "leader",
+      "at": "2026-11-16T11:32:05+08:00"
+    },
+    {
+      "seq": 34,
+      "kind": "disposed",
+      "id": "bug-20261115-06",
+      "disposition": {
+        "value": "adopted",
+        "reason": "删掉 `历史` 写入口（构案 0015）：payload 带 `历史` ⇒ exit 5 / `E_BUG_HISTORY_CALLER_SET`，抢锁前拒、零写入；刀 `LDG-03/history-payload` + 三条对照；契约 §3.1/§3.2/§5.2.1 各一行。",
+        "by": "leader",
+        "at": "2026-11-16T11:32:05+08:00"
+      },
+      "构案": "0015",
+      "at": "2026-11-16T11:32:05+08:00"
+    }
+  ]
+}
