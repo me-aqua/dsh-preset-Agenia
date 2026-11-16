@@ -4,7 +4,9 @@
 // 每一条断言回答同一个问题：笔记里那句话，今天还成立吗？
 // 只放**能变成断言**的事实 —— 判断与取舍归文档，数字、路径、结构归这里。
 //
-// 跑法：<node.exe> .tools/check-notes.mjs
+// 跑法：<node.exe> .tools/check-notes.mjs [--workspace <dir>] [--all]
+//   `--workspace`：团队账（`.team/`）量哪一棵树（缺省 = 脚本所在仓库）。
+//   `--all`：**文件长度上限的存量审计**（构案 0016）—— 不分存量 / 增量，全判（关票时用它量债还完没有）。
 // 退出码：0 全绿 / 2 有挂起（没红，但有判不了的条目 —— 未验 ≠ 通过）/ 1 有红。
 //   红的每一条都给出「笔记写的是」与「现在量到的是」。
 //
@@ -1960,6 +1962,234 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const stray = readdirSync(REPO).filter((n) => !allowed.has(n))
   yes('repo', '仓库根只许出现白名单里的条目（临时文件当场红）', stray.length === 0,
     stray.length === 0 ? `白名单 ${allowed.size} 项，干净` : `多出来：${stray.join(', ')} —— 删掉，或者加进 check-notes.mjs 的白名单`)
+}
+
+// ── 4c · 文件长度上限（构案 0016 · 2026-11-16）──────────────────────────────
+// 一条判据，两件事：**现状类今天多长**（读数）+ **超的是不是今天才越线的**（红）。
+//
+// 🔴 上限表**只有这一份**（构案 0016 §③「表放一处（工具里）」）：就是下面那个 `FILE_CAP_TABLE`。
+//    `CONTRACT.md` §17 写规则、**指到这个常量名**，数字不进文档 —— 文档里抄一份数字就是第二真相
+//    （`cand-20261104-0020`「一个数有几份载体，改一处 = 没改」；`mig-rules-18`「同一个数不许担两个意思」）。
+// 🔴 历史类**不设上限**（0016 §②）—— 这一条靠**扫描面**做到，不靠一张例外名单：这一节只走四个根
+//    （`presets/**` 里的手写件 · `CONTRACT.md` · `账本/构案/*.md` · `.team/<岗位>/now.md`）。
+//    `log.md` / 报告 / 会话包 / `_archive/` / `.team/**/cards/` / 证据目录都不在这四个根里 ⇒
+//    「忘了给历史类补一条例外」这条路根本不存在（比一张越写越长的豁免表硬）。
+// 🔴 生成物与数据**先剔再查表**（0016 §② 第三条）：派生物、事件流、派生页、运行时数据根拆了也白拆 ——
+//    拿「该不该拆」去逼它们，只会把一次「删注释」的动作推到一个生成器身上。
+// 🔴 存量与增量分开（0016 §② 末段）：判红只判**今天越线**的那几份 —— 口径是
+//    「现在超了」+「`HEAD` 那一份没超（或 `HEAD` 里没有这一份）」；
+//    `HEAD` 那一份**本来就超** ⇒ 存量，只进读数列（11 份已按文件挂票，见 `账本/缺陷/` 的 `file-length` 标签）。
+//    ⇒ 默认模式**不会**因为那 11 份存量躺在盘上就红（0016 §④：超限就红一片 = 恒红 = 教人忽略它）。
+//    `--all` = **存量审计**：不分存量增量、全判。关票那一刻用它量「债还完没有」—— 那时它必须是绿的。
+{
+  /**
+   * **上限（行）** —— 构案 0016 §② 那张表，全树只此一份。每个类的适用面就写在 `match` 里：
+   *   · `code`     `presets/**` 里的**手写** `.mjs` / `.js`；
+   *   · `manual`   说明书 / 作业书 = `presets/agenia/team/*.md`（岗位说明书）+ `job-briefs/*.md`（作业书）—— 13 份；
+   *   · `contract` 契约 / 构案 = `CONTRACT.md` + `账本/构案/*.md`；
+   *   · `yml`      `presets/**` 的手写 yml（`cordis.patch.yml` 是生成物，先剔）；
+   *   · `now`      `.team/<岗位>/now.md`（带日期的抽屉里那一份是历史，**不**在这张表里）。
+   * ⚠️ **表外的件不进表**：`账本/产品/*.md`（产品册）与 `presets/agenia/{说明,leader,style,mood,persona,
+   *    work-guidelines,决策账本}.md` 都不在 0016 §② 点名的类里 ⇒ 要进表先改构案，不许在这里顺手放大扫描面。
+   * ⚠️ 0016 §① 那张「份数 / 中位 / 最大」是**当时按整棵树量的分布**（含 `.runtime/` 里的 scratch 副本、
+   *    以及装着副本的 staging）；这张表数的是**现状类的手写件**，所以「今天几份」与 §① 的 49 / 5 不同。
+   *    同一个数担两个意思比数不同更坏 ⇒ 口径钉在下面读数的第一句里（「今天 N 份」数的就是这条 `match`）。
+   */
+  const FILE_CAP_TABLE = Object.freeze([
+    { key: 'code', label: '代码 .mjs / .js（presets/** 手写）', cap: 800, match: (rel) => rel.startsWith('presets/') && /\.(?:mjs|js)$/.test(rel) },
+    { key: 'manual', label: '说明书 / 作业书 .md（team/ + job-briefs/）', cap: 300, match: (rel) => /^presets\/agenia\/(?:team|job-briefs)\/[^/]+\.md$/.test(rel) },
+    { key: 'contract', label: '契约 / 构案 .md（CONTRACT.md + 账本/构案/）', cap: 250, match: (rel) => rel === 'CONTRACT.md' || /^账本\/构案\/[^/]+\.md$/.test(rel) },
+    { key: 'yml', label: '手写 .yml（presets/**）', cap: 700, match: (rel) => rel.startsWith('presets/') && /\.ya?ml$/.test(rel) },
+    { key: 'now', label: 'now.md（.team/<岗位>/now.md）', cap: 80, match: (rel) => /^\.team\/[^/]+\/now\.md$/.test(rel) },
+  ])
+  /**
+   * **生成物 / 数据 / 派生页不进表**（0016 §② 第三条）—— 查表**之前**先过这一关。
+   * 每一条都带着「为什么拆了也白拆」；最后一条（`.runtime/`）是运行时数据根，里面既有报告也有 scratch 脚本。
+   */
+  const CAP_NOT_A_DOC = Object.freeze([
+    { match: (rel) => /(^|\/)cordis\.patch\.ya?ml$/.test(rel), why: '生成物：由 `agent.cordis.yml` 派生（`.tools/make-bundle-patch.mjs`）' },
+    { match: (rel) => /^账本\/缺陷\/.*\.json$/.test(rel), why: '数据：缺陷事件流（只追加，不是现役文档）' },
+    { match: (rel) => /(^|\/)INDEX\.md$/.test(rel), why: '派生页：由账本 / 事件流重算（`决议-check.mjs --op index`）' },
+    { match: (rel) => /^presets\/agenia\/\.runtime\//.test(rel), why: '运行时数据根（快照 / 报告 / scratch / 锁）' },
+  ])
+  /** 一条路径落在哪个现状类里；生成物 / 数据 / 历史类一律 `null`（不进表）。 */
+  const capClassOf = (rel) => (CAP_NOT_A_DOC.some((x) => x.match(rel))
+    ? null
+    : (FILE_CAP_TABLE.find((c) => c.match(rel)) ?? null))
+  /**
+   * 递归收文件：只看能被标题点名的后缀，跳过 `node_modules/` 与符号链接（不跟、不算）。
+   * ⚠️ **不剪别的目录**：`.runtime/` 也照走 —— 它不是"不在盘上"，而是"由 `CAP_NOT_A_DOC` 判出局"。
+   *    剪在 walker 里等于给它开了第二个出口，两处口径迟早对不上。
+   */
+  const capWalk = (dir, out = []) => {
+    let entries = []
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return out }
+    for (const e of entries) {
+      const abs = join(dir, e.name)
+      if (e.isSymbolicLink()) continue
+      if (e.isDirectory()) {
+        if (e.name === 'node_modules') continue
+        capWalk(abs, out)
+        continue
+      }
+      if (/\.(?:mjs|js|md|ya?ml)$/.test(e.name)) out.push(relative(REPO, abs).replaceAll('\\', '/'))
+    }
+    return out
+  }
+  /** 行数口径：**与 `Get-Content` 同值**（末尾换行不算多一行）—— 0016 §① 那 11 个数就是这把尺子量的。 */
+  const capLineCount = (text) => {
+    if (text === '') return 0
+    const parts = text.split('\n')
+    return text.endsWith('\n') ? parts.length - 1 : parts.length
+  }
+  /** `now.md` 跟着 `--workspace`（团队账那一节的口径），其余三类跟着仓库（交付件那一节的口径）。 */
+  const capAbsOf = (rel) => (rel.startsWith('.team/') ? join(WORKSPACE, rel) : join(REPO, rel))
+  /** 扫描面 = 那四个根。**这就是"历史类不设上限"的实现**：不进这里 = 不进表。 */
+  const capScope = () => {
+    const list = capWalk(join(REPO, 'presets'))
+    if (existsSync(join(REPO, 'CONTRACT.md'))) list.push('CONTRACT.md')
+    const schemeDir = join(REPO, '账本', '构案')
+    if (existsSync(schemeDir)) {
+      for (const f of readdirSync(schemeDir)) if (f.endsWith('.md')) list.push(`账本/构案/${f}`)
+    }
+    if (TEAM_ROOT_EXISTS) {
+      for (const e of readdirSync(teamRoot, { withFileTypes: true })) {
+        if (!e.isDirectory() || !existsSync(join(teamRoot, e.name, 'now.md'))) continue
+        list.push(`.team/${e.name}/now.md`)
+      }
+    }
+    return [...new Set(list)]
+  }
+  const capAll = process.argv.includes('--all')
+  // `HEAD` 那一份的行数：**只对超限的那几份取**（多一次 `git show` 就多一次 IO，这里不需要全树）。
+  // 判不了 git（不在仓库里 / 没装 git）⇒ `capGitOk = false`，默认模式对那些类挂起（未验 ≠ 通过）。
+  let capGitOk = true
+  try { execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: REPO, stdio: ['ignore', 'ignore', 'ignore'] }) } catch { capGitOk = false }
+  const capHeadLines = (rel) => {
+    try {
+      const text = execFileSync('git', ['show', `HEAD:${rel}`], {
+        cwd: REPO, encoding: 'utf8', maxBuffer: 64 << 20, stdio: ['ignore', 'pipe', 'ignore'],
+      })
+      return capLineCount(text)
+    } catch {
+      return null // `HEAD` 里没有这一份 ⇒ 新文件（对它来说"HEAD 那一份"不存在，不是 0 行）
+    }
+  }
+  /**
+   * 红的报文要把**三种成因**摆到人面前（0016 §② 第三条）—— 它是判据的一半，不是注释：
+   * ①历史写进现状 ②该拆 ③注释 / 废话太多；外加一条禁令：「拆」不是默认答案，先问「这份文件该不该存在」。
+   * ⚠️ 一段话只印一次（每份文件重复一遍同一段，读的人会去读第一句就跳过）—— 点名的那几份列在它前面。
+   */
+  const capWhyPrompt = () => `每一份都要先答**是哪一种**：`
+    + '① 历史性内容写进了现状（把带日期的段落挪去 log / 报告）· '
+    + '② 该拆（**先答「这份文件该不该存在」、再答「哪一块该独立」**，不许一上手就按行数切成 N 份）· '
+    + '③ 注释 / 废话太多（删注释与死码，不删行为）。'
+    + '「拆」不是默认答案 —— 能整删的整删（删除优先）。'
+
+  const scoped = capScope()
+  const classes = FILE_CAP_TABLE.map((c) => {
+    const files = scoped
+      .filter((rel) => capClassOf(rel)?.key === c.key)
+      .map((rel) => ({ rel, lines: capLineCount(read(capAbsOf(rel))) }))
+    const over = files.filter((f) => f.lines > c.cap)
+    // 存量 = `HEAD` 那一份本来就超；增量 = 今天才越线（`HEAD` 没超，或 HEAD 里根本没有这一份）。
+    const marked = over.map((f) => ({ ...f, atHead: capHeadLines(f.rel) }))
+    const crossed = marked.filter((f) => capAll || f.atHead === null || f.atHead <= c.cap)
+    return { ...c, files, over: marked, crossed }
+  })
+
+  for (const c of classes) {
+    const name = `${c.label} · 上限 ${c.cap} 行`
+    if (c.key === 'now' && !TEAM_ROOT_EXISTS) {
+      pending('文件长度', name, `判不了：${WORKSPACE} 没有 .team/（这一格量的是那个工作区的岗位 now.md）`)
+      continue
+    }
+    if (c.files.length === 0) {
+      // 空集合不许读成绿：一条 `match` 谁都不命中时，"今天 0 份 / 超 0 份"长得和"全合规"一模一样。
+      yes('文件长度', name, false, '今天 0 份 —— 这一类一份都没扫到：表里的选择器写歪了？（空读数不是绿）')
+      continue
+    }
+    const who = c.over.length === 0
+      ? '没有'
+      : c.over.map((f) => `${f.rel} ${f.lines} 行`).join(' · ')
+    const reading = `今天 ${c.files.length} 份 / 超 ${c.over.length} 份 / 是：${who}`
+    if (!capAll && !capGitOk && c.over.length > 0) {
+      pending('文件长度', name, `${reading} —— 但**读不到 HEAD**（git 不可用）：判不了这几份是存量还是今天越线；`
+        + '要全判就加 `--all`（那种模式不需要 HEAD）')
+      continue
+    }
+    if (c.crossed.length === 0) {
+      const stock = c.over.length === 0
+        ? ''
+        : ` · 存量 ${c.over.length} 份（\`HEAD\` 那一份就超了 ⇒ 挂票、不判红；见 \`账本/缺陷/\` 的 \`file-length\` 标签）`
+      yes('文件长度', name, true, reading + stock)
+      continue
+    }
+    yes('文件长度', name, false,
+      `${reading} —— 🔴 今天越线 ${c.crossed.length} 份：${c.crossed.map((f) => `${f.rel}（${f.lines} 行）`).join(' · ')}`
+      + `；${capWhyPrompt()}`
+      + (c.over.length > c.crossed.length ? `（另有存量 ${c.over.length - c.crossed.length} 份，不判红）` : ''))
+  }
+
+  /**
+   * 判定面那一条（0016 §② 的第二、三条）：**生成物 / 数据 / 历史类都不进表**。
+   * 用探针走 `capClassOf`（不是靠注释承诺）—— 谁把某条 `match` 写宽了，这一格当场红：
+   * 探针里 `cordis.patch.yml` 就是那个证人（它 975 行 > 手写 yml 的 700，剔不掉它就得红在手写 yml 那一格）。
+   */
+  const notADocProbes = [
+    ['presets/agenia/cordis.patch.yml', '生成物'],
+    ['账本/缺陷/2026-11-16.json', '数据（事件流）'],
+    ['账本/缺陷/INDEX.md', '派生页'],
+    ['账本/构案/INDEX.md', '派生页'],
+    ['presets/agenia/.runtime/reports/memory-review/2026-11-10/记忆复核.md', '运行时数据根'],
+  ]
+  const historyProbes = [
+    ['.team/dev/2026-11-16/log.md', 'log.md'],
+    ['.team/leader/2026-11-15/cards/173731-test.md', '.team/**/cards/'],
+    ['.team/retro/2026-11-16/前日复盘.md', '报告 / 会话包'],
+    ['.team/dev/2026-10-14/now.md', '带日期的抽屉'],
+    ['.team/_archive/product/now.md', '_archive/'],
+    ['presets/agenia/.runtime/proposals/2026-11-10/x.json', '数据（候选池）'],
+  ]
+  const leaks = [
+    ...notADocProbes.filter(([rel]) => capClassOf(rel) !== null).map(([rel]) => `${rel}（应为"不进表"，实得「${capClassOf(rel).label}」）`),
+    ...historyProbes.filter(([rel]) => capClassOf(rel) !== null).map(([rel]) => `${rel}（历史类被算进「${capClassOf(rel).label}」）`),
+  ]
+  const ymlCap = FILE_CAP_TABLE.find((c) => c.key === 'yml').cap
+  const patchRel = 'presets/agenia/cordis.patch.yml'
+  const patchLines = existsSync(join(REPO, patchRel)) ? capLineCount(read(join(REPO, patchRel))) : null
+  yes('文件长度', '判定面：生成物 / 数据 / 派生页 / 历史类都不进表（0016 §② 第二、三条）',
+    leaks.length === 0,
+    leaks.length > 0
+      ? `这些路径不该有上限：${leaks.join(' · ')} —— 0016 §② 写死了它们不进表（拆了也白拆 / 历史类不设上限）`
+      : `${notADocProbes.length} 条"不进表"探针 + ${historyProbes.length} 条历史类探针全部判出局（`
+        + `${notADocProbes.map(([rel, why]) => `${rel}＝${why}`).join(' · ')}`
+        + ` ｜ 历史类：${historyProbes.map(([, why]) => why).join(' / ')}）`
+        + (patchLines === null
+          ? ''
+          : ` · 证人：\`${patchRel}\` 今天 ${patchLines} 行${patchLines > ymlCap ? `（> 手写 yml 的 ${ymlCap}）—— 不剔它，这一格就在手写 yml 那条红` : ''}`)
+        + ' · 扫描面只有那四个根，历史类根本走不进来')
+
+  /**
+   * 「一处」那一条（0016 §③）：表在工具里，契约文档**指过来**。
+   * 这条判据很小，但它挡的是一件大事：文档里抄一份数字，两处就会在第一次「上调 800 → 1000」时分叉。
+   */
+  const contractText = existsSync(join(REPO, 'CONTRACT.md')) ? read(join(REPO, 'CONTRACT.md')) : ''
+  yes('文件长度', '上限表只有一处：CONTRACT.md 的「文件长度上限」一节指到 `FILE_CAP_TABLE`（数字不进文档）',
+    contractText.includes('FILE_CAP_TABLE') && /文件长度上限/.test(contractText),
+    contractText === ''
+      ? 'CONTRACT.md 读不到 —— 规则得有一份落点'
+      : `CONTRACT.md 里${/文件长度上限/.test(contractText) ? '有' : '没有'}「文件长度上限」一节、`
+        + `${contractText.includes('FILE_CAP_TABLE') ? '有' : '没有'}指向 \`FILE_CAP_TABLE\` 的指针`)
+
+  // 一行读数（口径写在最前面：数的就是每条 `match` 命中的手写件）。
+  const capTotal = classes.reduce((n, c) => n + c.files.length, 0)
+  const capOver = classes.reduce((n, c) => n + c.over.length, 0)
+  const capCrossed = classes.reduce((n, c) => n + c.crossed.length, 0)
+  console.log(`  · 文件长度上限读数（构案 0016 · 表在 \`FILE_CAP_TABLE\`${capAll ? ' · `--all` 存量审计' : ''}）：`
+    + `${FILE_CAP_TABLE.length} 类 ${capTotal} 份 / 超 ${capOver} 份 —— `
+    + `今天越线（判红）${capCrossed} 份 · 存量（挂票，不判红）${capOver - capCrossed} 份`
+    + (capOver - capCrossed > 0 ? `：${classes.flatMap((c) => c.over.filter((f) => !c.crossed.includes(f)).map((f) => f.rel)).join(' · ')}` : ''))
 }
 
 // ── 5 · 这台机器的既成事实 ─────────────────────────────────────────────────

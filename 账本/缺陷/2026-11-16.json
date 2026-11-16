@@ -755,6 +755,545 @@
       },
       "构案": "0015",
       "at": "2026-11-16T11:32:05+08:00"
+    },
+    {
+      "seq": 35,
+      "kind": "registered",
+      "id": "bug-20261116-18",
+      "entry_kind": "bug",
+      "phenomenon": "`presets/agenia/inject.js` 4732 行（代码类上限 800 行 · 构案 0016 §②）—— 存量超限。它是宿主插件本体（`cordis.patch.yml` 按路径挂载的就是这一个文件），一个文件里装着：删除三闸 · 原子写并集 · 身份表（`ROLE_TABLE`）· 尾巴拼装（`tailBodyOf`）· 板子（`boardOf`）· 委派桥 · 快照。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "file-length",
+        "构案-0016",
+        "P3"
+      ],
+      "how_seen": "构案 0016 落地（e28ac49 · 2026-11-16）时按实测分布挂的存量票：`node .tools/check-notes.mjs` 的「文件长度」读数逐份点名（本票 = 其中一份）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/inject.js",
+          "note": "4732 行（上限见 .tools/check-notes.mjs 的 FILE_CAP_TABLE；构案 0016 §②）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .tools/check-notes.mjs",
+          "note": "「文件长度」一族：这一类今天几份 / 超几份 / 是谁"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T12:09:09+08:00"
+    },
+    {
+      "seq": 36,
+      "kind": "disposed",
+      "id": "bug-20261116-18",
+      "disposition": {
+        "value": "deferred",
+        "reason": "构案 0016 §②：存量超限按票分批处理（不今天硬拆）。到期 2026-11-20 · owner 实现岗。",
+        "by": "leader",
+        "at": "2026-11-16T12:09:09+08:00"
+      },
+      "due_at": "2026-11-20",
+      "owner": "实现岗",
+      "next_step": "先答「这份文件该不该存在」：`inject.js` 是**被 `cordis.patch.yml` 按路径挂载的那一个文件**（宿主插件入口）⇒ 它本身必须存在，问题变成「它该承载多少」。再答「哪一块该独立」：把这几个候选逐块写成「这一块的读者是谁 · 它的判据在哪一格 · 搬出去之后是否多出第二个真相」——删除三闸 / 原子写（已是内联正文，注意出厂件要拼进同一个模块作用域）/ 身份表 `ROLE_TABLE` / 尾巴拼装 `tailBodyOf` / 板子 `boardOf` / 委派桥。答不出判据的块**不许动**；**不许**按行数切成 N 份，也**不许**把 `inject.js` 拆成多个被挂载的插件（那会改掉 `cordis.patch.yml` 的挂载契约 = 重开第 1 关）。",
+      "at": "2026-11-16T12:09:09+08:00"
+    },
+    {
+      "seq": 37,
+      "kind": "registered",
+      "id": "bug-20261116-19",
+      "entry_kind": "bug",
+      "phenomenon": "`presets/agenia/bin/agenia-route.mjs` 2231 行（代码类上限 800 行 · 构案 0016 §②）—— 存量超限。25 个 op 的分发 + 根判定 + 事务（锁 / CAS / 审计链）+ 路线 op + 票 4 个 op + bug 12 个 op，都在同一个 CLI 文件里。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "file-length",
+        "构案-0016",
+        "P3"
+      ],
+      "how_seen": "构案 0016 落地（e28ac49 · 2026-11-16）时按实测分布挂的存量票：`node .tools/check-notes.mjs` 的「文件长度」读数逐份点名（本票 = 其中一份）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-route.mjs",
+          "note": "2231 行（上限见 .tools/check-notes.mjs 的 FILE_CAP_TABLE；构案 0016 §②）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .tools/check-notes.mjs",
+          "note": "「文件长度」一族：这一类今天几份 / 超几份 / 是谁"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T12:09:09+08:00"
+    },
+    {
+      "seq": 38,
+      "kind": "disposed",
+      "id": "bug-20261116-19",
+      "disposition": {
+        "value": "deferred",
+        "reason": "构案 0016 §②：存量超限按票分批处理（不今天硬拆）。到期 2026-11-21 · owner 实现岗。",
+        "by": "leader",
+        "at": "2026-11-16T12:09:09+08:00"
+      },
+      "due_at": "2026-11-21",
+      "owner": "实现岗",
+      "next_step": "先答「这份文件该不该存在」：它是路线账本**唯一**的写入口（文件头 ①–⑦ 那七条硬口径都挂在它身上），所以它必须存在。再答「哪一块该独立」：按**写面**分块 —— 路线 op（`init` / `stage-*` / `task-set` / `bootstrap` / `route-mark` / `headline-set`）· 票 op（`ticket-*`）· bug op（`bug-*`）。每块各有自己的锁、码表、审计 detail 形状与用例组（`RT-*` / `LED-*` / `LDG-*` / `BUG-*`）；先证明「搬进 `lib/` 之后 `OP_NAMES` 与码表仍然只有一处、审计链逐字不变」，再动。⚠️ 文件头记着的代价不许忽略：新造第二支 CLI 会连带 `install.mjs` / `release-scan` / `FROZEN.binFiles` / `surfaceInventory` 四张清单同批动 —— 那不是免费选项。",
+      "at": "2026-11-16T12:09:09+08:00"
+    },
+    {
+      "seq": 39,
+      "kind": "registered",
+      "id": "bug-20261116-20",
+      "entry_kind": "bug",
+      "phenomenon": "`presets/agenia/lib/决议-ledger.mjs` 1972 行（代码类上限 800 行 · 构案 0016 §②）—— 存量超限。三册账本的常量表 · 头块与正文形态解析 · 三册读面 · 引用 / 父子 / 重复主题判定 · 派生页渲染与对账 · 概念普查 · 三条链 —— 全在一个 lib 里。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "file-length",
+        "构案-0016",
+        "P3"
+      ],
+      "how_seen": "构案 0016 落地（e28ac49 · 2026-11-16）时按实测分布挂的存量票：`node .tools/check-notes.mjs` 的「文件长度」读数逐份点名（本票 = 其中一份）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/决议-ledger.mjs",
+          "note": "1972 行（上限见 .tools/check-notes.mjs 的 FILE_CAP_TABLE；构案 0016 §②）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .tools/check-notes.mjs",
+          "note": "「文件长度」一族：这一类今天几份 / 超几份 / 是谁"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T12:09:09+08:00"
+    },
+    {
+      "seq": 40,
+      "kind": "disposed",
+      "id": "bug-20261116-20",
+      "disposition": {
+        "value": "deferred",
+        "reason": "构案 0016 §②：存量超限按票分批处理（不今天硬拆）。到期 2026-11-22 · owner 实现岗。",
+        "by": "leader",
+        "at": "2026-11-16T12:09:09+08:00"
+      },
+      "due_at": "2026-11-22",
+      "owner": "实现岗",
+      "next_step": "先答「这份文件该不该存在」：三册的读面与常量现在只有这一份实现（`决议-check` 与 `census` 两个入口共用 `scanLedger`），它必须存在，但**它不必是一个文件**。再答「哪一块该独立」：按**行为族**分 —— ① 头块 / 正文形态（`parseDecisionText` / `parseBodyShape` / `splitHeaderBlock`）② 三册读 + 引用判定（`readBook` / `resolveRef` / `judgePointers` / `judgeParentRefs`）③ 派生页渲染 + 页对账（`renderIndexPage` / `judgeIndexPage`）④ 概念普查（`countConcept` / `shapeSitesOf` / `conceptRows`）⑤ 三条链（`judgeProductChain` / `judgeBugChain` / `judgeFileBasis` / `overdueDayOf`）。每一族都有自己的用例组（`DEC-04/05` · `LDG-03/04/05`）；先给出「族 → 用例组 → 搬走后的 import 面」对照表，再切 —— **不许**先把常量表拆成两份（那是第二真相）。",
+      "at": "2026-11-16T12:09:09+08:00"
+    },
+    {
+      "seq": 41,
+      "kind": "registered",
+      "id": "bug-20261116-21",
+      "entry_kind": "bug",
+      "phenomenon": "`presets/agenia/bin/agenia-brain.mjs` 1728 行（代码类上限 800 行 · 构案 0016 §②）—— 存量超限。记忆库 CLI：根判定（真实根 / 测试根两套闸）+ 读面 5 个 op + 写面（`daily-start` / `claim-update` / `candidates-freeze` / `judge-*` / 维护案导入 / 报告）+ 判决行组装，都在这一个文件里。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "file-length",
+        "构案-0016",
+        "P3"
+      ],
+      "how_seen": "构案 0016 落地（e28ac49 · 2026-11-16）时按实测分布挂的存量票：`node .tools/check-notes.mjs` 的「文件长度」读数逐份点名（本票 = 其中一份）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-brain.mjs",
+          "note": "1728 行（上限见 .tools/check-notes.mjs 的 FILE_CAP_TABLE；构案 0016 §②）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .tools/check-notes.mjs",
+          "note": "「文件长度」一族：这一类今天几份 / 超几份 / 是谁"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T12:09:10+08:00"
+    },
+    {
+      "seq": 42,
+      "kind": "disposed",
+      "id": "bug-20261116-21",
+      "disposition": {
+        "value": "deferred",
+        "reason": "构案 0016 §②：存量超限按票分批处理（不今天硬拆）。到期 2026-11-23 · owner 实现岗。",
+        "by": "leader",
+        "at": "2026-11-16T12:09:10+08:00"
+      },
+      "due_at": "2026-11-23",
+      "owner": "实现岗",
+      "next_step": "先答「这份文件该不该存在」：它是记忆库**唯一**的写入口（`init-real` 是唯一能落真实库的那个 op），必须存在。再答「哪一块该独立」：把 op 按**写面**分成「每日状态」「派工 / 领活」「判决与导入」「读面」四块，逐块答「它的写面根是谁 · 判据在哪一格（`DLY-*` / `STO-*` / `MTC-*` / `MF-*` / `MJ-*`）· 搬走之后根判定还会不会只有一处」。⚠️ 根判定（`resolveRoot` / `resolveInitReal` / `resolveRealMode`）是这一族最承重的接缝：它要是被搬成两份，「测试根 vs 真实根」就会有两个答案 —— 那一块要么留原处、要么整块搬（二选一，写进票面）。",
+      "at": "2026-11-16T12:09:10+08:00"
+    },
+    {
+      "seq": 43,
+      "kind": "registered",
+      "id": "bug-20261116-22",
+      "entry_kind": "bug",
+      "phenomenon": "`presets/agenia/lib/packet.mjs` 1695 行（代码类上限 800 行 · 构案 0016 §②）—— 存量超限。会话包：临时件落点与红线闸 · 解压总量上限 · 流式量具（分块 / UTF-8 边界 / 字符计数 / 行迭代）· zstd 帧工具的子进程调用 · 包形状与 manifest · 窗口裁剪 —— 全在一个 lib 里。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "file-length",
+        "构案-0016",
+        "P3"
+      ],
+      "how_seen": "构案 0016 落地（e28ac49 · 2026-11-16）时按实测分布挂的存量票：`node .tools/check-notes.mjs` 的「文件长度」读数逐份点名（本票 = 其中一份）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/packet.mjs",
+          "note": "1695 行（上限见 .tools/check-notes.mjs 的 FILE_CAP_TABLE；构案 0016 §②）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .tools/check-notes.mjs",
+          "note": "「文件长度」一族：这一类今天几份 / 超几份 / 是谁"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T12:09:10+08:00"
+    },
+    {
+      "seq": 44,
+      "kind": "disposed",
+      "id": "bug-20261116-22",
+      "disposition": {
+        "value": "deferred",
+        "reason": "构案 0016 §②：存量超限按票分批处理（不今天硬拆）。到期 2026-11-24 · owner 实现岗。",
+        "by": "leader",
+        "at": "2026-11-16T12:09:10+08:00"
+      },
+      "due_at": "2026-11-24",
+      "owner": "实现岗",
+      "next_step": "先答「这份文件该不该存在」：会话包只有这一份实现（`F-144` 的流式量具也住这里），必须存在。再答「哪一块该独立」：三个候选各有自己的判据与**不同的读者** —— ① **流式量具**（`READ_CHUNK_BYTES` / `completeUtf8End` / `eachChunkOfFile` / `countCharsOfFile` / `measureTextFile`）：判据是「峰值内存不随总量长」（`F-144` ②③④）；② **帧工具接缝**（`runFramesTool` / `firstFrameChars` / `FRAME_LINE`）：判据是「只走现成工具、不自己解压」；③ **包形状与裁窗**（manifest / `readStreamDetail` / 窗口那一支）：判据是包形状与「上界不取派工那一刻」。逐块答完再切；量具那一块搬走时**不许**把 `PACKET_MAX_BYTES` 的默认值抄第二份。",
+      "at": "2026-11-16T12:09:10+08:00"
+    },
+    {
+      "seq": 45,
+      "kind": "registered",
+      "id": "bug-20261116-23",
+      "entry_kind": "bug",
+      "phenomenon": "`presets/agenia/lib/proposals.mjs` 1086 行（上限 800 行 · 构案 0016 §②）—— 存量超限。候选池的**判词**（形状 / 普通提案的 kind 闭集 / 先例 / 围栏 / 400 字帽 / `importVerdict`）与**落盘**（池行锁 / 序号 / 去重 / 追加 / 归档抽取）混在一个 lib 里。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "file-length",
+        "构案-0016",
+        "P3"
+      ],
+      "how_seen": "构案 0016 落地（e28ac49 · 2026-11-16）时按实测分布挂的存量票：`node .tools/check-notes.mjs` 的「文件长度」读数逐份点名（本票 = 其中一份）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/proposals.mjs",
+          "note": "1086 行（上限见 .tools/check-notes.mjs 的 FILE_CAP_TABLE；构案 0016 §②）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .tools/check-notes.mjs",
+          "note": "「文件长度」一族：这一类今天几份 / 超几份 / 是谁"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T12:09:10+08:00"
+    },
+    {
+      "seq": 46,
+      "kind": "disposed",
+      "id": "bug-20261116-23",
+      "disposition": {
+        "value": "deferred",
+        "reason": "构案 0016 §②：存量超限按票分批处理（不今天硬拆）。到期 2026-11-25 · owner 实现岗。",
+        "by": "leader",
+        "at": "2026-11-16T12:09:10+08:00"
+      },
+      "due_at": "2026-11-25",
+      "owner": "实现岗",
+      "next_step": "先答「这份文件该不该存在」：400 字帽与导入判词只有这一份实现（`CONTRACT.md` §8 / §15 点名它是引擎那一版），必须存在。再答「哪一块该独立」：**判词是纯函数、落盘是 IO** —— 两条各有自己的判据（`MTC-02` 判正文帽；去重 / 序号 / 锁判在写面），也各有自己的失败形态（判词拒 = 零写入；锁失败 = 重试不静默），是最干净的一条切线。先证明「判词搬走之后 `E_PROPOSAL_TOO_LONG` / `E_PROPOSAL_DUPLICATE` 的报文与 exit 码逐字不变」，再动；**不许**把 `BODY_MAX_CHARS` 抄第二份。",
+      "at": "2026-11-16T12:09:10+08:00"
+    },
+    {
+      "seq": 47,
+      "kind": "registered",
+      "id": "bug-20261116-24",
+      "entry_kind": "bug",
+      "phenomenon": "`presets/agenia/lib/route.mjs` 1022 行（上限 800 行 · 构案 0016 §②）—— 存量超限。这个 lib 里同时住着**日切与时间**（`DAY_CUT_HOURS` / `localDateOf` / `dayKeyOf` / `dayDigitsOf` / `isoWithOffset`）和**路线形状**（阶段图 / 任务 / 五关 / 槽 / 暂停 / 摘要第一行）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "file-length",
+        "构案-0016",
+        "P3"
+      ],
+      "how_seen": "构案 0016 落地（e28ac49 · 2026-11-16）时按实测分布挂的存量票：`node .tools/check-notes.mjs` 的「文件长度」读数逐份点名（本票 = 其中一份）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/route.mjs",
+          "note": "1022 行（上限见 .tools/check-notes.mjs 的 FILE_CAP_TABLE；构案 0016 §②）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .tools/check-notes.mjs",
+          "note": "「文件长度」一族：这一类今天几份 / 超几份 / 是谁"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T12:09:10+08:00"
+    },
+    {
+      "seq": 48,
+      "kind": "disposed",
+      "id": "bug-20261116-24",
+      "disposition": {
+        "value": "deferred",
+        "reason": "构案 0016 §②：存量超限按票分批处理（不今天硬拆）。到期 2026-11-26 · owner 实现岗。",
+        "by": "leader",
+        "at": "2026-11-16T12:09:10+08:00"
+      },
+      "due_at": "2026-11-26",
+      "owner": "实现岗",
+      "next_step": "先答「这份文件该不该存在」：路线判定必须只有一份纯函数实现（`route.mjs` 是它唯一落点），必须存在。再答「哪一块该独立」：**日切那一块**最像另一件事 —— 它被四处入口共用、有自己的判据组（`DBY-01…06` / `CONTRACT.md` §13），且与「路线形状」没有语义依赖；把它抽成 `lib/day.mjs`（或同类）能让「一天从 04:00 切」继续只有一处。其余（阶段图 / 任务 / 五关 / 槽）留在原处，**不许**顺手拆成五份。先给出「谁 import 了哪几个日切函数」的清单（`check-notes` 自己也 import `dayKeyOf`），再动。",
+      "at": "2026-11-16T12:09:10+08:00"
+    },
+    {
+      "seq": 49,
+      "kind": "registered",
+      "id": "bug-20261116-25",
+      "entry_kind": "bug",
+      "phenomenon": "`presets/agenia/bin/决议-check.mjs` 1019 行（上限 800 行 · 构案 0016 §②）—— 存量超限。三册检查器：`check` / `index` / `fold` / `reconcile` / `gate2-card` / `card-land` / `supersede` 七个 op + 派生页重写 + 事件视图比对 + 卡片表单解析，都在这一个 CLI 里。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "file-length",
+        "构案-0016",
+        "P3"
+      ],
+      "how_seen": "构案 0016 落地（e28ac49 · 2026-11-16）时按实测分布挂的存量票：`node .tools/check-notes.mjs` 的「文件长度」读数逐份点名（本票 = 其中一份）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/决议-check.mjs",
+          "note": "1019 行（上限见 .tools/check-notes.mjs 的 FILE_CAP_TABLE；构案 0016 §②）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .tools/check-notes.mjs",
+          "note": "「文件长度」一族：这一类今天几份 / 超几份 / 是谁"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T12:09:10+08:00"
+    },
+    {
+      "seq": 50,
+      "kind": "disposed",
+      "id": "bug-20261116-25",
+      "disposition": {
+        "value": "deferred",
+        "reason": "构案 0016 §②：存量超限按票分批处理（不今天硬拆）。到期 2026-11-27 · owner 实现岗。",
+        "by": "leader",
+        "at": "2026-11-16T12:09:11+08:00"
+      },
+      "due_at": "2026-11-27",
+      "owner": "实现岗",
+      "next_step": "先答「这份文件该不该存在」：它是三册**唯一**的检查器与页生成器（`INDEX.md` 的生成物标记点名它），必须存在。再答「哪一块该独立」：`fold`/`reconcile`（事件流折叠与逐键对账 · `LDG-05`）· `gate2-card`/`card-land`（卡片闸 · `DEC-06` / `LDG-07`）· `index`（派生页重写 · `DEC-04`）是**三件各有独立用例的事**，而且都只要一个 `root` ⇒ 可以先搬成 `lib/` 里的三块，CLI 只剩 op 分发与参数。搬之前先证明「七个 op 的 stdout 逐字不变、`check` 仍然只读」。",
+      "at": "2026-11-16T12:09:11+08:00"
+    },
+    {
+      "seq": 51,
+      "kind": "registered",
+      "id": "bug-20261116-26",
+      "entry_kind": "bug",
+      "phenomenon": "`presets/agenia/bin/install.mjs` 927 行（上限 800 行 · 构案 0016 §②）—— 存量超限。安装器里同时住着：路径守卫 · 删除三闸 · 树哈希 · manifest · 备份落点，以及**出厂件的内联发布**（`publish-staged`：`SHIPPED_INLINE_BLOCKS` / 头部标记 / 丢弃 import）。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "file-length",
+        "构案-0016",
+        "P3"
+      ],
+      "how_seen": "构案 0016 落地（e28ac49 · 2026-11-16）时按实测分布挂的存量票：`node .tools/check-notes.mjs` 的「文件长度」读数逐份点名（本票 = 其中一份）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/install.mjs",
+          "note": "927 行（上限见 .tools/check-notes.mjs 的 FILE_CAP_TABLE；构案 0016 §②）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .tools/check-notes.mjs",
+          "note": "「文件长度」一族：这一类今天几份 / 超几份 / 是谁"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T12:09:11+08:00"
+    },
+    {
+      "seq": 52,
+      "kind": "disposed",
+      "id": "bug-20261116-26",
+      "disposition": {
+        "value": "deferred",
+        "reason": "构案 0016 §②：存量超限按票分批处理（不今天硬拆）。到期 2026-11-28 · owner 实现岗。",
+        "by": "leader",
+        "at": "2026-11-16T12:09:11+08:00"
+      },
+      "due_at": "2026-11-28",
+      "owner": "实现岗",
+      "next_step": "先答「这份文件该不该存在」：安装与发布是两条**不可逆**的路（一条改活树、一条生成出厂件），都得有入口，所以文件存在；问题变成「两件事该不该在同一个文件里」。再答「哪一块该独立」：**安装（改活树：guards + 三闸 + 备份 + 哈希）** 与 **发布（只读活树、只写出厂件：内联 + 头部标记 + `target-lag`）** 是两个方向 —— 前者要能回滚，后者一个字节都不该写活树；各有自己的判据（安装/回滚演练 · `SRC-*` 出厂件形状）。分开之后「发布路径**没有**删除权限」这件事才有地方说。先给出两条路各自的写面清单，再动。",
+      "at": "2026-11-16T12:09:11+08:00"
+    },
+    {
+      "seq": 53,
+      "kind": "registered",
+      "id": "bug-20261116-27",
+      "entry_kind": "bug",
+      "phenomenon": "`presets/agenia/lib/local-state.mjs` 829 行（上限 800 行 · 构案 0016 §②）—— 存量超限。本地状态里混着：落点与锁的路径 · 形状与校验 · 读写 · 两把锁（日锁 / 字段锁）与事务 · claim 判定（`claimVerdict` / `applyClaim`）· 回执版本。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "file-length",
+        "构案-0016",
+        "P3"
+      ],
+      "how_seen": "构案 0016 落地（e28ac49 · 2026-11-16）时按实测分布挂的存量票：`node .tools/check-notes.mjs` 的「文件长度」读数逐份点名（本票 = 其中一份）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "presets/agenia/lib/local-state.mjs",
+          "note": "829 行（上限见 .tools/check-notes.mjs 的 FILE_CAP_TABLE；构案 0016 §②）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .tools/check-notes.mjs",
+          "note": "「文件长度」一族：这一类今天几份 / 超几份 / 是谁"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T12:09:11+08:00"
+    },
+    {
+      "seq": 54,
+      "kind": "disposed",
+      "id": "bug-20261116-27",
+      "disposition": {
+        "value": "deferred",
+        "reason": "构案 0016 §②：存量超限按票分批处理（不今天硬拆）。到期 2026-11-29 · owner 实现岗。",
+        "by": "leader",
+        "at": "2026-11-16T12:09:11+08:00"
+      },
+      "due_at": "2026-11-29",
+      "owner": "实现岗",
+      "next_step": "先答「这份文件该不该存在」：`local/<day>.json` 的写者与形状必须只有一份实现（`CONTRACT.md` §12 点名它），必须存在。再答「哪一块该独立」：**锁与事务**（`fieldLockPath` / `acquireDayLock` / `localTransaction`）是并发写面，**形状与 claim 判定**（`emptyNode` / `validateLocalState` / `claimVerdict` / `applyClaim`）是纯判定 —— 两者失败形态不同（抢锁失败 ≠ 判定为假），判据也不同（`STO-*` · `OFL-01`）。先答「锁的语义（同一把锁两处解释会怎样）」再切；`DEFAULT_WAIT_MS` 缺省值不许抄第二份。",
+      "at": "2026-11-16T12:09:11+08:00"
+    },
+    {
+      "seq": 55,
+      "kind": "registered",
+      "id": "bug-20261116-28",
+      "entry_kind": "bug",
+      "phenomenon": "`CONTRACT.md` 2258 行（契约 / 构案类上限 250 行 · 构案 0016 §②）—— 存量超限。它现在是 17 节的大文件：§1–§3（尾巴 / 板子 / 触发点）· §6–§7（回执链路 / 声明即义务）· §8–§13（维护案 / 会话包 / 思考链 / 局部状态 / 每日状态 / 本地节点 / 日切）· §14–§17（评审对象 / 退役私有闸门 / 外聘记忆 / 文件长度上限），每节都带自己的判据索引与用例组。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "file-length",
+        "构案-0016",
+        "P3"
+      ],
+      "how_seen": "构案 0016 落地（e28ac49 · 2026-11-16）时按实测分布挂的存量票：`node .tools/check-notes.mjs` 的「文件长度」读数逐份点名（本票 = 其中一份）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "CONTRACT.md",
+          "note": "2258 行（上限见 .tools/check-notes.mjs 的 FILE_CAP_TABLE；构案 0016 §②）"
+        },
+        {
+          "kind": "cmd",
+          "ref": "node .tools/check-notes.mjs",
+          "note": "「文件长度」一族：这一类今天几份 / 超几份 / 是谁"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T12:09:11+08:00"
+    },
+    {
+      "seq": 56,
+      "kind": "disposed",
+      "id": "bug-20261116-28",
+      "disposition": {
+        "value": "deferred",
+        "reason": "构案 0016 §②：存量超限按票分批处理（不今天硬拆）。到期 2026-11-30 · owner 组长。",
+        "by": "leader",
+        "at": "2026-11-16T12:09:11+08:00"
+      },
+      "due_at": "2026-11-30",
+      "owner": "组长",
+      "next_step": "先答「这份文件该不该存在」：项目级行为契约需要一个落点（`AGENTS.md`「文档放哪」指定了 `CONTRACT.md`，实现岗可写它），它必须存在。再答「哪一块该独立」：**它不必是一份文件** —— 按行为族切成 `CONTRACT/` 目录下一族一份（§1–§3 注入面 · §6–§7 回执与声明 · §8 维护案 · §9 会话包 · §10 思考链 · §11–§13 每日状态 / 本地节点 / 日切 · §14 评审对象 · §15–§17），`CONTRACT.md` 只留「目录 + 命名空间 + 每条契约的三件套（行为 / 判据 / 边界）」。切之前先出一张「族 → 用例组 → 谁在注释里点名了 §N（`tests/**` 里有几百处）」的对照表 —— 引用点没搬完就切，等于让判据指向不存在的 §。⚠️ 这一票的 owner 是组长：**口径与边界**（哪一族算项目级、哪一族只是当时那一票）不是实现岗能拍的。",
+      "at": "2026-11-16T12:09:11+08:00"
     }
   ]
 }
