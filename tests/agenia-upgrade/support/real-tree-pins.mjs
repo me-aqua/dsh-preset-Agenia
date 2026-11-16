@@ -41,7 +41,7 @@ export const PIN_FROZEN = {
 /** 产品册条数（`check --json` 的 `books.产品.entries`）。 */
 export const BOOK_PRODUCT_ENTRIES = 5
 /** 缺陷册条数 —— **票数**，不是日文件数（`books.缺陷.entries`）。 */
-export const BOOK_BUG_ENTRIES = 193
+export const BOOK_BUG_ENTRIES = 194
 /** 构案册条数（`books.构案.entries`）。 */
 export const BOOK_SCHEME_ENTRIES = 11
 
@@ -208,3 +208,5 @@ export function pinLedgerProblems() {
 // （立案不动这两格；处置才动。`账本/缺陷/INDEX.md` 的重算是账本侧的事，不在这份钉表里）
 
 // 2026-11-16 15:5x 组长重钉：+2（`-33` 留的两件：CONTRACT §17.2 描述窄、FCAP-01 缺 `.team/`）
+
+// 2026-11-16 16:0x 组长重钉：+1（`-38` C2 §3.7.1 旧口径）、-1 暂缓（`-31` 改判 adopted · 构案 0017 落地）

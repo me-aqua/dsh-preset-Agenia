@@ -1706,6 +1706,104 @@
       "owner": "测试岗",
       "next_step": "夹具里加一个 `.team/<角色>/now.md`（一行超 80 的样本），断言它被判红；再补一个 80 行以内不红。",
       "at": "2026-11-16T15:46:42+08:00"
+    },
+    {
+      "seq": 75,
+      "kind": "registered",
+      "id": "bug-20261116-38",
+      "entry_kind": "bug",
+      "phenomenon": "**测试侧契约 §3.7.1 仍写着旧口径**（`-31` 改完之后没同批改）：`.team/test/CONTRACT-C2.md:383-431` 仍说「仍未 `assessed` ⇒ 红」、§3.7.1-A 仍写「处置不是收口」。而实现现在是：**处置即收口**（`disposition` 非空 ⇒ 不算积压），分级评估缺席只进读数。⇒ 照着这份契约判卡的人，会把这 32 条重新判红，并把实现「改回去」。",
+      "reporter": "实现岗",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "contract",
+        "P2"
+      ],
+      "how_seen": "2026-11-16 `-31` 实现岗交活报的「未做项 1」",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": ".team/test/CONTRACT-C2.md",
+          "note": ":383-431"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/决策账本.md",
+          "note": ":62 新口径"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T15:56:49+08:00"
+    },
+    {
+      "seq": 76,
+      "kind": "disposed",
+      "id": "bug-20261116-38",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P2 · 到期 2026-11-17 · 契约与实现相反，不改会把下一个读契约的人引回旧口径。",
+        "by": "leader",
+        "at": "2026-11-16T15:56:49+08:00"
+      },
+      "due_at": "2026-11-17",
+      "owner": "测试岗",
+      "next_step": "按 `决策账本.md §五` 的新口径改 §3.7.1 与 §3.7.1-A：处置即收口；分级评估缺席只进读数不判红；并在同处点名 `CHAIN-BUG-DEFERRED-OVERDUE` 是另一条。",
+      "at": "2026-11-16T15:56:49+08:00"
+    },
+    {
+      "seq": 77,
+      "kind": "registered",
+      "id": "bug-20261116-31",
+      "entry_kind": "bug",
+      "phenomenon": "**SLA 积压：32 条 bug 超一个开工周期仍未评估**（最老 3 天，`bug-20261113-01…` 那批）。根因是**我们的记法跳了一步**：登记之后直接 `bug-dispose`（写 disposed 事件），**从不写 `assessed`** ⇒ 折叠出来的票有处置、没有评估，而 SLA 那格量的正是「有没有评估」。今天（11-16）那批新票同样没写 assessed，只是还没到周期。⇒ 这不是读数坏，是**台账少了一道手续**。",
+      "reporter": "组长",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "ledger",
+        "process",
+        "P1"
+      ],
+      "how_seen": "2026-11-16 出卡时 `SLA_OVER_CYCLE` 红（`记忆更新报告-2026-11-16.xlsx` 的 `card.reasons`）",
+      "evidence": [
+        {
+          "kind": "cmd",
+          "ref": "daily-cards.py 读数",
+          "note": "超期 32 条 · 最老 3 天 · owed_by=test"
+        },
+        {
+          "kind": "file",
+          "ref": "presets/agenia/bin/agenia-route.mjs",
+          "note": "bug-dispose 不写 assessed"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "reopened": true,
+      "reopen_reason": "修已落地（86989d2），按合法路径关票",
+      "reopen_by": "leader",
+      "at": "2026-11-16T15:56:49+08:00"
+    },
+    {
+      "seq": 78,
+      "kind": "disposed",
+      "id": "bug-20261116-31",
+      "disposition": {
+        "value": "adopted",
+        "reason": "SLA 的输入换成「票还开着」（构案 0017）：`isOpenBug()` 一个谓词被三处共用；分级评估缺席只进读数；卡上红条清 0 而读数仍在（处置过但无分级评估 69 条 / 本周期之前 32 条）。",
+        "by": "leader",
+        "at": "2026-11-16T15:56:49+08:00"
+      },
+      "构案": "0017",
+      "at": "2026-11-16T15:56:49+08:00"
     }
   ]
 }
