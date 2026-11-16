@@ -832,8 +832,9 @@ def cap_of(entries, now):
     }
 
 
-# **assessment** 四值里"真正做过判定"的那三个（`lib/bug-ledger.mjs::ASSESSED_VERDICTS` 同值）。
-# `unknown` 是"判不了"，**不是**"已评估" —— 它让条目保留 open，SLA 照样算超期。
+# **assessment** 四值里"真正做过分级判定"的那三个（`lib/bug-ledger.mjs::ASSESSED_VERDICTS` 同值）。
+# `unknown` 是"判不了"，**不是**"已评估" —— 它算进 `disposed_unassessed` 读数，不冒充分级评估。
+# ⚠️ 这三个 verdict **不决定 SLA 红**：SLA 红只看"票还开着"（`disposition` 为空）。
 ASSESSED_VERDICTS = ("true", "false", "duplicate")
 
 # SLA 欠账的**归属表**不在这一份里，卡面也不许再抄一份字符串：
@@ -875,10 +876,10 @@ def sla_owner_fields():
 
 
 def is_assessed(entry):
-    """一条条目**是否已经被评估过**（SLA 的豁免之一；与 `bug-ledger.mjs::isAssessed` 同一条判据）。
+    """一条条目**做过分级评估**没有（`disposed_unassessed` 读数的判据；与 `bug-ledger.mjs::isAssessed` 同一条）。
 
     `assessment` 必须是对象、且 `verdict` 落在那三个真判定里。`None` / 形状坏 /
-    `verdict:'unknown'` / `verdict` 缺失 ⇒ **没评估过**（保守读法：超期照算）。
+    `verdict:'unknown'` / `verdict` 缺失 ⇒ **没有分级评估**（读数照数）。
     """
     assessment = entry.get("assessment")
     if not isinstance(assessment, dict):
@@ -886,12 +887,21 @@ def is_assessed(entry):
     return assessment.get("verdict") in ASSESSED_VERDICTS
 
 
-def sla_of(entries, cycle_day):
-    """**SLA**（契约 §3.7.1 / 组长裁定第 2 条）：`opened_at` 早于当前开工周期 **且**
-    还没被真正评估过（`is_assessed()`）⇒ 在 `over` 里。
+def is_disposed(entry):
+    """这条 bug **已经处置**（`disposition` 有值）—— 与 `is_open_bug()` 互补，open/closed 只有这一条判据。"""
+    return entry.get("kind") == "bug" and entry.get("disposition") is not None
 
-    ⚠️ 只有两个豁免：同一天开的、已经评估过的。`assessment.verdict === 'unknown'`（判不了）
-    **不是**"已评估"—— 它保留 open，所以照样算超期；不要把"判不了"读成"已经处理过了"。
+
+def sla_of(entries, cycle_day):
+    """**SLA**（契约 §3.7.1 · 2026-11-16 裁定）：`opened_at` 早于当前开工周期 **且** 票**还开着**
+    （`disposition` 为空）⇒ 在 `over` 里。
+
+    它保护的是**「票开着却没人看 / 没人处置」**，不是"有没有写过分级评估"：处置理由本身就是
+    最小评估，分级 `assessed` 是可选的加强（缺席只进 `disposed_unassessed_of()` 那个读数）。
+    所以：
+      · **已处置** ⇒ 不进 `over`（哪怕从没写过 `assessed`）；
+      · **已评估但没处置** ⇒ **照样进**（评估不是收口：它回答"是不是真的"，处置回答"修不修"）。
+    ⚠️ 只有同一天开的那一个豁免（`opened_at` 的日号 ≥ 周期号）。
     ⚠️ 这里只数 `kind === 'bug'`：observation 不是 bug，不进 SLA。
     """
     over = []
@@ -900,7 +910,7 @@ def sla_of(entries, cycle_day):
     for entry in entries:
         if entry.get("kind") != "bug":
             continue
-        if is_assessed(entry):
+        if not is_open_bug(entry):
             continue
         opened = parse_iso(entry.get("opened_at")) or parse_iso(entry.get("registered_at"))
         if opened is None or cycle_number is None:
@@ -911,6 +921,37 @@ def sla_of(entries, cycle_day):
         over.append(entry.get("id") or "(缺 id)")
         oldest = max(oldest, cycle_number - opened_number)
     return {"over": over, "oldest_age": oldest, "cycle": cycle_day}
+
+
+def disposed_unassessed_of(entries, cycle_day):
+    """**读数**（不判红、不进 `card.reasons`）：**处置过、但没有分级评估**的条数。
+
+    `all` = 全部（处置理由就是它那次最小评估的那一批）；`before_cycle` = 其中 `opened_at`
+    早于当前开工周期的（与 SLA 同一把尺子 —— 这一格是"若把分级评估当义务，会有几条"）。
+    周期号读不出来 ⇒ `before_cycle is None`（判不了，不许印 0）。
+    与 `bug-ledger.mjs::slaVerdict().disposed_unassessed` 同一条判据（跨读者判据逐项对）。
+    """
+    all_ids = []
+    before_cycle = []
+    cycle_number = local_day_number_of_key(cycle_day)
+    for entry in entries:
+        if not is_disposed(entry):
+            continue
+        if is_assessed(entry):
+            continue
+        all_ids.append(entry.get("id") or "(缺 id)")
+        if cycle_number is None:
+            continue
+        opened = parse_iso(entry.get("opened_at")) or parse_iso(entry.get("registered_at"))
+        if opened is None:
+            continue
+        opened_number = local_day_number(opened)
+        if opened_number is not None and opened_number < cycle_number:
+            before_cycle.append(entry.get("id") or "(缺 id)")
+    return {
+        "all": all_ids,
+        "before_cycle": None if cycle_number is None else before_cycle,
+    }
 
 
 def local_day_number_of_key(day_key):
@@ -1306,6 +1347,7 @@ def main():
     cap = cap_of(entries, now)
     observation_open = len([e for e in entries if e.get("kind") == "observation" and e.get("disposition") is None])
     sla = sla_of(entries, day)
+    disposed_unassessed = disposed_unassessed_of(entries, day)
     severity = severity_of(ledger)
     identity = read_identity(WS, day)
     carriers = review_carriers(WS, day)
@@ -1367,7 +1409,7 @@ def main():
                              "detail": "本周期 %s 没有技术评审回执（nodes.technical 不是 done / 文件不在）" % day})
     if sla["over"]:
         reasons1.append({"code": "SLA_OVER_CYCLE",
-                         "detail": "%d 条 bug 超一个开工周期仍未评估，最老 %d 天：%s"
+                         "detail": "%d 条 bug 超一个开工周期仍开着（没有 disposition），最老 %d 天：%s"
                                    % (len(sla["over"]), sla["oldest_age"], " · ".join(sla["over"]))})
     if slot_bad:
         reasons1.append({"code": "SLOT_NOT_ENFORCED",
@@ -1405,9 +1447,17 @@ def main():
              "报告 %s=%s · 快照 %s=%s" % (report_rel, "在" if os.path.isfile(os.path.join(DR, "reports", "memory-update", day + ".json")) else "不在",
                                         snap_name, "可读" if snap_ok else "读不出来"))
     sla_owed_by, sla_owed_by_label = sla_owner_fields()
+    # SLA 一格装两件事：**红**只数「开着（无 disposition）且过了一个开工周期」的票；
+    # **读数**（不判红）另写 —— 处置过、但没有分级评估的条数。这个数存在是为了让
+    # 「分级评估该不该当义务」这个选择一直看得见：处置理由即最小评估，`assessed` 是可选的加强。
+    ungraded_all = len(disposed_unassessed["all"])
+    ungraded_before = disposed_unassessed["before_cycle"]
+    ungraded_reading = ("处置过但无分级评估 %d 条（本周期之前 %s）—— 处置理由即最小评估，分级评估是可选加强"
+                        % (ungraded_all,
+                           "判不了" if ungraded_before is None else "%d 条" % len(ungraded_before)))
     add_cell("sla", "red" if sla["over"] else "green",
-             "超期 %d 条（%s 欠 · owed_by=%s）· 最老 %d 天 · 周期 %s"
-             % (len(sla["over"]), sla_owed_by_label, sla_owed_by, sla["oldest_age"], sla["cycle"]))
+             "超期 %d 条（%s 欠 · owed_by=%s）· 最老 %d 天 · 周期 %s · 读数（不判红）：%s"
+             % (len(sla["over"]), sla_owed_by_label, sla_owed_by, sla["oldest_age"], sla["cycle"], ungraded_reading))
     add_cell("carrier_missing", "red" if (receipt_required and not (carriers["technical"] and carriers["conversation"])) else "green",
              "需要回执=%s · 技术评审.md=%s · 会话评审.md=%s"
              % ("是" if receipt_required else "否（未建账期无活动）",

@@ -122,67 +122,77 @@ export const STATUS_CELLS = Object.freeze([
 export const STATUS_STATES = Object.freeze(['green', 'red', 'yellow', 'unknown'])
 
 /**
- * **SLA 的收口口径与欠账归属**（契约 §3.7.1-A，2026-11-11 · `bug-20261110-09` 的决定：**选 B**）。
+ * **SLA 的收口口径与欠账归属**（契约 §3.7.1，2026-11-16 裁定：**输入是「开着」**）。
  *
- * 这一段是**唯一出处**：`SLA_OVER_CYCLE` 只由 `assessment` 收口（组长的 `disposition` **不是**收口），
- * 欠这笔账的岗位是**测试岗**（`owed_by: 'test'`），卡面上要印的"还剩几条" = `sla.over.length`。
+ * 这一段是**唯一出处**：`SLA_OVER_CYCLE` 只由 `disposition` 收口（组长的处置**就是**收口），
+ * 分级评估（`assessment` 的 true/false/duplicate）是**可选加强** —— 它缺席只进读数
+ * `disposed_unassessed`，不判红。欠这笔账的岗位是**组长**（`owed_by: 'leader'`：票开着 =
+ * 没人处置），卡面上要印的"还剩几条" = 开着且过了周期的条数（`sla.over.length`）。
  * 判据（`slaDebtProblems()`）读这里，不在别处再抄一份；改归属 = 改契约，不是改文案。
  */
 export const SLA_DEBT = Object.freeze({
-  /** 收口发生在哪个字段上（`assessment`）。 */
-  closes_on: 'assessment',
-  /** 真算"收口"的三个 verdict（`unknown` 不算：判不了 ≠ 处理过，与 §3.7.1 同一条）。 */
-  closure_verdicts: Object.freeze(['true', 'false', 'duplicate']),
-  /** 🔴 组长处置**不是**收口（选 B 的那一半；A 已被否，理由见契约 §3.7.1-A）。 */
-  disposition_is_closure: false,
-  /** 谁欠这笔账（**测试岗**；`owed_by` 是判据用的机器名，`label` 是给人看的）。 */
-  owed_by: 'test',
-  owed_by_label: '测试岗',
+  /** 收口发生在哪个字段上（`disposition`：有值 = 已处置 = 不再算 SLA 欠账）。 */
+  closes_on: 'disposition',
+  /** 组长的处置**是**收口（"处置理由即最小评估"）。 */
+  disposition_is_closure: true,
+  /** 分级评估是可选加强：算"做过"的三个 verdict（`unknown` 不算，它只是"判不了"）。 */
+  graded_verdicts: Object.freeze(['true', 'false', 'duplicate']),
+  /** 谁欠这笔账（**组长**：票开着没人处置；`owed_by` 是判据用的机器名，`label` 是给人看的）。 */
+  owed_by: 'leader',
+  owed_by_label: '组长',
 })
 
-/** 一条 bug 的 SLA 是否已收口（机械判据：`assessment` 是对象且 `verdict` 落在三个真判定里）。 */
+/** 一条 bug 的 SLA 是否已收口（机械判据：`disposition` 有值，与 `isOpenBug()` 互补）。 */
 export function isSlaClosed(entry) {
-  const assessment = entry?.assessment
-  if (assessment === null || assessment === undefined || typeof assessment !== 'object' || Array.isArray(assessment)) return false
-  return SLA_DEBT.closure_verdicts.includes(assessment.verdict)
+  return (entry?.disposition ?? null) !== null
 }
 
 /**
- * **SLA 欠账读数**（契约 §3.7.1-A 的"谁欠的 + 这一批还剩几条"）：
- *   · `remaining` = 还欠评估的条数（`kind === 'bug'` 且 `opened_at` 的日号早于 `cycle` 且未收口）；
- *   · `owed_by`   = `SLA_DEBT.owed_by`（测试岗）—— 这一格不是"没人管"，是"测试岗还欠着"；
- *   · `disposition_only` = 其中**组长已经处置、但还没评估**的 id（这一批的责任人仍然只有测试岗）；
+ * **SLA 欠账读数 + 分级评估读数**（契约 §3.7.1 的"谁欠的 + 这一批还剩几条"）：
+ *   · `remaining` = 还欠账的条数（`kind === 'bug'` 且**开着**且 `opened_at` 的日号早于 `cycle`）；
+ *   · `owed_by`   = `SLA_DEBT.owed_by`（组长）—— 这一格不是"没人管"，是"组长还没处置"；
+ *   · `disposed_unassessed` = **读数**（不判红）：已处置、但没有分级评估的条数
+ *     （`all` 全部 / `before_cycle` 其中早于周期的；`cycle` 给不出来 ⇒ `before_cycle: null`）；
  *   · `cycle` = 卡上的 `<day>`（同一个键）。
  *
  * ⚠️ 日号取自 ISO 串前 10 位（夹具都用本地偏移 `+08:00` 的 ISO）—— 与卡上 `--day` 同一个日历口径。
  *
  * @param {{entries?:Array, cycle?:string}} [input]
  * @returns {{owed_by:string, owed_by_label:string, remaining:number, ids:string[],
- *            disposition_only:string[], cycle:string|null, closes_on:string}}
+ *            disposed_unassessed:{all:number, before_cycle:number|null},
+ *            cycle:string|null, closes_on:string}}
  */
 export function slaDebtReading({ entries = [], cycle = DAY } = {}) {
   const dayKeyOf = (iso) => (typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}/.test(iso) ? iso.slice(0, 10) : null)
   const cycleKey = typeof cycle === 'string' ? cycle : DAY
   const ids = []
-  const dispositionOnly = []
+  const disposedUnassessed = []
+  let disposedUnassessedBeforeCycle = 0
   for (const entry of Array.isArray(entries) ? entries : []) {
     if (entry?.kind !== 'bug') continue
-    if (isSlaClosed(entry)) continue
     const opened = dayKeyOf(entry?.opened_at) ?? dayKeyOf(entry?.registered_at)
-    if (opened === null || opened >= cycleKey) continue
-    ids.push(String(entry?.id ?? '(缺 id)'))
-    const disposition = entry?.disposition
-    if (disposition !== null && disposition !== undefined
-      && !(typeof disposition === 'object' && Object.keys(disposition).length === 0)) {
-      dispositionOnly.push(String(entry?.id ?? '(缺 id)'))
+    const beforeCycle = opened !== null && opened < cycleKey
+    if (!isSlaClosed(entry)) {
+      if (beforeCycle) ids.push(String(entry?.id ?? '(缺 id)'))
+      continue
     }
+    const assessment = entry?.assessment
+    const graded = assessment !== null && assessment !== undefined
+      && typeof assessment === 'object' && !Array.isArray(assessment)
+      && SLA_DEBT.graded_verdicts.includes(assessment.verdict)
+    if (graded) continue
+    disposedUnassessed.push(String(entry?.id ?? '(缺 id)'))
+    if (beforeCycle) disposedUnassessedBeforeCycle += 1
   }
   return {
     owed_by: SLA_DEBT.owed_by,
     owed_by_label: SLA_DEBT.owed_by_label,
     remaining: ids.length,
     ids,
-    disposition_only: dispositionOnly,
+    disposed_unassessed: {
+      all: disposedUnassessed.length,
+      before_cycle: disposedUnassessedBeforeCycle,
+    },
     cycle: cycleKey,
     closes_on: SLA_DEBT.closes_on,
   }
@@ -191,7 +201,7 @@ export function slaDebtReading({ entries = [], cycle = DAY } = {}) {
 /**
  * 卡面欠账判据（契约 §3.7.1-A）：卡上印的数、印的**归属**都与欠账同值；两个方向都不许自相矛盾。
  *
- *   · `remaining > 0` 而这格 **绿** ⇒ `C2-SLA-DEBT-HIDDEN`（有一条欠账，卡却说没欠）；
+ *   · `remaining > 0` 而这格 **绿** ⇒ `C2-SLA-DEBT-HIDDEN`（有票开着、卡却说没开着）；
  *   · `remaining > 0` 而卡上的数读不出 / ≠ `remaining` ⇒ `C2-SLA-DEBT-COUNT`（"还剩几条"说不清）；
  *   · `remaining > 0` 而 `card.reasons` 里没有 `SLA_OVER_CYCLE` ⇒ `C2-SLA-DEBT-REASON`；
  *   · `remaining > 0` 而卡面 **没印归属**（`（<label> 欠 · owed_by=<machine>）` 读不出）⇒
@@ -211,8 +221,8 @@ export function slaDebtProblems({ cell, reasons = [], debt, where = 'sla', push,
   const remaining = Number(debt?.remaining ?? 0)
   if (remaining > 0) {
     if (state === 'green') {
-      push('C2-SLA-DEBT-HIDDEN', `${label}：\`${SLA_DEBT.closes_on}\` 还欠 ${remaining} 条（${debt.ids.join(' · ')}），卡上 \`sla\` 格却是 \`green\``
-        + ` —— 欠账归 ${owner.owed_by_label}，卡不许把"还没评估"印成"没欠账"（契约 §3.7.1-A）`)
+      push('C2-SLA-DEBT-HIDDEN', `${label}：${remaining} 张 bug 开着且过了周期（${debt.ids.join(' · ')}），卡上 \`sla\` 格却是 \`green\``
+        + ` —— 欠账归 ${owner.owed_by_label}（收口字段 \`${SLA_DEBT.closes_on}\`），卡不许把"开着"印成"没欠账"（契约 §3.7.1）`)
     }
     const m = /超期\s*(\d+)\s*条/.exec(reading)
     if (m === null || Number(m[1]) !== remaining) {
@@ -221,7 +231,7 @@ export function slaDebtProblems({ cell, reasons = [], debt, where = 'sla', push,
     }
     const hasReason = (Array.isArray(reasons) ? reasons : []).some((r) => r?.code === 'SLA_OVER_CYCLE')
     if (!hasReason) {
-      push('C2-SLA-DEBT-REASON', `${label}：欠 ${remaining} 条评估而 \`card.reasons\` 里没有 \`SLA_OVER_CYCLE\``
+      push('C2-SLA-DEBT-REASON', `${label}：${remaining} 张 bug 还开着而 \`card.reasons\` 里没有 \`SLA_OVER_CYCLE\``
         + `（实得 ${JSON.stringify((Array.isArray(reasons) ? reasons : []).map((r) => r?.code))}）`)
     }
     // 🔴 归属（`bug-20261110-09` 的尾款 · M1）：卡面必须印**表里那个词**，而且印出机器名。
@@ -242,7 +252,7 @@ export function slaDebtProblems({ cell, reasons = [], debt, where = 'sla', push,
       }
     }
   } else if (state === 'red') {
-    push('C2-SLA-DEBT-EMPTY', `${label}：卡上 \`sla\` 格是红的，但欠账读数是 0（没有一条"超期未评估"）——`
+    push('C2-SLA-DEBT-EMPTY', `${label}：卡上 \`sla\` 格是红的，但欠账读数是 0（没有一张"开着且过周期"的 bug）——`
       + '这条红不是这个原因，别让它冒充 SLA')
   }
   return undefined
@@ -531,7 +541,7 @@ export function bugEntry(id, over = {}) {
     author: 'leader',
     source: { carrier: 'boss', ref: null },
     tags: [],
-    /** SLA 的起算点（契约 §3.7.1：从 `opened_at` 起，超一个开工周期仍未 `assessed` ⇒ 红）。 */
+    /** SLA 的起算点（契约 §3.7.1：从 `opened_at` 起，超一个开工周期**还开着**（`disposition` 空）⇒ 红）。 */
     opened_at: over.opened_at ?? registeredAt,
     registered_at: registeredAt,
     finding_refs: [],

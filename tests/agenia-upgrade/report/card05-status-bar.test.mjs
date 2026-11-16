@@ -37,13 +37,13 @@
  *       （Python 那份 `SLOT_STALE_MS` 是**手抄**的，只靠 2 小时那种远场现场抓不到 30→60 的漂移）。
  *   `G` 🔴 **两个 producer 自己的写面**（`gate4-C2` F-09）：A = `inject.js::recordIdentityAlarm()`
  *       （落点 / 04:00 天号 / 去重 / 不是工作区就不写）；B = `lib/bug-ledger.mjs::slaVerdict()`
- *       （`unknown` 照样超期 / 当天开的不算 / observation 不算 / `cycle` 缺 ⇒ 判不了）。
- *   `H` 🔴 **处置不是收口**（`bug-20261110-09` 的决定：**选 B** · 契约 §3.7.1-A）：
- *       一条 `opened_at` 在上一个开工周期、**组长已处置（`adopted`）**、`assessment` 仍是 null 的 bug ⇒
- *       ① `bug-read.sla.over` 仍含它（`C2-SLA-DISPOSITION-IS-CLOSURE`：处置回答"修不修"，
- *       评估回答"是不是真的"，两个问题不许互相顶账）；② 卡上 `sla` 格 `red` 且 `SLA_OVER_CYCLE` 点名它；
- *       ③ 欠账读数 `owed_by = test`（**测试岗**）/ `remaining` = 卡上印的"超期 N 条"
- *       （`slaDebtProblems()`，契约 §3.7.1-A：卡面必须说得出**谁欠的**与**这一批还剩几条**）。
+ *       （**开着且过周期** ⇒ 超期 / 已评估但没处置 ⇒ 仍超期 / 已处置没评估 ⇒ 只进读数 / 当天开的不算 /
+ *       observation 不算 / `cycle` 缺 ⇒ 判不了）。
+ *   `H` 🔴 **处置即收口**（2026-11-16 裁定：处置理由即最小评估，分级 `assessed` 是可选加强）：
+ *       两张 `opened_at` 在上一个开工周期、**组长已处置**（`adopted`；一张 `assessment: null`、
+ *       一张 `verdict:'unknown'`）的 bug ⇒ ① `bug-read.sla.over` **不含**它们；
+ *       ② 卡上 `sla` 格 `green`、`card.reasons` 里没有 `SLA_OVER_CYCLE`；③ 读数 `disposed_unassessed`
+ *       = 2 条（本周期之前 2 条），卡面必须把这个数 + 理由（"处置理由即最小评估"）印出来。
  *       ⚠️ 这一格判的是**数 + 归属**（`SLA_DEBT` 一处），归属那一半在下面 `I` 段；
  *       七份合成卡证明**哪几条码能单独翻面**：`proper`（0 条）· `hidden-only` ⇒ 只翻 HIDDEN ·
  *       `count-drift` ⇒ 只翻 COUNT · `red-without-debt` ⇒ 只翻 EMPTY · `owner-unnamed` ⇒ 只翻 OWNER-UNNAMED ·
@@ -52,11 +52,11 @@
  *       🔴 **边界（写下来，别读大）**：`C2-SLA-DEBT-REASON` **没有单独样本** —— 它只在 `hidden-green`
  *       里与另外两条一起出现，所以"每条码都能单独翻面"这句话对 REASON 不成立
  *       （`bug-20261111-05` ③ 点名的正是这种"注释比证据宽"）。
- *   `I` 🔴 **归属从表里读**（2026-11-11 第二轮 · `bug-20261111-05` · 契约 §3.7.1-B）：
+ *   `I` 🔴 **归属从表里读**（2026-11-11 第二轮 · `bug-20261111-05` · 契约 §3.7.1）：
  *       卡面 `sla` 格必须印 `（<owed_by_label> 欠 · owed_by=<owed_by>）`，两个值都来自 `SLA_DEBT`：
  *       ① **没印归属** ⇒ `C2-SLA-DEBT-OWNER-UNNAMED`；② 印了但**与表不符** ⇒ `C2-SLA-DEBT-OWNER-DRIFT`；
  *       ③ **工作区里放一份合成表**（`测试组` / `qa-group`）⇒ 卡面必须跟着换词（`C2-SLA-DEBT-OWNER-TABLE`）
- *          —— 这一条就是**翻面**：卡面若还抄着 `测试岗`，它当场红（表变 ⇒ 卡变，从此刻起看得见）；
+ *          —— 这一条就是**翻面**：卡面若还抄着表里那个词，它当场红（表变 ⇒ 卡变，从此刻起看得见）；
  *       ④ 合成表里**删掉 `owed_by`** ⇒ 卡面印 `owed_by=unknown`，**不许**退回旧词（`C2-SLA-DEBT-OWNER-UNKNOWN`）。
  *       ⚠️ 这一格**没有源码刀**：判的是"卡面印的字 vs 判据喂进去的那张表"，而合成表那条腿本身
  *       就走了一遍"表变 ⇒ 卡变"（表里只改 `owed_by_label`，卡面就换词），**并且**它比源码刀更有力 ——
@@ -421,7 +421,7 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
       }
     }
 
-    // ── E2 · sla 的另一向：超一个开工周期仍未评估 ⇒ 红 ──────────────────
+    // ── E2 · sla 的另一向：超一个开工周期**还开着**（没有 disposition）⇒ 红 ──────────
     {
       const over = scene('CARD-05', 'sla-over', {
         route: routeLedger({ tickets: [] }),
@@ -443,8 +443,8 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
         readings.sla_over = { cell, reasons: cells['card.reasons'], card_red: cells['card.red'] }
         if (cell === null || cell.state !== 'red') {
           push('C2-SLA-OVER-CYCLE-GREEN',
-            `一只 bug 的 \`opened_at\` 是 ${DAY_PREV}（上一个开工周期）、\`assessment\` 仍是 null ⇒ 格 \`sla\` 必须 \`red\`，`
-            + `实得 ${JSON.stringify(cell)} —— 契约 §3.7.1 / 裁定第 2 条：「从 opened_at 起超一个开工周期仍未 assessed ⇒ 红」`)
+            `一只 bug 的 \`opened_at\` 是 ${DAY_PREV}（上一个开工周期）、\`disposition\` 仍是 null（**开着**）⇒ 格 \`sla\` 必须 \`red\`，`
+            + `实得 ${JSON.stringify(cell)} —— 契约 §3.7.1 / 2026-11-16 裁定：「从 opened_at 起超一个开工周期还开着 ⇒ 红」`)
         }
         if (cell !== null && !String(cell.reading).match(/\d/)) {
           push('C2-SLA-READING', `格 \`sla\` 的 \`reading\` 必须带得出数（条数 / 最老天数），实得 ${JSON.stringify(cell.reading)}`)
@@ -457,14 +457,15 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
       }
     }
 
-    // ── E2b · 🔴 **判不了不是已评估**（`gate4-C2` F-01）：旧 bug + `assessment.verdict:'unknown'` ──
+    // ── E2b · 🔴 **评估不是收口**：旧 bug + 分级评估 `true`、但没有 disposition ⇒ 照样红 ──
     /**
-     * 这是 F-01 的现场：一只 2026-11-01 开、只有 `{"verdict":"unknown"}` 那种评估的 bug。
-     * `unknown` = 判不了 ⇒ 它**保留 open** ⇒ 照样超期 ⇒ 格 `sla` 必须 `red`，且 `SLA_OVER_CYCLE`
-     * 的 `detail` **点名那只 bug**。
-     * 病灶（打回那一条）：`assessment` 只要是个非空对象就被当成"已评估" ⇒ 这只 bug 静默变绿。
+     * 这是"SLA 的输入是「开着」而不是「有没有评估」"的翻面样本：一只 2026-11-01 开、已经写过
+     * `{"verdict":"true"}` 的分级评估、但**从没处置**（`disposition` 仍是 null）的 bug。
+     * 评估回答"是不是真的"，处置回答"修不修" —— 分级评估是**可选加强**，它不能替组长收口
+     * ⇒ 格 `sla` 必须 `red`，且 `SLA_OVER_CYCLE` 的 `detail` **点名那只 bug**。
+     * 病灶（打回那一条）：把 `assessment` 当成收口 ⇒ 这只 bug 静默变绿。
      */
-    const SLA_UNKNOWN_ID = 'bug-20261101-07'
+    const SLA_ASSESSED_OPEN_ID = 'bug-20261101-07'
     // ── E2c · **跨读者**（F-03）：`bug-read.sla` 必须用**同一个注入时钟**，三项逐项相同 ──
     const slaCrossReader = (label, s, slaCell, cells) => {
       const env = setClock(s.roots, s.nowIso)
@@ -512,6 +513,20 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
           `${label}：卡上 \`sla\` 格说 \`最老 ${mOldest === null ? '(读不出)' : mOldest[1]} 天\`，\`bug-read.sla.oldest_age\` = ${JSON.stringify(sla.oldest_age)}`
           + `（reading=${JSON.stringify(reading)}）`)
       }
+      // 读数那一半（处置过但无分级评估）也跨读者：卡上两个数 vs `sla.disposed_unassessed`。
+      const mDisposed = /处置过但无分级评估\s*(\d+)\s*条/.exec(reading)
+      const mDisposedBefore = /本周期之前\s*(\d+)\s*条/.exec(reading)
+      const readingOf = sla.disposed_unassessed ?? null
+      if (readingOf === null || mDisposed === null || Number(mDisposed[1]) !== readingOf.all) {
+        push('C2-SLA-CROSS-READER',
+          `${label}：卡上 \`sla\` 格说 \`处置过但无分级评估 ${mDisposed === null ? '(读不出)' : mDisposed[1]} 条\`，`
+          + `\`bug-read.sla.disposed_unassessed.all\` = ${JSON.stringify(readingOf?.all ?? null)}（reading=${JSON.stringify(reading)}）`)
+      }
+      if (readingOf === null || mDisposedBefore === null || Number(mDisposedBefore[1]) !== readingOf.before_cycle) {
+        push('C2-SLA-CROSS-READER',
+          `${label}：卡上 \`sla\` 格说 \`本周期之前 ${mDisposedBefore === null ? '(读不出)' : mDisposedBefore[1]} 条\`，`
+          + `\`bug-read.sla.disposed_unassessed.before_cycle\` = ${JSON.stringify(readingOf?.before_cycle ?? null)}（reading=${JSON.stringify(reading)}）`)
+      }
       // `SLA_OVER_CYCLE` 的 detail 必须点名 `over` 里那几个 id（红了却说不出是哪只 = 没红）。
       if (overIds.length > 0) {
         const detail = redDetails(cells, 'SLA_OVER_CYCLE').join(' ')
@@ -528,14 +543,14 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
       }
     }
     {
-      const unknown = scene('CARD-05', 'sla-unknown-assessment', {
+      const assessedOpen = scene('CARD-05', 'sla-assessed-open', {
         route: routeLedger({ tickets: [] }),
         bug: bugLedger({
           entries: [
-            bugEntry(SLA_UNKNOWN_ID, {
+            bugEntry(SLA_ASSESSED_OPEN_ID, {
               opened_at: `${DAY_PREV}T09:00:00+08:00`,
               registered_at: `${DAY_PREV}T09:00:00+08:00`,
-              assessment: { verdict: 'unknown', by_role: 'test', at: `${NOW_PREV}` },
+              assessment: { verdict: 'true', by_role: 'test', at: `${NOW_PREV}` },
             }),
           ],
         }),
@@ -544,56 +559,69 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
         reviews: {},
         legacy: { remaining: 0 },
       })
-      if (unknown.run.exit_code !== 0) {
-        push('C2-GENERATOR-FAILED', `sla 判不了现场：生成器 exit=${unknown.run.exit_code}`)
-      } else if (unknown.card.sheet !== null) {
-        const cells = unknown.card.cells
+      if (assessedOpen.run.exit_code !== 0) {
+        push('C2-GENERATOR-FAILED', `sla 评估不是收口现场：生成器 exit=${assessedOpen.run.exit_code}`)
+      } else if (assessedOpen.card.sheet !== null) {
+        const cells = assessedOpen.card.cells
         const cell = cellOf(cells['statusbar'], 'sla')
-        readings.sla_unknown_assessment = { cell, reasons: cells['card.reasons'], card_red: cells['card.red'] }
+        readings.sla_assessed_open = { cell, reasons: cells['card.reasons'], card_red: cells['card.red'] }
         if (cell === null || cell.state !== 'red') {
-          push('C2-SLA-UNKNOWN-ASSESSMENT-GREEN',
-            `一只 bug 的 \`opened_at\` 是 ${DAY_PREV}、它的 \`assessment\` 是 \`{"verdict":"unknown"}\`（**判不了**）⇒ 格 \`sla\` 必须 \`red\`，`
-            + `实得 ${JSON.stringify(cell)} —— 契约 §3.7.1：\`verdict:'unknown'\` **不是**"已评估"，它保留 open、照样算超期。`
-            + '把"判不了"读成"处理过了"，真超期的 bug 会静默变绿（`gate4-C2` F-01）')
+          push('C2-SLA-ASSESSED-OPEN-GREEN',
+            `一只 bug 的 \`opened_at\` 是 ${DAY_PREV}、它的 \`assessment\` 是 \`{"verdict":"true"}\`（分级评估做过）但 \`disposition\` 仍是 null ⇒ `
+            + `格 \`sla\` 必须 \`red\`，实得 ${JSON.stringify(cell)} —— 契约 §3.7.1：分级评估是可选加强，它**不是**收口；`
+            + '把"评估过了"读成"处置过了"，开着的票会静默变绿')
         }
         if (!hasRed(cells, 'SLA_OVER_CYCLE')) {
           push('C2-SLA-REASON',
-            `判不了的那只 bug 在 \`card.reasons\` 里没有 \`SLA_OVER_CYCLE\`（实得 ${JSON.stringify(cells['card.reasons'])}）`)
+            `已评估但没处置的那只 bug 在 \`card.reasons\` 里没有 \`SLA_OVER_CYCLE\`（实得 ${JSON.stringify(cells['card.reasons'])}）`)
         }
         const named = redDetails(cells, 'SLA_OVER_CYCLE').join(' ')
-        if (!named.includes(SLA_UNKNOWN_ID)) {
+        if (!named.includes(SLA_ASSESSED_OPEN_ID)) {
           push('C2-SLA-REASON-UNNAMED',
-            `\`SLA_OVER_CYCLE\` 的 detail 没点名那只 bug（\`${SLA_UNKNOWN_ID}\`；detail 实得 ${JSON.stringify(named)}）—— `
+            `\`SLA_OVER_CYCLE\` 的 detail 没点名那只 bug（\`${SLA_ASSESSED_OPEN_ID}\`；detail 实得 ${JSON.stringify(named)}）—— `
             + '红了不说哪一只，等于没红（契约 §5 末条）')
         }
         // 🔴 F-03：跨读者（同一个注入时钟）
-        slaCrossReader('E2c/sla-cross-reader', unknown, cell, cells)
+        slaCrossReader('E2c/sla-cross-reader', assessedOpen, cell, cells)
       }
     }
 
-    // ── E2d · 🔴 **处置不是收口**（`bug-20261110-09` 的决定：选 B · 契约 §3.7.1-A）──────────
+    // ── E2d · 🔴 **处置即收口**（2026-11-16 裁定）：处置过、没分级评估 ⇒ **绿 + 读数**，不判红 ──────
     /**
-     * 一条 `opened_at` 在上一个开工周期、**组长已经处置（`adopted`）**、`assessment` 仍是 `null` 的 bug。
-     * 按 B：`disposition` 不算收口 ⇒ ① 它还在 `bug-read.sla.over` 里；② 卡上那格 `red` 且点名它；
-     * ③ 欠账读数是"测试岗欠 1 条"，卡上那格必须印同一个数。
-     * 按 A 写的话 ① 会是空数组、② 会绿 —— 这一条样本就是两个形状的分界线（契约 §3.7.1-A 末段）。
+     * 两张 `opened_at` 在上一个开工周期、**组长已经处置**的 bug：
+     *   ① `assessment: null`；② `assessment: {verdict:'unknown'}`（判不了，也不进分级评估）。
+     * 按 2026-11-16 的裁定（处置理由即最小评估；分级 `assessed` 是可选加强）：
+     *   ① 它们**不在** `bug-read.sla.over` 里；② 卡上那格 `green`、`card.reasons` 里没有 `SLA_OVER_CYCLE`；
+     *   ③ 读数 `disposed_unassessed` = 2 条（其中本周期之前 2 条），卡面必须把这个数 + 理由印出来。
+     * 反方向（把分级评估当义务）就是旧口径：① 会含它们、② 会红 —— 这一条样本是两个口径的分界线。
      */
     const SLA_DISPOSITION_ID = 'bug-20261101-09'
+    const SLA_DISPOSITION_UNKNOWN_ID = 'bug-20261101-10'
     {
-      const entries = [bugEntry(SLA_DISPOSITION_ID, {
-        opened_at: `${DAY_PREV}T09:00:00+08:00`,
-        registered_at: `${DAY_PREV}T09:00:00+08:00`,
-        assessment: null,
-        disposition: { value: 'adopted', by: 'leader', at: NOW_PREV, reason: '夹具：组长已处置，测试岗还没评估' },
-      })]
+      const entries = [
+        bugEntry(SLA_DISPOSITION_ID, {
+          opened_at: `${DAY_PREV}T09:00:00+08:00`,
+          registered_at: `${DAY_PREV}T09:00:00+08:00`,
+          assessment: null,
+          disposition: { value: 'adopted', by: 'leader', at: NOW_PREV, reason: '夹具：组长已处置；处置理由就是这一次的评估' },
+        }),
+        bugEntry(SLA_DISPOSITION_UNKNOWN_ID, {
+          opened_at: `${DAY_PREV}T09:00:00+08:00`,
+          registered_at: `${DAY_PREV}T09:00:00+08:00`,
+          assessment: { verdict: 'unknown', by_role: 'test', at: NOW_PREV },
+          disposition: { value: 'adopted', by: 'leader', at: NOW_PREV, reason: '夹具：已处置；unknown 不是分级评估' },
+        }),
+      ]
       const debt = slaDebtReading({ entries, cycle: DAY })
       readings.sla_debt = { ...debt, contract: { owed_by: SLA_DEBT.owed_by, closes_on: SLA_DEBT.closes_on, disposition_is_closure: SLA_DEBT.disposition_is_closure } }
-      if (debt.owed_by !== SLA_DEBT.owed_by || debt.remaining !== 1 || !debt.disposition_only.includes(SLA_DISPOSITION_ID)) {
+      if (debt.owed_by !== SLA_DEBT.owed_by || debt.remaining !== 0 || debt.ids.length !== 0
+        || debt.disposed_unassessed.all !== 2 || debt.disposed_unassessed.before_cycle !== 2) {
         push('C2-SLA-DEBT-READING',
-          `欠账读数不对：期望 \`{owed_by:'${SLA_DEBT.owed_by}', remaining:1, disposition_only:['${SLA_DISPOSITION_ID}']}\`，`
-          + `实得 ${JSON.stringify(debt)} —— 这一格判的是"谁欠的 + 还剩几条"，两个数都得对得上`)
+          `欠账读数不对：期望 \`{owed_by:'${SLA_DEBT.owed_by}', remaining:0, disposed_unassessed:{all:2, before_cycle:2}}\`，`
+          + `实得 ${JSON.stringify(debt)} —— 处置过的票不欠账（收口字段 = \`${SLA_DEBT.closes_on}\`）；`
+          + '没有分级评估的只进读数')
       }
-      const disposed = scene('CARD-05', 'sla-disposition-not-closure', {
+      const disposed = scene('CARD-05', 'sla-disposition-closure', {
         route: routeLedger({ tickets: [] }),
         bug: bugLedger({ entries }),
         local: localState({ day: DAY, technical: 'done', conversation: 'done' }),
@@ -608,55 +636,83 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
         const cell = cellOf(cells['statusbar'], 'sla')
         const env = setClock(disposed.roots, disposed.nowIso)
         const res = readBugOp(disposed.roots.ws, 'c2-card05-sla-debt', { env })
-        const over = res?.json?.sla?.over ?? null
-        readings.sla_disposition_not_closure = {
+        const slaPayload = res?.json?.sla ?? null
+        const over = slaPayload?.over ?? null
+        readings.sla_disposition_closure = {
           cell,
           reasons: cells['card.reasons'],
           debt,
-          bug_read: { exit_code: res?.exit_code ?? null, code: res?.json?.error?.code ?? null, over },
+          bug_read: {
+            exit_code: res?.exit_code ?? null,
+            code: res?.json?.error?.code ?? null,
+            over,
+            disposed_unassessed: slaPayload?.disposed_unassessed ?? null,
+          },
         }
-        // ① B 的定义：组长处置**不是**收口 ⇒ 它仍然在 `over` 里。
-        if (!Array.isArray(over) || !over.includes(SLA_DISPOSITION_ID)) {
-          push('C2-SLA-DISPOSITION-IS-CLOSURE',
-            `一只 bug 的 \`opened_at\` 是 ${DAY_PREV}、\`assessment\` 是 null、**组长处置 = adopted** ⇒ `
-            + `\`bug-read.sla.over\` 必须仍然含它（实得 ${JSON.stringify(over)}）—— 契约 §3.7.1-A 选了 B：`
-            + 'SLA 只由 `assessment` 收口；处置回答"修不修"，评估回答"是不是真的"，两个问题不许互相顶账')
+        // ① 处置 = 收口 ⇒ 它们**不**在 `over` 里（哪怕从没写过分级评估）。
+        if (!Array.isArray(over) || over.includes(SLA_DISPOSITION_ID) || over.includes(SLA_DISPOSITION_UNKNOWN_ID)) {
+          push('C2-SLA-DISPOSITION-NOT-CLOSURE',
+            `两张 bug 的 \`opened_at\` 是 ${DAY_PREV}、都已 \`bug-dispose\`（adopted）⇒ `
+            + `\`bug-read.sla.over\` 必须**不含**它们（实得 ${JSON.stringify(over)}）—— 2026-11-16 裁定：`
+            + '处置理由即最小评估，处置就是收口；把"没写 assessed"当成"没处置"，32 条早就关掉的票会一直红着')
         }
-        // ② 卡上那格红 + 点名它。
-        if (cell === null || cell.state !== 'red') {
-          push('C2-SLA-DISPOSITION-GREEN',
-            `处置过但没评估的那只 bug ⇒ 格 \`sla\` 必须 \`red\`，实得 ${JSON.stringify(cell)} —— 把"组长处置了"读成"评估过了"，`
-            + '真超期的评估欠账会静默变绿（契约 §3.7.1-A）')
+        // ② 卡上那格绿 + 没有 SLA_OVER_CYCLE。
+        if (cell === null || cell.state !== 'green') {
+          push('C2-SLA-DISPOSED-GREEN',
+            `处置过但没分级评估的那两张 bug ⇒ 格 \`sla\` 必须 \`green\`，实得 ${JSON.stringify(cell)} —— `
+            + '把"没写 assessed"读成"超期"，处置过几天的票会一直红着（2026-11-16 裁定）')
         }
-        if (!hasRed(cells, 'SLA_OVER_CYCLE')) {
-          push('C2-SLA-REASON', `处置过但没评估的那只 bug 在 \`card.reasons\` 里没有 \`SLA_OVER_CYCLE\`（实得 ${JSON.stringify(cells['card.reasons'])}）`)
-        } else {
-          const named = redDetails(cells, 'SLA_OVER_CYCLE').join(' ')
-          if (!named.includes(SLA_DISPOSITION_ID)) {
-            push('C2-SLA-REASON-UNNAMED',
-              `\`SLA_OVER_CYCLE\` 的 detail 没点名那只 bug（\`${SLA_DISPOSITION_ID}\`；detail 实得 ${JSON.stringify(named)}）`)
-          }
+        if (hasRed(cells, 'SLA_OVER_CYCLE')) {
+          push('C2-SLA-REASON',
+            `处置过但没分级评估的 bug 在 \`card.reasons\` 里出现了 \`SLA_OVER_CYCLE\`（实得 ${JSON.stringify(cells['card.reasons'])}）—— `
+            + '处置即收口，它们不许判红')
         }
-        // ③ 卡上"还剩几条"必须与欠账同值（谁欠的 = 测试岗，写在 SLA_DEBT 一处）。
+        // ③ 读数必须印出来：数 + 理由（"处置理由即最小评估，分级评估是可选加强"）。
+        const reading = String(cell?.reading ?? '')
+        if (!/处置过但无分级评估\s*2\s*条/.test(reading)) {
+          push('C2-SLA-DISPOSED-READING',
+            `格 \`sla\` 的 \`reading\` 必须印出"处置过但无分级评估 2 条"，实得 ${JSON.stringify(reading)} —— `
+            + '读数存在是为了让"分级评估该不该当义务"这个选择一直看得见')
+        }
+        if (!/本周期之前\s*2\s*条/.test(reading)) {
+          push('C2-SLA-DISPOSED-READING',
+            `格 \`sla\` 的 \`reading\` 必须印出"本周期之前 2 条"（与 \`over\` 同一把尺子），实得 ${JSON.stringify(reading)}`)
+        }
+        if (!/处置理由即最小评估/.test(reading)) {
+          push('C2-SLA-DISPOSED-READING',
+            `格 \`sla\` 的 \`reading\` 必须说清为什么这个数**不判红**（"处置理由即最小评估"），实得 ${JSON.stringify(reading)}`)
+        }
+        // ④ 跨读者：`bug-read.sla.disposed_unassessed` 与卡面那两个数同值。
+        if (slaPayload === null || slaPayload.disposed_unassessed?.all !== 2 || slaPayload.disposed_unassessed?.before_cycle !== 2) {
+          push('C2-SLA-DISPOSED-READING',
+            `\`bug-read.sla.disposed_unassessed\` 必须是 \`{all:2, before_cycle:2}\`（实得 ${JSON.stringify(slaPayload?.disposed_unassessed ?? null)}）—— `
+            + '两个读者（JS 的 `slaVerdict` / Python 的 `disposed_unassessed_of`）必须同值')
+        }
+        // ⑤ 欠账判据：0 欠账 + 绿 ⇒ 一条码都不许吐。
         slaDebtProblems({ cell, reasons: cells['card.reasons'], debt, where: 'E2d/真卡', push })
       }
-      // ④ 判据自己的阳性对照 + 七份合成样本（**哪几条码能单独翻面**见文件头 `H` 段的边界说明）：没有这一组，"欠账说不清"就只是字面承诺。
-      //    ⚠️ `proper` / `count-drift` 的 reading 必须带**归属**那一段（`（测试岗 欠 · owed_by=test）`）——
-      //    卡面从 M1 起印它；不带就等于"没印归属"，那是另一条码（`OWNER-UNNAMED`），会把这把刀的期望弄脏。
+      // ⑥ 判据自己的阳性对照 + 七份合成样本（**哪几条码能单独翻面**见文件头 `H` 段的边界说明）：没有这一组，"欠账说不清"就只是字面承诺。
+      //    这一组要的是"有欠账"的那一侧 ⇒ 用一张**开着且过周期**的票算出来的 debt。
+      //    ⚠️ `proper` / `count-drift` 的 reading 必须带**归属**那一段（`（<label> 欠 · owed_by=<machine>）`）——
+      //    卡面一直印它；不带就等于"没印归属"，那是另一条码（`OWNER-UNNAMED`），会把这把刀的期望弄脏。
+      const openDebt = slaDebtReading({
+        entries: [bugEntry('bug-sla-open-debt', { opened_at: `${DAY_PREV}T09:00:00+08:00`, registered_at: `${DAY_PREV}T09:00:00+08:00` })],
+        cycle: DAY,
+      })
       const ownerText = `（${SLA_DEBT.owed_by_label} 欠 · owed_by=${SLA_DEBT.owed_by}）`
       const synthetics = [
         {
           key: 'proper',
           cell: { key: 'sla', state: 'red', reading: `超期 1 条${ownerText} · 最老 1 天 · 周期 ${DAY}` },
-          reasons: [{ code: 'SLA_OVER_CYCLE', detail: `1 条 bug 超一个开工周期仍未评估：${SLA_DISPOSITION_ID}` }],
-          debt,
+          reasons: [{ code: 'SLA_OVER_CYCLE', detail: '1 条 bug 超一个开工周期仍开着：bug-sla-open-debt' }],
+          debt: openDebt,
           want: [],
         },
         {
           key: 'hidden-green',
           cell: { key: 'sla', state: 'green', reading: `超期 0 条${ownerText} · 最老 0 天 · 周期 ${DAY}` },
           reasons: [],
-          debt,
+          debt: openDebt,
           want: ['C2-SLA-DEBT-HIDDEN', 'C2-SLA-DEBT-COUNT', 'C2-SLA-DEBT-REASON'],
         },
         {
@@ -664,15 +720,15 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
           // "每一码单独承重"这句话在它身上不成立。这一份只翻 HIDDEN：数对、理由在、就是**绿**着说没欠。
           key: 'hidden-only',
           cell: { key: 'sla', state: 'green', reading: `超期 1 条${ownerText} · 最老 1 天 · 周期 ${DAY}` },
-          reasons: [{ code: 'SLA_OVER_CYCLE', detail: `1 条 bug 超一个开工周期仍未评估：${SLA_DISPOSITION_ID}` }],
-          debt,
+          reasons: [{ code: 'SLA_OVER_CYCLE', detail: '1 条 bug 超一个开工周期仍开着：bug-sla-open-debt' }],
+          debt: openDebt,
           want: ['C2-SLA-DEBT-HIDDEN'],
         },
         {
           key: 'count-drift',
           cell: { key: 'sla', state: 'red', reading: `超期 2 条${ownerText} · 最老 1 天 · 周期 ${DAY}` },
           reasons: [{ code: 'SLA_OVER_CYCLE', detail: '（合成：数说 2 条）' }],
-          debt,
+          debt: openDebt,
           want: ['C2-SLA-DEBT-COUNT'],
         },
         {
@@ -686,16 +742,16 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
           // 卡面没印归属（M1 之前的形状）⇒ 必须点名"谁欠的说不清"。
           key: 'owner-unnamed',
           cell: { key: 'sla', state: 'red', reading: `超期 1 条 · 最老 1 天 · 周期 ${DAY}` },
-          reasons: [{ code: 'SLA_OVER_CYCLE', detail: `1 条 bug 超一个开工周期仍未评估：${SLA_DISPOSITION_ID}` }],
-          debt,
+          reasons: [{ code: 'SLA_OVER_CYCLE', detail: '1 条 bug 超一个开工周期仍开着：bug-sla-open-debt' }],
+          debt: openDebt,
           want: ['C2-SLA-DEBT-OWNER-UNNAMED'],
         },
         {
-          // 卡面自己抄了别的词（表是 test/测试岗，卡上写 测试组/qa）⇒ 必须红"与表不符"。
+          // 卡面自己抄了别的词（表是 leader/组长，卡上写 测试组/qa）⇒ 必须红"与表不符"。
           key: 'owner-drift',
           cell: { key: 'sla', state: 'red', reading: `超期 1 条（测试组 欠 · owed_by=qa）· 最老 1 天 · 周期 ${DAY}` },
-          reasons: [{ code: 'SLA_OVER_CYCLE', detail: `1 条 bug 超一个开工周期仍未评估：${SLA_DISPOSITION_ID}` }],
-          debt,
+          reasons: [{ code: 'SLA_OVER_CYCLE', detail: '1 条 bug 超一个开工周期仍开着：bug-sla-open-debt' }],
+          debt: openDebt,
           want: ['C2-SLA-DEBT-OWNER-DRIFT', 'C2-SLA-DEBT-OWNER-DRIFT'],
         },
       ]
@@ -713,24 +769,25 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
       readings.sla_debt_synthetic = syntheticReadings
     }
 
-    // ── E2e · 🔴 归属**从表里读**（M1 · 契约 §3.7.1-A）：改表 ⇒ 卡跟着改；表缺字段 ⇒ `unknown` ──────
+    // ── E2e · 🔴 归属**从表里读**（M1 · 契约 §3.7.1）：改表 ⇒ 卡跟着改；表缺字段 ⇒ `unknown` ──────
     /**
-     * 三个现场，同一份 `scene()`：
+     * 三个现场，同一份 `scene()`（一张**开着且过周期**的票 ⇒ 卡上有真欠账、会印归属）：
      *   ① **仓库里那张真表**（E2d 已经跑过）—— 卡面必须印 `SLA_DEBT.owed_by_label` / `owed_by`；
      *   ② **工作区里放一份合成表**（`测试组` / `qa-group`）—— 卡面必须跟着改成那两个词。
-     *      这就是这一格的**翻面**：卡面若还抄着 `测试岗`，② 会红；表改了卡不改这件事从此刻起看得见。
-     *   ③ **合成表里删掉 `owed_by`** —— 卡面必须印 `owed_by=unknown`，**且不许**退回那个旧词 `测试岗`。
+     *      这就是这一格的**翻面**：卡面若还抄着表里的旧词，② 会红；表改了卡不改这件事从此刻起看得见。
+     *   ③ **合成表里删掉 `owed_by`** —— 卡面必须印 `owed_by=unknown`，**且不许**退回表里那个旧词。
      *      （"猜一个词"会让"谁欠的"在表改坏之后继续印旧的，而所有断言都还绿着。）
      */
+    const SLA_OPEN_DEBT_ID = 'bug-20261101-11'
     const OWNER_SWAPPED = { owed_by: 'qa-group', owed_by_label: '测试组' }
     const ownerScene = (tag, table) => scene('CARD-05', tag, {
       route: routeLedger({ tickets: [] }),
       bug: bugLedger({
-        entries: [bugEntry(SLA_DISPOSITION_ID, {
+        entries: [bugEntry(SLA_OPEN_DEBT_ID, {
           opened_at: `${DAY_PREV}T09:00:00+08:00`,
           registered_at: `${DAY_PREV}T09:00:00+08:00`,
           assessment: null,
-          disposition: { value: 'adopted', by: 'leader', at: NOW_PREV, reason: '夹具：组长已处置，测试岗还没评估' },
+          disposition: null,
         })],
       }),
       local: localState({ day: DAY, technical: 'done', conversation: 'done' }),
@@ -759,13 +816,13 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
       const cell = cellOf(cells['statusbar'], 'sla')
       const got = []
       slaDebtProblems({ cell, reasons: cells['card.reasons'], debt: slaDebtReading({
-        entries: [{ id: SLA_DISPOSITION_ID, kind: 'bug', opened_at: `${DAY_PREV}T09:00:00+08:00`, assessment: null }],
+        entries: [{ id: SLA_OPEN_DEBT_ID, kind: 'bug', opened_at: `${DAY_PREV}T09:00:00+08:00`, assessment: null, disposition: null }],
         cycle: DAY,
       }), where: `owner:${spec.key}`, push: (code) => got.push(code), owner: spec.owner })
       ownerReadings[spec.key] = { cell, reasons: cells['card.reasons'], owner: spec.owner, codes: got }
       for (const code of got) {
         push(code, `归属表现场 ${spec.key}：${JSON.stringify(cell?.reading ?? null)} —— 期望卡面印 `
-          + `\`（${spec.owner.owed_by_label} 欠 · owed_by=${spec.owner.owed_by}）\`（契约 §3.7.1-A 的 M1：表是唯一出处）`)
+          + `\`（${spec.owner.owed_by_label} 欠 · owed_by=${spec.owner.owed_by}）\`（契约 §3.7.1：表是唯一出处）`)
       }
       if (spec.key === 'table-driven') {
         // 合成表必须**真的**顶掉仓库里那张（否则"卡跟着表改"这件事没被测到）。
@@ -1315,32 +1372,39 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
       }
     }
     {
-      // B · `slaVerdict()`：四个方向（`unknown` 照样超期 / 当天开的不算 / observation 不算 / cycle 缺 ⇒ 判不了）
+      // B · `slaVerdict()`：五个方向（开着且过周期 ⇒ 超期 / 已评估但没处置 ⇒ 仍超期 / 已处置没评估 ⇒ 只进读数 / 当天开的不算 / observation 不算 / cycle 缺 ⇒ 判不了）
       const bugLib = await loadLiveModule(path.join('lib', 'bug-ledger.mjs'), ['slaVerdict'])
       readings.producer_b = { file: bugLib.abs ?? null, surface_missing: bugLib.surfaceMissing, missing: bugLib.missing, error: bugLib.error }
       if (bugLib.surfaceMissing || bugLib.mod === null || typeof bugLib.mod.slaVerdict !== 'function') {
         push('C2-PRODUCER-B-MISSING',
           `现役 \`presets/agenia/lib/bug-ledger.mjs\` 里读不到 \`slaVerdict\`（${bugLib.error ?? '缺面'}）—— 它是 \`bug-read.sla\` 的写面`)
       } else {
-        const entry = (id, over = {}) => ({ id, kind: 'bug', opened_at: `${DAY_PREV}T09:00:00+08:00`, registered_at: `${DAY_PREV}T09:00:00+08:00`, assessment: null, ...over })
+        const entry = (id, over = {}) => ({ id, kind: 'bug', opened_at: `${DAY_PREV}T09:00:00+08:00`, registered_at: `${DAY_PREV}T09:00:00+08:00`, assessment: null, disposition: null, ...over })
+        const disposed = { value: 'adopted', by: 'leader', at: NOW_PREV, reason: '夹具：已处置' }
         const ledger = {
           entries: [
             entry('bug-sla-old-null'),
             entry('bug-sla-old-unknown', { assessment: { verdict: 'unknown', by_role: 'test', at: NOW_PREV } }),
             entry('bug-sla-today', { opened_at: `${DAY}T09:00:00+08:00`, registered_at: `${DAY}T09:00:00+08:00` }),
-            { id: 'obs-sla-old', kind: 'observation', opened_at: `${DAY_PREV}T09:00:00+08:00`, registered_at: `${DAY_PREV}T09:00:00+08:00`, assessment: null },
+            { id: 'obs-sla-old', kind: 'observation', opened_at: `${DAY_PREV}T09:00:00+08:00`, registered_at: `${DAY_PREV}T09:00:00+08:00`, assessment: null, disposition: null },
             entry('bug-sla-assessed', { assessment: { verdict: 'true', by_role: 'test', at: NOW_PREV } }),
+            entry('bug-sla-disposed-no-assessment', { disposition: disposed }),
           ],
         }
         const v1 = bugLib.mod.slaVerdict(ledger, { cycle: DAY })
         const v2 = bugLib.mod.slaVerdict(ledger, { cycle: null })
         readings.producer_b.sla = { cycle_day: v1, cycle_null: v2 }
-        const wantOver = ['bug-sla-old-null', 'bug-sla-old-unknown']
+        const wantOver = ['bug-sla-old-null', 'bug-sla-old-unknown', 'bug-sla-assessed']
         if (JSON.stringify(v1?.over ?? null) !== JSON.stringify(wantOver)) {
-          push('C2-PRODUCER-B-UNKNOWN',
-            `B：\`slaVerdict(cycle=${DAY}).over\` 必须是 ${JSON.stringify(wantOver)}（旧 bug 未评估 + 旧 bug **判不了**；`
-            + `当天开的不算、observation 不算、已评估的不算），实得 ${JSON.stringify(v1?.over)} —— `
-            + '`assessment.verdict:"unknown"` 不是"已评估"，它保留 open（`gate4-C2` F-01 的写面那一半）')
+          push('C2-PRODUCER-B-INPUT',
+            `B：\`slaVerdict(cycle=${DAY}).over\` 必须是 ${JSON.stringify(wantOver)}（开着且过周期的三只：没评估的 / 判不了的 / **评估过但没处置的**；`
+            + `当天开的不算、observation 不算、**已处置的不算**），实得 ${JSON.stringify(v1?.over)} —— `
+            + 'SLA 的输入是"还开着"（`disposition` 为空），不是"有没有评估"')
+        }
+        if (v1?.disposed_unassessed?.all !== 1 || v1?.disposed_unassessed?.before_cycle !== 1) {
+          push('C2-PRODUCER-B-READING',
+            `B：已处置但没分级评估的读数必须是 \`{all:1, before_cycle:1}\`（那只 disposed 的票），`
+            + `实得 ${JSON.stringify(v1?.disposed_unassessed ?? null)} —— 它只进读数、不进 \`over\``)
         }
         if (v1?.oldest_age !== 1) {
           push('C2-PRODUCER-B-AGE', `B：\`oldest_age\` 必须是 1（${DAY_PREV} 开、周期 ${DAY}），实得 ${JSON.stringify(v1?.oldest_age)}`)
@@ -1348,14 +1412,15 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
         if (v1?.cycle !== DAY) {
           push('C2-PRODUCER-B-CYCLE', `B：\`cycle\` 必须原样回 ${JSON.stringify(DAY)}，实得 ${JSON.stringify(v1?.cycle)}`)
         }
-        if (JSON.stringify(v2?.over ?? null) !== JSON.stringify([]) || v2?.cycle !== null) {
+        if (JSON.stringify(v2?.over ?? null) !== JSON.stringify([]) || v2?.cycle !== null || v2?.disposed_unassessed?.before_cycle !== null) {
           push('C2-PRODUCER-B-NO-CYCLE',
-            `B：没有 \`cycle\` ⇒ 这一格**判不了**（\`over: []\` + \`cycle: null\`），不许猜一个周期号；实得 ${JSON.stringify(v2)}`)
+            `B：没有 \`cycle\` ⇒ 这一格**判不了**（\`over: []\` + \`cycle: null\` + \`disposed_unassessed.before_cycle: null\`），`
+            + `不许猜一个周期号；实得 ${JSON.stringify(v2)}`)
         }
       }
     }
 
-    // ══ H · 两把刀：F-01 / F-02 的**翻面**（证明上面那些判据抓得到旧 bug）══════════════
+    // ══ H · 两把刀：SLA 的输入 / 槽谓词的**翻面**（证明上面那些判据抓得到旧 bug）══════════════
     /**
      * 「修好了」这句话的证据只有一种：**把 bug 放回去，判据要红**。
      *
@@ -1363,8 +1428,8 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
      * 落进运行根、import 它，然后把**同一个输入**喂给刀与真实现，断言两者的结论**不同** ——
      * 不同 ⇒ 我那条断言确实盯着那一行（`mig-rules-14`：翻不了面的判据是装饰）。
      *
-     * · 刀 1（F-01）：`bug-ledger.mjs::isAssessed()` 里那一条改成"只要 assessment 非 null 就算已评估"
-     *   ⇒ `slaVerdict` 必须**丢掉** `verdict:'unknown'` 那只 bug（旧 bug 的行为）。
+     * · 刀 1（SLA 的输入）：`bug-ledger.mjs::isOpenBug()` 改回旧口径"没评估过就算开着"
+     *   ⇒ `slaVerdict` 必须把**处置过但没评估**的那只算进 `over`（旧 bug 的行为：32 条处置过的票一直红着）。
      * · 刀 2（F-02）：`route.mjs::ROUTE_TASK_KINDS` 换成旧的错词表
      *   ⇒ 一条 `implement` 在途任务被当成"不占槽"（`slotBusy` 说 `exited`），而 Python 那份仍说 `busy`
      *   ⇒ 跨值判据必须**看得出来**。
@@ -1406,14 +1471,15 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
       }
       readings.knives = {}
 
-      // ── 刀 1（F-01）──────────────────────────────────────────────────────
+      // ── 刀 1（SLA 的输入）───────────────────────────────────────────────
       const bugSrc = readFileSync(liveBugFile, 'utf8')
-      const f01Needle = 'return ASSESSED_VERDICTS.includes(assessment.verdict)'
-      const f01Mutant = bugSrc.replace(f01Needle, 'return true')
+      const f01Needle = 'return (entry?.disposition ?? null) === null'
+      const f01Mutant = bugSrc.replace(f01Needle, 'return !isAssessed(entry)')
+      const disposedEntry = { value: 'adopted', by: 'leader', at: NOW_PREV, reason: '夹具：已处置' }
       const knifeLedger = {
         entries: [
-          { id: 'bug-sla-old-null', kind: 'bug', opened_at: `${DAY_PREV}T09:00:00+08:00`, registered_at: `${DAY_PREV}T09:00:00+08:00`, assessment: null },
-          { id: 'bug-sla-old-unknown', kind: 'bug', opened_at: `${DAY_PREV}T09:00:00+08:00`, registered_at: `${DAY_PREV}T09:00:00+08:00`, assessment: { verdict: 'unknown', by_role: 'test', at: NOW_PREV } },
+          { id: 'bug-sla-old-null', kind: 'bug', opened_at: `${DAY_PREV}T09:00:00+08:00`, registered_at: `${DAY_PREV}T09:00:00+08:00`, assessment: null, disposition: null },
+          { id: 'bug-sla-disposed-no-assessment', kind: 'bug', opened_at: `${DAY_PREV}T09:00:00+08:00`, registered_at: `${DAY_PREV}T09:00:00+08:00`, assessment: null, disposition: disposedEntry },
         ],
       }
       const liveBugLib = await loadLiveModule(path.join('lib', 'bug-ledger.mjs'), ['slaVerdict'])
@@ -1421,8 +1487,8 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
       readings.knives.f01 = { needle_found: f01Mutant !== bugSrc, live_over: liveOver }
       if (f01Mutant === bugSrc) {
         push('C2-KNIFE-MISSED',
-          `刀 1（F-01）：\`bug-ledger.mjs\` 里找不到那一行 \`${f01Needle}\` —— 刀没切下去，`
-          + '"判不了照样超期"这条判据的翻面证据**没量到**（实现换写法了就把这条刀同批挪过去）')
+          `刀 1（SLA 的输入）：\`bug-ledger.mjs\` 里找不到那一行 \`${f01Needle}\` —— 刀没切下去，`
+          + '"已处置的票不进 SLA"这条判据的翻面证据**没量到**（实现换写法了就把这条刀同批挪过去）')
       } else {
         const closure = copyModuleClosure(path.join(knifeDir, 'bug-ledger'), 'bug-ledger.mjs', f01Mutant)
         readings.knives.f01.closure = closure
@@ -1430,15 +1496,20 @@ test('CARD-05 状态条十二格：形状（12 格逐字同序）· 十二格全
         const mutantMod = await import(new URL(`file:///${mutantFile.replace(/\\/g, '/')}?t=${Date.now()}`).href)
         const mutantOver = mutantMod.slaVerdict?.(knifeLedger, { cycle: DAY })?.over ?? null
         readings.knives.f01.mutant_over = mutantOver
-        if (mutantOver === null || mutantOver.includes('bug-sla-old-unknown')) {
+        if (Array.isArray(liveOver) && liveOver.includes('bug-sla-disposed-no-assessment')) {
           push('C2-KNIFE-MISSED',
-            `刀 1（F-01）：把 \`isAssessed\` 改回"assessment 非 null 就算已评估"之后，\`slaVerdict\` 仍然把`
-            + ` \`verdict:'unknown'\` 那只 bug 算进 \`over\`（实得 ${JSON.stringify(mutantOver)}）—— `
-            + '这说明刀切歪了（或判据盯着别的东西），"判不了照样超期"的翻面证据不成立')
+            `刀 1（SLA 的输入）：真实现把**已处置**的那张 bug 算进了 \`over\`（实得 ${JSON.stringify(liveOver)}）—— `
+            + 'SLA 的输入不是"还开着"，这一条判据在旧 bug 下不会红')
+        }
+        if (mutantOver === null || !mutantOver.includes('bug-sla-disposed-no-assessment')) {
+          push('C2-KNIFE-MISSED',
+            `刀 1（SLA 的输入）：把 \`isOpenBug\` 改回"没评估过就算开着"之后，\`slaVerdict\` 仍然没把`
+            + ` 处置过但没评估的那只 bug 算进 \`over\`（实得 ${JSON.stringify(mutantOver)}）—— `
+            + '这说明刀切歪了（或判据盯着别的东西），"处置即收口"的翻面证据不成立')
         }
         if (JSON.stringify(mutantOver) === JSON.stringify(liveOver)) {
           push('C2-KNIFE-MISSED',
-            `刀 1（F-01）：刀与真实现给出同一份 \`over\`（${JSON.stringify(liveOver)}）—— 这条判据在旧 bug 下**不会红**`)
+            `刀 1（SLA 的输入）：刀与真实现给出同一份 \`over\`（${JSON.stringify(liveOver)}）—— 这条判据在旧 bug 下**不会红**`)
         }
       }
 

@@ -47,16 +47,17 @@ export const ASSESSMENTS = Object.freeze(['true', 'false', 'duplicate', 'unknown
 /**
  * **真正做过判定**的那三个 verdict（`unknown` 不在里面）。
  *
- * 🔴 `unknown` 是"判不了"，不是"已评估"：SLA（契约 C2 §3.7.1）按"还没真正判定"算超期。
- *    把它算成已评估，一只超期 bug 就会静默变绿 —— 这是"判不了冒充处理过了"。
+ * 🔴 `unknown` 是"判不了"，不是"已评估"：它算进 `disposed_unassessed` 这个读数
+ *    （SLA 的**读数**那一半），不许冒充"分级评估做过"。
+ *    它**不**决定 SLA 红 —— SLA 红只看"票还开着"（`isOpenBug`）。
  */
 export const ASSESSED_VERDICTS = Object.freeze(ASSESSMENTS.filter((v) => v !== 'unknown'))
 
 /**
- * 一条条目**是否已经被评估过**（SLA 的豁免之一）。
+ * 一条条目**是否做过分级评估**（`disposed_unassessed` 读数的判据）。
  *
  * 判据只有一条：`assessment` 是个对象、且 `verdict` 落在那三个真判定里。
- * `null` / 缺键 / 形状坏 / `verdict:'unknown'` / `verdict` 缺失 ⇒ **没评估过**（保守读法：超期照算）。
+ * `null` / 缺键 / 形状坏 / `verdict:'unknown'` / `verdict` 缺失 ⇒ **没有分级评估**。
  */
 export function isAssessed(entry) {
   const assessment = entry?.assessment
@@ -222,6 +223,17 @@ export function nextEntryId(ledger, at) {
   return `${prefix}${String(max + 1).padStart(2, '0')}`
 }
 
+/**
+ * 一条条目**是否还开着**：`disposition` 为空（`null` / 缺键）就是开着。
+ *
+ * 🔴 **open/closed 只有这一条判据**（契约 §4.1）：`disposition` 是组长"修不修"的处置，
+ *    `assessment` 是测试岗"是不是真的"的评估 —— 两个词不混，评估不是收口。
+ *    `openCounts` / `capVerdict` / `slaVerdict` 都从这里取，不各写一份。
+ */
+export function isOpenBug(entry) {
+  return (entry?.disposition ?? null) === null
+}
+
 // ── 封顶 50/30（契约 §5）───────────────────────────────────────────────────
 /**
  * 账上的四个数（契约 §5.3：**恰好这四格** —— 票 open 不许从这里出）。
@@ -232,11 +244,10 @@ export function nextEntryId(ledger, at) {
  */
 export function openCounts(ledger) {
   const entries = Array.isArray(ledger?.entries) ? ledger.entries : []
-  const open = (e) => (e?.disposition ?? null) === null
   return {
-    entry_open: entries.filter(open).length,
-    bug_open: entries.filter((e) => e?.kind === 'bug' && open(e)).length,
-    observation_open: entries.filter((e) => e?.kind === 'observation' && open(e)).length,
+    entry_open: entries.filter((e) => isOpenBug(e)).length,
+    bug_open: entries.filter((e) => e?.kind === 'bug' && isOpenBug(e)).length,
+    observation_open: entries.filter((e) => e?.kind === 'observation' && isOpenBug(e)).length,
     archived: Array.isArray(ledger?.archived) ? ledger.archived.length : 0,
   }
 }
@@ -271,7 +282,7 @@ export function calendarDayDiff(from, to) {
  */
 export function capVerdict(ledger, { now = null } = {}) {
   const openBugs = (Array.isArray(ledger?.entries) ? ledger.entries : [])
-    .filter((e) => e?.kind === 'bug' && (e?.disposition ?? null) === null)
+    .filter((e) => e?.kind === 'bug' && isOpenBug(e))
   const bugOpen = openBugs.length
   const overCount = bugOpen >= CAP.bug_open
   let oldest = 0
@@ -324,40 +335,63 @@ function localNoonOfDayKey(dayKey) {
 }
 
 /**
- * **SLA 读数**（契约 C2 §3.7.1）：一只 bug 从 **`opened_at`** 起，**超过当前一个开工周期**
- * 仍未**真正评估过**（判据 = `isAssessed()`；机械口径以 §3.7.1 为准，这里不再复述）⇒ 记进 `over`。
+ * **SLA 读数**（契约 C2 §3.7.1）：一只 bug 从 **`opened_at`** 起，**超过当前一个开工周期
+ * 还开着**（`isOpenBug()`：`disposition` 为空）⇒ 记进 `over`。
  *
- * 只有两个豁免（逐字照契约）：
- *   · **同一天开的**（`opened_at` 的日号 ≥ `cycle`）—— 当天开工的不算超期；
- *   · **已经评估过的**（`isAssessed()`：`assessment` 是对象且 `verdict` 是 `true/false/duplicate`）。
- * ⚠️ `assessment.verdict === 'unknown'`（判不了）**不是**"已评估"：它保留 open，所以照样超期 ——
- *    别把"判不了"读成"已经处理过了"。`kind === 'observation'` 不是 bug，不进这个数。
+ * "开着"就是这件东西要保护的那句话：**票开着却没人看/没人处置**。它量的不是"有没有评估" ——
+ * 处置理由本身就是最小评估（分级 `assessed` 是可选的加强，缺席只进 `disposed_unassessed`
+ * 这个读数，不判红）。所以：
+ *   · **已处置**（`disposition` 有值）⇒ 不进 `over`，哪怕从没写过 `assessed`；
+ *   · **已评估但没处置**（`assessment` 是 true/false/duplicate 而 `disposition` 仍空）⇒ **照样进**：
+ *     评估回答"是不是真的"，处置回答"修不修"，前者不是收口；
+ *   · 同一天开的（`opened_at` 的日号 ≥ `cycle`）不算超期。
+ *   `kind === 'observation'` 不是 bug，不进这个数。
+ *
+ * `disposed_unassessed` = **读数**（不判红、不进 `card.reasons`）：已处置、但没有分级评估的条数。
+ * `all` 是全部；`before_cycle` 是其中 `opened_at` 早于当前开工周期的那些（与 `over` 同一把尺子）。
+ * `cycle` 给不出来 ⇒ `before_cycle: null`（判不了，不许印 0）。
  *
  * `cycle` = 开工周期号 = 卡上的 `<day>`（同一个键；不按 24h 算 —— 同一场里先后跑两次会互相判过期）。
- * `now` 由调用方给（CLI 用注入时钟）；**没有 `cycle` ⇒ 这一格判不了**：`over` 空、`oldest_age` 为 0，
+ * `cycle` 由调用方给（CLI 用注入时钟算出天号）；**没有 `cycle` ⇒ 这一格判不了**：`over` 空、`oldest_age` 为 0，
  * 但那不是"没有超期"，所以 `cycle` 原样回 `null`，读的人看得出这一跑没量。
  *
  * @param {object} ledger
  * @param {{cycle?: string|null}} [options]
- * @returns {{over: string[], oldest_age: number, cycle: string|null}}
+ * @returns {{over: string[], oldest_age: number, cycle: string|null,
+ *            disposed_unassessed: {all: number, before_cycle: number|null}}}
  */
 export function slaVerdict(ledger, { cycle = null } = {}) {
   const entries = Array.isArray(ledger?.entries) ? ledger.entries : []
   const cycleAt = localNoonOfDayKey(cycle)
   const over = []
   let oldest = 0
-  if (cycleAt !== null) {
-    for (const e of entries) {
-      if (e?.kind !== 'bug') continue
+  const disposedUnassessed = []
+  let disposedUnassessedBeforeCycle = 0
+  for (const e of entries) {
+    if (e?.kind !== 'bug') continue
+    const openedAt = filled(e?.opened_at) ? e.opened_at : e?.registered_at
+    const age = cycleAt === null ? null : calendarDayDiff(openedAt, cycleAt)
+    const open = isOpenBug(e)
+    if (!open) {
+      // 已处置：不进 SLA（处置理由即最小评估）；没有分级评估的只进读数。
       if (isAssessed(e)) continue
-      const openedAt = filled(e?.opened_at) ? e.opened_at : e?.registered_at
-      const age = calendarDayDiff(openedAt, cycleAt)
-      if (age === null || age <= 0) continue
-      over.push(String(e?.id ?? '(缺 id)'))
-      if (age > oldest) oldest = age
+      disposedUnassessed.push(String(e?.id ?? '(缺 id)'))
+      if (cycleAt !== null && age !== null && age > 0) disposedUnassessedBeforeCycle += 1
+      continue
     }
+    if (cycleAt === null || age === null || age <= 0) continue
+    over.push(String(e?.id ?? '(缺 id)'))
+    if (age > oldest) oldest = age
   }
-  return { over, oldest_age: oldest, cycle: cycle ?? null }
+  return {
+    over,
+    oldest_age: oldest,
+    cycle: cycle ?? null,
+    disposed_unassessed: {
+      all: disposedUnassessed.length,
+      before_cycle: cycleAt === null ? null : disposedUnassessedBeforeCycle,
+    },
+  }
 }
 
 // ── 五分支分流（契约 §4.2）─────────────────────────────────────────────────
