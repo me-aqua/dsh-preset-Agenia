@@ -43,21 +43,21 @@ export const BOOK_PRODUCT_ENTRIES = 5
 /** 缺陷册条数 —— **票数**，不是日文件数（`books.缺陷.entries`）。 */
 export const BOOK_BUG_ENTRIES = 194
 /** 构案册条数（`books.构案.entries`）。 */
-export const BOOK_SCHEME_ENTRIES = 12
+export const BOOK_SCHEME_ENTRIES = 13
 
 // ── 二、缺陷链的五组读数（`chain.bug.*`）────────────────────────────────────
 /** 有结论、且由**生效构案**兜底的票数。 */
-export const BUG_CLOSED_BY_SCHEME = 2
+export const BUG_CLOSED_BY_SCHEME = 4
 /** 有结论、由**判假**兜底的票数。 */
 export const BUG_CLOSED_JUDGED_FALSE = 0
 /** 有结论、由 `历史`（只由迁移写）兜底的票数。 */
 export const BUG_LEGACY_CLOSED = 52
 /** 暂缓、且是**本迁移之后**登记的票数（`deferred_open`）。 */
-export const BUG_DEFERRED_OPEN = 97
+export const BUG_DEFERRED_OPEN = 95
 /** 暂缓、且是**迁移带过来的冻结票**数（`legacy_frozen`）。 */
 export const BUG_LEGACY_FROZEN = 43
 /** 上面 `deferred_open` 里**带结构化落地计划**（`due_at`/`owner`/`next_step`）的票数。 */
-export const BUG_DEFERRED_OPEN_STRUCTURED = 39
+export const BUG_DEFERRED_OPEN_STRUCTURED = 37
 /** 迁移归档里的 `历史` 条数（`legacy_disposed`）—— 归档是回滚点，不随事件流增长。 */
 export const LEGACY_DISPOSED = 153
 
@@ -210,3 +210,5 @@ export function pinLedgerProblems() {
 // 2026-11-16 15:5x 组长重钉：+2（`-33` 留的两件：CONTRACT §17.2 描述窄、FCAP-01 缺 `.team/`）
 
 // 2026-11-16 16:0x 组长重钉：+1（`-38` C2 §3.7.1 旧口径）、-1 暂缓（`-31` 改判 adopted · 构案 0017 落地）
+
+// 2026-11-16 17:2x 组长重钉：`-02` / `-04` 经构案 0018 关掉 ⇒ closed_by_scheme 2→4、暂缓 97→95、结构化 39→37、构案册 12→13
