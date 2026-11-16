@@ -22,7 +22,8 @@
     ↳ 抽屉 = 四类一次性作业各自的落点，按存在性逐个看（见 `review_dirs`）：
       retro / technical-review / conversation-review / memory-review
     <WS>/.team/route/current.json             路线账本（第一行 / 模式 / 暂停 / 票段）
-    <WS>/.team/bug/ledger.json                bug 台账（开放数 / 50-30 / 严重线 / SLA）
+    <WS>/账本/缺陷/*.json                     缺陷册（唯一活账；**不读** `.team/bug/ledger.json` —— 那是只读归档）
+                                             读面 = `agenia-route.mjs --op bug-read` + `决议-check.mjs --op fold`
     <WS>/.team/state/local/<day>.json         两段回执的节点（技术评审 / 会话评审）
     <WS>/.team/state/identity/<day>.json      身份报警（未知预设 / 预设降级；注入器写）
     <WS>/.team/tickets/legacy.json            legacy 票店（还剩几张 = 迁移没做完）
@@ -43,7 +44,7 @@
    往 `<WS>/.team/leader/<day>/记忆更新报告-FAILED.jsonl` **追加**一行 `{at, day, code, message}` ·
    stderr 一行 `🔴 <E_*码>: …`。`at` 取注入时钟那一刻（不是 `datetime.now()`）。
 """
-import argparse, json, os, re, sys, glob
+import argparse, json, os, re, shutil, subprocess, sys, glob
 from datetime import datetime, date
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill
@@ -400,7 +401,7 @@ PROBE_DEGRADED_KEYS = ("slot_not_enforced", "stale_slot")
 
 # 🔴 **同一个查询的机械形态**（定形 §6.2：卡区与 50/30 格读同一个查询，不许各算）。
 #    两个格（`bug.open.source` / `cap.bug_open.source`）都写这一个串，判据逐字比。
-BUG_QUERY_SOURCE = "bug-read:entries[kind=bug ∧ disposition=null] · .team/bug/ledger.json"
+BUG_QUERY_SOURCE = "bug-read:entries[kind=bug ∧ disposition=null] · 账本/缺陷/*.json（经 --op bug-read 折叠）"
 
 
 # ── ① 路线账本（C1 §2.2 / §6.1 / §7.5）────────────────────────────────────────
@@ -594,25 +595,211 @@ def slot_state_of(tasks, now):
             "code": None if allow else "E_GUARD_SLOT_BUSY"}
 
 
-# ── ② bug 台账（B §5 / §7 / 裁定第 2 条）──────────────────────────────────────
-def read_bug_ledger(ws):
-    """读 `<WS>/.team/bug/ledger.json`。返回 `(ledger, state)`，`state` ∈ `absent` / `broken` / `ok`。
+# ── ② bug 缺陷册（三册 · 构案 0012 · 票 bug-20261116-05）────────────────────────
+# 🔴 2026-11-16：这张卡以前读 `<WS>/.team/bug/ledger.json`。三册落地时那份登记簿改名成
+#    `ledger.archived-2026-11-15.json`（只读归档），于是 `absent` 分支把「没读到」印成 0 ——
+#    同一份文件对 `broken` 写着「印 0 就是撒谎」，absent 却走了反方向（技术评审 2026-11-15 · F4）。
+#    现在只认 **三册里的缺陷册**（`<WS>/账本/缺陷/*.json`），读面是两个现役入口：
+#      · `presets/agenia/bin/agenia-route.mjs --op bug-read`（条目 / 50-30 / 严重线 / SLA 的载荷）
+#      · `presets/agenia/bin/决议-check.mjs --op fold`（折叠健康：坏一天在这里报 `problems`）
+#    两条都走**绝对路径**（工作区 → 生成器那棵树 → cwd，与 `route_source_path()` 同一套候选）。
+#    **卡不自己折一遍事件流**：`lib/缺陷折叠` 是唯一实现，卡再写一份就是第二份真相。
+#    「0」只有一个来源：**册在那里、读到了、而且真的 0 条**（空册）/ 真的没有 open bug（有册）。
+BUG_BOOK_REL = ("账本", "缺陷")
+BUG_BOOK_LABEL_OK = "册在那里、读到了"
+BUG_BOOK_LABEL_ABSENT = "册缺"
+BUG_BOOK_LABEL_BROKEN = "册坏"
+BUG_BOOK_LABEL_NO_READER = "读器不在"
+BUG_READER_REL = ("presets", "agenia", "bin", "agenia-route.mjs")
+BUG_FOLD_REL = ("presets", "agenia", "bin", "决议-check.mjs")
+BUG_DAY_FILE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
+BUG_READER_TIMEOUT_S = 120
 
-    `absent` = 这个工作区从没登记过 bug（**不是**错：卡上那一格印 `0`，见契约 §6 第 1 条）；
-    `broken` = 在盘上但读不出来 —— 那个形状卡答不上来（`bug.open` 的形状是 `int`，没有"判不了"），
-    所以生成**当场失败**（宁可没有卡 + 一行红，也不要一张印着 0 的卡）。
-    """
-    path = os.path.join(ws, ".team", "bug", "ledger.json")
-    if not os.path.exists(path):
-        return None, "absent"
+
+def bug_book_dir(ws):
+    """缺陷册的绝对落点（`<WS>/账本/缺陷`）。"""
+    return os.path.join(ws, *BUG_BOOK_REL)
+
+
+def _reader_candidates(rel):
+    """读器候选（工作区 → 生成器那棵树 → cwd）—— 与 `route_source_path()` / `read_capacity()` 同一套。"""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out = []
+    if isinstance(WS, str) and WS.strip():
+        out.append(os.path.join(WS, *rel))
+    out += [os.path.join(here, *rel), os.path.join(os.getcwd(), *rel)]
+    return out
+
+
+def _reader_path(rel):
+    """三级候选里第一个真实存在的读器；都没有 ⇒ `None`（调用方报「读器不在」）。"""
+    for path in _reader_candidates(rel):
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _json_of(stdout):
+    """读器输出的 JSON：先整段（`决议-check --json` 是多行），再最后一行（`agenia-route` 是一行）。"""
+    text = (stdout or "").strip()
+    if text == "":
+        return None
     try:
-        with open(path, encoding="utf-8") as f:
-            value = json.load(f)
-    except Exception as exc:
-        return None, "broken:%s" % exc
-    if not isinstance(value, dict) or not isinstance(value.get("entries", []), list):
-        return None, "broken:形状不对（不是对象 / entries 不是数组）"
-    return value, "ok"
+        return json.loads(text)
+    except Exception:
+        pass
+    last = next((line for line in reversed(text.splitlines()) if line.strip()), "")
+    try:
+        return json.loads(last)
+    except Exception:
+        return None
+
+
+def _run_bug_reader(cli_path, argv):
+    """跑一次读器，返回 `(exit_code, payload, detail)`；起不来 ⇒ `(None, None, 原因)`。
+
+    `detail` 只用来诊断（stderr / 信封里的 message）—— 它不是判据。
+    """
+    node = shutil.which("node")
+    if node is None:
+        return None, None, "node 不在 PATH 上（读器是 .mjs，卡不自己折一遍账）"
+    try:
+        proc = subprocess.run(
+            [node, cli_path] + list(argv),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=BUG_READER_TIMEOUT_S,
+        )
+    except OSError as exc:
+        return None, None, "%s 起不来（%s）" % (cli_path, exc)
+    except subprocess.TimeoutExpired:
+        return None, None, "%s 超过 %d 秒没有回话" % (cli_path, BUG_READER_TIMEOUT_S)
+    payload = _json_of(proc.stdout)
+    detail = (proc.stderr or "").strip()
+    if not detail and isinstance(payload, dict):
+        detail = str((payload.get("error") or {}).get("message") or "")
+    return proc.returncode, payload, detail
+
+
+def _empty_book_ledger(ws):
+    """空册（`账本/缺陷/` 在、一条事件也没有）的台账形状：外壳读 `control.json`，条目就是 `[]`。
+
+    这是**读到了的 0**：目录在、折叠成功、零个日文件。它和「册缺」（目录不在）必须分开 ——
+    前者是刚 `init` 过还没登记，后者是根本没建三册。
+    """
+    control = jload(os.path.join(ws, ".team", "bug", "control.json"), {}) or {}
+    return {
+        "schema": 1,
+        "entries": [],
+        "tasks": control.get("tasks") if isinstance(control.get("tasks"), list) else [],
+        "batches": control.get("batches") if isinstance(control.get("batches"), list) else [],
+        "severity_samples": control.get("severity_samples") if isinstance(control.get("severity_samples"), dict)
+        else {"version": 0, "samples": [], "history": []},
+        "archived": control.get("archived") if isinstance(control.get("archived"), list) else [],
+        "book_mode": True,
+    }
+
+
+def read_bug_book(ws):
+    """读**三册的缺陷册**。返回 `(ledger, meta)`；读不到 ⇒ `CardFailure`（四态四句话）。
+
+    四态（票 bug-20261116-05）：
+      · `册在那里、读到了` —— `meta["state"] == "ok"`（`mode` 是 `book` / `empty`），`ledger` 是
+        `--op bug-read` 信封里那本（空册时由 `control.json` + `[]` 拼出来）；
+      · `册缺` —— `账本/缺陷/` 不在 ⇒ `E_BUG_BOOK_MISSING`（**不印 0**）；
+      · `册坏` —— 册在盘上、折叠报了 `problems` / 读器拒了 / 两个读器读数对不上 ⇒ `E_BUG_BOOK_UNREADABLE`；
+      · `读器不在` —— CLI / node 找不到，或读器不认这个根 / 这个 op ⇒ `E_BUG_READER_MISSING`。
+
+    🔴 为什么还要问一次 `--op fold`：`bug-read` 今天的折叠不把 `problems` 抛出来（另一张票
+       `bug-20261116-04` 在修），坏一天会让它**静默少报**。卡不能等那张票：折叠健康这一问是
+       「册坏」的唯一读面，`states` 还顺手给了一条和 `bug-read` 对账的读数。
+    """
+    book_dir = bug_book_dir(ws)
+    if not os.path.isdir(book_dir):
+        raise CardFailure(
+            "E_BUG_BOOK_MISSING",
+            "%s：%s 不在 —— 卡不印 0（0 只能来自「%s」且真的 0 条）；旧工区先跑 `决议-check --op init`"
+            % (BUG_BOOK_LABEL_ABSENT, book_dir.replace(os.sep, "/"), BUG_BOOK_LABEL_OK),
+        )
+    fold_cli = _reader_path(BUG_FOLD_REL)
+    read_cli = _reader_path(BUG_READER_REL)
+    if fold_cli is None or read_cli is None:
+        missing = [name for name, cli in (("决议-check.mjs", fold_cli), ("agenia-route.mjs", read_cli)) if cli is None]
+        looked = _reader_candidates(BUG_FOLD_REL) + _reader_candidates(BUG_READER_REL)
+        raise CardFailure(
+            "E_BUG_READER_MISSING",
+            "%s：找不到 %s（找过 %s）—— 卡不自己折一遍账（`缺陷折叠` 模块是唯一实现）"
+            % (BUG_BOOK_LABEL_NO_READER, " / ".join(missing),
+               " · ".join(p.replace(os.sep, "/") for p in looked)),
+        )
+
+    # ① 折叠健康（`states` 同时用来和 `bug-read` 对账）
+    fold_exit, fold, fold_detail = _run_bug_reader(fold_cli, ["--op", "fold", "--root", ws, "--json"])
+    if fold_exit is None:
+        raise CardFailure("E_BUG_READER_MISSING", "%s：%s" % (BUG_BOOK_LABEL_NO_READER, fold_detail))
+    error_code = ((fold.get("error") or {}).get("code") if isinstance(fold, dict) else None) or None
+    problems = fold.get("problems") if isinstance(fold, dict) and isinstance(fold.get("problems"), list) else None
+    states = fold.get("states") if isinstance(fold, dict) and isinstance(fold.get("states"), list) else None
+    if error_code in ("E_USAGE",) or (error_code or "").startswith(("E_ARG_", "E_ROOT_")):
+        raise CardFailure("E_BUG_READER_MISSING",
+                          "%s：`决议-check.mjs --op fold` 不认这个根 / 这个 op（%s · %s）"
+                          % (BUG_BOOK_LABEL_NO_READER, error_code, fold_detail))
+    if fold_exit != 0 or not isinstance(fold, dict) or fold.get("ok") is not True or problems or states is None:
+        shown = " · ".join(str((p or {}).get("message") or p) for p in (problems or [])[:3]) or fold_detail or "折叠读器没有回可用的信封"
+        raise CardFailure(
+            "E_BUG_BOOK_UNREADABLE",
+            "%s：%s 在盘上但折叠读不出来（%s）—— 卡上有两格的形状是数，印 0 就是撒谎"
+            % (BUG_BOOK_LABEL_BROKEN, book_dir.replace(os.sep, "/"), shown),
+        )
+
+    # ② 空册：「目录在、零个日文件、折叠 0 条」= 一本读到了的 0（不是「册缺」）
+    try:
+        names = os.listdir(book_dir)
+    except OSError as exc:
+        raise CardFailure("E_BUG_BOOK_UNREADABLE",
+                          "%s：%s 列不出来（%s）—— 读不到就不是 0" % (BUG_BOOK_LABEL_BROKEN, book_dir.replace(os.sep, "/"), exc))
+    day_files = [name for name in names if BUG_DAY_FILE_RE.match(name)]
+
+    # ③ 载荷（`bug-read` 是 50/30 / 严重线 / SLA 的同一份查询；卡不再按另一套口径算）
+    read_exit, payload, read_detail = _run_bug_reader(read_cli, ["--op", "bug-read", "--workspace", ws])
+    if read_exit is None:
+        raise CardFailure("E_BUG_READER_MISSING", "%s：%s" % (BUG_BOOK_LABEL_NO_READER, read_detail))
+    payload = payload if isinstance(payload, dict) else {}
+    error_code = ((payload.get("error") or {}).get("code")) or None
+    ledger = payload.get("ledger")
+    if read_exit != 0 or not isinstance(ledger, dict):
+        if error_code in ("E_USAGE",) or (error_code or "").startswith(("E_ARG_", "E_ROOT_")):
+            raise CardFailure("E_BUG_READER_MISSING",
+                              "%s：`agenia-route.mjs --op bug-read` 不认这个根 / 这个 op（%s · %s）"
+                              % (BUG_BOOK_LABEL_NO_READER, error_code, read_detail))
+        if error_code == "E_DATA_MISSING" and not day_files and len(states) == 0:
+            # 空册：读器按「缺 ≠ 空」拒了它，但卡这一层分得出「建过册、还没登记」——
+            # 这是真的 0；外壳照 `control.json` 读（条目只住事件流，外壳里没有 entries）。
+            return _empty_book_ledger(ws), {"state": "ok", "label": BUG_BOOK_LABEL_OK, "mode": "empty",
+                                           "dir": book_dir, "states": 0,
+                                           "reader": read_cli, "fold": fold_cli}
+        raise CardFailure(
+            "E_BUG_BOOK_UNREADABLE",
+            "%s：%s 在盘上但 `--op bug-read` 读不出来（%s · %s）—— 卡上有两格的形状是数，印 0 就是撒谎"
+            % (BUG_BOOK_LABEL_BROKEN, book_dir.replace(os.sep, "/"), error_code or "exit=%s" % read_exit, read_detail),
+        )
+    entries = ledger.get("entries")
+    if not isinstance(entries, list):
+        raise CardFailure("E_BUG_BOOK_UNREADABLE",
+                          "%s：`--op bug-read` 的信封里 `ledger.entries` 不是数组（%r）—— 读不到就不是 0"
+                          % (BUG_BOOK_LABEL_BROKEN, type(entries).__name__))
+
+    # ④ 两个读器对账：折叠条数（剔掉已归档）必须等于 `bug-read` 的条目数。
+    #    对不上 ⇒ 两次读之间册变了 / 其中一个读器漏条 ⇒ 不印数（少报和 0 一样是撒谎）。
+    archived = {a.get("id") for a in (ledger.get("archived") or []) if isinstance(a, dict)}
+    folded = [s.get("id") for s in states if isinstance(s, dict) and s.get("id") not in archived]
+    if len(folded) != len(entries):
+        raise CardFailure(
+            "E_BUG_BOOK_UNREADABLE",
+            "%s：两个读器对不上（折叠 %d 条 / bug-read %d 条，归档剔除后）—— 少报与 0 同罪，宁可没有卡"
+            % (BUG_BOOK_LABEL_BROKEN, len(folded), len(entries)),
+        )
+    return ledger, {"state": "ok", "label": BUG_BOOK_LABEL_OK, "mode": "book",
+                    "dir": book_dir, "states": len(states), "reader": read_cli, "fold": fold_cli}
 
 
 def bug_entries(ledger):
@@ -1111,12 +1298,10 @@ def main():
     route, route_state = read_route(WS)
     tickets = project_tickets(route or {})
     live_voids = void_with_live_task(route or {})
-    ledger, ledger_state = read_bug_ledger(WS)
-    if isinstance(ledger_state, str) and ledger_state.startswith("broken"):
-        # `bug.open` / `cap.bug_open` 的形状是 `int`（没有"判不了"那一格），而印 0 会让老板以为
-        # "一条 open bug 都没有"。⇒ 宁可**没有卡 + 一行红**，也不要一张印着 0 的卡（§3.8 零值卡）。
-        raise CardFailure("E_BUG_LEDGER_UNREADABLE",
-                          "bug 台账在盘上但读不出来（%s）—— 卡上有两格的形状是数，印 0 就是撒谎" % ledger_state.split(":", 1)[-1])
+    ledger, bug_book = read_bug_book(WS)
+    print("bug-book:", "%s（%s · fold %s · 折叠 %d 条%s）" % (
+        bug_book["label"], bug_book["dir"].replace(os.sep, "/"), bug_book["fold"].replace(os.sep, "/"),
+        bug_book["states"], " · 空册（一条事件也没有）" if bug_book["mode"] == "empty" else ""))
     entries = bug_entries(ledger)
     cap = cap_of(entries, now)
     observation_open = len([e for e in entries if e.get("kind") == "observation" and e.get("disposition") is None])

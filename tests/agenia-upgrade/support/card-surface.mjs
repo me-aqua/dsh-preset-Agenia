@@ -310,10 +310,13 @@ export const sampleIds = (set = SAMPLE_SET) => set.map((s) => `${s.line}:${s.pol
  * 一格一副根：**工作区**（带 marker；`--workspace` 的合法姿势）与**数据根**（记忆库那一侧）。
  * 两者必须分开：`daily-cards.py` 的 `DR` 是"预设级"的（默认按 `WS` 推），夹具里显式给。
  */
-export function makeCardRoots(caseId, tag) {
+export function makeCardRoots(caseId, tag, { book = true } = {}) {
   const runRoot = canonical(process.env[ENV.RUN_ROOT])
   const ws = makeWorkspace(caseId, tag)
   mkdirSync(path.join(ws, '.team'), { recursive: true })
+  // 缺陷册是**三册里的活账**：卡只读它。夹具默认建一本**空册**（目录在、零条事件）——
+  // 那是「读到了的 0」，不是「册缺」（`book:false` 的现场才不建这一格）。
+  if (book) mkdirSync(bugBookDir(ws), { recursive: true })
   const dr = path.join(runRoot, 'card-data-root', `${String(caseId).toLowerCase()}-${tag}`)
   mkdirSync(dr, { recursive: true })
   const nowFile = path.join(runRoot, 'card-clock', `${String(caseId).toLowerCase()}-${tag}.txt`)
@@ -561,8 +564,91 @@ export function bugLedger({ entries = [], tasks = [], batches = [], samples = SA
   }
 }
 
+/**
+ * 把一份**台账形状**的夹具摊成**三册**：条目 → `账本/缺陷/<day>.json` 事件流；外壳 → `.team/bug/control.json`。
+ *
+ * 🔴 卡读的是**册**（`--op bug-read` / `--op fold`），不是 `.team/bug/ledger.json` ——
+ *    那张旧账在三册落地时已改成只读归档（`ledger.archived-2026-11-15.json`），
+ *    夹具再写它就是**复活一个读面**（票 `bug-20261116-05` 的禁区）。
+ *
+ * 事件按 `at` 的日期分文件；每个文件里的 `seq` 从 1 严格递增（`lib/缺陷折叠.mjs` 的形状）。
+ * 外壳只放 `tasks` / `batches` / `severity_samples` / `archived`：条目只住事件流（`entries` 一格都不留）。
+ */
+export function bugBookDir(ws) {
+  return path.join(ws, '账本', '缺陷')
+}
+
+export function writeBugBook(ws, ledger) {
+  const dir = bugBookDir(ws)
+  mkdirSync(dir, { recursive: true })
+  writeJsonAt(path.join(ws, '.team', 'bug', 'control.json'), {
+    schema: 1,
+    tasks: Array.isArray(ledger?.tasks) ? ledger.tasks : [],
+    batches: Array.isArray(ledger?.batches) ? ledger.batches : [],
+    severity_samples: ledger?.severity_samples ?? { version: 0, registered_at: null, registered_by: null, samples: [], history: [] },
+    archived: Array.isArray(ledger?.archived) ? ledger.archived : [],
+    version: ledger?.version ?? 1,
+    updated_at: ledger?.updated_at ?? null,
+  })
+  const byDay = new Map()
+  const push = (at, event) => {
+    const day = String(at ?? '').slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      throw new Error(`CARD-FIXTURE-BAD-AT: ${JSON.stringify(event?.id)} 的 at=${JSON.stringify(at)} 不是一个 ISO 时刻，摊不成日文件`)
+    }
+    if (!byDay.has(day)) byDay.set(day, [])
+    byDay.get(day).push(event)
+  }
+  for (const entry of Array.isArray(ledger?.entries) ? ledger.entries : []) {
+    const id = entry?.id
+    const registeredAt = entry?.registered_at ?? '2026-11-01T09:00:00+08:00'
+    const {
+      id: _dropId, kind: _dropKind, registered_at: _dropRegisteredAt,
+      assessment = null, disposition = null, escalated_at = null, card_red = false, line_decision = null,
+      ...payload
+    } = entry ?? {}
+    push(registeredAt, {
+      ...payload,
+      kind: 'registered',
+      id,
+      entry_kind: entry?.kind === 'observation' ? 'observation' : 'bug',
+      phenomenon: entry?.phenomenon ?? `${id} 的现象（夹具）`,
+      at: registeredAt,
+    })
+    if (assessment !== null && typeof assessment === 'object') {
+      const at = assessment.at ?? registeredAt
+      push(at, {
+        ...assessment,
+        kind: 'assessed',
+        id,
+        at,
+        verdict: assessment.verdict === undefined ? null : assessment.verdict,
+        severity_line: assessment.severity_line ?? null,
+        by_role: assessment.by_role ?? null,
+        escalated_at,
+        card_red,
+        line_decision,
+      })
+    }
+    if (disposition !== null && typeof disposition === 'object') {
+      const at = disposition.at ?? registeredAt
+      const landing = {}
+      for (const key of ['构案', '判假', '历史', 'due_at', 'owner', 'next_step']) {
+        if (payload[key] !== undefined) landing[key] = payload[key]
+      }
+      push(at, { kind: 'disposed', id, at, disposition, ...landing })
+    }
+  }
+  const written = []
+  for (const day of [...byDay.keys()].sort()) {
+    const events = byDay.get(day).map((event, index) => ({ seq: index + 1, ...event }))
+    written.push(writeJsonAt(path.join(dir, `${day}.json`), { schema: 1, day, events }))
+  }
+  return { dir, days: written }
+}
+
 export function writeBug(ws, ledger) {
-  return writeJsonAt(path.join(ws, '.team', 'bug', 'ledger.json'), ledger)
+  return writeBugBook(ws, ledger)
 }
 
 /**
@@ -1146,6 +1232,11 @@ export function scene(caseId, tag, {
   reviews = undefined,
   legacy = undefined,
   /**
+   * 缺陷册在不在。`false` ⇒ 把 `makeCardRoots()` 建的空册目录拿掉 —— 「册缺」那个现场
+   * （卡必须红，**不许印 0**）。默认 `true`（空册 = 读到了的 0）。
+   */
+  book = true,
+  /**
    * 生成器跑之前先摆进工作区的**额外文件**（`{相对路径: 文本}`，先 `mkdir -p`）。
    * 今天只有一个用它的现场：把**归属表**（`tests/agenia-upgrade/support/card-surface.mjs`）
    * 的一份合成副本放进工作区 —— 卡面必须读工作区那一份（`sla_owner_fields()` 的"工作区优先"），
@@ -1153,7 +1244,7 @@ export function scene(caseId, tag, {
    */
   extraFiles = {},
 } = {}) {
-  const roots = makeCardRoots(caseId, tag)
+  const roots = makeCardRoots(caseId, tag, { book })
   if (memorySource) writeMemorySource(roots.ws)
   writeDataRoot(roots.dr, { day, snapshot, totals })
   if (route !== undefined && route !== null) writeRoute(roots.ws, route)

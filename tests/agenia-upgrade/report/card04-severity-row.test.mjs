@@ -26,8 +26,8 @@
 import { before, test } from 'node:test'
 import { caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
 import {
-  CARD_SHEET, DAY, SAMPLE_SET, SEVERITY_LINES, assertReasonCodes, bugEntry, bugLedger, hasRed,
-  keysMissing, localState, redDetails, routeLedger, sampleIds, scene, sheetMissing, statOf,
+  CARD_SHEET, DAY, SAMPLE_SET, SEVERITY_LINES, assertReasonCodes, bugBookDir, bugEntry, bugLedger, hasRed,
+  keysMissing, listNames, localState, redDetails, routeLedger, sampleIds, scene, sheetMissing, statOf,
 } from '../support/card-surface.mjs'
 import path from 'node:path'
 
@@ -183,19 +183,23 @@ test('CARD-04 严重度那一排：四出口闭集 · 样本四个 · 只校准�
         `E：\`assessment:'unknown'\` 让卡报了 \`SEVERITY_CANNOT_UNESCALATED\`（${JSON.stringify(C.card.cells['card.reasons'])}）—— 两个词混了`)
     }
 
-    // ── F · **无 bug 台账** ⇒ `samples: []` 是合法读数，卡不因此红 ─────────────
+    // ── F · **空册**（零条事件）⇒ `samples: []` 是合法读数，卡不因此红 ──────────
     /**
      * 组长 2026-11-02 裁定（`gate4-C2` F-10 / 契约 §2.3 #19 + §3.5）：
-     * 本工作区还没有 bug 台账 ⇒ `severity.samples = []`、`calibrated` 三条线全 `false`、
+     * 本工作区**还没有登记过 bug** ⇒ `severity.samples = []`、`calibrated` 三条线全 `false`、
      * `severity.card_red = false`，**卡不因此红**。
      *
-     * 为什么这一格必须存在：真工作区今天就是这个形状（实现岗 `gate3-C2.md:78-82` 记的读数）。
+     * 🔴 三册落地后的「还没登记过」= **空册**（`账本/缺陷/` 在、零条事件），不是「册缺」：
+     *    册缺是根本没建三册 ⇒ 卡红（票 `bug-20261116-05`）。这一格因此给一本空册，
+     *    并另判 `.team/bug/ledger.json`（旧登记簿）**不存在** —— 它不该再被写出来。
+     *
+     * 为什么这一格必须存在：真工作区刚 `init` 完就是这个形状（实现岗 `gate3-C2.md:78-82` 记的读数）。
      * 没有这一格时，"样本恰四个"只在夹具里成立 —— 真实卡要么被读成"少了两格"（假红）、
      * 要么实现被逼着编四个样本（把"没登记"印成"登记过"）。两个方向都在这一格里量：
      *   · 样本必须是 `[]`（编样本 ⇒ `C2-SEVERITY-SAMPLES-FAKE`）；
      *   · 卡不许因此红（`card.red:false` 且 `reasons` 里没有 `SEVERITY_*`）；
      *   · `severity.lines` 仍是四条（出口是闭集，与有没有样本无关）。
-     * 另一向（台账在 ⇒ 恰四个）由 A 段判着 —— 两条一起才排掉"把 `samples` 写成常量"。
+     * 另一向（册里有样本 ⇒ 恰四个）由 A 段判着 —— 两条一起才排掉"把 `samples` 写成常量"。
      */
     const F = scene('CARD-04', 'no-ledger', {
       route: routeLedger({ tickets: [] }),
@@ -204,9 +208,10 @@ test('CARD-04 严重度那一排：四出口闭集 · 样本四个 · 只校准�
       reviews: {},
       legacy: { remaining: 0 },
     })
-    if (!usable('F/无台账', F)) { caseFail(problems); return }
+    if (!usable('F/空册', F)) { caseFail(problems); return }
     const ledgerFile = path.join(F.roots.ws, '.team', 'bug', 'ledger.json')
-    readings['F/无台账'] = {
+    readings['F/空册'] = {
+      book_days: listNames(bugBookDir(F.roots.ws)),
       ledger: statOf(ledgerFile),
       samples: F.card.cells['severity.samples'],
       calibrated: F.card.cells['severity.calibrated'],
@@ -215,14 +220,19 @@ test('CARD-04 严重度那一排：四出口闭集 · 样本四个 · 只校准�
       card_red: F.card.cells['card.red'],
       reasons: F.card.cells['card.reasons'],
     }
+    if (listNames(bugBookDir(F.roots.ws)).filter((n) => n.endsWith('.json')).length !== 0) {
+      push('C2-FIXTURE-BROKEN',
+        `F：这一格的夹具本该是一本**空册**（零个日文件），实得 ${JSON.stringify(listNames(bugBookDir(F.roots.ws)))}`)
+    }
     if (statOf(ledgerFile).exists) {
       push('C2-FIXTURE-BROKEN',
-        `F：这一格的夹具本该**没有** bug 台账（${ledgerFile}），盘上却有 —— 场景没造对，下面的读数不可信`)
+        `F：这一格的夹具本该**没有**旧登记簿（${ledgerFile}），盘上却有 —— 三册落地后它已改成只读归档，`
+        + '夹具不该再写它（票 `bug-20261116-05`）')
     }
     const samplesF = F.card.cells['severity.samples']
     if (!Array.isArray(samplesF) || samplesF.length !== 0) {
       push('C2-SEVERITY-SAMPLES-FAKE',
-        `F（没有 bug 台账）：\`severity.samples\` 必须是 **\`[]\`**（契约 §2.3 #19：无台账 ⇒ 0 样本是合法读数），`
+        `F（空册）：\`severity.samples\` 必须是 **\`[]\`**（契约 §2.3 #19：无台账 ⇒ 0 样本是合法读数），`
         + `实得 ${JSON.stringify(samplesF)} —— 编出样本就是把"没登记"印成"登记过"（组长 2026-11-02 裁定）`)
     }
     const calibratedF = F.card.cells['severity.calibrated']
@@ -232,7 +242,7 @@ test('CARD-04 严重度那一排：四出口闭集 · 样本四个 · 只校准�
       for (const line of ['data_broken', 'function_broken_repro', 'reading_lies']) {
         if (calibratedF[line] !== false) {
           push('C2-SEVERITY-CALIBRATED',
-            `F（没有台账 ⇒ 一条样本也没有）：\`calibrated.${line}\` 必须 \`false\`，实得 ${JSON.stringify(calibratedF[line])}`)
+            `F（空册 ⇒ 一条样本也没有）：\`calibrated.${line}\` 必须 \`false\`，实得 ${JSON.stringify(calibratedF[line])}`)
         }
       }
       if (Object.prototype.hasOwnProperty.call(calibratedF, 'unclassified')) {
@@ -241,7 +251,7 @@ test('CARD-04 严重度那一排：四出口闭集 · 样本四个 · 只校准�
     }
     if (F.card.cells['severity.card_red'] !== false) {
       push('C2-SEVERITY-CARD-RED',
-        `F（没有 bug 台账）：\`severity.card_red\` 必须 \`false\` —— "没样本"不是"判不了"（那个词是 \`cannot\`），`
+        `F（空册）：\`severity.card_red\` 必须 \`false\` —— "没样本"不是"判不了"（那个词是 \`cannot\`），`
         + `实得 ${JSON.stringify(F.card.cells['severity.card_red'])}`)
     }
     if (!Array.isArray(F.card.cells['severity.lines']) || JSON.stringify(F.card.cells['severity.lines']) !== JSON.stringify(SEVERITY_LINES)) {
@@ -250,7 +260,7 @@ test('CARD-04 严重度那一排：四出口闭集 · 样本四个 · 只校准�
     }
     if (F.card.cells['card.red'] !== false) {
       push('C2-SEVERITY-SAMPLES-RED',
-        `F：没有 bug 台账 **不许**让卡红（组长 2026-11-02 裁定：那是"还没登记过"，不是故障）—— `
+        `F：空册 **不许**让卡红（组长 2026-11-02 裁定：那是"还没登记过"，不是故障）—— `
         + `\`card.red\` 实得 ${JSON.stringify(F.card.cells['card.red'])}，reasons=${JSON.stringify(F.card.cells['card.reasons'])}`)
     }
     for (const code of ['SEVERITY_CANNOT_UNESCALATED', 'SEVERITY_CARD_RED']) {

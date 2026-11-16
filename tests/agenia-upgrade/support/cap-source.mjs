@@ -16,8 +16,9 @@
  *    卡片上那两个数因此能反过来指名"是哪一份给的"—— 只断言"读到 200/80000"分不出级别
  *    （2026-11-02 现量：三级今天都读得到，缺的是**卡片说不说得出是哪一级**）。
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { PATHS } from './env.mjs'
 import {
   DAY, NOW, cardFile, copyGeneratorInto, generatorScriptPath, makeCardRoots, memorySourceAt, readCapConstants,
   readCard, routeLedger, runCards, sha256Of, writeDataRoot, writeLocal, writeRoute, writeRouteSource,
@@ -55,6 +56,40 @@ export function writeCapSourceAt(root, caps) {
   return file
 }
 
+/** 现役预设树（拷进夹具根的那一份的源）。 */
+const PRESET_SRC = path.join(PATHS.repo, 'presets', 'agenia')
+
+/**
+ * 在某一级摆一份**能跑的读器**（`presets/agenia/bin` + `presets/agenia/lib`），并把
+ * `lib/memory.mjs` 的两个参考线常量改成这一级的夹具值；返回那份 `memory.mjs` 的路径。
+ *
+ * 为什么不能只写一份 4 行的 `memory.mjs`：每日卡的缺陷读数现在要走
+ * `agenia-route.mjs --op bug-read` / `决议-check.mjs --op fold`，而这两个 CLI 会连带 import
+ * `lib/*`（`tickets.mjs` 要 `memory.mjs` 的 `charCountOf`）。只写 CAP 常量的话，读器一 import
+ * 就死 —— 那一来这一格量的就不是「容量参考线从哪一级来」，而是「读器在不在」。
+ * ⇒ 整份预设（除 `.runtime`）拷过去，再把那两个常量改成夹具值。判据侧不变：
+ *   `sides` 仍只看 `memory.mjs` 在哪一级，三级的值仍互不相同。
+ */
+export function stageReaderPresetAt(root, caps) {
+  const dest = path.join(root, 'presets', 'agenia')
+  mkdirSync(path.dirname(dest), { recursive: true })
+  cpSync(PRESET_SRC, dest, {
+    recursive: true,
+    filter: (src) => !/[\\/]\.runtime([\\/]|$)/.test(src),
+  })
+  const file = path.join(dest, 'lib', 'memory.mjs')
+  let text = readFileSync(file, 'utf8')
+  const countRe = /^const CAP_COUNT\s*=\s*\d+/m
+  const charsRe = /^const CAP_CHARS\s*=\s*[\d_]+/m
+  if (!countRe.test(text) || !charsRe.test(text)) {
+    throw new Error(`stageReaderPresetAt：${file} 里找不到 CAP_COUNT / CAP_CHARS（预设的写法变了？）`)
+  }
+  text = text.replace(countRe, `const CAP_COUNT = ${caps.count}`)
+  text = text.replace(charsRe, `const CAP_CHARS = ${String(caps.chars).replace(/\B(?=(\d{3})+(?!\d))/g, '_')}`)
+  writeFileSync(file, text, 'utf8')
+  return file
+}
+
 /** 路径比较口径（Windows 不分大小写；分隔符统一成正斜杠）。 */
 export const normPath = (p) => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 
@@ -83,7 +118,7 @@ export function capSourceScene({ caseId, tag, level, day = DAY, nowIso = NOW }) 
   }
   // 三级的落点：只有 `level` 那一级有文件，另两级**一个字节都不写**（夹具自证靠 `sides`）。
   const rootsOfLevel = { workspace: roots.ws, generator: copyRoot, cwd: cwdDir }
-  const expectedFile = writeCapSourceAt(rootsOfLevel[level], CAP_VALUES[level])
+  const expectedFile = stageReaderPresetAt(rootsOfLevel[level], CAP_VALUES[level])
   // 账本 / 数据根 / 复核节点 / route.mjs：让卡出得来，且失败不会停在别的错误码上
   // （`cand-20261020-0078`：要证明 A 在挡，先把也会挡它的 B 调成不挡）。
   writeDataRoot(roots.dr, { day, totals: { ...SNAPSHOT_TOTALS } })

@@ -27,10 +27,13 @@
 import { before, test } from 'node:test'
 import { caseHold, caseFail, preflight, problem, runCase } from '../support/evidence.mjs'
 import {
-  CARD_SHEET, bugEntry, bugLedger, freshTicket, hasRed, keysMissing, opUnavailable, readBugOp,
-  assertReasonCodes, routeLedger, runCards, scene, setClock, sha256Of, sheetMissing,
+  CARD_SHEET, assertReasonCodes, bugBookDir, bugEntry, bugLedger, cardFile, copyGeneratorInto, failureFile,
+  freshTicket, hasRed, keysMissing, listNames, localState, makeCardRoots, opUnavailable, readBugOp, readFailures,
+  routeLedger, runCards, scene, setClock, sha256Of, sheetMissing, statOf, writeDataRoot, writeLocal,
+  writeMemorySource, writeRoute, writeRouteSource,
 } from '../support/card-surface.mjs'
 import path from 'node:path'
+import { mkdirSync } from 'node:fs'
 
 before(() => {
   preflight()
@@ -267,18 +270,201 @@ test('CARD-03 bug 开放数 + 50/30：kind=bug 且无 disposition · 票不漏 �
     // 年龄与阈值只有在"红"的时候才真的被读到，绿的现场（C）两边都是 0，谁也分不出来。
     crossReader('C2/bug-read-31d', E31, 'red-31d')
 
-    // ── F · 封顶不动手：卡是只读的 ────────────────────────────────────────
+    // ── F · 封顶不动手：卡是只读的（量册，不量旧登记簿）─────────────────────
     {
-      // 同一个工作区、同一份台账：跑一张卡前后各量一次 `ledger.json` 的 sha256。
-      const ledgerFile = path.join(B.roots.ws, '.team', 'bug', 'ledger.json')
-      const before = sha256Of(ledgerFile)
+      // 🔴 三册落地后活账是 `账本/缺陷/<day>.json`；`.team/bug/ledger.json` 是只读归档，
+      //    夹具**一个字节都不许写它**（票 `bug-20261116-05` 的禁区）。这一格量的是册。
+      const bookDayFiles = listNames(bugBookDir(B.roots.ws)).filter((n) => n.endsWith('.json'))
+      const before = Object.fromEntries(bookDayFiles.map((n) => [n, sha256Of(path.join(bugBookDir(B.roots.ws), n))]))
       const again = runCards(B.roots, { day: B.day, nowIso: B.nowIso })
-      const after = sha256Of(ledgerFile)
-      readings['F/只读'] = { before, after, exit_code: again.exit_code }
-      if (before !== after) {
+      const after = Object.fromEntries(bookDayFiles.map((n) => [n, sha256Of(path.join(bugBookDir(B.roots.ws), n))]))
+      readings['F/只读'] = { before, after, exit_code: again.exit_code, files: bookDayFiles }
+      if (JSON.stringify(before) !== JSON.stringify(after)) {
         push('C2-CAP-TOUCHED',
-          'F：生成卡之后 `ledger.json` 的 sha256 变了 —— 封顶是**读数 + 预警**，不是动作'
-          + `（定形 §3.1 第 7 条：「不自动动手」）。before=${before} after=${after}`)
+          'F：生成卡之后缺陷册的 sha256 变了 —— 封顶是**读数 + 预警**，不是动作'
+          + `（定形 §3.1 第 7 条：「不自动动手」）。before=${JSON.stringify(before)} after=${JSON.stringify(after)}`)
+      }
+      if (statOf(path.join(B.roots.ws, '.team', 'bug', 'ledger.json')).exists) {
+        push('C2-OLD-LEDGER-RESURRECTED',
+          'F：夹具或生成器把 `.team/bug/ledger.json` 写出来了 —— 三册落地时它已改成只读归档，'
+          + '复活这个读面/写面就是本票要根治的那个洞（票 `bug-20261116-05`）')
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════
+    // G/H/I/J · **三册夹具**（票 `bug-20261116-05`：以前没有任何卡测试会造册）
+    //
+    // 四格是同一件事的四个面：
+    //   G 最小三册树（手写事件流）⇒ 卡必须**从册里**拉数（不是从 `.team/bug/ledger.json`）；
+    //   H 坏册（一天不是 JSON）⇒ 卡必须**红**（exit≠0 + 具名码 + 没有卡），**不许印 0**；
+    //   I 册缺（`账本/缺陷/` 不在）⇒ 同上，另一条码；
+    //   J 空册（目录在、零条事件）⇒ 卡出，`bug.open = 0` —— 这是**读到了的 0**，不是「没读到」。
+    // ════════════════════════════════════════════════════════════════════════════════════
+    const minimalBook = {
+      schema: 1,
+      day: DAY,
+      events: [
+        // 1 条 open bug + 1 条 open observation + 1 条已处置 bug（观测与已处置都不进 `bug.open`）
+        { seq: 1, kind: 'registered', id: 'bug-20261102-70', entry_kind: 'bug', phenomenon: '夹具：已处置的那条', at: `${DAY}T08:00:00+08:00` },
+        { seq: 2, kind: 'disposed', id: 'bug-20261102-70', at: `${DAY}T08:30:00+08:00`, disposition: { value: 'adopted', reason: '夹具：已修', by: 'leader', at: `${DAY}T08:30:00+08:00` } },
+        { seq: 3, kind: 'registered', id: 'bug-20261102-71', entry_kind: 'bug', phenomenon: '夹具：册里唯一一条 open bug', at: `${DAY}T09:00:00+08:00` },
+        { seq: 4, kind: 'registered', id: 'obs-20261102-71', entry_kind: 'observation', phenomenon: '夹具：open observation（不计入 bug.open）', at: `${DAY}T09:05:00+08:00` },
+      ],
+    }
+    const bookExtra = (text) => ({ '账本/缺陷/2026-11-02.json': text })
+
+    // G · 最小三册树：卡上的数只能从这本册来
+    const G = scene('CARD-03', 'book-minimal', {
+      route: routeLedger({ tickets: [] }),
+      local: localState({ day: DAY, technical: 'done', conversation: 'done' }),
+      reviews: {},
+      legacy: { remaining: 0 },
+      extraFiles: bookExtra(`${JSON.stringify(minimalBook, null, 2)}\n`),
+    })
+    readings['G/三册'] = {
+      exit_code: G.run.exit_code,
+      stderr: String(G.run.stderr ?? '').trim().slice(0, 300),
+      bug_open: G.card.cells?.['bug.open'] ?? null,
+      cap_bug_open: G.card.cells?.['cap.bug_open'] ?? null,
+      source: G.card.cells?.['bug.open.source'] ?? null,
+      book_days: listNames(bugBookDir(G.roots.ws)),
+      old_ledger: statOf(path.join(G.roots.ws, '.team', 'bug', 'ledger.json')).exists,
+    }
+    if (G.run.exit_code !== 0) {
+      push('C2-BOOK-FIXTURE-FAILED',
+        `G：最小三册树（${path.join(bugBookDir(G.roots.ws), '2026-11-02.json')}）跑卡 exit=${G.run.exit_code} —— `
+        + `这格要的是"卡从册里拉数"，实得 stderr=${String(G.run.stderr ?? '').trim().slice(0, 300)}`)
+    } else {
+      if (G.card.cells['bug.open'] !== 1) {
+        push('C2-BOOK-COUNT',
+          `G：册里 1 条 open bug + 1 条 open observation + 1 条已处置 bug ⇒ \`bug.open\` 必须是 **1**，`
+          + `实得 ${JSON.stringify(G.card.cells['bug.open'])} —— 卡没有从三册拉数（或口径又变了）`)
+      }
+      if (G.card.cells['cap.bug_open'] !== 1) {
+        push('C2-BOOK-COUNT', `G：\`cap.bug_open\` 必须是 **1**，实得 ${JSON.stringify(G.card.cells['cap.bug_open'])}`)
+      }
+      const sourceG = String(G.card.cells['bug.open.source'] ?? '')
+      if (!sourceG.includes('账本/缺陷') || sourceG.includes('ledger.json')) {
+        push('C2-BOOK-SOURCE',
+          `G：\`bug.open.source\` 必须点名三册（含 \`账本/缺陷\`、不含 \`.team/bug/ledger.json\`），实得 ${JSON.stringify(sourceG)}`)
+      }
+    }
+
+    // H · 坏册：折叠读器报 problems ⇒ 生成失败（绝不印 0）
+    const H = scene('CARD-03', 'book-broken', {
+      route: routeLedger({ tickets: [] }),
+      local: localState({ day: DAY, technical: 'done', conversation: 'done' }),
+      reviews: {},
+      legacy: { remaining: 0 },
+      extraFiles: bookExtra('{ 这不是 JSON'),
+    })
+    const hMarkers = H.run.exit_code === 0 ? [] : readFailures(H.roots.ws, DAY)
+    readings['H/坏册'] = {
+      exit_code: H.run.exit_code,
+      stderr: String(H.run.stderr ?? '').trim().slice(0, 400),
+      card_exists: statOf(cardFile(H.roots.ws, DAY)).exists,
+      markers: hMarkers,
+    }
+    if (H.run.exit_code === 0) {
+      push('C2-BOOK-BROKEN-GREEN',
+        'H：册里有一天不是 JSON ⇒ 卡必须**红**（生成失败），实得 exit=0 —— '
+        + '一张印着 0 的卡比没有卡更坏（票 `bug-20261116-05`）')
+    }
+    if (!String(H.run.stderr ?? '').includes('E_BUG_BOOK_UNREADABLE')) {
+      push('C2-BOOK-BROKEN-CODE',
+        `H：坏册的失败码必须是 \`E_BUG_BOOK_UNREADABLE\`（stderr=${String(H.run.stderr ?? '').trim().slice(0, 300)}）`)
+    }
+    if (statOf(cardFile(H.roots.ws, DAY)).exists) {
+      push('C2-BOOK-BROKEN-CARD',
+        `H：坏册却留下了一张卡（${cardFile(H.roots.ws, DAY)}）—— 零值卡比没卡更坏`)
+    }
+    if (!hMarkers.some((m) => m?.code === 'E_BUG_BOOK_UNREADABLE')) {
+      push('C2-BOOK-BROKEN-MARKER',
+        `H：坏册的失败标记（${failureFile(H.roots.ws, DAY)}）里没有 \`E_BUG_BOOK_UNREADABLE\`（实得 ${JSON.stringify(hMarkers)}）`)
+    }
+
+    // I · 册缺：`账本/缺陷/` 不在 ⇒ 生成失败（另一条码；不印 0）
+    const I = scene('CARD-03', 'book-absent', {
+      route: routeLedger({ tickets: [] }),
+      local: localState({ day: DAY, technical: 'done', conversation: 'done' }),
+      reviews: {},
+      legacy: { remaining: 0 },
+      book: false,
+    })
+    readings['I/册缺'] = {
+      exit_code: I.run.exit_code,
+      stderr: String(I.run.stderr ?? '').trim().slice(0, 400),
+      card_exists: statOf(cardFile(I.roots.ws, DAY)).exists,
+      book_dir: statOf(bugBookDir(I.roots.ws)).exists,
+    }
+    if (I.run.exit_code === 0) {
+      push('C2-BOOK-ABSENT-ZERO',
+        'I：`账本/缺陷/` 不在 ⇒ 卡必须红，实得 exit=0 —— '
+        + '缺册印 0 就是本票的原始病灶（技术评审 2026-11-15 · F4）')
+    }
+    if (!String(I.run.stderr ?? '').includes('E_BUG_BOOK_MISSING')) {
+      push('C2-BOOK-ABSENT-CODE',
+        `I：册缺的失败码必须是 \`E_BUG_BOOK_MISSING\`（stderr=${String(I.run.stderr ?? '').trim().slice(0, 300)}）`)
+    }
+    if (statOf(cardFile(I.roots.ws, DAY)).exists) {
+      push('C2-BOOK-ABSENT-CARD', 'I：册缺却留下了一张卡 —— 那张卡的 0 没有来源')
+    }
+
+    // J · 空册：目录在、零条事件 ⇒ 卡出，0 是**读到了的 0**
+    const J = scene('CARD-03', 'book-empty', {
+      route: routeLedger({ tickets: [] }),
+      local: localState({ day: DAY, technical: 'done', conversation: 'done' }),
+      reviews: {},
+      legacy: { remaining: 0 },
+    })
+    readings['J/空册'] = {
+      exit_code: J.run.exit_code,
+      stderr: String(J.run.stderr ?? '').trim().slice(0, 300),
+      bug_open: J.card.cells?.['bug.open'] ?? null,
+      book_days: listNames(bugBookDir(J.roots.ws)),
+    }
+    if (J.run.exit_code !== 0) {
+      push('C2-BOOK-EMPTY-HOLD',
+        `J：空册（\`账本/缺陷/\` 在、零条事件）应当出卡、\`bug.open = 0\`，实得 exit=${J.run.exit_code} —— `
+        + `stderr=${String(J.run.stderr ?? '').trim().slice(0, 300)}`)
+    } else if (J.card.cells['bug.open'] !== 0) {
+      push('C2-BOOK-EMPTY-COUNT', `J：空册的 \`bug.open\` 必须是 0，实得 ${JSON.stringify(J.card.cells['bug.open'])}`)
+    }
+
+    // K · 读器不在：生成器副本 + 空 cwd，三处都找不到 `presets/agenia/bin/*` ⇒ 具名红（不是 0）
+    {
+      const rootsK = makeCardRoots('CARD-03', 'book-no-reader')
+      writeMemorySource(rootsK.ws)
+      writeRouteSource(rootsK.ws)
+      writeDataRoot(rootsK.dr, { day: DAY })
+      writeRoute(rootsK.ws, routeLedger({ tickets: [] }))
+      writeLocal(rootsK.ws, DAY, localState({ day: DAY, technical: 'done', conversation: 'done' }))
+      const copyRoot = path.join(rootsK.runRoot, 'card-generator-copy', 'card-03-no-reader')
+      const cwdDir = path.join(copyRoot, 'cwd')
+      mkdirSync(cwdDir, { recursive: true })
+      const scriptCopy = copyGeneratorInto(copyRoot)
+      const runK = runCards(rootsK, { day: DAY, nowIso: `${DAY}T10:00:00+08:00`, script: scriptCopy, cwd: cwdDir })
+      readings['K/读器不在'] = {
+        exit_code: runK.exit_code,
+        stderr: String(runK.stderr ?? '').trim().slice(0, 400),
+        card_exists: statOf(cardFile(rootsK.ws, DAY)).exists,
+        candidates: [
+          path.join(rootsK.ws, 'presets', 'agenia', 'bin', 'agenia-route.mjs'),
+          path.join(copyRoot, 'presets', 'agenia', 'bin', 'agenia-route.mjs'),
+          path.join(cwdDir, 'presets', 'agenia', 'bin', 'agenia-route.mjs'),
+        ].map((f) => ({ file: f, exists: statOf(f).exists })),
+      }
+      if (runK.exit_code === 0) {
+        push('C2-BOOK-NO-READER-GREEN',
+          'K：三处都找不到 `agenia-route.mjs` / `决议-check.mjs` ⇒ 卡必须红（读器不在），实得 exit=0 —— '
+          + '读器不在却出数，那个数一定是编的')
+      }
+      if (!String(runK.stderr ?? '').includes('E_BUG_READER_MISSING')) {
+        push('C2-BOOK-NO-READER-CODE',
+          `K：读器不在的失败码必须是 \`E_BUG_READER_MISSING\`（stderr=${String(runK.stderr ?? '').trim().slice(0, 300)}）`)
+      }
+      if (statOf(cardFile(rootsK.ws, DAY)).exists) {
+        push('C2-BOOK-NO-READER-CARD', 'K：读器不在却留下了一张卡 —— 那张卡的数字没有来源')
       }
     }
 

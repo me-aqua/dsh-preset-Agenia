@@ -506,6 +506,9 @@ export function makeRoots(caseId, name) {
   const ws = ensureMarkedDir(path.join(base, 'ws'), { runRoot, runId: path.basename(runRoot), kind: 'agenia-test-workspace' })
   const brain = ensureMarkedDir(path.join(base, 'brain'), { runRoot, runId: path.basename(runRoot), kind: 'agenia-test-brain-root' })
   mkdirSync(path.join(ws, '.team'), { recursive: true })
+  // 每日卡读**缺陷册**（`账本/缺陷/`）：这些腿只判"卡用了哪一天"，给一本空册就够 ——
+  // 空册 = 读到了的 0；不建它，卡会因为「册缺」整条失败（票 `bug-20261116-05`）。
+  mkdirSync(path.join(ws, '账本', '缺陷'), { recursive: true })
   mountCapSource(ws)
   return { base, ws, brain }
 }
