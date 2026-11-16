@@ -1130,7 +1130,7 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
     //
     // 🔴 那十条是**数据**，不是代码：开一张票、关一张票、写一条构案都会推它。
     //    ⇒ 漂了先看是不是有人开了票（`REAL-TREE-PIN-DRIFT` / `PIN-LEDGER-MALFORMED`），
-    //      别读成「产品的链读数丢了」（`bug-20261116-17` 的由来：`-01` 票在套件跑到一半时落盘）。
+    //      别读成「产品的链读数丢了」（`bug-20261116-18…-28（本卡原写 -17：那个号从未登记，见 11-16 log）` 的由来：`-01` 票在套件跑到一半时落盘）。
     //    ⇒ 这一格里的**恒等式**（组之和、票总数）跟着读数走，不进钉表 —— 它们永远不该要人重钉。
     {
       for (const msg of pinLedgerProblems()) push('PIN-LEDGER-MALFORMED', `[钉账] ${msg}`)
@@ -1161,7 +1161,7 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
             push('CHAIN-READING-MISSING', `[真树] chain.bug.deferred ${JSON.stringify(chain.deferred)} ≠ deferred_open + legacy_frozen ${chain.deferred_open + chain.legacy_frozen}`)
           }
           // ③ 处置数不许超过册里的票数（**子集关系**，不是等式：刚登记、还没处置的票在两组里都不到）。
-          //   等式那种写法会让"有人开了票但还没处置"读成代码坏 —— 那正是 `bug-20261116-17` 要杀的形状。
+          //   等式那种写法会让"有人开了票但还没处置"读成代码坏 —— 那正是 `bug-20261116-18…-28（本卡原写 -17：那个号从未登记，见 11-16 log）` 要杀的形状。
           const tickets = run.json?.books?.缺陷?.entries ?? null
           if (tickets === null) {
             push('CHAIN-READING-MISSING', '[真树] 读数里没有 books.缺陷.entries —— 处置数这一格判不了')

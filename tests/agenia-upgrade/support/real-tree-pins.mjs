@@ -1,7 +1,7 @@
 /**
  * **真树冻结读数（REAL-TREE PINS）** —— 这一份是**数据**，不是代码。
  *
- * 为什么单独一份（`bug-20261116-17`）：
+ * 为什么单独一份（`bug-20261116-18…-28（本卡原写 -17：那个号从未登记，见 11-16 log）`）：
  *   判据里原来散着几个硬编码数（157 · 52 / 62 / 43 / 4 · 153），它们是**活树的读数**。
  *   任何人**开一张票**，那些数就动 —— 于是一次诚实的开票会把套件读成 `LDG-03 CHAIN-READING-MISSING`，
  *   而那个码长得像「产品的链读数丢了」。2026-11-16 实测：`-01` 票在套件跑到一半时落盘 ⇒
@@ -189,7 +189,7 @@ export function pinLedgerProblems() {
     if (!Number.isInteger(pin.value)) problems.push(`${at} 的 value 不是整数：${JSON.stringify(pin.value ?? null)}`)
     if (typeof pin.what !== 'string' || pin.what.trim() === '') problems.push(`${at} 没有 what（报文里要说这是哪一格）`)
     if (typeof pin.moved_by !== 'string' || pin.moved_by.trim() === '') {
-      problems.push(`${at} 没有 moved_by —— **没有具名数据动作就不许钉**（bug-20261116-17）`)
+      problems.push(`${at} 没有 moved_by —— **没有具名数据动作就不许钉**（bug-20261116-18…-28（本卡原写 -17：那个号从未登记，见 11-16 log））`)
     }
   }
   return problems
