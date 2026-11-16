@@ -2301,8 +2301,15 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
    * 现在拆成三条能翻面的：
    *   ① CONTRACT 从 `## §17` 到 EOF 的切片里**零个上限数字**（文档只许指表）；
    *   ② 扫描面里没有第二处「三个以上上限数字同现」的文档（0016 §② 是决定，单列对账）；
-   *   ③ §17.2 必须指到 `FILE_CAP_TABLE` 的 `match`，且不抄 glob（复制 glob = 第二份适用面）。
-   * 外加 0016 §② 那张决定表与 `FILE_CAP_TABLE` 逐值相等（改数字 = 构案 + 工具同批）。
+   *   ③ §17.2 必须指到 `FILE_CAP_TABLE` 的 `match`，且整个 `## §17` 不抄**适用面**的 glob。
+   * 外加 0016 §② 那张决定表与 `FILE_CAP_TABLE` 逐类相等（改数字 = 构案 + 工具同批）。
+   * 🔴 第 4 关 r2 · M-3 的三个漏口（三条各补一处，都是「承诺比断言宽」）：
+   *   · 漏口 1 —— `README.md` / `presets/agenia/*.md` 在 `capDocs` 之外：贴两行数字进去四条全绿
+   *     ⇒ ② 另加这两个根（它们本来就不进 0016 的表，所以口径是**两档数字同现即红**）；
+   *   · 漏口 2 —— ④ 比的是**排序后的多重集**：把 §② 两行的数字对调（代码拿说明书的数、说明书拿代码的数）照样相等
+   *     ⇒ ④ 改成**按类**的映射 `{类 → 上限}` 逐对相等；
+   *   · 漏口 3 —— ③ 只切 §17.2：把 glob 抄进 §17.3 / §17.4 / §17.7 仍绿 ⇒ ③ 的 glob 检查放到整个 §17
+   *     （判的是「选得到上限表里的件」的 glob；§17.3/§17.4 点名排除面与扫描根的那几个不算，见 ③ 那段注释）。
    */
   const CAP_LITERALS = FILE_CAP_TABLE.map((c) => String(c.cap))
   const CAP_LITERAL_RE = new RegExp(`\\b(?:${CAP_LITERALS.join('|')})\\b`, 'g')
@@ -2323,48 +2330,151 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       : contractS17 === null
         ? 'CONTRACT.md 里没有 `## §17` 那一节 —— 规则没有落点'
         : s17Hits.length === 0
-          ? `§17 切片 ${contractS17.split('\n').length} 行：数字 0 个（文档只指表）`
+          ? `§17 切片 ${capLineCount(contractS17)} 行：数字 0 个（文档只指表）`
           : `§17 切片里出现了上限数字 ${[...new Set(s17Hits)].join(' / ')}（共 ${s17Hits.length} 处）—— 文档里抄了第二份表`)
 
   // ② 扫描面里没有第二处「三个以上上限数字同现」的文档（至少 3 个**不同**的上限数字同现 ⇒ 像一张表）。
   const capDocs = scoped.filter((rel) => capClassOf(rel) !== null && rel !== '账本/构案/0016-文件长度上限.md')
-  const clusters = []
-  for (const rel of capDocs) {
+  /**
+   * 🔴 还有两个根**根本不在 `capDocs` 里**（第 4 关 r2 · M-3 漏口 1）：`README.md`（不在扫描面）与
+   * `presets/agenia/` 根下那几份注入碎片 / 说明书（`capClassOf` 判 `null` —— 0016 §② 点名它们不进表）。
+   * 正因为不在表里，**贴进去的两行数字没有任何一条判据看得见**；而注入碎片是会进组长提示词的东西，
+   * 第二份数字放那儿比放 CONTRACT 更糟（读的人会把表外的数字当准）。
+   * ⇒ 这些根按**两档不同数字同现即红**判：一份「只许指表」的件里出现第二档，就已经是第二张表的开头。
+   * ⚠️ `presets/agenia/说明.md` **不在这一组**：它在 `manual` 面里（`capClassOf` 非 `null`），
+   *    按上面那条 `>= 3` 判 —— 同一份件不许同时吃两个阈值。
+   * ⚠️ 阈值 2 与 3 的差别是有意的：`capDocs` 那批是现状件（为了别的用途顺手提一两个数不奇怪），
+   *    这两个根是「只该指表」的件 —— 口径收在**它们**身上，不是把老判据放宽或收紧。
+   */
+  const presetRootDir = join(REPO, 'presets', 'agenia')
+  const capFreeDocs = [
+    'README.md',
+    ...(existsSync(presetRootDir) ? readdirSync(presetRootDir).filter((n) => n.endsWith('.md') && !n.startsWith('.')) : [])
+      .map((n) => `presets/agenia/${n}`),
+  ].filter((rel) => capClassOf(rel) === null && existsSync(capAbsOf(rel)))
+  /** 一份件里的「上限数字簇」：`>= min` 个**不同**的上限数字同现 ⇒ 像一张表（读不到 ⇒ `null`，不猜）。 */
+  const capClusterOf = (rel, min) => {
     let text = ''
-    try { text = read(capAbsOf(rel)) } catch { continue }
+    try { text = read(capAbsOf(rel)) } catch { return null }
     const vals = [...new Set(text.match(CAP_LITERAL_RE) ?? [])]
-    if (vals.length >= 3) clusters.push(`${rel}（${vals.join(' / ')}）`)
+    return vals.length >= min ? `${rel}（${vals.join(' / ')}）` : null
   }
-  yes('文件长度', '上限表只有一处 ②：扫描面里没有第二处「三个以上上限数字同现」（0016 §② 是决定，单列对账）',
+  const clusters = []
+  for (const rel of capDocs) { const c = capClusterOf(rel, 3); if (c !== null) clusters.push(c) }
+  for (const rel of capFreeDocs) { const c = capClusterOf(rel, 2); if (c !== null) clusters.push(c) }
+  yes('文件长度', '上限表只有一处 ②：扫描面（含 README.md + presets/agenia 根下碎片）里没有第二处上限数字成簇（0016 §② 是决定，单列对账）',
     clusters.length === 0,
     clusters.length === 0
-      ? `${capDocs.length} 份手写件里，除了 \`FILE_CAP_TABLE\` 与 0016 §②，没有一份同时带着三个以上上限数字`
+      ? `${capDocs.length} 份现状件里，除了 \`FILE_CAP_TABLE\` 与 0016 §②，没有一份同时带着三个以上上限数字；`
+        + `另加 ${capFreeDocs.length} 份「只许指表」的件（README.md + presets/agenia 根下的手写件）—— 两档同现即红，一份都没有`
       : `这些文件像是第二张表：${clusters.join(' · ')} —— 数字只许住在 \`FILE_CAP_TABLE\`；要改就改表（0016 §③）`)
 
-  // ③ §17.2 只许指 `match`，不许抄 glob。
+  // ③ §17.2 只许指 `match`；**整个 `## §17` 不许抄适用面的 glob**（§17.2 更严：一处 glob 都不许有）。
   const s172 = sectionOf(contractText, '### §17.2', '### §17.3')
   const s172Glob = s172 === null ? null : /\*(?:\.|\/)/.test(s172)
-  yes('文件长度', '上限表只有一处 ③：§17.2 指到 `FILE_CAP_TABLE` 的 `match`（不抄 glob）',
-    s172 !== null && s172.includes('FILE_CAP_TABLE') && /\bmatch\b/.test(s172) && s172Glob === false,
+  /**
+   * 🔴 glob 检查的作用面 = **整个 `## §17`**（第 4 关 r2 · M-3 漏口 3）：只切 §17.2 时，把
+   * `presets/agenia/team/*.md` 抄进 §17.3 / §17.4 / §17.7 任一节，③ 照样绿 —— 而承诺的是
+   * 「本文件不复制 glob」，不是「§17.2 不复制 glob」。
+   * 🔴 为什么不是「§17 里一个 `*` 都不许有」：§17.3 / §17.4 必须能点名**排除面**
+   *    （`账本/缺陷/*.json` · `presets/agenia/.runtime/**` · `.team/**\/cards/`），§17.3 还要点名
+   *    **扫描根**（`presets/**` · `账本/构案/*.md` · `.team/<岗位>/now.md`）—— 那些是「历史类为什么
+   *    进不来」的必要成分，删了 §17 反而说不清楚。判的是**适用面**：一个 glob 只要
+   *    ① 选得到上限表里的件（拿 `scoped` 逐份过 `capClassOf`，不靠猜名字），且
+   *    ② 不是某个扫描根的**整面**（根面 = 那几个根自己，不是根下面某一类）
+   *    ⇒ 它就已经是第二份适用面。抄进哪一节都算（§17.2 另有更严的「一处 `*.` / `*\/` 都不许」）。
+   * ⚠️ 根面表就是 `capScope()` 那四个根的镜像（`CONTRACT.md` 不是 glob，列在这里只是让读者看全四个根）；
+   *    扫描根变了而这张表没跟 ⇒ 合法的根会被当成抄来的面而**红**（fail-closed，改这里即可）。
+   */
+  const CAP_ROOT_FACES = Object.freeze(['presets/**', '账本/构案/*.md', '.team/**/now.md', 'CONTRACT.md'])
+  /** glob → 正则（`**\/` = 任意层目录 · `**` = 任意串 · `*` = 一层里的任意串）。 */
+  const capGlobToRe = (glob) => new RegExp(`^${glob
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*\//g, '\u0000')
+    .replace(/\*\*/g, '\u0001')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\u0000/g, '(?:[^/]+/)*')
+    .replace(/\u0001/g, '.*')}$`)
+  /** §17 里除去 §17.2 的其余部分（§17.2 走上面那条更严的检查）。 */
+  const s17Rest = contractS17 === null || s172 === null ? '' : contractS17.split(s172).join('')
+  /** 候选 glob：路径形状的串，且真的带 `*`（`*.md` 这种裸扩展名也算）。 */
+  const s17GlobTokens = [...new Set((s17Rest.match(/[A-Za-z0-9_.\-\u4e00-\u9fa5*/]+/g) ?? [])
+    .filter((tok) => tok.includes('*') && (tok.includes('/') || /\*\.[A-Za-z]/.test(tok))))]
+  const copiedFaces = s17GlobTokens
+    .filter((tok) => !CAP_ROOT_FACES.includes(tok))
+    .filter((tok) => {
+      const re = capGlobToRe(tok)
+      return scoped.some((rel) => capClassOf(rel) !== null && re.test(rel))
+    })
+  yes('文件长度', '上限表只有一处 ③：§17.2 指到 `FILE_CAP_TABLE` 的 `match`；整个 `## §17` 不抄适用面的 glob',
+    s172 !== null && s172.includes('FILE_CAP_TABLE') && /\bmatch\b/.test(s172) && s172Glob === false && copiedFaces.length === 0,
     s172 === null
       ? 'CONTRACT.md 里没有 `### §17.2` 那一节'
-      : `${s172.includes('FILE_CAP_TABLE') ? '有' : '没有'} \`FILE_CAP_TABLE\` 指针、`
-        + `${/\bmatch\b/.test(s172) ? '有' : '没有'} \`match\` 指针、`
-        + `${s172Glob ? '仍然抄了 glob（`*.md` 之类）' : '没抄 glob'}`)
+      : contractS17 === null
+        ? 'CONTRACT.md 里没有 `## §17` 那一节'
+        : `${s172.includes('FILE_CAP_TABLE') ? '有' : '没有'} \`FILE_CAP_TABLE\` 指针、`
+          + `${/\bmatch\b/.test(s172) ? '有' : '没有'} \`match\` 指针、`
+          + `${s172Glob ? '§17.2 仍然抄了 glob（`*.md` 之类）' : '§17.2 没抄 glob'}`
+          + ` · §17 切片 ${capLineCount(contractS17)} 行（**整块**）：`
+          + `除 §17.2 外读到 ${s17GlobTokens.length} 个 glob，${copiedFaces.length === 0
+            ? `没有一个选得到上限表里的件（根面 ${CAP_ROOT_FACES.filter((g) => g !== 'CONTRACT.md').join(' / ')} 不算）`
+            : `🔴 这些是第二份适用面：${copiedFaces.join(' · ')} —— 面只住在 \`FILE_CAP_TABLE\` 的 \`match\` 里`}`)
 
-  // ④ 0016 §②（决定）与 `FILE_CAP_TABLE`（工具）逐值相等 —— 改数字必须同批。
+  // ④ 0016 §②（决定）与 `FILE_CAP_TABLE`（工具）**按类**逐值相等 —— 改数字必须同批，配对也不许对调。
   const schemeFile = join(REPO, '账本', '构案', '0016-文件长度上限.md')
   const schemeText = existsSync(schemeFile) ? read(schemeFile) : ''
   const schemeS2 = sectionOf(schemeText, '## ②', '## ③')
+  /**
+   * 🔴 按类比，不比排序多重集（第 4 关 r2 · M-3 漏口 2）：旧口径把 §② 的粗体数字与工具表都 `sort()`
+   * 再比 —— 把两行的数字对调（代码拿说明书的数、说明书拿代码的数）**照样相等**，决定文件从此说反话而工具照旧执行。
+   * 现在逐行读 `| 现状类 | **上限** |`，先把这一行认回工具表的 `key`，再逐类对 `cap`：
+   *   · 认不出的行 / 同一类出现两次 ⇒ 红（加一类必须同批改这张映射表，不许悄悄漏过）；
+   *   · 任何一类对不上 / 构案多出表里没有的类 ⇒ 红，报文点名「哪一类拿了哪个数」。
+   * 表里那个 `key` 就是身份（`code` / `manual` / `contract` / `yml` / `now`）；§② 的行文案是中文，
+   * 这里按**标签词**认（`.mjs` / 说明书 / 契约 / `.yml` / `now.md`），只认标签、不认数字 —— 用数字认行
+   * 就会跟着对调走（那就又变回多重集了）。**认错 / 认不出 ⇒ 红**，不静默跳过。
+   * 另：§② 里的粗体数字照旧单列（多一个都不许有）—— 这一条比旧口径只强不弱。
+   */
+  const SCHEME_ROW_KEY = Object.freeze([
+    [/\bnow\.md\b/, 'now'],
+    [/\.ya?ml\b|配置/, 'yml'],
+    [/契约|构案|CONTRACT\.md/, 'contract'],
+    [/说明书|作业书/, 'manual'],
+    [/代码|\.mjs\b|\.js\b/, 'code'],
+  ])
+  const schemeRows = (schemeS2?.split('\n') ?? [])
+    .filter((line) => line.trimStart().startsWith('|'))
+    .map((line) => line.replace(/\s*\|\s*$/, '').split('|').slice(1).map((cell) => cell.trim()))
+    .filter((cells) => cells.length >= 2 && /^\*\*\d+\*\*$/.test(cells[1]))
+  const schemeMap = {}
+  const schemeBad = []
+  for (const [label, capCell] of schemeRows) {
+    const key = SCHEME_ROW_KEY.find(([re]) => re.test(label))?.[1] ?? null
+    if (key === null) { schemeBad.push(`认不出这一行是哪一类：${label}`); continue }
+    if (key in schemeMap) { schemeBad.push(`「${key}」在 §② 出现了两次：${label}`); continue }
+    schemeMap[key] = Number(/^\*\*(\d+)\*\*$/.exec(capCell)[1])
+  }
   const schemeNums = schemeS2 === null ? null : [...schemeS2.matchAll(/\*\*(\d+)\*\*/g)].map((m) => Number(m[1])).sort((a, b) => a - b)
   const tableNums = FILE_CAP_TABLE.map((c) => c.cap).sort((a, b) => a - b)
-  yes('文件长度', '上限表只有一处 ④：0016 §② 的分档表与 `FILE_CAP_TABLE` 逐值相等（改数字 = 构案 + 工具同批）',
-    schemeNums !== null && JSON.stringify(schemeNums) === JSON.stringify(tableNums),
+  const tableMap = Object.fromEntries(FILE_CAP_TABLE.map((c) => [c.key, c.cap]))
+  const mapDiff = FILE_CAP_TABLE
+    .filter((c) => schemeMap[c.key] !== c.cap)
+    .map((c) => `${c.key}：构案 ${schemeMap[c.key] ?? '（没有这一行）'} ≠ 工具 ${c.cap}`)
+  const extraKeys = Object.keys(schemeMap).filter((k) => !(k in tableMap))
+  yes('文件长度', '上限表只有一处 ④：0016 §② 的「类 → 上限」与 `FILE_CAP_TABLE` **逐类**相等（改数字 = 构案 + 工具同批）',
+    schemeS2 !== null && schemeBad.length === 0 && mapDiff.length === 0 && extraKeys.length === 0
+      && JSON.stringify(schemeNums) === JSON.stringify(tableNums),
     schemeText === ''
       ? '`账本/构案/0016-文件长度上限.md` 读不到 —— 决定不在，工具的这张表就没有来历'
       : schemeS2 === null
         ? '0016 里没有 `## ②` 那一节'
-        : `构案 §② 读到 ${JSON.stringify(schemeNums)} / 工具表 ${JSON.stringify(tableNums)}`)
+        : schemeBad.length > 0
+          ? `构案 §② 的表读不成「类 → 上限」：${schemeBad.join(' · ')}`
+          : mapDiff.length > 0 || extraKeys.length > 0
+            ? `构案 §② 与工具表**按类**对不上：${[...mapDiff, ...extraKeys.map((k) => `构案多了一类「${k}」`)].join(' · ')}`
+              + `（构案逐类：${FILE_CAP_TABLE.map((c) => `${c.key}=${schemeMap[c.key] ?? '缺'}`).join(' · ')}）`
+            : `构案 §② 与工具表逐类相等（${FILE_CAP_TABLE.map((c) => `${c.key}=${schemeMap[c.key]}`).join(' · ')}）`
+              + ` · §② 的粗体数字只有这 ${schemeNums.length} 个：${schemeNums.join(' / ')}`)
 
   // 一行读数（口径写在最前面：数的就是每条 `match` 命中的手写件；份数分两个根印，别把 71 混成一个数）。
   const capTotal = classes.reduce((n, c) => n + c.files.length, 0)

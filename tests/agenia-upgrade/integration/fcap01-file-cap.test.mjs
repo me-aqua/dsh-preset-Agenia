@@ -22,6 +22,13 @@
  *   F `growth-red`      存量 `inject.js` 长 1 行 ⇒ 红（长过冻结点；存量只许缩）；
  *   G `rename-red`      把存量 `packet.mjs` 改名成 `packet-renamed.mjs` 并提交 ⇒ 新路径红（债不许跟着改名搬走）。
  *
+ * 三条 M-3 腿（复审 r2 的**三个漏口**；票 `bug-20261116-33`）—— 每种「应当红」的改法各一把刀，
+ * 刀后**按原字节还原**（sha 相等）再跑一次确认回绿：
+ *   H `m3-readme-two-rows` 把 0016 §② 的两行原样贴进 `README.md` ⇒ ② 红（它此前在 `capDocs` 之外）；
+ *   I `m3-scheme-swap`     把 §② 两行的数字**对调** ⇒ ④ 红（旧口径比排序多重集，对调也相等）；
+ *   J `m3-s17-glob`        把一个 glob 抄进 `CONTRACT.md` §17.7 ⇒ ③ 红（旧口径只切 §17.2）。
+ *   ⚠️ 腿里要贴的「类 + 数」从**夹具里那份** `0016 §②` 读，测试里不抄上限（数字只有一处载体）。
+ *
  * 🔴 覆盖边界（这一格**不判**什么）：
  *   · 不判 `check-notes` 其它族（宿主 / 团队账 / 三册……）：夹具只拷了 cap 族读得到的子树，
  *     其它族的红绿不是这一格的对象；这一格只从「文件长度」那一族取数。
@@ -31,6 +38,7 @@
 
 import { before, describe, test } from 'node:test'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -88,6 +96,8 @@ function buildFixture(root) {
   copySubset(path.join(tree, 'presets'), path.join(fx, 'presets'))
   copySubset(path.join(tree, '账本'), path.join(fx, '账本'))
   cpSync(path.join(tree, 'CONTRACT.md'), path.join(fx, 'CONTRACT.md'))
+  // M-3 腿 H 的落点：`README.md` 不在 cap 族的扫描面里（这正是漏口 1），刀要能往它身上贴两行。
+  if (existsSync(path.join(tree, 'README.md'))) cpSync(path.join(tree, 'README.md'), path.join(fx, 'README.md'))
   // `check-notes.mjs` 有一处**无守卫**地读 `.gitignore`（第 1473 行；别处都带 `existsSync`）——
   // 夹具不拷它，整份体检会在 4c 之前抛 ENOENT（这一格要量的是 cap 族，不是夹具的缺角）。
   for (const name of ['.gitignore', '.gitattributes']) {
@@ -184,6 +194,33 @@ function git(fx, args) {
     timeout: 60000,
   })
   return { status: r.status, stdout: String(r.stdout ?? ''), stderr: String(r.stderr ?? '') }
+}
+
+/**
+ * 0016 §② 的表行 `[标签, '**上限**']` —— **从夹具里那份决定文件读**。
+ * 三把 M-3 刀要贴的是「真的那两行」：数字只能有一个载体（`FILE_CAP_TABLE` / §②），
+ * 测试里再抄一份上限就变成第三个载体了。读不出来 ⇒ 由调用方按「腿造不出来」判红（不许静默跳过）。
+ */
+function schemeRowsOf(fx) {
+  const file = path.join(fx, '账本', '构案', '0016-文件长度上限.md')
+  if (!existsSync(file)) return []
+  const text = readFileSync(file, 'utf8')
+  const i = text.indexOf('## ②')
+  if (i < 0) return []
+  const j = text.indexOf('## ③', i)
+  const s2 = j < 0 ? text.slice(i) : text.slice(i, j)
+  return s2.split('\n')
+    .filter((line) => line.trimStart().startsWith('|'))
+    .map((line) => line.replace(/\s*\|\s*$/, '').split('|').slice(1).map((cell) => cell.trim()))
+    .filter((cells) => cells.length >= 2 && /^\*\*\d+\*\*$/.test(cells[1]))
+    .map(([label, cap]) => [label, cap])
+}
+
+const sha256Of = (abs) => createHash('sha256').update(readFileSync(abs)).digest('hex')
+
+/** 「文件长度」那一族里某一条（按行名正则取）；没有 ⇒ `null`。 */
+function capRowOf(section, re) {
+  return section === null ? null : (section.rows.find((r) => re.test(r.name)) ?? null)
 }
 
 const KNIFE_REL = 'presets/agenia/lib/knife-file-cap-0016.mjs'
@@ -334,6 +371,94 @@ describe('integration · 文件长度上限（FCAP）· 0016 的红/绿刀', () 
           const stock = stockPathsOf(renamed.section) ?? []
           if (stock.includes('presets/agenia/lib/packet-renamed.mjs')) push('FCAP-RENAME-STOCK', '改名后的新路径被当成存量（旧票跟过去了）—— 债不许跟着改名搬走')
         }
+      }
+
+      // ── H/I/J · M-3 的三个漏口（票 bug-20261116-33）：每种「应当红」的改法各一把刀 ──────────────
+      //   刀的形状固定：改 → 跑（点名那一条红）→ **按原字节还原**（sha 相等）→ 再跑（回到绿）。
+      //   三把刀都挂在**这个 case** 里（不新开 case ⇒ 分母不动）；刀只改夹具，不碰活树。
+      const schemeAbs = path.join(fx, '账本', '构案', '0016-文件长度上限.md')
+      const M3_ROWS = [['h', /上限表只有一处 ②/], ['i', /上限表只有一处 ④/], ['j', /上限表只有一处 ③/]]
+      const schemeRows = schemeRowsOf(fx)
+      rec.readings.m3_scheme_rows = schemeRows.length
+      if (schemeRows.length < 2) {
+        push('FCAP-M3-CANNOT-BUILD', `0016 §② 只读出 ${schemeRows.length} 行「标签 | **数**」—— 三把刀造不出来（决定文件的表格式变了；不许静默跳过）`)
+      } else {
+        /** 一把刀：改一份文件 → 量点名那一条红 → **按原字节还原** → 量回绿。 */
+        const m3Knife = ({ code, label, abs, mutate, re, wantDetail }) => {
+          const before = readFileSync(abs, 'utf8')
+          const h0 = sha256Of(abs)
+          const mutated = mutate(before)
+          if (mutated === before) {
+            push('FCAP-M3-CANNOT-BUILD', `M-3 刀 ${code} 没改成（落点不在）：${label} —— 不许当成"红了"或"绿了"`)
+            return
+          }
+          writeFileSync(abs, mutated, 'utf8')
+          const red = readCap(`m3_${code}_red`)
+          const row = capRowOf(red.section, re)
+          rec.readings[`m3_${code}_red_row`] = { mark: row?.mark ?? null, detail: (row?.detail ?? '').slice(0, 600) }
+          if (red.section === null) {
+            push('FCAP-NO-CAP-LINE', `M-3 刀 ${code} 之后没有「文件长度」那一族`)
+          } else if (row === null) {
+            push('FCAP-NO-CAP-LINE', `M-3 刀 ${code} 之后没有「${label}」那一行`)
+          } else {
+            if (row.mark !== 'RED') push(`FCAP-M3-${code.toUpperCase()}-NOT-RED`, `M-3 刀 ${code}（${label}）应把这一条打红 —— 实得 ${row.mark}：${row.detail.slice(0, 300)}`)
+            if (wantDetail !== undefined && !wantDetail.test(row.detail)) push(`FCAP-M3-${code.toUpperCase()}-WHY`, `M-3 刀 ${code} 红了，但红因没点名「${wantDetail}」：${row.detail.slice(0, 300)}`)
+            // 刀只许红这一条：另两条 M-3 行必须还是 ok（不拿别的红冒充这一刀）
+            for (const [other, otherRe] of M3_ROWS) {
+              if (other === code) continue
+              const r2 = capRowOf(red.section, otherRe)
+              if (r2 === null || r2.mark !== 'ok') push(`FCAP-M3-${code.toUpperCase()}-COLLATERAL`, `M-3 刀 ${code} 只该红「${label}」，可另一条也变成了 ${r2 === null ? '（没有这一行）' : r2.mark}`)
+            }
+          }
+          writeFileSync(abs, before, 'utf8')
+          if (sha256Of(abs) !== h0) push('FCAP-M3-REVERT', `M-3 刀 ${code} 还原后 sha 与改前不等 —— 字节没还原干净（${abs}）`)
+          const back = readCap(`m3_${code}_back`)
+          const backRow = capRowOf(back.section, re)
+          rec.readings[`m3_${code}_back_row`] = { mark: backRow?.mark ?? null, detail: (backRow?.detail ?? '').slice(0, 600) }
+          if (back.section === null) {
+            push('FCAP-NO-CAP-LINE', `M-3 刀 ${code} 还原之后没有「文件长度」那一族`)
+          } else if (backRow === null || backRow.mark !== 'ok') {
+            push(`FCAP-M3-${code.toUpperCase()}-NOT-GREEN`, `M-3 刀 ${code} 还原之后「${label}」应回绿 —— 实得 ${backRow === null ? '（没有这一行）' : backRow.mark}：${(backRow?.detail ?? '').slice(0, 300)}`)
+          }
+        }
+
+        // H · README.md 贴两行上限（漏口 1：这两个根此前在 `capDocs` 之外）
+        m3Knife({
+          code: 'h',
+          label: '② 第二张表',
+          abs: path.join(fx, 'README.md'),
+          mutate: (before) => `${before}\n| ${schemeRows[0][0]} | ${schemeRows[0][1]} |\n| ${schemeRows[1][0]} | ${schemeRows[1][1]} |\n`,
+          re: /上限表只有一处 ②/,
+          wantDetail: /README\.md/,
+        })
+        // I · §② 两行数字对调（漏口 2：④ 旧口径只比排序多重集）
+        m3Knife({
+          code: 'i',
+          label: '④ 逐类',
+          abs: schemeAbs,
+          mutate: (before) => {
+            let out = before
+            for (const [self, other] of [[0, 1], [1, 0]]) {
+              out = out.replace(`| ${schemeRows[self][0]} | ${schemeRows[self][1]} |`, `| ${schemeRows[self][0]} | ${schemeRows[other][1]} |`)
+            }
+            return out
+          },
+          re: /上限表只有一处 ④/,
+          wantDetail: /按类/,
+        })
+        // J · 把一个 glob 抄进 §17.7（漏口 3：③ 旧口径只切 §17.2）
+        m3Knife({
+          code: 'j',
+          label: '③ glob',
+          abs: path.join(fx, 'CONTRACT.md'),
+          mutate: (before) => {
+            const anchor = '- **不拆**任何文件：拆分是那批票的事，这一节只立判据与读数。'
+            if (!before.includes(anchor)) return before
+            return before.replace(anchor, `${anchor}\n- 判据只看 \`presets/agenia/team/*.md\` 这一面。`)
+          },
+          re: /上限表只有一处 ③/,
+          wantDetail: /第二份适用面/,
+        })
       }
 
       caseFail(problems)
