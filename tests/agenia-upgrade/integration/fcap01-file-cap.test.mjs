@@ -36,6 +36,22 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { caseFail, preflight, problem, runCase, runRoot } from '../support/evidence.mjs'
 
+/**
+ * 删除前的三道校验（契约 §2.5 同口径；`ENV-02` 认这个形状）：解析绝对路径 → 必须在运行根之下 →
+ * 运行根必须带 marker。`buildFixture` 会递归删上一个同名目录，落点算错一次就删到别人的东西。
+ */
+function assertDeletable(target) {
+  const abs = path.resolve(target)
+  const root = path.resolve(runRoot())
+  if (abs !== root && !abs.startsWith(root + path.sep)) {
+    throw new Error(`FCAP-DELETE-OUTSIDE: ${abs} 不在运行根之下（${root}）`)
+  }
+  if (!existsSync(path.join(root, '.agenia-test-root'))) {
+    throw new Error(`FCAP-DELETE-NO-MARKER: 运行根没有 .agenia-test-root（${root}）—— 删除前必须先证明这是测试根`)
+  }
+  return abs
+}
+
 before(() => {
   preflight()
 })
@@ -66,7 +82,8 @@ function copySubset(src, dst) {
 function buildFixture(root) {
   const tree = suiteTree()
   const fx = path.join(root, 'fixtures', 'fcap01-tree')
-  rmSync(fx, { recursive: true, force: true })
+  // 删除纪律（契约 §2.5 / `ENV-02`）：删之前先过 `assertDeletable`（绝对路径 → marker → 在 RUN_ID 之下）。
+  rmSync(assertDeletable(fx), { recursive: true, force: true })
   mkdirSync(fx, { recursive: true })
   copySubset(path.join(tree, 'presets'), path.join(fx, 'presets'))
   copySubset(path.join(tree, '账本'), path.join(fx, '账本'))
@@ -270,7 +287,7 @@ describe('integration · 文件长度上限（FCAP）· 0016 的红/绿刀', () 
       }
 
       // ── B · 删掉刀 ⇒ 回到绿（不是「变成存量绿」）──────────────────────────────────
-      rmSync(path.join(fx, KNIFE_REL), { force: true })
+      rmSync(assertDeletable(path.join(fx, KNIFE_REL)), { force: true })
       git(fx, ['add', '-A'])
       git(fx, ['commit', '-qm', 'drop knife'])
       const deleted = readCap('knife_deleted')

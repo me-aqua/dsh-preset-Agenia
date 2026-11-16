@@ -2249,9 +2249,8 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       continue
     }
     const redWho = c.red.map((f) => `${f.rel}（${f.lines} 行；${f.why}）`).join(' · ')
-    const stockNote = c.stock.length > 0
-      ? `（另有存量 ${c.stock.length} 份${capAll ? '' : '，不判红'}）`
-      : ''
+    // 默认模式才说「另有存量 N 份，不判红」；`--all` 里存量**本身就在红名单里**，那句话会自相矛盾。
+    const stockNote = !capAll && c.stock.length > 0 ? `（另有存量 ${c.stock.length} 份，不判红）` : ''
     yes('文件长度', name, false,
       `${reading} —— 🔴 ${capAll ? '存量审计，全判' : '越线'} ${c.red.length} 份：${redWho}`
       + `；${capWhyPrompt()}${stockNote}`)
