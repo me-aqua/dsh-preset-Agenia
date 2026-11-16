@@ -186,8 +186,8 @@ test('CARD-04 严重度那一排：四出口闭集 · 样本四个 · 只校准�
     // ── F · **空册**（零条事件）⇒ `samples: []` 是合法读数，卡不因此红 ──────────
     /**
      * 组长 2026-11-02 裁定（`gate4-C2` F-10 / 契约 §2.3 #19 + §3.5）：
-     * 本工作区**还没有登记过 bug** ⇒ `severity.samples = []`、`calibrated` 三条线全 `false`、
-     * `severity.card_red = false`，**卡不因此红**。
+     * 本工作区是**空册**（册在、零条事件、还没登记过 bug）⇒ `severity.samples = []`、`calibrated` 三条线全
+     * `false`、`severity.card_red = false`，**卡不因此红**。
      *
      * 🔴 三册落地后的「还没登记过」= **空册**（`账本/缺陷/` 在、零条事件），不是「册缺」：
      *    册缺是根本没建三册 ⇒ 卡红（票 `bug-20261116-05`）。这一格因此给一本空册，
@@ -232,7 +232,7 @@ test('CARD-04 严重度那一排：四出口闭集 · 样本四个 · 只校准�
     const samplesF = F.card.cells['severity.samples']
     if (!Array.isArray(samplesF) || samplesF.length !== 0) {
       push('C2-SEVERITY-SAMPLES-FAKE',
-        `F（空册）：\`severity.samples\` 必须是 **\`[]\`**（契约 §2.3 #19：无台账 ⇒ 0 样本是合法读数），`
+        `F（空册）：\`severity.samples\` 必须是 **\`[]\`**（契约 §2.3 #19：空册 ⇒ 0 样本是合法读数；册缺不出卡），`
         + `实得 ${JSON.stringify(samplesF)} —— 编出样本就是把"没登记"印成"登记过"（组长 2026-11-02 裁定）`)
     }
     const calibratedF = F.card.cells['severity.calibrated']
