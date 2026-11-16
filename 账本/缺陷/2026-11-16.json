@@ -1602,6 +1602,110 @@
       "batch": null,
       "finding_refs": [],
       "at": "2026-11-16T14:29:11+08:00"
+    },
+    {
+      "seq": 70,
+      "kind": "disposed",
+      "id": "bug-20261116-35",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P2 · 到期 2026-11-17 · 契约与新实现相反：照旧契约判卡，会把「缺册必须红」判成「缺册就是 0」。",
+        "by": "leader",
+        "at": "2026-11-16T14:29:31+08:00"
+      },
+      "due_at": "2026-11-17",
+      "owner": "测试岗",
+      "next_step": "按新实现改 CONTRACT-C2 那两处：①册缺/册坏/读器不在 ⇒ 不生成卡 + 一行红；②空册 = 读出来的 0。同批补一条「契约里不得出现 .team/bug/ledger.json 作为读面」的腿。",
+      "at": "2026-11-16T14:29:31+08:00"
+    },
+    {
+      "seq": 71,
+      "kind": "registered",
+      "id": "bug-20261116-36",
+      "entry_kind": "bug",
+      "phenomenon": "**`CONTRACT.md §17.2` 现在描述得比判据窄**（`-33` 把三条断言改强之后没同批改契约）：契约那节还写「扫描面没有第二处『三个以上数字同现』· 本节只指 `match`」，而实现现在多了两条——② 也扫 `README.md` 与根级 `presets/agenia/*.md`（**两个**上限数字同现即红，不是三个以上）、③ 的切片覆盖**整个 §17** 并认「选得中受上限文件的 glob」。⇒ 照旧契约读这段的人会以为判据比实际弱。",
+      "reporter": "实现岗",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P3"
+      ],
+      "how_seen": "2026-11-16 `-33` 实现岗的交活报（未修项，组长接）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "CONTRACT.md",
+          "note": "§17.2"
+        },
+        {
+          "kind": "file",
+          "ref": ".tools/check-notes.mjs",
+          "note": ":2350 / :2389 / :2438"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T15:46:42+08:00"
+    },
+    {
+      "seq": 72,
+      "kind": "disposed",
+      "id": "bug-20261116-36",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P3 · 到期 2026-11-19 · 判据比契约说的强（或某一类只被间接覆盖）—— 不改会把下一个人读窄。",
+        "by": "leader",
+        "at": "2026-11-16T15:46:42+08:00"
+      },
+      "due_at": "2026-11-19",
+      "owner": "实现岗",
+      "next_step": "把那两句改成「判据见 `check-notes.mjs` 的 ②③④（含 README 与根级 .md 的两个数字规则、整节 §17 的 glob 规则）」，或降级成纯指针（数字与规则都不进文档）。**不许**把上限数字抄进契约。",
+      "at": "2026-11-16T15:46:42+08:00"
+    },
+    {
+      "seq": 73,
+      "kind": "registered",
+      "id": "bug-20261116-37",
+      "entry_kind": "bug",
+      "phenomenon": "**`FCAP-01` 的夹具里没有 `.team/`** ⇒ `now` 那一类（上限 80）只被「按类映射相等」覆盖，**没有一份真的 `now.md` 被量过**。⇒ 如果 `now` 那类的扫描面写错（比如只认 `.team/<岗位>/now.md` 而夹具里没有），这条判据永远绿。",
+      "reporter": "实现岗",
+      "source": {
+        "carrier": "leader",
+        "ref": null
+      },
+      "tags": [
+        "P3"
+      ],
+      "how_seen": "2026-11-16 `-33` 实现岗的交活报（未修项，组长接）",
+      "evidence": [
+        {
+          "kind": "file",
+          "ref": "tests/agenia-upgrade/integration/fcap01-file-cap.test.mjs",
+          "note": "夹具无 .team/"
+        }
+      ],
+      "recipe": null,
+      "batch": null,
+      "finding_refs": [],
+      "at": "2026-11-16T15:46:42+08:00"
+    },
+    {
+      "seq": 74,
+      "kind": "disposed",
+      "id": "bug-20261116-37",
+      "disposition": {
+        "value": "deferred",
+        "reason": "P3 · 到期 2026-11-19 · 判据比契约说的强（或某一类只被间接覆盖）—— 不改会把下一个人读窄。",
+        "by": "leader",
+        "at": "2026-11-16T15:46:42+08:00"
+      },
+      "due_at": "2026-11-19",
+      "owner": "测试岗",
+      "next_step": "夹具里加一个 `.team/<角色>/now.md`（一行超 80 的样本），断言它被判红；再补一个 80 行以内不红。",
+      "at": "2026-11-16T15:46:42+08:00"
     }
   ]
 }

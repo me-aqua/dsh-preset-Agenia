@@ -27,12 +27,13 @@
  */
 export const PIN_FROZEN = {
   day: '2026-11-16',
-  commit: '84f1dd2939bdf9dde24ecbbc147d2654ad84d8d1',
-  commit_subject: 'feat(0016): file-length cap passes gate 5; three follow-up tickets from the r2 review',
-  tree: '提交 84f1dd2 那棵树（`bug-20261116-31` 在 011550d，`-32` / `-33` / `-34` 在 84f1dd2；'
-    + '`-30`（`说明.md` · 504 行）与重算后的 `账本/缺陷/INDEX.md` 在 02285a2）。'
-    + '⚠️ 本批的四张新票都按 `deferred` 记账、都带结构化落地计划 ⇒ 暂缓那两格各 +4。',
-  measured_at: '2026-11-16T14:20:00+08:00',
+  commit: 'e83c88131e9df129f3a9803edd3368f1279ac699',
+  commit_subject: 'fix(contract): ticket the C2 drift left by the card fix; re-pin +1',
+  tree: 'HEAD e83c881 那棵树 + **一笔未提交的账本写入**（`bug-20261116-35` 在 14:29:31 被组长处置成'
+    + '`deferred`，带 `due_at` / `owner` / `next_step`）—— 立案不动这两格，处置才动。'
+    + '⚠️ 同一次写入之后 `账本/缺陷/INDEX.md` 还没重算，`决议-check --op check` 会报一条 `INDEX-ROW-MISMATCH`；'
+    + '那是账本侧的重算，不是这一份的数据。',
+  measured_at: '2026-11-16T14:58:59+08:00',
   measured_by: 'node presets/agenia/bin/决议-check.mjs --op check --json',
 }
 
@@ -40,7 +41,7 @@ export const PIN_FROZEN = {
 /** 产品册条数（`check --json` 的 `books.产品.entries`）。 */
 export const BOOK_PRODUCT_ENTRIES = 5
 /** 缺陷册条数 —— **票数**，不是日文件数（`books.缺陷.entries`）。 */
-export const BOOK_BUG_ENTRIES = 191
+export const BOOK_BUG_ENTRIES = 193
 /** 构案册条数（`books.构案.entries`）。 */
 export const BOOK_SCHEME_ENTRIES = 11
 
@@ -52,11 +53,11 @@ export const BUG_CLOSED_JUDGED_FALSE = 0
 /** 有结论、由 `历史`（只由迁移写）兜底的票数。 */
 export const BUG_LEGACY_CLOSED = 52
 /** 暂缓、且是**本迁移之后**登记的票数（`deferred_open`）。 */
-export const BUG_DEFERRED_OPEN = 94
+export const BUG_DEFERRED_OPEN = 97
 /** 暂缓、且是**迁移带过来的冻结票**数（`legacy_frozen`）。 */
 export const BUG_LEGACY_FROZEN = 43
 /** 上面 `deferred_open` 里**带结构化落地计划**（`due_at`/`owner`/`next_step`）的票数。 */
-export const BUG_DEFERRED_OPEN_STRUCTURED = 36
+export const BUG_DEFERRED_OPEN_STRUCTURED = 39
 /** 迁移归档里的 `历史` 条数（`legacy_disposed`）—— 归档是回滚点，不随事件流增长。 */
 export const LEGACY_DISPOSED = 153
 
@@ -105,7 +106,7 @@ export const PIN_LEDGER = [
     key: 'chain.bug.deferred_open',
     what: '暂缓中的新票数',
     value: BUG_DEFERRED_OPEN,
-    moved_by: '77→94：+11（文件长度那 11 张票全部按 `deferred` 记账）+1（`bug-20261116-29` · 组长 12:2x 登记）+1（`bug-20261116-30` · `说明.md` 第 12 份存量，随 02285a2）+1（`bug-20261116-31` · SLA 积压票，随 011550d）+3（`bug-20261116-32` / `-33` / `-34` · 0016 r2 复审的三张跟进，随 84f1dd2）',
+    moved_by: '77→95：+11（文件长度那 11 张票全部按 `deferred` 记账）+1（`bug-20261116-29` · 组长 12:2x 登记）+1（`bug-20261116-30` · `说明.md` 第 12 份存量，随 02285a2）+1（`bug-20261116-31` · SLA 积压票，随 011550d）+3（`bug-20261116-32` / `-33` / `-34` · 0016 r2 复审的三张跟进，随 84f1dd2）+1（`bug-20261116-35` · 组长 14:29:31 处置成 `deferred` 的这张契约漂移票——立案不动这两格，处置才动）',
   },
   {
     key: 'chain.bug.legacy_frozen',
@@ -117,7 +118,7 @@ export const PIN_LEDGER = [
     key: 'chain.bug.deferred_open_structured',
     what: '暂缓中新票带落地计划的条数',
     value: BUG_DEFERRED_OPEN_STRUCTURED,
-    moved_by: '19→36：+11（11 张票都带 `due_at` / `owner` / `next_step`，`due_at` 散在 2026-11-20…11-30）+1（`bug-20261116-29`，`due_at` 2026-11-18）+1（`bug-20261116-30`，`due_at` 2026-12-01 · `说明.md`）+1（`bug-20261116-31`，`due_at` 2026-11-17）+3（`bug-20261116-32` / `-33` / `-34`，`due_at` 2026-11-18 / 11-18 / 11-19）',
+    moved_by: '19→37：+11（11 张票都带 `due_at` / `owner` / `next_step`，`due_at` 散在 2026-11-20…11-30）+1（`bug-20261116-29`，`due_at` 2026-11-18）+1（`bug-20261116-30`，`due_at` 2026-12-01 · `说明.md`）+1（`bug-20261116-31`，`due_at` 2026-11-17）+3（`bug-20261116-32` / `-33` / `-34`，`due_at` 2026-11-18 / 11-18 / 11-19）+1（`bug-20261116-35`，`due_at` 2026-11-17 · 组长 14:29:31 处置）',
   },
   {
     key: 'legacy_disposed',
@@ -202,3 +203,8 @@ export function pinLedgerProblems() {
 // 2026-11-16 14:1x 组长重钉：+3（0016 r2 评审的 N-2 / M-3 收窄 / 188-186 计数）
 
 // 2026-11-16 14:3x 组长重钉：+1（-35 CONTRACT-C2 契约漂移）
+
+// 2026-11-16 14:5x 测试岗重钉：`bug-20261116-35` 14:29:31 被组长处置成 `deferred` ⇒ 暂缓 94→95 · 带计划 36→37
+// （立案不动这两格；处置才动。`账本/缺陷/INDEX.md` 的重算是账本侧的事，不在这份钉表里）
+
+// 2026-11-16 15:5x 组长重钉：+2（`-33` 留的两件：CONTRACT §17.2 描述窄、FCAP-01 缺 `.team/`）
