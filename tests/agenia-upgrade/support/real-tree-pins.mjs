@@ -27,18 +27,18 @@
  */
 export const PIN_FROZEN = {
   day: '2026-11-16',
-  commit: 'e28ac49284e2bc8d803f3401bae26715637a1551',
-  commit_subject: 'docs(ledger): product 0014 (his 11-15 words) + 0015/0016 landings, cap policy in the shipped rule, and two instrument fixes',
-  tree: '提交 e28ac49 那棵树（当天的账本写入 —— 产品 0014 · 构案 0015/0016 · 缺陷/2026-11-16.json —— 已经进这个提交，所以这组数能从它复算出来）',
-  measured_at: '2026-11-16T12:02:05+08:00',
-  measured_by: 'node presets/agenia/bin/决议-check.mjs --root=. --json',
+  commit: '659c8c25da096ea4860c735a1c104804d3949444',
+  commit_subject: 'feat(check-notes): 构案 0016 文件长度上限落进体检 + 11 份存量挂票（bug-20261116-18…-28）',
+  tree: '提交 659c8c2 那棵树（11 张文件长度的存量票 `bug-20261116-18`…`-28` 与重算后的 `账本/缺陷/INDEX.md` 都在这个提交里，所以这组数能从它复算）',
+  measured_at: '2026-11-16T12:10:00+08:00',
+  measured_by: 'node presets/agenia/bin/决议-check.mjs --op check --json',
 }
 
 // ── 一、三册：一本册一个具名常量 ─────────────────────────────────────────────
 /** 产品册条数（`check --json` 的 `books.产品.entries`）。 */
 export const BOOK_PRODUCT_ENTRIES = 5
 /** 缺陷册条数 —— **票数**，不是日文件数（`books.缺陷.entries`）。 */
-export const BOOK_BUG_ENTRIES = 173
+export const BOOK_BUG_ENTRIES = 184
 /** 构案册条数（`books.构案.entries`）。 */
 export const BOOK_SCHEME_ENTRIES = 11
 
@@ -50,11 +50,11 @@ export const BUG_CLOSED_JUDGED_FALSE = 0
 /** 有结论、由 `历史`（只由迁移写）兜底的票数。 */
 export const BUG_LEGACY_CLOSED = 52
 /** 暂缓、且是**本迁移之后**登记的票数（`deferred_open`）。 */
-export const BUG_DEFERRED_OPEN = 77
+export const BUG_DEFERRED_OPEN = 88
 /** 暂缓、且是**迁移带过来的冻结票**数（`legacy_frozen`）。 */
 export const BUG_LEGACY_FROZEN = 43
 /** 上面 `deferred_open` 里**带结构化落地计划**（`due_at`/`owner`/`next_step`）的票数。 */
-export const BUG_DEFERRED_OPEN_STRUCTURED = 19
+export const BUG_DEFERRED_OPEN_STRUCTURED = 30
 /** 迁移归档里的 `历史` 条数（`legacy_disposed`）—— 归档是回滚点，不随事件流增长。 */
 export const LEGACY_DISPOSED = 153
 
@@ -73,7 +73,7 @@ export const PIN_LEDGER = [
     key: 'books.缺陷.entries',
     what: '缺陷册票数',
     value: BOOK_BUG_ENTRIES,
-    moved_by: '157→173：+16 票（`bug-20261116-01`…`-16`，11-15 两份每日评审登记进 `账本/缺陷/2026-11-16.json`）',
+    moved_by: '173→184：+11 票（`bug-20261116-18`…`-28`，构案 0016 §② 的 11 份存量超限各挂一张）',
   },
   {
     key: 'books.构案.entries',
@@ -103,7 +103,7 @@ export const PIN_LEDGER = [
     key: 'chain.bug.deferred_open',
     what: '暂缓中的新票数',
     value: BUG_DEFERRED_OPEN,
-    moved_by: '62→77：+16（新票全部按 `deferred` 记账）−1（`bug-20261115-06` 由 deferred 转 closed）= +15',
+    moved_by: '77→88：+11（文件长度那 11 张票全部按 `deferred` 记账）',
   },
   {
     key: 'chain.bug.legacy_frozen',
@@ -115,7 +115,7 @@ export const PIN_LEDGER = [
     key: 'chain.bug.deferred_open_structured',
     what: '暂缓中新票带落地计划的条数',
     value: BUG_DEFERRED_OPEN_STRUCTURED,
-    moved_by: '4→19：+16（新票都带 `due_at`/`owner`/`next_step`）−1（`bug-20261115-06` 出账）= +15',
+    moved_by: '19→30：+11（11 张票都带 `due_at` / `owner` / `next_step`，`due_at` 散在 2026-11-20…11-30）',
   },
   {
     key: 'legacy_disposed',
