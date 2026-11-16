@@ -139,7 +139,7 @@ test('DEC-04 三张派生页：页与册逐行对账；改页 / 改了实现不�
           const want = [d.id, d.topic, d.date, d.status, (d.basisP ?? []).join(',') || '—', (d.basisBug ?? []).join(',') || '—']
           if (JSON.stringify(row) !== JSON.stringify(want)) push('INDEX-ROW-MISMATCH', `[真树] 构案页 ${d.id}：页上 ${JSON.stringify(row)} / 重算 ${JSON.stringify(want)}`)
         }
-        // 缺陷页：行数 = `books.缺陷.entries`（153），每行第一格是缺陷 id
+        // 缺陷页：行数 = `books.缺陷.entries`（现算，不钉数），每行第一格是缺陷 id
         const bugRows = pages.缺陷.table?.rows ?? []
         if (bugRows.length !== (check.json.books?.['缺陷']?.entries ?? -1)) {
           push('INDEX-ROW-SET', `[真树] 缺陷页 ${bugRows.length} 行，折叠出 ${JSON.stringify(check.json.books?.['缺陷']?.entries)} 条 —— 页必须一行一条`)

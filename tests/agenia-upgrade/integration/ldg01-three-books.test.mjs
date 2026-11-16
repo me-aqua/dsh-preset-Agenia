@@ -19,6 +19,7 @@ import { FROZEN, PATHS } from '../support/env.mjs'
 import { caseFail, preflight, problem, runCase, runId, runRoot } from '../support/evidence.mjs'
 import { ensureMarkedDir } from '../support/root-guard.mjs'
 import { loadStagedModule, runRoute } from '../support/sut.mjs'
+import { PIN_FROZEN, PIN_LEDGER, pinDriftMessage, pinLedgerProblems, pinReadingsOf } from '../support/real-tree-pins.mjs'
 import {
   BOOKS, CHECK, LEDGER_REL, buildScene, codesOf, eventAssessed, eventDisposed, eventRegistered,
   expectCodes, indexMarkerReading, messagesOf, namedIn, productText, readJson, readText, runBugRead, runCheck, runFold,
@@ -1125,39 +1126,50 @@ test('LDG-03 缺陷→构案：关上的缺陷要么有构案引用、要么显�
         if (chain?.deferred_open !== 1) push('CHAIN-READING-MISSING', `[LDG-03/deferred-not-yet-due] chain.bug.deferred_open 实得 ${JSON.stringify(chain?.deferred_open ?? null)}，期望 1`)
       }
     }
-    // ⑥ 真树：legacy_disposed = 153（旧台账的每一条处置都显式标成历史）+ 本族 0 码
+    // ⑥ 真树：三册条数 + 缺陷链五组 + legacy_disposed —— **全部走 `support/real-tree-pins.mjs`**
+    //
+    // 🔴 那十条是**数据**，不是代码：开一张票、关一张票、写一条构案都会推它。
+    //    ⇒ 漂了先看是不是有人开了票（`REAL-TREE-PIN-DRIFT` / `PIN-LEDGER-MALFORMED`），
+    //      别读成「产品的链读数丢了」（`bug-20261116-17` 的由来：`-01` 票在套件跑到一半时落盘）。
+    //    ⇒ 这一格里的**恒等式**（组之和、票总数）跟着读数走，不进钉表 —— 它们永远不该要人重钉。
     {
+      for (const msg of pinLedgerProblems()) push('PIN-LEDGER-MALFORMED', `[钉账] ${msg}`)
+
       const run = runCheck(PATHS.repo)
+      const readings = pinReadingsOf(run.json ?? {})
       rec.readings.real = {
         exit: run.exit, codes: codesOf(run.json), chain_bug: run.json?.chain?.bug ?? null,
-        legacy_disposed: run.json?.legacy_disposed ?? null,
+        books: run.json?.books ?? null, legacy_disposed: run.json?.legacy_disposed ?? null,
+        frozen: PIN_FROZEN,
+        pins: Object.fromEntries(PIN_LEDGER.map((p) => [p.key, { what: p.what, want: p.value, got: readings[p.key], moved_by: p.moved_by }])),
       }
       if (run.json !== null) {
-        if (run.json?.legacy_disposed !== 153) {
-          push('LEGACY-COUNT-DRIFT', `[真树] legacy_disposed 实得 ${JSON.stringify(run.json?.legacy_disposed)}，期望 153（旧台账 153 条全部带处置；迁移必须逐条标成历史，契约 §3.2/§12-2）`)
+        // ① 十条真树读数逐条对钉（报文说「钉住的是什么 + 冻在哪儿 + 谁动的」）
+        for (const pin of PIN_LEDGER) {
+          const got = readings[pin.key]
+          if (got !== pin.value) push('REAL-TREE-PIN-DRIFT', pinDriftMessage(pin, got))
         }
         const chain = run.json?.chain?.bug ?? null
         if (chain === null) push('CHAIN-READING-MISSING', '[真树] check 的读数里没有 chain.bug')
         else if (chain.unresolved !== 0) push('CHAIN-BUG-NO-SCHEME', `[真树] chain.bug.unresolved = ${JSON.stringify(chain.unresolved)}（实得 ${JSON.stringify(chain)}）`)
-        // 五组真树读数（契约 §10.1 r5/r6）：157 = 52 结论（全是 legacy）+ 105 暂缓
-        // （4 新票带结构化字段 + 43 冻结 + 58 legacy 散文到期日）
         if (chain !== null) {
-          const want = {
-            closed_by_scheme: 0, closed_judged_false: 0, legacy_closed: 52,
-            deferred_open: 62, legacy_frozen: 43, deferred_open_structured: 4,
-          }
-          for (const [k, v] of Object.entries(want)) {
-            if (chain[k] !== v) push('CHAIN-READING-MISSING', `[真树] chain.bug.${k} 实得 ${JSON.stringify(chain[k] ?? null)}，期望 ${v}`)
-          }
-          // 算术闭合：closed = 前三组；deferred = 后两组；两数和 = 有处置的条数
+          // ② 算术闭合：closed = 前三组；deferred = 后两组（恒等式，不钉数）
           if (chain.closed !== chain.closed_by_scheme + chain.closed_judged_false + chain.legacy_closed) {
             push('CHAIN-READING-MISSING', `[真树] chain.bug.closed ${JSON.stringify(chain.closed)} ≠ 三组之和 ${chain.closed_by_scheme + chain.closed_judged_false + chain.legacy_closed}`)
           }
           if (chain.deferred !== chain.deferred_open + chain.legacy_frozen) {
             push('CHAIN-READING-MISSING', `[真树] chain.bug.deferred ${JSON.stringify(chain.deferred)} ≠ deferred_open + legacy_frozen ${chain.deferred_open + chain.legacy_frozen}`)
           }
-          if (chain.closed + chain.deferred !== 157) {
-            push('CHAIN-READING-MISSING', `[真树] closed ${chain.closed} + deferred ${chain.deferred} 实得 ${chain.closed + chain.deferred}，期望 157（每一条处置都在某一组里）`)
+          // ③ 每一条票都必须在某一组里 —— 分母取**同一次读数**的册条数（不是常量，所以永不重钉）
+          const tickets = run.json?.books?.缺陷?.entries ?? null
+          if (tickets === null) {
+            push('CHAIN-READING-MISSING', '[真树] 读数里没有 books.缺陷.entries —— 票总数这一格判不了')
+          } else if (chain.closed + chain.deferred !== tickets) {
+            push('CHAIN-READING-MISSING', `[真树] closed ${chain.closed} + deferred ${chain.deferred} 实得 ${chain.closed + chain.deferred}，册里有 ${tickets} 条 —— 每一条票都必须在某一组里`)
+          }
+          // ④ 带落地计划的暂缓是本族暂缓的**子集**（数超了 ⇒ 折叠把别人也算进来了）
+          if (chain.deferred_open_structured > chain.deferred_open) {
+            push('CHAIN-READING-MISSING', `[真树] deferred_open_structured ${chain.deferred_open_structured} > deferred_open ${chain.deferred_open} —— 结构化那格必须是暂缓的子集`)
           }
         }
       }
