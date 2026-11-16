@@ -1097,6 +1097,20 @@ export const BATCH_AW = ['ATM-01']
 export const BATCH_AX = ['LDG-01', 'LDG-02', 'LDG-03', 'LDG-04', 'LDG-05', 'LDG-06', 'LDG-07', 'LDG-08', 'LDG-09']
 
 /**
+ * 批次 AY（2026-11-16 · Gate 3 r2 · 构案 0016 的复审 M-4）—— **文件长度上限的自动化刀**（`FCAP-01`）。
+ *
+ * 复审 `.team/review/2026-11-16/评审报告-0016-文件长度上限.md` §二 M-4：`tests/**` 里 0 条命中
+ * `FILE_CAP_TABLE|文件长度`；899 行那把刀只活在 dev 的 `log.md` 里（人写的 = 说明，不是证据）。
+ * 这一格在一份真副本里真跑 `check-notes.mjs`：899 行红 / 删掉绿 / 12 份存量绿 / `--all` 恰好那 12 份，
+ * 外加 M-1 的三条腿（提交洗不白 / 存量长 1 行红 / 改名后的新路径红）。
+ *
+ * 🔴 **分母 227 → 228（+1），这是本批唯一动过的数**：M-4 要一条能复现的刀，而现有 227 格没有一格
+ * 判的是文件长度上限（并进 `DEC-05`（census）或 `LDG-04`（依据面）都会让一格判两件事）。
+ * 0012 的验收表允许「说明分母变化」；下一票要回去先改 0012 的验收表。
+ */
+export const BATCH_AY = ['FCAP-01']
+
+/**
  * 已落笔的批次（A–AV）。历史冻结的 **55 条**（A–F）见 `FROZEN_IDS`；批次 G 是 F-57 新加的那 11 条，
  * 批次 H 是门 1 回执链路四票的 4 条（2026-10-22），批次 I 是 `F-112` 剩下两格（同日），
  * 批次 J 是 `F-125` 维护案 400 字帽（同日），批次 K 是 `F-129` anchors 形状（2026-10-23），
@@ -1122,7 +1136,7 @@ export const BATCH_AX = ['LDG-01', 'LDG-02', 'LDG-03', 'LDG-04', 'LDG-05', 'LDG-
  * 批次 AV 是**史山清查 A1**（`DUP-01`，2026-11-12 第 2 关）：`.tools/*.mjs` 不许有 `bin/*.mjs` 的第二份拷贝
  * （旧名 `agenia-` 归一；逐字节相同与已分叉两种都红）。
  */
-export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP, AQ: BATCH_AQ, AR: BATCH_AR, AS: BATCH_AS, AT: BATCH_AT, AU: BATCH_AU, AV: BATCH_AV, AW: BATCH_AW, AX: BATCH_AX }
+export const WRITTEN_BATCHES = { A: BATCH_A, B: BATCH_B, C: BATCH_C, D: BATCH_D, E: BATCH_E, F: BATCH_F, G: BATCH_G, H: BATCH_H, I: BATCH_I, J: BATCH_J, K: BATCH_K, L: BATCH_L, M: BATCH_M, N: BATCH_N, O: BATCH_O, P: BATCH_P, Q: BATCH_Q, R: BATCH_R, S: BATCH_S, T: BATCH_T, U: BATCH_U, V: BATCH_V, W: BATCH_W, X: BATCH_X, Y: BATCH_Y, Z: BATCH_Z, AA: BATCH_AA, AB: BATCH_AB, AC: BATCH_AC, AD: BATCH_AD, AE: BATCH_AE, AF: BATCH_AF, AG: BATCH_AG, AH: BATCH_AH, AI: BATCH_AI, AJ: BATCH_AJ, AK: BATCH_AK, AL: BATCH_AL, AM: BATCH_AM, AN: BATCH_AN, AO: BATCH_AO, AP: BATCH_AP, AQ: BATCH_AQ, AR: BATCH_AR, AS: BATCH_AS, AT: BATCH_AT, AU: BATCH_AU, AV: BATCH_AV, AW: BATCH_AW, AX: BATCH_AX, AY: BATCH_AY }
 const BATCH_OF = (id) =>
   BATCH_A.includes(id) ? 'A'
     : BATCH_B.includes(id) ? 'B'
@@ -1161,7 +1175,7 @@ const BATCH_OF = (id) =>
                                                                       : BATCH_AJ.includes(id) ? 'AJ'
                                                                         : BATCH_AK.includes(id) ? 'AK'
                                                                           : BATCH_AL.includes(id) ? 'AL'
-                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP' : BATCH_AQ.includes(id) ? 'AQ' : BATCH_AR.includes(id) ? 'AR' : BATCH_AS.includes(id) ? 'AS' : BATCH_AT.includes(id) ? 'AT' : BATCH_AU.includes(id) ? 'AU' : BATCH_AV.includes(id) ? 'AV' : BATCH_AW.includes(id) ? 'AW' : BATCH_AX.includes(id) ? 'AX'
+                                                                            : BATCH_AM.includes(id) ? 'AM' : BATCH_AN.includes(id) ? 'AN' : BATCH_AO.includes(id) ? 'AO' : BATCH_AP.includes(id) ? 'AP' : BATCH_AQ.includes(id) ? 'AQ' : BATCH_AR.includes(id) ? 'AR' : BATCH_AS.includes(id) ? 'AS' : BATCH_AT.includes(id) ? 'AT' : BATCH_AU.includes(id) ? 'AU' : BATCH_AV.includes(id) ? 'AV' : BATCH_AW.includes(id) ? 'AW' : BATCH_AX.includes(id) ? 'AX' : BATCH_AY.includes(id) ? 'AY'
                                                                   : null
 
 const F = {
@@ -1401,6 +1415,10 @@ const F = {
   ldg6: 'integration/ldg06-ledger-init.test.mjs',
   ldg7: 'integration/ldg07-card-gate.test.mjs',
   ldg9: 'static/ldg09-injection.test.mjs',
+  /** 批次 AY（2026-11-16 · Gate 3 r2）：**文件长度上限的自动化刀**（`FCAP-01`，复审 M-4）。
+   *  单开一个文件而不是并进 `LDG-04` / `DEC-05`：那一族判「依据面 / census」，这一格在真副本里
+   *  真跑 `check-notes` 的「文件长度」那一族（899 红 / 删掉绿 / 12 份存量绿 / `--all` 恰好存量 + M-1 三条腿）。 */
+  fcap: 'integration/fcap01-file-cap.test.mjs',
 }
 
 /** 每条：`id / group / file / status`（+ `title` 给人读；`notes` 只在有表内歧义时出现）。 */
@@ -1805,6 +1823,16 @@ ROWS.push(
   ['LDG-09', 'three-books', F.ldg9, '**注入（配置侧腿）**（契约 §8）：`presets/agenia/决策账本.md` 在且非空壳（≥200 字符）+ 同时出现在 `agent.cordis.yml` 的 `leaderOrder`、`inject.js` 的 `DEFAULT_LEADER_ORDER` 与 `@roster` 声明里；三个载体的四处缺一处各红一处（假仓库逐处一刀，真树控）；读数 `scope_line` **必须自报**"判配置 / 不是注入结果"（缺 ⇒ `INJECTION-SCOPE-NOT-DECLARED`）—— 真会话那一格是第 5 关由人在 GUI 点一次', '批次 AX'],
 )
 
+/**
+ * 批次 AY（2026-11-16 · Gate 3 r2）—— **文件长度上限的自动化刀**（`FCAP-01`，复审 M-4）。
+ * 契约：`.team/review/2026-11-16/评审报告-0016-文件长度上限.md` §二 M-4；决定 `账本/构案/0016-文件长度上限.md`。
+ * 单开一格而不是并进 `LDG-04`（依据面）或 `DEC-05`（census 口径）：那两格判的是别的对象，
+ * 这一格判的是**红/绿本身能不能翻面**（899 红 / 删掉绿 / 12 份存量绿 / `--all` 恰好存量 + M-1 三条腿）。
+ */
+ROWS.push(
+  ['FCAP-01', 'file-length', F.fcap, '**文件长度上限（0016）的红/绿四条腿 + M-1 三条腿**：在一份真副本里真跑 `check-notes.mjs`（`presets/**`（不含 `.runtime`）+ `账本/**` + `CONTRACT.md` + 模块闭包；`git init` 一次提交）—— A 合成 899 行 `.mjs` ⇒ 代码类那一行红且只红它 · B 删掉 ⇒ 回到绿 · C 默认模式 12 份存量全绿 + 无票超限 0（`说明.md` 是 M-2 补进面的第 12 份）· D `--all` 红的**恰好**是 C 那 12 份（3 条类检查，不是 12 条）· E 899 行提交之后仍然红（旧口径「HEAD 里就超 ⇒ 存量」不许回来）· F 存量 `inject.js` 长 1 行 ⇒ 红（长过冻结点 / 比 HEAD 长）· G `packet.mjs` 改名成 `packet-renamed.mjs` 并提交 ⇒ 新路径红、旧路径不红、旧票不跟过去。覆盖边界：只从「文件长度」那一族取数；其它族在夹具里红不红不是这一格的对象；不判活树（树从 `import.meta.url` 推）', '批次 AY'],
+)
+
 /** 注册表本体（冻结顺序 = 契约 §9.1 的组序）。 */
 export const REGISTRY = ROWS.map(([id, group, file, title, batchNote, notes]) => ({
   id,
@@ -2027,6 +2055,11 @@ export const GROUP_COUNTS = {
    *  红的时候一眼看得出是"哪一册/哪一条链没建"，而不是"检查器坏了"。
    *  ⚠️ 分母因此 218 → 227（+9）；理由三条写在 `BATCH_AX` 的头注释与契约 §0（0012 验收表显式允许）。 */
   'three-books': 9,
+  /** 批次 AY（2026-11-16 · Gate 3 r2）—— **文件长度上限的自动化刀**（`FCAP-01`，复审 M-4）。
+   *  单开一组而不是并进 `three-books`（`LDG-04` 依据面）/ `decision-ledger`（`DEC-05` census 口径）：
+   *  那一族判的是「依据面 / 口径」，这一组判的是**红/绿本身能不能翻面**（899 红 / 删掉绿 / 12 份存量绿 /
+   *  `--all` 恰好存量 + M-1 三条腿）。分母因此 227 → 228（+1）。 */
+  'file-length': 1,
 }
 
 /**
@@ -2046,7 +2079,7 @@ export function registryProblems() {
   // 冻结清单必须正好盖住"后加的显式批次之外的全部登记行"（多一条或少一条都是清单与表分家）。
   // ⚠️ G / H / I / J / K / L / M / N / O / P / Q / R / S / T **以及** U 起的每一个后加批次（U…AV）都是**后加的显式批次**（不进历史冻结清单），每一批都要从这一格里排掉 ——
   //    漏一个的现象是"冻结清单 55 条 ≠ 登记表里多出来的那几条"，而真正坏掉的可能是**别处**。
-  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV, ...BATCH_AW, ...BATCH_AX]
+  const POST_FROZEN = [...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV, ...BATCH_AW, ...BATCH_AX, ...BATCH_AY]
   const nonFrozen = REGISTRY.filter((r) => !POST_FROZEN.includes(r.id)).length
   if (FROZEN_IDS.length !== nonFrozen) problems.push(`冻结清单 ${FROZEN_IDS.length} 条 ≠ 登记表里批次 G/H/I/J/K/L/M/N/O/P/Q/R/S/T/U/V/W/X/Y/Z/AA/AB/AC/AD/AE/AF/AG/AH/AI/AJ/AK/AL/AM/AN/AO/AP/AQ/AR/AS/AT/AU/AV/AW/AX 之外的 ${nonFrozen} 条（清单与表分家了）`)
   if (BATCH_A.length !== 14) problems.push(`批次 A 的 ID 数 ${BATCH_A.length} ≠ 14`)
@@ -2075,7 +2108,7 @@ export function registryProblems() {
   for (const g of Object.keys(byGroup)) {
     if (!(g in GROUP_COUNTS)) problems.push(`多出一个组：${g}`)
   }
-  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV, ...BATCH_AW, ...BATCH_AX]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
+  for (const id of [...FROZEN_IDS, ...BATCH_G, ...BATCH_H, ...BATCH_I, ...BATCH_J, ...BATCH_K, ...BATCH_L, ...BATCH_M, ...BATCH_N, ...BATCH_O, ...BATCH_P, ...BATCH_Q, ...BATCH_R, ...BATCH_S, ...BATCH_T, ...BATCH_U, ...BATCH_V, ...BATCH_W, ...BATCH_X, ...BATCH_Y, ...BATCH_Z, ...BATCH_AA, ...BATCH_AB, ...BATCH_AC, ...BATCH_AD, ...BATCH_AE, ...BATCH_AF, ...BATCH_AG, ...BATCH_AH, ...BATCH_AI, ...BATCH_AJ, ...BATCH_AK, ...BATCH_AL, ...BATCH_AM, ...BATCH_AN, ...BATCH_AO, ...BATCH_AP, ...BATCH_AQ, ...BATCH_AR, ...BATCH_AS, ...BATCH_AT, ...BATCH_AU, ...BATCH_AV, ...BATCH_AW, ...BATCH_AX, ...BATCH_AY]) if (!CASES_BY_ID.has(id)) problems.push(`批次清单里的 ID 不在注册表：${id}`)
   return problems
 }
 

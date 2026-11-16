@@ -1964,52 +1964,68 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     stray.length === 0 ? `白名单 ${allowed.size} 项，干净` : `多出来：${stray.join(', ')} —— 删掉，或者加进 check-notes.mjs 的白名单`)
 }
 
-// ── 4c · 文件长度上限（构案 0016 · 2026-11-16）──────────────────────────────
+// ── 4c · 文件长度上限（构案 0016 · 2026-11-16；第 4 关 r2 修 M-1/M-2/M-3）────────
 // 一条判据，两件事：**现状类今天多长**（读数）+ **超的是不是今天才越线的**（红）。
 //
 // 🔴 上限表**只有这一份**（构案 0016 §③「表放一处（工具里）」）：就是下面那个 `FILE_CAP_TABLE`。
-//    `CONTRACT.md` §17 写规则、**指到这个常量名**，数字不进文档 —— 文档里抄一份数字就是第二真相
-//    （`cand-20261104-0020`「一个数有几份载体，改一处 = 没改」；`mig-rules-18`「同一个数不许担两个意思」）。
+//    `CONTRACT.md` §17 写规则、**指到这个常量名与每一行的 `match`**，数字与 glob 都不进文档 ——
+//    文档里抄一份数字就是第二真相（`cand-20261104-0020`「一个数有几份载体，改一处 = 没改」；
+//    `mig-rules-18`「同一个数不许担两个意思」）。下面有三条判据咬这句话：§17 切片零数字 ·
+//    扫描面里没有第二处「三个以上上限数字同现」· 0016 §② 那张决定表与这张表逐值相等。
 // 🔴 历史类**不设上限**（0016 §②）—— 这一条靠**扫描面**做到，不靠一张例外名单：这一节只走四个根
 //    （`presets/**` 里的手写件 · `CONTRACT.md` · `账本/构案/*.md` · `.team/<岗位>/now.md`）。
 //    `log.md` / 报告 / 会话包 / `_archive/` / `.team/**/cards/` / 证据目录都不在这四个根里 ⇒
 //    「忘了给历史类补一条例外」这条路根本不存在（比一张越写越长的豁免表硬）。
 // 🔴 生成物与数据**先剔再查表**（0016 §② 第三条）：派生物、事件流、派生页、运行时数据根拆了也白拆 ——
 //    拿「该不该拆」去逼它们，只会把一次「删注释」的动作推到一个生成器身上。
-// 🔴 存量与增量分开（0016 §② 末段）：判红只判**今天越线**的那几份 —— 口径是
-//    「现在超了」+「`HEAD` 那一份没超（或 `HEAD` 里没有这一份）」；
-//    `HEAD` 那一份**本来就超** ⇒ 存量，只进读数列（11 份已按文件挂票，见 `账本/缺陷/` 的 `file-length` 标签）。
-//    ⇒ 默认模式**不会**因为那 11 份存量躺在盘上就红（0016 §④：超限就红一片 = 恒红 = 教人忽略它）。
-//    `--all` = **存量审计**：不分存量增量、全判。关票那一刻用它量「债还完没有」—— 那时它必须是绿的。
+// 🔴 存量**以票为锚**，不拿 `HEAD` 当基线（第 4 关 r2 · M-1）：
+//    · 旧口径「`HEAD` 里就超 ⇒ 存量」会漏三面：新文件 commit 一次就洗白（`HEAD` 里超 = 存量）、
+//      改名把债搬到无票的新路径、存量文件还能继续长；
+//    · 现在的口径 = **现在超 + 缺陷册里有一张同路径、tag `file-length`、处置 `deferred` 的票**；
+//      票的 `evidence[]` 里 `kind:file` 那条的 `note` 以 `N 行` 开头 —— 那个数就是**冻结点**；
+//    · **存量只许缩**：`现在 > 冻结点` ⇒ 红（长得比冻结点还高）· `现在 > HEAD 那一份` ⇒ 红（比上次提交长）；
+//    · 无票的「超」一律红（含新文件、改名后的新路径、票已关的）；`--all` 是存量审计，全判。
+//    ⇒ 默认模式**不会**因为存量躺在盘上就红（0016 §④：超限就红一片 = 恒红 = 教人忽略它），
+//      但「一次 commit 洗白」「存量继续长」「改名搬债」三条都被同一组判据咬住。
+// 🔴 `now.md` **没有 HEAD 基线**（`.team` 不进 git）：这一类永远按现状判，报文不许写「今天才越线」。
+// 🔴 类名口径：`code` 判的是**随预设分发的代码**（`presets/**` 手写 `.mjs/.js`）；`.tools/**` 与
+//    `tests/**` 是开发机件（体检脚本自己就是两千多行的工具），不在本表 —— 给它们上 800 行只会把
+//    体检本身变成一笔新的存量债（第 4 关 r2 · N-3 的显式去留）。
 {
   /**
    * **上限（行）** —— 构案 0016 §② 那张表，全树只此一份。每个类的适用面就写在 `match` 里：
-   *   · `code`     `presets/**` 里的**手写** `.mjs` / `.js`；
-   *   · `manual`   说明书 / 作业书 = `presets/agenia/team/*.md`（岗位说明书）+ `job-briefs/*.md`（作业书）—— 13 份；
+   *   · `code`     `presets/**` 里的**手写** `.mjs` / `.js`（类名 = 预设代码：只判随预设分发的代码）；
+   *   · `manual`   说明书 / 作业书 = `presets/agenia/team/*.md`（岗位说明书）+ `job-briefs/*.md`（作业书）
+   *                + **`presets/agenia/说明.md`**（给维护者看的那份手写说明书；2026-11-16 复审 M-2 补进面 ——
+   *                它是唯一叫「说明书」的文件，却在 300 这一档之外，今天 504 行 ⇒ 永不判）；
    *   · `contract` 契约 / 构案 = `CONTRACT.md` + `账本/构案/*.md`；
    *   · `yml`      `presets/**` 的手写 yml（`cordis.patch.yml` 是生成物，先剔）；
-   *   · `now`      `.team/<岗位>/now.md`（带日期的抽屉里那一份是历史，**不**在这张表里）。
-   * ⚠️ **表外的件不进表**：`账本/产品/*.md`（产品册）与 `presets/agenia/{说明,leader,style,mood,persona,
-   *    work-guidelines,决策账本}.md` 都不在 0016 §② 点名的类里 ⇒ 要进表先改构案，不许在这里顺手放大扫描面。
+   *   · `now`      `.team/<岗位>/now.md`（带日期的抽屉里那一份是历史，**不**在这张表里；`_archive/` 也不在）。
+   * ⚠️ **表外的件不进表**：`账本/产品/*.md`（产品册）与 `presets/agenia/{leader,style,mood,persona,
+   *    work-guidelines,决策账本}.md`（六份注入碎片，不是说明书 / 作业书；今天都 <300）都不在 0016 §②
+   *    点名的类里 ⇒ 要进表先改构案，不许在这里顺手放大扫描面。
    * ⚠️ 0016 §① 那张「份数 / 中位 / 最大」是**当时按整棵树量的分布**（含 `.runtime/` 里的 scratch 副本、
    *    以及装着副本的 staging）；这张表数的是**现状类的手写件**，所以「今天几份」与 §① 的 49 / 5 不同。
    *    同一个数担两个意思比数不同更坏 ⇒ 口径钉在下面读数的第一句里（「今天 N 份」数的就是这条 `match`）。
+   *    §① 后来补的**更正注**（说明书 14 份 / 最大 504）与本表数的是同一件事。
    */
   const FILE_CAP_TABLE = Object.freeze([
-    { key: 'code', label: '代码 .mjs / .js（presets/** 手写）', cap: 800, match: (rel) => rel.startsWith('presets/') && /\.(?:mjs|js)$/.test(rel) },
-    { key: 'manual', label: '说明书 / 作业书 .md（team/ + job-briefs/）', cap: 300, match: (rel) => /^presets\/agenia\/(?:team|job-briefs)\/[^/]+\.md$/.test(rel) },
+    { key: 'code', label: '预设代码 .mjs / .js（presets/** 手写）', cap: 800, match: (rel) => rel.startsWith('presets/') && /\.(?:mjs|js)$/.test(rel) },
+    { key: 'manual', label: '说明书 / 作业书 .md（team/ + job-briefs/ + 说明.md）', cap: 300, match: (rel) => /^presets\/agenia\/(?:team|job-briefs)\/[^/]+\.md$/.test(rel) || rel === 'presets/agenia/说明.md' },
     { key: 'contract', label: '契约 / 构案 .md（CONTRACT.md + 账本/构案/）', cap: 250, match: (rel) => rel === 'CONTRACT.md' || /^账本\/构案\/[^/]+\.md$/.test(rel) },
     { key: 'yml', label: '手写 .yml（presets/**）', cap: 700, match: (rel) => rel.startsWith('presets/') && /\.ya?ml$/.test(rel) },
-    { key: 'now', label: 'now.md（.team/<岗位>/now.md）', cap: 80, match: (rel) => /^\.team\/[^/]+\/now\.md$/.test(rel) },
+    { key: 'now', label: 'now.md（.team/<岗位>/now.md）', cap: 80, match: (rel) => /^\.team\/(?!_archive\/)[^/]+\/now\.md$/.test(rel) },
   ])
   /**
    * **生成物 / 数据 / 派生页不进表**（0016 §② 第三条）—— 查表**之前**先过这一关。
    * 每一条都带着「为什么拆了也白拆」；最后一条（`.runtime/`）是运行时数据根，里面既有报告也有 scratch 脚本。
+   * `INDEX.md` 只认**三册的派生页**（`账本/{产品,缺陷,构案}/INDEX.md`）—— 从前是一条 `(^|/)INDEX\.md$`
+   * 的宽通配，会把将来任何手写的 INDEX.md 一起剔掉（第 4 关 r2 · N-6）。
    */
   const CAP_NOT_A_DOC = Object.freeze([
     { match: (rel) => /(^|\/)cordis\.patch\.ya?ml$/.test(rel), why: '生成物：由 `agent.cordis.yml` 派生（`.tools/make-bundle-patch.mjs`）' },
     { match: (rel) => /^账本\/缺陷\/.*\.json$/.test(rel), why: '数据：缺陷事件流（只追加，不是现役文档）' },
-    { match: (rel) => /(^|\/)INDEX\.md$/.test(rel), why: '派生页：由账本 / 事件流重算（`决议-check.mjs --op index`）' },
+    { match: (rel) => /^账本\/(?:产品|缺陷|构案)\/INDEX\.md$/.test(rel), why: '派生页：由账本 / 事件流重算（`决议-check.mjs --op index`）' },
     { match: (rel) => /^presets\/agenia\/\.runtime\//.test(rel), why: '运行时数据根（快照 / 报告 / scratch / 锁）' },
   ])
   /** 一条路径落在哪个现状类里；生成物 / 数据 / 历史类一律 `null`（不进表）。 */
@@ -2044,7 +2060,9 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   }
   /** `now.md` 跟着 `--workspace`（团队账那一节的口径），其余三类跟着仓库（交付件那一节的口径）。 */
   const capAbsOf = (rel) => (rel.startsWith('.team/') ? join(WORKSPACE, rel) : join(REPO, rel))
-  /** 扫描面 = 那四个根。**这就是"历史类不设上限"的实现**：不进这里 = 不进表。 */
+  /**
+   * 扫描面 = 那四个根。**这就是"历史类不设上限"的实现**：不进这里 = 不进表。
+   */
   const capScope = () => {
     const list = capWalk(join(REPO, 'presets'))
     if (existsSync(join(REPO, 'CONTRACT.md'))) list.push('CONTRACT.md')
@@ -2059,6 +2077,64 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       }
     }
     return [...new Set(list)]
+  }
+  /**
+   * **存量票**（第 4 关 r2 · M-1）：缺陷册里 tag `file-length` 的票就是「这份超限是已知的」的唯一凭据。
+   *
+   * 只认三样：
+   *   · 一条 `registered` 事件、`tags` 含 `file-length`、`evidence[]` 里 `kind:file` 指向这份文件；
+   *   · 同一 id 的**最后一次** `disposed` 处置必须是 `deferred`（开着的票 / 已关的票都不算存量 ——
+   *     「登记了但没裁」等于没决定要不要背这笔债，按无票判红更安全）；
+   *   · `note` 以 `N 行` 开头 —— 那是**冻结点**（存量只许缩，长过它 = 红）。读不出 ⇒ 这一份按红判，
+   *     并在报文里点名「票在但冻结行数读不出」。
+   * 文件读不动 / JSON 坏 ⇒ `ok:false`：默认模式对这些类**挂起**（判不了 ≠ 绿），`--all` 照常全判。
+   */
+  const CAP_TICKET_TAG = 'file-length'
+  const capTickets = () => {
+    const problems = []
+    const registered = new Map() // id → {id, rel, frozen}
+    const disposed = new Map() // id → 最后一次处置值
+    const bugDir = join(REPO, '账本', '缺陷')
+    let names = []
+    try {
+      names = readdirSync(bugDir).filter((n) => n.endsWith('.json')).sort()
+    } catch (err) {
+      return { ok: false, byPath: new Map(), problems: [`${bugDir} 读不动：${String(err?.code ?? err)}`] }
+    }
+    for (const name of names) {
+      let doc = null
+      try {
+        doc = JSON.parse(read(join(bugDir, name)))
+      } catch (err) {
+        problems.push(`${name} 不是合法 JSON：${String(err?.message ?? err).slice(0, 120)}`)
+        continue
+      }
+      const entries = Array.isArray(doc?.events)
+        ? doc.events
+        : Array.isArray(doc?.entries) ? doc.entries : [] // 事件流是三册形态；`entries` 是旧登记簿形态的只读兼容
+      for (const e of entries) {
+        if (e?.kind === 'disposed' && typeof e.id === 'string') disposed.set(e.id, e.disposition?.value ?? null)
+      }
+      for (const e of entries) {
+        if (e?.kind !== 'registered') continue
+        if (!Array.isArray(e.tags) || !e.tags.includes(CAP_TICKET_TAG)) continue
+        for (const ev of Array.isArray(e.evidence) ? e.evidence : []) {
+          if (ev?.kind !== 'file' || typeof ev.ref !== 'string' || ev.ref.trim() === '') continue
+          const rel = ev.ref.replaceAll('\\', '/')
+          const m = /^(\d+)\s*行/.exec(String(ev.note ?? ''))
+          registered.set(e.id, { id: e.id, rel, frozen: m === null ? null : Number(m[1]) })
+        }
+      }
+    }
+    const byPath = new Map()
+    for (const t of registered.values()) {
+      const disp = disposed.has(t.id) ? disposed.get(t.id) : null
+      if (disp !== 'deferred') continue
+      const cur = byPath.get(t.rel)
+      // 同一路径两张票：取更严的那张（冻结点更低）—— 两张都 deferred 是账本的事，这里只判「不许长过最严的冻结点」。
+      if (cur === undefined || (t.frozen !== null && (cur.frozen === null || t.frozen < cur.frozen))) byPath.set(t.rel, t)
+    }
+    return { ok: problems.length === 0, byPath, problems }
   }
   const capAll = process.argv.includes('--all')
   // `HEAD` 那一份的行数：**只对超限的那几份取**（多一次 `git show` 就多一次 IO，这里不需要全树）。
@@ -2085,17 +2161,58 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
     + '② 该拆（**先答「这份文件该不该存在」、再答「哪一块该独立」**，不许一上手就按行数切成 N 份）· '
     + '③ 注释 / 废话太多（删注释与死码，不删行为）。'
     + '「拆」不是默认答案 —— 能整删的整删（删除优先）。'
+    + '要背这笔债就开一张 `file-length` 票，并把选中的成因写进票面 `phenomenon` 的第一句'
+    + '（`成因：① / ② / ③`）—— 报文不替你记，票上要有这一格。'
 
   const scoped = capScope()
+  const tickets = capTickets()
+  /**
+   * 每一份超限的三种事实**分开量**，红/绿由这三个谓词组合出来（不是一句 `atHead <= cap`）：
+   *   · `ticket`   —— 缺陷册里那张 `file-length` 票（含冻结点）；无票 = 这笔债没人认领；
+   *   · `atHead`   —— `HEAD` 那一份的行数；`null` 有两种意思：HEAD 里没有（新文件）或这一格没有 HEAD 基线
+   *                  （`now.md`：`team/` 不进 git）—— 两者由 `headKnown` 分开；
+   *   · `stockOk`  —— 存量成立：**有票 + 冻结点读得出 + 现在没长过冻结点 + HEAD 里那一份本来就超 + 没比 HEAD 长**。
+   * 只有 `stockOk` 为真的超限件不红；其余一律红（含「无票」「票已关」「长过冻结点」「比 HEAD 长」）。
+   */
   const classes = FILE_CAP_TABLE.map((c) => {
     const files = scoped
       .filter((rel) => capClassOf(rel)?.key === c.key)
       .map((rel) => ({ rel, lines: capLineCount(read(capAbsOf(rel))) }))
     const over = files.filter((f) => f.lines > c.cap)
-    // 存量 = `HEAD` 那一份本来就超；增量 = 今天才越线（`HEAD` 没超，或 HEAD 里根本没有这一份）。
-    const marked = over.map((f) => ({ ...f, atHead: capHeadLines(f.rel) }))
-    const crossed = marked.filter((f) => capAll || f.atHead === null || f.atHead <= c.cap)
-    return { ...c, files, over: marked, crossed }
+    const judged = over.map((f) => {
+      // `now.md` 跟着工作区、不进 git ⇒ 不取 HEAD（取也恒失败）；其余类取 HEAD 那一份。
+      const headKnown = !f.rel.startsWith('.team/')
+      const atHead = headKnown ? capHeadLines(f.rel) : null
+      const ticket = tickets.byPath.get(f.rel) ?? null
+      const frozenOk = ticket !== null && ticket.frozen !== null
+      const headOver = atHead !== null && atHead > c.cap
+      const frozenShrunk = frozenOk && f.lines <= ticket.frozen
+      const headShrunk = atHead === null || f.lines <= atHead
+      const stockOk = frozenOk && headOver && frozenShrunk && headShrunk
+      let why = ''
+      if (stockOk) {
+        why = `存量（票 ${ticket.id} 冻在 ${ticket.frozen} 行；只许缩）`
+      } else if (!headKnown) {
+        why = 'now.md 没有 HEAD 基线（`.team` 不进 git）⇒ 按现状判，超了就是越线'
+      } else if (ticket === null) {
+        why = atHead === null
+          ? 'HEAD 里没有这一份（新文件）且没有存量票'
+          : (headOver
+            ? 'HEAD 里已经超了，但没有存量票 —— 一次 commit 洗不成存量'
+            : 'HEAD 那一份没超（今天才越线）且没有存量票')
+      } else if (ticket.frozen === null) {
+        why = `票 ${ticket.id} 在，但冻结行数读不出（\`evidence[].note\` 必须以「N 行」开头）`
+      } else if (!frozenShrunk) {
+        why = `存量长过冻结点（票 ${ticket.id} 冻在 ${ticket.frozen} 行，现在 ${f.lines} 行）`
+      } else if (!headOver) {
+        why = `票 ${ticket.id} 在，但 HEAD 那一份没超 —— 新越线不许拿旧票顶`
+      } else {
+        why = `比 HEAD 长了 ${f.lines - atHead} 行（存量只许缩）`
+      }
+      return { ...f, atHead, headKnown, ticket, stockOk, why }
+    })
+    const red = judged.filter((f) => capAll || !f.stockOk)
+    return { ...c, files, over: judged, red, stock: judged.filter((f) => f.stockOk) }
   })
 
   for (const c of classes) {
@@ -2113,22 +2230,31 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
       ? '没有'
       : c.over.map((f) => `${f.rel} ${f.lines} 行`).join(' · ')
     const reading = `今天 ${c.files.length} 份 / 超 ${c.over.length} 份 / 是：${who}`
-    if (!capAll && !capGitOk && c.over.length > 0) {
-      pending('文件长度', name, `${reading} —— 但**读不到 HEAD**（git 不可用）：判不了这几份是存量还是今天越线；`
+    // `now.md` 不需要 HEAD（它没有基线，按现状判）；其余类不知道 HEAD 就分不清「新越线 / 存量」⇒ 挂起。
+    if (!capAll && !capGitOk && c.over.length > 0 && c.key !== 'now') {
+      pending('文件长度', name, `${reading} —— 但**读不到 HEAD**（git 不可用）：判不了这几份是存量还是新越线；`
         + '要全判就加 `--all`（那种模式不需要 HEAD）')
       continue
     }
-    if (c.crossed.length === 0) {
-      const stock = c.over.length === 0
+    if (!capAll && !tickets.ok && c.over.length > 0) {
+      pending('文件长度', name, `${reading} —— 但**缺陷册读不动**（${tickets.problems.join('；')}）：分不清哪几份有存量票；`
+        + '要先把 `账本/缺陷/*.json` 修好，或加 `--all`（那种模式不需要票）')
+      continue
+    }
+    if (c.red.length === 0) {
+      const stock = c.stock.length === 0
         ? ''
-        : ` · 存量 ${c.over.length} 份（\`HEAD\` 那一份就超了 ⇒ 挂票、不判红；见 \`账本/缺陷/\` 的 \`file-length\` 标签）`
+        : ` · 存量 ${c.stock.length} 份（有票：${c.stock.map((f) => `${f.rel}＝${f.ticket.id}`).join(' · ')}；只许缩）`
       yes('文件长度', name, true, reading + stock)
       continue
     }
+    const redWho = c.red.map((f) => `${f.rel}（${f.lines} 行；${f.why}）`).join(' · ')
+    const stockNote = c.stock.length > 0
+      ? `（另有存量 ${c.stock.length} 份${capAll ? '' : '，不判红'}）`
+      : ''
     yes('文件长度', name, false,
-      `${reading} —— 🔴 今天越线 ${c.crossed.length} 份：${c.crossed.map((f) => `${f.rel}（${f.lines} 行）`).join(' · ')}`
-      + `；${capWhyPrompt()}`
-      + (c.over.length > c.crossed.length ? `（另有存量 ${c.over.length - c.crossed.length} 份，不判红）` : ''))
+      `${reading} —— 🔴 ${capAll ? '存量审计，全判' : '越线'} ${c.red.length} 份：${redWho}`
+      + `；${capWhyPrompt()}${stockNote}`)
   }
 
   /**
@@ -2159,37 +2285,102 @@ const firstLineDate = (text) => (/(\d{4}-\d{2}-\d{2})/.exec(text.split('\n')[0] 
   const patchRel = 'presets/agenia/cordis.patch.yml'
   const patchLines = existsSync(join(REPO, patchRel)) ? capLineCount(read(join(REPO, patchRel))) : null
   yes('文件长度', '判定面：生成物 / 数据 / 派生页 / 历史类都不进表（0016 §② 第二、三条）',
-    leaks.length === 0,
+    leaks.length === 0 && patchLines !== null,
     leaks.length > 0
       ? `这些路径不该有上限：${leaks.join(' · ')} —— 0016 §② 写死了它们不进表（拆了也白拆 / 历史类不设上限）`
-      : `${notADocProbes.length} 条"不进表"探针 + ${historyProbes.length} 条历史类探针全部判出局（`
-        + `${notADocProbes.map(([rel, why]) => `${rel}＝${why}`).join(' · ')}`
-        + ` ｜ 历史类：${historyProbes.map(([, why]) => why).join(' / ')}）`
-        + (patchLines === null
-          ? ''
-          : ` · 证人：\`${patchRel}\` 今天 ${patchLines} 行${patchLines > ymlCap ? `（> 手写 yml 的 ${ymlCap}）—— 不剔它，这一格就在手写 yml 那条红` : ''}`)
-        + ' · 扫描面只有那四个根，历史类根本走不进来')
+      : patchLines === null
+        ? `证人不在盘上：\`${patchRel}\` —— 它是 \`agent.cordis.yml\` 的派生物；缺它这一格就没有「不剔它会在手写 yml 那条红」的样本（第 4 关 r2 · N-7：证人不在不许默绿）`
+        : `${notADocProbes.length} 条"不进表"探针 + ${historyProbes.length} 条历史类探针全部判出局（`
+          + `${notADocProbes.map(([rel, why]) => `${rel}＝${why}`).join(' · ')}`
+          + ` ｜ 历史类：${historyProbes.map(([, why]) => why).join(' / ')}）`
+          + ` · 证人：\`${patchRel}\` 今天 ${patchLines} 行${patchLines > ymlCap ? `（> 手写 yml 的 ${ymlCap}）—— 不剔它，这一格就在手写 yml 那条红` : ''}`
+          + ' · 扫描面只有那四个根，历史类根本走不进来')
 
   /**
-   * 「一处」那一条（0016 §③）：表在工具里，契约文档**指过来**。
-   * 这条判据很小，但它挡的是一件大事：文档里抄一份数字，两处就会在第一次「上调 800 → 1000」时分叉。
+   * 「一处」那三条（0016 §③；第 4 关 r2 · M-3）：旧断言只查 CONTRACT 里有没有 `FILE_CAP_TABLE`
+   * 这个词 —— 把五档表原样粘进 §17 也照样绿，那是**自证**（证明"提过这个名字"，不证明"表只有一处"）。
+   * 现在拆成三条能翻面的：
+   *   ① CONTRACT 从 `## §17` 到 EOF 的切片里**零个上限数字**（文档只许指表）；
+   *   ② 扫描面里没有第二处「三个以上上限数字同现」的文档（0016 §② 是决定，单列对账）；
+   *   ③ §17.2 必须指到 `FILE_CAP_TABLE` 的 `match`，且不抄 glob（复制 glob = 第二份适用面）。
+   * 外加 0016 §② 那张决定表与 `FILE_CAP_TABLE` 逐值相等（改数字 = 构案 + 工具同批）。
    */
+  const CAP_LITERALS = FILE_CAP_TABLE.map((c) => String(c.cap))
+  const CAP_LITERAL_RE = new RegExp(`\\b(?:${CAP_LITERALS.join('|')})\\b`, 'g')
+  /** 取一节：[startHeading, endHeading)（`endHeading` 缺 ⇒ 到 EOF）。找不到 start ⇒ `null`。 */
+  const sectionOf = (text, startHeading, endHeading = null) => {
+    const i = text.indexOf(startHeading)
+    if (i < 0) return null
+    const j = endHeading === null ? -1 : text.indexOf(endHeading, i + startHeading.length)
+    return j < 0 ? text.slice(i) : text.slice(i, j)
+  }
   const contractText = existsSync(join(REPO, 'CONTRACT.md')) ? read(join(REPO, 'CONTRACT.md')) : ''
-  yes('文件长度', '上限表只有一处：CONTRACT.md 的「文件长度上限」一节指到 `FILE_CAP_TABLE`（数字不进文档）',
-    contractText.includes('FILE_CAP_TABLE') && /文件长度上限/.test(contractText),
+  const contractS17 = sectionOf(contractText, '## §17')
+  const s17Hits = contractS17 === null ? null : (contractS17.match(CAP_LITERAL_RE) ?? [])
+  yes('文件长度', '上限表只有一处 ①：CONTRACT.md 从 `## §17` 到 EOF 的切片里**零个上限数字**',
+    s17Hits !== null && s17Hits.length === 0,
     contractText === ''
       ? 'CONTRACT.md 读不到 —— 规则得有一份落点'
-      : `CONTRACT.md 里${/文件长度上限/.test(contractText) ? '有' : '没有'}「文件长度上限」一节、`
-        + `${contractText.includes('FILE_CAP_TABLE') ? '有' : '没有'}指向 \`FILE_CAP_TABLE\` 的指针`)
+      : contractS17 === null
+        ? 'CONTRACT.md 里没有 `## §17` 那一节 —— 规则没有落点'
+        : s17Hits.length === 0
+          ? `§17 切片 ${contractS17.split('\n').length} 行：数字 0 个（文档只指表）`
+          : `§17 切片里出现了上限数字 ${[...new Set(s17Hits)].join(' / ')}（共 ${s17Hits.length} 处）—— 文档里抄了第二份表`)
 
-  // 一行读数（口径写在最前面：数的就是每条 `match` 命中的手写件）。
+  // ② 扫描面里没有第二处「三个以上上限数字同现」的文档（至少 3 个**不同**的上限数字同现 ⇒ 像一张表）。
+  const capDocs = scoped.filter((rel) => capClassOf(rel) !== null && rel !== '账本/构案/0016-文件长度上限.md')
+  const clusters = []
+  for (const rel of capDocs) {
+    let text = ''
+    try { text = read(capAbsOf(rel)) } catch { continue }
+    const vals = [...new Set(text.match(CAP_LITERAL_RE) ?? [])]
+    if (vals.length >= 3) clusters.push(`${rel}（${vals.join(' / ')}）`)
+  }
+  yes('文件长度', '上限表只有一处 ②：扫描面里没有第二处「三个以上上限数字同现」（0016 §② 是决定，单列对账）',
+    clusters.length === 0,
+    clusters.length === 0
+      ? `${capDocs.length} 份手写件里，除了 \`FILE_CAP_TABLE\` 与 0016 §②，没有一份同时带着三个以上上限数字`
+      : `这些文件像是第二张表：${clusters.join(' · ')} —— 数字只许住在 \`FILE_CAP_TABLE\`；要改就改表（0016 §③）`)
+
+  // ③ §17.2 只许指 `match`，不许抄 glob。
+  const s172 = sectionOf(contractText, '### §17.2', '### §17.3')
+  const s172Glob = s172 === null ? null : /\*(?:\.|\/)/.test(s172)
+  yes('文件长度', '上限表只有一处 ③：§17.2 指到 `FILE_CAP_TABLE` 的 `match`（不抄 glob）',
+    s172 !== null && s172.includes('FILE_CAP_TABLE') && /\bmatch\b/.test(s172) && s172Glob === false,
+    s172 === null
+      ? 'CONTRACT.md 里没有 `### §17.2` 那一节'
+      : `${s172.includes('FILE_CAP_TABLE') ? '有' : '没有'} \`FILE_CAP_TABLE\` 指针、`
+        + `${/\bmatch\b/.test(s172) ? '有' : '没有'} \`match\` 指针、`
+        + `${s172Glob ? '仍然抄了 glob（`*.md` 之类）' : '没抄 glob'}`)
+
+  // ④ 0016 §②（决定）与 `FILE_CAP_TABLE`（工具）逐值相等 —— 改数字必须同批。
+  const schemeFile = join(REPO, '账本', '构案', '0016-文件长度上限.md')
+  const schemeText = existsSync(schemeFile) ? read(schemeFile) : ''
+  const schemeS2 = sectionOf(schemeText, '## ②', '## ③')
+  const schemeNums = schemeS2 === null ? null : [...schemeS2.matchAll(/\*\*(\d+)\*\*/g)].map((m) => Number(m[1])).sort((a, b) => a - b)
+  const tableNums = FILE_CAP_TABLE.map((c) => c.cap).sort((a, b) => a - b)
+  yes('文件长度', '上限表只有一处 ④：0016 §② 的分档表与 `FILE_CAP_TABLE` 逐值相等（改数字 = 构案 + 工具同批）',
+    schemeNums !== null && JSON.stringify(schemeNums) === JSON.stringify(tableNums),
+    schemeText === ''
+      ? '`账本/构案/0016-文件长度上限.md` 读不到 —— 决定不在，工具的这张表就没有来历'
+      : schemeS2 === null
+        ? '0016 里没有 `## ②` 那一节'
+        : `构案 §② 读到 ${JSON.stringify(schemeNums)} / 工具表 ${JSON.stringify(tableNums)}`)
+
+  // 一行读数（口径写在最前面：数的就是每条 `match` 命中的手写件；份数分两个根印，别把 71 混成一个数）。
   const capTotal = classes.reduce((n, c) => n + c.files.length, 0)
   const capOver = classes.reduce((n, c) => n + c.over.length, 0)
-  const capCrossed = classes.reduce((n, c) => n + c.crossed.length, 0)
+  const capRed = classes.reduce((n, c) => n + c.red.length, 0)
+  const capStock = classes.reduce((n, c) => n + c.stock.length, 0)
+  const capNoTicket = classes.flatMap((c) => c.over.filter((f) => f.ticket === null)).length
+  const capRepo = classes.filter((c) => c.key !== 'now').reduce((n, c) => n + c.files.length, 0)
+  const capWorkspace = capTotal - capRepo
+  const stockPaths = classes.flatMap((c) => c.stock.map((f) => f.rel))
   console.log(`  · 文件长度上限读数（构案 0016 · 表在 \`FILE_CAP_TABLE\`${capAll ? ' · `--all` 存量审计' : ''}）：`
-    + `${FILE_CAP_TABLE.length} 类 ${capTotal} 份 / 超 ${capOver} 份 —— `
-    + `今天越线（判红）${capCrossed} 份 · 存量（挂票，不判红）${capOver - capCrossed} 份`
-    + (capOver - capCrossed > 0 ? `：${classes.flatMap((c) => c.over.filter((f) => !c.crossed.includes(f)).map((f) => f.rel)).join(' · ')}` : ''))
+    + `${FILE_CAP_TABLE.length} 类 ${capTotal} 份（仓库根 ${capRepo} + 工作区 ${capWorkspace}）/ 超 ${capOver} 份 —— `
+    + `${capAll ? '存量审计（全判红）' : '越线（判红）'} ${capRed} 份 · 存量（有票${capAll ? '' : '，不判红'}）${capStock} 份`
+    + (stockPaths.length > 0 ? `：${stockPaths.join(' · ')}` : '')
+    + (capNoTicket > 0 ? ` · 超但无票 ${capNoTicket} 份` : ''))
 }
 
 // ── 5 · 这台机器的既成事实 ─────────────────────────────────────────────────
